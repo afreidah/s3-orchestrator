@@ -35,7 +35,7 @@ Package admin provides the admin API handler for operational control endpoints.
 
 
 <a name="BackendOps"></a>
-## type [BackendOps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L47-L54>)
+## type [BackendOps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L40-L47>)
 
 BackendOps is the narrow surface of \*proxy.BackendManager that the admin handler depends on for operations not encapsulated by a named sub\-manager \(replicator, drain, scrubber, etc.\). \*proxy.BackendManager satisfies it.
 
@@ -51,7 +51,7 @@ type BackendOps interface {
 ```
 
 <a name="BackfillChecksumsResult"></a>
-## type [BackfillChecksumsResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L1092-L1096>)
+## type [BackfillChecksumsResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_integrity.go#L70-L74>)
 
 BackfillChecksumsResult is the outcome of a checksum backfill pass.
 
@@ -64,7 +64,7 @@ type BackfillChecksumsResult struct {
 ```
 
 <a name="BulkRewriteResult"></a>
-## type [BulkRewriteResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L844-L850>)
+## type [BulkRewriteResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_encryption.go#L207-L213>)
 
 BulkRewriteResult is the outcome of a bulk encrypt/decrypt\-existing pass. Status is "complete" when the run finished, "skipped" when the operation is unavailable \(encryption not enabled\).
 
@@ -79,7 +79,7 @@ type BulkRewriteResult struct {
 ```
 
 <a name="Deps"></a>
-## type [Deps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L89-L106>)
+## type [Deps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L82-L99>)
 
 Deps groups the narrow role interfaces and infrastructure the admin handler touches. Each field carries the smallest contract the handler actually uses, so the constructor \(and the backing DI provider\) never hand the handler a god\-shaped \*proxy.BackendManager.
 
@@ -105,7 +105,7 @@ type Deps struct {
 ```
 
 <a name="Handler"></a>
-## type [Handler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L60-L83>)
+## type [Handler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L53-L76>)
 
 Handler serves the admin API endpoints.
 
@@ -116,7 +116,7 @@ type Handler struct {
 ```
 
 <a name="New"></a>
-### func [New](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L109>)
+### func [New](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L102>)
 
 ```go
 func New(d *Deps) *Handler
@@ -125,7 +125,7 @@ func New(d *Deps) *Handler
 New creates a new admin API handler from its narrow dependency bag.
 
 <a name="Handler.BackfillChecksums"></a>
-### func \(\*Handler\) [BackfillChecksums](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L1102>)
+### func \(\*Handler\) [BackfillChecksums](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_integrity.go#L80>)
 
 ```go
 func (h *Handler) BackfillChecksums(ctx context.Context, batchSize int) BackfillChecksumsResult
@@ -134,7 +134,7 @@ func (h *Handler) BackfillChecksums(ctx context.Context, batchSize int) Backfill
 BackfillChecksums computes and stores content hashes for objects that don't have one, paginating internally until all objects are processed or the context is cancelled. batchSize \<= 0 means use 100. Skips when integrity verification is not enabled.
 
 <a name="Handler.EncryptExisting"></a>
-### func \(\*Handler\) [EncryptExisting](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L855>)
+### func \(\*Handler\) [EncryptExisting](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_encryption.go#L218>)
 
 ```go
 func (h *Handler) EncryptExisting(ctx context.Context) BulkRewriteResult
@@ -143,7 +143,7 @@ func (h *Handler) EncryptExisting(ctx context.Context) BulkRewriteResult
 EncryptExisting downloads every unencrypted object, encrypts it, re\-uploads the ciphertext, and updates the DB record. Returns counts. Skips when encryption is not configured.
 
 <a name="Handler.Register"></a>
-### func \(\*Handler\) [Register](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L141>)
+### func \(\*Handler\) [Register](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_routes.go#L22>)
 
 ```go
 func (h *Handler) Register(mux *http.ServeMux)
@@ -152,7 +152,7 @@ func (h *Handler) Register(mux *http.ServeMux)
 Register mounts the admin API routes on the given mux.
 
 <a name="Handler.Replicate"></a>
-### func \(\*Handler\) [Replicate](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L409>)
+### func \(\*Handler\) [Replicate](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_replication.go#L35>)
 
 ```go
 func (h *Handler) Replicate(ctx context.Context) (ReplicateResult, error)
@@ -161,7 +161,7 @@ func (h *Handler) Replicate(ctx context.Context) (ReplicateResult, error)
 Replicate runs one replication cycle synchronously and returns the resulting counts. Skips when replication is unconfigured or factor \<= 1. Refreshes quota metrics on success. Exposed for callers \(UI, tests\) that need the counts back as Go values rather than JSON.
 
 <a name="Handler.Scrub"></a>
-### func \(\*Handler\) [Scrub](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L1057>)
+### func \(\*Handler\) [Scrub](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_integrity.go#L35>)
 
 ```go
 func (h *Handler) Scrub(ctx context.Context, batchSize int) ScrubResult
@@ -170,7 +170,7 @@ func (h *Handler) Scrub(ctx context.Context, batchSize int) ScrubResult
 Scrub runs one integrity\-verification scrub pass synchronously and returns the per\-pass counts. batchSize \<= 0 means use the configured ScrubberBatchSize. Skips when integrity verification is not enabled.
 
 <a name="Handler.SetReloadStatusProvider"></a>
-### func \(\*Handler\) [SetReloadStatusProvider](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L136>)
+### func \(\*Handler\) [SetReloadStatusProvider](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L137>)
 
 ```go
 func (h *Handler) SetReloadStatusProvider(fn func() any)
@@ -203,7 +203,7 @@ type Reconciler interface {
 ```
 
 <a name="ReplicateResult"></a>
-## type [ReplicateResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L399-L403>)
+## type [ReplicateResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_replication.go#L25-L29>)
 
 ReplicateResult is the outcome of a one\-shot replication cycle.
 
@@ -228,7 +228,7 @@ type ReplicatorOps interface {
 ```
 
 <a name="ScrubResult"></a>
-## type [ScrubResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L1047-L1052>)
+## type [ScrubResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_integrity.go#L25-L30>)
 
 ScrubResult is the outcome of one on\-demand scrub cycle.
 
@@ -254,7 +254,7 @@ type ScrubberOps interface {
 ```
 
 <a name="WorkerHealth"></a>
-## type [WorkerHealth](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L1197-L1203>)
+## type [WorkerHealth](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_status.go#L153-L159>)
 
 WorkerHealth is the JSON shape returned by /admin/api/workers. Mirrors lifecycle.WorkerHealth but lives here so the admin transport package owns its own response contract and does not import the lifecycle package directly. Field tags must stay in lockstep with the source type or the wire format silently diverges.
 

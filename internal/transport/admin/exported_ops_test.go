@@ -407,6 +407,7 @@ func TestNew_FromDeps(t *testing.T) {
 		DBHealthy:  src.dbHealthy,
 		Objects:    src.objects,
 		Cleanup:    src.cleanup,
+		Encryption: src.encAdmin,
 		Token:      src.token,
 		LogLevel:   src.logLevel,
 	}
