@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
@@ -50,6 +51,8 @@ type Scrubber struct {
 
 // NewScrubber creates a Scrubber with the given dependencies and optional encryptor.
 func NewScrubber(deps ScrubberOps, store ScrubberStore, encryptor *encryption.Encryptor) *Scrubber {
+	must.NotNil("deps", deps)
+	must.NotNil("store", store)
 	return &Scrubber{deps: deps, store: store, encryptor: encryptor, log: slog.Default().With(logfmt.Component("scrubber"))}
 }
 

@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
 // -------------------------------------------------------------------------
@@ -53,6 +54,8 @@ type Coordinator struct {
 // component-scoped logger is built in the constructor body per the
 // project's logging convention.
 func New(core WritepathCore, stores core.MetadataStore, pendingEnabled bool) *Coordinator {
+	must.NotNil("core", core)
+	must.NotNil("stores", stores)
 	return &Coordinator{
 		core:           core,
 		stores:         stores,

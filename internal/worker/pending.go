@@ -25,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
 
@@ -53,6 +54,8 @@ type PendingReaper struct {
 // concurrency, minAge, and batchSize fall back to safe defaults when zero
 // or negative.
 func NewPendingReaper(deps CleanupOps, store PendingReaperStore, concurrency int, minAge time.Duration, batchSize int) *PendingReaper {
+	must.NotNil("deps", deps)
+	must.NotNil("store", store)
 	if concurrency <= 0 {
 		concurrency = 4
 	}

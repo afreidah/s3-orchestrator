@@ -10,7 +10,6 @@
 package proxy
 
 import (
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -292,42 +291,44 @@ func TestUpdateUsageLimits_ConcurrentAccess(t *testing.T) {
 // NewBackendManager constructor validation
 // -------------------------------------------------------------------------
 
-// TestNewBackendManager_NilConfig pins the nil-pointer guard so callers can
-// errors.Is against ErrConfigNil without depending on the wrapped message.
+// TestNewBackendManager_NilConfig pins the nil-pointer guard. The
+// constructor panics via must.NotNil so a DI wiring bug surfaces at
+// assembly rather than NPE'ing on first use.
 func TestNewBackendManager_NilConfig(t *testing.T) {
 	t.Parallel()
-	_, err := NewBackendManager(nil)
-	if !errors.Is(err, ErrConfigNil) {
-		t.Errorf("err = %v, want ErrConfigNil", err)
-	}
+	defer func() {
+		if recover() == nil {
+			t.Error("expected panic on nil config")
+		}
+	}()
+	NewBackendManager(nil)
 }
 
-// TestNewBackendManager_ValidationSentinels pins every constructor
-// validation branch: each required field and each negative-duration check
-// must surface a typed sentinel so DI startup can distinguish them.
-func TestNewBackendManager_ValidationSentinels(t *testing.T) {
+// TestNewBackendManager_RequiredDepsPanic pins each required-dep nil
+// guard. Negative-duration validation is no longer the constructor's
+// responsibility - the config validator owns that - so this table only
+// covers the dep-shape branches.
+func TestNewBackendManager_RequiredDepsPanic(t *testing.T) {
 	t.Parallel()
 	mock := newPermissiveMock(t)
 
 	cases := []struct {
 		name string
 		cfg  *BackendManagerConfig
-		want error
 	}{
-		{"no stores", &BackendManagerConfig{}, ErrStoresRequired},
-		{"no dashboard", &BackendManagerConfig{Stores: mock}, ErrDashboardRequired},
-		{"no metrics", &BackendManagerConfig{Stores: mock, Dashboard: mock}, ErrMetricsRequired},
-		{"negative backend timeout", &BackendManagerConfig{Stores: mock, Dashboard: mock, Metrics: mock, BackendTimeout: -1}, ErrNegativeBackendTimeout},
-		{"negative cache ttl", &BackendManagerConfig{Stores: mock, Dashboard: mock, Metrics: mock, CacheTTL: -1}, ErrNegativeCacheTTL},
-		{"negative multipart dek cache ttl", &BackendManagerConfig{Stores: mock, Dashboard: mock, Metrics: mock, MultipartDEKCacheTTL: -1}, ErrNegativeMultipartDEKCacheTTL},
+		{"no stores", &BackendManagerConfig{}},
+		{"no dashboard", &BackendManagerConfig{Stores: mock}},
+		{"no metrics", &BackendManagerConfig{Stores: mock, Dashboard: mock}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := NewBackendManager(tc.cfg)
-			if !errors.Is(err, tc.want) {
-				t.Errorf("err = %v, want errors.Is %v", err, tc.want)
-			}
+			defer func() {
+				if recover() == nil {
+					t.Error("expected panic on missing dep")
+				}
+			}()
+			NewBackendManager(tc.cfg)
 		})
 	}
 }

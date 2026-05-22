@@ -40,6 +40,7 @@ import (
 	pobserve "github.com/afreidah/s3-orchestrator/internal/proxy/observe"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
@@ -77,6 +78,9 @@ type Manager struct {
 // component-scoped logger is built in the constructor body per the
 // project's logging convention.
 func New(core MultipartCore, coord MultipartCoordinator, stores core.MetadataStore, encryptor *encryption.Encryptor, objectCache objcache.ObjectCache, dekCacheTTL time.Duration, integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]) *Manager {
+	must.NotNil("core", core)
+	must.NotNil("coord", coord)
+	must.NotNil("stores", stores)
 	return &Manager{
 		core:         core,
 		coord:        coord,

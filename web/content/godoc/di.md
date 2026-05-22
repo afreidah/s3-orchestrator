@@ -14,18 +14,9 @@ Package di is the single wiring point for the orchestrator. It uses samber/do/v2
 ## Index
 
 - [func IsRegistered\[T any\]\(inj do.Injector\) bool](<#IsRegistered>)
-- [func NewCircuitBreakerWatchdog\(registry \*breaker.Registry\) lifecycle.Runner](<#NewCircuitBreakerWatchdog>)
-- [func NewCleanupQueueService\(cleanup \*worker.CleanupWorker, locker advisoryLocker\) lifecycle.Runner](<#NewCleanupQueueService>)
 - [func NewInjector\(cfg \*config.Config, mode string, logLevel \*slog.LevelVar, logBuffer \*telemetry.LogBuffer\) do.Injector](<#NewInjector>)
-- [func NewLifecycleService\(manager lifecycleOps, locker advisoryLocker\) lifecycle.Runner](<#NewLifecycleService>)
-- [func NewMultipartCleanupService\(cleaner staleMultipartCleaner, locker advisoryLocker, staleTimeout time.Duration\) lifecycle.Runner](<#NewMultipartCleanupService>)
-- [func NewOverReplicationService\(manager quotaMetricsRefresher, overRep \*worker.OverReplicationCleaner, locker advisoryLocker\) lifecycle.Runner](<#NewOverReplicationService>)
-- [func NewPendingReaperService\(reaper \*worker.PendingReaper, locker advisoryLocker, tick time.Duration\) lifecycle.Runner](<#NewPendingReaperService>)
-- [func NewRebalancerService\(manager quotaMetricsRefresher, rebalancer \*worker.Rebalancer, locker advisoryLocker\) lifecycle.Runner](<#NewRebalancerService>)
-- [func NewReconcileService\(reconciler \*worker.Reconciler, locker advisoryLocker, interval time.Duration\) lifecycle.Runner](<#NewReconcileService>)
-- [func NewReplicatorService\(manager quotaMetricsRefresher, replicator \*worker.Replicator, locker advisoryLocker\) lifecycle.Runner](<#NewReplicatorService>)
-- [func NewScrubberService\(scrubber \*worker.Scrubber, locker advisoryLocker\) lifecycle.Runner](<#NewScrubberService>)
-- [func NewUsageFlushService\(manager usageFlushOps, locker advisoryLocker\) lifecycle.Runner](<#NewUsageFlushService>)
+- [func NewLifecycleService\(manager lifecycleOps, locker tickrunner.AdvisoryLocker\) lifecycle.Runner](<#NewLifecycleService>)
+- [func NewUsageFlushService\(manager usageFlushOps, locker tickrunner.AdvisoryLocker\) lifecycle.Runner](<#NewUsageFlushService>)
 - [func ProvideAdminHandler\(i do.Injector\) \(\*admin.Handler, error\)](<#ProvideAdminHandler>)
 - [func ProvideBackendManager\(i do.Injector\) \(\*proxy.BackendManager, error\)](<#ProvideBackendManager>)
 - [func ProvideBreakerRegistry\(i do.Injector\) \(\*breaker.Registry, error\)](<#ProvideBreakerRegistry>)
@@ -76,24 +67,6 @@ func IsRegistered[T any](inj do.Injector) bool
 
 IsRegistered reports whether T has a provider registered in the injector or any ancestor scope. Cheap; does not invoke the constructor.
 
-<a name="NewCircuitBreakerWatchdog"></a>
-## func [NewCircuitBreakerWatchdog](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L561>)
-
-```go
-func NewCircuitBreakerWatchdog(registry *breaker.Registry) lifecycle.Runner
-```
-
-NewCircuitBreakerWatchdog constructs the watchdog background service.
-
-<a name="NewCleanupQueueService"></a>
-## func [NewCleanupQueueService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L354>)
-
-```go
-func NewCleanupQueueService(cleanup *worker.CleanupWorker, locker advisoryLocker) lifecycle.Runner
-```
-
-NewCleanupQueueService constructs the cleanup\-queue background service.
-
 <a name="NewInjector"></a>
 ## func [NewInjector](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/injector.go#L53>)
 
@@ -104,82 +77,19 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 NewInjector creates and configures the DI container. Required providers are always registered. Optional providers register only when their config section is enabled \- do.Invoke returns an error for disabled services, which callers use to detect absence.
 
 <a name="NewLifecycleService"></a>
-## func [NewLifecycleService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L433>)
+## func [NewLifecycleService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L140>)
 
 ```go
-func NewLifecycleService(manager lifecycleOps, locker advisoryLocker) lifecycle.Runner
+func NewLifecycleService(manager lifecycleOps, locker tickrunner.AdvisoryLocker) lifecycle.Runner
 ```
 
-NewLifecycleService constructs the lifecycle\-expiration background service.
-
-<a name="NewMultipartCleanupService"></a>
-## func [NewMultipartCleanupService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L335>)
-
-```go
-func NewMultipartCleanupService(cleaner staleMultipartCleaner, locker advisoryLocker, staleTimeout time.Duration) lifecycle.Runner
-```
-
-NewMultipartCleanupService constructs the multipart\-cleanup background service. The cleaner is typically \*multipart.Manager \(resolved by the DI provider as mgr.MultipartManager\); the narrow interface keeps this constructor decoupled from the rest of \*proxy.BackendManager.
-
-<a name="NewOverReplicationService"></a>
-## func [NewOverReplicationService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L471>)
-
-```go
-func NewOverReplicationService(manager quotaMetricsRefresher, overRep *worker.OverReplicationCleaner, locker advisoryLocker) lifecycle.Runner
-```
-
-NewOverReplicationService constructs the over\-replication cleanup service.
-
-<a name="NewPendingReaperService"></a>
-## func [NewPendingReaperService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L378>)
-
-```go
-func NewPendingReaperService(reaper *worker.PendingReaper, locker advisoryLocker, tick time.Duration) lifecycle.Runner
-```
-
-NewPendingReaperService constructs the pending\-objects reaper background service. The reaper resolves abandoned PUT intents by HEADing the destination backend and either promoting the intent into object\_locations \(bytes present\) or dropping it \(bytes absent\). Returns nil when no pending reaper is configured.
-
-<a name="NewRebalancerService"></a>
-## func [NewRebalancerService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L404>)
-
-```go
-func NewRebalancerService(manager quotaMetricsRefresher, rebalancer *worker.Rebalancer, locker advisoryLocker) lifecycle.Runner
-```
-
-NewRebalancerService constructs the rebalancer background service.
-
-<a name="NewReconcileService"></a>
-## func [NewReconcileService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L532>)
-
-```go
-func NewReconcileService(reconciler *worker.Reconciler, locker advisoryLocker, interval time.Duration) lifecycle.Runner
-```
-
-NewReconcileService constructs the reconcile background service.
-
-<a name="NewReplicatorService"></a>
-## func [NewReplicatorService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L500>)
-
-```go
-func NewReplicatorService(manager quotaMetricsRefresher, replicator *worker.Replicator, locker advisoryLocker) lifecycle.Runner
-```
-
-NewReplicatorService constructs the replication background service.
-
-<a name="NewScrubberService"></a>
-## func [NewScrubberService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L591>)
-
-```go
-func NewScrubberService(scrubber *worker.Scrubber, locker advisoryLocker) lifecycle.Runner
-```
-
-NewScrubberService constructs the integrity scrubber background service.
+NewLifecycleService constructs the lifecycle\-expiration background service. Lives in DI \(rather than next to a worker\) because the work surface is on \*proxy.BackendManager itself \(via the lifecycleOps consumer interface\) \- there is no dedicated worker type.
 
 <a name="NewUsageFlushService"></a>
-## func [NewUsageFlushService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L251>)
+## func [NewUsageFlushService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L56>)
 
 ```go
-func NewUsageFlushService(manager usageFlushOps, locker advisoryLocker) lifecycle.Runner
+func NewUsageFlushService(manager usageFlushOps, locker tickrunner.AdvisoryLocker) lifecycle.Runner
 ```
 
 NewUsageFlushService constructs the usage flush background service.
@@ -194,7 +104,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error)
 ProvideAdminHandler creates the admin API handler.
 
 <a name="ProvideBackendManager"></a>
-## func [ProvideBackendManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L226>)
+## func [ProvideBackendManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L229>)
 
 ```go
 func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error)
@@ -239,7 +149,7 @@ func ProvideDatabaseBreaker(i do.Injector) (*breaker.CircuitBreaker, error)
 ProvideDatabaseBreaker constructs the shared \*breaker.CircuitBreaker every driver\-level SQL statement forwards calls through.
 
 <a name="ProvideDrainManager"></a>
-## func [ProvideDrainManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L188>)
+## func [ProvideDrainManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L189>)
 
 ```go
 func ProvideDrainManager(i do.Injector) (*drain.Manager, error)
@@ -257,7 +167,7 @@ func ProvideEncryptionAdmin(i do.Injector) (core.EncryptionAdmin, error)
 ProvideEncryptionAdmin aliases the wide MetadataStore as its EncryptionAdmin role for the admin HTTP handler's key rotation and encrypt/decrypt batch ops.
 
 <a name="ProvideEncryptionProvider"></a>
-## func [ProvideEncryptionProvider](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L158>)
+## func [ProvideEncryptionProvider](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L159>)
 
 ```go
 func ProvideEncryptionProvider(i do.Injector) (encryption.KeyProvider, error)
@@ -293,7 +203,7 @@ func ProvideLifecycleAdmin(i do.Injector) (core.LifecycleAdmin, error)
 ProvideLifecycleAdmin aliases the wide MetadataStore as its LifecycleAdmin role for boot/shutdown migrations, schema checks, and Close.
 
 <a name="ProvideLifecycleManager"></a>
-## func [ProvideLifecycleManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/lifecycle.go#L85>)
+## func [ProvideLifecycleManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/lifecycle.go#L91>)
 
 ```go
 func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error)
@@ -347,7 +257,7 @@ func ProvideNotifier(i do.Injector) (*notify.Notifier, error)
 ProvideNotifier creates the webhook notification system.
 
 <a name="ProvideObjectCache"></a>
-## func [ProvideObjectCache](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L198>)
+## func [ProvideObjectCache](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L200>)
 
 ```go
 func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error)
@@ -365,13 +275,13 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 ProvideOverReplicationCleaner constructs the over\-replication cleanup worker.
 
 <a name="ProvidePendingReaper"></a>
-## func [ProvidePendingReaper](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L132>)
+## func [ProvidePendingReaper](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L136>)
 
 ```go
 func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error)
 ```
 
-ProvidePendingReaper constructs the pending\-reaper worker. Returns nil when the pending pattern is disabled \(matches the legacy NewBackendManager behavior of only attaching a reaper when stores.Pending is non\-nil\).
+ProvidePendingReaper constructs the pending\-reaper worker. This provider is registered in NewInjector ONLY when the pending pattern is enabled, so reaching this function implies the feature is on \(\#830\). Any nil dependency at this point is a wiring bug, not an intentional "feature off" signal \- it surfaces as an error so Optional\[\*worker.PendingReaper\] reports Failed instead of conflating it with Disabled.
 
 <a name="ProvideRateLimiter"></a>
 ## func [ProvideRateLimiter](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L70>)
@@ -392,7 +302,7 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error)
 ProvideRebalancer constructs the rebalancer worker.
 
 <a name="ProvideReconciler"></a>
-## func [ProvideReconciler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L170>)
+## func [ProvideReconciler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L171>)
 
 ```go
 func ProvideReconciler(i do.Injector) (*worker.Reconciler, error)
@@ -401,7 +311,7 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error)
 ProvideReconciler constructs the bucket reconciler worker. Registered only in worker/all modes because reconciliation is a worker\-side background task. Returns the reconciler so the lifecycle manager can register a service for it; the reconciler is also resolvable directly for the admin handler's inspection endpoints.
 
 <a name="ProvideRedisCounterBackend"></a>
-## func [ProvideRedisCounterBackend](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L167>)
+## func [ProvideRedisCounterBackend](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L168>)
 
 ```go
 func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, error)
@@ -428,7 +338,7 @@ func ProvideS3Server(i do.Injector) (*s3api.Server, error)
 ProvideS3Server creates the S3\-compatible HTTP handler.
 
 <a name="ProvideScrubber"></a>
-## func [ProvideScrubber](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L151>)
+## func [ProvideScrubber](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L152>)
 
 ```go
 func ProvideScrubber(i do.Injector) (*worker.Scrubber, error)
@@ -446,7 +356,7 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error)
 ProvideUIHandler creates the web dashboard handler.
 
 <a name="WireAuditMetrics"></a>
-## func [WireAuditMetrics](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/injector.go#L130>)
+## func [WireAuditMetrics](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/injector.go#L138>)
 
 ```go
 func WireAuditMetrics()
@@ -455,7 +365,7 @@ func WireAuditMetrics()
 WireAuditMetrics connects the audit event counter to Prometheus. Called from the main binary during startup, outside the injector.
 
 <a name="WireManager"></a>
-## func [WireManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/wiring.go#L41>)
+## func [WireManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/wiring.go#L40>)
 
 ```go
 func WireManager(inj do.Injector) error
@@ -464,7 +374,7 @@ func WireManager(inj do.Injector) error
 WireManager resolves the BackendManager plus every required worker \(as a smoke check that construction succeeded\) and installs the drain manager onto the BackendManager. Returns the first error from resolving a required dependency; the optional PendingReaper Failed resolution is logged so a broken provider stays distinguishable from an intentionally absent one.
 
 <a name="BackendsResult"></a>
-## type [BackendsResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L43-L53>)
+## type [BackendsResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L42-L52>)
 
 BackendsResult groups the outputs of backend initialization so multiple providers can resolve it without re\-running construction.
 
@@ -483,7 +393,7 @@ type BackendsResult struct {
 ```
 
 <a name="ProvideBackends"></a>
-### func [ProvideBackends](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L57>)
+### func [ProvideBackends](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L56>)
 
 ```go
 func ProvideBackends(i do.Injector) (*BackendsResult, error)

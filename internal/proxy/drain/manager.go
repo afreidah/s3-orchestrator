@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
 // Core is the slice of proxy infrastructure the Manager needs. Defined
@@ -107,6 +108,12 @@ func New(
 	abortMultipartUploads func(ctx context.Context, backendName string),
 	processCleanupQueue func(ctx context.Context) (processed, failed int),
 ) *Manager {
+	must.NotNil("infra", infra)
+	must.NotNil("objects", objects)
+	must.NotNil("quota", quota)
+	must.NotNil("backendLifecycle", backendLifecycle)
+	must.NotNil("abortMultipartUploads", abortMultipartUploads)
+	must.NotNil("processCleanupQueue", processCleanupQueue)
 	return &Manager{
 		infra:                 infra,
 		objects:               objects,

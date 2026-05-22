@@ -12,19 +12,12 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
-// NewManager builds a *proxy.BackendManager from cfg and fatal-fails the
-// test on construction error. Exists so cross-package tests can keep
-// the historic `mgr := proxytest.NewManager(t, &cfg)` single-line shape
-// after NewBackendManager picked up an error return; without this every
-// test site would carry the same five-line `if err != nil { ... }`
-// boilerplate.
+// NewManager builds a *proxy.BackendManager from cfg. Kept as a helper
+// so cross-package call sites stay grouped under a single import even
+// though the underlying constructor is a one-liner.
 func NewManager(t testing.TB, cfg *proxy.BackendManagerConfig) *proxy.BackendManager {
 	t.Helper()
-	mgr, err := proxy.NewBackendManager(cfg)
-	if err != nil {
-		t.Fatalf("proxy.NewBackendManager: %v", err)
-	}
-	return mgr
+	return proxy.NewBackendManager(cfg)
 }
 
 // Workers bundles every worker plus the drain manager that a test

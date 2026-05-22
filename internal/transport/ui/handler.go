@@ -45,6 +45,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -119,6 +120,11 @@ type Handler struct {
 // passes it here; tests build Deps directly. Each field is the smallest
 // contract the handler uses, so wiring stays visible at the call site.
 func New(d *Deps) *Handler {
+	must.NotNil("d", d)
+	must.NotNil("d.BackendOps", d.BackendOps)
+	must.NotNil("d.Objects", d.Objects)
+	must.NotNil("d.AdminHandler", d.AdminHandler)
+	must.NotNil("d.Cfg", d.Cfg)
 	h := &Handler{
 		log:            slog.Default().With(logfmt.Component("ui")),
 		backendOps:     d.BackendOps,

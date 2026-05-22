@@ -582,6 +582,50 @@ genuinely missing dependency surfaces at boot, not at first use.
   resolved in the provider; only handlers (HTTP/CLI entry points) carry
   the injector itself.
 
+### Constructor Patterns
+
+Constructors at the DI/wiring boundary panic on missing required
+dependencies via `internal/util/must`. The boundary is the set of
+constructors a DI provider or a test fixture builds directly:
+`proxy.NewBackendManager`, every `worker.New*`, every
+`transport/{s3api,admin,ui}.New*`, and the `proxy/{drain,readpath,
+multipart,object,writepath}` package constructors that take a `*Deps`
+or interface bag. Internal helpers that are only called from one
+already-validated site (`accounting.New`, `metrics.New`,
+`dashboard.New`, `infra.New`) trust their caller and skip the panic.
+
+```go
+func New(d *Deps) *Handler {
+    must.NotNil("d", d)
+    must.NotNil("d.BackendOps", d.BackendOps)
+    must.NotNil("d.Objects", d.Objects)
+    ...
+    return &Handler{...}
+}
+```
+
+Why panic rather than return `(*T, error)`: a wiring bug is a programmer
+error, not an operator-recoverable condition. The panic surfaces at boot
+with a clear "required dependency X is nil" message; the alternative
+defers to the NPE that fires several call frames deep on the first
+request. Operator-facing config invariants (negative timeouts, missing
+required strings) belong in `internal/config.SetDefaultsAndValidate`
+which returns errors the loader can format and report.
+
+**Fallible-constructor exemption.** Constructors that legitimately
+fail at boot for I/O, parsing, or network reasons keep the
+`(*T, error)` signature and do not use `must.NotNil`. Examples:
+`httputil.NewCertReloader` (reads cert files),
+`httpserver.New` (binds a port). The DI provider chains the error
+upstream.
+
+**Tests must satisfy the boundary.** When a test constructs one of
+these types directly, it provides real or `gomock`-generated deps for
+every required field. Don't loosen production validation to fit lazy
+test wiring; widen the test fixture instead. The shared fixtures in
+`internal/proxy/proxytest`, `internal/testutil`, and the per-package
+`newTestHandler*` helpers exist for this purpose.
+
 ---
 
 ## Adding a New Component

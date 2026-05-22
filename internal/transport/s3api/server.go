@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -69,6 +70,7 @@ func (s *Server) logger() *slog.Logger {
 
 // NewServer creates a Server with a stable start timestamp.
 func NewServer(manager *proxy.BackendManager, maxObjectSize int64) *Server {
+	must.NotNil("manager", manager)
 	return &Server{
 		Manager:       manager,
 		MaxObjectSize: maxObjectSize,

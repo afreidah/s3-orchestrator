@@ -266,7 +266,8 @@ func TestBackfill_EmptyBatch(t *testing.T) {
 // Asserts that expected batch size 50, got.
 func TestScrubber_SetConfig(t *testing.T) {
 	t.Parallel()
-	s := NewScrubber(nil, &mockMetadataStore{}, nil)
+	ctrl := gomock.NewController(t)
+	s := NewScrubber(NewMockScrubberOps(ctrl), &mockMetadataStore{}, nil)
 	if s.Config() != nil {
 		t.Fatal("expected nil config initially")
 	}

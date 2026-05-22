@@ -20,6 +20,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
 // ReconcileResult holds the outcome of a reconciliation pass for one backend.
@@ -49,6 +50,7 @@ type Reconciler struct {
 // NewReconciler creates a reconciler that uses the syncer's SyncBackend to
 // import untracked objects.
 func NewReconciler(syncer BackendSyncer, bucketNames []string) *Reconciler {
+	must.NotNil("syncer", syncer)
 	return &Reconciler{
 		log: slog.Default().With(logfmt.Component("reconciler")),
 		syncer:      syncer,
