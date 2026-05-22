@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
@@ -45,6 +46,8 @@ type Rebalancer struct {
 
 // NewRebalancer creates a Rebalancer with fleet operations and a narrow store.
 func NewRebalancer(ops Ops, store RebalancerStore) *Rebalancer {
+	must.NotNil("ops", ops)
+	must.NotNil("store", store)
 	return &Rebalancer{ops: ops, store: store, log: slog.Default().With(logfmt.Component("rebalancer"))}
 }
 

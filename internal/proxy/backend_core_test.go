@@ -19,10 +19,16 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	storecore "github.com/afreidah/s3-orchestrator/internal/store/core"
 )
+
+// staticDrainChecker is a fixed-set DrainChecker for tests that need to
+// pin which backends report draining without standing up a real drain
+// manager.
+type staticDrainChecker map[string]bool
+
+func (s staticDrainChecker) IsDraining(name string) bool { return s[name] }
 
 // TestBackendCore_LogFallback covers the nil-safe behaviour of Log():
 // when *infra.Core was constructed without a log field, the helper returns
@@ -332,8 +338,6 @@ func TestEligibleForWrite_CombinesAllFilters(t *testing.T) {
 	)
 	usage.SetBaseline("over-limit", storecore.UsageStat{APIRequests: 1})
 
-	dm := drain.New(nil, nil, nil, nil, nil, nil)
-	dm.SeedActiveForTest("draining")
 	c := infra.New(&infra.Config{
 		Backends: map[string]backend.ObjectBackend{
 			"healthy":    healthy,
@@ -344,7 +348,7 @@ func TestEligibleForWrite_CombinesAllFilters(t *testing.T) {
 		Order: []string{"healthy", "draining", "unhealthy", "over-limit"},
 		Usage: usage,
 	})
-	c.SetDrainChecker(dm)
+	c.SetDrainChecker(staticDrainChecker{"draining": true})
 
 	eligible := c.EligibleForWrite(1, 0, 0)
 	if len(eligible) != 1 || eligible[0] != "healthy" {

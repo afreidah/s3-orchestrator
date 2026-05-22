@@ -38,6 +38,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
 // spanPrefix is prepended to every OpenTelemetry span name the
@@ -100,6 +101,9 @@ type Failover struct {
 // once). The component-scoped logger is built in the constructor body
 // per the project's logging convention.
 func New(core Core, stores ObjectLocationLister, cache LocationCache, parallelBroadcast bool, degradedBroadcastParallelism int) *Failover {
+	must.NotNil("core", core)
+	must.NotNil("stores", stores)
+	must.NotNil("cache", cache)
 	return &Failover{
 		core:                         core,
 		stores:                       stores,

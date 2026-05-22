@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
 
@@ -39,6 +40,8 @@ type CleanupWorker struct {
 // claimGracePeriod is the threshold past which an outstanding claim becomes
 // reclaimable by another worker tick (typically 5m).
 func NewCleanupWorker(deps CleanupOps, store CleanupWorkerStore, concurrency int, instanceID string, claimGracePeriod time.Duration) *CleanupWorker {
+	must.NotNil("deps", deps)
+	must.NotNil("store", store)
 	return &CleanupWorker{
 		deps:             deps,
 		store:            store,

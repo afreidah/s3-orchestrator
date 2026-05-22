@@ -241,7 +241,7 @@ func ParseLogLevel(s string) slog.Level
 ParseLogLevel maps a log level string to a slog.Level. Returns slog.LevelInfo for unrecognized values. Callers should validate via SetDefaultsAndValidate before calling this function.
 
 <a name="BackendCircuitBreakerConfig"></a>
-## type [BackendCircuitBreakerConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ratelimit.go#L46-L50>)
+## type [BackendCircuitBreakerConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ratelimit.go#L54-L58>)
 
 BackendCircuitBreakerConfig holds settings for per\-backend circuit breakers. When a backend is unreachable or returns errors \(e.g. expired credentials\), the circuit opens and the backend is excluded from request routing until recovery is detected via a probe request.
 
@@ -310,7 +310,7 @@ type CacheConfig struct {
 ```
 
 <a name="CircuitBreakerConfig"></a>
-## type [CircuitBreakerConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ratelimit.go#L35-L40>)
+## type [CircuitBreakerConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ratelimit.go#L35-L48>)
 
 CircuitBreakerConfig holds settings for the database circuit breaker. When the database becomes unreachable, the proxy enters degraded mode: reads broadcast to all backends, writes return 503.
 
@@ -320,6 +320,14 @@ type CircuitBreakerConfig struct {
     OpenTimeout       time.Duration `yaml:"open_timeout"`       // Delay before probing recovery (default: 15s)
     CacheTTL          time.Duration `yaml:"cache_ttl"`          // TTL for key->backend cache during degraded reads (default: 60s)
     ParallelBroadcast bool          `yaml:"parallel_broadcast"` // Fan-out reads to all backends in parallel during degraded mode (default: false)
+    // DegradedBroadcastParallelism caps the number of backends probed
+    // concurrently during a parallel degraded-mode broadcast. 0 means no
+    // cap (every configured backend is probed at once, the historical
+    // behaviour). With a positive value, probes run as a rolling window:
+    // the first N are launched immediately, and each failure replenishes
+    // the next pending backend so at most N goroutines are in flight at
+    // any time. Only meaningful when ParallelBroadcast is true. See #858.
+    DegradedBroadcastParallelism int `yaml:"degraded_broadcast_parallelism"`
 }
 ```
 

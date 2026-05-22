@@ -321,7 +321,7 @@ func TestMain(m *testing.M) {
 
 	stores := newStores(failableStore)
 
-	manager, err := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	manager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:        testBackends,
 		Stores:          stores,
 		PendingEnabled:  true,
@@ -332,10 +332,6 @@ func TestMain(m *testing.M) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create backend manager: %v\n", err)
-		os.Exit(1)
-	}
 	workers := proxytest.BuildWorkers(manager, stores)
 	testManager = manager
 	testWorkers = workers

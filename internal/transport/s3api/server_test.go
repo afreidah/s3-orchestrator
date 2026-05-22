@@ -18,8 +18,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
+	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 )
 
 // TestServer_LoggerFallback pins the nil-safe behaviour of logger():
@@ -51,7 +54,14 @@ func TestServer_LoggerReturnsCustomLog(t *testing.T) {
 // under coverage.
 func TestNewServer_AssignsScopedLogger(t *testing.T) {
 	t.Parallel()
-	srv := NewServer(nil, 1024)
+	mockStore := testutil.NewMockStore(t)
+	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+		Stores:    mockStore,
+		Dashboard: mockStore,
+		Metrics:   mockStore,
+	})
+	t.Cleanup(mgr.Close)
+	srv := NewServer(mgr, 1024)
 	if srv.log == nil {
 		t.Fatal("NewServer left log field nil")
 	}

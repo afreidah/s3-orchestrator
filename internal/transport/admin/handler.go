@@ -31,6 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
 // BackendOps is the narrow surface of *proxy.BackendManager that the admin
@@ -99,6 +100,14 @@ type Deps struct {
 
 // New creates a new admin API handler from its narrow dependency bag.
 func New(d *Deps) *Handler {
+	must.NotNil("d", d)
+	must.NotNil("d.BackendOps", d.BackendOps)
+	must.NotNil("d.Drain", d.Drain)
+	must.NotNil("d.Lifecycle", d.Lifecycle)
+	must.NotNil("d.Objects", d.Objects)
+	must.NotNil("d.Cleanup", d.Cleanup)
+	must.NotNil("d.Encryption", d.Encryption)
+	must.NotNil("d.LogLevel", d.LogLevel)
 	return &Handler{
 		log:          slog.Default().With(logfmt.Component("admin")),
 		backendOps:   d.BackendOps,

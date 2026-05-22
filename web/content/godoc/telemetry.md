@@ -967,6 +967,21 @@ var (
             Help: "ListObjects calls that exited at the per-request page cap with more pages remaining",
         },
     )
+
+    // HTTPPanicRecoveredTotal counts panics caught by the HTTP panic-
+    // recovery middleware (#798). A non-zero value means a request
+    // handler panicked and the recovery layer translated it into a 500
+    // response; the matching slog.ErrorContext line carries the panic
+    // value, the captured stack, and the request id. Label scopes the
+    // counter to the route group so dashboards can distinguish a
+    // flaking S3 path from a flaking admin or UI path.
+    HTTPPanicRecoveredTotal = promauto.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "s3o_http_panic_recovered_total",
+            Help: "HTTP handler panics caught by the recovery middleware, by route group",
+        },
+        []string{"route"},
+    )
 )
 ```
 

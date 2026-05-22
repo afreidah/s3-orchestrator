@@ -40,6 +40,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -151,58 +152,18 @@ func (m *BackendManager) WireDrain(d *drain.Manager) {
 	m.SetDrainChecker(d)
 }
 
-// validateConfig checks every input the constructor dereferences and
-// returns the first violation wrapped with the matching sentinel so
-// callers can errors.Is against the typed value. The scope here is
-// narrow on purpose: operator-facing config shape (backend ordering,
-// minimum backend count, named-backend uniqueness) is validated by
-// internal/config.SetDefaultsAndValidate; this function only catches
-// the "NewBackendManager would NPE on first use" cases that the config
-// validator does not cover (because tests can construct configs that
-// bypass it). Negative-duration checks live here rather than in the
-// config validator because the relevant fields are also settable from
-// test code that does not go through the config path.
-// validateConfigErrFmt wraps a required-input sentinel.
-// validateConfigDurationErrFmt wraps a negative-duration sentinel with the
-// offending value rendered for the operator.
-const (
-	validateConfigErrFmt         = "BackendManager: %w"
-	validateConfigDurationErrFmt = "BackendManager: %w (%s)"
-)
-
-func validateConfig(cfg *BackendManagerConfig) error {
-	if cfg == nil {
-		return fmt.Errorf(validateConfigErrFmt, ErrConfigNil)
-	}
-	if cfg.Stores == nil {
-		return fmt.Errorf(validateConfigErrFmt, ErrStoresRequired)
-	}
-	if cfg.Dashboard == nil {
-		return fmt.Errorf(validateConfigErrFmt, ErrDashboardRequired)
-	}
-	if cfg.Metrics == nil {
-		return fmt.Errorf(validateConfigErrFmt, ErrMetricsRequired)
-	}
-	if cfg.BackendTimeout < 0 {
-		return fmt.Errorf(validateConfigDurationErrFmt, ErrNegativeBackendTimeout, cfg.BackendTimeout)
-	}
-	if cfg.CacheTTL < 0 {
-		return fmt.Errorf(validateConfigDurationErrFmt, ErrNegativeCacheTTL, cfg.CacheTTL)
-	}
-	if cfg.MultipartDEKCacheTTL < 0 {
-		return fmt.Errorf(validateConfigDurationErrFmt, ErrNegativeMultipartDEKCacheTTL, cfg.MultipartDEKCacheTTL)
-	}
-	return nil
-}
-
-// NewBackendManager validates cfg and constructs a BackendManager.
-// Returns a typed sentinel error (errors.Is-matchable) for every
-// required input or runtime invariant violation so DI startup fails
-// fast rather than NPE'ing at first request.
-func NewBackendManager(cfg *BackendManagerConfig) (*BackendManager, error) {
-	if err := validateConfig(cfg); err != nil {
-		return nil, err
-	}
+// NewBackendManager constructs a BackendManager. Required dependencies
+// (cfg, Stores, Dashboard, Metrics) panic via must.NotNil at
+// construction so a wiring bug surfaces immediately at DI assembly
+// rather than NPE'ing N call frames deep on the first request. Numeric
+// config invariants (negative timeouts, ordering rules) are the config
+// validator's responsibility; the constructor trusts the values it
+// receives.
+func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
+	must.NotNil("cfg", cfg)
+	must.NotNil("cfg.Stores", cfg.Stores)
+	must.NotNil("cfg.Dashboard", cfg.Dashboard)
+	must.NotNil("cfg.Metrics", cfg.Metrics)
 
 	backendNames := make([]string, 0, len(cfg.Backends))
 	for name := range cfg.Backends {
@@ -264,7 +225,7 @@ func NewBackendManager(cfg *BackendManagerConfig) (*BackendManager, error) {
 
 	c.SetMetricsCollector(metrics.New(cfg.Metrics, usage, backendNames, cfg.ReplicationFactor))
 
-	return m, nil
+	return m
 }
 
 // ClearCache removes all entries from the location cache.
@@ -552,44 +513,6 @@ func (m *BackendManager) resolveS3Backend(name string) (reconcile.ObjectLister, 
 	}
 	return lister, nil
 }
-
-// Constructor input validation errors.
-var (
-	// ErrConfigNil signals that NewBackendManager was called with a nil
-	// *BackendManagerConfig pointer.
-	ErrConfigNil = errors.New("config is nil")
-
-	// ErrStoresRequired signals that BackendManagerConfig.Stores is nil.
-	// Stores carries the metadata-store contract and is dereferenced in
-	// every write path, so a nil value would NPE on first use.
-	ErrStoresRequired = errors.New("stores is required")
-
-	// ErrDashboardRequired signals that BackendManagerConfig.Dashboard is
-	// nil. The dashboard aggregator is constructed eagerly inside the
-	// manager, so a nil value here would NPE at boot rather than at first
-	// dashboard request.
-	ErrDashboardRequired = errors.New("dashboard is required")
-
-	// ErrMetricsRequired signals that BackendManagerConfig.Metrics is
-	// nil. The metrics collector is constructed eagerly inside
-	// backendCore, so an unset metrics.Deps would NPE the first time a
-	// metric scrape happens.
-	ErrMetricsRequired = errors.New("metrics is required")
-
-	// ErrNegativeBackendTimeout signals that BackendManagerConfig.BackendTimeout
-	// is negative. Zero is allowed (interpreted as "no per-call deadline")
-	// because production paths derive deadlines from the request context.
-	ErrNegativeBackendTimeout = errors.New("backend_timeout must not be negative")
-
-	// ErrNegativeCacheTTL signals that BackendManagerConfig.CacheTTL is
-	// negative. Zero is allowed (interpreted as "no TTL").
-	ErrNegativeCacheTTL = errors.New("cache_ttl must not be negative")
-
-	// ErrNegativeMultipartDEKCacheTTL signals that
-	// BackendManagerConfig.MultipartDEKCacheTTL is negative. Zero is
-	// allowed (interpreted as "use the 1h default").
-	ErrNegativeMultipartDEKCacheTTL = errors.New("multipart_dek_cache_ttl must not be negative")
-)
 
 // -------------------------------------------------------------------------
 // STORE-ROLE ACCESSORS

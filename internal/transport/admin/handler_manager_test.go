@@ -71,6 +71,7 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 		dbHealthy: cb.IsHealthy,
 		objects:    mock,
 		cleanup:    mock,
+		encAdmin:   mock,
 		token:      "test-token",
 		logLevel:   &lv,
 	}

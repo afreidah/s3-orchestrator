@@ -99,7 +99,7 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 		},
 	}
 
-	h := New(&Deps{BackendOps: mgr, Objects: mgr.ObjectManager, Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{BackendOps: mgr, Objects: mgr.ObjectManager, Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(t), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
@@ -477,7 +477,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 		},
 	}
 
-	h := New(&Deps{BackendOps: mgr, Objects: mgr.ObjectManager, Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{BackendOps: mgr, Objects: mgr.ObjectManager, Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(t), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 
@@ -552,8 +552,8 @@ func TestCrossInstanceSession(t *testing.T) {
 		},
 	}
 
-	h1 := New(&Deps{BackendOps: mgr, Objects: mgr.ObjectManager, Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
-	h2 := New(&Deps{BackendOps: mgr, Objects: mgr.ObjectManager, Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h1 := New(&Deps{BackendOps: mgr, Objects: mgr.ObjectManager, Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(t), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h2 := New(&Deps{BackendOps: mgr, Objects: mgr.ObjectManager, Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(t), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux1 := http.NewServeMux()
 	mux2 := http.NewServeMux()
 	h1.Register(mux1, "/ui")
@@ -1951,7 +1951,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		},
 	}
 
-	h := New(&Deps{BackendOps: mgr, Objects: mgr.ObjectManager, Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{BackendOps: mgr, Objects: mgr.ObjectManager, Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(b), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 

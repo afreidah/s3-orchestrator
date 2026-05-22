@@ -13,9 +13,11 @@ Package breaker implements a generic three\-state circuit breaker \(closed, open
 
 ## Index
 
+- [Constants](<#constants>)
 - [Variables](<#variables>)
 - [func CBCall\[T any\]\(cb \*CircuitBreaker, fn func\(\) \(T, error\)\) \(T, error\)](<#CBCall>)
 - [func CBCallNoResult\(cb \*CircuitBreaker, fn func\(\) error\) error](<#CBCallNoResult>)
+- [func NewWatchdog\(registry \*Registry\) lifecycle.Runner](<#NewWatchdog>)
 - [type CircuitBreaker](<#CircuitBreaker>)
   - [func NewCircuitBreaker\(name string, threshold int, timeout time.Duration, isError func\(error\) bool, sentinel error\) \*CircuitBreaker](<#NewCircuitBreaker>)
   - [func \(cb \*CircuitBreaker\) IsHealthy\(\) bool](<#CircuitBreaker.IsHealthy>)
@@ -38,6 +40,14 @@ Package breaker implements a generic three\-state circuit breaker \(closed, open
   - [func \(s State\) String\(\) string](<#State.String>)
 - [type StateChangeInfo](<#StateChangeInfo>)
 
+
+## Constants
+
+<a name="DefaultWatchdogInterval"></a>DefaultWatchdogInterval is the cadence at which the watchdog inspects every registered breaker. Picked as half the breaker probe timeout so a stuck half\-open state is detected within one full probe window.
+
+```go
+const DefaultWatchdogInterval = 1 * time.Minute
+```
 
 ## Variables
 
@@ -64,6 +74,15 @@ func CBCallNoResult(cb *CircuitBreaker, fn func() error) error
 ```
 
 CBCallNoResult wraps a call that returns only error with circuit breaker logic.
+
+<a name="NewWatchdog"></a>
+## func [NewWatchdog](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/watchdog.go#L38>)
+
+```go
+func NewWatchdog(registry *Registry) lifecycle.Runner
+```
+
+NewWatchdog constructs the watchdog background service. The registry holds every breaker that should be inspected on a tick \- membership is decided once at DI construction time.
 
 <a name="CircuitBreaker"></a>
 ## type [CircuitBreaker](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/breaker/breaker.go#L89-L105>)
