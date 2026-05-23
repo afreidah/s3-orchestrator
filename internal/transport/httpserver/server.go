@@ -40,9 +40,7 @@ const (
 	ModeAll = "all"
 )
 
-// Deps groups every external the HTTP server needs at construction time.
-// The struct keeps the New signature readable as the daemon grows new
-// optional surfaces.
+// Deps holds the dependencies New requires.
 type Deps struct {
 	Cfg       *config.Config
 	Mode      string

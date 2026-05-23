@@ -27,15 +27,13 @@ import (
 // Resolution classifies the outcome of an optional dependency lookup.
 type Resolution string
 
-// Resolution values. Disabled means no provider was registered for T;
-// Applied means a provider resolved cleanly; Failed means a provider
-// was registered but construction or dependency wiring returned an
-// error. The three outcomes are deliberately distinct so a missing
-// optional feature does not look like a broken one in startup logs.
 const (
+	// ResolutionDisabled means no provider was registered for T.
 	ResolutionDisabled Resolution = "disabled"
-	ResolutionApplied  Resolution = "applied"
-	ResolutionFailed   Resolution = "failed"
+	// ResolutionApplied means the provider resolved cleanly.
+	ResolutionApplied Resolution = "applied"
+	// ResolutionFailed means the provider was registered but construction failed.
+	ResolutionFailed Resolution = "failed"
 )
 
 // OptionalResult carries the outcome of an Optional[T] lookup. Callers

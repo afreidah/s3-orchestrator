@@ -9,25 +9,6 @@
 // Redis, notifications) register only when enabled in config; do.Invoke
 // returns an error for disabled services, which callers use to detect
 // absence.
-//
-// Narrow-role store providers are registered one per role (ObjectStore,
-// QuotaStore, CleanupStore, ...) so consumers can ask only for the slice
-// they actually use. Each narrow provider wraps the concrete *store.Store
-// with the per-role CB decorator. No consumer ever sees a composed "god
-// interface" - that type no longer exists.
-//
-// Non-DI packages (internal/*, internal/transport/*) never import samber/do.
-// Constructors keep explicit parameters; only this package and cmd/ touch
-// the injector.
-//
-// Provider bodies live in focused sibling files:
-//   - store.go     (database, role aliases, metrics deps, instance id)
-//   - backend.go   (S3 backends, breaker registry, manager, optional features)
-//   - workers.go   (rebalancer, replicator, cleanup, scrubber, ...)
-//   - lifecycle.go (lifecycle.Manager and service registration)
-//   - transport.go (S3, admin, UI, notifier, rate limiter)
-//   - optional.go  (invokeOptional + resolveOptional* helpers)
-//   - services.go  (lifecycle Runner wrappers - locked-ticker background jobs)
 // -------------------------------------------------------------------------------
 
 // Package di is the single wiring point for the orchestrator. It uses

@@ -134,10 +134,9 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 	}), nil
 }
 
-// adminHandlerRequiredDeps bundles the required dependencies of
-// ProvideAdminHandler so the provider body stays under the cognitive-
-// complexity ceiling. Optional dependencies are resolved separately via
-// invokeOptional.
+// adminHandlerRequiredDeps is the typed return shape of
+// resolveAdminHandlerRequiredDeps. Optional deps (encryptor, object
+// cache, reconciler) are resolved separately via Optional[T].
 type adminHandlerRequiredDeps struct {
 	cfg        *config.Config
 	manager    *proxy.BackendManager
