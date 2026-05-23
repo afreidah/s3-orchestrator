@@ -61,29 +61,12 @@ func (o *Manager) PutObject(ctx context.Context, key string, body io.Reader, siz
 	var lastErr error
 
 	for len(eligible) > 0 {
-		res := o.attemptPutOnBackend(ctx, span, &putAttemptRequest{
-			operation:   operation,
-			key:         key,
-			body:        mbody,
-			size:        size,
-			contentType: contentType,
-			metadata:    metadata,
-			contentHash: contentHash,
-			dekState:    &dekState,
-			eligible:    eligible,
-		})
+		res := o.attemptPutOnBackend(ctx, span, operation, key, mbody, size, contentType, metadata, contentHash, &dekState, eligible)
 		if res.fatalErr != nil {
 			return "", res.fatalErr
 		}
 		if res.putErr == nil {
-			o.finalizePutSuccess(ctx, span, &putSuccessRequest{
-				operation:      operation,
-				key:            key,
-				backendName:    res.backend,
-				size:           size,
-				start:          start,
-				failedBackends: failedBackends,
-			})
+			o.finalizePutSuccess(ctx, span, operation, key, res.backend, size, start, failedBackends)
 			return res.etag, nil
 		}
 		lastErr = res.putErr
@@ -133,28 +116,13 @@ func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*m
 	return mb, sha256Hex(hasher), nil
 }
 
-// putAttemptRequest bundles the per-attempt arguments to
-// attemptPutOnBackend so the helper signature stays under the
-// parameter-count limit.
-type putAttemptRequest struct {
-	operation   string
-	key         string
-	body        *materializedBody
-	size        int64
-	contentType string
-	metadata    map[string]string
-	contentHash string
-	dekState    *putEncryptState
-	eligible    []string
-}
-
 // attemptPutOnBackend performs one backend PUT attempt: select a
 // destination, prepare the payload (encrypt/hash), insert a pending
 // intent, upload, then promote the intent on success.
-func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, req *putAttemptRequest) putAttemptResult {
-	backendName, err := o.coord.SelectBackendForWrite(ctx, req.size, req.eligible)
+func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, operation, key string, body *materializedBody, size int64, contentType string, metadata map[string]string, contentHash string, dekState *putEncryptState, eligible []string) putAttemptResult {
+	backendName, err := o.coord.SelectBackendForWrite(ctx, size, eligible)
 	if err != nil {
-		return putAttemptResult{fatalErr: o.core.ClassifyWriteError(span, req.operation, err)}
+		return putAttemptResult{fatalErr: o.core.ClassifyWriteError(span, operation, err)}
 	}
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
 
@@ -164,7 +132,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, req 
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 
-	uploadBody, uploadSize, enc, err := o.buildPutPayload(ctx, req.body, req.size, req.contentHash, req.dekState)
+	uploadBody, uploadSize, enc, err := o.buildPutPayload(ctx, body, size, contentHash, dekState)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return putAttemptResult{backend: backendName, fatalErr: err}
@@ -174,14 +142,14 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, req 
 	// commit failure after the bytes land has a recovery breadcrumb: the
 	// pending reaper promotes the intent on a later tick instead of the
 	// old failure path silently deleting the just-written copy.
-	intentID, err := o.coord.InsertPendingIntent(ctx, req.key, backendName, uploadSize, enc)
+	intentID, err := o.coord.InsertPendingIntent(ctx, key, backendName, uploadSize, enc)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 
 	bctx, bcancel := o.core.WithTimeout(ctx)
-	etag, err := be.PutObject(bctx, req.key, uploadBody, uploadSize, req.contentType, req.metadata)
+	etag, err := be.PutObject(bctx, key, uploadBody, uploadSize, contentType, metadata)
 	bcancel()
 	if err != nil {
 		o.core.Acct().APICall(backendName)
@@ -202,13 +170,13 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, req 
 	// the bytes), and drops the intent.
 	if o.core.IsDraining(backendName) {
 		o.log.WarnContext(ctx, "drain started mid-write; aborting commit on draining backend",
-			"key", req.key, "backend", backendName)
+			"key", key, "backend", backendName)
 		telemetry.DrainRaceAbortedTotal.Inc()
-		o.coord.RecoverFromRecordFailure(ctx, be, backendName, req.key, "drain_race_aborted", uploadSize)
+		o.coord.RecoverFromRecordFailure(ctx, be, backendName, key, "drain_race_aborted", uploadSize)
 		return putAttemptResult{backend: backendName, putErr: errDrainRaceAborted}
 	}
 
-	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, req.key, backendName, uploadSize, enc, intentID); err != nil {
+	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, key, backendName, uploadSize, enc, intentID); err != nil {
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 	return putAttemptResult{backend: backendName, etag: etag}

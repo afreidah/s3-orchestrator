@@ -29,18 +29,14 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
-// workerCore bundles the two dependencies every background worker needs:
-// the BackendManager seam (worker.Ops / CleanupOps / ScrubberOps) and the
-// wide MetadataStore that satisfies each worker's narrow per-role store
-// contract via implicit interface satisfaction.
+// workerCore bundles the dependencies every background worker needs.
 type workerCore struct {
 	Mgr    *proxy.BackendManager
 	Stores core.MetadataStore
 }
 
 // workerCoreWithCfg extends workerCore with *config.Config for workers
-// whose constructors also need reloadable config knobs (batch sizes,
-// concurrency, feature toggles).
+// whose constructors take reloadable config knobs.
 type workerCoreWithCfg struct {
 	workerCore
 	Cfg *config.Config

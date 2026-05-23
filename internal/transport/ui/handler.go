@@ -78,10 +78,7 @@ type BackendOps interface {
 // Compile-time assertion: *proxy.BackendManager implements BackendOps.
 var _ BackendOps = (*proxy.BackendManager)(nil)
 
-// Deps groups the narrow types the UI handler depends on. Construction goes
-// through this struct so the handler never holds a *proxy.BackendManager.
-// AdminHandler is optional; when nil the UI's admin-action endpoints are
-// reported as unavailable.
+// Deps holds the dependencies New requires.
 type Deps struct {
 	BackendOps    BackendOps
 	Objects       *object.Manager

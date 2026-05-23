@@ -43,16 +43,7 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 	var once sync.Once
 
 	backendName, err := o.failover.Read(ctx, "GetObject", key, func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (int64, func(), error) {
-		req := &getAttemptRequest{
-			key:         key,
-			rangeHeader: rangeHeader,
-			beName:      beName,
-			backend:     backend,
-			loc:         loc,
-			once:        &once,
-			result:      &result,
-		}
-		return o.getObjectAttempt(ctx, req)
+		return o.getObjectAttempt(ctx, key, rangeHeader, beName, backend, loc, &once, &result)
 	})
 	if err != nil {
 		return nil, err
@@ -88,50 +79,37 @@ func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string
 	}, true
 }
 
-// getAttemptRequest bundles the per-attempt arguments to getObjectAttempt
-// so the callback signature stays under the parameter-count limit.
-type getAttemptRequest struct {
-	key         string
-	rangeHeader string
-	beName      string
-	backend     s3be.ObjectBackend
-	loc         *core.ObjectLocation // nil in degraded-mode broadcasts
-	once        *sync.Once
-	result      **s3be.GetObjectResult
-}
-
 // getObjectAttempt is the per-backend callback invoked by withReadFailover
 // for GetObject. It owns the per-attempt timeout, applies usage limits,
 // translates encrypted ranges, decrypts and verifies the body, and records
-// the winning result via once.
-func (o *Manager) getObjectAttempt(ctx context.Context, req *getAttemptRequest) (int64, func(), error) {
+// the winning result via once. loc is nil in degraded-mode broadcasts.
+func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName string, backend s3be.ObjectBackend, loc *core.ObjectLocation, once *sync.Once, result **s3be.GetObjectResult) (int64, func(), error) {
 	bctx, bcancel := o.core.WithTimeout(ctx)
 
-	if !o.core.Usage().WithinLimits(req.beName, 1, 0, 0) {
+	if !o.core.Usage().WithinLimits(beName, 1, 0, 0) {
 		bcancel()
-		return 0, readpath.NoopCleanup, fmt.Errorf("backend %s: %w", req.beName, readpath.ErrUsageLimitSkip)
+		return 0, readpath.NoopCleanup, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 	}
 	// Encrypted reads need the location row to unwrap the DEK; without it
 	// (degraded broadcast with the DB unreachable) we cannot decrypt.
-	if o.encryptor != nil && req.loc == nil {
+	if o.encryptor != nil && loc == nil {
 		bcancel()
 		return 0, readpath.NoopCleanup, core.ErrServiceUnavailable
 	}
 
-	loc := req.loc
-	actualRange, rng, ptStart, ptEnd := o.resolveBackendRange(req.rangeHeader, loc)
+	actualRange, rng, ptStart, ptEnd := o.resolveBackendRange(rangeHeader, loc)
 
-	r, err := req.backend.GetObject(bctx, req.key, actualRange)
+	r, err := backend.GetObject(bctx, key, actualRange)
 	if err != nil {
 		bcancel()
-		o.core.Acct().APICall(req.beName)
+		o.core.Acct().APICall(beName)
 		return 0, readpath.NoopCleanup, err
 	}
-	if !o.core.Usage().WithinLimits(req.beName, 1, r.Size, 0) {
+	if !o.core.Usage().WithinLimits(beName, 1, r.Size, 0) {
 		_ = r.Body.Close()
 		bcancel()
-		o.core.Acct().APICall(req.beName)
-		return 0, readpath.NoopCleanup, fmt.Errorf("backend %s egress: %w", req.beName, readpath.ErrUsageLimitSkip)
+		o.core.Acct().APICall(beName)
+		return 0, readpath.NoopCleanup, fmt.Errorf("backend %s egress: %w", beName, readpath.ErrUsageLimitSkip)
 	}
 
 	if loc != nil && loc.Encrypted && o.encryptor != nil {
@@ -142,11 +120,11 @@ func (o *Manager) getObjectAttempt(ctx context.Context, req *getAttemptRequest) 
 		}
 	}
 
-	o.maybeWrapIntegrityReader(ctx, r, loc, req.key, req.beName, req.backend)
+	o.maybeWrapIntegrityReader(ctx, r, loc, key, beName, backend)
 
 	r.Body = ioutilx.WithCancel(r.Body, bcancel)
-	req.once.Do(func() { *req.result = r })
-	if *req.result != r {
+	once.Do(func() { *result = r })
+	if *result != r {
 		_ = r.Body.Close()
 	}
 	return r.Size, readpath.NoopCleanup, nil
