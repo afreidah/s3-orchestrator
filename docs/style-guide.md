@@ -254,6 +254,15 @@ func New(core MultipartCore, coord MultipartCoordinator, ...) *Manager { ... }
 
 **Mocking:** generated mocks are not produced eagerly. When a test actually needs to mock a consumer-declared interface, add a `//go:generate mockgen -source=consumer_interfaces.go -destination=mock/<file>.go -package=<pkg>mock` directive at the top of the consumer interface file and run `make generate`. Until a mock is needed, the interface declaration alone documents the dependency surface — generating unused mocks is busywork.
 
+**When NOT to declare a narrow interface (#918).** A consumer-side interface earns its keep when at least one of these is true:
+
+1. **Multiple implementations actually exist** (a real polymorphism point, e.g. `keySource` over S3 iter + DB iter).
+2. **A test fake genuinely benefits from the seam** — a hand-rolled fake or `gomock`-generated mock that lets tests exercise the consumer without standing up the real producer (e.g. `worker.Ops` mocked across ~60 test sites; `admin.ReplicatorOps`/`OverReplicationOps`/`ScrubberOps`/`Reconciler` whose fakes drive admin handler branches).
+3. **An import cycle would otherwise form** (e.g. `readpath.LocationCache` — without the interface, `readpath` would have to import `object` which already imports `readpath`).
+4. **The interface models a real domain boundary** between subsystems (`drain.Core`, `MultipartCore`, `ObjectCore`, `WritepathCore`).
+
+If none apply — single impl, single consumer, no test fake, no cycle, no boundary — pass the concrete `*Type` directly. Examples cut under #918: `readpath.ObjectLocationLister`, `multipart.MultipartCoordinator`, `multipart.StaleCleaner`, `accounting.UsageTracker`, the `worker.RebalancerStore`/`ReplicatorStore`/`OverReplicationStore`/`CleanupWorkerStore`/`ScrubberStore`/`PendingReaperStore` store-role wrappers (workers now take `core.MetadataStore` directly).
+
 **Producer-side interfaces are an anti-pattern.** `*infra.Core`, `*writepath.Coordinator`, `*object.Manager`, `*multipart.Manager` are exported as concrete pointer types with no sibling `Core`/`Coordinator`/`Manager` interface that mirrors their public surface. Producer-side interfaces force every consumer to mock the full producer API, which is exactly what this pattern is built to avoid.
 
 **Logger is not a behavior dependency.** Never include `Log() *slog.Logger` in a consumer-declared interface. The logger is observability infrastructure: it has no return value the consumer depends on, and the per-component scope is a property of the consumer itself, not of the producer. Components build their own `log *slog.Logger` field in the constructor body via `slog.Default().With(logfmt.Component("<slug>"))` (see Logging and Audit), so each subsystem owns its component name and tests do not need to thread a logger through dependency interfaces.

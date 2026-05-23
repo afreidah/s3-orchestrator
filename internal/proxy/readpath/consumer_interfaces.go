@@ -11,11 +11,8 @@
 package readpath
 
 import (
-	"context"
-
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // Core is the subset of *infra.Core the Failover orchestrator needs:
@@ -27,14 +24,11 @@ type Core interface {
 	Acct() *accounting.Recorder
 }
 
-// ObjectLocationLister is the subset of core.MetadataStore the orchestrator
-// needs to resolve which backends hold which keys.
-type ObjectLocationLister interface {
-	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
-}
-
 // LocationCache is the subset of the object-package location cache the
 // orchestrator needs to remember and reuse degraded-mode winners.
+// Declared as an interface here (not *object.LocationCache) to avoid
+// the import cycle that would otherwise form (object imports readpath
+// for Failover).
 type LocationCache interface {
 	Get(key string) (backendName string, ok bool)
 	Set(key, backendName string)

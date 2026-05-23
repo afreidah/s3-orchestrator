@@ -45,22 +45,9 @@ type Workers struct {
 // effect (drain.Manager attached to mgr) may ignore the return value.
 func BuildWorkers(mgr *proxy.BackendManager, m core.MetadataStore) *Workers {
 	w := &Workers{}
-	w.Rebalancer = worker.NewRebalancer(mgr, struct {
-		core.ObjectStore
-		core.QuotaStore
-	}{ObjectStore: m, QuotaStore: m})
-
-	w.Replicator = worker.NewReplicator(mgr, struct {
-		core.ObjectStore
-		core.ReplicationStore
-		core.QuotaStore
-	}{ObjectStore: m, ReplicationStore: m, QuotaStore: m})
-
-	w.OverReplicationCleaner = worker.NewOverReplicationCleaner(mgr, struct {
-		core.ReplicationStore
-		core.QuotaStore
-	}{ReplicationStore: m, QuotaStore: m})
-
+	w.Rebalancer = worker.NewRebalancer(mgr, m)
+	w.Replicator = worker.NewReplicator(mgr, m)
+	w.OverReplicationCleaner = worker.NewOverReplicationCleaner(mgr, m)
 	w.CleanupWorker = worker.NewCleanupWorker(mgr, m, 10, "test-instance", 5*time.Minute)
 	w.PendingReaper = worker.NewPendingReaper(mgr, m, 0, 0, 0)
 	w.Scrubber = worker.NewScrubber(mgr, m, nil)

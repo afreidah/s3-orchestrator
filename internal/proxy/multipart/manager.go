@@ -38,6 +38,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	pobserve "github.com/afreidah/s3-orchestrator/internal/proxy/observe"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
@@ -60,9 +61,9 @@ const spanPrefix = "Manager "
 // cold cache will each issue their own Unwrap; the design accepts that
 // minor cold-start cost in exchange for not pulling in singleflight.
 type Manager struct {
-	core         MultipartCore        // infrastructure subset: backends, usage, timeout, error classification, metrics
-	coord        MultipartCoordinator // write-path helpers shared with BackendManager and ObjectManager
-	stores       core.MetadataStore   // direct store access for multipart row/part operations and WithAdvisoryLock
+	core         MultipartCore         // infrastructure subset: backends, usage, timeout, error classification, metrics
+	coord        *writepath.Coordinator // write-path helpers shared with BackendManager and ObjectManager
+	stores       core.MetadataStore    // direct store access for multipart row/part operations and WithAdvisoryLock
 	encryptor    *encryption.Encryptor
 	objectCache  objcache.ObjectCache
 	dekCache     *syncutil.TTLCache[string, []byte]
@@ -77,7 +78,7 @@ type Manager struct {
 // populates content_hash on the recorded location (#916). The
 // component-scoped logger is built in the constructor body per the
 // project's logging convention.
-func New(core MultipartCore, coord MultipartCoordinator, stores core.MetadataStore, encryptor *encryption.Encryptor, objectCache objcache.ObjectCache, dekCacheTTL time.Duration, integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]) *Manager {
+func New(core MultipartCore, coord *writepath.Coordinator, stores core.MetadataStore, encryptor *encryption.Encryptor, objectCache objcache.ObjectCache, dekCacheTTL time.Duration, integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]) *Manager {
 	must.NotNil("core", core)
 	must.NotNil("coord", coord)
 	must.NotNil("stores", stores)

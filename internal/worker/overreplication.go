@@ -42,12 +42,12 @@ import (
 type OverReplicationCleaner struct {
 	log   *slog.Logger
 	ops   Ops
-	store OverReplicationStore
+	store core.MetadataStore
 	cfg   syncutil.AtomicConfig[config.ReplicationConfig]
 }
 
 // NewOverReplicationCleaner creates a cleaner that shares the given core.
-func NewOverReplicationCleaner(ops Ops, store OverReplicationStore) *OverReplicationCleaner {
+func NewOverReplicationCleaner(ops Ops, store core.MetadataStore) *OverReplicationCleaner {
 	must.NotNil("ops", ops)
 	must.NotNil("store", store)
 	return &OverReplicationCleaner{ops: ops, store: store, log: slog.Default().With(logfmt.Component("over_replication"))}

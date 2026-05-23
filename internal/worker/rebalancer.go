@@ -40,12 +40,12 @@ import (
 type Rebalancer struct {
 	log   *slog.Logger
 	ops   Ops
-	store RebalancerStore
+	store core.MetadataStore
 	cfg   syncutil.AtomicConfig[config.RebalanceConfig]
 }
 
-// NewRebalancer creates a Rebalancer with fleet operations and a narrow store.
-func NewRebalancer(ops Ops, store RebalancerStore) *Rebalancer {
+// NewRebalancer creates a Rebalancer with fleet operations and a metadata store.
+func NewRebalancer(ops Ops, store core.MetadataStore) *Rebalancer {
 	must.NotNil("ops", ops)
 	must.NotNil("store", store)
 	return &Rebalancer{ops: ops, store: store, log: slog.Default().With(logfmt.Component("rebalancer"))}

@@ -29,7 +29,7 @@ import (
 type CleanupWorker struct {
 	log              *slog.Logger
 	deps             CleanupOps
-	store            CleanupWorkerStore
+	store            core.MetadataStore
 	concurrency      int
 	instanceID       string
 	claimGracePeriod time.Duration
@@ -39,7 +39,7 @@ type CleanupWorker struct {
 // instanceID is stamped into cleanup_queue.claimed_by for observability;
 // claimGracePeriod is the threshold past which an outstanding claim becomes
 // reclaimable by another worker tick (typically 5m).
-func NewCleanupWorker(deps CleanupOps, store CleanupWorkerStore, concurrency int, instanceID string, claimGracePeriod time.Duration) *CleanupWorker {
+func NewCleanupWorker(deps CleanupOps, store core.MetadataStore, concurrency int, instanceID string, claimGracePeriod time.Duration) *CleanupWorker {
 	must.NotNil("deps", deps)
 	must.NotNil("store", store)
 	return &CleanupWorker{
