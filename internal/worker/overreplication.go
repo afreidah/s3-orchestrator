@@ -75,29 +75,37 @@ func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.Replicati
 	})
 }
 
-// clean is the body of Clean after observe.Run sets up the span.
+// cleanOutcome captures everything the post-cycle reporter needs so the
+// body of clean stays focused on the cleanup work itself.
+type cleanOutcome struct {
+	copiesRemoved  int
+	objectsChecked int
+	err            error
+}
+
+// clean is the body of Clean after observe.Run sets up the span. All
+// per-cycle telemetry and audit emission lives in reportCleanCycle so
+// the work below reads as straight business logic.
 func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
-	start := time.Now()
 	if cfg.Factor <= 1 {
 		return 0, nil
 	}
+
+	start := time.Now()
+	var out cleanOutcome
+	defer func() { c.reportCleanCycle(ctx, start, &out) }()
 
 	audit.Log(ctx, "over_replication.start",
 		slog.Int("factor", cfg.Factor),
 		slog.Int("batch_size", cfg.BatchSize),
 	)
 
-	// --- Find over-replicated objects ---
 	locations, err := c.store.GetOverReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
 	if err != nil {
-		telemetry.OverReplicationRunsTotal.WithLabelValues("error").Inc()
-		return 0, fmt.Errorf("failed to query over-replicated objects: %w", err)
+		out.err = fmt.Errorf("failed to query over-replicated objects: %w", err)
+		return 0, out.err
 	}
-
 	if len(locations) == 0 {
-		telemetry.OverReplicationPending.Set(0)
-		telemetry.OverReplicationRunsTotal.WithLabelValues("success").Inc()
-		telemetry.OverReplicationDuration.Observe(time.Since(start).Seconds())
 		return 0, nil
 	}
 
@@ -108,8 +116,8 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 			"error", qErr)
 	}
 
-	// --- Group locations by object key ---
 	grouped := core.GroupByKey(locations)
+	out.objectsChecked = len(grouped)
 
 	type cleanupTask struct {
 		key    string
@@ -124,7 +132,6 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 		}
 	}
 
-	// --- Remove excess copies concurrently ---
 	telemetry.OverReplicationPending.Set(float64(len(tasks)))
 	var removed atomic.Int64
 	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task cleanupTask) {
@@ -135,18 +142,32 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 		})
 	})
 
-	copiesRemoved := int(removed.Load())
-	telemetry.OverReplicationRemovedTotal.Add(float64(copiesRemoved))
+	out.copiesRemoved = int(removed.Load())
+	return out.copiesRemoved, nil
+}
+
+// reportCleanCycle emits every per-cycle metric and the completion
+// audit log in one place: error counter or success counter + duration
+// histogram, the remove-total counter, and the complete-audit line.
+// Called via defer from clean so every exit path reports consistently.
+func (c *OverReplicationCleaner) reportCleanCycle(ctx context.Context, start time.Time, out *cleanOutcome) {
+	duration := time.Since(start)
+	if out.err != nil {
+		telemetry.OverReplicationRunsTotal.WithLabelValues("error").Inc()
+		return
+	}
 	telemetry.OverReplicationRunsTotal.WithLabelValues("success").Inc()
-	telemetry.OverReplicationDuration.Observe(time.Since(start).Seconds())
-
+	telemetry.OverReplicationDuration.Observe(duration.Seconds())
+	if out.objectsChecked == 0 {
+		telemetry.OverReplicationPending.Set(0)
+		return
+	}
+	telemetry.OverReplicationRemovedTotal.Add(float64(out.copiesRemoved))
 	audit.Log(ctx, "over_replication.complete",
-		slog.Int("copies_removed", copiesRemoved),
-		slog.Int("objects_checked", len(grouped)),
-		slog.Duration("duration", time.Since(start)),
+		slog.Int("copies_removed", out.copiesRemoved),
+		slog.Int("objects_checked", out.objectsChecked),
+		slog.Duration("duration", duration),
 	)
-
-	return copiesRemoved, nil
 }
 
 // CountPending returns the number of objects exceeding the replication factor.

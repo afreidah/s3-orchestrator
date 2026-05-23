@@ -256,22 +256,26 @@ func (o *Manager) probeDestAfterAmbiguousCopy(ctx context.Context, req *nativeCo
 	hctx, hcancel := o.core.WithTimeout(ctx)
 	defer hcancel()
 	head, headErr := req.destBackend.HeadObject(hctx, req.destKey)
-	if headErr != nil {
+	base := []any{
+		"source_key", req.sourceKey,
+		"dest_key", req.destKey,
+		"backend", req.destBackendName,
+		"copy_error", origErr,
+	}
+	switch {
+	case headErr != nil:
 		if !s3be.IsNotFound(headErr) {
 			o.log.WarnContext(ctx, "ambiguous native-copy HEAD probe failed",
-				"source_key", req.sourceKey, "dest_key", req.destKey, "backend", req.destBackendName,
-				"copy_error", origErr, "probe_error", headErr)
+				append(base, "probe_error", headErr)...)
 		}
 		return "", false
-	}
-	if head.Size != req.size {
+	case head.Size != req.size:
 		o.log.WarnContext(ctx, "ambiguous native-copy destination size mismatch, falling back to materialized copy",
-			"source_key", req.sourceKey, "dest_key", req.destKey, "backend", req.destBackendName,
-			"expected_size", req.size, "observed_size", head.Size, "copy_error", origErr)
+			append(base, "expected_size", req.size, "observed_size", head.Size)...)
 		return "", false
+	default:
+		o.log.InfoContext(ctx, "ambiguous native-copy resolved via HEAD probe, destination already populated",
+			append(base, "size", head.Size)...)
+		return head.ETag, true
 	}
-	o.log.InfoContext(ctx, "ambiguous native-copy resolved via HEAD probe, destination already populated",
-		"source_key", req.sourceKey, "dest_key", req.destKey, "backend", req.destBackendName,
-		"size", head.Size, "copy_error", origErr)
-	return head.ETag, true
 }
