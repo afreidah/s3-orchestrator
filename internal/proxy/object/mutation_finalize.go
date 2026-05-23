@@ -29,62 +29,37 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// putSuccessRequest bundles the metadata that finalizePutSuccess emits
-// so the helper signature stays under the parameter-count limit.
-type putSuccessRequest struct {
-	operation      string
-	key            string
-	backendName    string
-	size           int64
-	start          time.Time
-	failedBackends []string
-}
-
 // finalizePutSuccess emits success metrics, audit log, and an event
 // notification for a successful PutObject. Records failover spans when
 // retries occurred.
-func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, req *putSuccessRequest) {
-	o.core.Acct().PutSuccess(req.operation, req.backendName, req.size, req.start)
-	if len(req.failedBackends) > 0 {
-		for _, fb := range req.failedBackends {
-			telemetry.WriteFailoverTotal.WithLabelValues(req.operation, fb, req.backendName).Inc()
+func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, operation, key, backendName string, size int64, start time.Time, failedBackends []string) {
+	o.core.Acct().PutSuccess(operation, backendName, size, start)
+	if len(failedBackends) > 0 {
+		for _, fb := range failedBackends {
+			telemetry.WriteFailoverTotal.WithLabelValues(operation, fb, backendName).Inc()
 		}
 		span.SetAttributes(telemetry.AttrWriteFailover.Bool(true))
-		span.SetAttributes(telemetry.AttrFailoverAttempts.Int(len(req.failedBackends)))
+		span.SetAttributes(telemetry.AttrFailoverAttempts.Int(len(failedBackends)))
 	}
-	pobserve.PutCompleted(ctx, span, req.key, req.backendName, req.size)
-	o.invalidateObjectCaches(req.key)
-}
-
-// materializedCopyRequest bundles finalizeMaterializedCopy's inputs.
-// Parallels nativeCopyRequest used by finalizeNativeCopy.
-type materializedCopyRequest struct {
-	destBackend     s3be.ObjectBackend
-	sourceKey       string
-	destKey         string
-	srcBackendName  string
-	destBackendName string
-	size            int64
-	srcEnc          *core.EncryptionMeta
-	start           time.Time
-	etag            string
+	pobserve.PutCompleted(ctx, span, key, backendName, size)
+	o.invalidateObjectCaches(key)
 }
 
 // finalizeMaterializedCopy runs the post-PUT-success steps for the
 // stream-through copy path. Differs from finalizeNativeCopy by adding
 // the egress/ingress tick because the bytes physically traversed the
 // orchestrator.
-func (o *Manager) finalizeMaterializedCopy(ctx context.Context, span trace.Span, req *materializedCopyRequest) (string, error) {
+func (o *Manager) finalizeMaterializedCopy(ctx context.Context, span trace.Span, destBackend s3be.ObjectBackend, sourceKey, destKey, srcBackendName, destBackendName string, size int64, srcEnc *core.EncryptionMeta, start time.Time, etag string) (string, error) {
 	const operation = "CopyObject"
-	if err := o.coord.RecordObjectOrCleanup(ctx, span, req.destBackend, req.destKey, req.destBackendName, req.size, req.srcEnc); err != nil {
+	if err := o.coord.RecordObjectOrCleanup(ctx, span, destBackend, destKey, destBackendName, size, srcEnc); err != nil {
 		return "", err
 	}
-	o.core.Acct().Operation(operation, req.destBackendName, req.start, nil)
-	o.core.Acct().Egress(req.srcBackendName, req.size)
-	o.core.Acct().Ingress(req.destBackendName, req.size)
-	pobserve.CopyCompleted(ctx, span, req.sourceKey, req.destKey, req.srcBackendName, req.destBackendName, req.size)
-	o.invalidateObjectCaches(req.destKey)
-	return req.etag, nil
+	o.core.Acct().Operation(operation, destBackendName, start, nil)
+	o.core.Acct().Egress(srcBackendName, size)
+	o.core.Acct().Ingress(destBackendName, size)
+	pobserve.CopyCompleted(ctx, span, sourceKey, destKey, srcBackendName, destBackendName, size)
+	o.invalidateObjectCaches(destKey)
+	return etag, nil
 }
 
 // finalizeNativeCopy runs the post-native-copy success steps shared by
@@ -93,7 +68,7 @@ func (o *Manager) finalizeMaterializedCopy(ctx context.Context, span trace.Span,
 // copy, emit completion observability, and invalidate caches. Returns
 // (_, true, err) on RecordObjectOrCleanup failure - the bytes are
 // already on the destination so the caller MUST NOT fall back.
-func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyRequest, etag string) (string, bool, error) {
+func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyContext, etag string) (string, bool, error) {
 	const operation = "CopyObject"
 	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, req.destKey, req.destBackendName, req.size, req.srcEnc); err != nil {
 		return "", true, err

@@ -20,10 +20,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 )
 
-// HealthDeps groups the read-only signals the health and readiness handlers
-// observe. Each is supplied as a callback so the runtime can mutate them
-// (ready -> true, breaker state changes) without touching the registered
-// handlers.
+// HealthDeps holds the signals the health and readiness handlers read.
 type HealthDeps struct {
 	// Ready reports whether the daemon has finished initialization and is
 	// accepting traffic. Routed to /health/ready.

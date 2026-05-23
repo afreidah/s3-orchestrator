@@ -120,7 +120,7 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 	// caller because the bytes are already on the destination; falling
 	// back would copy them a second time.
 	if sameBackendCopyEligible(locations, destBackendName) {
-		req := &nativeCopyRequest{
+		req := &nativeCopyContext{
 			span:            span,
 			destBackend:     destBackend,
 			sourceKey:       sourceKey,
@@ -157,17 +157,7 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 		return "", fmt.Errorf("failed to write destination: %w", err)
 	}
 
-	return o.finalizeMaterializedCopy(ctx, span, &materializedCopyRequest{
-		destBackend:     destBackend,
-		sourceKey:       sourceKey,
-		destKey:         destKey,
-		srcBackendName:  src.sourceBackend,
-		destBackendName: destBackendName,
-		size:            size,
-		srcEnc:          srcEnc,
-		start:           start,
-		etag:            etag,
-	})
+	return o.finalizeMaterializedCopy(ctx, span, destBackend, sourceKey, destKey, src.sourceBackend, destBackendName, size, srcEnc, start, etag)
 }
 
 // sameBackendCopyEligible reports whether the source has at least one
@@ -184,10 +174,11 @@ func sameBackendCopyEligible(locations []core.ObjectLocation, destBackendName st
 	return false
 }
 
-// nativeCopyRequest bundles tryNativeCopy's inputs so its signature
-// stays under the parameter-count limit. Carried through the native
-// path: tryNativeCopy -> probeDestAfterAmbiguousCopy -> finalizeNativeCopy.
-type nativeCopyRequest struct {
+// nativeCopyContext is the per-operation state the three native-copy
+// helpers share: tryNativeCopy attempts the server-side copy,
+// probeDestAfterAmbiguousCopy disambiguates lost-response failures,
+// and finalizeNativeCopy commits the destination metadata.
+type nativeCopyContext struct {
 	span            trace.Span
 	destBackend     s3be.ObjectBackend
 	sourceKey       string
@@ -226,7 +217,7 @@ type nativeCopyRequest struct {
 // This guards against the ambiguous case where the backend completed the
 // copy server-side but the response was lost (timeout, dropped connection)
 // - falling back blindly would duplicate the work. See issue #884.
-func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyRequest) (string, bool, error) {
+func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyContext) (string, bool, error) {
 	copier, ok := req.destBackend.(s3be.BackendCopier)
 	if !ok {
 		return "", false, nil
@@ -261,7 +252,7 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyRequest) (st
 // clean fallback signal; any other HEAD error is also a fallback but
 // is logged as a warn so operators see the probe failure mode. See
 // issue #884.
-func (o *Manager) probeDestAfterAmbiguousCopy(ctx context.Context, req *nativeCopyRequest, origErr error) (string, bool) {
+func (o *Manager) probeDestAfterAmbiguousCopy(ctx context.Context, req *nativeCopyContext, origErr error) (string, bool) {
 	hctx, hcancel := o.core.WithTimeout(ctx)
 	defer hcancel()
 	head, headErr := req.destBackend.HeadObject(hctx, req.destKey)
