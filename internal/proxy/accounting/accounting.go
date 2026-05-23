@@ -22,7 +22,11 @@
 
 package accounting
 
-import "time"
+import (
+	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/counter"
+)
 
 // OperationRecordFunc is the per-operation metric callback. Wraps the
 // existing Prometheus operation histogram so the Recorder does not have
@@ -33,14 +37,14 @@ type OperationRecordFunc func(operation, backend string, start time.Time, err er
 // concurrent use: all state lives on the underlying UsageTracker and
 // OperationRecordFunc, which are themselves safe.
 type Recorder struct {
-	usage    UsageTracker
+	usage    *counter.UsageTracker
 	recordOp OperationRecordFunc
 }
 
 // New constructs a Recorder. usage credits the per-backend API call
 // and ingress/egress byte counters; recordOp emits the per-operation
 // Prometheus histogram observation.
-func New(usage UsageTracker, recordOp OperationRecordFunc) *Recorder {
+func New(usage *counter.UsageTracker, recordOp OperationRecordFunc) *Recorder {
 	return &Recorder{usage: usage, recordOp: recordOp}
 }
 

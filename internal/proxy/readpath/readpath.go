@@ -83,7 +83,7 @@ func NoopCleanup() {
 // One instance per object.Manager; safe for concurrent reads.
 type Failover struct {
 	core              Core
-	stores            ObjectLocationLister
+	stores            core.MetadataStore
 	cache             LocationCache
 	parallelBroadcast bool
 	// degradedBroadcastParallelism caps the number of backends probed
@@ -100,12 +100,12 @@ type Failover struct {
 // broadcast probes concurrently (0 means no cap, i.e. every backend at
 // once). The component-scoped logger is built in the constructor body
 // per the project's logging convention.
-func New(core Core, stores ObjectLocationLister, cache LocationCache, parallelBroadcast bool, degradedBroadcastParallelism int) *Failover {
-	must.NotNil("core", core)
+func New(infraCore Core, stores core.MetadataStore, cache LocationCache, parallelBroadcast bool, degradedBroadcastParallelism int) *Failover {
+	must.NotNil("core", infraCore)
 	must.NotNil("stores", stores)
 	must.NotNil("cache", cache)
 	return &Failover{
-		core:                         core,
+		core:                         infraCore,
 		stores:                       stores,
 		cache:                        cache,
 		parallelBroadcast:            parallelBroadcast,

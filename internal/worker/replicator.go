@@ -38,12 +38,12 @@ import (
 type Replicator struct {
 	log   *slog.Logger
 	ops   Ops
-	store ReplicatorStore
+	store core.MetadataStore
 	cfg   syncutil.AtomicConfig[config.ReplicationConfig]
 }
 
-// NewReplicator creates a Replicator with fleet operations and a narrow store.
-func NewReplicator(ops Ops, store ReplicatorStore) *Replicator {
+// NewReplicator creates a Replicator with fleet operations and a metadata store.
+func NewReplicator(ops Ops, store core.MetadataStore) *Replicator {
 	must.NotNil("ops", ops)
 	must.NotNil("store", store)
 	return &Replicator{ops: ops, store: store, log: slog.Default().With(logfmt.Component("replicator"))}

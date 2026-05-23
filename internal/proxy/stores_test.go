@@ -11,25 +11,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
-// rebalancerStoreT, replicatorStoreT, overReplicationStoreT mirror the
-// adapter types worker constructors require. Declared here so proxy's
-// own fixtures can wire workers without importing di.
-type rebalancerStoreT struct {
-	core.ObjectStore
-	core.QuotaStore
-}
-
-type replicatorStoreT struct {
-	core.ObjectStore
-	core.ReplicationStore
-	core.QuotaStore
-}
-
-type overReplicationStoreT struct {
-	core.ReplicationStore
-	core.QuotaStore
-}
-
 // testWorkers bundles the workers wireWorkersForTest constructed. In-
 // package proxy tests grab specific workers from this struct now that
 // they are no longer fields on BackendManager.
@@ -50,19 +31,9 @@ type testWorkers struct {
 // without standing up the injector.
 func wireWorkersForTest(m *BackendManager) *testWorkers {
 	w := &testWorkers{}
-	w.Rebalancer = worker.NewRebalancer(m, &rebalancerStoreT{
-		ObjectStore: m.stores,
-		QuotaStore:  m.stores,
-	})
-	w.Replicator = worker.NewReplicator(m, &replicatorStoreT{
-		ObjectStore:      m.stores,
-		ReplicationStore: m.stores,
-		QuotaStore:       m.stores,
-	})
-	w.OverReplicationCleaner = worker.NewOverReplicationCleaner(m, &overReplicationStoreT{
-		ReplicationStore: m.stores,
-		QuotaStore:       m.stores,
-	})
+	w.Rebalancer = worker.NewRebalancer(m, m.stores)
+	w.Replicator = worker.NewReplicator(m, m.stores)
+	w.OverReplicationCleaner = worker.NewOverReplicationCleaner(m, m.stores)
 	w.CleanupWorker = worker.NewCleanupWorker(m, m.stores, 10, "test-instance", 5*time.Minute)
 	w.PendingReaper = worker.NewPendingReaper(m, m.stores, 0, 0, 0)
 	w.Scrubber = worker.NewScrubber(m, m.stores, nil)
