@@ -39,6 +39,9 @@ type mockMetadataStore struct {
 	core.DashboardStore
 	core.UsageFlusher
 	core.AdvisoryLocker
+	core.LifecycleAdmin
+	core.EncryptionAdmin
+	core.NotificationOutbox
 	pendingCleanups     []core.CleanupItem
 	completedIDs        []int64
 	dlqMoves            []dlqMoveCall

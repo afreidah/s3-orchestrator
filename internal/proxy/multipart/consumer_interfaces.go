@@ -18,7 +18,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // MultipartCore is the subset of *infra.Core the multipart Manager needs.
@@ -28,13 +27,4 @@ type MultipartCore interface {
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
 	ClassifyWriteError(span trace.Span, operation string, err error) error
 	Acct() *accounting.Recorder
-}
-
-// MultipartCoordinator is the subset of *writepath.Coordinator the
-// multipart Manager needs.
-type MultipartCoordinator interface {
-	SelectWriteTarget(ctx context.Context, span trace.Span, operation string, size int64) (string, error)
-	RecoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, backendName, key, cleanupReason string, size int64)
-	RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, key, backendName string, size int64, enc *core.EncryptionMeta) error
-	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
 }

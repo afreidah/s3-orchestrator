@@ -44,13 +44,13 @@ import (
 type Scrubber struct {
 	log *slog.Logger
 	deps      ScrubberOps
-	store     ScrubberStore
+	store     core.MetadataStore
 	encryptor *encryption.Encryptor
 	cfg       syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
 // NewScrubber creates a Scrubber with the given dependencies and optional encryptor.
-func NewScrubber(deps ScrubberOps, store ScrubberStore, encryptor *encryption.Encryptor) *Scrubber {
+func NewScrubber(deps ScrubberOps, store core.MetadataStore, encryptor *encryption.Encryptor) *Scrubber {
 	must.NotNil("deps", deps)
 	must.NotNil("store", store)
 	return &Scrubber{deps: deps, store: store, encryptor: encryptor, log: slog.Default().With(logfmt.Component("scrubber"))}

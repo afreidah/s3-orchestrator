@@ -26,18 +26,9 @@ const (
 	DefaultMultipartCleanupTick  = 1 * time.Hour
 )
 
-// StaleCleaner is the consumer-declared surface NewCleanupService
-// needs from *Manager. Declared here so this constructor does not
-// pull the wider Manager surface into its dependency graph.
-type StaleCleaner interface {
-	CleanupStaleMultipartUploads(ctx context.Context, olderThan time.Duration)
-}
-
 // NewCleanupService constructs the multipart-cleanup background
-// service. The cleaner is typically *multipart.Manager; the narrow
-// interface keeps this constructor decoupled from the rest of
-// *proxy.BackendManager.
-func NewCleanupService(cleaner StaleCleaner, locker tickrunner.AdvisoryLocker, staleTimeout time.Duration) lifecycle.Runner {
+// service backed by mgr.CleanupStaleMultipartUploads.
+func NewCleanupService(mgr *Manager, locker tickrunner.AdvisoryLocker, staleTimeout time.Duration) lifecycle.Runner {
 	if staleTimeout <= 0 {
 		staleTimeout = DefaultMultipartStaleTimeout
 	}
@@ -49,7 +40,7 @@ func NewCleanupService(cleaner StaleCleaner, locker tickrunner.AdvisoryLocker, s
 		Name:     slug,
 		Log:      tickrunner.ComponentLogger(slug),
 		Work: func(ctx context.Context) error {
-			cleaner.CleanupStaleMultipartUploads(ctx, staleTimeout)
+			mgr.CleanupStaleMultipartUploads(ctx, staleTimeout)
 			return nil
 		},
 	})

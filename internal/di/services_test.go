@@ -83,23 +83,13 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 	// workers with test-specific configs below.
 	_ = proxytest.BuildWorkers(mgr, mock)
 
-	rb := worker.NewRebalancer(mgr, struct {
-		core.ObjectStore
-		core.QuotaStore
-	}{ObjectStore: mock, QuotaStore: mock})
+	rb := worker.NewRebalancer(mgr, mock)
 	rb.SetConfig(&config.RebalanceConfig{})
 
-	rp := worker.NewReplicator(mgr, struct {
-		core.ObjectStore
-		core.ReplicationStore
-		core.QuotaStore
-	}{ObjectStore: mock, ReplicationStore: mock, QuotaStore: mock})
+	rp := worker.NewReplicator(mgr, mock)
 	rp.SetConfig(&config.ReplicationConfig{Factor: 1})
 
-	or := worker.NewOverReplicationCleaner(mgr, struct {
-		core.ReplicationStore
-		core.QuotaStore
-	}{ReplicationStore: mock, QuotaStore: mock})
+	or := worker.NewOverReplicationCleaner(mgr, mock)
 	or.SetConfig(&config.ReplicationConfig{Factor: 1})
 
 	cw := worker.NewCleanupWorker(mgr, mock, 10, "test-instance", 5*time.Minute)
