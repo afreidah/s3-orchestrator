@@ -525,6 +525,36 @@ func TestTransition_NilHookIsNoop(t *testing.T) {
 	}
 }
 
+// TestAddOnStateChange_ChainsListeners verifies that AddOnStateChange
+// appends to the existing hook rather than replacing it; both the
+// telemetry listener and the recovery listener must fire on transitions.
+func TestAddOnStateChange_ChainsListeners(t *testing.T) {
+	var standardCalls, addedCalls int
+	cb := newTestBreaker(1, time.Hour)
+	cb.SetOnStateChange(func(StateChangeInfo) { standardCalls++ })
+	cb.AddOnStateChange(func(StateChangeInfo) { addedCalls++ })
+
+	_ = cb.PostCheck(errTest) // closed -> open
+
+	if standardCalls != 1 || addedCalls != 1 {
+		t.Errorf("standard=%d added=%d, want 1/1", standardCalls, addedCalls)
+	}
+}
+
+// TestAddOnStateChange_NoPriorHook verifies AddOnStateChange installs
+// the callback cleanly when no SetOnStateChange has been called first.
+func TestAddOnStateChange_NoPriorHook(t *testing.T) {
+	var calls int
+	cb := newTestBreaker(1, time.Hour)
+	cb.AddOnStateChange(func(StateChangeInfo) { calls++ })
+
+	_ = cb.PostCheck(errTest)
+
+	if calls != 1 {
+		t.Errorf("calls = %d, want 1", calls)
+	}
+}
+
 // -------------------------------------------------------------------------
 // ResetStaleProbe
 // -------------------------------------------------------------------------
