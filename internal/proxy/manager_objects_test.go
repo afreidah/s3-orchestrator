@@ -1167,6 +1167,51 @@ func TestGetObject_DBUnavailable_BroadcastHit(t *testing.T) {
 	}
 }
 
+// rangeRecordingBackend wraps a mockBackend to capture the Range
+// header the proxy forwards on GetObject. Used to assert the degraded
+// broadcast path does not strip Range before dispatching to backends.
+type rangeRecordingBackend struct {
+	*mockBackend
+	receivedRange string
+}
+
+func (b *rangeRecordingBackend) GetObject(ctx context.Context, key, rangeHeader string) (*s3be.GetObjectResult, error) {
+	b.receivedRange = rangeHeader
+	return b.mockBackend.GetObject(ctx, key, rangeHeader)
+}
+
+// TestGetObject_DBUnavailable_RangeRequest pins that the degraded
+// broadcast forwards the client's Range header to the backend instead
+// of silently dropping it.
+func TestGetObject_DBUnavailable_RangeRequest(t *testing.T) {
+	t.Parallel()
+	inner := newMockBackend()
+	_, _ = inner.PutObject(context.Background(), "k", bytes.NewReader([]byte("0123456789")), 10, "text/plain", nil)
+	recorder := &rangeRecordingBackend{mockBackend: inner}
+
+	store := locationsStore(t, nil, core.ErrDBUnavailable)
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
+		Backends:        map[string]s3be.ObjectBackend{"b1": recorder},
+		Stores:          testStoresFromMock(store),
+		PendingEnabled:  true,
+		Dashboard:       store,
+		Metrics:         store,
+		Order:           []string{"b1"},
+		CacheTTL:        5 * time.Second,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: config.RoutingPack,
+	})
+
+	result, err := mgr.ObjectManager.GetObject(context.Background(), "k", "bytes=2-5")
+	if err != nil {
+		t.Fatalf("GetObject with Range during degraded mode: %v", err)
+	}
+	_ = result.Body.Close()
+	if recorder.receivedRange != "bytes=2-5" {
+		t.Errorf("backend received Range = %q, want %q", recorder.receivedRange, "bytes=2-5")
+	}
+}
+
 // TestGetObject_DBUnavailable_DegradedReadsDisabled asserts the
 // operator opt-out: a DB outage with DisableDegradedReads=true returns
 // ErrServiceUnavailable instead of fanning out to every backend.

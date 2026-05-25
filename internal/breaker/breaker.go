@@ -138,6 +138,23 @@ func (cb *CircuitBreaker) SetOnStateChange(fn func(StateChangeInfo)) {
 	cb.onStateChange = fn
 }
 
+// AddOnStateChange appends a callback to the existing hook chain. Used
+// to attach an additional listener (e.g. cache invalidation on recovery)
+// without disturbing the telemetry hook already installed.
+func (cb *CircuitBreaker) AddOnStateChange(fn func(StateChangeInfo)) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	prev := cb.onStateChange
+	if prev == nil {
+		cb.onStateChange = fn
+		return
+	}
+	cb.onStateChange = func(info StateChangeInfo) {
+		prev(info)
+		fn(info)
+	}
+}
+
 // Name returns the breaker's identifier  -  useful for callers wiring
 // observability hooks that need the label.
 func (cb *CircuitBreaker) Name() string { return cb.name }

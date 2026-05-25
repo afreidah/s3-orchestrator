@@ -225,7 +225,9 @@ func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error) {
 // -------------------------------------------------------------------------
 
 // ProvideBackendManager creates the central orchestration manager with the
-// narrow per-role store interfaces supplied.
+// narrow per-role store interfaces supplied. Also installs a recovery
+// listener on the DB breaker so the degraded-mode location cache is
+// cleared the moment the DB transitions back to closed.
 func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	cfg, err := do.Invoke[*config.Config](i)
 	if err != nil {
@@ -247,8 +249,12 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	if err != nil {
 		return nil, err
 	}
+	dbBreaker, err := do.Invoke[*breaker.CircuitBreaker](i)
+	if err != nil {
+		return nil, err
+	}
 
-	return proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Backends:                     br.Backends,
 		Stores:                       stores,
 		PendingEnabled:               cfg.WritePath.PendingPattern.IsEnabled(),
@@ -268,7 +274,17 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 		MaxObjectSizes:               br.MaxObjectSizes,
 		AdmissionSem:                 admissionSemFor(&cfg.Server),
 		ReplicationFactor:            replicationFactorFromInjector(i),
-	}), nil
+	})
+
+	// Drop stale degraded-mode location cache entries on DB recovery so
+	// the next reads use fresh DB lookups instead of remembered winners.
+	dbBreaker.AddOnStateChange(func(info breaker.StateChangeInfo) {
+		if info.To == breaker.StateClosed {
+			mgr.ClearCache()
+		}
+	})
+
+	return mgr, nil
 }
 
 // admissionSemFor returns the shared admission semaphore that lives on

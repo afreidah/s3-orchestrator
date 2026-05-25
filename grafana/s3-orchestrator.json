@@ -4359,6 +4359,37 @@
           }
         }
       }
+    },
+    {
+      "type": "timeseries",
+      "id": 112,
+      "title": "Degraded broadcast mixed outcomes",
+      "description": "Rate of broadcasts where backends disagreed: some returned 404 while others failed with non-404 errors. Persistent non-zero values suggest provider divergence or a transient backend storm hidden under not_found.",
+      "gridPos": {
+        "x": 0,
+        "y": 282,
+        "w": 24,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (operation) (rate(s3o_degraded_broadcast_mixed_outcomes_total[5m]))",
+          "legendFormat": "{{operation}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
     }
   ]
 }
