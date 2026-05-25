@@ -1167,6 +1167,34 @@ func TestGetObject_DBUnavailable_BroadcastHit(t *testing.T) {
 	}
 }
 
+// TestGetObject_DBUnavailable_DegradedReadsDisabled asserts the
+// operator opt-out: a DB outage with DisableDegradedReads=true returns
+// ErrServiceUnavailable instead of fanning out to every backend.
+func TestGetObject_DBUnavailable_DegradedReadsDisabled(t *testing.T) {
+	t.Parallel()
+	b1 := newMockBackend()
+	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("would-be-broadcast")), 18, "text/plain", nil)
+
+	store := locationsStore(t, nil, core.ErrDBUnavailable)
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
+		Backends:             map[string]s3be.ObjectBackend{"b1": b1},
+		Stores:               testStoresFromMock(store),
+		PendingEnabled:       true,
+		Dashboard:            store,
+		Metrics:              store,
+		Order:                []string{"b1"},
+		CacheTTL:             5 * time.Second,
+		BackendTimeout:       30 * time.Second,
+		RoutingStrategy:      config.RoutingPack,
+		DisableDegradedReads: true,
+	})
+
+	_, err := mgr.ObjectManager.GetObject(context.Background(), "key", "")
+	if !errors.Is(err, core.ErrServiceUnavailable) {
+		t.Fatalf("GetObject err = %v, want core.ErrServiceUnavailable", err)
+	}
+}
+
 // TestGetObject_DBUnavailable_CacheHit asserts the cache hit branch
 // after a successful broadcast.
 func TestGetObject_DBUnavailable_CacheHit(t *testing.T) {

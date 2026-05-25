@@ -4265,6 +4265,100 @@
           "legendFormat": "objects"
         }
       ]
+    },
+    {
+      "type": "row",
+      "id": 109,
+      "title": "Degraded-Mode Hardening",
+      "gridPos": {
+        "x": 0,
+        "y": 273,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "id": 110,
+      "title": "Degraded mode active",
+      "description": "1 when the DB circuit breaker is open or half-open; reads broadcast across backends.",
+      "gridPos": {
+        "x": 0,
+        "y": 274,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "s3o_degraded_mode_active",
+          "legendFormat": "active"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"]
+        },
+        "colorMode": "background"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "normal", "color": "green" }, "1": { "text": "DEGRADED", "color": "red" } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 111,
+      "title": "Degraded broadcast duration",
+      "description": "Wall-clock p50/p95/p99 of degraded-mode broadcast reads, by terminal outcome.",
+      "gridPos": {
+        "x": 6,
+        "y": 274,
+        "w": 18,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, outcome) (rate(s3o_degraded_broadcast_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50 {{outcome}}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, outcome) (rate(s3o_degraded_broadcast_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95 {{outcome}}"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, outcome) (rate(s3o_degraded_broadcast_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99 {{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
     }
   ]
 }

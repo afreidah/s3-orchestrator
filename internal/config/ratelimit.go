@@ -43,8 +43,10 @@ type CircuitBreakerConfig struct {
 	// behaviour). With a positive value, probes run as a rolling window:
 	// the first N are launched immediately, and each failure replenishes
 	// the next pending backend so at most N goroutines are in flight at
-	// any time. Only meaningful when ParallelBroadcast is true. See #858.
+	// any time. Only meaningful when ParallelBroadcast is true.
 	DegradedBroadcastParallelism int `yaml:"degraded_broadcast_parallelism"`
+	// DegradedReadsEnabled opts out of degraded-mode broadcasts (default true; set false to fail fast on DB outage).
+	DegradedReadsEnabled *bool `yaml:"degraded_reads_enabled"`
 }
 
 // BackendCircuitBreakerConfig holds settings for per-backend circuit breakers.
@@ -101,6 +103,11 @@ func (cb *CircuitBreakerConfig) setDefaults() {
 	// cannot accidentally disable the broadcast entirely.
 	if cb.DegradedBroadcastParallelism < 0 {
 		cb.DegradedBroadcastParallelism = 0
+	}
+	// *bool so unset (nil) is distinguishable from explicit false.
+	if cb.DegradedReadsEnabled == nil {
+		t := true
+		cb.DegradedReadsEnabled = &t
 	}
 }
 

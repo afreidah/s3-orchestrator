@@ -70,8 +70,10 @@ type BackendManagerConfig struct {
 	ParallelBroadcast bool // fan-out reads in parallel during degraded mode
 	// DegradedBroadcastParallelism caps concurrent probes during a
 	// parallel degraded-mode broadcast. 0 = no cap (every backend
-	// probed at once, the historical behaviour). See #858.
+	// probed at once, the historical behaviour).
 	DegradedBroadcastParallelism int
+	// DisableDegradedReads opts the read path out of broadcasting on DB outage.
+	DisableDegradedReads bool
 	Encryptor                    *encryption.Encryptor  // nil when encryption is disabled
 	CounterBackend               counter.CounterBackend // nil uses LocalCounterBackend
 	ObjectCache                  objcache.ObjectCache   // nil when object data caching is disabled
@@ -210,6 +212,7 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		ObjectCache:                  cfg.ObjectCache,
 		ParallelBroadcast:            cfg.ParallelBroadcast,
 		DegradedBroadcastParallelism: cfg.DegradedBroadcastParallelism,
+		DisableDegradedReads:         cfg.DisableDegradedReads,
 		IntegrityCfg:                 integrityCfg,
 	})
 

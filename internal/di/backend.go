@@ -261,6 +261,7 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 		RoutingStrategy:              cfg.RoutingStrategy,
 		ParallelBroadcast:            cfg.CircuitBreaker.ParallelBroadcast,
 		DegradedBroadcastParallelism: cfg.CircuitBreaker.DegradedBroadcastParallelism,
+		DisableDegradedReads:         cfg.CircuitBreaker.DegradedReadsEnabled != nil && !*cfg.CircuitBreaker.DegradedReadsEnabled,
 		Encryptor:                    enc,
 		ObjectCache:                  resolveOptionalCache(i),
 		CounterBackend:               resolveOptionalCounterBackend(i),

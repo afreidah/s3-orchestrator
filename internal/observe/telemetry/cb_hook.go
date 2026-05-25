@@ -34,6 +34,21 @@ func NewCircuitBreakerHook(name string) func(breaker.StateChangeInfo) {
 	}
 }
 
+// NewDatabaseBreakerHook chains the standard breaker hook with the
+// DegradedModeActive gauge (1 when not closed, 0 when closed).
+func NewDatabaseBreakerHook(name string) func(breaker.StateChangeInfo) {
+	DegradedModeActive.Set(0)
+	standard := NewCircuitBreakerHook(name)
+	return func(info breaker.StateChangeInfo) {
+		standard(info)
+		if info.To == breaker.StateClosed {
+			DegradedModeActive.Set(0)
+		} else {
+			DegradedModeActive.Set(1)
+		}
+	}
+}
+
 // emitCircuitEvent sends the corresponding BackendCircuit{Opened,Closed}
 // event for the closed->open and *->closed transitions. Other transitions
 // are state-machine internals and not user-visible.
