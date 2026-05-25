@@ -295,6 +295,7 @@ func (f *Failover) tryBackendsSequentially(
 	probe Probe,
 ) (string, error) {
 	var lastErr error
+	var tally broadcastErrTally
 	for _, name := range f.core.BackendOrder() {
 		be, ok := f.core.Backends()[name]
 		if !ok {
@@ -304,13 +305,37 @@ func (f *Failover) tryBackendsSequentially(
 		size, cleanup, err := probe(ctx, name, nil, be)
 		if err != nil {
 			lastErr = err
+			tally.add(err)
 			continue
 		}
 		cleanup()
 		f.recordBroadcastWinner(operation, key, name, size, start, span, false)
 		return name, nil
 	}
+	tally.recordMixedOutcomes(operation)
 	return broadcastAllFailed(span, lastErr)
+}
+
+// broadcastErrTally tracks the 404-vs-other distribution of probe
+// errors so the all-failed terminal can flag provider-divergence storms
+// hidden under not_found.
+type broadcastErrTally struct {
+	notFound int
+	other    int
+}
+
+func (t *broadcastErrTally) add(err error) {
+	if backend.IsNotFound(err) {
+		t.notFound++
+	} else {
+		t.other++
+	}
+}
+
+func (t *broadcastErrTally) recordMixedOutcomes(operation string) {
+	if t.notFound > 0 && t.other > 0 {
+		telemetry.DegradedBroadcastMixedOutcomesTotal.WithLabelValues(operation).Inc()
+	}
 }
 
 // broadcastResult carries one parallel-probe outcome back to the
@@ -377,12 +402,14 @@ func (f *Failover) tryBackendsInParallel(
 	}
 
 	var lastErr error
+	var tally broadcastErrTally
 	received := 0
 	for received < launched {
 		r := <-ch
 		received++
 		if r.err != nil {
 			lastErr = r.err
+			tally.add(r.err)
 			launchNext() // backfill the slot; harmless when no pending probes remain
 			continue
 		}
@@ -409,6 +436,7 @@ func (f *Failover) tryBackendsInParallel(
 	for _, cancel := range cancels {
 		cancel()
 	}
+	tally.recordMixedOutcomes(operation)
 	return broadcastAllFailed(span, lastErr)
 }
 
