@@ -20,6 +20,7 @@ Package telemetry provides Prometheus metrics registration and OpenTelemetry tra
 - [func BackendAttributes\(operation, backendName, endpoint, bucket, key string\) \[\]attribute.KeyValue](<#BackendAttributes>)
 - [func InitTracer\(ctx context.Context, cfg config.TracingConfig\) \(func\(context.Context\) error, error\)](<#InitTracer>)
 - [func NewCircuitBreakerHook\(name string\) func\(breaker.StateChangeInfo\)](<#NewCircuitBreakerHook>)
+- [func NewDatabaseBreakerHook\(name string\) func\(breaker.StateChangeInfo\)](<#NewDatabaseBreakerHook>)
 - [func RequestAttributes\(method, path, bucket, key, clientIP string\) \[\]attribute.KeyValue](<#RequestAttributes>)
 - [func StartClientSpan\(ctx context.Context, name string, attrs ...attribute.KeyValue\) \(context.Context, trace.Span\)](<#StartClientSpan>)
 - [func StartServerSpan\(ctx context.Context, name string, attrs ...attribute.KeyValue\) \(context.Context, trace.Span\)](<#StartServerSpan>)
@@ -128,6 +129,24 @@ var (
             Help: "Total number of write operations that failed over to a different backend",
         },
         []string{"operation", "failed_backend", "success_backend"},
+    )
+
+    // DegradedModeActive is 1 when the DB breaker is open or half-open.
+    DegradedModeActive = promauto.NewGauge(
+        prometheus.GaugeOpts{
+            Name: "s3o_degraded_mode_active",
+            Help: "1 when the read path is currently in degraded mode (DB unavailable), 0 otherwise",
+        },
+    )
+
+    // DegradedBroadcastDuration is the wall-clock duration of degraded-mode broadcast reads.
+    DegradedBroadcastDuration = promauto.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name:    "s3o_degraded_broadcast_duration_seconds",
+            Help:    "Wall-clock duration of degraded-mode broadcast reads, terminal outcome labelled.",
+            Buckets: prometheus.DefBuckets,
+        },
+        []string{"operation", "outcome"},
     )
 )
 ```
@@ -1124,6 +1143,15 @@ func NewCircuitBreakerHook(name string) func(breaker.StateChangeInfo)
 NewCircuitBreakerHook returns the callback to install on a breaker so its state changes drive the CircuitBreakerState gauge, the CircuitBreakerTransitionsTotal counter, and the BackendCircuitOpened / BackendCircuitClosed events.
 
 Initializes the gauge to "closed" up front so Prometheus reports a value before the first transition.
+
+<a name="NewDatabaseBreakerHook"></a>
+## func [NewDatabaseBreakerHook](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/observe/telemetry/cb_hook.go#L39>)
+
+```go
+func NewDatabaseBreakerHook(name string) func(breaker.StateChangeInfo)
+```
+
+NewDatabaseBreakerHook chains the standard breaker hook with the DegradedModeActive gauge \(1 when not closed, 0 when closed\).
 
 <a name="RequestAttributes"></a>
 ## func [RequestAttributes](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/observe/telemetry/tracing.go#L159>)

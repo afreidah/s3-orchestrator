@@ -232,7 +232,7 @@ func NonReloadableFieldsChanged(old, new *Config) []string
 NonReloadableFieldsChanged compares two configs and returns a list of non\-reloadable field descriptions that differ. Used by the SIGHUP handler to warn about changes that require a restart.
 
 <a name="ParseLogLevel"></a>
-## func [ParseLogLevel](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L342>)
+## func [ParseLogLevel](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L361>)
 
 ```go
 func ParseLogLevel(s string) slog.Level
@@ -241,7 +241,7 @@ func ParseLogLevel(s string) slog.Level
 ParseLogLevel maps a log level string to a slog.Level. Returns slog.LevelInfo for unrecognized values. Callers should validate via SetDefaultsAndValidate before calling this function.
 
 <a name="BackendCircuitBreakerConfig"></a>
-## type [BackendCircuitBreakerConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ratelimit.go#L54-L58>)
+## type [BackendCircuitBreakerConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ratelimit.go#L56-L60>)
 
 BackendCircuitBreakerConfig holds settings for per\-backend circuit breakers. When a backend is unreachable or returns errors \(e.g. expired credentials\), the circuit opens and the backend is excluded from request routing until recovery is detected via a probe request.
 
@@ -310,7 +310,7 @@ type CacheConfig struct {
 ```
 
 <a name="CircuitBreakerConfig"></a>
-## type [CircuitBreakerConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ratelimit.go#L35-L48>)
+## type [CircuitBreakerConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/ratelimit.go#L35-L50>)
 
 CircuitBreakerConfig holds settings for the database circuit breaker. When the database becomes unreachable, the proxy enters degraded mode: reads broadcast to all backends, writes return 503.
 
@@ -326,8 +326,10 @@ type CircuitBreakerConfig struct {
     // behaviour). With a positive value, probes run as a rolling window:
     // the first N are launched immediately, and each failure replenishes
     // the next pending backend so at most N goroutines are in flight at
-    // any time. Only meaningful when ParallelBroadcast is true. See #858.
+    // any time. Only meaningful when ParallelBroadcast is true.
     DegradedBroadcastParallelism int `yaml:"degraded_broadcast_parallelism"`
+    // DegradedReadsEnabled opts out of degraded-mode broadcasts (default true; set false to fail fast on DB outage).
+    DegradedReadsEnabled *bool `yaml:"degraded_reads_enabled"`
 }
 ```
 
