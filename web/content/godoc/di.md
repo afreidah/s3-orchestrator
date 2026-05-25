@@ -59,7 +59,7 @@ Package di is the single wiring point for the orchestrator. It uses samber/do/v2
 
 
 <a name="IsRegistered"></a>
-## func [IsRegistered](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/optional.go#L83>)
+## func [IsRegistered](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/optional.go#L81>)
 
 ```go
 func IsRegistered[T any](inj do.Injector) bool
@@ -68,7 +68,7 @@ func IsRegistered[T any](inj do.Injector) bool
 IsRegistered reports whether T has a provider registered in the injector or any ancestor scope. Cheap; does not invoke the constructor.
 
 <a name="NewInjector"></a>
-## func [NewInjector](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/injector.go#L53>)
+## func [NewInjector](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/injector.go#L34>)
 
 ```go
 func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBuffer *telemetry.LogBuffer) do.Injector
@@ -95,7 +95,7 @@ func NewUsageFlushService(manager usageFlushOps, locker tickrunner.AdvisoryLocke
 NewUsageFlushService constructs the usage flush background service.
 
 <a name="ProvideAdminHandler"></a>
-## func [ProvideAdminHandler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L216>)
+## func [ProvideAdminHandler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L215>)
 
 ```go
 func ProvideAdminHandler(i do.Injector) (*admin.Handler, error)
@@ -131,7 +131,7 @@ func ProvideBucketAuth(i do.Injector) (*auth.BucketRegistry, error)
 ProvideBucketAuth creates the credential\-to\-bucket registry.
 
 <a name="ProvideCleanupWorker"></a>
-## func [ProvideCleanupWorker](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L113>)
+## func [ProvideCleanupWorker](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L109>)
 
 ```go
 func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error)
@@ -149,7 +149,7 @@ func ProvideDatabaseBreaker(i do.Injector) (*breaker.CircuitBreaker, error)
 ProvideDatabaseBreaker constructs the shared \*breaker.CircuitBreaker every driver\-level SQL statement forwards calls through.
 
 <a name="ProvideDrainManager"></a>
-## func [ProvideDrainManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L189>)
+## func [ProvideDrainManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L185>)
 
 ```go
 func ProvideDrainManager(i do.Injector) (*drain.Manager, error)
@@ -248,7 +248,7 @@ func ProvideNotificationOutbox(i do.Injector) (core.NotificationOutbox, error)
 ProvideNotificationOutbox aliases the wide MetadataStore as its NotificationOutbox role for the notifier worker.
 
 <a name="ProvideNotifier"></a>
-## func [ProvideNotifier](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L261>)
+## func [ProvideNotifier](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L260>)
 
 ```go
 func ProvideNotifier(i do.Injector) (*notify.Notifier, error)
@@ -266,7 +266,7 @@ func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error)
 ProvideObjectCache creates the in\-memory LRU object data cache.
 
 <a name="ProvideOverReplicationCleaner"></a>
-## func [ProvideOverReplicationCleaner](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L104>)
+## func [ProvideOverReplicationCleaner](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L100>)
 
 ```go
 func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleaner, error)
@@ -275,7 +275,7 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 ProvideOverReplicationCleaner constructs the over\-replication cleanup worker.
 
 <a name="ProvidePendingReaper"></a>
-## func [ProvidePendingReaper](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L136>)
+## func [ProvidePendingReaper](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L132>)
 
 ```go
 func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error)
@@ -293,7 +293,7 @@ func ProvideRateLimiter(i do.Injector) (*s3api.RateLimiter, error)
 ProvideRateLimiter creates the per\-IP rate limiter.
 
 <a name="ProvideRebalancer"></a>
-## func [ProvideRebalancer](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L86>)
+## func [ProvideRebalancer](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L82>)
 
 ```go
 func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error)
@@ -302,7 +302,7 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error)
 ProvideRebalancer constructs the rebalancer worker.
 
 <a name="ProvideReconciler"></a>
-## func [ProvideReconciler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L171>)
+## func [ProvideReconciler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L167>)
 
 ```go
 func ProvideReconciler(i do.Injector) (*worker.Reconciler, error)
@@ -320,7 +320,7 @@ func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, er
 ProvideRedisCounterBackend creates the shared Redis counter backend.
 
 <a name="ProvideReplicator"></a>
-## func [ProvideReplicator](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L95>)
+## func [ProvideReplicator](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L91>)
 
 ```go
 func ProvideReplicator(i do.Injector) (*worker.Replicator, error)
@@ -338,7 +338,7 @@ func ProvideS3Server(i do.Injector) (*s3api.Server, error)
 ProvideS3Server creates the S3\-compatible HTTP handler.
 
 <a name="ProvideScrubber"></a>
-## func [ProvideScrubber](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L152>)
+## func [ProvideScrubber](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L148>)
 
 ```go
 func ProvideScrubber(i do.Injector) (*worker.Scrubber, error)
@@ -356,7 +356,7 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error)
 ProvideUIHandler creates the web dashboard handler.
 
 <a name="WireAuditMetrics"></a>
-## func [WireAuditMetrics](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/injector.go#L138>)
+## func [WireAuditMetrics](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/injector.go#L119>)
 
 ```go
 func WireAuditMetrics()
@@ -402,7 +402,7 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error)
 ProvideBackends initializes all configured storage backends, wrapping each with a per\-backend circuit breaker when enabled.
 
 <a name="OptionalResult"></a>
-## type [OptionalResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/optional.go#L45-L49>)
+## type [OptionalResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/optional.go#L43-L47>)
 
 OptionalResult carries the outcome of an Optional\[T\] lookup. Callers pick the field they care about: Value for the resolved instance, Resolution for the operational classification, Err for the failure detail when Resolution is Failed.
 
@@ -415,7 +415,7 @@ type OptionalResult[T any] struct {
 ```
 
 <a name="Optional"></a>
-### func [Optional](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/optional.go#L67>)
+### func [Optional](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/optional.go#L65>)
 
 ```go
 func Optional[T any](inj do.Injector) OptionalResult[T]
@@ -424,7 +424,7 @@ func Optional[T any](inj do.Injector) OptionalResult[T]
 Optional resolves T as an optional dependency. Inspects the injector's registered service list first so a missing provider is distinguished from a constructor failure: a Disabled result means the feature was never wired in this run mode, while a Failed result means a provider was wired but its constructor \(or a transitive dependency it tried to resolve\) returned an error.
 
 <a name="OptionalResult[T].Applied"></a>
-### func \(OptionalResult\[T\]\) [Applied](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/optional.go#L55>)
+### func \(OptionalResult\[T\]\) [Applied](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/optional.go#L53>)
 
 ```go
 func (r OptionalResult[T]) Applied() bool
@@ -433,7 +433,7 @@ func (r OptionalResult[T]) Applied() bool
 Applied reports whether the provider resolved cleanly.
 
 <a name="OptionalResult[T].Disabled"></a>
-### func \(OptionalResult\[T\]\) [Disabled](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/optional.go#L52>)
+### func \(OptionalResult\[T\]\) [Disabled](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/optional.go#L50>)
 
 ```go
 func (r OptionalResult[T]) Disabled() bool
@@ -442,7 +442,7 @@ func (r OptionalResult[T]) Disabled() bool
 Disabled reports whether the underlying provider was not registered.
 
 <a name="OptionalResult[T].Failed"></a>
-### func \(OptionalResult\[T\]\) [Failed](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/optional.go#L59>)
+### func \(OptionalResult\[T\]\) [Failed](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/optional.go#L57>)
 
 ```go
 func (r OptionalResult[T]) Failed() bool
@@ -459,13 +459,16 @@ Resolution classifies the outcome of an optional dependency lookup.
 type Resolution string
 ```
 
-<a name="ResolutionDisabled"></a>Resolution values. Disabled means no provider was registered for T; Applied means a provider resolved cleanly; Failed means a provider was registered but construction or dependency wiring returned an error. The three outcomes are deliberately distinct so a missing optional feature does not look like a broken one in startup logs.
+<a name="ResolutionDisabled"></a>
 
 ```go
 const (
+    // ResolutionDisabled means no provider was registered for T.
     ResolutionDisabled Resolution = "disabled"
-    ResolutionApplied  Resolution = "applied"
-    ResolutionFailed   Resolution = "failed"
+    // ResolutionApplied means the provider resolved cleanly.
+    ResolutionApplied Resolution = "applied"
+    // ResolutionFailed means the provider was registered but construction failed.
+    ResolutionFailed Resolution = "failed"
 )
 ```
 
