@@ -269,7 +269,7 @@ func topLevelFieldsChanged(old, new *Config) []string {
 	if old.UI != new.UI {
 		changed = append(changed, "ui")
 	}
-	if old.CircuitBreaker != new.CircuitBreaker {
+	if circuitBreakerChanged(old.CircuitBreaker, new.CircuitBreaker) {
 		changed = append(changed, "circuit_breaker")
 	}
 	if old.BackendCircuitBreaker != new.BackendCircuitBreaker {
@@ -287,7 +287,26 @@ func topLevelFieldsChanged(old, new *Config) []string {
 	return changed
 }
 
-// redisFieldsChanged handles the *RedisConfig pointer-nullable case  - 
+// circuitBreakerChanged is field-by-field because *bool DegradedReadsEnabled defeats ==.
+func circuitBreakerChanged(old, next CircuitBreakerConfig) bool {
+	if old.FailureThreshold != next.FailureThreshold ||
+		old.OpenTimeout != next.OpenTimeout ||
+		old.CacheTTL != next.CacheTTL ||
+		old.ParallelBroadcast != next.ParallelBroadcast ||
+		old.DegradedBroadcastParallelism != next.DegradedBroadcastParallelism {
+		return true
+	}
+	return derefBoolDefault(old.DegradedReadsEnabled, true) != derefBoolDefault(next.DegradedReadsEnabled, true)
+}
+
+func derefBoolDefault(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+// redisFieldsChanged handles the *RedisConfig pointer-nullable case  -
 // either presence change or struct inequality counts as a diff.
 func redisFieldsChanged(old, new *RedisConfig) []string {
 	oldHas := old != nil

@@ -17,7 +17,19 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+
+	dto "github.com/prometheus/client_model/go"
 )
+
+// gaugeValue reads the current scalar value of a Prometheus Gauge.
+func gaugeValue(t *testing.T) float64 {
+	t.Helper()
+	var m dto.Metric
+	if err := DegradedModeActive.Write(&m); err != nil {
+		t.Fatalf("write gauge: %v", err)
+	}
+	return m.GetGauge().GetValue()
+}
 
 // TestNewCircuitBreakerHook_EmitsOpenEvent confirms the closed->open
 // transition emits a BackendCircuitOpened event with failure context.
@@ -99,4 +111,29 @@ func TestNewCircuitBreakerHook_NilEmitIsSafe(t *testing.T) {
 		From: breaker.StateClosed,
 		To:   breaker.StateOpen,
 	})
+}
+
+// TestNewDatabaseBreakerHook_GaugeFollowsState pins the DegradedModeActive
+// gauge to the DB breaker: 1 on open/half-open, 0 on closed.
+func TestNewDatabaseBreakerHook_GaugeFollowsState(t *testing.T) {
+	event.Emit = nil
+	hook := NewDatabaseBreakerHook("db")
+	if got := gaugeValue(t); got != 0 {
+		t.Fatalf("initial gauge = %v, want 0", got)
+	}
+
+	hook(breaker.StateChangeInfo{Name: "db", From: breaker.StateClosed, To: breaker.StateOpen})
+	if got := gaugeValue(t); got != 1 {
+		t.Errorf("after open gauge = %v, want 1", got)
+	}
+
+	hook(breaker.StateChangeInfo{Name: "db", From: breaker.StateOpen, To: breaker.StateHalfOpen})
+	if got := gaugeValue(t); got != 1 {
+		t.Errorf("after half-open gauge = %v, want 1", got)
+	}
+
+	hook(breaker.StateChangeInfo{Name: "db", From: breaker.StateHalfOpen, To: breaker.StateClosed})
+	if got := gaugeValue(t); got != 0 {
+		t.Errorf("after closed gauge = %v, want 0", got)
+	}
 }
