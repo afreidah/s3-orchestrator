@@ -86,21 +86,16 @@ type Failover struct {
 	stores            core.MetadataStore
 	cache             LocationCache
 	parallelBroadcast bool
-	// degradedBroadcastParallelism caps the number of backends probed
-	// concurrently during a parallel degraded broadcast. 0 means no
-	// cap (every backend probed at once, the historical behaviour).
-	// See #858.
+	// degradedBroadcastParallelism caps concurrent probes in a parallel broadcast; 0 means uncapped.
 	degradedBroadcastParallelism int
-	log                          *slog.Logger
+	// degradedReadsEnabled false makes degraded reads fail fast instead of broadcasting.
+	degradedReadsEnabled bool
+	log                  *slog.Logger
 }
 
-// New constructs a Failover. parallelBroadcast selects between
-// sequential and per-backend-goroutine broadcasts in degraded mode.
-// degradedBroadcastParallelism caps how many backends a parallel
-// broadcast probes concurrently (0 means no cap, i.e. every backend at
-// once). The component-scoped logger is built in the constructor body
-// per the project's logging convention.
-func New(infraCore Core, stores core.MetadataStore, cache LocationCache, parallelBroadcast bool, degradedBroadcastParallelism int) *Failover {
+// New constructs a Failover. When degradedReadsEnabled is false, a DB
+// outage surfaces as ErrServiceUnavailable instead of broadcasting.
+func New(infraCore Core, stores core.MetadataStore, cache LocationCache, parallelBroadcast bool, degradedBroadcastParallelism int, degradedReadsEnabled bool) *Failover {
 	must.NotNil("core", infraCore)
 	must.NotNil("stores", stores)
 	must.NotNil("cache", cache)
@@ -110,6 +105,7 @@ func New(infraCore Core, stores core.MetadataStore, cache LocationCache, paralle
 		cache:                        cache,
 		parallelBroadcast:            parallelBroadcast,
 		degradedBroadcastParallelism: degradedBroadcastParallelism,
+		degradedReadsEnabled:         degradedReadsEnabled,
 		log:                          slog.Default().With(logfmt.Component("readpath")),
 	}
 }
@@ -210,9 +206,21 @@ func failoverFailureResult(span trace.Span, operation string, locations []core.O
 // broadcastRead tries all backends when the DB is unavailable. Checks
 // the location cache first for a known-good backend, then dispatches
 // to either parallel or sequential broadcast based on configuration.
-func (f *Failover) broadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, probe Probe) (string, error) {
+func (f *Failover) broadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, probe Probe) (winner string, retErr error) {
 	span.SetAttributes(telemetry.AttrDegradedMode.Bool(true))
 	telemetry.DegradedReadsTotal.WithLabelValues(operation).Inc()
+
+	if !f.degradedReadsEnabled {
+		observe.MarkSpanError(span, "degraded reads disabled by operator")
+		return "", core.ErrServiceUnavailable
+	}
+
+	bcStart := time.Now()
+	cacheHit := false
+	defer func() {
+		telemetry.DegradedBroadcastDuration.WithLabelValues(operation, broadcastOutcome(cacheHit, retErr)).
+			Observe(time.Since(bcStart).Seconds())
+	}()
 
 	// --- Check location cache first ---
 	if cachedBackend, ok := f.cache.Get(key); ok {
@@ -226,6 +234,7 @@ func (f *Failover) broadcastRead(ctx context.Context, operation, key string, sta
 				span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 				span.SetStatus(codes.Ok, "")
 				telemetry.DegradedCacheHitsTotal.Inc()
+				cacheHit = true
 				return cachedBackend, nil
 			}
 			// Cache hit but backend failed - fall through to broadcast.
@@ -238,6 +247,24 @@ func (f *Failover) broadcastRead(ctx context.Context, operation, key string, sta
 		concurrency = len(f.core.BackendOrder())
 	}
 	return f.tryAllBackends(ctx, operation, key, start, span, concurrency, probe)
+}
+
+// broadcastOutcome classifies the terminal state of a degraded broadcast
+// for the DegradedBroadcastDuration histogram label. cache_hit and
+// success are both wins; not_found is "all backends agreed the key is
+// missing"; error covers any other failure (provider divergence,
+// network, usage limits).
+func broadcastOutcome(cacheHit bool, err error) string {
+	switch {
+	case cacheHit:
+		return "cache_hit"
+	case err == nil:
+		return "success"
+	case errors.Is(err, core.ErrObjectNotFound):
+		return "not_found"
+	default:
+		return "error"
+	}
 }
 
 // tryAllBackends dispatches to the sequential or parallel branch based

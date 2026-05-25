@@ -85,4 +85,21 @@ var (
 		[]string{"operation", "failed_backend", "success_backend"},
 	)
 
+	// DegradedModeActive is 1 when the DB breaker is open or half-open.
+	DegradedModeActive = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3o_degraded_mode_active",
+			Help: "1 when the read path is currently in degraded mode (DB unavailable), 0 otherwise",
+		},
+	)
+
+	// DegradedBroadcastDuration is the wall-clock duration of degraded-mode broadcast reads.
+	DegradedBroadcastDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "s3o_degraded_broadcast_duration_seconds",
+			Help:    "Wall-clock duration of degraded-mode broadcast reads, terminal outcome labelled.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"operation", "outcome"},
+	)
 )

@@ -65,9 +65,11 @@ type Deps struct {
 	ObjectCache       objcache.ObjectCache
 	ParallelBroadcast bool
 	// DegradedBroadcastParallelism caps concurrent probes during
-	// parallel degraded-mode broadcasts. 0 = uncapped. See #858.
+	// parallel degraded-mode broadcasts. 0 = uncapped.
 	DegradedBroadcastParallelism int
-	IntegrityCfg                 *syncutil.AtomicConfig[config.IntegrityConfig]
+	// DisableDegradedReads makes the degraded path fail fast instead of broadcasting.
+	DisableDegradedReads bool
+	IntegrityCfg         *syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
 // New creates a Manager sharing the given core infrastructure and
@@ -93,7 +95,7 @@ func New(d *Deps) *Manager {
 		objectCache:       d.ObjectCache,
 		parallelBroadcast: d.ParallelBroadcast,
 		integrityCfg:      d.IntegrityCfg,
-		failover:          readpath.New(d.Core, d.Stores, d.LocationCache, d.ParallelBroadcast, d.DegradedBroadcastParallelism),
+		failover:          readpath.New(d.Core, d.Stores, d.LocationCache, d.ParallelBroadcast, d.DegradedBroadcastParallelism, !d.DisableDegradedReads),
 		log:               slog.Default().With(logfmt.Component("object")),
 	}
 }
