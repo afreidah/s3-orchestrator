@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -81,6 +82,89 @@ func TestStoreInt_WithAdvisoryLock_PropagatesFnError(t *testing.T) {
 	// Confirm the lock was released.
 	if got, err := s.WithAdvisoryLock(ctx, lockID, func(ctx context.Context) error { return nil }); err != nil || !got {
 		t.Errorf("re-acquire after fn error: got=%v err=%v", got, err)
+	}
+}
+
+// TestStoreInt_WithAdvisoryLock_ConcurrentExclusivity pins the most
+// load-bearing invariant in the worker fleet: two acquirers of the
+// same lockID never run their fn concurrently. Without this the
+// leader-election story collapses and every background worker
+// (replicator, rebalancer, cleanup, drain, etc.) could run twice in
+// parallel across instances.
+func TestStoreInt_WithAdvisoryLock_ConcurrentExclusivity(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	lockID := int64(123458)
+
+	// A holds the lock for 200ms. B races to acquire while A is in fn.
+	// pg_try_advisory_lock returns false on contention (no wait), so B
+	// must see (false, nil).
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var aRan, bRan atomic.Bool
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		got, err := s.WithAdvisoryLock(ctx, lockID, func(ctx context.Context) error {
+			aRan.Store(true)
+			close(started)
+			<-release
+			return nil
+		})
+		if err != nil || !got {
+			t.Errorf("A: got=%v err=%v, want true,nil", got, err)
+		}
+	}()
+
+	<-started
+	gotB, errB := s.WithAdvisoryLock(ctx, lockID, func(ctx context.Context) error {
+		bRan.Store(true)
+		return nil
+	})
+	if errB != nil {
+		t.Errorf("B err = %v, want nil", errB)
+	}
+	if gotB {
+		t.Error("B acquired the lock while A held it")
+	}
+	if bRan.Load() {
+		t.Error("B's fn ran despite A holding the lock")
+	}
+
+	close(release)
+	wg.Wait()
+
+	if !aRan.Load() {
+		t.Error("A's fn did not run")
+	}
+
+	// Lock released; a fresh acquire must succeed.
+	got, err := s.WithAdvisoryLock(ctx, lockID, func(ctx context.Context) error { return nil })
+	if err != nil || !got {
+		t.Errorf("post-release acquire: got=%v err=%v, want true,nil", got, err)
+	}
+}
+
+// TestStoreInt_WithAdvisoryLock_ReleasedOnPanic confirms the deferred
+// pg_advisory_unlock fires even when fn panics, so a worker bug cannot
+// permanently strand a lockID.
+func TestStoreInt_WithAdvisoryLock_ReleasedOnPanic(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	lockID := int64(123459)
+
+	func() {
+		defer func() { _ = recover() }()
+		_, _ = s.WithAdvisoryLock(ctx, lockID, func(ctx context.Context) error {
+			panic("simulated fn panic")
+		})
+	}()
+
+	got, err := s.WithAdvisoryLock(ctx, lockID, func(ctx context.Context) error { return nil })
+	if err != nil || !got {
+		t.Errorf("re-acquire after fn panic: got=%v err=%v, want true,nil (lock should have been released)", got, err)
 	}
 }
 
