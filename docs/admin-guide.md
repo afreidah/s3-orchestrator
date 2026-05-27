@@ -288,6 +288,25 @@ For GCS backends, you typically need both `disable_checksum: true` and `strip_sd
     strip_sdk_headers: true
 ```
 
+**Credential source:** `credential_source` selects how the orchestrator obtains credentials for the backend. Default is `static`, which uses the `access_key_id` / `secret_access_key` fields above. Set to `default_chain` to delegate to the AWS SDK's default credential chain (env vars, EC2 IMDS, SSO, `~/.aws/credentials`, STS assume-role). When `default_chain` is set, the two key fields must be omitted — leaving stale keys behind is rejected at validation so they cannot silently shadow the SDK-resolved credentials.
+
+Use `default_chain` when:
+
+- The orchestrator runs on an EC2 instance with an IAM role attached (IMDS-vended credentials rotate every ~6 hours and cannot be tracked by YAML).
+- Local development uses SSO (`aws sso login`) instead of long-lived keys.
+- You want the SDK to resolve credentials via STS assume-role chains.
+
+```yaml
+  - name: "aws-prod"
+    endpoint: "https://s3.amazonaws.com"
+    region: "us-east-1"
+    bucket: "my-prod-bucket"
+    credential_source: "default_chain"
+    # access_key_id / secret_access_key intentionally omitted
+```
+
+Note: the config loader already expands `${ENV_VAR}` references at load time, so `access_key_id: ${AWS_ACCESS_KEY_ID}` covers the env-var case under `credential_source: static`. Use `default_chain` for credential sources the loader cannot reach (IMDS, SSO, STS) and for cases where refresh matters.
+
 ### telemetry
 
 ```yaml

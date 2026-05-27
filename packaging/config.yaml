@@ -56,6 +56,7 @@ backends:
     endpoint: ${BACKEND1_ENDPOINT}
     region: ${BACKEND1_REGION}
     bucket: ${BACKEND1_BUCKET}
+    # credential_source: static    # "static" (default, uses keys below) or "default_chain" (AWS SDK: env, IMDS, SSO, STS)
     access_key_id: ${BACKEND1_ACCESS_KEY}
     secret_access_key: ${BACKEND1_SECRET_KEY}
     # force_path_style: false
@@ -65,6 +66,14 @@ backends:
     # api_request_limit: 0         # Monthly API request cap (0 = unlimited)
     # egress_byte_limit: 0         # Monthly egress cap (0 = unlimited)
     # ingress_byte_limit: 0        # Monthly ingress cap (0 = unlimited)
+
+  # Example: EC2 instance role / SSO / STS (no long-lived keys in YAML).
+  # - name: aws-prod
+  #   endpoint: https://s3.amazonaws.com
+  #   region: us-east-1
+  #   bucket: my-prod-bucket
+  #   credential_source: default_chain
+  #   # access_key_id / secret_access_key intentionally omitted
 
 # --- Object routing ---
 # routing_strategy: pack          # "pack" fills backends sequentially, "spread" distributes evenly
