@@ -28,6 +28,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	smithymiddleware "github.com/aws/smithy-go/middleware"
@@ -112,11 +113,17 @@ func newBackendTransport() *http.Transport {
 // NewS3Backend creates a new S3-compatible backend client. Uses BaseEndpoint
 // to direct requests to the configured provider instead of AWS. Each backend
 // gets a dedicated HTTP transport with tuned connection pool settings.
-func NewS3Backend(cfg *config.BackendConfig) (*S3Backend, error) {
+// ctx is used for the default-chain credential probe (IMDS, SSO, STS); the
+// resulting provider continues to refresh in the background after Init.
+func NewS3Backend(ctx context.Context, cfg *config.BackendConfig) (*S3Backend, error) {
+	creds, err := resolveCredentials(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials for backend %q: %w", cfg.Name, err)
+	}
 	// --- Create S3 client with custom endpoint and transport ---
 	opts := s3.Options{
 		Region:       cfg.Region,
-		Credentials:  credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
+		Credentials:  creds,
 		BaseEndpoint: aws.String(cfg.Endpoint),
 		UsePathStyle: cfg.ForcePathStyle,
 		HTTPClient:   &http.Client{Transport: newBackendTransport()},
@@ -468,6 +475,27 @@ func stripSDKHeadersMiddleware(stack *smithymiddleware.Stack) error {
 // into memory. Body integrity is still protected by TLS at the transport layer.
 func withUnsignedPayload(o *s3.Options) {
 	o.APIOptions = append(o.APIOptions, v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware)
+}
+
+// resolveCredentials selects the credentials provider for cfg based on
+// CredentialSource. "static" uses the configured access/secret keys;
+// "default_chain" delegates to the AWS SDK default chain (env, EC2 IMDS,
+// SSO, ~/.aws, STS). The config validator has already rejected an
+// unknown source by the time this runs, so the default arm is reached
+// only via direct test wiring.
+func resolveCredentials(ctx context.Context, cfg *config.BackendConfig) (aws.CredentialsProvider, error) {
+	switch cfg.CredentialSource {
+	case "", config.CredentialSourceStatic:
+		return credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, ""), nil
+	case config.CredentialSourceDefaultChain:
+		loaded, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Region))
+		if err != nil {
+			return nil, fmt.Errorf("load default credential chain: %w", err)
+		}
+		return loaded.Credentials, nil
+	default:
+		return nil, fmt.Errorf("unsupported credential_source %q", cfg.CredentialSource)
+	}
 }
 
 // recordOperation updates Prometheus metrics for a backend operation.

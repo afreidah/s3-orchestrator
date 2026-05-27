@@ -65,7 +65,7 @@ func Run(args []string, stderr io.Writer) int { // codecov:ignore -- CLI entry p
 	}
 	defer adminDB.Close()
 
-	s3b, err := backend.NewS3Backend(backendCfg)
+	s3b, err := backend.NewS3Backend(ctx, backendCfg)
 	if err != nil {
 		synccmdLogger().ErrorContext(ctx, "failed to initialize backend", slog.String("backend", backendCfg.Name), "error", err)
 		return 1
