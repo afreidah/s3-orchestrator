@@ -294,7 +294,7 @@ func TestMain(m *testing.M) {
 	backends := make(map[string]s3be.ObjectBackend)
 	var backendOrder []string
 	for _, bcfg := range cfg.Backends {
-		b, err := s3be.NewS3Backend(&bcfg)
+		b, err := s3be.NewS3Backend(context.Background(), &bcfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to create backend %s: %v\n", bcfg.Name, err)
 			os.Exit(1)
@@ -989,7 +989,7 @@ func newTestS3Backend(t *testing.T, name string) *s3be.S3Backend {
 		t.Fatalf("unknown backend %q", name)
 	}
 
-	backend, err := s3be.NewS3Backend(&cfg)
+	backend, err := s3be.NewS3Backend(context.Background(), &cfg)
 	if err != nil {
 		t.Fatalf("NewS3Backend(%s): %v", name, err)
 	}

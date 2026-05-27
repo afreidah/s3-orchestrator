@@ -2942,7 +2942,7 @@ func TestListObjectsFromBackend(t *testing.T) {
 	}
 
 	// Use S3Backend.ListObjects to scan the bucket
-	backend, err := s3be.NewS3Backend(&config.BackendConfig{
+	backend, err := s3be.NewS3Backend(context.Background(), &config.BackendConfig{
 		Name:            "minio-1",
 		Endpoint:        envOrDefault("MINIO1_ENDPOINT", "http://localhost:19000"),
 		Region:          "us-east-1",

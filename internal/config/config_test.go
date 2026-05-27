@@ -2993,6 +2993,83 @@ func TestBackendValidation_MissingFields(t *testing.T) {
 	}
 }
 
+// TestBackendValidation_DefaultChainAcceptsEmptyKeys pins that a
+// backend with credential_source=default_chain validates cleanly when
+// no static keys are configured.
+func TestBackendValidation_DefaultChainAcceptsEmptyKeys(t *testing.T) {
+	t.Parallel()
+	errs := validateBackends([]BackendConfig{{
+		Name: "b1", Endpoint: "https://s3.amazonaws.com", Bucket: "b",
+		CredentialSource: CredentialSourceDefaultChain,
+	}})
+	for _, e := range errs {
+		if errors.Is(e, ErrAccessKeyIDReqd) || errors.Is(e, ErrSecretAccessKeyReqd) {
+			t.Errorf("default_chain backend should not require static keys: %v", e)
+		}
+	}
+}
+
+// TestBackendValidation_DefaultChainRejectsStaticKeys ensures stale
+// keys left in a default_chain backend are flagged rather than silently
+// shadowing the SDK-resolved credentials.
+func TestBackendValidation_DefaultChainRejectsStaticKeys(t *testing.T) {
+	t.Parallel()
+	errs := validateBackends([]BackendConfig{{
+		Name: "b1", Endpoint: "https://s3.amazonaws.com", Bucket: "b",
+		AccessKeyID: "ak", SecretAccessKey: "sk",
+		CredentialSource: CredentialSourceDefaultChain,
+	}})
+	found := false
+	for _, e := range errs {
+		if errors.Is(e, ErrCredentialsWithDefaultChain) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected ErrCredentialsWithDefaultChain, got %v", errs)
+	}
+}
+
+// TestBackendValidation_StaticDefaultsRequireKeys keeps the original
+// validation behaviour intact when CredentialSource is unset (defaults
+// to "static").
+func TestBackendValidation_StaticDefaultsRequireKeys(t *testing.T) {
+	t.Parallel()
+	errs := validateBackends([]BackendConfig{{
+		Name: "b1", Endpoint: "https://s3.example.com", Bucket: "b",
+	}})
+	foundAK, foundSK := false, false
+	for _, e := range errs {
+		if errors.Is(e, ErrAccessKeyIDReqd) {
+			foundAK = true
+		}
+		if errors.Is(e, ErrSecretAccessKeyReqd) {
+			foundSK = true
+		}
+	}
+	if !foundAK || !foundSK {
+		t.Errorf("static (default) must require both keys: foundAK=%v foundSK=%v errs=%v", foundAK, foundSK, errs)
+	}
+}
+
+// TestBackendValidation_UnknownCredentialSourceRejected pins that a
+// typo in credential_source surfaces as a typed error rather than
+// silently defaulting.
+func TestBackendValidation_UnknownCredentialSourceRejected(t *testing.T) {
+	t.Parallel()
+	errs := validateBackends([]BackendConfig{{
+		Name: "b1", Endpoint: "https://s3.example.com", Bucket: "b",
+		AccessKeyID: "ak", SecretAccessKey: "sk",
+		CredentialSource: "imds_only",
+	}})
+	for _, e := range errs {
+		if errors.Is(e, ErrInvalidCredentialSource) {
+			return
+		}
+	}
+	t.Errorf("expected ErrInvalidCredentialSource, got %v", errs)
+}
+
 // TestBackendValidation_NegativeMaxObjectSize verifies the backend validation negative max object size path by exercising strings.Contains, e.Error.
 func TestBackendValidation_NegativeMaxObjectSize(t *testing.T) {
 	t.Parallel()

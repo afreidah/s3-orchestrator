@@ -522,6 +522,12 @@ backends:
     endpoint: "https://namespace.compat.objectstorage.region.oraclecloud.com"
     region: "us-phoenix-1"
     bucket: "my-bucket"
+    # credential_source: "static" | "default_chain"  (default: "static")
+    #   static        - read access_key_id / secret_access_key from this block (current behaviour).
+    #   default_chain - resolve credentials via the AWS SDK chain (env, EC2 IMDS, SSO, ~/.aws, STS).
+    #                   Required for IMDS-vended roles on EC2 (rotate every ~6h) and SSO-based local dev.
+    #                   When set, access_key_id and secret_access_key MUST be omitted.
+    credential_source: "static"
     access_key_id: "backend-access-key"
     secret_access_key: "backend-secret-key"
     force_path_style: true
@@ -533,6 +539,13 @@ backends:
     api_request_limit: 0      # monthly API request limit (0 = unlimited)
     egress_byte_limit: 0      # monthly egress byte limit (0 = unlimited)
     ingress_byte_limit: 0     # monthly ingress byte limit (0 = unlimited)
+
+  # Example: running on EC2 with an instance role; no long-lived keys in YAML.
+  # - name: "aws-prod"
+  #   endpoint: "https://s3.amazonaws.com"
+  #   region: "us-east-1"
+  #   bucket: "my-prod-bucket"
+  #   credential_source: "default_chain"
 
 telemetry:
   metrics:

@@ -73,6 +73,10 @@ var (
 	ErrNegativeAPILimit    = errors.New("api_request_limit must not be negative")
 	ErrNegativeEgress      = errors.New("egress_byte_limit must not be negative")
 	ErrNegativeIngress     = errors.New("ingress_byte_limit must not be negative")
+	// ErrInvalidCredentialSource: unknown credential_source value (allowed: "static", "default_chain").
+	ErrInvalidCredentialSource = errors.New(`credential_source must be "static" or "default_chain"`)
+	// ErrCredentialsWithDefaultChain: static keys present alongside credential_source=default_chain.
+	ErrCredentialsWithDefaultChain = errors.New("access_key_id/secret_access_key must be empty when credential_source is default_chain")
 )
 
 // Server and TLS errors.

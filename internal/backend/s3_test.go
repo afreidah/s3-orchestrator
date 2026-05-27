@@ -63,7 +63,7 @@ func TestNewS3Backend_UnsignedPayloadDefaults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			backend, err := NewS3Backend(&config.BackendConfig{
+			backend, err := NewS3Backend(t.Context(), &config.BackendConfig{
 				Name:            "test",
 				Endpoint:        tt.endpoint,
 				Region:          "us-east-1",
@@ -102,7 +102,7 @@ func TestNewS3Backend_DisableChecksum(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewS3Backend(&config.BackendConfig{
+			_, err := NewS3Backend(t.Context(), &config.BackendConfig{
 				Name:            "test",
 				Endpoint:        "https://storage.googleapis.com",
 				Region:          "us",
@@ -115,6 +115,28 @@ func TestNewS3Backend_DisableChecksum(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+// TestNewS3Backend_DefaultChainConstructs pins that a backend with
+// CredentialSource=default_chain wires the AWS SDK default-chain
+// provider instead of static keys. Construction must succeed; actual
+// resolution happens lazily on first request and is exercised by the
+// integration suite when run against an AWS-attached instance.
+func TestNewS3Backend_DefaultChainConstructs(t *testing.T) {
+	t.Parallel()
+	be, err := NewS3Backend(t.Context(), &config.BackendConfig{
+		Name:             "test-default-chain",
+		Endpoint:         "https://s3.amazonaws.com",
+		Region:           "us-east-1",
+		Bucket:           "test-bucket",
+		CredentialSource: config.CredentialSourceDefaultChain,
+	})
+	if err != nil {
+		t.Fatalf("default_chain construction failed: %v", err)
+	}
+	if be == nil {
+		t.Fatal("default_chain returned nil backend")
 	}
 }
 
@@ -138,7 +160,7 @@ func TestNewS3Backend_StripSDKHeaders(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewS3Backend(&config.BackendConfig{
+			_, err := NewS3Backend(t.Context(), &config.BackendConfig{
 				Name:            "test",
 				Endpoint:        "https://storage.googleapis.com",
 				Region:          "auto",

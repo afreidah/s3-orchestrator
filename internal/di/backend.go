@@ -14,6 +14,7 @@
 package di
 
 import (
+	"context"
 	"crypto/tls"
 	"log/slog"
 
@@ -67,7 +68,7 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 
 	for idx := range cfg.Backends {
 		bcfg := &cfg.Backends[idx]
-		s3be, err := backend.NewS3Backend(bcfg)
+		s3be, err := backend.NewS3Backend(context.Background(), bcfg)
 		if err != nil {
 			return nil, err
 		}
