@@ -148,6 +148,15 @@ var (
         },
         []string{"operation", "outcome"},
     )
+
+    // DegradedBroadcastMixedOutcomesTotal counts broadcasts where some backends returned 404 and others failed differently.
+    DegradedBroadcastMixedOutcomesTotal = promauto.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "s3o_degraded_broadcast_mixed_outcomes_total",
+            Help: "Broadcasts where the all-failed terminal saw both 404 and non-404 failures across backends. Surfaces provider divergence or transient backend storms hidden under not_found.",
+        },
+        []string{"operation"},
+    )
 )
 ```
 
