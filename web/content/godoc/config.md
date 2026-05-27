@@ -13,6 +13,7 @@ Package config provides YAML configuration loading with environment variable exp
 
 ## Index
 
+- [Constants](<#constants>)
 - [Variables](<#variables>)
 - [func NonReloadableFieldsChanged\(old, new \*Config\) \[\]string](<#NonReloadableFieldsChanged>)
 - [func ParseLogLevel\(s string\) slog.Level](<#ParseLogLevel>)
@@ -53,6 +54,19 @@ Package config provides YAML configuration loading with environment variable exp
 - [type VaultTransitConfig](<#VaultTransitConfig>)
 - [type WritePathConfig](<#WritePathConfig>)
 
+
+## Constants
+
+<a name="CredentialSourceStatic"></a>CredentialSourceStatic and friends enumerate the supported credential\_source values.
+
+```go
+const (
+    // CredentialSourceStatic uses access_key_id / secret_access_key from the config (current default behaviour).
+    CredentialSourceStatic = "static"
+    // CredentialSourceDefaultChain resolves credentials via the AWS SDK default chain (env, IMDS, SSO, ~/.aws, STS).
+    CredentialSourceDefaultChain = "default_chain"
+)
+```
 
 ## Variables
 
@@ -96,6 +110,10 @@ var (
     ErrNegativeAPILimit    = errors.New("api_request_limit must not be negative")
     ErrNegativeEgress      = errors.New("egress_byte_limit must not be negative")
     ErrNegativeIngress     = errors.New("ingress_byte_limit must not be negative")
+    // ErrInvalidCredentialSource: unknown credential_source value (allowed: "static", "default_chain").
+    ErrInvalidCredentialSource = errors.New(`credential_source must be "static" or "default_chain"`)
+    // ErrCredentialsWithDefaultChain: static keys present alongside credential_source=default_chain.
+    ErrCredentialsWithDefaultChain = errors.New("access_key_id/secret_access_key must be empty when credential_source is default_chain")
 )
 ```
 
@@ -254,18 +272,20 @@ type BackendCircuitBreakerConfig struct {
 ```
 
 <a name="BackendConfig"></a>
-## type [BackendConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/backends.go#L18-L34>)
+## type [BackendConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/backends.go#L26-L44>)
 
 BackendConfig holds configuration for an S3\-compatible storage backend.
 
 ```go
 type BackendConfig struct {
-    Name             string `yaml:"name"`               // Identifier for metrics/tracing
-    Endpoint         string `yaml:"endpoint"`           // S3-compatible endpoint URL
-    Region           string `yaml:"region"`             // AWS region or equivalent
-    Bucket           string `yaml:"bucket"`             // Target bucket name
-    AccessKeyID      string `yaml:"access_key_id"`      // AWS access key ID
-    SecretAccessKey  string `yaml:"secret_access_key"`  // AWS secret access key
+    Name            string `yaml:"name"`              // Identifier for metrics/tracing
+    Endpoint        string `yaml:"endpoint"`          // S3-compatible endpoint URL
+    Region          string `yaml:"region"`            // AWS region or equivalent
+    Bucket          string `yaml:"bucket"`            // Target bucket name
+    AccessKeyID     string `yaml:"access_key_id"`     // AWS access key ID (required when credential_source is "static")
+    SecretAccessKey string `yaml:"secret_access_key"` // AWS secret access key (required when credential_source is "static")
+    // CredentialSource selects how credentials are resolved: "static" (default, uses keys above) or "default_chain" (AWS SDK chain: env, IMDS, SSO, STS).
+    CredentialSource string `yaml:"credential_source"`
     ForcePathStyle   bool   `yaml:"force_path_style"`   // Use path-style URLs
     UnsignedPayload  *bool  `yaml:"unsigned_payload"`   // Skip SigV4 payload hash to stream uploads without buffering (default: true)
     DisableChecksum  bool   `yaml:"disable_checksum"`   // Disable SDK default checksums for GCS and other providers that reject them (default: false)

@@ -104,16 +104,16 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error)
 ProvideAdminHandler creates the admin API handler.
 
 <a name="ProvideBackendManager"></a>
-## func [ProvideBackendManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L229>)
+## func [ProvideBackendManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L232>)
 
 ```go
 func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error)
 ```
 
-ProvideBackendManager creates the central orchestration manager with the narrow per\-role store interfaces supplied.
+ProvideBackendManager creates the central orchestration manager with the narrow per\-role store interfaces supplied. Also installs a recovery listener on the DB breaker so the degraded\-mode location cache is cleared the moment the DB transitions back to closed.
 
 <a name="ProvideBreakerRegistry"></a>
-## func [ProvideBreakerRegistry](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L114>)
+## func [ProvideBreakerRegistry](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L115>)
 
 ```go
 func ProvideBreakerRegistry(i do.Injector) (*breaker.Registry, error)
@@ -167,7 +167,7 @@ func ProvideEncryptionAdmin(i do.Injector) (core.EncryptionAdmin, error)
 ProvideEncryptionAdmin aliases the wide MetadataStore as its EncryptionAdmin role for the admin HTTP handler's key rotation and encrypt/decrypt batch ops.
 
 <a name="ProvideEncryptionProvider"></a>
-## func [ProvideEncryptionProvider](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L159>)
+## func [ProvideEncryptionProvider](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L160>)
 
 ```go
 func ProvideEncryptionProvider(i do.Injector) (encryption.KeyProvider, error)
@@ -176,7 +176,7 @@ func ProvideEncryptionProvider(i do.Injector) (encryption.KeyProvider, error)
 ProvideEncryptionProvider creates the key provider for admin key rotation operations. Only registered when encryption is enabled.
 
 <a name="ProvideEncryptor"></a>
-## func [ProvideEncryptor](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L135>)
+## func [ProvideEncryptor](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L136>)
 
 ```go
 func ProvideEncryptor(i do.Injector) (*encryption.Encryptor, error)
@@ -257,7 +257,7 @@ func ProvideNotifier(i do.Injector) (*notify.Notifier, error)
 ProvideNotifier creates the webhook notification system.
 
 <a name="ProvideObjectCache"></a>
-## func [ProvideObjectCache](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L200>)
+## func [ProvideObjectCache](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L201>)
 
 ```go
 func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error)
@@ -311,7 +311,7 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error)
 ProvideReconciler constructs the bucket reconciler worker. Registered only in worker/all modes because reconciliation is a worker\-side background task. Returns the reconciler so the lifecycle manager can register a service for it; the reconciler is also resolvable directly for the admin handler's inspection endpoints.
 
 <a name="ProvideRedisCounterBackend"></a>
-## func [ProvideRedisCounterBackend](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L168>)
+## func [ProvideRedisCounterBackend](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L169>)
 
 ```go
 func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, error)
@@ -374,7 +374,7 @@ func WireManager(inj do.Injector) error
 WireManager resolves the BackendManager plus every required worker \(as a smoke check that construction succeeded\) and installs the drain manager onto the BackendManager. Returns the first error from resolving a required dependency; the optional PendingReaper Failed resolution is logged so a broken provider stays distinguishable from an intentionally absent one.
 
 <a name="BackendsResult"></a>
-## type [BackendsResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L42-L52>)
+## type [BackendsResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L43-L53>)
 
 BackendsResult groups the outputs of backend initialization so multiple providers can resolve it without re\-running construction.
 
@@ -393,7 +393,7 @@ type BackendsResult struct {
 ```
 
 <a name="ProvideBackends"></a>
-### func [ProvideBackends](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L56>)
+### func [ProvideBackends](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L57>)
 
 ```go
 func ProvideBackends(i do.Injector) (*BackendsResult, error)
