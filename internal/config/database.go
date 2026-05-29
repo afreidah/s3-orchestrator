@@ -15,7 +15,9 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -42,7 +44,7 @@ func (c *DatabaseConfig) ConnectionString() string {
 	u := &url.URL{
 		Scheme:   "postgres",
 		User:     url.UserPassword(c.User, c.Password),
-		Host:     fmt.Sprintf("%s:%d", c.Host, c.Port),
+		Host:     net.JoinHostPort(c.Host, strconv.Itoa(c.Port)),
 		Path:     c.Database,
 		RawQuery: fmt.Sprintf("sslmode=%s", url.QueryEscape(c.SSLMode)),
 	}
