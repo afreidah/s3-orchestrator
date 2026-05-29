@@ -237,8 +237,8 @@ func TestUploadPart_InvalidPartNumber(t *testing.T) {
 			t.Errorf("UploadPart(partNumber=%d) should fail", pn)
 			continue
 		}
-		var s3Err *core.S3Error
-		if !errors.As(err, &s3Err) || s3Err.Code != "InvalidArgument" {
+		s3Err, ok := errors.AsType[*core.S3Error](err)
+		if !ok || s3Err.Code != "InvalidArgument" {
 			t.Errorf("UploadPart(partNumber=%d) = %v, want st.S3Error InvalidArgument", pn, err)
 		}
 	}
@@ -535,8 +535,8 @@ func TestCompleteMultipartUpload_InvalidPart(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing part")
 	}
-	var s3err *core.S3Error
-	if !errors.As(err, &s3err) || s3err.Code != "InvalidPart" {
+	s3err, ok := errors.AsType[*core.S3Error](err)
+	if !ok || s3err.Code != "InvalidPart" {
 		t.Errorf("expected st.S3Error with Code=InvalidPart, got %v", err)
 	}
 }
@@ -562,8 +562,8 @@ func TestCompleteMultipartUpload_LockContended(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected OperationAborted error from contended lock")
 	}
-	var s3err *core.S3Error
-	if !errors.As(err, &s3err) {
+	s3err, ok := errors.AsType[*core.S3Error](err)
+	if !ok {
 		t.Fatalf("expected *core.S3Error, got %T: %v", err, err)
 	}
 	if s3err.StatusCode != 409 || s3err.Code != "OperationAborted" {

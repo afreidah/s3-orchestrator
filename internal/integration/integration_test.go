@@ -3032,8 +3032,7 @@ func deleteDirectFromMinio(t *testing.T, backendName, key string) {
 // assertHTTPStatus checks that the error contains the expected HTTP status code.
 func assertHTTPStatus(t *testing.T, err error, wantStatus int) {
 	t.Helper()
-	var respErr *smithyhttp.ResponseError
-	if errors.As(err, &respErr) {
+	if respErr, ok := errors.AsType[*smithyhttp.ResponseError](err); ok {
 		if respErr.HTTPStatusCode() != wantStatus {
 			t.Errorf("HTTP status = %d, want %d", respErr.HTTPStatusCode(), wantStatus)
 		}
@@ -3098,8 +3097,8 @@ func TestStore_DeleteObject_NotFound(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 
-	var s3Err *core.S3Error
-	if !errors.As(err, &s3Err) {
+	s3Err, ok := errors.AsType[*core.S3Error](err)
+	if !ok {
 		t.Fatalf("expected *S3Error, got %T: %v", err, err)
 	}
 	if s3Err.StatusCode != 404 {

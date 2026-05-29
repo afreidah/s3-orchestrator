@@ -265,8 +265,7 @@ func writeStorageError(w http.ResponseWriter, err error, fallbackMsg string) int
 		writeS3Error(w, status, code, msg)
 		return status
 	}
-	var s3err *core.S3Error
-	if errors.As(err, &s3err) {
+	if s3err, ok := errors.AsType[*core.S3Error](err); ok {
 		writeS3Error(w, s3err.StatusCode, s3err.Code, s3err.Message)
 		return s3err.StatusCode
 	}

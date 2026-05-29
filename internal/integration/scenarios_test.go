@@ -108,8 +108,7 @@ func TestConcurrentPutAndDelete_SameKey(t *testing.T) {
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		var apiErr *smithyhttp.ResponseError
-		if errors.As(err, &apiErr) && apiErr.HTTPStatusCode() == http.StatusNotFound {
+		if apiErr, ok := errors.AsType[*smithyhttp.ResponseError](err); ok && apiErr.HTTPStatusCode() == http.StatusNotFound {
 			return // acceptable
 		}
 		t.Fatalf("final HeadObject: unexpected error: %v", err)
@@ -205,8 +204,8 @@ func TestPresignedDELETE(t *testing.T) {
 		t.Error("HeadObject after presigned DELETE succeeded, want 404")
 		return
 	}
-	var apiErr *smithyhttp.ResponseError
-	if !errors.As(err, &apiErr) || apiErr.HTTPStatusCode() != http.StatusNotFound {
+	apiErr, ok := errors.AsType[*smithyhttp.ResponseError](err)
+	if !ok || apiErr.HTTPStatusCode() != http.StatusNotFound {
 		t.Errorf("HeadObject after presigned DELETE: expected 404, got %v", err)
 	}
 }
