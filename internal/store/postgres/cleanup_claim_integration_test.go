@@ -58,13 +58,11 @@ func claimInParallel(t *testing.T, s *Store, workers, limit int, graceCutoff tim
 	t.Helper()
 	results := make([]claimResult, workers)
 	var wg sync.WaitGroup
-	wg.Add(workers)
 	for i := range workers {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			items, err := s.ClaimPendingCleanups(context.Background(), limit, "instance-test", graceCutoff)
 			results[i] = claimResultFromItems(items, err)
-		}()
+		})
 	}
 	wg.Wait()
 	return results

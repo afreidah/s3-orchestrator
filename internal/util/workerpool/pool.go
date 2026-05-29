@@ -67,14 +67,12 @@ func Run[T any](ctx context.Context, concurrency int, items []T, fn func(context
 
 	jobs := make(chan T)
 	var wg sync.WaitGroup
-	wg.Add(workers)
 	for range workers {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for item := range jobs {
 				fn(ctx, item)
 			}
-		}()
+		})
 	}
 
 	for _, item := range items {
