@@ -160,7 +160,7 @@ func assertNoSignatureInCanonicalQuery(t *testing.T, canonicalRequest string) {
 		return
 	}
 	queryLine := lines[2]
-	for _, pair := range strings.Split(queryLine, "&") {
+	for pair := range strings.SplitSeq(queryLine, "&") {
 		key, _, _ := strings.Cut(pair, "=")
 		if key == "X-Amz-Signature" {
 			t.Errorf("canonical query string contains X-Amz-Signature key: %q", queryLine)
