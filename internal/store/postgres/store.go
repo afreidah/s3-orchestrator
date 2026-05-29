@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -64,7 +66,7 @@ type Store struct {
 // through it via wrapDBTX. Pass nil to skip CB wrapping (test fixtures,
 // migration runners).
 func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.CircuitBreaker) (*Store, error) {
-	host := fmt.Sprintf("%s:%d", dbCfg.Host, dbCfg.Port)
+	host := net.JoinHostPort(dbCfg.Host, strconv.Itoa(dbCfg.Port))
 	connStr := dbCfg.ConnectionString()
 	cfg, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
