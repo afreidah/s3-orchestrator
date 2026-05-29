@@ -105,7 +105,7 @@ func TestPeriodicServiceSpecs_IntervalsSane(t *testing.T) {
 func lifecycleManagerForMode(t *testing.T, mode string) *lifecycle.Manager {
 	t.Helper()
 	cfg := happyPathConfig(t.TempDir())
-	cfg.WritePath.PendingPattern.Enabled = boolPtr(true)
+	cfg.WritePath.PendingPattern.Enabled = new(true)
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("config validation: %v", err)
 	}
@@ -177,7 +177,3 @@ func TestLifecycleManager_ModeMatrix(t *testing.T) {
 		})
 	}
 }
-
-// boolPtr is a local helper so the mode matrix can flip optional config
-// flags without pulling in a wider helper module.
-func boolPtr(b bool) *bool { return &b }

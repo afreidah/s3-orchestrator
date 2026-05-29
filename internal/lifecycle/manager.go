@@ -116,8 +116,8 @@ func (m *Manager) Names() []string {
 // the admin /api/workers endpoint.
 type WorkerHealth struct {
 	Name                string    `json:"name"`
-	LastSuccess         time.Time `json:"last_success,omitempty"`
-	LastFailure         time.Time `json:"last_failure,omitempty"`
+	LastSuccess         time.Time `json:"last_success"`
+	LastFailure         time.Time `json:"last_failure"`
 	LastError           string    `json:"last_error,omitempty"`
 	ConsecutiveFailures int       `json:"consecutive_failures"`
 }

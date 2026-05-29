@@ -40,7 +40,7 @@ func newFakeVault(t *testing.T) *httptest.Server {
 			return
 		}
 		// Echo the plaintext back as "ciphertext" for round-trip testing.
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]string{"ciphertext": "vault:v1:" + req.Plaintext},
 		})
 	})
@@ -59,14 +59,14 @@ func newFakeVault(t *testing.T) *httptest.Server {
 			http.Error(w, "bad ciphertext", http.StatusBadRequest)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]string{"plaintext": req.Ciphertext[len(prefix):]},
 		})
 	})
 
 	mux.HandleFunc("/v1/auth/token/renew-self", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"auth": map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"auth": map[string]any{
 				"client_token":   "renewed-token",
 				"lease_duration": 3600,
 				"renewable":      true,
@@ -184,8 +184,8 @@ func TestVaultKeyProvider_RenewToken(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/auth/token/renew-self", func(w http.ResponseWriter, _ *http.Request) {
 		renewCalls.Add(1)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"auth": map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"auth": map[string]any{
 				"client_token":   "renewed",
 				"lease_duration": 3600,
 				"renewable":      true,
