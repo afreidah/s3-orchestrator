@@ -156,11 +156,7 @@ func (m *Manager) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 
 	for _, e := range m.services {
-		wg.Add(1)
-		go func(e entry) {
-			defer wg.Done()
-			m.supervise(ctx, e)
-		}(e)
+		wg.Go(func() { m.supervise(ctx, e) })
 	}
 
 	wg.Wait()

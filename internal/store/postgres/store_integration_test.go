@@ -103,9 +103,7 @@ func TestStoreInt_WithAdvisoryLock_ConcurrentExclusivity(t *testing.T) {
 	var aRan, bRan atomic.Bool
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		got, err := s.WithAdvisoryLock(ctx, lockID, func(ctx context.Context) error {
 			aRan.Store(true)
 			close(started)
@@ -115,7 +113,7 @@ func TestStoreInt_WithAdvisoryLock_ConcurrentExclusivity(t *testing.T) {
 		if err != nil || !got {
 			t.Errorf("A: got=%v err=%v, want true,nil", got, err)
 		}
-	}()
+	})
 
 	<-started
 	gotB, errB := s.WithAdvisoryLock(ctx, lockID, func(ctx context.Context) error {

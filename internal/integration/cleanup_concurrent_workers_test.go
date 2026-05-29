@@ -66,9 +66,7 @@ func TestInt_CleanupQueue_ConcurrentWorkersProcessExactlyOnce(t *testing.T) {
 	var resolvedTotal, failedTotal atomic.Int64
 	var wg sync.WaitGroup
 	for _, w := range pool {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			// One pass is enough: each ProcessCleanupQueue call claims a
 			// batch (up to 50 with the default), and 40 rows fits in a
 			// single sweep. SKIP LOCKED makes the per-call disjointness
@@ -76,7 +74,7 @@ func TestInt_CleanupQueue_ConcurrentWorkersProcessExactlyOnce(t *testing.T) {
 			resolved, failed := w.ProcessCleanupQueue(ctx)
 			resolvedTotal.Add(int64(resolved))
 			failedTotal.Add(int64(failed))
-		}()
+		})
 	}
 	wg.Wait()
 

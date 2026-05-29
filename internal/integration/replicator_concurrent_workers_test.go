@@ -102,16 +102,14 @@ func raceReplicators(t *testing.T, ctx context.Context, cfg config.ReplicationCo
 	var total atomic.Int64
 	var wg sync.WaitGroup
 	for _, r := range rs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			created, err := r.Replicate(ctx, cfg)
 			if err != nil {
 				t.Errorf("Replicate: %v", err)
 				return
 			}
 			total.Add(int64(created))
-		}()
+		})
 	}
 	wg.Wait()
 	return total.Load()

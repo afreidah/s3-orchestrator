@@ -244,9 +244,7 @@ func TestMemoryCache_ConcurrentAccess(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := range 50 {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
+		wg.Go(func() {
 			key := string(rune('A' + i%26))
 			data := bytes.Repeat([]byte{byte(i)}, 50) //nolint:gosec // G115: test loop index, always < 256
 			if c.Admit(int64(len(data))) {
@@ -254,7 +252,7 @@ func TestMemoryCache_ConcurrentAccess(t *testing.T) {
 			}
 			c.Get(key)
 			c.Invalidate(key)
-		}(i)
+		})
 	}
 	wg.Wait()
 
