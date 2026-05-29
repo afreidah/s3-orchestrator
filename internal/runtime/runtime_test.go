@@ -15,6 +15,7 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -22,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,16 +196,18 @@ func TestRunFullLifecycle(t *testing.T) {
 	port := freePort(t)
 	cfg := loadCfg(t, configWithPort(port))
 
+	var stdout bytes.Buffer
 	rt, err := New(Options{
 		ConfigPath: writeYAML(t, configWithPort(port)),
 		Mode:       "all",
-		Stdout:     io.Discard,
+		Stdout:     &stdout,
 	}, cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	cause := errors.New("test-shutdown-cause")
+	ctx, cancel := context.WithCancelCause(context.Background())
 	errCh := make(chan error, 1)
 	go func() { errCh <- rt.Run(ctx) }()
 
@@ -223,11 +227,11 @@ func TestRunFullLifecycle(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	if lastErr != nil {
-		cancel()
+		cancel(cause)
 		t.Fatalf("server never became ready: %v", lastErr)
 	}
 
-	cancel()
+	cancel(cause)
 	select {
 	case err := <-errCh:
 		if err != nil {
@@ -235,5 +239,10 @@ func TestRunFullLifecycle(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run did not exit within 10 seconds")
+	}
+
+	// New shutdown-cause log line (Go 1.26 signal.NotifyContext compatibility).
+	if !strings.Contains(stdout.String(), `"msg":"shutdown initiated"`) || !strings.Contains(stdout.String(), cause.Error()) {
+		t.Errorf("expected shutdown log line with cause %q, got logs:\n%s", cause.Error(), stdout.String())
 	}
 }

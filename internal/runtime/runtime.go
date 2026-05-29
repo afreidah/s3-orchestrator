@@ -158,6 +158,8 @@ func (r *Runtime) Run(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
+		// signal.NotifyContext populates context.Cause with the signal that triggered shutdown.
+		r.log.InfoContext(ctx, "shutdown initiated", "cause", context.Cause(ctx))
 	case err := <-serverErr:
 		if err != nil {
 			r.shutdown()
