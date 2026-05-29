@@ -1323,8 +1323,8 @@ func TestGetObject_DBUnavailable_EncryptedRejects503(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for encrypted read with DB unavailable")
 	}
-	var s3err *core.S3Error
-	if !errors.As(err, &s3err) || s3err.StatusCode != 503 {
+	s3err, ok := errors.AsType[*core.S3Error](err)
+	if !ok || s3err.StatusCode != 503 {
 		t.Errorf("expected 503 S3Error, got: %v", err)
 	}
 }
@@ -2439,8 +2439,8 @@ func TestListObjects_DBUnavailable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	var s3err *core.S3Error
-	if !errors.As(err, &s3err) {
+	s3err, ok := errors.AsType[*core.S3Error](err)
+	if !ok {
 		t.Fatalf("expected st.S3Error, got %T: %v", err, err)
 	}
 	if s3err.StatusCode != 503 {
@@ -3406,8 +3406,7 @@ func TestListObjects_GenericError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from generic store failure")
 	}
-	var s3err *core.S3Error
-	if errors.As(err, &s3err) {
+	if s3err, ok := errors.AsType[*core.S3Error](err); ok {
 		t.Errorf("generic error should not be st.S3Error, got %+v", s3err)
 	}
 }

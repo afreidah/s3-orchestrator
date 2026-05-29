@@ -296,8 +296,8 @@ func TestE2E_ErrorResponses_HeadNonexistent(t *testing.T) {
 		t.Fatal("expected error for nonexistent key")
 	}
 	// HEAD returns 404 but no XML body  -  SDK returns a generic error.
-	var respErr *smithyhttp.ResponseError
-	if !errors.As(err, &respErr) {
+	respErr, ok := errors.AsType[*smithyhttp.ResponseError](err)
+	if !ok {
 		t.Fatalf("expected ResponseError, got %T: %v", err, err)
 	}
 	if respErr.HTTPStatusCode() != 404 {
