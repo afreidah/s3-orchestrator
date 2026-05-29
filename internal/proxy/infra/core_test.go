@@ -255,8 +255,8 @@ func TestCore_StreamCopy_TagsReadPhaseOnGetError(t *testing.T) {
 	dst := &recordingBackend{}
 	c := newTestCore(t)
 	err := c.StreamCopy(context.Background(), src, dst, "k")
-	var ce *backend.CopyError
-	if !errors.As(err, &ce) {
+	ce, ok := errors.AsType[*backend.CopyError](err)
+	if !ok {
 		t.Fatalf("err = %v, want *backend.CopyError", err)
 	}
 	if ce.Phase != backend.CopyPhaseRead {

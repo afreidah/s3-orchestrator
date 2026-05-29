@@ -51,8 +51,8 @@ func (e *CopyError) Unwrap() error {
 // IsCopyPhase reports whether err is (or wraps) a CopyError whose
 // Phase matches phase. Returns false on nil err or unrelated errors.
 func IsCopyPhase(err error, phase CopyPhase) bool {
-	var ce *CopyError
-	if !errors.As(err, &ce) {
+	ce, ok := errors.AsType[*CopyError](err)
+	if !ok {
 		return false
 	}
 	return ce.Phase == phase
