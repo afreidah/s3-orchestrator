@@ -64,15 +64,13 @@ func TestAdmissionController_RejectsOverLimit(t *testing.T) {
 
 	// Start first request  -  will block inside handler
 	var wg sync.WaitGroup
-	wg.Add(1)
 	firstDone := make(chan int, 1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("PUT", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
 		firstDone <- rec.Code
-	}()
+	})
 
 	// Wait for the first request to enter the handler
 	<-entered

@@ -115,10 +115,8 @@ func TestConcurrentPutSameKey(t *testing.T) {
 	errs := make(chan error, writers)
 
 	for i := range writers {
-		wg.Add(1)
-		go func(n int) {
-			defer wg.Done()
-			body := []byte(fmt.Sprintf("writer-%d", n))
+		wg.Go(func() {
+			body := []byte(fmt.Sprintf("writer-%d", i))
 			_, err := client.PutObject(ctx, &s3.PutObjectInput{
 				Bucket:        aws.String(virtualBucket),
 				Key:           aws.String(key),
@@ -128,7 +126,7 @@ func TestConcurrentPutSameKey(t *testing.T) {
 			if err != nil {
 				errs <- err
 			}
-		}(i)
+		})
 	}
 	wg.Wait()
 	close(errs)
