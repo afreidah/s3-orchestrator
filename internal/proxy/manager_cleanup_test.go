@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -38,12 +39,12 @@ import (
 // slices on this struct, then reads them after exercising the system
 // under test.
 type cleanupCalls struct {
-	mu         sync.Mutex
-	enqueue    []core.CleanupItem
-	complete   []int64
-	retry      []retryRecord
-	dlq        []dlqRecord
-	pending []core.PendingObject
+	mu       sync.Mutex
+	enqueue  []core.CleanupItem
+	complete []int64
+	retry    []retryRecord
+	dlq      []dlqRecord
+	pending  []core.PendingObject
 }
 
 type retryRecord struct {
@@ -177,13 +178,7 @@ func TestEnqueueCleanup_EnqueueFailure_RecordsMetricAndAudit(t *testing.T) {
 	if after-before != 1 {
 		t.Errorf("enqueue-failure counter delta = %v, want 1", after-before)
 	}
-	found := false
-	for _, e := range capturedEvents {
-		if e == "storage.OrphanEnqueueFailed" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(capturedEvents, "storage.OrphanEnqueueFailed")
 	if !found {
 		t.Errorf("expected storage.OrphanEnqueueFailed audit event, got %v", capturedEvents)
 	}
@@ -220,13 +215,7 @@ func TestEnqueueCleanup_OrphanBytesFailure_RecordsMetricAndAudit(t *testing.T) {
 	if after-before != 1 {
 		t.Errorf("orphan-bytes-failure counter delta = %v, want 1", after-before)
 	}
-	found := false
-	for _, e := range capturedEvents {
-		if e == "storage.OrphanEnqueueFailed" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(capturedEvents, "storage.OrphanEnqueueFailed")
 	if !found {
 		t.Errorf("expected storage.OrphanEnqueueFailed audit event, got %v", capturedEvents)
 	}
