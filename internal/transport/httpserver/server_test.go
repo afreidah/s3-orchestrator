@@ -293,7 +293,7 @@ func TestHealth_Ok(t *testing.T) {
 	registerHealthEndpoints(mux, HealthDeps{Ready: ready, DBBreaker: dbBreaker})
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)
 	mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("/health status = %d, want 200", w.Code)
@@ -315,7 +315,7 @@ func TestHealthReady_503BeforeReady(t *testing.T) {
 	registerHealthEndpoints(mux, HealthDeps{Ready: ready, DBBreaker: dbBreaker})
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health/ready", nil)
 	mux.ServeHTTP(w, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("/health/ready status = %d, want 503", w.Code)
@@ -331,7 +331,7 @@ func TestHealthReady_200WhenReady(t *testing.T) {
 	registerHealthEndpoints(mux, HealthDeps{Ready: ready, DBBreaker: dbBreaker})
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health/ready", nil)
 	mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("/health/ready status = %d, want 200", w.Code)
@@ -366,7 +366,7 @@ func TestConfigureMetrics_Inline(t *testing.T) {
 		t.Errorf("expected nil server for inline metrics, got %v", got)
 	}
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil)
 	mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("/metrics status = %d, want 200", w.Code)
@@ -379,7 +379,7 @@ func TestConfigureMetrics_Inline(t *testing.T) {
 	// inline (the issue #886 case), this test fails.
 	for _, path := range []string{"/debug/pprof/", "/debug/pprof/cmdline"} {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 		mux.ServeHTTP(w, req)
 		if w.Code != http.StatusNotFound {
 			t.Errorf("inline-metrics mux must not expose %s (status = %d, want 404)", path, w.Code)
@@ -409,7 +409,7 @@ func TestConfigureMetrics_SeparateListener_PprofDisabled(t *testing.T) {
 	}
 	// /metrics is reachable.
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil)
 	srv.Handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("/metrics status = %d, want 200", w.Code)
@@ -417,7 +417,7 @@ func TestConfigureMetrics_SeparateListener_PprofDisabled(t *testing.T) {
 	// Pprof MUST NOT be reachable when cfg.Pprof is unset.
 	for _, path := range []string{"/debug/pprof/", "/debug/pprof/cmdline"} {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 		srv.Handler.ServeHTTP(w, req)
 		if w.Code != http.StatusNotFound {
 			t.Errorf("dedicated listener must NOT expose %s when Pprof=false (status = %d, want 404)", path, w.Code)
@@ -444,7 +444,7 @@ func TestConfigureMetrics_SeparateListener_PprofEnabled(t *testing.T) {
 	}
 	for _, path := range []string{"/debug/pprof/", "/debug/pprof/cmdline"} {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 		srv.Handler.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
 			t.Errorf("dedicated metrics listener must expose %s when Pprof=true (status = %d, want 200)", path, w.Code)
@@ -469,7 +469,7 @@ func TestConfigureMetrics_Inline_PprofIgnored(t *testing.T) {
 	}
 	for _, path := range []string{"/debug/pprof/", "/debug/pprof/cmdline"} {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 		mux.ServeHTTP(w, req)
 		if w.Code != http.StatusNotFound {
 			t.Errorf("inline-metrics mux must not expose %s even when Pprof=true (status = %d, want 404)", path, w.Code)
@@ -573,7 +573,7 @@ func TestNew_HealthRoutesMounted(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health/ready", nil)
 	srv.main.Handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("/health/ready status = %d, want 200", w.Code)
@@ -632,7 +632,7 @@ ui:
 	}
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/ui/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/", nil)
 	srv.main.Handler.ServeHTTP(w, req)
 	if w.Code == 0 {
 		t.Errorf("/ui/ was not handled (code=0)")

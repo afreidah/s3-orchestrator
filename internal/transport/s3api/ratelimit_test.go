@@ -10,14 +10,15 @@
 package s3api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
@@ -68,7 +69,7 @@ func TestRateLimiter_Middleware429(t *testing.T) {
 
 	// First request succeeds
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/test-bucket/key", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
 	req.RemoteAddr = "10.0.0.1:12345"
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -106,13 +107,13 @@ func TestRateLimiter_Middleware429_IncrementsMetric(t *testing.T) {
 
 	// Exhaust the burst
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/test-bucket/key", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
 	req.RemoteAddr = "10.0.0.99:12345"
 	handler.ServeHTTP(rec, req)
 
 	// This request should be rate-limited
 	rec2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest("GET", "/test-bucket/key", nil)
+	req2 := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
 	req2.RemoteAddr = "10.0.0.99:12345"
 	handler.ServeHTTP(rec2, req2)
 
@@ -197,7 +198,7 @@ func TestExtractIP_NoTrustedProxies(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := httptest.NewRequest("GET", "/", nil)
+			r := httptest.NewRequestWithContext(context.Background(), "GET", "/", nil)
 			r.RemoteAddr = tt.remoteAddr
 			if tt.xff != "" {
 				r.Header.Set("X-Forwarded-For", tt.xff)
@@ -263,7 +264,7 @@ func TestExtractIP_WithTrustedProxies(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := httptest.NewRequest("GET", "/", nil)
+			r := httptest.NewRequestWithContext(context.Background(), "GET", "/", nil)
 			r.RemoteAddr = tt.remoteAddr
 			if tt.xff != "" {
 				r.Header.Set("X-Forwarded-For", tt.xff)

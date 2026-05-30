@@ -453,8 +453,8 @@ func (d *Manager) copyAndRemoveSource(ctx context.Context, srcBackend backend.Ob
 
 	audit.Log(ctx, "storage.DrainMove",
 		slog.String("key", obj.ObjectKey),
-		slog.String("from_backend", srcName),
-		slog.String("to_backend", destName),
+		slog.String("src_backend", srcName),
+		slog.String("dst_backend", destName),
 		slog.Int64("size", movedSize),
 	)
 	return true

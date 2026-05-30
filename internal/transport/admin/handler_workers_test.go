@@ -17,6 +17,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -41,7 +42,7 @@ func TestHandleWorkers_HappyPath(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/workers", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/workers", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -79,7 +80,7 @@ func TestHandleWorkers_NotWired(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/workers", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/workers", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -98,7 +99,7 @@ func TestHandleWorkers_RequiresToken(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/workers", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/workers", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 

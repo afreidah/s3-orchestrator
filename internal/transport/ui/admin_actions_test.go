@@ -49,7 +49,7 @@ func stubAdminHandler() *admin.Handler { return &admin.Handler{} }
 func TestStartAdminAction_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
 	h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
-	req := httptest.NewRequest(http.MethodGet, "/api/replicate", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/replicate", nil)
 	w := httptest.NewRecorder()
 
 	h.startAdminAction(w, req, noopOp("replicate"))
@@ -64,7 +64,7 @@ func TestStartAdminAction_MethodNotAllowed(t *testing.T) {
 func TestStartAdminAction_NotConfigured(t *testing.T) {
 	t.Parallel()
 	h := &Handler{log: slog.Default(), } // adminHandler intentionally nil
-	req := httptest.NewRequest(http.MethodPost, "/api/replicate", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/replicate", nil)
 	w := httptest.NewRecorder()
 
 	h.startAdminAction(w, req, noopOp("replicate"))
@@ -84,7 +84,7 @@ func TestStartAdminAction_AlreadyRunning(t *testing.T) {
 		t.Fatal("test pre-condition: TryStart should claim the slot")
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/replicate", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/replicate", nil)
 	w := httptest.NewRecorder()
 	h.startAdminAction(w, req, noopOp("replicate"))
 
@@ -100,7 +100,7 @@ func TestStartAdminAction_AcceptedStoresExtra(t *testing.T) {
 	t.Parallel()
 	h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/encrypt-existing", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/encrypt-existing", nil)
 	w := httptest.NewRecorder()
 
 	h.startAdminAction(w, req, adminActionOp{
@@ -133,7 +133,7 @@ func TestStartAdminAction_AcceptedStoresExtra(t *testing.T) {
 func TestStartAdminAction_SkippedReason(t *testing.T) {
 	t.Parallel()
 	h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
-	req := httptest.NewRequest(http.MethodPost, "/api/scrub", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/scrub", nil)
 	w := httptest.NewRecorder()
 
 	h.startAdminAction(w, req, adminActionOp{
@@ -155,7 +155,7 @@ func TestStartAdminAction_SkippedReason(t *testing.T) {
 func TestStartAdminAction_ErrorPropagates(t *testing.T) {
 	t.Parallel()
 	h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
-	req := httptest.NewRequest(http.MethodPost, "/api/replicate", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/replicate", nil)
 	w := httptest.NewRecorder()
 
 	h.startAdminAction(w, req, adminActionOp{
@@ -357,7 +357,7 @@ func TestAdminActionWrappers_NotConfigured(t *testing.T) {
 			h := &Handler{log: slog.Default(), } // adminHandler nil
 
 			// Trigger: 503 because admin handler is not configured.
-			triggerReq := httptest.NewRequest(http.MethodPost, tc.triggerPath, nil)
+			triggerReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, tc.triggerPath, nil)
 			triggerW := httptest.NewRecorder()
 			tc.trigger(h, triggerW, triggerReq)
 			if triggerW.Code != http.StatusServiceUnavailable {
@@ -365,7 +365,7 @@ func TestAdminActionWrappers_NotConfigured(t *testing.T) {
 			}
 
 			// Status: idle because no run has ever started.
-			statusReq := httptest.NewRequest(http.MethodGet, tc.statusPath, nil)
+			statusReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, tc.statusPath, nil)
 			statusW := httptest.NewRecorder()
 			tc.status(h, statusW, statusReq)
 			body := decodeBody(t, statusW)
@@ -397,7 +397,7 @@ func TestAdminActionWrappers_MethodNotAllowed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
-			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, tc.path, nil)
 			w := httptest.NewRecorder()
 			tc.trigger(h, w, req)
 			if w.Code != http.StatusMethodNotAllowed {

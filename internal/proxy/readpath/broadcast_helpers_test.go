@@ -115,8 +115,11 @@ func TestCancelLosers_LeavesWinnerAliveCancelsRest(t *testing.T) {
 	t.Parallel()
 	parent := context.Background()
 	ctxA, cancelA := context.WithCancel(parent)
+	defer cancelA()
 	ctxB, cancelB := context.WithCancel(parent)
+	defer cancelB()
 	ctxC, cancelC := context.WithCancel(parent)
+	defer cancelC()
 
 	cancels := map[string]context.CancelFunc{
 		"a": cancelA,
@@ -146,7 +149,9 @@ func TestCancelLosers_LeavesWinnerAliveCancelsRest(t *testing.T) {
 func TestCancelLosers_UnknownWinnerCancelsEveryone(t *testing.T) {
 	t.Parallel()
 	ctxA, cancelA := context.WithCancel(context.Background())
+	defer cancelA()
 	ctxB, cancelB := context.WithCancel(context.Background())
+	defer cancelB()
 
 	cancelLosers(map[string]context.CancelFunc{"a": cancelA, "b": cancelB}, "no-such-backend")
 

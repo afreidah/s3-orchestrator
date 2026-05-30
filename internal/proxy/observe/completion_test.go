@@ -106,7 +106,7 @@ func TestCopyCompleted(t *testing.T) {
 		if entry["event"] != "storage.CopyObject" {
 			t.Errorf("audit event = %v", entry["event"])
 		}
-		for _, k := range []string{"source_key", "dest_key", "source_backend", "dest_backend", "size"} {
+		for _, k := range []string{"source_key", "dest_key", "src_backend", "dest_backend", "size"} {
 			if _, ok := entry[k]; !ok {
 				t.Errorf("audit missing attr %q: %v", k, entry)
 			}

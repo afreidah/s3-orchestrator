@@ -36,7 +36,7 @@ func TestAdmissionController_AllowsWithinLimit(t *testing.T) {
 	// Send 2 sequential requests  -  both should succeed
 	for i := range 2 {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("GET", "/test-bucket/key", nil)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Errorf("request %d: got %d, want 200", i+1, rec.Code)
@@ -67,7 +67,7 @@ func TestAdmissionController_RejectsOverLimit(t *testing.T) {
 	firstDone := make(chan int, 1)
 	wg.Go(func() {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("PUT", "/test-bucket/key", nil)
+		req := httptest.NewRequestWithContext(context.Background(), "PUT", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
 		firstDone <- rec.Code
 	})
@@ -77,7 +77,7 @@ func TestAdmissionController_RejectsOverLimit(t *testing.T) {
 
 	// Second request should be rejected  -  semaphore is full
 	rec2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest("PUT", "/test-bucket/key2", nil)
+	req2 := httptest.NewRequestWithContext(context.Background(), "PUT", "/test-bucket/key2", nil)
 	handler.ServeHTTP(rec2, req2)
 
 	if rec2.Code != http.StatusServiceUnavailable {
@@ -109,7 +109,7 @@ func TestAdmissionController_ReleasesOnCompletion(t *testing.T) {
 
 	// First request completes, freeing the slot
 	rec1 := httptest.NewRecorder()
-	req1 := httptest.NewRequest("GET", "/test-bucket/key", nil)
+	req1 := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
 	handler.ServeHTTP(rec1, req1)
 	if rec1.Code != http.StatusOK {
 		t.Fatalf("first request: got %d, want 200", rec1.Code)
@@ -117,7 +117,7 @@ func TestAdmissionController_ReleasesOnCompletion(t *testing.T) {
 
 	// Second request should succeed because the slot was released
 	rec2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest("GET", "/test-bucket/key", nil)
+	req2 := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
 	handler.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusOK {
 		t.Errorf("second request: got %d, want 200", rec2.Code)
@@ -144,7 +144,7 @@ func TestAdmissionController_IncrementsMetric(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("GET", "/test-bucket/key", nil)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
 	})
 
@@ -153,7 +153,7 @@ func TestAdmissionController_IncrementsMetric(t *testing.T) {
 
 	// This request should be rejected
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/test-bucket/key2", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key2", nil)
 	handler.ServeHTTP(rec, req)
 
 	close(hold)
@@ -187,14 +187,14 @@ func TestSplitAdmission_WriteFull_ReadAllowed(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("PUT", "/test-bucket/key", nil)
+		req := httptest.NewRequestWithContext(context.Background(), "PUT", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
 	})
 	<-entered
 
 	// Another write should be rejected
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("PUT", "/test-bucket/key2", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "PUT", "/test-bucket/key2", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("second write: got %d, want 503", rec.Code)
@@ -204,7 +204,7 @@ func TestSplitAdmission_WriteFull_ReadAllowed(t *testing.T) {
 	readDone := make(chan int, 1)
 	wg.Go(func() {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("GET", "/test-bucket/key", nil)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
 		readDone <- rec.Code
 	})
@@ -236,14 +236,14 @@ func TestSplitAdmission_ReadFull_WriteAllowed(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("GET", "/test-bucket/key", nil)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
 	})
 	<-entered
 
 	// Another read should be rejected
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/test-bucket/key2", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key2", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("second read: got %d, want 503", rec.Code)
@@ -253,7 +253,7 @@ func TestSplitAdmission_ReadFull_WriteAllowed(t *testing.T) {
 	writeDone := make(chan int, 1)
 	wg.Go(func() {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("PUT", "/test-bucket/key", nil)
+		req := httptest.NewRequestWithContext(context.Background(), "PUT", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
 		writeDone <- rec.Code
 	})
@@ -387,14 +387,14 @@ func TestSplitAdmission_DeleteUsesWritePool(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("DELETE", "/test-bucket/key", nil)
+		req := httptest.NewRequestWithContext(context.Background(), "DELETE", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
 	})
 	<-entered
 
 	// A PUT should be rejected  -  same pool
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("PUT", "/test-bucket/key2", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "PUT", "/test-bucket/key2", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("PUT while DELETE holds write pool: got %d, want 503", rec.Code)
@@ -423,7 +423,7 @@ func TestAdmissionController_WaitAcquiresSlot(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("GET", "/test-bucket/key", nil)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
 	})
 	<-entered
@@ -432,7 +432,7 @@ func TestAdmissionController_WaitAcquiresSlot(t *testing.T) {
 	secondDone := make(chan int, 1)
 	wg.Go(func() {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("GET", "/test-bucket/key2", nil)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key2", nil)
 		handler.ServeHTTP(rec, req)
 		secondDone <- rec.Code
 	})
@@ -465,14 +465,14 @@ func TestAdmissionController_WaitTimesOut(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("GET", "/test-bucket/key", nil)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
 	})
 	<-entered
 
 	// Second request  -  slot never frees, should timeout after 20ms
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/test-bucket/key2", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key2", nil)
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
@@ -504,7 +504,7 @@ func TestAdmissionController_ClientCancelDuringWaitNotCountedAsRejection(t *test
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("GET", "/test-bucket/key", nil)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
 		handler.ServeHTTP(rec, req)
 	})
 	<-entered

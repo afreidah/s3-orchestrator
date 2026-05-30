@@ -287,7 +287,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 
 		audit.Log(ctx, "replication.copy",
 			slog.String("key", key),
-			slog.String("source_backend", source),
+			slog.String("src_backend", source),
 			slog.String("target_backend", target),
 			slog.Int64("size", recordedSize),
 		)

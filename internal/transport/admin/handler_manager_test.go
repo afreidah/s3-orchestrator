@@ -79,7 +79,7 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 
 // doAuth builds a request pre-populated with the correct admin token.
 func doAuth(method, path string, body string) *http.Request {
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), method, path, strings.NewReader(body))
 	req.Header.Set("X-Admin-Token", "test-token")
 	return req
 }

@@ -10,6 +10,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -33,7 +34,7 @@ func TestRequireToken_Missing(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/status", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/status", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -50,7 +51,7 @@ func TestRequireToken_Wrong(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/status", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/status", nil)
 	req.Header.Set("X-Admin-Token", "wrong-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -68,7 +69,7 @@ func TestRequireToken_Valid(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/log-level", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/log-level", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -86,7 +87,7 @@ func TestLogLevel_Get(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/log-level", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/log-level", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -112,7 +113,7 @@ func TestLogLevel_Put(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodPut, "/admin/api/log-level",
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/admin/api/log-level",
 		strings.NewReader(`{"level":"debug"}`))
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
@@ -144,7 +145,7 @@ func TestLogLevel_PutInvalidJSON(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodPut, "/admin/api/log-level",
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/admin/api/log-level",
 		strings.NewReader(`not json`))
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
@@ -163,7 +164,7 @@ func TestLogLevel_MethodNotAllowed(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodDelete, "/admin/api/log-level", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/log-level", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -181,7 +182,7 @@ func TestReloadStatus_NoReloadYet(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/reload-status", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/reload-status", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -205,7 +206,7 @@ func TestReloadStatus_ReturnsProvidedResult(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/reload-status", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/reload-status", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -229,7 +230,7 @@ func TestStatus_MethodNotAllowed(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/status", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/status", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -247,7 +248,7 @@ func TestObjectLocations_MissingKey(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/object-locations", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/object-locations", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -265,7 +266,7 @@ func TestUsageFlush_MethodNotAllowed(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/usage-flush", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/usage-flush", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -283,7 +284,7 @@ func TestReplicate_MethodNotAllowed(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/replicate", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/replicate", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -306,7 +307,7 @@ func TestCacheFlush_Disabled(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/cache/flush", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/cache/flush", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -331,7 +332,7 @@ func TestCacheFlush_Empty(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/cache/flush", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/cache/flush", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -364,7 +365,7 @@ func TestCacheFlush_Cleared(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/cache/flush", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/cache/flush", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -392,7 +393,7 @@ func TestCacheStats_Disabled(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/cache", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/cache", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -414,7 +415,7 @@ func TestCacheStats_Populated(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/cache", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/cache", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -449,7 +450,7 @@ func TestCacheInvalidateKey_RemovesEntry(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodDelete, "/admin/api/cache/keys/a/1", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/keys/a/1", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -481,7 +482,7 @@ func TestCacheInvalidateKey_UnknownKey(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodDelete, "/admin/api/cache/keys/nonexistent", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/keys/nonexistent", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -505,7 +506,7 @@ func TestCacheInvalidatePrefix_DropsMatching(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodDelete, "/admin/api/cache/prefix?prefix=users/1/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/prefix?prefix=users/1/", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -534,7 +535,7 @@ func TestCacheInvalidatePrefix_EmptyRejected(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodDelete, "/admin/api/cache/prefix", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/prefix", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -553,7 +554,7 @@ func TestCacheInvalidateKey_Disabled(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodDelete, "/admin/api/cache/keys/foo", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/keys/foo", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -571,7 +572,7 @@ func TestCacheInvalidatePrefix_Disabled(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodDelete, "/admin/api/cache/prefix?prefix=foo/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/prefix?prefix=foo/", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -626,7 +627,7 @@ func TestDecryptExisting_NoEncryptor(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/decrypt-existing", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/decrypt-existing", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -652,7 +653,7 @@ func TestDecryptExisting_MethodNotAllowed(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/decrypt-existing", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/decrypt-existing", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -670,7 +671,7 @@ func TestEncryptExisting_NoEncryptor(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/encrypt-existing", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/encrypt-existing", nil)
 	req.Header.Set("X-Admin-Token", "test-token")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)

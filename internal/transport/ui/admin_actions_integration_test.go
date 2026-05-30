@@ -14,9 +14,12 @@
 package ui
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"log/slog"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -25,7 +28,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
-	"log/slog"
 )
 
 // newAdminHandlerForTest builds an *admin.Handler against a mock store
@@ -87,7 +89,7 @@ func TestHandleAPIReplicate_HappyPathReturnsCount(t *testing.T) {
 		workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 10})
 	})}
 
-	triggerReq := httptest.NewRequest(http.MethodPost, "/api/replicate", nil)
+	triggerReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/replicate", nil)
 	triggerW := httptest.NewRecorder()
 	h.handleAPIReplicate(triggerW, triggerReq)
 	if triggerW.Code != http.StatusAccepted {
@@ -102,7 +104,7 @@ func TestHandleAPIReplicate_HappyPathReturnsCount(t *testing.T) {
 		t.Errorf("Count = %d, want 0 (empty store)", res.Count)
 	}
 
-	statusReq := httptest.NewRequest(http.MethodGet, "/api/replicate/status", nil)
+	statusReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/replicate/status", nil)
 	statusW := httptest.NewRecorder()
 	h.handleAPIReplicateStatus(statusW, statusReq)
 	body := decodeBody(t, statusW)
@@ -145,7 +147,7 @@ func TestAdminActionWrappers_RouteIntoAdmin(t *testing.T) {
 			t.Parallel()
 			h := &Handler{log: slog.Default(), adminHandler: newSkippedAdminHandler(t)}
 
-			triggerReq := httptest.NewRequest(http.MethodPost, tc.triggerPath, nil)
+			triggerReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, tc.triggerPath, nil)
 			triggerW := httptest.NewRecorder()
 			tc.trigger(h, triggerW, triggerReq)
 			if triggerW.Code != http.StatusAccepted {
@@ -158,7 +160,7 @@ func TestAdminActionWrappers_RouteIntoAdmin(t *testing.T) {
 				t.Errorf("op %q result has empty Skipped reason; want non-empty", tc.opName)
 			}
 
-			statusReq := httptest.NewRequest(http.MethodGet, tc.statusPath, nil)
+			statusReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, tc.statusPath, nil)
 			statusW := httptest.NewRecorder()
 			tc.status(h, statusW, statusReq)
 			body := decodeBody(t, statusW)
