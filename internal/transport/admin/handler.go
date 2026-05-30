@@ -18,6 +18,7 @@ package admin
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -66,6 +67,7 @@ type Handler struct {
 	encAdmin     core.EncryptionAdmin
 	encryptor    *encryption.Encryptor
 	objectCache  cache.ObjectCache
+	flightRec    io.WriterTo // nil when debug.flight_recorder.enabled is false
 	token        string
 	logLevel     *slog.LevelVar
 	// reloadStatus is the per-process snapshot of the last reload
@@ -93,6 +95,7 @@ type Deps struct {
 	Cleanup      core.CleanupStore
 	Encryptor    *encryption.Encryptor
 	ObjectCache  cache.ObjectCache // nil when object data caching is disabled
+	FlightRec    io.WriterTo // nil when debug.flight_recorder.enabled is false
 	Reconciler   Reconciler
 	Token        string
 	LogLevel     *slog.LevelVar
@@ -124,6 +127,7 @@ func New(d *Deps) *Handler {
 		encAdmin:     d.Encryption,
 		encryptor:    d.Encryptor,
 		objectCache:  d.ObjectCache,
+		flightRec:    d.FlightRec,
 		token:        d.Token,
 		logLevel:     d.LogLevel,
 	}

@@ -45,6 +45,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /admin/api/cache/keys/{key...}", h.requireToken(h.handleCacheInvalidateKey))
 	mux.HandleFunc("DELETE /admin/api/cache/prefix", h.requireToken(h.handleCacheInvalidatePrefix))
 	mux.HandleFunc("GET /admin/api/workers", h.requireToken(h.handleWorkers))
+	mux.HandleFunc("POST /admin/api/trace/snapshot", h.requireToken(h.handleTraceSnapshot))
 }
 
 // requireToken wraps a handler and enforces X-Admin-Token authentication.

@@ -1528,6 +1528,31 @@ Drops every cached key under the given prefix. Useful after a bulk update for on
 curl -X DELETE -H "X-Admin-Token: $TOKEN" "http://localhost:9000/admin/api/cache/prefix?prefix=reports/"
 ```
 
+### Execution trace snapshots
+
+The `runtime/trace.FlightRecorder` (Go 1.25) continuously records execution traces in a bounded ring buffer. Operators can stream the last `min_age` of trace data on demand for post-incident "what was every goroutine doing in the last 30 seconds" analysis. Opt-in: disabled by default because the recorder carries continuous (small) overhead.
+
+Enable in config:
+
+```yaml
+debug:
+  flight_recorder:
+    enabled: true
+    min_age: 30s
+```
+
+#### `POST /admin/api/trace/snapshot`
+
+Streams the current ring buffer as a binary `go tool trace` file. Returns 503 `{"error":"flight recorder is disabled (set debug.flight_recorder.enabled: true)"}` when the feature is off.
+
+```bash
+curl -X POST -H "X-Admin-Token: $TOKEN" -o trace.bin \
+  http://localhost:9000/admin/api/trace/snapshot
+go tool trace trace.bin
+```
+
+The ring buffer continues recording after a snapshot; nothing is persisted server-side, so download promptly. Each orchestrator instance has its own recorder — for multi-instance deployments the snapshot is whichever instance the admin request landed on.
+
 ## Common Operations
 
 ### Reloading configuration

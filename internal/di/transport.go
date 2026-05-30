@@ -22,6 +22,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/debug"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
@@ -236,6 +237,11 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	if lm, err := do.Invoke[*lifecycle.Manager](i); err == nil {
 		workerHealth = func() []admin.WorkerHealth { return toAdminWorkerHealth(lm.Health()) }
 	}
+	// FlightRecorder is optional — Optional[*debug.FlightRecorderService]
+	// returns a nil Value when the feature is disabled, so the admin
+	// handler ends up holding a nil *trace.FlightRecorder and the
+	// snapshot endpoint responds 503.
+	frRes := Optional[*debug.FlightRecorderService](i)
 	return admin.New(&admin.Deps{
 		BackendOps:   d.manager,
 		Replicator:   d.replicator,
@@ -250,6 +256,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		Cleanup:      d.stores,
 		Encryptor:    d.enc,
 		ObjectCache:  resolveOptionalCache(i),
+		FlightRec:    frRes.Value.Recorder(),
 		Reconciler:   recRes.Value,
 		Token:        adminToken,
 		LogLevel:     d.logLevel,
