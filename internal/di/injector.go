@@ -106,6 +106,9 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 	if len(cfg.Notifications.Endpoints) > 0 {
 		do.Provide(inj, ProvideNotifier)
 	}
+	if cfg.Debug.FlightRecorder.Enabled {
+		do.Provide(inj, ProvideFlightRecorderService)
+	}
 
 	return inj
 }

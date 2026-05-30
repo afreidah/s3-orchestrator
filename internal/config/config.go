@@ -69,6 +69,7 @@ type Config struct {
 	Cache           CacheConfig          `yaml:"cache"`
 	Redis           *RedisConfig         `yaml:"redis"`
 	Notifications   NotificationConfig   `yaml:"notifications"`
+	Debug           DebugConfig          `yaml:"debug"`
 	RoutingStrategy RoutingStrategy      `yaml:"routing_strategy"` // "pack" (default) or "spread"
 }
 
@@ -135,6 +136,7 @@ func (c *Config) validatePerTypeSections() []error {
 	errs = append(errs, c.Lifecycle.setDefaultsAndValidate()...)
 	errs = append(errs, c.Cache.setDefaultsAndValidate()...)
 	errs = append(errs, c.Notifications.setDefaultsAndValidate()...)
+	errs = append(errs, c.Debug.FlightRecorder.setDefaultsAndValidate()...)
 	if c.Redis != nil {
 		errs = append(errs, c.Redis.setDefaultsAndValidate()...)
 	}

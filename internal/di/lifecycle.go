@@ -16,6 +16,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/debug"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
@@ -113,6 +114,9 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	sm := lifecycle.NewManager()
 	sm.Register("usage-flush", NewUsageFlushService(manager, locker))
 	sm.Register("cb-watchdog", breaker.NewWatchdog(registry))
+	if fr, err := do.Invoke[*debug.FlightRecorderService](i); err == nil {
+		sm.Register("flight-recorder", fr)
+	}
 
 	if mode != "worker" && mode != "all" {
 		return sm, nil
