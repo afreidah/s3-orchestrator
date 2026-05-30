@@ -13,6 +13,7 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -53,27 +54,29 @@ func TestRun_EmptySlice(t *testing.T) {
 // Asserts that peak concurrency = , want <= 3.
 func TestRun_ConcurrencyBound(t *testing.T) {
 	t.Parallel()
-	var active, peak atomic.Int32
-	items := make([]int, 20)
+	synctest.Test(t, func(t *testing.T) {
+		var active, peak atomic.Int32
+		items := make([]int, 20)
 
-	Run(context.Background(), 3, items, func(_ context.Context, _ int) {
-		cur := active.Add(1)
-		defer active.Add(-1)
-		for {
-			old := peak.Load()
-			if cur <= old || peak.CompareAndSwap(old, cur) {
-				break
+		Run(context.Background(), 3, items, func(_ context.Context, _ int) {
+			cur := active.Add(1)
+			defer active.Add(-1)
+			for {
+				old := peak.Load()
+				if cur <= old || peak.CompareAndSwap(old, cur) {
+					break
+				}
 			}
-		}
-		time.Sleep(10 * time.Millisecond)
-	})
+			time.Sleep(10 * time.Millisecond)
+		})
 
-	if p := peak.Load(); p > 3 {
-		t.Errorf("peak concurrency = %d, want <= 3", p)
-	}
-	if p := peak.Load(); p < 2 {
-		t.Errorf("peak concurrency = %d, expected at least 2 with 20 items", p)
-	}
+		if p := peak.Load(); p > 3 {
+			t.Errorf("peak concurrency = %d, want <= 3", p)
+		}
+		if p := peak.Load(); p < 2 {
+			t.Errorf("peak concurrency = %d, expected at least 2 with 20 items", p)
+		}
+	})
 }
 
 // TestRun_ZeroConcurrency verifies the run zero concurrency contract.

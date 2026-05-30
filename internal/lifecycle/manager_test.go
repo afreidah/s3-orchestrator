@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
@@ -184,86 +185,90 @@ func TestManager_PanicRecovery(t *testing.T) {
 // TestManager_StopCallsStoppable verifies the manager stop calls stoppable contract.
 // Asserts that Expected stop for svc-a, got.
 func TestManager_StopCallsStoppable(t *testing.T) {
-	mgr := NewManager()
-	stopped := make(chan string, 1)
-	svc := &stoppableService{stopped: stopped, name: "svc-a"}
-	mgr.Register("svc-a", svc)
+	synctest.Test(t, func(t *testing.T) {
+		mgr := NewManager()
+		stopped := make(chan string, 1)
+		svc := &stoppableService{stopped: stopped, name: "svc-a"}
+		mgr.Register("svc-a", svc)
 
-	// Also register a non-stoppable to verify it's skipped
-	mgr.Register("counter", &counterService{})
+		// Also register a non-stoppable to verify it's skipped
+		mgr.Register("counter", &counterService{})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		mgr.Run(ctx)
-		close(done)
-	}()
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			mgr.Run(ctx)
+			close(done)
+		}()
 
-	time.Sleep(50 * time.Millisecond)
-	cancel()
-	<-done
+		synctest.Wait()
+		cancel()
+		<-done
 
-	mgr.Stop(5 * time.Second)
+		mgr.Stop(5 * time.Second)
 
-	select {
-	case name := <-stopped:
-		if name != "svc-a" {
-			t.Errorf("Expected stop for svc-a, got %s", name)
+		select {
+		case name := <-stopped:
+			if name != "svc-a" {
+				t.Errorf("Expected stop for svc-a, got %s", name)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Stop was never called on stoppable service")
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Stop was never called on stoppable service")
-	}
+	})
 }
 
 // TestManager_StopReverseOrder verifies the manager stop reverse order contract.
 // Asserts that Expected stop order , got.
 func TestManager_StopReverseOrder(t *testing.T) {
-	mgr := NewManager()
-	var mu sync.Mutex
-	var order []string
-	stopped := make(chan string, 3)
+	synctest.Test(t, func(t *testing.T) {
+		mgr := NewManager()
+		var mu sync.Mutex
+		var order []string
+		stopped := make(chan string, 3)
 
-	for _, name := range []string{"first", "second", "third"} {
-		svc := &stoppableService{stopped: stopped, name: name}
-		mgr.Register(name, svc)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		mgr.Run(ctx)
-		close(done)
-	}()
-
-	time.Sleep(50 * time.Millisecond)
-	cancel()
-	<-done
-
-	// Stop collects in reverse registration order (synchronous per service)
-	go func() {
-		mgr.Stop(5 * time.Second)
-	}()
-
-	for range 3 {
-		select {
-		case name := <-stopped:
-			mu.Lock()
-			order = append(order, name)
-			mu.Unlock()
-		case <-time.After(2 * time.Second):
-			t.Fatal("Timed out waiting for Stop calls")
+		for _, name := range []string{"first", "second", "third"} {
+			svc := &stoppableService{stopped: stopped, name: name}
+			mgr.Register(name, svc)
 		}
-	}
 
-	mu.Lock()
-	defer mu.Unlock()
-	expected := []string{"third", "second", "first"}
-	for i, name := range expected {
-		if i >= len(order) || order[i] != name {
-			t.Errorf("Expected stop order %v, got %v", expected, order)
-			break
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			mgr.Run(ctx)
+			close(done)
+		}()
+
+		synctest.Wait()
+		cancel()
+		<-done
+
+		// Stop collects in reverse registration order (synchronous per service)
+		go func() {
+			mgr.Stop(5 * time.Second)
+		}()
+
+		for range 3 {
+			select {
+			case name := <-stopped:
+				mu.Lock()
+				order = append(order, name)
+				mu.Unlock()
+			case <-time.After(2 * time.Second):
+				t.Fatal("Timed out waiting for Stop calls")
+			}
 		}
-	}
+
+		mu.Lock()
+		defer mu.Unlock()
+		expected := []string{"third", "second", "first"}
+		for i, name := range expected {
+			if i >= len(order) || order[i] != name {
+				t.Errorf("Expected stop order %v, got %v", expected, order)
+				break
+			}
+		}
+	})
 }
 
 // TestManager_ErrorRestart verifies the manager error restart path by exercising mgr.SetBackoff, mgr.Register, context.WithCancel.
@@ -419,44 +424,46 @@ func (s *slowStopService) Stop(ctx context.Context) error {
 // a full share.
 func TestManager_StopPerServiceTimeout(t *testing.T) {
 	t.Parallel()
-	mgr := NewManager()
-	stopped := make(chan string, 2)
+	synctest.Test(t, func(t *testing.T) {
+		mgr := NewManager()
+		stopped := make(chan string, 2)
 
-	mgr.Register("slow", &slowStopService{stopped: stopped, name: "slow"})
-	mgr.Register("fast", &stoppableService{stopped: stopped, name: "fast"})
+		mgr.Register("slow", &slowStopService{stopped: stopped, name: "slow"})
+		mgr.Register("fast", &stoppableService{stopped: stopped, name: "fast"})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		mgr.Run(ctx)
-		close(done)
-	}()
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			mgr.Run(ctx)
+			close(done)
+		}()
 
-	time.Sleep(10 * time.Millisecond)
-	cancel()
-	<-done
+		synctest.Wait()
+		cancel()
+		<-done
 
-	// 200ms total, 2 stoppable services = 100ms each. The ratio matches
-	// production (slow burns its full share, fast returns immediately)
-	// without spending real wall-clock on a 1s-per-service budget.
-	const totalBudget = 200 * time.Millisecond
-	start := time.Now()
-	mgr.Stop(totalBudget)
-	elapsed := time.Since(start)
+		// 200ms total, 2 stoppable services = 100ms each. The ratio matches
+		// production (slow burns its full share, fast returns immediately)
+		// without spending real wall-clock on a 1s-per-service budget.
+		const totalBudget = 200 * time.Millisecond
+		start := time.Now()
+		mgr.Stop(totalBudget)
+		elapsed := time.Since(start)
 
-	var names []string
-	for range 2 {
-		select {
-		case name := <-stopped:
-			names = append(names, name)
-		case <-time.After(500 * time.Millisecond):
-			t.Fatalf("timed out waiting for stop calls, got %v", names)
+		var names []string
+		for range 2 {
+			select {
+			case name := <-stopped:
+				names = append(names, name)
+			case <-time.After(500 * time.Millisecond):
+				t.Fatalf("timed out waiting for stop calls, got %v", names)
+			}
 		}
-	}
 
-	// Should be ~100ms (slow burns its share, fast stops instantly). Give
-	// 3x headroom for slow CI.
-	if elapsed > 3*totalBudget {
-		t.Errorf("Stop took %v, expected ~%v (per-service budgets)", elapsed, totalBudget/2)
-	}
+		// Should be ~100ms (slow burns its share, fast stops instantly). Give
+		// 3x headroom for slow CI.
+		if elapsed > 3*totalBudget {
+			t.Errorf("Stop took %v, expected ~%v (per-service budgets)", elapsed, totalBudget/2)
+		}
+	})
 }
