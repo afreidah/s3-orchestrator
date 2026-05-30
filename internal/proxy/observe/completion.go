@@ -67,7 +67,7 @@ func CopyCompleted(ctx context.Context, span trace.Span, sourceKey, destKey, sou
 	audit.Log(ctx, "storage.CopyObject",
 		slog.String("source_key", sourceKey),
 		slog.String("dest_key", destKey),
-		slog.String("source_backend", sourceBackend),
+		slog.String("src_backend", sourceBackend),
 		slog.String("dest_backend", destBackend),
 		slog.Int64("size", size),
 	)

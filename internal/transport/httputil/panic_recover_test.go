@@ -99,7 +99,7 @@ func TestPanicRecover_PassesThroughWhenNoPanic(t *testing.T) {
 	}))
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil))
 
 	if cw.called {
 		t.Error("error writer invoked for a non-panicking handler")
@@ -124,7 +124,7 @@ func TestPanicRecover_StringPanic(t *testing.T) {
 
 	delta := counterDelta(t, "test_string", func() {
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil))
 		if rec.Code != http.StatusInternalServerError {
 			t.Errorf("status = %d, want 500", rec.Code)
 		}
@@ -159,7 +159,7 @@ func TestPanicRecover_ErrorPanic(t *testing.T) {
 
 	delta := counterDelta(t, "test_error", func() {
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil))
 		if rec.Code != http.StatusInternalServerError {
 			t.Errorf("status = %d, want 500", rec.Code)
 		}
@@ -183,7 +183,7 @@ func TestPanicRecover_RequestIDEchoedInMessage(t *testing.T) {
 		panic("with id")
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	req = req.WithContext(audit.WithRequestID(req.Context(), "req-XYZ"))
 
 	rec := httptest.NewRecorder()
@@ -211,7 +211,7 @@ func TestPanicRecover_ActiveSpanGetsErrorRecorded(t *testing.T) {
 	}))
 
 	ctx, span := tracer.Start(context.Background(), "test-span")
-	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	span.End()
@@ -243,7 +243,7 @@ func TestPanicRecover_AuditCallbackFires(t *testing.T) {
 	}))
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil))
 
 	if !saw.Load() {
 		t.Error("audit callback did not see http.PanicRecovered")

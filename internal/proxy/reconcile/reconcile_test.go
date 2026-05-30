@@ -22,10 +22,10 @@ package reconcile
 
 import (
 	"context"
-	"log/slog"
 	"errors"
+	"log/slog"
+	"slices"
 	"testing"
-
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -166,10 +166,10 @@ func TestReconcileSorted_Interleaved(t *testing.T) {
 	}
 	wantImp := []string{"a", "c", "f"}
 	wantDel := []string{"b", "e"}
-	if got := keysOf(imp); !equalStrings(got, wantImp) {
+	if got := keysOf(imp); !slices.Equal(got, wantImp) {
 		t.Errorf("imports = %v, want %v", got, wantImp)
 	}
-	if !equalStrings(del, wantDel) {
+	if !slices.Equal(del, wantDel) {
 		t.Errorf("deletes = %v, want %v", del, wantDel)
 	}
 }
@@ -350,7 +350,7 @@ func TestDBCursorStream_DrainsAcrossPages(t *testing.T) {
 	it := NewDBCursorStream(lister, "be1", "vb/", nil)
 	got := drainStream(t, it)
 	want := []string{"vb/a", "vb/b", "vb/c", "vb/d"}
-	if !equalStrings(got, want) {
+	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
@@ -369,7 +369,7 @@ func TestDBCursorStream_FiltersSiblingBucket(t *testing.T) {
 	}
 	it := NewDBCursorStream(lister, "be1", "vb/", []string{"other/"})
 	got := drainStream(t, it)
-	if !equalStrings(got, []string{"vb/a", "vb/b"}) {
+	if !slices.Equal(got, []string{"vb/a", "vb/b"}) {
 		t.Errorf("sibling-bucket row not filtered: %v", got)
 	}
 }
@@ -414,7 +414,7 @@ func TestDBCursorStream_StopIsNoop(t *testing.T) {
 	it.Stop()
 	it.Stop() // idempotent
 	got := drainStream(t, it)
-	if !equalStrings(got, []string{"vb/a"}) {
+	if !slices.Equal(got, []string{"vb/a"}) {
 		t.Errorf("stop should not affect iteration, got %v", got)
 	}
 }
@@ -489,7 +489,7 @@ func TestNamespaceKey_LegacyKey(t *testing.T) {
 func TestSiblingPrefixes_DropsCurrent(t *testing.T) {
 	got := SiblingPrefixes([]string{"a", "b", "c"}, "b")
 	want := []string{"a/", "c/"}
-	if !equalStrings(got, want) {
+	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
@@ -499,7 +499,7 @@ func TestSiblingPrefixes_DropsCurrent(t *testing.T) {
 func TestSiblingPrefixes_NoMatch(t *testing.T) {
 	got := SiblingPrefixes([]string{"a", "b"}, "z")
 	want := []string{"a/", "b/"}
-	if !equalStrings(got, want) {
+	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
@@ -540,7 +540,7 @@ func TestS3KeyStream_StreamsAcrossPagesAndNamespaces(t *testing.T) {
 
 	got := drainStream(t, s3)
 	want := []string{"vb/a", "vb/legacy", "vb/z"}
-	if !equalStrings(got, want) {
+	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	if apiPages != 2 {
@@ -675,7 +675,7 @@ func TestDeleteHandler_CountsAndContinues(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // keysOf projects a []Entry into its keys slice so the test
-// can compare against the expected ordering with equalStrings without
+// can compare against the expected ordering with slices.Equal without
 // exposing the entry struct fields the comparison does not care about.
 func keysOf(es []Entry) []string {
 	out := make([]string, len(es))
@@ -685,17 +685,3 @@ func keysOf(es []Entry) []string {
 	return out
 }
 
-// equalStrings is a tiny equality helper used so the assertion sites
-// below stay readable. reflect.DeepEqual would also work; this lets the
-// failure messages cite the exact diverging position cheaply.
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}

@@ -578,8 +578,8 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 
 	audit.Log(ctx, "rebalance.move",
 		slog.String("key", move.ObjectKey),
-		slog.String("from_backend", move.FromBackend),
-		slog.String("to_backend", move.ToBackend),
+		slog.String("src_backend", move.FromBackend),
+		slog.String("dst_backend", move.ToBackend),
 		slog.Int64("size", movedSize),
 	)
 
