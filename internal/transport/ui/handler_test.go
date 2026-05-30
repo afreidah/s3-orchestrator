@@ -12,6 +12,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -118,7 +119,7 @@ func loginCookies(t *testing.T, h *Handler, mux *http.ServeMux) (session *http.C
 		"access_key": {testAdminKey},
 		"secret_key": {testAdminSecret},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -152,7 +153,7 @@ func getSessionCookie(t *testing.T, h *Handler, mux *http.ServeMux) *http.Cookie
 func authedRequest(t *testing.T, h *Handler, mux *http.ServeMux, method, path string, body io.Reader) *http.Request {
 	t.Helper()
 	session, csrf := loginCookies(t, h, mux)
-	req := httptest.NewRequest(method, path, body)
+	req := httptest.NewRequestWithContext(context.Background(), method, path, body)
 	req.AddCookie(session)
 	req.AddCookie(csrf)
 	if method == http.MethodPost {
@@ -173,7 +174,7 @@ func TestCSRF_PostWithoutToken_Rejected(t *testing.T) {
 	session := getSessionCookie(t, h, mux)
 
 	// POST without CSRF token should be rejected
-	req := httptest.NewRequest(http.MethodPost, "/ui/api/rebalance", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/api/rebalance", nil)
 	req.AddCookie(session)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -191,7 +192,7 @@ func TestCSRF_PostWithCookieButNoHeader_Rejected(t *testing.T) {
 	session, csrf := loginCookies(t, h, mux)
 
 	// Send CSRF cookie but no X-CSRF-Token header
-	req := httptest.NewRequest(http.MethodPost, "/ui/api/rebalance", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/api/rebalance", nil)
 	req.AddCookie(session)
 	req.AddCookie(csrf)
 	w := httptest.NewRecorder()
@@ -209,7 +210,7 @@ func TestCSRF_PostWithWrongToken_Rejected(t *testing.T) {
 	h, mux := newTestHandler(t)
 	session, csrf := loginCookies(t, h, mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/ui/api/rebalance", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/api/rebalance", nil)
 	req.AddCookie(session)
 	req.AddCookie(csrf)
 	req.Header.Set(csrfHeaderName, "wrong-token")
@@ -229,7 +230,7 @@ func TestCSRF_GetWithoutToken_Allowed(t *testing.T) {
 	session := getSessionCookie(t, h, mux)
 
 	// GET requests should not require CSRF token
-	req := httptest.NewRequest(http.MethodGet, "/ui/api/dashboard", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/api/dashboard", nil)
 	req.AddCookie(session)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -253,7 +254,7 @@ func TestDashboard_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/ui/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -273,7 +274,7 @@ func TestAPIDashboard_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/ui/api/dashboard", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/api/dashboard", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -292,7 +293,7 @@ func TestLogin_ValidCredentials(t *testing.T) {
 		"access_key": {testAdminKey},
 		"secret_key": {testAdminSecret},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -332,7 +333,7 @@ func TestLogin_InvalidCredentials(t *testing.T) {
 		"access_key": {"wrong"},
 		"secret_key": {"wrong"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -354,7 +355,7 @@ func TestLogin_GET_ShowsForm(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/ui/login", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/login", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -376,7 +377,7 @@ func TestLogin_GET_RedirectsWhenAuthenticated(t *testing.T) {
 	h, mux := newTestHandler(t)
 
 	cookie := getSessionCookie(t, h, mux)
-	req := httptest.NewRequest(http.MethodGet, "/ui/login", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/login", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -397,7 +398,7 @@ func TestLogout_ClearsCookie(t *testing.T) {
 	h, mux := newTestHandler(t)
 
 	cookie := getSessionCookie(t, h, mux)
-	req := httptest.NewRequest(http.MethodGet, "/ui/logout", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/logout", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -485,7 +486,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 		"access_key": {testAdminKey},
 		"secret_key": {testAdminSecret},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -563,7 +564,7 @@ func TestCrossInstanceSession(t *testing.T) {
 	cookie := getSessionCookie(t, h1, mux1)
 
 	// Use that session on instance 2.
-	req := httptest.NewRequest(http.MethodGet, "/ui/api/dashboard", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/api/dashboard", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
 	mux2.ServeHTTP(w, req)
@@ -579,7 +580,7 @@ func TestStaticAssets_NoAuthRequired(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/ui/static/style.css", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/static/style.css", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -704,7 +705,7 @@ func TestSecurityHeaders_PresentOnAllEndpoints(t *testing.T) {
 			if ep.authed {
 				req = authedRequest(t, h, mux, http.MethodGet, ep.path, nil)
 			} else {
-				req = httptest.NewRequest(http.MethodGet, ep.path, nil)
+				req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, ep.path, nil)
 			}
 			w := httptest.NewRecorder()
 			mux.ServeHTTP(w, req)
@@ -767,7 +768,7 @@ func TestAPIDelete_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/ui/api/delete", strings.NewReader(`{"key":"test"}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/api/delete", strings.NewReader(`{"key":"test"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -783,7 +784,7 @@ func TestAPIUpload_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/ui/api/upload", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/api/upload", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -898,7 +899,7 @@ func TestAPIDeletePrefix_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/ui/api/delete-prefix",
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/api/delete-prefix",
 		strings.NewReader(`{"prefix":"test-bucket/"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -1208,7 +1209,7 @@ func TestAPIRebalance_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/ui/api/rebalance", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/api/rebalance", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -1336,7 +1337,7 @@ func TestAPISync_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/ui/api/sync",
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/api/sync",
 		strings.NewReader(`{"backend":"b1","bucket":"test-bucket"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -1467,7 +1468,7 @@ func TestLogin_UnsupportedMethod(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
 
-	req := httptest.NewRequest(http.MethodPut, "/ui/login", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/ui/login", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -1564,7 +1565,7 @@ func TestAPILogs_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/ui/api/logs", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/api/logs", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -1852,7 +1853,7 @@ func TestLogin_BruteForceProtection(t *testing.T) {
 	// 3 bad attempts
 	for range 3 {
 		form := url.Values{"access_key": {"wrong"}, "secret_key": {"wrong"}}
-		req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.RemoteAddr = "10.0.0.1:12345"
 		w := httptest.NewRecorder()
@@ -1861,7 +1862,7 @@ func TestLogin_BruteForceProtection(t *testing.T) {
 
 	// 4th attempt should be 429
 	form := url.Values{"access_key": {"wrong"}, "secret_key": {"wrong"}}
-	req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.RemoteAddr = "10.0.0.1:12345"
 	w := httptest.NewRecorder()
@@ -1887,7 +1888,7 @@ func BenchmarkLogin_InvalidKey(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(body))
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/login", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, req)
@@ -1904,7 +1905,7 @@ func BenchmarkLogin_ValidKeyWrongSecret(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(body))
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/login", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, req)
@@ -2100,7 +2101,7 @@ func TestLogin_BruteForceReset(t *testing.T) {
 	// 2 bad attempts
 	for range 2 {
 		form := url.Values{"access_key": {"wrong"}, "secret_key": {"wrong"}}
-		req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.RemoteAddr = addr
 		w := httptest.NewRecorder()
@@ -2109,7 +2110,7 @@ func TestLogin_BruteForceReset(t *testing.T) {
 
 	// Successful login resets counter
 	form := url.Values{"access_key": {testAdminKey}, "secret_key": {testAdminSecret}}
-	req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.RemoteAddr = addr
 	w := httptest.NewRecorder()
@@ -2122,7 +2123,7 @@ func TestLogin_BruteForceReset(t *testing.T) {
 	// 2 more bad attempts should not trigger lockout (counter was reset)
 	for range 2 {
 		form := url.Values{"access_key": {"wrong"}, "secret_key": {"wrong"}}
-		req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.RemoteAddr = addr
 		w := httptest.NewRecorder()
@@ -2184,7 +2185,7 @@ func TestAPICleanExcess_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/ui/api/clean-excess", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/api/clean-excess", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -2221,7 +2222,7 @@ func TestAPICleanExcessStatus_RequiresAuth(t *testing.T) {
 	t.Parallel()
 	_, mux := newTestHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/ui/api/clean-excess/status", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ui/api/clean-excess/status", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 

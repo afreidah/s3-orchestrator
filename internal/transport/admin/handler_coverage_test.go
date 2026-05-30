@@ -131,7 +131,7 @@ func TestHandleStatus_PopulatedDashboard(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	h.handleStatus(w, httptest.NewRequest(http.MethodGet, "/admin/api/status", nil))
+	h.handleStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/status", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -162,7 +162,7 @@ func TestHandleOverReplicationStatus_Configured(t *testing.T) {
 	h.overRep = &fakeOverRep{cfg: &config.ReplicationConfig{Factor: 2}, count: 7}
 
 	w := httptest.NewRecorder()
-	h.handleOverReplicationStatus(w, httptest.NewRequest(http.MethodGet, "/admin/api/over-replication", nil))
+	h.handleOverReplicationStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/over-replication", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -181,7 +181,7 @@ func TestHandleOverReplicationStatus_CountError(t *testing.T) {
 	h.overRep = &fakeOverRep{cfg: &config.ReplicationConfig{Factor: 2}, countErr: errors.New("db down")}
 
 	w := httptest.NewRecorder()
-	h.handleOverReplicationStatus(w, httptest.NewRequest(http.MethodGet, "/admin/api/over-replication", nil))
+	h.handleOverReplicationStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/over-replication", nil))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
@@ -197,7 +197,7 @@ func TestHandleOverReplicationClean_Configured(t *testing.T) {
 	h.overRep = &fakeOverRep{cfg: &config.ReplicationConfig{Factor: 2, BatchSize: 5}, cleaned: 3}
 
 	w := httptest.NewRecorder()
-	h.handleOverReplicationClean(w, httptest.NewRequest(http.MethodPost, "/admin/api/over-replication?batch_size=100", nil))
+	h.handleOverReplicationClean(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/over-replication?batch_size=100", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -223,7 +223,7 @@ func TestHandleReplicate_Configured(t *testing.T) {
 	h.replicator = &fakeReplicator{cfg: &config.ReplicationConfig{Factor: 2}, created: 4}
 
 	w := httptest.NewRecorder()
-	h.handleReplicate(w, httptest.NewRequest(http.MethodPost, "/admin/api/replicate", nil))
+	h.handleReplicate(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/replicate", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -248,7 +248,7 @@ func TestHandleScrub_IntegrityEnabled(t *testing.T) {
 	h.scrubber = &fakeScrubber{scrubChecked: 12, scrubFailed: 1}
 
 	w := httptest.NewRecorder()
-	h.handleScrub(w, httptest.NewRequest(http.MethodPost, "/admin/api/scrub?batch_size=10", nil))
+	h.handleScrub(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/scrub?batch_size=10", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -270,7 +270,7 @@ func TestHandleBackfillChecksums_IntegrityEnabled(t *testing.T) {
 	h.scrubber = &fakeScrubber{backfillProcessed: 8}
 
 	w := httptest.NewRecorder()
-	h.handleBackfillChecksums(w, httptest.NewRequest(http.MethodPost, "/admin/api/backfill-checksums", nil))
+	h.handleBackfillChecksums(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/backfill-checksums", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -294,7 +294,7 @@ func TestHandleReconcile_Success(t *testing.T) {
 	h.reconciler = &fakeReconciler{result: &worker.ReconcileResult{Imported: 4, Removed: 1, BackendsScanned: 2}}
 
 	w := httptest.NewRecorder()
-	h.handleReconcile(w, httptest.NewRequest(http.MethodPost, "/admin/api/reconcile?backend=b1", nil))
+	h.handleReconcile(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/reconcile?backend=b1", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -314,7 +314,7 @@ func TestHandleReconcile_Error(t *testing.T) {
 	h.reconciler = &fakeReconciler{err: errors.New("scan failed")}
 
 	w := httptest.NewRecorder()
-	h.handleReconcile(w, httptest.NewRequest(http.MethodPost, "/admin/api/reconcile", nil))
+	h.handleReconcile(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/reconcile", nil))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
@@ -355,7 +355,7 @@ func TestHandleReloadStatus_ProviderReturnsNil(t *testing.T) {
 	h.SetReloadStatusProvider(func() any { return nil })
 
 	w := httptest.NewRecorder()
-	h.handleReloadStatus(w, httptest.NewRequest(http.MethodGet, "/admin/api/reload-status", nil))
+	h.handleReloadStatus(w, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/reload-status", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
@@ -378,7 +378,7 @@ func TestHandleCacheInvalidateKey_EmptyKey(t *testing.T) {
 	h := newTestHandlerWithCache(t)
 	w := httptest.NewRecorder()
 	// No PathValue set on the bare request -> key resolves to "".
-	h.handleCacheInvalidateKey(w, httptest.NewRequest(http.MethodDelete, "/admin/api/cache/keys/", nil))
+	h.handleCacheInvalidateKey(w, httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/keys/", nil))
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
@@ -419,7 +419,7 @@ func TestHandleDecryptExisting_HappyEmpty(t *testing.T) {
 	h := newRotateEncryptionKeyHandler(t) // gives us encryptor + emptyEncAdmin
 
 	w := httptest.NewRecorder()
-	h.handleDecryptExisting(w, httptest.NewRequest(http.MethodPost, "/admin/api/decrypt-existing", nil))
+	h.handleDecryptExisting(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/decrypt-existing", nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -447,7 +447,7 @@ func TestHandleRotateEncryptionKey_DrivesListLoop(t *testing.T) {
 	h.encAdmin = &singleRowEncAdmin{}
 
 	body := `{"old_key_id":"old"}`
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/rotate-encryption-key", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/rotate-encryption-key", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.handleRotateEncryptionKey(w, req)
 

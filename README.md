@@ -1527,6 +1527,7 @@ deploy/
 | [API Reference](docs/api-reference.md) | UI and Admin API JSON endpoint documentation |
 | [Security Hardening](docs/security-hardening.md) | TLS, mTLS, config security, network segmentation |
 | [Performance Tuning](docs/performance-tuning.md) | Connection pools, timeouts, routing, rebalancer tuning |
+| [Benchmark Trends](https://afreidah.github.io/s3-orchestrator/dev/bench/) | Nightly benchmark history with per-bench trend charts |
 | [Disaster Recovery](docs/disaster-recovery.md) | Failure scenarios and recovery procedures |
 | [Version Migration](docs/version-migration.md) | Upgrade guide, config changes by version |
 | [Style Guide](docs/style-guide.md) | Coding conventions for contributors |

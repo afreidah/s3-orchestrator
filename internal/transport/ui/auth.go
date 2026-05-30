@@ -103,7 +103,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, accessKe
 	// from a trusted X-Forwarded-Proto.
 	secure := h.forceSecure || httputil.IsTLSRequest(r, h.trustedProxies)
 
-	http.SetCookie(w, &http.Cookie{ // NOSONAR S2092 - Secure derived from TLS detection above
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124 / NOSONAR S2092: Secure derived from TLS detection above
 		Name:     sessionCookieName,
 		Value:    value,
 		Path:     h.prefix + "/",
@@ -119,7 +119,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, accessKe
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{ // NOSONAR S2092 - Secure derived from TLS detection above
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124 / NOSONAR S2092: Secure derived from TLS detection above
 		Name:     csrfCookieName,
 		Value:    csrfToken,
 		Path:     h.prefix + "/",
@@ -269,7 +269,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// SetCookie used, otherwise the browser will not match the cookie
 	// against the deletion request and will leave the original in place.
 	secure := h.forceSecure || httputil.IsTLSRequest(r, h.trustedProxies)
-	http.SetCookie(w, &http.Cookie{ // NOSONAR S2092 - Secure derived from TLS detection above
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124 / NOSONAR S2092: Secure derived from TLS detection above
 		Name:     sessionCookieName,
 		Value:    "",
 		Path:     h.prefix + "/",
@@ -278,7 +278,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1,
 		Secure:   secure,
 	})
-	http.SetCookie(w, &http.Cookie{ // NOSONAR S2092 - Secure derived from TLS detection above
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124 / NOSONAR S2092: Secure derived from TLS detection above
 		Name:   csrfCookieName,
 		Value:  "",
 		Path:   h.prefix + "/",

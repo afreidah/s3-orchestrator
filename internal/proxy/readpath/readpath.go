@@ -392,7 +392,7 @@ func (f *Failover) tryBackendsInParallel(
 		}
 		p := pending[launched]
 		launched++
-		probeCtx, cancel := context.WithCancel(ctx)
+		probeCtx, cancel := context.WithCancel(ctx) //nolint:gosec // G118: cancel reaches the call graph via cancels map -> cancelLosers / all-failed loop.
 		cancels[p.name] = cancel
 		go runBackendProbe(probeCtx, p.name, p.be, probe, ch)
 		return true

@@ -7,6 +7,7 @@
 package httputil_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -75,7 +76,7 @@ func TestDecodeJSONBody(t *testing.T) {
 
 	t.Run("happy path", func(t *testing.T) {
 		t.Parallel()
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"alice"}`))
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/", strings.NewReader(`{"name":"alice"}`))
 		w := httptest.NewRecorder()
 		var dst struct {
 			Name string `json:"name"`
@@ -90,7 +91,7 @@ func TestDecodeJSONBody(t *testing.T) {
 
 	t.Run("invalid JSON returns 400", func(t *testing.T) {
 		t.Parallel()
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{not json`))
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/", strings.NewReader(`{not json`))
 		w := httptest.NewRecorder()
 		var dst map[string]any
 		if httputil.DecodeJSONBody(w, req, &dst, 1<<10) {
@@ -104,7 +105,7 @@ func TestDecodeJSONBody(t *testing.T) {
 	t.Run("over cap returns 400", func(t *testing.T) {
 		t.Parallel()
 		big := strings.Repeat(`a`, 2048)
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"v":"`+big+`"}`))
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/", strings.NewReader(`{"v":"`+big+`"}`))
 		w := httptest.NewRecorder()
 		var dst map[string]string
 		if httputil.DecodeJSONBody(w, req, &dst, 64) {
@@ -125,7 +126,7 @@ func TestRequireMethod(t *testing.T) {
 
 	t.Run("allowed", func(t *testing.T) {
 		t.Parallel()
-		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/", nil)
 		w := httptest.NewRecorder()
 		if !httputil.RequireMethod(w, req, http.MethodPost, http.MethodPut) {
 			t.Errorf("expected RequireMethod to allow POST")
@@ -137,7 +138,7 @@ func TestRequireMethod(t *testing.T) {
 
 	t.Run("rejected", func(t *testing.T) {
 		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 		w := httptest.NewRecorder()
 		if httputil.RequireMethod(w, req, http.MethodPost, http.MethodPut) {
 			t.Errorf("expected RequireMethod to reject GET")
