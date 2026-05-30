@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -60,24 +61,26 @@ func TestLoginThrottle_SuccessResetsCounter(t *testing.T) {
 // TestLoginThrottle_LockoutExpires verifies the login throttle lockout expires path by exercising lt.Close, lt.RecordFailure, lt.IsLockedOut.
 func TestLoginThrottle_LockoutExpires(t *testing.T) {
 	t.Parallel()
-	lt := NewLoginThrottle(3, 50*time.Millisecond)
-	defer lt.Close()
+	synctest.Test(t, func(t *testing.T) {
+		lt := NewLoginThrottle(3, 50*time.Millisecond)
+		defer lt.Close()
 
-	addr := "10.0.0.1"
+		addr := "10.0.0.1"
 
-	for range 3 {
-		lt.RecordFailure(addr)
-	}
+		for range 3 {
+			lt.RecordFailure(addr)
+		}
 
-	if !lt.IsLockedOut(addr) {
-		t.Fatal("should be locked out immediately after 3 failures")
-	}
+		if !lt.IsLockedOut(addr) {
+			t.Fatal("should be locked out immediately after 3 failures")
+		}
 
-	time.Sleep(60 * time.Millisecond)
+		time.Sleep(60 * time.Millisecond)
 
-	if lt.IsLockedOut(addr) {
-		t.Error("lockout should have expired")
-	}
+		if lt.IsLockedOut(addr) {
+			t.Error("lockout should have expired")
+		}
+	})
 }
 
 // TestLoginThrottle_IPIsolation verifies the login throttle ipisolation path by exercising lt.Close, lt.RecordFailure, lt.IsLockedOut.

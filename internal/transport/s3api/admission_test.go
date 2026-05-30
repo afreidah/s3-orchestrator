@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -408,42 +409,44 @@ func TestSplitAdmission_DeleteUsesWritePool(t *testing.T) {
 // Asserts that request after wait: got , want 200.
 func TestAdmissionController_WaitAcquiresSlot(t *testing.T) {
 	t.Parallel()
-	ac := NewAdmissionController(1)
-	ac.SetAdmissionWait(200 * time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		ac := NewAdmissionController(1)
+		ac.SetAdmissionWait(200 * time.Millisecond)
 
-	hold := make(chan struct{})
-	entered := make(chan struct{}, 1)
-	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		entered <- struct{}{}
-		<-hold
-		w.WriteHeader(http.StatusOK)
-	}))
+		hold := make(chan struct{})
+		entered := make(chan struct{}, 1)
+		handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			entered <- struct{}{}
+			<-hold
+			w.WriteHeader(http.StatusOK)
+		}))
 
-	// Fill the slot
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
-		handler.ServeHTTP(rec, req)
+		// Fill the slot
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
+			handler.ServeHTTP(rec, req)
+		})
+		<-entered
+
+		// Release the slot after 50ms  -  well within the 200ms wait window
+		secondDone := make(chan int, 1)
+		wg.Go(func() {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key2", nil)
+			handler.ServeHTTP(rec, req)
+			secondDone <- rec.Code
+		})
+
+		time.Sleep(50 * time.Millisecond)
+		close(hold)
+		wg.Wait()
+
+		if code := <-secondDone; code != http.StatusOK {
+			t.Errorf("request after wait: got %d, want 200", code)
+		}
 	})
-	<-entered
-
-	// Release the slot after 50ms  -  well within the 200ms wait window
-	secondDone := make(chan int, 1)
-	wg.Go(func() {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key2", nil)
-		handler.ServeHTTP(rec, req)
-		secondDone <- rec.Code
-	})
-
-	time.Sleep(50 * time.Millisecond)
-	close(hold)
-	wg.Wait()
-
-	if code := <-secondDone; code != http.StatusOK {
-		t.Errorf("request after wait: got %d, want 200", code)
-	}
 }
 
 // TestAdmissionController_WaitTimesOut verifies the admission controller wait times out contract.
@@ -487,62 +490,67 @@ func TestAdmissionController_WaitTimesOut(t *testing.T) {
 // Asserts that AdmissionClientCanceledTotal did not increment: before= after=.
 func TestAdmissionController_ClientCancelDuringWaitNotCountedAsRejection(t *testing.T) {
 	t.Parallel()
-	ac := NewAdmissionController(1)
-	// Generous wait so the test reliably observes the client-cancel branch
-	// rather than racing the timer.
-	ac.SetAdmissionWait(2 * time.Second)
+	synctest.Test(t, func(t *testing.T) {
+		ac := NewAdmissionController(1)
+		// Generous wait so the test reliably observes the client-cancel branch
+		// rather than racing the timer.
+		ac.SetAdmissionWait(2 * time.Second)
 
-	hold := make(chan struct{})
-	entered := make(chan struct{}, 1)
-	handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		entered <- struct{}{}
-		<-hold
-		w.WriteHeader(http.StatusOK)
-	}))
+		hold := make(chan struct{})
+		entered := make(chan struct{}, 1)
+		handler := ac.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			entered <- struct{}{}
+			<-hold
+			w.WriteHeader(http.StatusOK)
+		}))
 
-	// Fill the only slot.
-	var wg sync.WaitGroup
-	wg.Go(func() {
+		// Fill the only slot.
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
+			handler.ServeHTTP(rec, req)
+		})
+		<-entered
+
+		beforeCancel := testutil.ToFloat64(telemetry.AdmissionClientCanceledTotal)
+
+		// Second request: cancel its context shortly after dispatch so it lands
+		// in the brief-wait branch and exits via r.Context().Done().
+		ctx, cancel := context.WithCancel(context.Background())
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-bucket/key", nil)
-		handler.ServeHTTP(rec, req)
+		req := httptest.NewRequestWithContext(ctx, "GET", "/test-bucket/key2", nil)
+		done := make(chan struct{})
+		go func() {
+			handler.ServeHTTP(rec, req)
+			close(done)
+		}()
+		// synctest.Wait blocks until all goroutines (including the in-flight
+		// handler) are parked, so cancel() lands in the wait branch
+		// deterministically without a wall-clock sleep.
+		synctest.Wait()
+		cancel()
+		<-done
+
+		// The dedicated client-cancel counter must increment by exactly 1.
+		// (Asserting the rejection counter does NOT increment is unreliable here
+		// because other parallel tests share the global counter; the directly
+		// observable invariants are this delta and the empty response below.)
+		if afterCancel := testutil.ToFloat64(telemetry.AdmissionClientCanceledTotal); afterCancel != beforeCancel+1 {
+			t.Errorf("AdmissionClientCanceledTotal did not increment: before=%v after=%v",
+				beforeCancel, afterCancel)
+		}
+		// No response should have been written for a cancelled client. httptest
+		// defaults Code to 200 when WriteHeader is never called, and Body is
+		// empty when Write is never called.
+		if rec.Code != http.StatusOK {
+			t.Errorf("response status was set despite client cancel: got %d, want 200 (default, not written)", rec.Code)
+		}
+		if rec.Body.Len() != 0 {
+			t.Errorf("response body was written despite client cancel: %q", rec.Body.String())
+		}
+
+		close(hold)
+		wg.Wait()
 	})
-	<-entered
-
-	beforeCancel := testutil.ToFloat64(telemetry.AdmissionClientCanceledTotal)
-
-	// Second request: cancel its context shortly after dispatch so it lands
-	// in the brief-wait branch and exits via r.Context().Done().
-	ctx, cancel := context.WithCancel(context.Background())
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequestWithContext(ctx, "GET", "/test-bucket/key2", nil)
-	done := make(chan struct{})
-	go func() {
-		handler.ServeHTTP(rec, req)
-		close(done)
-	}()
-	time.Sleep(50 * time.Millisecond) // let the goroutine reach the wait
-	cancel()
-	<-done
-
-	// The dedicated client-cancel counter must increment by exactly 1.
-	// (Asserting the rejection counter does NOT increment is unreliable here
-	// because other parallel tests share the global counter; the directly
-	// observable invariants are this delta and the empty response below.)
-	if afterCancel := testutil.ToFloat64(telemetry.AdmissionClientCanceledTotal); afterCancel != beforeCancel+1 {
-		t.Errorf("AdmissionClientCanceledTotal did not increment: before=%v after=%v",
-			beforeCancel, afterCancel)
-	}
-	// No response should have been written for a cancelled client. httptest
-	// defaults Code to 200 when WriteHeader is never called, and Body is
-	// empty when Write is never called.
-	if rec.Code != http.StatusOK {
-		t.Errorf("response status was set despite client cancel: got %d, want 200 (default, not written)", rec.Code)
-	}
-	if rec.Body.Len() != 0 {
-		t.Errorf("response body was written despite client cancel: %q", rec.Body.String())
-	}
-
-	close(hold)
-	wg.Wait()
 }

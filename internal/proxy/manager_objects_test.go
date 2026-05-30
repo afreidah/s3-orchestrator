@@ -330,7 +330,9 @@ func (f *flippingDrainChecker) IsDraining(name string) bool {
 // commit aborts and the bytes are cleaned up. The orchestrator fails
 // the attempt over to b2.
 func TestPutObject_DrainRace_AbortsAndFailsOver(t *testing.T) {
-	t.Parallel()
+	// Not parallel: asserts an exact +1 delta on the global
+	// telemetry.DrainRaceAbortedTotal counter, which is also bumped by
+	// TestPutObject_DrainRace_AllBackendsDraining.
 	drained := newMockBackend()
 	healthy := newMockBackend()
 	store, _ := eligibleStore(t)
@@ -360,7 +362,9 @@ func TestPutObject_DrainRace_AbortsAndFailsOver(t *testing.T) {
 // path: when every eligible backend flips to draining mid-write, the
 // retry loop exhausts without committing anywhere.
 func TestPutObject_DrainRace_AllBackendsDraining(t *testing.T) {
-	t.Parallel()
+	// Not parallel: bumps the shared telemetry.DrainRaceAbortedTotal
+	// counter that TestPutObject_DrainRace_AbortsAndFailsOver asserts an
+	// exact delta against.
 	drainedA := newMockBackend()
 	drainedB := newMockBackend()
 	store, _ := eligibleStore(t)

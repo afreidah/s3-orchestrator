@@ -11,12 +11,14 @@
 package backend
 
 import (
-	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"context"
 	"errors"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/breaker"
 )
 
 // newTestCBBackend constructs a new test cbbackend.
@@ -182,28 +184,30 @@ func TestCBBackend_DeleteObject_CircuitOpen(t *testing.T) {
 // Asserts that probe should succeed:.
 func TestCBBackend_RecoveryAfterTimeout(t *testing.T) {
 	t.Parallel()
-	mock := newMockBackend()
-	mock.putErr = errors.New("connection refused")
-	cb := newTestCBBackend(mock, 1, 10*time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		mock := newMockBackend()
+		mock.putErr = errors.New("connection refused")
+		cb := newTestCBBackend(mock, 1, 10*time.Millisecond)
 
-	// Trip the circuit
-	_, _ = cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil)
+		// Trip the circuit
+		_, _ = cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil)
 
-	time.Sleep(15 * time.Millisecond)
+		time.Sleep(15 * time.Millisecond)
 
-	// Fix the mock
-	mock.mu.Lock()
-	mock.putErr = nil
-	mock.mu.Unlock()
+		// Fix the mock
+		mock.mu.Lock()
+		mock.putErr = nil
+		mock.mu.Unlock()
 
-	// Probe should succeed, circuit closes
-	_, err := cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil)
-	if err != nil {
-		t.Fatalf("probe should succeed: %v", err)
-	}
-	if !cb.IsHealthy() {
-		t.Fatal("circuit should be closed after successful probe")
-	}
+		// Probe should succeed, circuit closes
+		_, err := cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil)
+		if err != nil {
+			t.Fatalf("probe should succeed: %v", err)
+		}
+		if !cb.IsHealthy() {
+			t.Fatal("circuit should be closed after successful probe")
+		}
+	})
 }
 
 // -------------------------------------------------------------------------

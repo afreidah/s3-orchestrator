@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -81,58 +82,67 @@ func TestTTLCache_Clear(t *testing.T) {
 // TestTTLCache_Expiry verifies the ttlcache expiry path by exercising c.Close, c.Set, c.Get.
 func TestTTLCache_Expiry(t *testing.T) {
 	t.Parallel()
-	c := NewTTLCache[string, string](50 * time.Millisecond)
-	defer c.Close()
+	synctest.Test(t, func(t *testing.T) {
+		c := NewTTLCache[string, string](50 * time.Millisecond)
+		defer c.Close()
 
-	c.Set("key1", "value1")
+		c.Set("key1", "value1")
 
-	// Verify entry is live before expiry
-	if _, ok := c.Get("key1"); !ok {
-		t.Fatal("entry should be live immediately after Set")
-	}
+		// Verify entry is live before expiry
+		if _, ok := c.Get("key1"); !ok {
+			t.Fatal("entry should be live immediately after Set")
+		}
 
-	time.Sleep(80 * time.Millisecond)
+		time.Sleep(80 * time.Millisecond)
 
-	if _, ok := c.Get("key1"); ok {
-		t.Error("entry should be expired after TTL")
-	}
+		if _, ok := c.Get("key1"); ok {
+			t.Error("entry should be expired after TTL")
+		}
+	})
 }
 
 // TestTTLCache_Eviction verifies the ttlcache eviction contract.
 // Asserts that entries after eviction = , want 0.
 func TestTTLCache_Eviction(t *testing.T) {
 	t.Parallel()
-	c := NewTTLCache[string, string](50 * time.Millisecond)
-	defer c.Close()
+	synctest.Test(t, func(t *testing.T) {
+		c := NewTTLCache[string, string](50 * time.Millisecond)
+		defer c.Close()
 
-	c.Set("key1", "value1")
+		c.Set("key1", "value1")
 
-	// Wait for the eviction goroutine to sweep (ticks every TTL)
-	time.Sleep(150 * time.Millisecond)
+		// Advance past two ticker intervals; synctest.Wait then blocks until
+		// the eviction goroutine has re-parked, so we read Len() after the
+		// sweep has actually run rather than racing it.
+		time.Sleep(150 * time.Millisecond)
+		synctest.Wait()
 
-	if count := c.Len(); count != 0 {
-		t.Errorf("entries after eviction = %d, want 0", count)
-	}
+		if count := c.Len(); count != 0 {
+			t.Errorf("entries after eviction = %d, want 0", count)
+		}
+	})
 }
 
 // TestTTLCache_SetWithTTL verifies the ttlcache set with ttl path by exercising c.Close, c.SetWithTTL, c.Get.
 func TestTTLCache_SetWithTTL(t *testing.T) {
 	t.Parallel()
-	c := NewTTLCache[string, string](5 * time.Second)
-	defer c.Close()
+	synctest.Test(t, func(t *testing.T) {
+		c := NewTTLCache[string, string](5 * time.Second)
+		defer c.Close()
 
-	// Set with a very short custom TTL
-	c.SetWithTTL("key1", "value1", 50*time.Millisecond)
+		// Set with a very short custom TTL
+		c.SetWithTTL("key1", "value1", 50*time.Millisecond)
 
-	if _, ok := c.Get("key1"); !ok {
-		t.Fatal("entry should be live immediately after SetWithTTL")
-	}
+		if _, ok := c.Get("key1"); !ok {
+			t.Fatal("entry should be live immediately after SetWithTTL")
+		}
 
-	time.Sleep(80 * time.Millisecond)
+		time.Sleep(80 * time.Millisecond)
 
-	if _, ok := c.Get("key1"); ok {
-		t.Error("entry should be expired after custom TTL")
-	}
+		if _, ok := c.Get("key1"); ok {
+			t.Error("entry should be expired after custom TTL")
+		}
+	})
 }
 
 // TestTTLCache_ZeroTTL verifies the ttlcache zero ttl path by exercising c.Close, c.Set, c.Get.
