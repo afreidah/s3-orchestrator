@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -83,27 +84,30 @@ func TestMemoryCache_Miss(t *testing.T) {
 // Asserts that Put:.
 func TestMemoryCache_TTLExpiry(t *testing.T) {
 	t.Parallel()
-	c := newTestCache(t, 1024, 512, 10*time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		c := newTestCache(t, 1024, 512, 10*time.Millisecond)
 
-	admitAndPut(t, c, "key1", []byte("data"), EntryMeta{})
+		admitAndPut(t, c, "key1", []byte("data"), EntryMeta{})
 
-	// Should be present immediately
-	if _, ok := c.Get("key1"); !ok {
-		t.Fatal("expected hit before TTL expires")
-	}
+		// Should be present immediately
+		if _, ok := c.Get("key1"); !ok {
+			t.Fatal("expected hit before TTL expires")
+		}
 
-	time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
+		synctest.Wait()
 
-	// Should be expired
-	if _, ok := c.Get("key1"); ok {
-		t.Fatal("expected miss after TTL expires")
-	}
+		// Should be expired
+		if _, ok := c.Get("key1"); ok {
+			t.Fatal("expected miss after TTL expires")
+		}
 
-	// Stats should reflect removal
-	stats := c.Stats()
-	if stats.Entries != 0 {
-		t.Errorf("entries = %d after TTL expiry, want 0", stats.Entries)
-	}
+		// Stats should reflect removal
+		stats := c.Stats()
+		if stats.Entries != 0 {
+			t.Errorf("entries = %d after TTL expiry, want 0", stats.Entries)
+		}
+	})
 }
 
 // TestMemoryCache_AdmitRejectsOversized verifies that Admit returns false

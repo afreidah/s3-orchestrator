@@ -13,6 +13,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -93,51 +94,57 @@ func TestCB_OpenRejectsCalls(t *testing.T) {
 // Asserts that probe should be allowed:.
 func TestCB_HalfOpenAfterTimeout(t *testing.T) {
 	t.Parallel()
-	cb := newTestBreaker(1, 10*time.Millisecond)
-	_ = cb.PostCheck(errTest) // trip
-	time.Sleep(15 * time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		cb := newTestBreaker(1, 10*time.Millisecond)
+		_ = cb.PostCheck(errTest) // trip
+		time.Sleep(15 * time.Millisecond)
 
-	// PreCheck should allow one probe through
-	if err := cb.PreCheck(); err != nil {
-		t.Fatalf("probe should be allowed: %v", err)
-	}
-	if cb.State() != StateHalfOpen {
-		t.Fatalf("expected half-open, got %v", cb.State())
-	}
+		// PreCheck should allow one probe through
+		if err := cb.PreCheck(); err != nil {
+			t.Fatalf("probe should be allowed: %v", err)
+		}
+		if cb.State() != StateHalfOpen {
+			t.Fatalf("expected half-open, got %v", cb.State())
+		}
+	})
 }
 
 // TestCB_HalfOpenSuccess_Closes verifies the cb half open success closes path by exercising cb.PostCheck, time.Sleep, cb.PreCheck.
 func TestCB_HalfOpenSuccess_Closes(t *testing.T) {
 	t.Parallel()
-	cb := newTestBreaker(1, 10*time.Millisecond)
-	_ = cb.PostCheck(errTest) // trip
-	time.Sleep(15 * time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		cb := newTestBreaker(1, 10*time.Millisecond)
+		_ = cb.PostCheck(errTest) // trip
+		time.Sleep(15 * time.Millisecond)
 
-	_ = cb.PreCheck()     // allow probe
-	_ = cb.PostCheck(nil) // success
+		_ = cb.PreCheck()     // allow probe
+		_ = cb.PostCheck(nil) // success
 
-	if !cb.IsHealthy() {
-		t.Fatal("should be healthy after successful probe")
-	}
+		if !cb.IsHealthy() {
+			t.Fatal("should be healthy after successful probe")
+		}
+	})
 }
 
 // TestCB_HalfOpenFailure_Reopens verifies the cb half open failure reopens contract.
 // Asserts that expected open, got.
 func TestCB_HalfOpenFailure_Reopens(t *testing.T) {
 	t.Parallel()
-	cb := newTestBreaker(1, 10*time.Millisecond)
-	_ = cb.PostCheck(errTest) // trip
-	time.Sleep(15 * time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		cb := newTestBreaker(1, 10*time.Millisecond)
+		_ = cb.PostCheck(errTest) // trip
+		time.Sleep(15 * time.Millisecond)
 
-	_ = cb.PreCheck()         // allow probe
-	_ = cb.PostCheck(errTest) // probe fails
+		_ = cb.PreCheck()         // allow probe
+		_ = cb.PostCheck(errTest) // probe fails
 
-	if cb.IsHealthy() {
-		t.Fatal("should be unhealthy after failed probe")
-	}
-	if cb.State() != StateOpen {
-		t.Fatalf("expected open, got %v", cb.State())
-	}
+		if cb.IsHealthy() {
+			t.Fatal("should be unhealthy after failed probe")
+		}
+		if cb.State() != StateOpen {
+			t.Fatalf("expected open, got %v", cb.State())
+		}
+	})
 }
 
 // TestCB_SuccessResetsFailureCount verifies the cb success resets failure count path by exercising cb.PostCheck, cb.IsHealthy.
@@ -174,47 +181,53 @@ func TestCB_OpenDuration_ZeroWhenClosed(t *testing.T) {
 // Asserts that expected >= 5ms, got.
 func TestCB_OpenDuration_PositiveWhenOpen(t *testing.T) {
 	t.Parallel()
-	cb := newTestBreaker(1, time.Minute)
-	_ = cb.PostCheck(errTest) // trip
+	synctest.Test(t, func(t *testing.T) {
+		cb := newTestBreaker(1, time.Minute)
+		_ = cb.PostCheck(errTest) // trip
 
-	time.Sleep(5 * time.Millisecond)
-	d := cb.OpenDuration()
-	if d < 5*time.Millisecond {
-		t.Fatalf("expected >= 5ms, got %v", d)
-	}
+		time.Sleep(5 * time.Millisecond)
+		d := cb.OpenDuration()
+		if d < 5*time.Millisecond {
+			t.Fatalf("expected >= 5ms, got %v", d)
+		}
+	})
 }
 
 // TestCB_OpenDuration_PositiveWhenHalfOpen verifies the cb open duration positive when half open contract.
 // Asserts that expected half-open, got.
 func TestCB_OpenDuration_PositiveWhenHalfOpen(t *testing.T) {
 	t.Parallel()
-	cb := newTestBreaker(1, 10*time.Millisecond)
-	_ = cb.PostCheck(errTest) // trip
-	time.Sleep(15 * time.Millisecond)
-	_ = cb.PreCheck() // transition to half-open
+	synctest.Test(t, func(t *testing.T) {
+		cb := newTestBreaker(1, 10*time.Millisecond)
+		_ = cb.PostCheck(errTest) // trip
+		time.Sleep(15 * time.Millisecond)
+		_ = cb.PreCheck() // transition to half-open
 
-	if cb.State() != StateHalfOpen {
-		t.Fatalf("expected half-open, got %v", cb.State())
-	}
-	if cb.OpenDuration() == 0 {
-		t.Fatal("expected positive duration in half-open state")
-	}
+		if cb.State() != StateHalfOpen {
+			t.Fatalf("expected half-open, got %v", cb.State())
+		}
+		if cb.OpenDuration() == 0 {
+			t.Fatal("expected positive duration in half-open state")
+		}
+	})
 }
 
 // TestCB_OpenDuration_ZeroAfterRecovery verifies the cb open duration zero after recovery contract.
 // Asserts that expected 0 after recovery, got.
 func TestCB_OpenDuration_ZeroAfterRecovery(t *testing.T) {
 	t.Parallel()
-	cb := newTestBreaker(1, 10*time.Millisecond)
-	_ = cb.PostCheck(errTest) // trip
-	time.Sleep(15 * time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		cb := newTestBreaker(1, 10*time.Millisecond)
+		_ = cb.PostCheck(errTest) // trip
+		time.Sleep(15 * time.Millisecond)
 
-	_ = cb.PreCheck()     // half-open
-	_ = cb.PostCheck(nil) // recover
+		_ = cb.PreCheck()     // half-open
+		_ = cb.PostCheck(nil) // recover
 
-	if d := cb.OpenDuration(); d != 0 {
-		t.Fatalf("expected 0 after recovery, got %v", d)
-	}
+		if d := cb.OpenDuration(); d != 0 {
+			t.Fatalf("expected 0 after recovery, got %v", d)
+		}
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -315,62 +328,66 @@ func TestCBCallNoResult_CircuitOpen(t *testing.T) {
 // Asserts that expected exactly 1 probe, got.
 func TestCB_OnlyOneProbeAllowed(t *testing.T) {
 	t.Parallel()
-	cb := newTestBreaker(1, 10*time.Millisecond)
-	_ = cb.PostCheck(errTest) // trip
-	time.Sleep(15 * time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		cb := newTestBreaker(1, 10*time.Millisecond)
+		_ = cb.PostCheck(errTest) // trip
+		time.Sleep(15 * time.Millisecond)
 
-	const goroutines = 50
-	var wg sync.WaitGroup
-	var probes int64
-	var mu sync.Mutex
+		const goroutines = 50
+		var wg sync.WaitGroup
+		var probes int64
+		var mu sync.Mutex
 
-	wg.Add(goroutines)
-	for range goroutines {
-		go func() {
-			defer wg.Done()
-			if err := cb.PreCheck(); err == nil {
-				mu.Lock()
-				probes++
-				mu.Unlock()
-				// Simulate the probe completing
-				_ = cb.PostCheck(errTest)
-			}
-		}()
-	}
-	wg.Wait()
+		wg.Add(goroutines)
+		for range goroutines {
+			go func() {
+				defer wg.Done()
+				if err := cb.PreCheck(); err == nil {
+					mu.Lock()
+					probes++
+					mu.Unlock()
+					// Simulate the probe completing
+					_ = cb.PostCheck(errTest)
+				}
+			}()
+		}
+		wg.Wait()
 
-	if probes != 1 {
-		t.Errorf("expected exactly 1 probe, got %d", probes)
-	}
+		if probes != 1 {
+			t.Errorf("expected exactly 1 probe, got %d", probes)
+		}
+	})
 }
 
 // TestCB_ProbeEligible verifies the cb probe eligible path by exercising cb.ProbeEligible, cb.PostCheck, time.Sleep.
 func TestCB_ProbeEligible(t *testing.T) {
 	t.Parallel()
-	cb := newTestBreaker(1, 5*time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		cb := newTestBreaker(1, 5*time.Millisecond)
 
-	// Closed  -  not probe-eligible
-	if cb.ProbeEligible() {
-		t.Error("closed circuit should not be probe-eligible")
-	}
+		// Closed  -  not probe-eligible
+		if cb.ProbeEligible() {
+			t.Error("closed circuit should not be probe-eligible")
+		}
 
-	// Trip it open
-	_ = cb.PostCheck(errTest)
-	if cb.ProbeEligible() {
-		t.Error("freshly opened circuit should not be probe-eligible (timeout not elapsed)")
-	}
+		// Trip it open
+		_ = cb.PostCheck(errTest)
+		if cb.ProbeEligible() {
+			t.Error("freshly opened circuit should not be probe-eligible (timeout not elapsed)")
+		}
 
-	// Wait for timeout
-	time.Sleep(10 * time.Millisecond)
-	if !cb.ProbeEligible() {
-		t.Error("open circuit with elapsed timeout should be probe-eligible")
-	}
+		// Wait for timeout
+		time.Sleep(10 * time.Millisecond)
+		if !cb.ProbeEligible() {
+			t.Error("open circuit with elapsed timeout should be probe-eligible")
+		}
 
-	// Transition to half-open via PreCheck  -  no longer probe-eligible
-	_ = cb.PreCheck()
-	if cb.ProbeEligible() {
-		t.Error("half-open circuit should not be probe-eligible")
-	}
+		// Transition to half-open via PreCheck  -  no longer probe-eligible
+		_ = cb.PreCheck()
+		if cb.ProbeEligible() {
+			t.Error("half-open circuit should not be probe-eligible")
+		}
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -405,66 +422,70 @@ func TestCB_ProbeJitter_VariesBetweenInstances(t *testing.T) {
 // TestCB_ProbeJitter_RecomputedOnReopen verifies the cb probe jitter recomputed on reopen path by exercising cb.PostCheck, time.Sleep, cb.PreCheck.
 func TestCB_ProbeJitter_RecomputedOnReopen(t *testing.T) {
 	t.Parallel()
-	cb := newTestBreaker(1, 50*time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		cb := newTestBreaker(1, 50*time.Millisecond)
 
-	// Trip -> record jitter
-	_ = cb.PostCheck(errTest)
-	cb.mu.RLock()
-	firstJitter := cb.probeJitter
-	cb.mu.RUnlock()
+		// Trip -> record jitter
+		_ = cb.PostCheck(errTest)
+		cb.mu.RLock()
+		firstJitter := cb.probeJitter
+		cb.mu.RUnlock()
 
-	// Recover  -  sleep must exceed openTimeout + max jitter (50ms + 12.5ms)
-	time.Sleep(80 * time.Millisecond)
-	_ = cb.PreCheck()
-	_ = cb.PostCheck(nil)
-	if !cb.IsHealthy() {
-		t.Fatal("expected recovery to closed state")
-	}
+		// Recover  -  sleep must exceed openTimeout + max jitter (50ms + 12.5ms)
+		time.Sleep(80 * time.Millisecond)
+		_ = cb.PreCheck()
+		_ = cb.PostCheck(nil)
+		if !cb.IsHealthy() {
+			t.Fatal("expected recovery to closed state")
+		}
 
-	// Trip again -> new jitter (may coincidentally equal firstJitter, but
-	// the code path that sets it is exercised)
-	_ = cb.PostCheck(errTest)
-	cb.mu.RLock()
-	_ = cb.probeJitter
-	cb.mu.RUnlock()
+		// Trip again -> new jitter (may coincidentally equal firstJitter, but
+		// the code path that sets it is exercised)
+		_ = cb.PostCheck(errTest)
+		cb.mu.RLock()
+		_ = cb.probeJitter
+		cb.mu.RUnlock()
 
-	// Verify the code path ran without panicking
-	_ = firstJitter
+		// Verify the code path ran without panicking
+		_ = firstJitter
+	})
 }
 
 // TestCB_StaleProbeAutoResets verifies the cb stale probe auto resets contract.
 // Asserts that probe should be allowed:.
 func TestCB_StaleProbeAutoResets(t *testing.T) {
 	t.Parallel()
-	cb := newTestBreaker(1, 5*time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		cb := newTestBreaker(1, 5*time.Millisecond)
 
-	// Trip the breaker
-	_ = cb.PostCheck(errTest)
-	time.Sleep(10 * time.Millisecond)
+		// Trip the breaker
+		_ = cb.PostCheck(errTest)
+		time.Sleep(10 * time.Millisecond)
 
-	// Start a probe (PreCheck transitions to half-open)
-	if err := cb.PreCheck(); err != nil {
-		t.Fatalf("probe should be allowed: %v", err)
-	}
-	if cb.State() != StateHalfOpen {
-		t.Fatalf("expected half-open, got %s", cb.State())
-	}
+		// Start a probe (PreCheck transitions to half-open)
+		if err := cb.PreCheck(); err != nil {
+			t.Fatalf("probe should be allowed: %v", err)
+		}
+		if cb.State() != StateHalfOpen {
+			t.Fatalf("expected half-open, got %s", cb.State())
+		}
 
-	// Simulate a stale probe by backdating probeStarted beyond probeTimeout.
-	// Do NOT call PostCheck  -  the probe is "abandoned".
-	cb.probeStarted.Store(time.Now().Add(-probeTimeout - time.Second).UnixNano())
+		// Simulate a stale probe by backdating probeStarted beyond probeTimeout.
+		// Do NOT call PostCheck  -  the probe is "abandoned".
+		cb.probeStarted.Store(time.Now().Add(-probeTimeout - time.Second).UnixNano())
 
-	// Next PreCheck should detect the stale probe and reset to open
-	if err := cb.PreCheck(); err == nil {
-		t.Fatal("expected sentinel error after stale probe reset")
-	}
+		// Next PreCheck should detect the stale probe and reset to open
+		if err := cb.PreCheck(); err == nil {
+			t.Fatal("expected sentinel error after stale probe reset")
+		}
 
-	if cb.State() != StateOpen {
-		t.Fatalf("expected open after stale probe reset, got %s", cb.State())
-	}
-	if cb.probeInFlight.Load() {
-		t.Error("probeInFlight should be reset after stale probe detection")
-	}
+		if cb.State() != StateOpen {
+			t.Fatalf("expected open after stale probe reset, got %s", cb.State())
+		}
+		if cb.probeInFlight.Load() {
+			t.Error("probeInFlight should be reset after stale probe detection")
+		}
+	})
 }
 
 // TestTransition_InvokesHookOnOpen verifies the OnStateChange callback is
@@ -493,25 +514,27 @@ func TestTransition_InvokesHookOnOpen(t *testing.T) {
 // closed cycle and confirms the hook fires for each transition with a
 // non-zero OpenDuration on the recovery edge.
 func TestTransition_InvokesHookOnRecovery(t *testing.T) {
-	var infos []StateChangeInfo
-	cb := newTestBreaker(1, 10*time.Millisecond)
-	cb.SetOnStateChange(func(i StateChangeInfo) { infos = append(infos, i) })
+	synctest.Test(t, func(t *testing.T) {
+		var infos []StateChangeInfo
+		cb := newTestBreaker(1, 10*time.Millisecond)
+		cb.SetOnStateChange(func(i StateChangeInfo) { infos = append(infos, i) })
 
-	_ = cb.PostCheck(errTest)         // closed -> open
-	time.Sleep(15 * time.Millisecond) // wait for probe eligibility
-	_ = cb.PreCheck()                 // open -> half-open
-	_ = cb.PostCheck(nil)             // half-open -> closed
+		_ = cb.PostCheck(errTest)         // closed -> open
+		time.Sleep(15 * time.Millisecond) // wait for probe eligibility
+		_ = cb.PreCheck()                 // open -> half-open
+		_ = cb.PostCheck(nil)             // half-open -> closed
 
-	if len(infos) != 3 {
-		t.Fatalf("expected 3 hook invocations, got %d", len(infos))
-	}
-	closed := infos[2]
-	if closed.From != StateHalfOpen || closed.To != StateClosed {
-		t.Errorf("final transition = %s->%s, want half-open->closed", closed.From, closed.To)
-	}
-	if closed.OpenDuration <= 0 {
-		t.Error("OpenDuration should be > 0 on recovery")
-	}
+		if len(infos) != 3 {
+			t.Fatalf("expected 3 hook invocations, got %d", len(infos))
+		}
+		closed := infos[2]
+		if closed.From != StateHalfOpen || closed.To != StateClosed {
+			t.Errorf("final transition = %s->%s, want half-open->closed", closed.From, closed.To)
+		}
+		if closed.OpenDuration <= 0 {
+			t.Error("OpenDuration should be > 0 on recovery")
+		}
+	})
 }
 
 // TestTransition_NilHookIsNoop verifies the breaker still transitions
@@ -592,52 +615,56 @@ func TestResetStaleProbe_OpenCircuit(t *testing.T) {
 // a probe that was just dispatched (well within probeTimeout).
 func TestResetStaleProbe_FreshProbe(t *testing.T) {
 	t.Parallel()
-	cb := newTestBreaker(1, time.Millisecond)
-	_ = cb.PostCheck(errTest)
-	time.Sleep(2 * time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		cb := newTestBreaker(1, time.Millisecond)
+		_ = cb.PostCheck(errTest)
+		time.Sleep(2 * time.Millisecond)
 
-	// Dispatch a probe via PreCheck
-	if err := cb.PreCheck(); err != nil {
-		t.Fatalf("expected probe to be allowed: %v", err)
-	}
-	if cb.State() != StateHalfOpen {
-		t.Fatalf("state = %s, want half-open", cb.State())
-	}
+		// Dispatch a probe via PreCheck
+		if err := cb.PreCheck(); err != nil {
+			t.Fatalf("expected probe to be allowed: %v", err)
+		}
+		if cb.State() != StateHalfOpen {
+			t.Fatalf("state = %s, want half-open", cb.State())
+		}
 
-	// Probe is fresh, should not be reset.
-	if cb.ResetStaleProbe() {
-		t.Error("expected false for fresh probe")
-	}
-	if cb.State() != StateHalfOpen {
-		t.Errorf("state = %s, want half-open (unchanged)", cb.State())
-	}
+		// Probe is fresh, should not be reset.
+		if cb.ResetStaleProbe() {
+			t.Error("expected false for fresh probe")
+		}
+		if cb.State() != StateHalfOpen {
+			t.Errorf("state = %s, want half-open (unchanged)", cb.State())
+		}
+	})
 }
 
 // TestResetStaleProbe_StaleProbe verifies that ResetStaleProbe resets a
 // half-open circuit whose probe has exceeded probeTimeout back to open.
 func TestResetStaleProbe_StaleProbe(t *testing.T) {
 	t.Parallel()
-	cb := newTestBreaker(1, time.Millisecond)
-	_ = cb.PostCheck(errTest)
-	time.Sleep(2 * time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		cb := newTestBreaker(1, time.Millisecond)
+		_ = cb.PostCheck(errTest)
+		time.Sleep(2 * time.Millisecond)
 
-	// Dispatch a probe
-	if err := cb.PreCheck(); err != nil {
-		t.Fatalf("expected probe: %v", err)
-	}
+		// Dispatch a probe
+		if err := cb.PreCheck(); err != nil {
+			t.Fatalf("expected probe: %v", err)
+		}
 
-	// Backdate the probe start to simulate a stale probe.
-	cb.probeStarted.Store(time.Now().Add(-probeTimeout - time.Second).UnixNano())
+		// Backdate the probe start to simulate a stale probe.
+		cb.probeStarted.Store(time.Now().Add(-probeTimeout - time.Second).UnixNano())
 
-	if !cb.ResetStaleProbe() {
-		t.Error("expected true for stale probe")
-	}
-	if cb.State() != StateOpen {
-		t.Errorf("state = %s, want open after stale probe reset", cb.State())
-	}
-	if cb.probeInFlight.Load() {
-		t.Error("probeInFlight should be false after reset")
-	}
+		if !cb.ResetStaleProbe() {
+			t.Error("expected true for stale probe")
+		}
+		if cb.State() != StateOpen {
+			t.Errorf("state = %s, want open after stale probe reset", cb.State())
+		}
+		if cb.probeInFlight.Load() {
+			t.Error("probeInFlight should be false after reset")
+		}
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -680,26 +707,28 @@ func TestCB_RecoverFromOpen(t *testing.T) {
 // PreCheck does not see a stale in-flight probe.
 func TestCB_RecoverFromHalfOpen(t *testing.T) {
 	t.Parallel()
-	cb := newTestBreaker(1, 10*time.Millisecond)
-	_ = cb.PostCheck(errTest) // trip
-	time.Sleep(15 * time.Millisecond)
-	_ = cb.PreCheck() // -> half-open, probeInFlight set
+	synctest.Test(t, func(t *testing.T) {
+		cb := newTestBreaker(1, 10*time.Millisecond)
+		_ = cb.PostCheck(errTest) // trip
+		time.Sleep(15 * time.Millisecond)
+		_ = cb.PreCheck() // -> half-open, probeInFlight set
 
-	if cb.State() != StateHalfOpen {
-		t.Fatalf("setup: state = %s, want half-open", cb.State())
-	}
+		if cb.State() != StateHalfOpen {
+			t.Fatalf("setup: state = %s, want half-open", cb.State())
+		}
 
-	cb.Recover()
+		cb.Recover()
 
-	if cb.State() != StateClosed {
-		t.Errorf("state = %s, want closed", cb.State())
-	}
-	if cb.probeInFlight.Load() {
-		t.Error("probeInFlight should be cleared after Recover()")
-	}
-	if cb.probeStarted.Load() != 0 {
-		t.Error("probeStarted should be zero after Recover()")
-	}
+		if cb.State() != StateClosed {
+			t.Errorf("state = %s, want closed", cb.State())
+		}
+		if cb.probeInFlight.Load() {
+			t.Error("probeInFlight should be cleared after Recover()")
+		}
+		if cb.probeStarted.Load() != 0 {
+			t.Error("probeStarted should be zero after Recover()")
+		}
+	})
 }
 
 // TestCB_RecoverFromClosed asserts Recover() is a safe no-op on an
