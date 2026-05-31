@@ -134,7 +134,7 @@ type BackendManagerConfig struct {
 //
 // DrainManager is the one dependency wired post-construction via
 // WireDrain. The cycle (drain.Manager needs *BackendManager and
-// mgr.MultipartManager) makes constructor injection impractical without
+// mgr.multipartManager) makes constructor injection impractical without
 // redesigning drain.Core. Code paths that depend on DrainManager
 // (FlushUsage, ClearDrainState) nil-guard the field so a manager
 // constructed without WireDrain (every test path that does not need
@@ -142,23 +142,37 @@ type BackendManagerConfig struct {
 type BackendManager struct {
 	*infra.Core
 	stores           Stores                 // narrow store-role view; see Stores interface above
-	coord            *writepath.Coordinator // shared write-path helpers (also held by object.Manager and MultipartManager)
-	MultipartManager *multipart.Manager     // multipart upload lifecycle
-	ObjectManager    *object.Manager        // CRUD, read failover, broadcast reads
+	coord            *writepath.Coordinator // shared write-path helpers (also held by objectManager and multipartManager)
+	multipartManager *multipart.Manager     // multipart upload lifecycle; expose via Multipart()
+	objectManager    *object.Manager        // CRUD, read failover, broadcast reads; expose via Objects()
 	dashboard        *dashboard.Aggregator  // web UI data aggregation
 
-	// DrainManager is the single post-construction wiring point. Set by
+	// drainManager is the single post-construction wiring point. Set by
 	// WireDrain after both *BackendManager and *drain.Manager have been
 	// constructed (the dependency cycle prevents constructor injection).
 	// Nil-able by design; FlushUsage and ClearDrainState guard the
 	// access so tests that do not exercise drain behavior need not call
-	// WireDrain.
-	DrainManager *drain.Manager
+	// WireDrain. Expose via Drain().
+	drainManager *drain.Manager
 
 	usageFlushCfg syncutil.AtomicConfig[config.UsageFlushConfig]
 	lifecycleCfg  syncutil.AtomicConfig[config.LifecycleConfig]
-	integrityCfg  *syncutil.AtomicConfig[config.IntegrityConfig] // shared with object.Manager
+	integrityCfg  *syncutil.AtomicConfig[config.IntegrityConfig] // shared with objectManager
 }
+
+// Multipart returns the multipart upload lifecycle manager. Exposed so
+// transport and DI callers can reach multipart functionality without
+// touching the unexported field directly.
+func (m *BackendManager) Multipart() *multipart.Manager { return m.multipartManager }
+
+// Objects returns the object CRUD manager. Same accessor rationale as
+// Multipart().
+func (m *BackendManager) Objects() *object.Manager { return m.objectManager }
+
+// Drain returns the drain manager, or nil if WireDrain has not been
+// called yet (test paths that do not exercise drain behavior). Callers
+// that touch the result must nil-guard.
+func (m *BackendManager) Drain() *drain.Manager { return m.drainManager }
 
 // WireDrain installs the drain.Manager: stores it on BackendManager so
 // dashboard rendering and drain-aware tests can reach it, and points
@@ -167,7 +181,7 @@ type BackendManager struct {
 // dependency cycle between drain.Manager and BackendManager prevents
 // passing the drain manager through the constructor.
 func (m *BackendManager) WireDrain(d *drain.Manager) {
-	m.DrainManager = d
+	m.drainManager = d
 	m.SetDrainChecker(d)
 }
 
@@ -238,8 +252,8 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		Core:             c,
 		stores:           cfg.Stores,
 		coord:            coord,
-		MultipartManager: multipartManager,
-		ObjectManager:    objectManager,
+		multipartManager: multipartManager,
+		objectManager:    objectManager,
 		dashboard:        dashboard.New(cfg.Dashboard, usage, cfg.Order),
 		integrityCfg:     integrityCfg,
 	}
@@ -251,17 +265,17 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 
 // ClearCache removes all entries from the location cache.
 func (m *BackendManager) ClearCache() {
-	m.ObjectManager.LocationCache().Clear()
+	m.objectManager.LocationCache().Clear()
 }
 
 // ClearDrainState removes all entries from the draining map. Used by tests
 // to reset state between runs. No-op when DrainManager has not been
 // wired (tests that do not need drain behavior skip WireDrain).
 func (m *BackendManager) ClearDrainState() {
-	if m.DrainManager == nil {
+	if m.drainManager == nil {
 		return
 	}
-	m.DrainManager.ClearState()
+	m.drainManager.ClearState()
 }
 
 // AdmissionSem returns the shared admission semaphore, or nil if none is
@@ -275,9 +289,9 @@ func (m *BackendManager) AdmissionSem() chan struct{} {
 // owns: the object location cache and the multipart per-upload DEK
 // cache. Safe to call multiple times.
 func (m *BackendManager) Close() {
-	m.ObjectManager.LocationCache().Close()
-	if m.MultipartManager != nil {
-		m.MultipartManager.Close()
+	m.objectManager.LocationCache().Close()
+	if m.multipartManager != nil {
+		m.multipartManager.Close()
 	}
 }
 
@@ -300,8 +314,8 @@ func (m *BackendManager) UpdateUsageLimits(limits map[string]core.UsageLimits) {
 // skip set is empty and every backend's counters flush.
 func (m *BackendManager) FlushUsage(ctx context.Context) error {
 	var skip map[string]bool
-	if m.DrainManager != nil {
-		skip = m.DrainManager.CompletedBackends()
+	if m.drainManager != nil {
+		skip = m.drainManager.CompletedBackends()
 	}
 	return m.Usage().FlushUsage(ctx, m.stores, skip)
 }
@@ -607,7 +621,7 @@ func (m *BackendManager) GetDashboardData(ctx context.Context) (*dashboard.Data,
 		if !m.IsDraining(name) {
 			continue
 		}
-		progress, err := m.DrainManager.GetDrainProgress(ctx, name)
+		progress, err := m.drainManager.GetDrainProgress(ctx, name)
 		if err == nil {
 			data.DrainingBackends[name] = *progress
 		}

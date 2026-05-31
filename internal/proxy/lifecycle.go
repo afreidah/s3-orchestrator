@@ -87,7 +87,7 @@ func (m *BackendManager) applyLifecycleRule(ctx context.Context, rule config.Lif
 // audit + metrics for each outcome. Returns (deleted, failed) counts.
 func (m *BackendManager) deleteLifecycleBatch(ctx context.Context, rule config.LifecycleRule, objects []core.ObjectLocation) (deleted, failed int) {
 	for i := range objects {
-		if err := m.ObjectManager.DeleteObject(ctx, objects[i].ObjectKey); err != nil {
+		if err := m.objectManager.DeleteObject(ctx, objects[i].ObjectKey); err != nil {
 			m.Log().WarnContext(ctx, "failed to delete expired object",
 				slog.String("key", objects[i].ObjectKey), "error", err)
 			telemetry.LifecycleFailedTotal.Inc()

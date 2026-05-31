@@ -60,7 +60,7 @@ func TestBuildWorkers(t *testing.T) {
 	if w.Drain == nil {
 		t.Error("Drain not wired")
 	}
-	if mgr.DrainManager == nil {
-		t.Error("DrainManager not installed on manager via WireDrain")
+	if mgr.Drain() == nil {
+		t.Error("drain manager not installed via WireDrain")
 	}
 }

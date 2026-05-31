@@ -57,7 +57,7 @@ func BuildWorkers(mgr *proxy.BackendManager, m core.MetadataStore) *Workers {
 		m,
 		m,
 		m,
-		mgr.MultipartManager.AbortMultipartUploadsOnBackend,
+		mgr.Multipart().AbortMultipartUploadsOnBackend,
 		w.CleanupWorker.ProcessCleanupQueue,
 	)
 	mgr.WireDrain(w.Drain)

@@ -196,7 +196,7 @@ func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
 		c.Stores,
 		c.Stores,
 		c.Stores,
-		c.Mgr.MultipartManager.AbortMultipartUploadsOnBackend,
+		c.Mgr.Multipart().AbortMultipartUploadsOnBackend,
 		cleanup.ProcessCleanupQueue,
 	), nil
 }

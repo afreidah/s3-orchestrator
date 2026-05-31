@@ -76,7 +76,7 @@ func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 // sm. Pulled out of ProvideLifecycleManager so that function stays under
 // the cognitive-complexity ceiling.
 func registerWorkerServices(sm *lifecycle.Manager, mgr *proxy.BackendManager, ws lifecycleWorkerSet, locker core.AdvisoryLocker, cfg *config.Config) {
-	sm.Register("multipart-cleanup", multipart.NewCleanupService(mgr.MultipartManager, locker, cfg.CleanupQueue.MultipartStaleTimeout))
+	sm.Register("multipart-cleanup", multipart.NewCleanupService(mgr.Multipart(), locker, cfg.CleanupQueue.MultipartStaleTimeout))
 	sm.Register("cleanup-queue", worker.NewCleanupQueueService(ws.cleanup, locker))
 	if svc := worker.NewPendingReaperService(ws.pendingReaper, locker, cfg.WritePath.PendingPattern.ReaperTick); svc != nil {
 		sm.Register("pending-reaper", svc)

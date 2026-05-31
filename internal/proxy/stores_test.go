@@ -45,7 +45,7 @@ func wireWorkersForTest(m *BackendManager, stores core.MetadataStore) *testWorke
 		stores,
 		stores,
 		stores,
-		m.MultipartManager.AbortMultipartUploadsOnBackend,
+		m.multipartManager.AbortMultipartUploadsOnBackend,
 		w.CleanupWorker.ProcessCleanupQueue,
 	))
 	return w
