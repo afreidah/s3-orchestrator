@@ -70,17 +70,18 @@ jobs:
         id: fuzz
         run: go test -fuzz=${{ matrix.target }} -fuzztime=2m -timeout=3m ${{ matrix.package }}
 
-      # A real crash always writes an input file under testdata/fuzz/<target>/.
+      # A real crash writes a NEW input file under testdata/fuzz/<target>/.
+      # Tracked files in that directory are previously-found regressions
+      # checked in as permanent coverage, so they show up every run and must
+      # not trigger an issue. Only untracked files indicate a fresh crash.
       # The fuzz coordinator can also exit non-zero with "context deadline
       # exceeded" when an in-flight worker has not returned by the time
       # -fuzztime expires; that is not a bug, just a deadline race on shutdown.
-      # Gate the issue-creation step on an actual corpus file so the workflow
-      # stops filing false-positive bugs.
       - name: Check for crashing input
         if: failure()
         id: corpus
         run: |
-          files=$(find . -path '*/testdata/fuzz/${{ matrix.target }}/*' -type f 2>/dev/null)
+          files=$(git ls-files --others --exclude-standard -- "*/testdata/fuzz/${{ matrix.target }}/*")
           if [ -n "$files" ]; then
             {
               echo "has_crash=true"
@@ -90,7 +91,7 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           else
             echo "has_crash=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Fuzz target exited non-zero with no crashing input — likely fuzz-coordinator deadline race on shutdown, not a real bug."
+            echo "::notice::Fuzz target exited non-zero with no new crashing input — likely fuzz-coordinator deadline race on shutdown, not a real bug."
           fi
 
       - name: Upload crashing inputs
