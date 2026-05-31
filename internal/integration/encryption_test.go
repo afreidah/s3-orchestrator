@@ -116,7 +116,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		BackendOps: mgr,
 		Replicator: workers.Replicator,
 		OverRep:    workers.OverReplicationCleaner,
-		Drain:      mgr.DrainManager,
+		Drain:      mgr.Drain(),
 		Scrubber:   workers.Scrubber,
 		Lifecycle:  testStore,
 		DBHealthy:  testDatabaseCB.IsHealthy,

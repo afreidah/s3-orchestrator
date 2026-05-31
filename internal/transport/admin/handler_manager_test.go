@@ -65,7 +65,7 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 		backendOps: mgr,
 		replicator: workers.Replicator,
 		overRep:    workers.OverReplicationCleaner,
-		drain:      mgr.DrainManager,
+		drain:      mgr.Drain(),
 		scrubber:   workers.Scrubber,
 		lifecycle:  mock,
 		dbHealthy: cb.IsHealthy,

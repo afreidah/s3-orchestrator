@@ -51,7 +51,7 @@ func TestUploadPart_RecordFailure_CleanupDeleteCarriesDeadline(t *testing.T) {
 
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
-	_, err := mgr.MultipartManager.UploadPart(context.Background(), "multi", "key", "upload-1", 1, bytes.NewReader([]byte("data")), 4)
+	_, err := mgr.multipartManager.UploadPart(context.Background(), "multi", "key", "upload-1", 1, bytes.NewReader([]byte("data")), 4)
 	if err == nil {
 		t.Fatal("expected error from RecordPart failure to trigger part cleanup")
 	}

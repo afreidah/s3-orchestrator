@@ -303,7 +303,7 @@ func TestEncryptExisting_HappyPathOneRow(t *testing.T) {
 		backendOps: mgr,
 		replicator: workers.Replicator,
 		overRep:    workers.OverReplicationCleaner,
-		drain:      mgr.DrainManager,
+		drain:      mgr.Drain(),
 		scrubber:   workers.Scrubber,
 		objects:    mock,
 		cleanup:    mock,

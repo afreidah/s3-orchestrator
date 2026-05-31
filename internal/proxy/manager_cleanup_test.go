@@ -623,7 +623,7 @@ func TestDeleteObject_BackendDeleteFails_EnqueuesCleanup(t *testing.T) {
 	backend.delErr = errors.New("backend timeout")
 	backend.mu.Unlock()
 
-	if err := mgr.ObjectManager.DeleteObject(context.Background(), "mykey"); err != nil {
+	if err := mgr.objectManager.DeleteObject(context.Background(), "mykey"); err != nil {
 		t.Fatalf("DeleteObject should succeed even if backend delete fails: %v", err)
 	}
 
@@ -716,7 +716,7 @@ func TestPutObject_RecordFails_DoesNotEnqueueOrphanCleanup(t *testing.T) {
 
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
-	if _, err := mgr.ObjectManager.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err == nil {
+	if _, err := mgr.objectManager.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err == nil {
 		t.Fatal("expected error from PutObject")
 	}
 

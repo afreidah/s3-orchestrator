@@ -549,7 +549,7 @@ func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 		BackendOps: mgr,
 		Replicator: workers.Replicator,
 		OverRep:    workers.OverReplicationCleaner,
-		Drain:      mgr.DrainManager,
+		Drain:      mgr.Drain(),
 		Scrubber:   workers.Scrubber,
 		Lifecycle:  mock,
 		DBHealthy:  cb.IsHealthy,
@@ -561,7 +561,7 @@ func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 	})
 	return &ui.Deps{
 		BackendOps:   mgr,
-		Objects:      mgr.ObjectManager,
+		Objects:      mgr.Objects(),
 		AdminHandler: adminHandler,
 		Cfg:          &config.Config{},
 	}
