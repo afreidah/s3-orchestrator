@@ -222,6 +222,7 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 	cache := object.NewLocationCache(cfg.CacheTTL)
 	objectManager := object.New(&object.Deps{
 		Core:                         c,
+		BroadcastCore:                c,
 		Coord:                        coord,
 		Stores:                       cfg.Stores,
 		Encryptor:                    cfg.Encryptor,

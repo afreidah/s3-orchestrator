@@ -66,6 +66,7 @@ type Manager struct {
 // implicitly.
 type Deps struct {
 	Core              ObjectCore
+	BroadcastCore     readpath.Core // narrow consumer interface for the failover broadcaster; satisfied by the same *infra.Core that backs Core
 	Coord             ObjectCoordinator
 	Stores            Stores
 	Encryptor         *encryption.Encryptor
@@ -90,6 +91,7 @@ type Deps struct {
 func New(d *Deps) *Manager {
 	must.NotNil("d", d)
 	must.NotNil("d.Core", d.Core)
+	must.NotNil("d.BroadcastCore", d.BroadcastCore)
 	must.NotNil("d.Coord", d.Coord)
 	must.NotNil("d.Stores", d.Stores)
 	must.NotNil("d.LocationCache", d.LocationCache)
@@ -103,7 +105,7 @@ func New(d *Deps) *Manager {
 		objectCache:       d.ObjectCache,
 		parallelBroadcast: d.ParallelBroadcast,
 		integrityCfg:      d.IntegrityCfg,
-		failover:          readpath.New(d.Core, d.Stores, d.LocationCache, d.ParallelBroadcast, d.DegradedBroadcastParallelism, !d.DisableDegradedReads),
+		failover:          readpath.New(d.BroadcastCore, d.Stores, d.LocationCache, d.ParallelBroadcast, d.DegradedBroadcastParallelism, !d.DisableDegradedReads),
 		log:               slog.Default().With(logfmt.Component("object")),
 	}
 }
