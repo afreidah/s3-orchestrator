@@ -80,7 +80,7 @@ func newTestManagerWithWorkers(t *testing.T, store core.MetadataStore, backends 
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	return mgr, wireWorkersForTest(mgr)
+	return mgr, wireWorkersForTest(mgr, store)
 }
 
 // objectsCalls holds the per-test capture state for assertions.
@@ -416,7 +416,7 @@ func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	if _, err := mgr.ObjectManager.PutObject(context.Background(), "pack-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err != nil {
@@ -446,7 +446,7 @@ func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingSpread,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	if _, err := mgr.ObjectManager.PutObject(context.Background(), "spread-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err != nil {
@@ -666,7 +666,7 @@ func newTestManagerWithOrder(t *testing.T, store core.MetadataStore, backends ma
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	return mgr
 }
@@ -931,7 +931,7 @@ func TestPutObject_WriteFailover_WithEncryption(t *testing.T) {
 		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	payload := []byte("encrypt-failover-test-data")
@@ -993,7 +993,7 @@ func TestGetObject_WithEncryption_UsesLocationMap(t *testing.T) {
 		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	defer mgr.Close()
 
@@ -1049,7 +1049,7 @@ func TestHeadObject_WithEncryption(t *testing.T) {
 		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	defer mgr.Close()
 
@@ -1319,7 +1319,7 @@ func TestGetObject_DBUnavailable_EncryptedRejects503(t *testing.T) {
 		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	defer mgr.Close()
 
@@ -2536,7 +2536,7 @@ func TestPutObject_BackendTimeout(t *testing.T) {
 		BackendTimeout:  50 * time.Millisecond,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	_, err := mgr.ObjectManager.PutObject(context.Background(), "timeout-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
@@ -2688,7 +2688,7 @@ func newTestManagerWithLimits(t *testing.T, store core.MetadataStore, backends m
 		UsageLimits:     limits,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	return mgr
 }
@@ -2875,7 +2875,7 @@ func newTestManagerParallel(t *testing.T, store core.MetadataStore, orderedBacke
 		RoutingStrategy:   "pack",
 		ParallelBroadcast: true,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	return mgr
 }
@@ -3026,7 +3026,7 @@ func TestGetObject_SequentialBroadcast_WhenDisabled(t *testing.T) {
 		RoutingStrategy:   "pack",
 		ParallelBroadcast: false,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	defer mgr.Close()
 
@@ -3120,7 +3120,7 @@ func TestGetObject_DegradedBroadcastCap_RespectsLimit(t *testing.T) {
 		ParallelBroadcast:            true,
 		DegradedBroadcastParallelism: 2,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	defer mgr.Close()
 
@@ -3165,7 +3165,7 @@ func TestGetObject_DegradedBroadcastCap_ReplenishesAfterFailure(t *testing.T) {
 		ParallelBroadcast:            true,
 		DegradedBroadcastParallelism: 1,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	defer mgr.Close()
 
@@ -3301,7 +3301,7 @@ func TestCopyObject_DestWriteFails(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	if _, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst"); err == nil {
@@ -3330,7 +3330,7 @@ func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	mgr.DrainManager.SeedActiveForTest("src-be")
@@ -3364,7 +3364,7 @@ func TestCopyObject_SourceReadFails(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	if _, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst"); err == nil {
@@ -3392,7 +3392,7 @@ func TestCopyObject_AllSourceGetObjectsFail(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	if _, err := mgr.ObjectManager.CopyObject(context.Background(), "src", "dst"); err == nil {

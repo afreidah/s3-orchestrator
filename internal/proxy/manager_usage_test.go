@@ -78,7 +78,7 @@ func newUsageManager(t *testing.T, backendNames []string, store core.MetadataSto
 		Order:           backendNames,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	return mgr
 }
@@ -99,7 +99,7 @@ func newUsageManagerWithLimits(t *testing.T, backendNames []string, store core.M
 		UsageLimits:     limits,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	return mgr
 }

@@ -14,13 +14,21 @@ package s3api
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 )
 
 // -------------------------------------------------------------------------
@@ -625,5 +633,100 @@ func TestListMultipartUploads_NoAuth(t *testing.T) {
 
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", resp.StatusCode)
+	}
+}
+
+// -------------------------------------------------------------------------
+// CreateMultipartUpload - per-bucket limit (#984 coverage)
+// -------------------------------------------------------------------------
+
+// newTestServerWithMultipartLimit builds an httptest.Server whose
+// "mybucket" credential is configured with a per-bucket multipart upload
+// cap. Used by the per-bucket limit tests so the limit branch in
+// handleCreateMultipartUpload is exercised end-to-end (the default
+// newTestServer leaves the cap at 0 == unlimited and never enters that
+// branch).
+func newTestServerWithMultipartLimit(t *testing.T, maxUploads int) (*httptest.Server, *testutil.MockStore) {
+	t.Helper()
+
+	backend := newServerMockBackend()
+	mockStore := testutil.NewMockStore(t)
+	mockStore.GetBackendResp = "b1"
+
+	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
+		Stores:          mockStore,
+		Dashboard:       mockStore,
+		Metrics:         mockStore,
+		Order:           []string{"b1"},
+		RoutingStrategy: config.RoutingPack,
+	})
+	_ = proxytest.BuildWorkers(mgr, mockStore)
+	t.Cleanup(mgr.Close)
+
+	srv := &Server{Manager: mgr, MaxObjectSize: 10 * 1024 * 1024}
+	buckets := []config.BucketConfig{{
+		Name:                "mybucket",
+		MaxMultipartUploads: maxUploads,
+		Credentials:         []config.CredentialConfig{{Token: "test-token"}},
+	}}
+	srv.SetBucketAuth(auth.NewBucketRegistry(buckets))
+
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+	return ts, mockStore
+}
+
+// TestCreateMultipartUpload_PerBucketLimit_Exceeded pins the 503 response
+// when the active-upload count is at or above the per-bucket cap.
+func TestCreateMultipartUpload_PerBucketLimit_Exceeded(t *testing.T) {
+	t.Parallel()
+	ts, mockStore := newTestServerWithMultipartLimit(t, 2)
+	mockStore.CountActiveMultipartResp = 2 // already at limit
+
+	resp := doReq(t, ts, http.MethodPost, ts.URL+"/mybucket/k?uploads", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 503. body: %s", resp.StatusCode, body)
+	}
+}
+
+// TestCreateMultipartUpload_PerBucketLimit_StoreError pins that a
+// CountActiveMultipartUploads failure surfaces as a storage error
+// instead of letting the create proceed unguarded.
+func TestCreateMultipartUpload_PerBucketLimit_StoreError(t *testing.T) {
+	t.Parallel()
+	ts, mockStore := newTestServerWithMultipartLimit(t, 1)
+	mockStore.CountActiveMultipartErr = errors.New("count failed")
+
+	resp := doReq(t, ts, http.MethodPost, ts.URL+"/mybucket/k?uploads", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("expected non-200 on count error, got %d", resp.StatusCode)
+	}
+}
+
+// TestCreateMultipartUpload_PerBucketLimit_BelowAllows pins the success
+// path: when active count is below the cap, the create proceeds.
+func TestCreateMultipartUpload_PerBucketLimit_BelowAllows(t *testing.T) {
+	t.Parallel()
+	ts, mockStore := newTestServerWithMultipartLimit(t, 5)
+	mockStore.CountActiveMultipartResp = 1
+	mockStore.GetMultipartResp = &core.MultipartUpload{
+		UploadID:    "upl-1",
+		ObjectKey:   "mybucket/k",
+		BackendName: "b1",
+		ContentType: "application/octet-stream",
+	}
+
+	resp := doReq(t, ts, http.MethodPost, ts.URL+"/mybucket/k?uploads", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200. body: %s", resp.StatusCode, body)
 	}
 }

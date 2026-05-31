@@ -114,7 +114,7 @@ func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	loc := core.ObjectLocation{BackendName: "b1", SizeBytes: 100}
@@ -464,7 +464,7 @@ func TestClean_AdmissionBlocked(t *testing.T) {
 		RoutingStrategy: config.RoutingPack,
 		AdmissionSem:    sem,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	ctx, cancel := context.WithCancel(context.Background())

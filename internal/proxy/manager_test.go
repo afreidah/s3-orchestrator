@@ -10,13 +10,70 @@
 package proxy
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	"go.uber.org/mock/gomock"
+
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
+
+// -------------------------------------------------------------------------
+// CountActiveMultipartUploads delegation
+// -------------------------------------------------------------------------
+
+// newMockMultipartCountStore returns a fresh MockMetadataStore with a
+// strict CountActiveMultipartUploads expectation registered FIRST, then
+// Permissive() applied as the catch-all. Mirrors the ordering documented
+// on storetest.Permissive: specific stubs must precede the catch-all so
+// Times()-bounded expectations actually fire.
+func newMockMultipartCountStore(t *testing.T, wantPrefix string, retCount int64, retErr error) *storetest.MockMetadataStore {
+	t.Helper()
+	m := storetest.NewMockMetadataStore(gomock.NewController(t))
+	m.EXPECT().
+		CountActiveMultipartUploads(gomock.Any(), wantPrefix).
+		Return(retCount, retErr).
+		Times(1)
+	storetest.Permissive(m)
+	return m
+}
+
+// TestCountActiveMultipartUploads_DelegatesToStore pins that the typed
+// accessor on BackendManager forwards the prefix and return values from
+// the underlying MultipartStore unchanged.
+func TestCountActiveMultipartUploads_DelegatesToStore(t *testing.T) {
+	t.Parallel()
+	store := newMockMultipartCountStore(t, "bucket/", 7, nil)
+	mgr := newUsageManager(t, []string{"b1"}, store)
+	defer mgr.Close()
+
+	got, err := mgr.CountActiveMultipartUploads(context.Background(), "bucket/")
+	if err != nil {
+		t.Fatalf("CountActiveMultipartUploads: %v", err)
+	}
+	if got != 7 {
+		t.Errorf("got %d, want 7", got)
+	}
+}
+
+// TestCountActiveMultipartUploads_PropagatesError pins that store errors
+// surface to the caller without rewrapping.
+func TestCountActiveMultipartUploads_PropagatesError(t *testing.T) {
+	t.Parallel()
+	storeErr := errors.New("boom")
+	store := newMockMultipartCountStore(t, "x/", 0, storeErr)
+	mgr := newUsageManager(t, []string{"b1"}, store)
+	defer mgr.Close()
+
+	if _, err := mgr.CountActiveMultipartUploads(context.Background(), "x/"); !errors.Is(err, storeErr) {
+		t.Errorf("err = %v, want %v", err, storeErr)
+	}
+}
 
 // -------------------------------------------------------------------------
 // Close (idempotent)
@@ -72,8 +129,9 @@ func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 // Asserts that rebalance config mismatch: v.
 func TestRebalanceConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
-	workers := wireWorkersForTest(mgr)
+	store := newPermissiveMock(t)
+	mgr := newUsageManager(t, []string{"b1"}, store)
+	workers := wireWorkersForTest(mgr, store)
 
 	// Initially nil
 	if workers.Rebalancer.Config() != nil {
@@ -106,8 +164,9 @@ func TestRebalanceConfig_RoundTrip(t *testing.T) {
 // Asserts that replication config mismatch: v.
 func TestReplicationConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
-	workers := wireWorkersForTest(mgr)
+	store := newPermissiveMock(t)
+	mgr := newUsageManager(t, []string{"b1"}, store)
+	workers := wireWorkersForTest(mgr, store)
 
 	// Initially nil
 	if workers.Replicator.Config() != nil {
@@ -360,8 +419,9 @@ func TestClearDrainState_NoDrainManager(t *testing.T) {
 // panicking.
 func TestClearDrainState_ClearsWiredDrain(t *testing.T) {
 	t.Parallel()
-	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
-	workers := wireWorkersForTest(mgr)
+	store := newPermissiveMock(t)
+	mgr := newUsageManager(t, []string{"b1"}, store)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	mgr.ClearDrainState()
 }

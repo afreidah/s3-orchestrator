@@ -119,7 +119,7 @@ func newDrainTestManager(t *testing.T, store core.MetadataStore, backends map[st
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	return mgr
 }

@@ -79,11 +79,18 @@ func NoopCleanup() {
 	// meant to be a noop function
 }
 
+// Stores is the narrow persistence surface read failover needs: object
+// location lookups for the normal DB-backed path. Declared locally so
+// readpath does not pull in the full MetadataStore.
+type Stores interface {
+	core.ObjectStore
+}
+
 // Failover orchestrates per-key read failover across backends.
 // One instance per object.Manager; safe for concurrent reads.
 type Failover struct {
 	core              Core
-	stores            core.MetadataStore
+	stores            Stores
 	cache             LocationCache
 	parallelBroadcast bool
 	// degradedBroadcastParallelism caps concurrent probes in a parallel broadcast; 0 means uncapped.
@@ -95,7 +102,7 @@ type Failover struct {
 
 // New constructs a Failover. When degradedReadsEnabled is false, a DB
 // outage surfaces as ErrServiceUnavailable instead of broadcasting.
-func New(infraCore Core, stores core.MetadataStore, cache LocationCache, parallelBroadcast bool, degradedBroadcastParallelism int, degradedReadsEnabled bool) *Failover {
+func New(infraCore Core, stores Stores, cache LocationCache, parallelBroadcast bool, degradedBroadcastParallelism int, degradedReadsEnabled bool) *Failover {
 	must.NotNil("core", infraCore)
 	must.NotNil("stores", stores)
 	must.NotNil("cache", cache)

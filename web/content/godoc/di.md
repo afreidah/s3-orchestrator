@@ -27,6 +27,7 @@ Package di is the single wiring point for the orchestrator. It uses samber/do/v2
 - [func ProvideEncryptionAdmin\(i do.Injector\) \(core.EncryptionAdmin, error\)](<#ProvideEncryptionAdmin>)
 - [func ProvideEncryptionProvider\(i do.Injector\) \(encryption.KeyProvider, error\)](<#ProvideEncryptionProvider>)
 - [func ProvideEncryptor\(i do.Injector\) \(\*encryption.Encryptor, error\)](<#ProvideEncryptor>)
+- [func ProvideFlightRecorderService\(i do.Injector\) \(\*debug.FlightRecorderService, error\)](<#ProvideFlightRecorderService>)
 - [func ProvideInstanceID\(\_ do.Injector\) \(instanceid.ID, error\)](<#ProvideInstanceID>)
 - [func ProvideLifecycleAdmin\(i do.Injector\) \(core.LifecycleAdmin, error\)](<#ProvideLifecycleAdmin>)
 - [func ProvideLifecycleManager\(i do.Injector\) \(\*lifecycle.Manager, error\)](<#ProvideLifecycleManager>)
@@ -95,7 +96,7 @@ func NewUsageFlushService(manager usageFlushOps, locker tickrunner.AdvisoryLocke
 NewUsageFlushService constructs the usage flush background service.
 
 <a name="ProvideAdminHandler"></a>
-## func [ProvideAdminHandler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L215>)
+## func [ProvideAdminHandler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L216>)
 
 ```go
 func ProvideAdminHandler(i do.Injector) (*admin.Handler, error)
@@ -122,7 +123,7 @@ func ProvideBreakerRegistry(i do.Injector) (*breaker.Registry, error)
 ProvideBreakerRegistry assembles the watchdog's breaker registry from the database circuit breaker and the per\-backend breakers produced during backend initialization. Centralizing membership here keeps the watchdog itself free of type\-assertions and keeps DI as the single wiring point.
 
 <a name="ProvideBucketAuth"></a>
-## func [ProvideBucketAuth](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L42>)
+## func [ProvideBucketAuth](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L43>)
 
 ```go
 func ProvideBucketAuth(i do.Injector) (*auth.BucketRegistry, error)
@@ -184,6 +185,15 @@ func ProvideEncryptor(i do.Injector) (*encryption.Encryptor, error)
 
 ProvideEncryptor creates the envelope encryption engine.
 
+<a name="ProvideFlightRecorderService"></a>
+## func [ProvideFlightRecorderService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/debug.go#L24>)
+
+```go
+func ProvideFlightRecorderService(i do.Injector) (*debug.FlightRecorderService, error)
+```
+
+ProvideFlightRecorderService constructs the always\-on runtime/trace FlightRecorder wrapper that the admin trace\-snapshot endpoint streams from. Only registered when cfg.Debug.FlightRecorder.Enabled is true, so resolution failure means the operator did not opt in.
+
 <a name="ProvideInstanceID"></a>
 ## func [ProvideInstanceID](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/store.go#L115>)
 
@@ -203,7 +213,7 @@ func ProvideLifecycleAdmin(i do.Injector) (core.LifecycleAdmin, error)
 ProvideLifecycleAdmin aliases the wide MetadataStore as its LifecycleAdmin role for boot/shutdown migrations, schema checks, and Close.
 
 <a name="ProvideLifecycleManager"></a>
-## func [ProvideLifecycleManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/lifecycle.go#L91>)
+## func [ProvideLifecycleManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/lifecycle.go#L92>)
 
 ```go
 func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error)
@@ -212,7 +222,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error)
 ProvideLifecycleManager creates and registers all background services.
 
 <a name="ProvideLoginThrottle"></a>
-## func [ProvideLoginThrottle](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L85>)
+## func [ProvideLoginThrottle](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L86>)
 
 ```go
 func ProvideLoginThrottle(_ do.Injector) (*httputil.LoginThrottle, error)
@@ -248,7 +258,7 @@ func ProvideNotificationOutbox(i do.Injector) (core.NotificationOutbox, error)
 ProvideNotificationOutbox aliases the wide MetadataStore as its NotificationOutbox role for the notifier worker.
 
 <a name="ProvideNotifier"></a>
-## func [ProvideNotifier](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L260>)
+## func [ProvideNotifier](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L267>)
 
 ```go
 func ProvideNotifier(i do.Injector) (*notify.Notifier, error)
@@ -284,7 +294,7 @@ func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error)
 ProvidePendingReaper constructs the pending\-reaper worker. This provider is registered in NewInjector ONLY when the pending pattern is enabled, so reaching this function implies the feature is on \(\#830\). Any nil dependency at this point is a wiring bug, not an intentional "feature off" signal \- it surfaces as an error so Optional\[\*worker.PendingReaper\] reports Failed instead of conflating it with Disabled.
 
 <a name="ProvideRateLimiter"></a>
-## func [ProvideRateLimiter](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L70>)
+## func [ProvideRateLimiter](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L71>)
 
 ```go
 func ProvideRateLimiter(i do.Injector) (*s3api.RateLimiter, error)
@@ -329,7 +339,7 @@ func ProvideReplicator(i do.Injector) (*worker.Replicator, error)
 ProvideReplicator constructs the replication worker.
 
 <a name="ProvideS3Server"></a>
-## func [ProvideS3Server](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L51>)
+## func [ProvideS3Server](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L52>)
 
 ```go
 func ProvideS3Server(i do.Injector) (*s3api.Server, error)
@@ -347,7 +357,7 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error)
 ProvideScrubber constructs the integrity\-verification worker.
 
 <a name="ProvideUIHandler"></a>
-## func [ProvideUIHandler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L90>)
+## func [ProvideUIHandler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L91>)
 
 ```go
 func ProvideUIHandler(i do.Injector) (*ui.Handler, error)
@@ -356,7 +366,7 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error)
 ProvideUIHandler creates the web dashboard handler.
 
 <a name="WireAuditMetrics"></a>
-## func [WireAuditMetrics](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/injector.go#L119>)
+## func [WireAuditMetrics](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/injector.go#L122>)
 
 ```go
 func WireAuditMetrics()

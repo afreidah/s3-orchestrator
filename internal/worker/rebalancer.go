@@ -36,16 +36,24 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
+// RebalancerStore is the narrow persistence surface the rebalancer needs:
+// per-backend listings + quota stats for the source/dest fill ratio.
+// Declared locally so the worker does not pull in the full MetadataStore.
+type RebalancerStore interface {
+	core.ObjectStore
+	core.QuotaStore
+}
+
 // Rebalancer moves objects between backends to optimize space distribution.
 type Rebalancer struct {
 	log   *slog.Logger
 	ops   Ops
-	store core.MetadataStore
+	store RebalancerStore
 	cfg   syncutil.AtomicConfig[config.RebalanceConfig]
 }
 
 // NewRebalancer creates a Rebalancer with fleet operations and a metadata store.
-func NewRebalancer(ops Ops, store core.MetadataStore) *Rebalancer {
+func NewRebalancer(ops Ops, store RebalancerStore) *Rebalancer {
 	must.NotNil("ops", ops)
 	must.NotNil("store", store)
 	return &Rebalancer{ops: ops, store: store, log: slog.Default().With(logfmt.Component("rebalancer"))}

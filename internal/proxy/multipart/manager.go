@@ -60,10 +60,19 @@ const spanPrefix = "Manager "
 // existence. Concurrent UploadPart calls on the same uploadID with a
 // cold cache will each issue their own Unwrap; the design accepts that
 // minor cold-start cost in exchange for not pulling in singleflight.
+// Stores is the narrow persistence surface multipart needs: multipart
+// row/part operations and the advisory lock used to serialize stale-upload
+// sweeps. Declared locally so multipart does not pull in the full
+// MetadataStore.
+type Stores interface {
+	core.MultipartStore
+	core.AdvisoryLocker
+}
+
 type Manager struct {
-	core         MultipartCore         // infrastructure subset: backends, usage, timeout, error classification, metrics
+	core         MultipartCore          // infrastructure subset: backends, usage, timeout, error classification, metrics
 	coord        *writepath.Coordinator // write-path helpers shared with BackendManager and ObjectManager
-	stores       core.MetadataStore    // direct store access for multipart row/part operations and WithAdvisoryLock
+	stores       Stores                 // multipart row/part operations and WithAdvisoryLock
 	encryptor    *encryption.Encryptor
 	objectCache  objcache.ObjectCache
 	dekCache     *syncutil.TTLCache[string, []byte]
@@ -78,7 +87,7 @@ type Manager struct {
 // populates content_hash on the recorded location (#916). The
 // component-scoped logger is built in the constructor body per the
 // project's logging convention.
-func New(core MultipartCore, coord *writepath.Coordinator, stores core.MetadataStore, encryptor *encryption.Encryptor, objectCache objcache.ObjectCache, dekCacheTTL time.Duration, integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]) *Manager {
+func New(core MultipartCore, coord *writepath.Coordinator, stores Stores, encryptor *encryption.Encryptor, objectCache objcache.ObjectCache, dekCacheTTL time.Duration, integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]) *Manager {
 	must.NotNil("core", core)
 	must.NotNil("coord", coord)
 	must.NotNil("stores", stores)

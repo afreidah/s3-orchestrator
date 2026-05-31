@@ -34,16 +34,24 @@ import (
 // REPLICATOR TYPE
 // -------------------------------------------------------------------------
 
+// ReplicatorStore is the narrow persistence surface the replicator needs:
+// under-replicated discovery + per-replica record / location updates.
+// Declared locally so the worker does not pull in the full MetadataStore.
+type ReplicatorStore interface {
+	core.ObjectStore
+	core.ReplicationStore
+}
+
 // Replicator creates additional copies of under-replicated objects across backends.
 type Replicator struct {
 	log   *slog.Logger
 	ops   Ops
-	store core.MetadataStore
+	store ReplicatorStore
 	cfg   syncutil.AtomicConfig[config.ReplicationConfig]
 }
 
 // NewReplicator creates a Replicator with fleet operations and a metadata store.
-func NewReplicator(ops Ops, store core.MetadataStore) *Replicator {
+func NewReplicator(ops Ops, store ReplicatorStore) *Replicator {
 	must.NotNil("ops", ops)
 	must.NotNil("store", store)
 	return &Replicator{ops: ops, store: store, log: slog.Default().With(logfmt.Component("replicator"))}

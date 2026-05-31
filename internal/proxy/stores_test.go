@@ -23,25 +23,28 @@ type testWorkers struct {
 	Scrubber               *worker.Scrubber
 }
 
-// wireWorkersForTest constructs every worker against m's metadata
-// store, installs the drain manager via WireDrain, and returns the
-// worker handles so in-package tests can reach specific instances
-// after wiring. Production code resolves workers through DI; this
-// helper exists so proxy tests can build a fully-wired fixture
-// without standing up the injector.
-func wireWorkersForTest(m *BackendManager) *testWorkers {
+// wireWorkersForTest constructs every worker against the supplied
+// composition-root metadata store, installs the drain manager via
+// WireDrain, and returns the worker handles so in-package tests can
+// reach specific instances after wiring. Production code resolves
+// workers through DI; this helper exists so proxy tests can build a
+// fully-wired fixture without standing up the injector. The stores
+// argument carries the wide MetadataStore because the test helper is
+// itself the composition root for the in-package tests; each worker
+// constructor narrows it to its declared role-composite interface.
+func wireWorkersForTest(m *BackendManager, stores core.MetadataStore) *testWorkers {
 	w := &testWorkers{}
-	w.Rebalancer = worker.NewRebalancer(m, m.stores)
-	w.Replicator = worker.NewReplicator(m, m.stores)
-	w.OverReplicationCleaner = worker.NewOverReplicationCleaner(m, m.stores)
-	w.CleanupWorker = worker.NewCleanupWorker(m, m.stores, 10, "test-instance", 5*time.Minute)
-	w.PendingReaper = worker.NewPendingReaper(m, m.stores, 0, 0, 0)
-	w.Scrubber = worker.NewScrubber(m, m.stores, nil)
+	w.Rebalancer = worker.NewRebalancer(m, stores)
+	w.Replicator = worker.NewReplicator(m, stores)
+	w.OverReplicationCleaner = worker.NewOverReplicationCleaner(m, stores)
+	w.CleanupWorker = worker.NewCleanupWorker(m, stores, 10, "test-instance", 5*time.Minute)
+	w.PendingReaper = worker.NewPendingReaper(m, stores, 0, 0, 0)
+	w.Scrubber = worker.NewScrubber(m, stores, nil)
 	m.WireDrain(drain.New(
 		m,
-		m.stores,
-		m.stores,
-		m.stores,
+		stores,
+		stores,
+		stores,
 		m.MultipartManager.AbortMultipartUploadsOnBackend,
 		w.CleanupWorker.ProcessCleanupQueue,
 	))
