@@ -187,7 +187,7 @@ func TestReplicate_Success(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
@@ -229,7 +229,7 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	exclusion := map[string]bool{"b1": true, "b2": true}
@@ -253,7 +253,7 @@ func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	exclusion := map[string]bool{"b1": true}
@@ -283,7 +283,7 @@ func TestSelectReplicaTarget_NoSpaceAvailable(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	exclusion := map[string]bool{"b1": true}
@@ -318,7 +318,7 @@ func TestCopyToReplica_Success(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
@@ -353,7 +353,7 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	copies := []core.ObjectLocation{
@@ -389,7 +389,7 @@ func TestCopyToReplica_AllSourcesFail(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
@@ -423,7 +423,7 @@ func TestCopyToReplica_DoesNotMutateInputSlice(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	copies := []core.ObjectLocation{
@@ -515,7 +515,7 @@ func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
@@ -566,7 +566,7 @@ func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
@@ -600,7 +600,7 @@ func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
@@ -641,7 +641,7 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
@@ -695,7 +695,7 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
@@ -749,7 +749,7 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
@@ -804,7 +804,7 @@ func TestReplicate_UsesRecordedSize_NotFirstCopy(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
@@ -845,7 +845,7 @@ func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
@@ -907,7 +907,7 @@ func TestIsBackendHealthy_CBHealthy(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	if !workers.Replicator.IsBackendHealthy("b1") {
 		t.Error("healthy CB backend should report healthy")
@@ -927,7 +927,7 @@ func TestIsBackendHealthy_CBUnhealthy(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	if workers.Replicator.IsBackendHealthy("b1") {
 		t.Error("tripped CB backend should report unhealthy")

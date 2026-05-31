@@ -240,7 +240,7 @@ func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
 		Order:           []string{"b1"},
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	defer mgr.Close()
 
@@ -285,7 +285,7 @@ func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 		Order:           []string{"b1"},
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	defer mgr.Close()
 

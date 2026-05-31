@@ -1051,7 +1051,7 @@ func newEncryptedTestManager(t *testing.T, store core.MetadataStore, backends ma
 		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	return mgr
 }
@@ -1094,7 +1094,7 @@ func newFailingEncryptionTestManager(t *testing.T, store core.MetadataStore, bac
 		RoutingStrategy: config.RoutingPack,
 		Encryptor:       enc,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	return mgr
 }

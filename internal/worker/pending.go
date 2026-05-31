@@ -33,12 +33,19 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
+// PendingReaperStore is the narrow persistence surface the pending reaper
+// needs. Declared locally so the worker does not pull in the full
+// MetadataStore.
+type PendingReaperStore interface {
+	core.PendingStore
+}
+
 // PendingReaper resolves abandoned PUT intents by inspecting the destination
 // backend. The min-age window protects in-flight PUTs whose commit has not
 // yet had a chance to clear the intent on the synchronous path.
 type PendingReaper struct {
 	deps        CleanupOps
-	store       core.MetadataStore
+	store       PendingReaperStore
 	log         *slog.Logger
 	concurrency int
 	minAge      time.Duration
@@ -48,7 +55,7 @@ type PendingReaper struct {
 // NewPendingReaper creates a PendingReaper with explicit dependencies.
 // concurrency, minAge, and batchSize fall back to safe defaults when zero
 // or negative.
-func NewPendingReaper(deps CleanupOps, store core.MetadataStore, concurrency int, minAge time.Duration, batchSize int) *PendingReaper {
+func NewPendingReaper(deps CleanupOps, store PendingReaperStore, concurrency int, minAge time.Duration, batchSize int) *PendingReaper {
 	must.NotNil("deps", deps)
 	must.NotNil("store", store)
 	if concurrency <= 0 {

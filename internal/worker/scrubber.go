@@ -37,20 +37,27 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
+// ScrubberStore is the narrow persistence surface the scrubber needs:
+// integrity row reads/writes. Declared locally so the worker does not
+// pull in the full MetadataStore.
+type ScrubberStore interface {
+	core.IntegrityStore
+}
+
 // Scrubber periodically verifies stored object integrity by reading objects
 // from backends, computing their SHA-256 hash, and comparing against the
 // stored content hash. Also supports backfilling hashes for objects that
 // were written before integrity was enabled.
 type Scrubber struct {
-	log *slog.Logger
+	log       *slog.Logger
 	deps      ScrubberOps
-	store     core.MetadataStore
+	store     ScrubberStore
 	encryptor *encryption.Encryptor
 	cfg       syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
 // NewScrubber creates a Scrubber with the given dependencies and optional encryptor.
-func NewScrubber(deps ScrubberOps, store core.MetadataStore, encryptor *encryption.Encryptor) *Scrubber {
+func NewScrubber(deps ScrubberOps, store ScrubberStore, encryptor *encryption.Encryptor) *Scrubber {
 	must.NotNil("deps", deps)
 	must.NotNil("store", store)
 	return &Scrubber{deps: deps, store: store, encryptor: encryptor, log: slog.Default().With(logfmt.Component("scrubber"))}

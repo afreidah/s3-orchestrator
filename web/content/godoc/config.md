@@ -29,7 +29,9 @@ Package config provides YAML configuration loading with environment variable exp
 - [type CredentialConfig](<#CredentialConfig>)
 - [type DatabaseConfig](<#DatabaseConfig>)
   - [func \(c \*DatabaseConfig\) ConnectionString\(\) string](<#DatabaseConfig.ConnectionString>)
+- [type DebugConfig](<#DebugConfig>)
 - [type EncryptionConfig](<#EncryptionConfig>)
+- [type FlightRecorderConfig](<#FlightRecorderConfig>)
 - [type IntegrityConfig](<#IntegrityConfig>)
   - [func \(ic \*IntegrityConfig\) ShouldVerifyOnReplicate\(\) bool](<#IntegrityConfig.ShouldVerifyOnReplicate>)
 - [type LifecycleConfig](<#LifecycleConfig>)
@@ -241,7 +243,7 @@ var (
 ```
 
 <a name="NonReloadableFieldsChanged"></a>
-## func [NonReloadableFieldsChanged](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L212>)
+## func [NonReloadableFieldsChanged](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L214>)
 
 ```go
 func NonReloadableFieldsChanged(old, new *Config) []string
@@ -250,7 +252,7 @@ func NonReloadableFieldsChanged(old, new *Config) []string
 NonReloadableFieldsChanged compares two configs and returns a list of non\-reloadable field descriptions that differ. Used by the SIGHUP handler to warn about changes that require a restart.
 
 <a name="ParseLogLevel"></a>
-## func [ParseLogLevel](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L361>)
+## func [ParseLogLevel](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L363>)
 
 ```go
 func ParseLogLevel(s string) slog.Level
@@ -369,7 +371,7 @@ type CleanupQueueConfig struct {
 ```
 
 <a name="Config"></a>
-## type [Config](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L50-L73>)
+## type [Config](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L50-L74>)
 
 Config holds the complete service configuration.
 
@@ -396,12 +398,13 @@ type Config struct {
     Cache                 CacheConfig                 `yaml:"cache"`
     Redis                 *RedisConfig                `yaml:"redis"`
     Notifications         NotificationConfig          `yaml:"notifications"`
+    Debug                 DebugConfig                 `yaml:"debug"`
     RoutingStrategy       RoutingStrategy             `yaml:"routing_strategy"` // "pack" (default) or "spread"
 }
 ```
 
 <a name="LoadConfig"></a>
-### func [LoadConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L81>)
+### func [LoadConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L82>)
 
 ```go
 func LoadConfig(path string) (*Config, error)
@@ -410,7 +413,7 @@ func LoadConfig(path string) (*Config, error)
 LoadConfig reads and parses the configuration file with environment variable expansion. Returns an error if the file cannot be read, parsed, or validated.
 
 <a name="Config.SetDefaultsAndValidate"></a>
-### func \(\*Config\) [SetDefaultsAndValidate](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L108>)
+### func \(\*Config\) [SetDefaultsAndValidate](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/config.go#L109>)
 
 ```go
 func (c *Config) SetDefaultsAndValidate() error
@@ -432,7 +435,7 @@ type CredentialConfig struct {
 ```
 
 <a name="DatabaseConfig"></a>
-## type [DatabaseConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/database.go#L25-L37>)
+## type [DatabaseConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/database.go#L27-L39>)
 
 DatabaseConfig holds metadata store connection settings. The Driver field selects between "sqlite" \(embedded, zero\-dependency default\) and "postgres" \(required for multi\-instance deployments\).
 
@@ -453,13 +456,24 @@ type DatabaseConfig struct {
 ```
 
 <a name="DatabaseConfig.ConnectionString"></a>
-### func \(\*DatabaseConfig\) [ConnectionString](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/database.go#L41>)
+### func \(\*DatabaseConfig\) [ConnectionString](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/database.go#L43>)
 
 ```go
 func (c *DatabaseConfig) ConnectionString() string
 ```
 
 ConnectionString returns a PostgreSQL connection URI with properly escaped credentials, safe for passwords containing special characters.
+
+<a name="DebugConfig"></a>
+## type [DebugConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/debug.go#L18-L20>)
+
+DebugConfig groups opt\-in diagnostic features. All sub\-blocks default to disabled; production deployments enable only what an incident requires.
+
+```go
+type DebugConfig struct {
+    FlightRecorder FlightRecorderConfig `yaml:"flight_recorder"`
+}
+```
 
 <a name="EncryptionConfig"></a>
 ## type [EncryptionConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/encryption.go#L31-L38>)
@@ -474,6 +488,25 @@ type EncryptionConfig struct {
     MasterKeyFile string              `yaml:"master_key_file"` // Path to file containing raw 32-byte key
     Vault         *VaultTransitConfig `yaml:"vault"`           // Vault Transit key management
     PreviousKeys  []string            `yaml:"previous_keys"`   // Base64-encoded previous master keys for rotation (unwrap only)
+}
+```
+
+<a name="FlightRecorderConfig"></a>
+## type [FlightRecorderConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/debug.go#L26-L36>)
+
+FlightRecorderConfig configures the always\-on runtime/trace.FlightRecorder ring buffer that backs the admin trace\-snapshot endpoint. Disabled by default — the recorder is cheap but does carry continuous overhead, so only flip it on where operators actually want the safety net.
+
+```go
+type FlightRecorderConfig struct {
+    // Enabled starts the FlightRecorder at boot. When false the admin
+    // snapshot endpoint returns 503.
+    Enabled bool `yaml:"enabled"`
+
+    // MinAge is the soft lower bound on the trace window age, mapped
+    // directly to runtime/trace.FlightRecorderConfig.MinAge. Defaults to
+    // 30s — long enough to cover a typical incident window without
+    // excessive memory.
+    MinAge time.Duration `yaml:"min_age"`
 }
 ```
 

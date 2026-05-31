@@ -429,7 +429,7 @@ func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	exclusion := map[string]bool{"b1": true}
@@ -464,7 +464,7 @@ func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 		CacheTTL:        5 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	exclusion := map[string]bool{"b1": true}
@@ -787,7 +787,7 @@ func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 
 	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{

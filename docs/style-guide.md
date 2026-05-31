@@ -194,7 +194,7 @@ Group related fields with inline comments explaining non-obvious fields:
 ```go
 type BackendManager struct {
     *backendCore                                     // embeds backend fleet, admission, drain, metrics
-    stores          core.MetadataStore               // wide composite metadata-store contract
+    stores          Stores                           // narrow store-role composite; see Stores interface
     pendingEnabled  bool                             // mirrors cfg.PendingEnabled for write-path branches
     routingStrategy config.RoutingStrategy           // RoutingPack or RoutingSpread
     rebalanceCfg    syncutil.AtomicConfig[config.RebalanceConfig]
@@ -261,7 +261,29 @@ func New(core MultipartCore, coord MultipartCoordinator, ...) *Manager { ... }
 3. **An import cycle would otherwise form** (e.g. `readpath.LocationCache` — without the interface, `readpath` would have to import `object` which already imports `readpath`).
 4. **The interface models a real domain boundary** between subsystems (`drain.Core`, `MultipartCore`, `ObjectCore`, `WritepathCore`).
 
-If none apply — single impl, single consumer, no test fake, no cycle, no boundary — pass the concrete `*Type` directly. Examples cut under #918: `readpath.ObjectLocationLister`, `multipart.MultipartCoordinator`, `multipart.StaleCleaner`, `accounting.UsageTracker`, the `worker.RebalancerStore`/`ReplicatorStore`/`OverReplicationStore`/`CleanupWorkerStore`/`ScrubberStore`/`PendingReaperStore` store-role wrappers (workers now take `core.MetadataStore` directly).
+If none apply — single impl, single consumer, no test fake, no cycle, no boundary — pass the concrete `*Type` directly. Examples cut under #918: `readpath.ObjectLocationLister`, `multipart.MultipartCoordinator`, `multipart.StaleCleaner`, `accounting.UsageTracker`.
+
+**Special case: `core.MetadataStore` is composition-root-only.** `MetadataStore` is the union of every per-role store interface (`ObjectStore`, `QuotaStore`, `MultipartStore`, `PendingStore`, `CleanupStore`, etc.) — a god interface in the same way `*BackendManager` would be if every consumer took it whole. Treat it that way:
+
+- **OK to hold or accept:** `internal/di`, `internal/runtime`, `internal/lifecycle`, in-package test fixtures, and the proxy subtree's composition root (`BackendManagerConfig.Stores`). These are composition layers; their job is to route the concrete store into the narrow interfaces each consumer declares.
+- **Not OK to hold or accept:** every feature package under `internal/proxy/*`, `internal/worker/`, `internal/transport/*`, `internal/store/postgres`, etc. Each declares its own role-composite interface naming exactly the per-role store interfaces it needs:
+
+  ```go
+  // internal/worker/scrubber.go
+  type ScrubberStore interface {
+      core.IntegrityStore
+  }
+
+  // internal/proxy/writepath/coordinator.go
+  type Stores interface {
+      core.ObjectStore
+      core.QuotaStore
+      core.PendingStore
+      core.CleanupStore
+  }
+  ```
+
+  The single concrete `MetadataStore` satisfies every such composite implicitly, so DI wiring stays one line per provider while each consumer's dependency footprint is documented in its own source file. This rule exists because a feature package that takes `MetadataStore` whole gives the misleading impression it might call any DB role — auditing the actual surface then requires reading the implementation, which defeats the point of consumer-declared interfaces.
 
 **Producer-side interfaces are an anti-pattern.** `*infra.Core`, `*writepath.Coordinator`, `*object.Manager`, `*multipart.Manager` are exported as concrete pointer types with no sibling `Core`/`Coordinator`/`Manager` interface that mirrors their public surface. Producer-side interfaces force every consumer to mock the full producer API, which is exactly what this pattern is built to avoid.
 
@@ -280,7 +302,7 @@ If none apply — single impl, single consumer, no test fake, no cycle, no bound
 
 For interfaces that exist to *provide* a value (typical "Acct" / "Stores" / "Config" getters), name the interface after the returned type plus `Provider` or `Source` — `RecorderProvider` for `Acct() *Recorder`, `ConfigSource` for `Config() *Config`. The `Provider` / `Source` suffix is also an agent noun and satisfies the rule.
 
-Multi-method interfaces are exempt: `core.MetadataStore`, `worker.Ops`, `ObjectCore`, `MultipartCoordinator` describe a role (or a composite of sub-roles), not a single action, so the `-er` form does not apply.
+Multi-method interfaces are exempt: `worker.Ops`, `ObjectCore`, `MultipartCoordinator` describe a role (or a composite of sub-roles), not a single action, so the `-er` form does not apply.
 
 ### Per-Backend Accounting: Use the Recorder
 

@@ -66,6 +66,8 @@ type MockStore struct {
 	RecordPartErr             error
 	ListMultipartUploadsResp  []core.MultipartUpload
 	ListMultipartUploadsErr   error
+	CountActiveMultipartResp  int64
+	CountActiveMultipartErr   error
 
 	// Dashboard / background
 	GetQuotaStatsResp      map[string]core.QuotaStat
@@ -154,6 +156,16 @@ func (m *MockStore) GetObjectBackendsForKeys(_ context.Context, _ []string) (map
 		return m.GetObjectBackendsForKeysResp, nil
 	}
 	return map[string][]string{}, nil
+}
+
+// CountActiveMultipartUploads returns the pre-configured count or error.
+func (m *MockStore) CountActiveMultipartUploads(_ context.Context, _ string) (int64, error) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	if m.CountActiveMultipartErr != nil {
+		return 0, m.CountActiveMultipartErr
+	}
+	return m.CountActiveMultipartResp, nil
 }
 
 // GetBackendWithSpace returns the pre-configured backend name or error.

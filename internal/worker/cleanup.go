@@ -25,11 +25,18 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
 
+// CleanupWorkerStore is the narrow persistence surface the cleanup worker
+// needs: the cleanup queue + DLQ operations. Declared locally so the
+// worker does not pull in the full MetadataStore.
+type CleanupWorkerStore interface {
+	core.CleanupStore
+}
+
 // CleanupWorker processes the retry queue for failed object deletions.
 type CleanupWorker struct {
 	log              *slog.Logger
 	deps             CleanupOps
-	store            core.MetadataStore
+	store            CleanupWorkerStore
 	concurrency      int
 	instanceID       string
 	claimGracePeriod time.Duration
@@ -39,7 +46,7 @@ type CleanupWorker struct {
 // instanceID is stamped into cleanup_queue.claimed_by for observability;
 // claimGracePeriod is the threshold past which an outstanding claim becomes
 // reclaimable by another worker tick (typically 5m).
-func NewCleanupWorker(deps CleanupOps, store core.MetadataStore, concurrency int, instanceID string, claimGracePeriod time.Duration) *CleanupWorker {
+func NewCleanupWorker(deps CleanupOps, store CleanupWorkerStore, concurrency int, instanceID string, claimGracePeriod time.Duration) *CleanupWorker {
 	must.NotNil("deps", deps)
 	must.NotNil("store", store)
 	return &CleanupWorker{
