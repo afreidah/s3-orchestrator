@@ -21,22 +21,43 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// ObjectCore is the subset of *infra.Core the object Manager needs.
-// BackendOrder is here for *readpath.Failover, which Manager constructs
-// from its own ObjectCore; the transitive requirement satisfies its
-// type-check at this boundary. IsDraining is here for the post-PUT
-// drain-race re-check in attemptPutOnBackend (the upstream
-// EligibleForWrite filter is racy; the re-check closes the window).
-type ObjectCore interface {
-	Backends() map[string]backend.ObjectBackend
-	BackendOrder() []string
+// ObjectWriteCore is the subset of *infra.Core the write-path Manager
+// methods (put, copy, delete, mutation_finalize) reach for. IsDraining
+// is here for the post-PUT drain-race re-check in attemptPutOnBackend
+// (the upstream EligibleForWrite filter is racy; the re-check closes
+// the window).
+type ObjectWriteCore interface {
 	GetBackend(name string) (backend.ObjectBackend, error)
-	Usage() *counter.UsageTracker // still needed for WithinLimits pre-flight checks; per-backend Record calls flow through Acct
 	IsDraining(name string) bool
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
 	EligibleForWrite(apiCalls, egress, ingress int64) []string
 	ClassifyWriteError(span trace.Span, operation string, err error) error
 	Acct() *accounting.Recorder
+}
+
+// ObjectReadCore is the subset of *infra.Core the read-path Manager
+// methods (get, head, list, materialize) reach for. Usage() is still
+// needed for WithinLimits pre-flight checks; per-backend Record calls
+// flow through Acct.
+type ObjectReadCore interface {
+	Backends() map[string]backend.ObjectBackend
+	GetBackend(name string) (backend.ObjectBackend, error)
+	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
+	Usage() *counter.UsageTracker
+	Acct() *accounting.Recorder
+}
+
+// ObjectCore composes the read and write role interfaces above into the
+// single dependency object.Manager holds. *infra.Core satisfies both
+// implicitly, so production wiring stays one field; tests and future
+// consumers may depend on the narrower role that matches their actual
+// call surface. BackendOrder() is intentionally NOT included here — it
+// is only used by *readpath.Failover, which receives its own
+// readpath.Core via Deps.BroadcastCore so the transitive requirement
+// does not bleed into ObjectCore.
+type ObjectCore interface {
+	ObjectWriteCore
+	ObjectReadCore
 }
 
 // WriteRouter is the routing subset of *writepath.Coordinator: pick a
