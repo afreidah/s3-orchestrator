@@ -39,18 +39,42 @@ type ObjectCore interface {
 	Acct() *accounting.Recorder
 }
 
-// ObjectCoordinator is the subset of *writepath.Coordinator the object
-// Manager needs. RecoverFromRecordFailure is here for the drain-race
-// abort path in attemptPutOnBackend: when the post-PUT IsDraining
-// re-check fires, the orchestrator reuses the existing post-record-
-// failure recovery sequence to delete the orphaned bytes and account
-// for the cleanup DELETE.
-type ObjectCoordinator interface {
+// WriteRouter is the routing subset of *writepath.Coordinator: pick a
+// write-target backend given a size and an optional eligibility filter.
+// Tests that exercise only routing decisions can mock this alone.
+type WriteRouter interface {
 	SelectBackendForWrite(ctx context.Context, size int64, eligible []string) (string, error)
 	SelectWriteTarget(ctx context.Context, span trace.Span, operation string, size int64) (string, error)
+}
+
+// PendingWriter is the pending-intent subset of *writepath.Coordinator:
+// insert the pre-PUT intent row and (on success) promote it into a
+// permanent object_locations row. Tests that exercise only the
+// pending-pattern handoff can mock this alone.
+type PendingWriter interface {
 	InsertPendingIntent(ctx context.Context, key, backendName string, size int64, enc *core.EncryptionMeta) (string, error)
 	RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, key, backendName string, size int64, enc *core.EncryptionMeta, intentID string) error
+}
+
+// CleanupWriter is the post-write commit + recovery subset of
+// *writepath.Coordinator: commit the object row (with enqueue-on-failure
+// fallback), recover from a record failure by deleting the orphaned
+// bytes, or directly delete-or-enqueue a copy that should not survive.
+// RecoverFromRecordFailure also backs the drain-race abort path in
+// attemptPutOnBackend (when the post-PUT IsDraining re-check fires).
+type CleanupWriter interface {
 	RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, key, backendName string, size int64, enc *core.EncryptionMeta) error
 	RecoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, backendName, key, cleanupReason string, size int64)
 	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
+}
+
+// ObjectCoordinator composes the three role interfaces above into the
+// single dependency object.Manager holds. *writepath.Coordinator
+// satisfies all three implicitly, so production wiring stays a single
+// field, while tests and future consumers may depend on whichever
+// narrower role matches their actual call surface.
+type ObjectCoordinator interface {
+	WriteRouter
+	PendingWriter
+	CleanupWriter
 }
