@@ -332,7 +332,7 @@ func TestFlushUsage_SkipsDrainedBackend(t *testing.T) {
 	mgr.Usage().Record("b1", 5, 100, 200)
 	mgr.Usage().Record("b2", 3, 50, 75)
 
-	mgr.DrainManager.SeedCompletedForTest("b2")
+	mgr.drainManager.SeedCompletedForTest("b2")
 
 	if err := mgr.FlushUsage(context.Background()); err != nil {
 		t.Fatalf("FlushUsage() error = %v", err)

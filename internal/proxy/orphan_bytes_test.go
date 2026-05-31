@@ -360,7 +360,7 @@ func TestPutObject_Overwrite_EnqueuesDisplacedCopiesWithSize(t *testing.T) {
 
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": b1, "b2": b2})
 
-	if _, err := mgr.ObjectManager.PutObject(context.Background(), "overwritten-key", bytes.NewReader([]byte("new")), 3, "text/plain", nil); err != nil {
+	if _, err := mgr.objectManager.PutObject(context.Background(), "overwritten-key", bytes.NewReader([]byte("new")), 3, "text/plain", nil); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 
@@ -401,7 +401,7 @@ func TestDeleteObject_BackendFails_EnqueuesWithSize(t *testing.T) {
 
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
-	if err := mgr.ObjectManager.DeleteObject(context.Background(), "mykey"); err != nil {
+	if err := mgr.objectManager.DeleteObject(context.Background(), "mykey"); err != nil {
 		t.Fatalf("DeleteObject should succeed even if backend delete fails: %v", err)
 	}
 	if len(c.enqueue) != 1 {
@@ -623,7 +623,7 @@ func TestRecordObjectOrCleanup_DisplacedCopyBackendNotFound(t *testing.T) {
 
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": b1})
 
-	if _, err := mgr.ObjectManager.PutObject(context.Background(), "key1", bytes.NewReader([]byte("hi")), 2, "text/plain", nil); err != nil {
+	if _, err := mgr.objectManager.PutObject(context.Background(), "key1", bytes.NewReader([]byte("hi")), 2, "text/plain", nil); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 	if len(c.enqueue) != 0 {
@@ -655,7 +655,7 @@ func TestRecordObjectOrCleanup_DisplacedCopyDeleteSucceeds(t *testing.T) {
 
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": b1, "b2": b2})
 
-	if _, err := mgr.ObjectManager.PutObject(context.Background(), "key1", bytes.NewReader([]byte("new")), 3, "", nil); err != nil {
+	if _, err := mgr.objectManager.PutObject(context.Background(), "key1", bytes.NewReader([]byte("new")), 3, "", nil); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 	if len(c.enqueue) != 0 {

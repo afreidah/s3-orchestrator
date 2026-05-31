@@ -2523,10 +2523,10 @@ func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 	// Start draining the first backend where the object was placed
 	drainTarget := backends[0]
 
-	if err := mgr.DrainManager.StartDrain(ctx, drainTarget); err != nil {
+	if err := mgr.Drain().StartDrain(ctx, drainTarget); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
-	defer mgr.DrainManager.CancelDrain(drainTarget)
+	defer mgr.Drain().CancelDrain(drainTarget)
 
 	// Clean with factor=2 -> should remove 1 copy, preferring the draining backend (score 0)
 	removed, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
@@ -4335,7 +4335,7 @@ func TestDrainBackend(t *testing.T) {
 	keys := seedDrainObjects(t, ctx, client, 5, 50, "D")
 	assertObjectsOnBackend(t, keys, "minio-1")
 
-	if err := testManager.DrainManager.StartDrain(ctx, "minio-1"); err != nil {
+	if err := testManager.Drain().StartDrain(ctx, "minio-1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 	waitDrainComplete(t, ctx, "minio-1", 30*time.Second)
@@ -4390,7 +4390,7 @@ func waitDrainComplete(t *testing.T, ctx context.Context, backend string, timeou
 			t.Fatalf("drain of %s did not complete within %s", backend, timeout)
 		default:
 		}
-		progress, err := testManager.DrainManager.GetDrainProgress(ctx, backend)
+		progress, err := testManager.Drain().GetDrainProgress(ctx, backend)
 		if err != nil {
 			t.Fatalf("GetDrainProgress: %v", err)
 		}
@@ -4458,7 +4458,7 @@ func TestDrainBackend_WriteExclusion(t *testing.T) {
 	}
 
 	// Start drain of minio-1.
-	if err := testManager.DrainManager.StartDrain(ctx, "minio-1"); err != nil {
+	if err := testManager.Drain().StartDrain(ctx, "minio-1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
@@ -4486,7 +4486,7 @@ func TestDrainBackend_WriteExclusion(t *testing.T) {
 			t.Fatal("drain did not complete within 30s")
 		default:
 		}
-		progress, err := testManager.DrainManager.GetDrainProgress(ctx, "minio-1")
+		progress, err := testManager.Drain().GetDrainProgress(ctx, "minio-1")
 		if err != nil {
 			t.Fatalf("GetDrainProgress: %v", err)
 		}
@@ -4522,7 +4522,7 @@ func TestRemoveBackend(t *testing.T) {
 	}
 
 	// Remove without purge (just DB records).
-	if err := testManager.DrainManager.RemoveBackend(ctx, "minio-2", false); err != nil {
+	if err := testManager.Drain().RemoveBackend(ctx, "minio-2", false); err != nil {
 		t.Fatalf("RemoveBackend: %v", err)
 	}
 

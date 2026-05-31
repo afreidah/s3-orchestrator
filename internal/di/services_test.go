@@ -151,7 +151,7 @@ func TestServiceWorkClosures_RunOnceCovers(t *testing.T) {
 	locker := acquiringLocker{}
 
 	services := []lifecycle.Runner{
-		multipart.NewCleanupService(f.mgr.MultipartManager, locker, 0),
+		multipart.NewCleanupService(f.mgr.Multipart(), locker, 0),
 		worker.NewCleanupQueueService(f.cleanupWorker, locker),
 		worker.NewRebalancerService(f.mgr, f.rebalancer, locker),
 		NewLifecycleService(f.mgr, locker),
@@ -205,7 +205,7 @@ func TestServiceConstructors_AllReturnNonNil(t *testing.T) {
 		svc  any
 	}{
 		{"UsageFlush", NewUsageFlushService(f.mgr, locker)},
-		{"MultipartCleanup", multipart.NewCleanupService(f.mgr.MultipartManager, locker, 0)},
+		{"MultipartCleanup", multipart.NewCleanupService(f.mgr.Multipart(), locker, 0)},
 		{"CleanupQueue", worker.NewCleanupQueueService(f.cleanupWorker, locker)},
 		{"Rebalancer", worker.NewRebalancerService(f.mgr, f.rebalancer, locker)},
 		{"Lifecycle", NewLifecycleService(f.mgr, locker)},
@@ -410,7 +410,7 @@ func TestServiceClosures_ExerciseWorkAndShouldRun(t *testing.T) {
 	ctx := context.Background()
 	locker := acquiringLocker{}
 
-	asTicker(t, multipart.NewCleanupService(mgr.MultipartManager, locker, 100*time.Millisecond)).Tick(ctx)
+	asTicker(t, multipart.NewCleanupService(mgr.Multipart(), locker, 100*time.Millisecond)).Tick(ctx)
 	asTicker(t, worker.NewCleanupQueueService(f.cleanupWorker, locker)).Tick(ctx)
 	asTicker(t, worker.NewRebalancerService(mgr, f.rebalancer, locker)).Tick(ctx)
 	asTicker(t, NewLifecycleService(mgr, locker)).Tick(ctx)

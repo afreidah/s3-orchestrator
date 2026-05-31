@@ -110,7 +110,7 @@ func TestPending_DBBlipMidPUT_RecoveredByReaper(t *testing.T) {
 	// on the retry  -  masking the failure we're trying to observe.
 	testFailableStore.SetFailCommitOnce()
 
-	_, err := testManager.ObjectManager.PutObject(
+	_, err := testManager.Objects().PutObject(
 		ctx, internalKey(key), bytes.NewReader([]byte("payload")), 7, "application/octet-stream", nil,
 	)
 	if err == nil {

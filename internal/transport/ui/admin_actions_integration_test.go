@@ -58,7 +58,7 @@ func newAdminHandlerForTest(t testing.TB, opts ...func(*proxy.BackendManager, *p
 		BackendOps: mgr,
 		Replicator: workers.Replicator,
 		OverRep:    workers.OverReplicationCleaner,
-		Drain:      mgr.DrainManager,
+		Drain:      mgr.Drain(),
 		Scrubber:   workers.Scrubber,
 		Lifecycle:  mock,
 		DBHealthy:  cb.IsHealthy,

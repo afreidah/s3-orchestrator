@@ -149,7 +149,7 @@ func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
 
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
-	mgr.DrainManager.PurgeBackendObjects(context.Background(), backend, "b1")
+	mgr.drainManager.PurgeBackendObjects(context.Background(), backend, "b1")
 
 	if len(c.deletedLocation) != 2 {
 		t.Fatalf("expected 2 DeleteObjectLocation calls, got %d", len(c.deletedLocation))
@@ -195,7 +195,7 @@ func TestPurgeBackendObjects_ContinuesOnS3DeleteFailure(t *testing.T) {
 
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
-	mgr.DrainManager.PurgeBackendObjects(context.Background(), backend, "b1")
+	mgr.drainManager.PurgeBackendObjects(context.Background(), backend, "b1")
 
 	if len(c.deletedLocation) != 1 {
 		t.Fatalf("expected 1 DeleteObjectLocation call, got %d", len(c.deletedLocation))
@@ -240,7 +240,7 @@ func TestPurgeBackendObjects_BailsOnZeroDBProgress(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		mgr.DrainManager.PurgeBackendObjects(context.Background(), backend, "b1")
+		mgr.drainManager.PurgeBackendObjects(context.Background(), backend, "b1")
 		close(done)
 	}()
 	select {
@@ -273,7 +273,7 @@ func TestRemoveBackend_PurgeTerminates(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- mgr.DrainManager.RemoveBackend(context.Background(), "b1", true)
+		done <- mgr.drainManager.RemoveBackend(context.Background(), "b1", true)
 	}()
 
 	select {
@@ -305,7 +305,7 @@ func TestDrainOneObject_ReplicaExists_DeletesSourceWithSize(t *testing.T) {
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": srcBackend, "b2": newMockBackend()})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	if !mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
+	if !mgr.drainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Fatal("drainOneObject should succeed when replica exists")
 	}
 	if srcBackend.hasObject("key1") {
@@ -339,7 +339,7 @@ func TestDrainOneObject_NoCopy_MovesObjectWithSize(t *testing.T) {
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": srcBackend, "b2": dstBackend})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	if !mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
+	if !mgr.drainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Fatal("drainOneObject should succeed")
 	}
 	if !dstBackend.hasObject("key1") {
@@ -378,7 +378,7 @@ func TestDrainOneObject_MoveLocationFails_EnqueuesOrphanWithSize(t *testing.T) {
 	dstBackend.delErr = errors.New("backend down")
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	if mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
+	if mgr.drainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Fatal("drainOneObject should fail when MoveObjectLocation fails")
 	}
 	if len(c.enqueue) != 1 {
@@ -419,7 +419,7 @@ func TestDrainOneObject_StaleObject_EnqueuesOrphanWithSize(t *testing.T) {
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": srcBackend, "b2": dstBackend})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	if mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
+	if mgr.drainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Fatal("drainOneObject should return false for stale object")
 	}
 	if len(c.enqueue) != 1 {
@@ -461,15 +461,15 @@ func TestStartDrain_FlushesCleanupQueueBeforeDeleteBackendData(t *testing.T) {
 
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
-	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
+	if err := mgr.drainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
 	testx.Eventually(t, 3*time.Second, func() bool {
-		p, pErr := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
+		p, pErr := mgr.drainManager.GetDrainProgress(context.Background(), "b1")
 		return pErr == nil && !p.Active
 	}, "drain did not complete within timeout")
-	progress, err := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
+	progress, err := mgr.drainManager.GetDrainProgress(context.Background(), "b1")
 	if err != nil {
 		t.Fatalf("GetDrainProgress: %v", err)
 	}
@@ -492,20 +492,20 @@ func TestCancelDrain_CompletedDrain_ClearsState(t *testing.T) {
 	store := newPermissiveMock(t)
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
+	if err := mgr.drainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
 	testx.Eventually(t, 3*time.Second, func() bool {
-		p, err := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
+		p, err := mgr.drainManager.GetDrainProgress(context.Background(), "b1")
 		return err == nil && !p.Active
 	}, "drain did not complete")
 
-	if err := mgr.DrainManager.CancelDrain("b1"); err != nil {
+	if err := mgr.drainManager.CancelDrain("b1"); err != nil {
 		t.Fatalf("CancelDrain: %v", err)
 	}
 
-	if err := mgr.DrainManager.CancelDrain("b1"); err == nil {
+	if err := mgr.drainManager.CancelDrain("b1"); err == nil {
 		t.Error("expected error after clearing drained state")
 	}
 }
@@ -521,17 +521,17 @@ func TestDrainActive_NetZero_AfterCompletion(t *testing.T) {
 
 	before := promtest.ToFloat64(telemetry.DrainActive)
 
-	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
+	if err := mgr.drainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 	testx.Eventually(t, 3*time.Second, func() bool {
-		p, err := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
+		p, err := mgr.drainManager.GetDrainProgress(context.Background(), "b1")
 		return err == nil && !p.Active
 	}, "drain did not complete")
 
 	// CancelDrain after natural completion would, pre-fix, decrement
 	// a second time. Post-fix sync.Once on drainState makes it a no-op.
-	if err := mgr.DrainManager.CancelDrain("b1"); err != nil {
+	if err := mgr.drainManager.CancelDrain("b1"); err != nil {
 		t.Fatalf("CancelDrain: %v", err)
 	}
 
@@ -556,11 +556,11 @@ func TestDrainActive_NetZero_AfterCancelActive(t *testing.T) {
 
 	before := promtest.ToFloat64(telemetry.DrainActive)
 
-	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
+	if err := mgr.drainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 	time.Sleep(20 * time.Millisecond) // let drain block on the gated lister
-	if err := mgr.DrainManager.CancelDrain("b1"); err != nil {
+	if err := mgr.drainManager.CancelDrain("b1"); err != nil {
 		t.Fatalf("CancelDrain: %v", err)
 	}
 
@@ -586,11 +586,11 @@ func TestDrainActive_NetZero_AfterDrainError(t *testing.T) {
 
 	before := promtest.ToFloat64(telemetry.DrainActive)
 
-	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
+	if err := mgr.drainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 	testx.Eventually(t, 3*time.Second, func() bool {
-		p, _ := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
+		p, _ := mgr.drainManager.GetDrainProgress(context.Background(), "b1")
 		return !p.Active
 	}, "drain did not abort")
 
@@ -612,13 +612,13 @@ func TestCancelDrain_ActiveDrain_CancelsAndClears(t *testing.T) {
 
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
+	if err := mgr.drainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
 	time.Sleep(20 * time.Millisecond)
 
-	if err := mgr.DrainManager.CancelDrain("b1"); err != nil {
+	if err := mgr.drainManager.CancelDrain("b1"); err != nil {
 		t.Fatalf("CancelDrain: %v", err)
 	}
 }
@@ -636,7 +636,7 @@ func TestGetDrainProgress_ConcurrentAccess(t *testing.T) {
 
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
+	if err := mgr.drainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
@@ -648,7 +648,7 @@ func TestGetDrainProgress_ConcurrentAccess(t *testing.T) {
 				case <-done:
 					return
 				default:
-					_, _ = mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
+					_, _ = mgr.drainManager.GetDrainProgress(context.Background(), "b1")
 				}
 			}
 		}()
@@ -656,7 +656,7 @@ func TestGetDrainProgress_ConcurrentAccess(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 	close(done)
-	_ = mgr.DrainManager.CancelDrain("b1")
+	_ = mgr.drainManager.CancelDrain("b1")
 }
 
 // TestGetDrainProgress_ReportsError surfaces a DeleteBackendData error.
@@ -670,13 +670,13 @@ func TestGetDrainProgress_ReportsError(t *testing.T) {
 
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
+	if err := mgr.drainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
 	var progress *drain.Progress
 	testx.Eventually(t, 3*time.Second, func() bool {
-		p, _ := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
+		p, _ := mgr.drainManager.GetDrainProgress(context.Background(), "b1")
 		if !p.Active {
 			progress = p
 			return true
@@ -703,16 +703,16 @@ func TestRunDrain_ListObjectsByBackendFails(t *testing.T) {
 
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
+	if err := mgr.drainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
 	testx.Eventually(t, 3*time.Second, func() bool {
-		p, _ := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
+		p, _ := mgr.drainManager.GetDrainProgress(context.Background(), "b1")
 		return !p.Active
 	}, "drain remained active after error")
 
-	p, _ := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
+	p, _ := mgr.drainManager.GetDrainProgress(context.Background(), "b1")
 	if p.Active {
 		t.Error("drain should have terminated after ListObjectsByBackend failure")
 	}
@@ -732,16 +732,16 @@ func TestRunDrain_DeleteBackendDataFails(t *testing.T) {
 
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	if err := mgr.DrainManager.StartDrain(context.Background(), "b1"); err != nil {
+	if err := mgr.drainManager.StartDrain(context.Background(), "b1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
 	testx.Eventually(t, 3*time.Second, func() bool {
-		p, err := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
+		p, err := mgr.drainManager.GetDrainProgress(context.Background(), "b1")
 		return err != nil || !p.Active
 	}, "drain did not complete")
 
-	p, _ := mgr.DrainManager.GetDrainProgress(context.Background(), "b1")
+	p, _ := mgr.drainManager.GetDrainProgress(context.Background(), "b1")
 	if p == nil || p.Error == "" {
 		t.Error("expected drain error from DeleteBackendData failure")
 	}
@@ -760,7 +760,7 @@ func TestDrainOneObject_GetAllLocationsFails(t *testing.T) {
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	if mgr.DrainManager.DrainOneObject(context.Background(), newMockBackend(), "b1", obj) {
+	if mgr.drainManager.DrainOneObject(context.Background(), newMockBackend(), "b1", obj) {
 		t.Error("expected failure when GetAllObjectLocations fails")
 	}
 }
@@ -785,7 +785,7 @@ func TestDrainOneObject_DeleteSourceLocationFails(t *testing.T) {
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": srcBackend, "b2": newMockBackend()})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	if mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
+	if mgr.drainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Error("expected failure when DeleteObjectLocation fails")
 	}
 }
@@ -809,7 +809,7 @@ func TestDrainOneObject_NoDestinationAvailable(t *testing.T) {
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": srcBackend})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	if mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
+	if mgr.drainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Error("expected failure when no destination available")
 	}
 }
@@ -833,7 +833,7 @@ func TestDrainOneObject_DestBackendNotFound(t *testing.T) {
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": srcBackend})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	if mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
+	if mgr.drainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Error("expected failure when destination backend not found")
 	}
 }
@@ -861,7 +861,7 @@ func TestDrainOneObject_StreamCopyFails(t *testing.T) {
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": srcBackend, "b2": dstBackend})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	if mgr.DrainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
+	if mgr.drainManager.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Error("expected failure when streamCopy fails")
 	}
 }
@@ -878,7 +878,7 @@ func TestPurgeBackendObjects_ListObjectsFails(t *testing.T) {
 
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	mgr.DrainManager.PurgeBackendObjects(context.Background(), newMockBackend(), "b1")
+	mgr.drainManager.PurgeBackendObjects(context.Background(), newMockBackend(), "b1")
 }
 
 // TestPurgeBackendObjects_S3DeleteFails_LogsWarning ensures the DB
@@ -902,7 +902,7 @@ func TestPurgeBackendObjects_S3DeleteFails_LogsWarning(t *testing.T) {
 
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
-	mgr.DrainManager.PurgeBackendObjects(context.Background(), backend, "b1")
+	mgr.drainManager.PurgeBackendObjects(context.Background(), backend, "b1")
 
 	if len(c.deletedLocation) != 1 {
 		t.Fatalf("expected 1 DeleteObjectLocation call, got %d", len(c.deletedLocation))
@@ -928,7 +928,7 @@ func TestPurgeBackendObjects_DBDeleteFails(t *testing.T) {
 
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
-	mgr.DrainManager.PurgeBackendObjects(context.Background(), backend, "b1")
+	mgr.drainManager.PurgeBackendObjects(context.Background(), backend, "b1")
 }
 
 // _ = s3be ensures the import stays in scope for the type-alias usage.

@@ -124,7 +124,7 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 
 	return ui.New(&ui.Deps{
 		BackendOps:    manager,
-		Objects:       manager.ObjectManager,
+		Objects:       manager.Objects(),
 		Rebalancer:    rebalancer,
 		OverRep:       overRep,
 		AdminHandler:  adminHandler,

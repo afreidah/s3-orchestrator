@@ -47,7 +47,7 @@ func TestWireManager_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve BackendManager: %v", err)
 	}
-	if mgr.DrainManager == nil {
+	if mgr.Drain() == nil {
 		t.Error("DrainManager not installed by WireDrain")
 	}
 	if _, err := do.Invoke[*worker.Rebalancer](inj); err != nil {

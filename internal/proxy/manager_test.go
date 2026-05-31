@@ -290,15 +290,15 @@ func TestClearCache_RemovesAllEntries(t *testing.T) {
 	t.Parallel()
 	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
 
-	mgr.ObjectManager.LocationCache().Set("key1", "b1")
-	mgr.ObjectManager.LocationCache().Set("key2", "b1")
+	mgr.objectManager.LocationCache().Set("key1", "b1")
+	mgr.objectManager.LocationCache().Set("key2", "b1")
 
 	mgr.ClearCache()
 
-	if _, ok := mgr.ObjectManager.LocationCache().Get("key1"); ok {
+	if _, ok := mgr.objectManager.LocationCache().Get("key1"); ok {
 		t.Error("expected key1 cache miss after ClearCache")
 	}
-	if _, ok := mgr.ObjectManager.LocationCache().Get("key2"); ok {
+	if _, ok := mgr.objectManager.LocationCache().Get("key2"); ok {
 		t.Error("expected key2 cache miss after ClearCache")
 	}
 }
@@ -408,7 +408,7 @@ func TestClearDrainState_NoDrainManager(t *testing.T) {
 		RoutingStrategy: config.RoutingPack,
 	})
 	defer mgr.Close()
-	if mgr.DrainManager != nil {
+	if mgr.drainManager != nil {
 		t.Fatal("expected DrainManager nil prior to WireDrain")
 	}
 	mgr.ClearDrainState()
