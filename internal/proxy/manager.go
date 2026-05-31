@@ -49,14 +49,31 @@ import (
 // BACKEND MANAGER
 // -------------------------------------------------------------------------
 
+// Stores is the narrow persistence surface BackendManager itself touches:
+// object import / delete, cleanup-queue sweep, lifecycle expiry listing,
+// usage-delta flush, and the multipart count it exposes to the s3api
+// transport. Sub-managers (object, writepath, multipart, readpath)
+// receive their own narrower role-composite interfaces through their
+// constructors; the *core.MetadataStore handed in via BackendManagerConfig
+// is the composition-root concrete that satisfies all of them.
+type Stores interface {
+	core.ObjectStore
+	core.CleanupStore
+	core.ExpiredObjectsLister
+	core.UsageFlusher
+	core.MultipartStore
+}
+
 // BackendManagerConfig holds the parameters for creating a BackendManager.
-// Stores carries the metadata-store contract. Metrics carries the narrow
+// Stores remains core.MetadataStore because BackendManager is the proxy
+// subtree's composition root — it routes the concrete store into the
+// narrow interfaces each sub-manager declares. Metrics carries the narrow
 // proxy.metrics.Deps used by MetricsCollector.
 type BackendManagerConfig struct {
 	Backends  map[string]backend.ObjectBackend
 	Stores    core.MetadataStore
 	Metrics   metrics.Deps
-	Dashboard core.MetadataStore
+	Dashboard core.DashboardStore
 	// PendingEnabled toggles the PUT-before-COMMIT pending-row pattern
 	// (write_path.pending_pattern.enabled). When false the manager skips
 	// pending-intent inserts and pending-promotion paths and falls back
@@ -124,7 +141,7 @@ type BackendManagerConfig struct {
 // drain behavior) remains usable.
 type BackendManager struct {
 	*infra.Core
-	stores           core.MetadataStore     // metadata-store dependency
+	stores           Stores                 // narrow store-role view; see Stores interface above
 	coord            *writepath.Coordinator // shared write-path helpers (also held by object.Manager and MultipartManager)
 	MultipartManager *multipart.Manager     // multipart upload lifecycle
 	ObjectManager    *object.Manager        // CRUD, read failover, broadcast reads
@@ -521,10 +538,12 @@ func (m *BackendManager) resolveS3Backend(name string) (reconcile.ObjectLister, 
 // STORE-ROLE ACCESSORS
 // -------------------------------------------------------------------------
 
-// Stores returns the wrapped metadata-store contract. Exposed for
-// transport handlers that need direct store access (multipart bookkeeping
-// in s3api, per-backend stats / data drop in admin).
-func (m *BackendManager) Stores() core.MetadataStore { return m.stores }
+// CountActiveMultipartUploads delegates to the multipart store. Exposed
+// for the s3api bucket-delete pre-check so the transport layer does not
+// need to reach into the persistence layer directly.
+func (m *BackendManager) CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error) {
+	return m.stores.CountActiveMultipartUploads(ctx, bucketPrefix)
+}
 
 // -------------------------------------------------------------------------
 // ROUTING

@@ -35,7 +35,7 @@ Package admin provides the admin API handler for operational control endpoints.
 
 
 <a name="BackendOps"></a>
-## type [BackendOps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L40-L47>)
+## type [BackendOps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L41-L48>)
 
 BackendOps is the narrow surface of \*proxy.BackendManager that the admin handler depends on for operations not encapsulated by a named sub\-manager \(replicator, drain, scrubber, etc.\). \*proxy.BackendManager satisfies it.
 
@@ -79,7 +79,7 @@ type BulkRewriteResult struct {
 ```
 
 <a name="Deps"></a>
-## type [Deps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L82-L99>)
+## type [Deps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L84-L102>)
 
 Deps groups the narrow role interfaces and infrastructure the admin handler touches. Each field carries the smallest contract the handler actually uses, so the constructor \(and the backing DI provider\) never hand the handler a god\-shaped \*proxy.BackendManager.
 
@@ -98,6 +98,7 @@ type Deps struct {
     Cleanup      core.CleanupStore
     Encryptor    *encryption.Encryptor
     ObjectCache  cache.ObjectCache // nil when object data caching is disabled
+    FlightRec    io.WriterTo       // nil when debug.flight_recorder.enabled is false
     Reconciler   Reconciler
     Token        string
     LogLevel     *slog.LevelVar
@@ -105,7 +106,7 @@ type Deps struct {
 ```
 
 <a name="Handler"></a>
-## type [Handler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L53-L76>)
+## type [Handler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L54-L78>)
 
 Handler serves the admin API endpoints.
 
@@ -116,7 +117,7 @@ type Handler struct {
 ```
 
 <a name="New"></a>
-### func [New](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L102>)
+### func [New](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L105>)
 
 ```go
 func New(d *Deps) *Handler
@@ -170,7 +171,7 @@ func (h *Handler) Scrub(ctx context.Context, batchSize int) ScrubResult
 Scrub runs one integrity\-verification scrub pass synchronously and returns the per\-pass counts. batchSize \<= 0 means use the configured ScrubberBatchSize. Skips when integrity verification is not enabled.
 
 <a name="Handler.SetReloadStatusProvider"></a>
-### func \(\*Handler\) [SetReloadStatusProvider](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L137>)
+### func \(\*Handler\) [SetReloadStatusProvider](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L141>)
 
 ```go
 func (h *Handler) SetReloadStatusProvider(fn func() any)
@@ -261,8 +262,8 @@ WorkerHealth is the JSON shape returned by /admin/api/workers. Mirrors lifecycle
 ```go
 type WorkerHealth struct {
     Name                string    `json:"name"`
-    LastSuccess         time.Time `json:"last_success,omitempty"`
-    LastFailure         time.Time `json:"last_failure,omitempty"`
+    LastSuccess         time.Time `json:"last_success"`
+    LastFailure         time.Time `json:"last_failure"`
     LastError           string    `json:"last_error,omitempty"`
     ConsecutiveFailures int       `json:"consecutive_failures"`
 }

@@ -36,18 +36,27 @@ import (
 // OVER-REPLICATION CLEANER TYPE
 // -------------------------------------------------------------------------
 
+// OverReplicationCleanerStore is the narrow persistence surface the
+// over-replication cleaner needs: over-replicated discovery + excess copy
+// removal + per-backend quota stats for the deletion target. Declared
+// locally so the worker does not pull in the full MetadataStore.
+type OverReplicationCleanerStore interface {
+	core.ReplicationStore
+	core.QuotaStore
+}
+
 // OverReplicationCleaner removes excess copies of objects that exceed the
 // configured replication factor. Embeds *backendCore for access to shared
 // infrastructure.
 type OverReplicationCleaner struct {
 	log   *slog.Logger
 	ops   Ops
-	store core.MetadataStore
+	store OverReplicationCleanerStore
 	cfg   syncutil.AtomicConfig[config.ReplicationConfig]
 }
 
 // NewOverReplicationCleaner creates a cleaner that shares the given core.
-func NewOverReplicationCleaner(ops Ops, store core.MetadataStore) *OverReplicationCleaner {
+func NewOverReplicationCleaner(ops Ops, store OverReplicationCleanerStore) *OverReplicationCleaner {
 	must.NotNil("ops", ops)
 	must.NotNil("store", store)
 	return &OverReplicationCleaner{ops: ops, store: store, log: slog.Default().With(logfmt.Component("over_replication"))}

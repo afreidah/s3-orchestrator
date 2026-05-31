@@ -286,7 +286,7 @@ func TestUpdateQuotaMetrics_ReplicationFactorFromManager(t *testing.T) {
 		BackendTimeout:  30 * time.Second,
 		RoutingStrategy: config.RoutingPack,
 	})
-	workers := wireWorkersForTest(mgr)
+	workers := wireWorkersForTest(mgr, store)
 
 	if err := mgr.MetricsCollector().UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics (no repl config): %v", err)

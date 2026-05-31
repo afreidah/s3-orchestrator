@@ -104,7 +104,7 @@ func (m *Manager) SetBackoff(initial, maximum, reset time.Duration)
 SetBackoff overrides the supervisor's restart backoff parameters. Intended for tests that exercise the restart path without paying real wall\-clock time. Must be called before Run; values take effect on the next supervise iteration.
 
 <a name="Manager.Stop"></a>
-### func \(\*Manager\) [Stop](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/lifecycle/manager.go#L173>)
+### func \(\*Manager\) [Stop](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/lifecycle/manager.go#L169>)
 
 ```go
 func (m *Manager) Stop(timeout time.Duration)
@@ -142,8 +142,8 @@ WorkerHealth snapshots a registered service's last tick outcomes plus its regist
 ```go
 type WorkerHealth struct {
     Name                string    `json:"name"`
-    LastSuccess         time.Time `json:"last_success,omitempty"`
-    LastFailure         time.Time `json:"last_failure,omitempty"`
+    LastSuccess         time.Time `json:"last_success"`
+    LastFailure         time.Time `json:"last_failure"`
     LastError           string    `json:"last_error,omitempty"`
     ConsecutiveFailures int       `json:"consecutive_failures"`
 }
