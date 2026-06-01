@@ -45,12 +45,20 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 		FailureThreshold: 3,
 	})
 	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Backends:        map[string]backend.ObjectBackend{},
-		Stores:          mock,
-		Dashboard:       mock,
-		Metrics:         mock,
-		Order:           []string{},
-		RoutingStrategy: config.RoutingPack,
+		Storage: proxy.StorageDeps{
+			Backends: map[string]backend.ObjectBackend{},
+			Order:    []string{},
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  mock,
+			Dashboard: mock,
+		},
+		Policies: proxy.PolicyConfig{
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: mock,
+		},
 	})
 	workers := proxytest.BuildWorkers(mgr, mock)
 	// Empty reloadable configs so Replicator.Config()/Scrubber.Config() return
@@ -68,7 +76,7 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 		drain:      mgr.Drain(),
 		scrubber:   workers.Scrubber,
 		lifecycle:  mock,
-		dbHealthy: cb.IsHealthy,
+		dbHealthy:  cb.IsHealthy,
 		objects:    mock,
 		cleanup:    mock,
 		encAdmin:   mock,

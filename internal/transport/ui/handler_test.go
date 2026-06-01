@@ -71,12 +71,20 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 	}
 
 	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Backends:        map[string]backend.ObjectBackend{},
-		Stores:          mockStore,
-		Dashboard:       mockStore,
-		Metrics:         mockStore,
-		Order:           []string{"b1"},
-		RoutingStrategy: config.RoutingPack,
+		Storage: proxy.StorageDeps{
+			Backends: map[string]backend.ObjectBackend{},
+			Order:    []string{"b1"},
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  mockStore,
+			Dashboard: mockStore,
+		},
+		Policies: proxy.PolicyConfig{
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: mockStore,
+		},
 	})
 	workers := proxytest.BuildWorkers(mgr, mockStore)
 	t.Cleanup(mgr.Close)
@@ -458,11 +466,17 @@ func TestLogin_BcryptSecret(t *testing.T) {
 	mockStore.GetUsageForPeriodResp = map[string]core.UsageStat{}
 	mockStore.ListDirChildrenResp = &core.DirectoryListResult{}
 	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Backends:  map[string]backend.ObjectBackend{},
-		Stores:    mockStore,
-		Dashboard: mockStore,
-		Metrics:   mockStore,
-		Order:     []string{},
+		Storage: proxy.StorageDeps{
+			Backends: map[string]backend.ObjectBackend{},
+			Order:    []string{},
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  mockStore,
+			Dashboard: mockStore,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: mockStore,
+		},
 	})
 	workers := proxytest.BuildWorkers(mgr, mockStore)
 	t.Cleanup(mgr.Close)
@@ -534,11 +548,17 @@ func TestCrossInstanceSession(t *testing.T) {
 	mockStore.GetUsageForPeriodResp = map[string]core.UsageStat{}
 	mockStore.ListDirChildrenResp = &core.DirectoryListResult{}
 	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Backends:  map[string]backend.ObjectBackend{},
-		Stores:    mockStore,
-		Dashboard: mockStore,
-		Metrics:   mockStore,
-		Order:     []string{},
+		Storage: proxy.StorageDeps{
+			Backends: map[string]backend.ObjectBackend{},
+			Order:    []string{},
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  mockStore,
+			Dashboard: mockStore,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: mockStore,
+		},
 	})
 	workers := proxytest.BuildWorkers(mgr, mockStore)
 	t.Cleanup(mgr.Close)
@@ -1930,12 +1950,20 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 	mockStore.ListDirChildrenResp = &core.DirectoryListResult{}
 
 	mgr := proxytest.NewManager(b, &proxy.BackendManagerConfig{
-		Backends:        map[string]backend.ObjectBackend{},
-		Stores:          mockStore,
-		Dashboard:       mockStore,
-		Metrics:         mockStore,
-		Order:           []string{},
-		RoutingStrategy: config.RoutingPack,
+		Storage: proxy.StorageDeps{
+			Backends: map[string]backend.ObjectBackend{},
+			Order:    []string{},
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  mockStore,
+			Dashboard: mockStore,
+		},
+		Policies: proxy.PolicyConfig{
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: mockStore,
+		},
 	})
 	workers := proxytest.BuildWorkers(mgr, mockStore)
 	b.Cleanup(mgr.Close)

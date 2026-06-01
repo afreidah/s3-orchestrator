@@ -34,21 +34,21 @@ import (
 // multipartCalls captures store interactions a multipart test wants to
 // assert on.
 type multipartCalls struct {
-	mu                  sync.Mutex
-	create              []core.CreateMultipartUploadParams
-	deleteMultipartHit  bool
-	recordPart          []multipartPartCall
-	recordObject        []multipartObjectCall
-	enqueue             []core.CleanupItem
-	incrementOrphan     []orphanBytesEntry
+	mu                 sync.Mutex
+	create             []core.CreateMultipartUploadParams
+	deleteMultipartHit bool
+	recordPart         []multipartPartCall
+	recordObject       []multipartObjectCall
+	enqueue            []core.CleanupItem
+	incrementOrphan    []orphanBytesEntry
 }
 
 type multipartPartCall struct {
-	uploadID  string
+	uploadID   string
 	partNumber int
-	etag      string
-	sizeBytes int64
-	enc       *core.EncryptionMeta
+	etag       string
+	sizeBytes  int64
+	enc        *core.EncryptionMeta
 }
 
 type multipartObjectCall struct {
@@ -1041,15 +1041,25 @@ func newEncryptedTestManager(t *testing.T, store core.MetadataStore, backends ma
 		order = append(order, name)
 	}
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        obs,
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           order,
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
-		Encryptor:       enc,
+		Storage: StorageDeps{
+			Backends: obs,
+			Order:    order,
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Features: FeatureDeps{
+			Encryptor: enc,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -1084,15 +1094,25 @@ func newFailingEncryptionTestManager(t *testing.T, store core.MetadataStore, bac
 		order = append(order, name)
 	}
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        obs,
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           order,
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
-		Encryptor:       enc,
+		Storage: StorageDeps{
+			Backends: obs,
+			Order:    order,
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Features: FeatureDeps{
+			Encryptor: enc,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -1219,10 +1239,10 @@ func TestCompleteMultipartUpload_Encrypted_RoundTrips(t *testing.T) {
 			out := make([]core.MultipartPart, len(partsCalls))
 			for i, pc := range partsCalls {
 				out[i] = core.MultipartPart{
-					PartNumber: pc.partNumber,
-					ETag:       pc.etag,
-					SizeBytes:  int64(backendObjectSize(backend, "__multipart/"+pc.uploadID+"/"+itoa(pc.partNumber))),
-					Encrypted:  true,
+					PartNumber:    pc.partNumber,
+					ETag:          pc.etag,
+					SizeBytes:     int64(backendObjectSize(backend, "__multipart/"+pc.uploadID+"/"+itoa(pc.partNumber))),
+					Encrypted:     true,
 					EncryptionKey: pc.enc.EncryptionKey,
 					KeyID:         pc.enc.KeyID,
 					PlaintextSize: 6,
@@ -1442,14 +1462,22 @@ func TestCompleteMultipartUpload_BackendTimeout(t *testing.T) {
 		}, nil)
 
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"b1": slow},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  50 * time.Millisecond,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"b1": slow},
+			Order:    []string{"b1"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  50 * time.Millisecond,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 
 	_, err := mgr.multipartManager.CompleteMultipartUpload(ctx, "multi", "slow", "upload-slow", []int{1, 2})

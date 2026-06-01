@@ -143,28 +143,118 @@ When filing a bug report, include:
 
 For feature requests, describe the use case and any proposed approach.
 
+## Releasing
+
+Tag a version and push to trigger an automated GitHub Release via GoReleaser:
+
+```bash
+make release
+```
+
+This regenerates `CHANGELOG.md` via [git-cliff](https://git-cliff.org), tags the current `.version` value, and pushes the tag. The tag triggers GoReleaser to build Linux binaries (amd64 + arm64), Debian packages, and SHA256 checksums — all attached to the GitHub Release.
+
+To regenerate the changelog without releasing:
+
+```bash
+make changelog
+```
+
+Commit categorization is configured in `cliff.toml`. Commit messages starting with `Add`, `Fix`, `Harden`, `Refactor`, `Improve`, `docs:`, `test:`, or `chore(deps):` are automatically grouped into the appropriate section.
+
+Docker images are still built manually since the private registry isn't reachable from GitHub Actions:
+
+```bash
+make push VERSION=vX.Y.Z
+```
+
+To dry-run the release locally (builds everything without publishing):
+
+```bash
+make release-local
+```
+
 ## Project Structure
 
 ```
-cmd/s3-orchestrator/    # CLI entry points and subcommands
+cmd/s3-orchestrator/         Binary entry: subcommand dispatch + thin shims
+  main.go                    Entry point, subcommand dispatch
+  admin.go / init_cmd.go / sync.go    Shims into internal/cli/{adminctl,initcmd,synccmd}
+  validate.go / version.go   Validate-config and version subcommands
+
 internal/
-  admin/                # Admin API handler
-  audit/                # Request ID and audit logging
-  auth/                 # SigV4 and token authentication
-  backend/              # ObjectBackend interface, S3Backend, circuit breaker wrapper
-  breaker/              # Generic circuit breaker state machine
-  config/               # YAML config loading and validation
-  counter/              # Usage tracking (local atomics, Redis shared counters)
-  httputil/             # HTTP middleware (rate limiting, admission, cert reload, login throttle)
-  lifecycle/            # Background service lifecycle manager
-  proxy/                # Domain orchestration (BackendManager, ObjectManager, routing)
-  server/               # S3 HTTP handlers
-  store/                # MetadataStore interface, PostgreSQL impl, circuit breaker wrapper
-  syncutil/             # Generic utilities (AtomicConfig[T], TTLCache[K,V])
-  telemetry/            # Prometheus metrics and OpenTelemetry tracing
-  worker/               # Background services (rebalancer, replicator, cleanup, reconciler)
-  ui/                   # Web dashboard handler and templates
-docs/                   # Documentation
-deploy/                 # Nomad and Kubernetes deployment manifests
-packaging/              # Debian package files
+  cli/                       CLI-side dispatch and bootstrap
+    serve/                   Daemon lifecycle: build the DI injector, start HTTP, SIGHUP reload, shutdown
+    adminctl/                Admin operational CLI (HTTP client wrapping the admin API)
+    initcmd/                 Interactive config-file generator
+    synccmd/                 Pre-existing bucket import CLI
+
+  di/                        Single wiring point for samber/do/v2
+    injector.go              Every Provide<X> for stores, workers, handlers, backends
+    services.go              Lifecycle-managed background services
+
+  transport/                 HTTP interface layer (no business logic)
+    s3api/                   S3-compatible XML/REST API: routing, buckets, objects, multipart, streaming
+    admin/                   Admin API handlers (status, drain, replicate, scrub, encrypt-existing, etc.)
+    auth/                    BucketRegistry, SigV4 verification, legacy token, streaming chunk reader
+    ui/                      Web dashboard: handler, session auth, JSON APIs, async-action endpoints, templates
+    httputil/                HTTP middleware: rate limiting, admission, login throttle, cert reload
+
+  observe/                   Observability layer
+    audit/                   Request-id context plumbing + structured audit logger
+    telemetry/               Per-domain Prometheus metric files + OTel helpers + log ring buffer
+    event/                   Notification event types + Emit hook
+    logfmt/                  Slog handler wrapper (error attr handling, JSON sink)
+
+  proxy/                     Domain orchestration layer
+    manager.go               BackendManager root composition object
+    infra/                   BackendRuntime: backend registry, usage, timeouts, admission, error classification
+    object/                  CRUD + read failover + broadcast reads + location cache
+    multipart/               Multipart lifecycle + DEK cache
+    writepath/               Shared write helpers: routing, pending intents, record-or-cleanup, recovery
+    readpath/                Failover orchestrator + degraded-mode broadcast
+    drain/                   Online backend drain manager
+    dashboard/               Aggregator for the web UI dashboard data
+    reconcile/               Sorted-merge orphan reconciler
+    metrics/                 Per-backend usage metric collector
+    accounting/              Shared Recorder for per-backend usage + per-operation metrics
+    observe/                 Per-operation completion helpers (audit + event + span status in one place)
+
+  backend/                   ObjectBackend interface + S3Backend implementation + circuit-breaker wrapper
+
+  store/                     Metadata persistence
+    core/                    Engine-agnostic types + role interfaces + orchestration helpers (TxAdapter)
+    postgres/                Postgres adapter (pgx/v5 + sqlc-generated queries)
+    sqlite/                  SQLite adapter
+    storetest/               gomock-generated MetadataStore + Permissive() catch-all for tests
+
+  worker/                    Background services
+    rebalancer.go            Moves objects between backends per strategy
+    replicator.go            Creates copies of under-replicated objects (health-aware)
+    overreplication.go       Removes excess copies (scored: draining < circuit-broken < healthy-by-util)
+    cleanup.go               Cleanup queue worker with DLQ graduation
+    pending.go               PUT-before-COMMIT pending intent reaper
+    scrubber.go              Random-sample integrity verification + content-hash backfill
+    reconciler.go            Background sorted-merge orphan reconciler
+    *_service.go             lifecycle.Runner wrappers around each worker
+
+  lifecycle/                 Background service supervisor (Runner + Stopper interfaces, manager.go)
+  runtime/                   Daemon Runtime: assembles DI, manages HTTP + background lifecycle
+  reload/                    SIGHUP reload coordinator + change classifier
+  breaker/                   Generic circuit breaker state machine + watchdog
+  config/                    YAML config loading + validation (sub-files per top-level block)
+  encryption/                Envelope encryption: chunked AES-256-GCM + Vault Transit / static-key providers
+  counter/                   UsageTracker + LocalCounterBackend + RedisCounterBackend
+  cache/                     MemoryCache (LRU + admission + TTL) for the object data cache
+  notify/                    Notification drainer
+  util/                      Generic utilities: bufpool, ioutilx, must, syncutil, workerpool
+  testutil/                  Cross-package test helpers (MockStore, fixtures)
+  integration/               testcontainers-driven end-to-end tests
+  debug/                     runtime/trace.FlightRecorder lifecycle wrapper
+
+docs/                        Per-topic documentation
+deploy/                      Nomad and Kubernetes manifests
+packaging/                   Debian package files
+web/                         Hugo project website source
+grafana/                     Ready-to-import Grafana dashboard JSON
+benchmarks/                  Nightly benchmark history (per-commit text files)
 ```

@@ -58,15 +58,25 @@ func setupCacheEnv(t *testing.T) *cacheTestEnv {
 
 	stores := newStores(testStore)
 	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Backends:        testBackends,
-		Stores:          stores,
-		Dashboard:       testStore,
-		Metrics:         newMetricsAdapter(testStore),
-		Order:           testBackendOrder,
-		CacheTTL:        60 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
-		ObjectCache:     mc,
+		Storage: proxy.StorageDeps{
+			Backends: testBackends,
+			Order:    testBackendOrder,
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  stores,
+			Dashboard: testStore,
+		},
+		Policies: proxy.PolicyConfig{
+			CacheTTL:        60 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Features: proxy.FeatureDeps{
+			ObjectCache: mc,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: newMetricsAdapter(testStore),
+		},
 	})
 	_ = proxytest.BuildWorkers(mgr, stores)
 
