@@ -70,15 +70,23 @@ func newTestManagerWithWorkers(t *testing.T, store core.MetadataStore, backends 
 		order = append(order, name)
 	}
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        obs,
-		Stores:          testStoresFromMock(store),
-		PendingEnabled:  true,
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           order,
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: obs,
+			Order:    order,
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			PendingEnabled:  true,
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	return mgr, wireWorkersForTest(mgr, store)
 }
@@ -407,14 +415,22 @@ func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
 	backend := newMockBackend()
 	store, c := putObjectStore(t, "b1")
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"b1": backend},
+			Order:    []string{"b1"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -437,14 +453,22 @@ func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
 	backend := newMockBackend()
 	store, c := putObjectStore(t, "b1")
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingSpread,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"b1": backend},
+			Order:    []string{"b1"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingSpread,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -656,15 +680,23 @@ func newTestManagerWithOrder(t *testing.T, store core.MetadataStore, backends ma
 		obs[name] = b
 	}
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        obs,
-		Stores:          testStoresFromMock(store),
-		PendingEnabled:  true,
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           order,
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: obs,
+			Order:    order,
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			PendingEnabled:  true,
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -921,15 +953,25 @@ func TestPutObject_WriteFailover_WithEncryption(t *testing.T) {
 
 	store, c := eligibleStore(t)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"b1": b1, "b2": b2},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1", "b2"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
-		Encryptor:       enc,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"b1": b1, "b2": b2},
+			Order:    []string{"b1", "b2"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Features: FeatureDeps{
+			Encryptor: enc,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -983,15 +1025,25 @@ func TestGetObject_WithEncryption_UsesLocationMap(t *testing.T) {
 		[]core.ObjectLocation{{ObjectKey: "enc-key", BackendName: "b1", SizeBytes: 4, Encrypted: false}},
 		nil)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"b1": b1},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
-		Encryptor:       enc,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"b1": b1},
+			Order:    []string{"b1"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Features: FeatureDeps{
+			Encryptor: enc,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -1039,15 +1091,25 @@ func TestHeadObject_WithEncryption(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"b1": b1},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
-		Encryptor:       enc,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"b1": b1},
+			Order:    []string{"b1"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Features: FeatureDeps{
+			Encryptor: enc,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -1195,15 +1257,23 @@ func TestGetObject_DBUnavailable_RangeRequest(t *testing.T) {
 
 	store := locationsStore(t, nil, core.ErrDBUnavailable)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"b1": recorder},
-		Stores:          testStoresFromMock(store),
-		PendingEnabled:  true,
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"b1": recorder},
+			Order:    []string{"b1"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			PendingEnabled:  true,
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 
 	result, err := mgr.objectManager.GetObject(context.Background(), "k", "bytes=2-5")
@@ -1226,16 +1296,24 @@ func TestGetObject_DBUnavailable_DegradedReadsDisabled(t *testing.T) {
 
 	store := locationsStore(t, nil, core.ErrDBUnavailable)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:             map[string]s3be.ObjectBackend{"b1": b1},
-		Stores:               testStoresFromMock(store),
-		PendingEnabled:       true,
-		Dashboard:            store,
-		Metrics:              store,
-		Order:                []string{"b1"},
-		CacheTTL:             5 * time.Second,
-		BackendTimeout:       30 * time.Second,
-		RoutingStrategy:      config.RoutingPack,
-		DisableDegradedReads: true,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"b1": b1},
+			Order:    []string{"b1"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			PendingEnabled:       true,
+			CacheTTL:             5 * time.Second,
+			BackendTimeout:       30 * time.Second,
+			RoutingStrategy:      config.RoutingPack,
+			DisableDegradedReads: true,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 
 	_, err := mgr.objectManager.GetObject(context.Background(), "key", "")
@@ -1309,15 +1387,25 @@ func TestGetObject_DBUnavailable_EncryptedRejects503(t *testing.T) {
 
 	store := locationsStore(t, nil, core.ErrDBUnavailable)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"b1": b1},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
-		Encryptor:       enc,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"b1": b1},
+			Order:    []string{"b1"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Features: FeatureDeps{
+			Encryptor: enc,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -2466,14 +2554,22 @@ func TestCopyObject_BackendTimeout_SourceGetSlow(t *testing.T) {
 		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
 		"b1", nil)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"b1": slow},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  50 * time.Millisecond,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"b1": slow},
+			Order:    []string{"b1"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  50 * time.Millisecond,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 
 	_, err := mgr.objectManager.CopyObject(context.Background(), "src", "dst")
@@ -2500,14 +2596,22 @@ func TestCopyObject_BackendTimeout_DestPutSlow(t *testing.T) {
 		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
 		"b2", nil)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"b1": srcBE, "b2": slowDst},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1", "b2"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  50 * time.Millisecond,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"b1": srcBE, "b2": slowDst},
+			Order:    []string{"b1", "b2"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  50 * time.Millisecond,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 
 	_, err := mgr.objectManager.CopyObject(context.Background(), "src", "dst")
@@ -2527,14 +2631,22 @@ func TestPutObject_BackendTimeout(t *testing.T) {
 
 	store, _ := putObjectStore(t, "b1")
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"b1": slowBackend},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  50 * time.Millisecond,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"b1": slowBackend},
+			Order:    []string{"b1"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  50 * time.Millisecond,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -2584,7 +2696,15 @@ func (s *slowMockBackend) GetObject(ctx context.Context, key, rng string) (*s3be
 // TestLocationCache_SetAndGet pins basic cache set/get.
 func TestLocationCache_SetAndGet(t *testing.T) {
 	t.Parallel()
-	mgr := newTestBackendManager(t, &BackendManagerConfig{Stores: newPermissiveMock(t), CacheTTL: 5 * time.Second, RoutingStrategy: config.RoutingPack})
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
+		Stores: StoreDeps{
+			Metadata: newPermissiveMock(t),
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+	})
 	defer mgr.Close()
 	mgr.objectManager.LocationCache().Set("key1", "backend-a")
 
@@ -2600,7 +2720,15 @@ func TestLocationCache_SetAndGet(t *testing.T) {
 // TestLocationCache_Expiry pins TTL-based cache expiration.
 func TestLocationCache_Expiry(t *testing.T) {
 	t.Parallel()
-	mgr := newTestBackendManager(t, &BackendManagerConfig{Stores: newPermissiveMock(t), CacheTTL: 10 * time.Millisecond, RoutingStrategy: config.RoutingPack})
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
+		Stores: StoreDeps{
+			Metadata: newPermissiveMock(t),
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        10 * time.Millisecond,
+			RoutingStrategy: config.RoutingPack,
+		},
+	})
 	defer mgr.Close()
 	mgr.objectManager.LocationCache().Set("key1", "backend-a")
 
@@ -2614,7 +2742,15 @@ func TestLocationCache_Expiry(t *testing.T) {
 // TestLocationCache_Overwrite pins cache overwrites.
 func TestLocationCache_Overwrite(t *testing.T) {
 	t.Parallel()
-	mgr := newTestBackendManager(t, &BackendManagerConfig{Stores: newPermissiveMock(t), CacheTTL: 5 * time.Second, RoutingStrategy: config.RoutingPack})
+	mgr := newTestBackendManager(t, &BackendManagerConfig{
+		Stores: StoreDeps{
+			Metadata: newPermissiveMock(t),
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+	})
 	defer mgr.Close()
 	mgr.objectManager.LocationCache().Set("key1", "old-backend")
 	mgr.objectManager.LocationCache().Set("key1", "new-backend")
@@ -2677,16 +2813,24 @@ func newTestManagerWithLimits(t *testing.T, store core.MetadataStore, backends m
 		order = append(order, name)
 	}
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        obs,
-		Stores:          testStoresFromMock(store),
-		PendingEnabled:  true,
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           order,
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		UsageLimits:     limits,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: obs,
+			Order:    order,
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			PendingEnabled:  true,
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			UsageLimits:     limits,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -2865,15 +3009,23 @@ func newTestManagerParallel(t *testing.T, store core.MetadataStore, orderedBacke
 		order = append(order, b.name)
 	}
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:          obs,
-		Stores:            testStoresFromMock(store),
-		Dashboard:         store,
-		Metrics:           store,
-		Order:             order,
-		CacheTTL:          5 * time.Second,
-		BackendTimeout:    30 * time.Second,
-		RoutingStrategy:   "pack",
-		ParallelBroadcast: true,
+		Storage: StorageDeps{
+			Backends: obs,
+			Order:    order,
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:          5 * time.Second,
+			BackendTimeout:    30 * time.Second,
+			RoutingStrategy:   "pack",
+			ParallelBroadcast: true,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -3016,15 +3168,23 @@ func TestGetObject_SequentialBroadcast_WhenDisabled(t *testing.T) {
 		"fast": fast,
 	}
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:          obs,
-		Stores:            testStoresFromMock(store),
-		Dashboard:         store,
-		Metrics:           store,
-		Order:             []string{"slow", "fast"},
-		CacheTTL:          5 * time.Second,
-		BackendTimeout:    30 * time.Second,
-		RoutingStrategy:   "pack",
-		ParallelBroadcast: false,
+		Storage: StorageDeps{
+			Backends: obs,
+			Order:    []string{"slow", "fast"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:          5 * time.Second,
+			BackendTimeout:    30 * time.Second,
+			RoutingStrategy:   "pack",
+			ParallelBroadcast: false,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -3109,16 +3269,24 @@ func TestGetObject_DegradedBroadcastCap_RespectsLimit(t *testing.T) {
 
 	store := locationsStore(t, nil, core.ErrDBUnavailable)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:                     obs,
-		Stores:                       testStoresFromMock(store),
-		Dashboard:                    store,
-		Metrics:                      store,
-		Order:                        names,
-		CacheTTL:                     5 * time.Second,
-		BackendTimeout:               30 * time.Second,
-		RoutingStrategy:              "pack",
-		ParallelBroadcast:            true,
-		DegradedBroadcastParallelism: 2,
+		Storage: StorageDeps{
+			Backends: obs,
+			Order:    names,
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:                     5 * time.Second,
+			BackendTimeout:               30 * time.Second,
+			RoutingStrategy:              "pack",
+			ParallelBroadcast:            true,
+			DegradedBroadcastParallelism: 2,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -3154,16 +3322,24 @@ func TestGetObject_DegradedBroadcastCap_ReplenishesAfterFailure(t *testing.T) {
 	obs := map[string]s3be.ObjectBackend{"b1": b1, "b2": b2, "b3": b3}
 	store := locationsStore(t, nil, core.ErrDBUnavailable)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:                     obs,
-		Stores:                       testStoresFromMock(store),
-		Dashboard:                    store,
-		Metrics:                      store,
-		Order:                        []string{"b1", "b2", "b3"},
-		CacheTTL:                     5 * time.Second,
-		BackendTimeout:               30 * time.Second,
-		RoutingStrategy:              "pack",
-		ParallelBroadcast:            true,
-		DegradedBroadcastParallelism: 1,
+		Storage: StorageDeps{
+			Backends: obs,
+			Order:    []string{"b1", "b2", "b3"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:                     5 * time.Second,
+			BackendTimeout:               30 * time.Second,
+			RoutingStrategy:              "pack",
+			ParallelBroadcast:            true,
+			DegradedBroadcastParallelism: 1,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -3292,14 +3468,22 @@ func TestCopyObject_DestWriteFails(t *testing.T) {
 		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "src-be"}}, nil,
 		"dst-be", nil)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"src-be": src, "dst-be": dst},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"src-be", "dst-be"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"src-be": src, "dst-be": dst},
+			Order:    []string{"src-be", "dst-be"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -3321,14 +3505,22 @@ func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
 		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "src-be"}}, nil,
 		"dst-be", nil)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"src-be": src, "dst-be": dst},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"src-be", "dst-be"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"src-be": src, "dst-be": dst},
+			Order:    []string{"src-be", "dst-be"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -3355,14 +3547,22 @@ func TestCopyObject_SourceReadFails(t *testing.T) {
 		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "src-be"}}, nil,
 		"dst-be", nil)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"src-be": src, "dst-be": newMockBackend()},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"src-be", "dst-be"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"src-be": src, "dst-be": newMockBackend()},
+			Order:    []string{"src-be", "dst-be"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -3383,14 +3583,22 @@ func TestCopyObject_AllSourceGetObjectsFail(t *testing.T) {
 		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "src-be"}}, nil,
 		"dst-be", nil)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"src-be": src, "dst-be": newMockBackend()},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"src-be", "dst-be"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"src-be": src, "dst-be": newMockBackend()},
+			Order:    []string{"src-be", "dst-be"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers

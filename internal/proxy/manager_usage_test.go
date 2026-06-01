@@ -71,12 +71,20 @@ func newUsageManager(t *testing.T, backendNames []string, store core.MetadataSto
 		backends[name] = newMockBackend()
 	}
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        backends,
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           backendNames,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: backends,
+			Order:    backendNames,
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -91,13 +99,21 @@ func newUsageManagerWithLimits(t *testing.T, backendNames []string, store core.M
 		backends[name] = newMockBackend()
 	}
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        backends,
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           backendNames,
-		UsageLimits:     limits,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: backends,
+			Order:    backendNames,
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			UsageLimits:     limits,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers

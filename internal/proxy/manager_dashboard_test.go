@@ -233,12 +233,20 @@ func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
 	_, _ = cbBackend.PutObject(context.Background(), "k", nil, 0, "", nil)
 
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]backend.ObjectBackend{"b1": cbBackend},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1"},
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: map[string]backend.ObjectBackend{"b1": cbBackend},
+			Order:    []string{"b1"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -278,12 +286,20 @@ func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 
 	cbBackend := backend.NewCircuitBreakerBackend(newMockBackend(), "b1", 5, time.Minute)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]backend.ObjectBackend{"b1": cbBackend},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1"},
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: map[string]backend.ObjectBackend{"b1": cbBackend},
+			Order:    []string{"b1"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers

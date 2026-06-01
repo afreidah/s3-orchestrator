@@ -507,15 +507,15 @@ func TestRateLimitHook_AppliedPushesNewLimits(t *testing.T) {
 // breaking change that should be deliberate.
 func TestHookNamesStable(t *testing.T) {
 	cases := map[Hook]string{
-		&tlsCertHook{}:        "tls_certificate",
-		&bucketAuthHook{}:     "bucket_credentials",
-		&rateLimitHook{}:      "rate_limit",
-		&quotaSyncHook{}:      "quota_sync",
-		&usageLimitsHook{}:    "usage_limits",
-		&logLevelHook{}:       "log_level",
-		&workerConfigsHook{}:  "worker_configs",
-		&managerConfigHook{}:  "manager_config",
-		&uiHandlerHook{}:      "ui_handler",
+		&tlsCertHook{}:       "tls_certificate",
+		&bucketAuthHook{}:    "bucket_credentials",
+		&rateLimitHook{}:     "rate_limit",
+		&quotaSyncHook{}:     "quota_sync",
+		&usageLimitsHook{}:   "usage_limits",
+		&logLevelHook{}:      "log_level",
+		&workerConfigsHook{}: "worker_configs",
+		&managerConfigHook{}: "manager_config",
+		&uiHandlerHook{}:     "ui_handler",
 	}
 	for h, want := range cases {
 		if got := h.Name(); got != want {
@@ -535,12 +535,20 @@ func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 	mock := testutil.NewMockStore(t)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Backends:        map[string]backend.ObjectBackend{},
-		Stores:          mock,
-		Dashboard:       mock,
-		Metrics:         mock,
-		Order:           []string{},
-		RoutingStrategy: config.RoutingPack,
+		Storage: proxy.StorageDeps{
+			Backends: map[string]backend.ObjectBackend{},
+			Order:    []string{},
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  mock,
+			Dashboard: mock,
+		},
+		Policies: proxy.PolicyConfig{
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: mock,
+		},
 	})
 	workers := proxytest.BuildWorkers(mgr, mock)
 	t.Cleanup(mgr.Close)

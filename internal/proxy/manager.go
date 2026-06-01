@@ -64,37 +64,68 @@ type Stores interface {
 	core.MultipartStore
 }
 
-// BackendManagerConfig holds the parameters for creating a BackendManager.
-// Stores remains core.MetadataStore because BackendManager is the proxy
-// subtree's composition root — it routes the concrete store into the
-// narrow interfaces each sub-manager declares. Metrics carries the narrow
-// proxy.metrics.Deps used by MetricsCollector.
-type BackendManagerConfig struct {
-	Backends  map[string]backend.ObjectBackend
-	Stores    core.MetadataStore
-	Metrics   metrics.Deps
+// StorageDeps groups the backend-fleet topology: the set of object
+// backends to route across and the deterministic per-strategy iteration
+// order.
+type StorageDeps struct {
+	Backends map[string]backend.ObjectBackend
+	Order    []string
+}
+
+// StoreDeps groups the persistence dependencies. Metadata stays as the
+// wide core.MetadataStore because BackendManager is the proxy subtree's
+// composition root — it routes the concrete store into the narrow
+// interfaces each sub-manager declares. Dashboard is already narrow.
+type StoreDeps struct {
+	Metadata  core.MetadataStore
 	Dashboard core.DashboardStore
-	// PendingEnabled toggles the PUT-before-COMMIT pending-row pattern
-	// (write_path.pending_pattern.enabled). When false the manager skips
-	// pending-intent inserts and pending-promotion paths and falls back
-	// to the legacy cleanup-on-failure flow.
-	PendingEnabled    bool
-	Order             []string
-	CacheTTL          time.Duration
-	BackendTimeout    time.Duration
-	UsageLimits       map[string]core.UsageLimits
-	RoutingStrategy   config.RoutingStrategy
-	ParallelBroadcast bool // fan-out reads in parallel during degraded mode
+}
+
+// PolicyConfig groups runtime tunables that shape how the manager
+// behaves across normal and degraded operation. None of these enable a
+// feature; they configure existing behavior.
+type PolicyConfig struct {
+	BackendTimeout time.Duration
+	CacheTTL       time.Duration
+	UsageLimits    map[string]core.UsageLimits
+	// RoutingStrategy selects write-target ordering: pack vs spread.
+	RoutingStrategy config.RoutingStrategy
+	// ParallelBroadcast fans out reads in parallel during degraded mode.
+	ParallelBroadcast bool
 	// DegradedBroadcastParallelism caps concurrent probes during a
 	// parallel degraded-mode broadcast. 0 = no cap (every backend
 	// probed at once, the historical behaviour).
 	DegradedBroadcastParallelism int
 	// DisableDegradedReads opts the read path out of broadcasting on DB outage.
 	DisableDegradedReads bool
-	Encryptor                    *encryption.Encryptor  // nil when encryption is disabled
-	CounterBackend               counter.CounterBackend // nil uses LocalCounterBackend
-	ObjectCache                  objcache.ObjectCache   // nil when object data caching is disabled
-	MaxObjectSizes               map[string]int64       // per-backend max object size in bytes (0 = unlimited)
+	// PendingEnabled toggles the PUT-before-COMMIT pending-row pattern
+	// (write_path.pending_pattern.enabled). When false the manager skips
+	// pending-intent inserts and pending-promotion paths and falls back
+	// to the legacy cleanup-on-failure flow.
+	PendingEnabled bool
+	// MaxObjectSizes is the per-backend max object size in bytes (0 = unlimited).
+	MaxObjectSizes map[string]int64
+	// MultipartDEKCacheTTL pegs the lifetime of cached unwrapped DEKs
+	// the MultipartManager uses to avoid re-unwrapping the upload-level
+	// DEK on every UploadPart. Zero falls back to a 1h default which
+	// is shorter than the typical multipart_stale_timeout but long
+	// enough to absorb a reasonable upload's part stream.
+	MultipartDEKCacheTTL time.Duration
+}
+
+// FeatureDeps groups optional capabilities. Each field is nil-able and
+// disables the corresponding feature when left zero.
+type FeatureDeps struct {
+	Encryptor      *encryption.Encryptor  // nil when encryption is disabled
+	CounterBackend counter.CounterBackend // nil uses LocalCounterBackend
+	ObjectCache    objcache.ObjectCache   // nil when object data caching is disabled
+}
+
+// OperationalDeps groups telemetry, concurrency, and observability
+// callbacks the manager exposes to operators and to long-running
+// background services.
+type OperationalDeps struct {
+	Metrics metrics.Deps
 	// AdmissionSem is the shared concurrency semaphore for write-class
 	// traffic. In split mode (MaxConcurrentReads + MaxConcurrentWrites)
 	// it is sized to MaxConcurrentWrites and is shared between HTTP
@@ -103,21 +134,25 @@ type BackendManagerConfig struct {
 	// (MaxConcurrentRequests only) it is the global pool for every HTTP
 	// request and every background worker. nil disables admission entirely
 	// (no cap installed). See admissionSemFor in internal/di/backend.go
-	// for the sizing rules and #835 for the documentation rationale.
+	// for the sizing rules.
 	AdmissionSem chan struct{}
-
-	// MultipartDEKCacheTTL pegs the lifetime of cached unwrapped DEKs
-	// the MultipartManager uses to avoid re-unwrapping the upload-level
-	// DEK on every UploadPart. Zero falls back to a 1h default which
-	// is shorter than the typical multipart_stale_timeout but long
-	// enough to absorb a reasonable upload's part stream.
-	MultipartDEKCacheTTL time.Duration
-
 	// ReplicationFactor is invoked by the metrics collector when refreshing
 	// the under-replicated-objects gauge. Returns 0 when replication is
 	// disabled. Lazy-evaluated so it can resolve the live replicator's
 	// configured factor (which is hot-reloadable).
 	ReplicationFactor func() int
+}
+
+// BackendManagerConfig groups the constructor parameters by capability
+// so contributors can see at a glance which fields belong together:
+// topology, persistence, runtime policy, optional features, and
+// operational deps. Each sub-struct documents its own field semantics.
+type BackendManagerConfig struct {
+	Storage    StorageDeps
+	Stores     StoreDeps
+	Policies   PolicyConfig
+	Features   FeatureDeps
+	Operations OperationalDeps
 }
 
 // BackendManager manages multiple storage backends with quota tracking.
@@ -194,71 +229,77 @@ func (m *BackendManager) WireDrain(d *drain.Manager) {
 // receives.
 func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 	must.NotNil("cfg", cfg)
-	must.NotNil("cfg.Stores", cfg.Stores)
-	must.NotNil("cfg.Dashboard", cfg.Dashboard)
-	must.NotNil("cfg.Metrics", cfg.Metrics)
+	must.NotNil("cfg.Stores.Metadata", cfg.Stores.Metadata)
+	must.NotNil("cfg.Stores.Dashboard", cfg.Stores.Dashboard)
+	must.NotNil("cfg.Operations.Metrics", cfg.Operations.Metrics)
 
-	backendNames := make([]string, 0, len(cfg.Backends))
-	for name := range cfg.Backends {
+	storage := cfg.Storage
+	stores := cfg.Stores
+	policies := cfg.Policies
+	features := cfg.Features
+	ops := cfg.Operations
+
+	backendNames := make([]string, 0, len(storage.Backends))
+	for name := range storage.Backends {
 		backendNames = append(backendNames, name)
 	}
 
-	counters := cfg.CounterBackend
+	counters := features.CounterBackend
 	if counters == nil {
 		counters = counter.NewLocalCounterBackend(backendNames)
 	}
-	usage := counter.NewUsageTracker(counters, cfg.UsageLimits)
+	usage := counter.NewUsageTracker(counters, policies.UsageLimits)
 
 	c := infra.New(&infra.Config{
-		Backends:        cfg.Backends,
-		Order:           cfg.Order,
-		BackendTimeout:  cfg.BackendTimeout,
+		Backends:        storage.Backends,
+		Order:           storage.Order,
+		BackendTimeout:  policies.BackendTimeout,
 		Usage:           usage,
-		RoutingStrategy: cfg.RoutingStrategy,
-		MaxObjectSizes:  cfg.MaxObjectSizes,
-		AdmissionSem:    cfg.AdmissionSem,
+		RoutingStrategy: policies.RoutingStrategy,
+		MaxObjectSizes:  policies.MaxObjectSizes,
+		AdmissionSem:    ops.AdmissionSem,
 		Log:             slog.Default().With(logfmt.Component("backend_manager")),
 	})
 
-	dekCacheTTL := cfg.MultipartDEKCacheTTL
+	dekCacheTTL := policies.MultipartDEKCacheTTL
 	if dekCacheTTL == 0 {
 		dekCacheTTL = time.Hour
 	}
 
-	coord := writepath.New(c, cfg.Stores, cfg.PendingEnabled)
+	coord := writepath.New(c, stores.Metadata, policies.PendingEnabled)
 
 	// Shared with object.Manager so SIGHUP-driven integrity config
 	// changes flip both write paths atomically. Multipart's nil-safe
-	// hasher gate (#916) reads through this pointer on each Complete.
+	// hasher gate reads through this pointer on each Complete.
 	integrityCfg := &syncutil.AtomicConfig[config.IntegrityConfig]{}
-	multipartManager := multipart.New(c, coord, cfg.Stores, cfg.Encryptor, cfg.ObjectCache, dekCacheTTL, integrityCfg)
+	multipartManager := multipart.New(c, coord, stores.Metadata, features.Encryptor, features.ObjectCache, dekCacheTTL, integrityCfg)
 
-	cache := object.NewLocationCache(cfg.CacheTTL)
+	cache := object.NewLocationCache(policies.CacheTTL)
 	objectManager := object.New(&object.Deps{
 		Core:                         c,
 		BroadcastCore:                c,
 		Coord:                        coord,
-		Stores:                       cfg.Stores,
-		Encryptor:                    cfg.Encryptor,
+		Stores:                       stores.Metadata,
+		Encryptor:                    features.Encryptor,
 		LocationCache:                cache,
-		ObjectCache:                  cfg.ObjectCache,
-		ParallelBroadcast:            cfg.ParallelBroadcast,
-		DegradedBroadcastParallelism: cfg.DegradedBroadcastParallelism,
-		DisableDegradedReads:         cfg.DisableDegradedReads,
+		ObjectCache:                  features.ObjectCache,
+		ParallelBroadcast:            policies.ParallelBroadcast,
+		DegradedBroadcastParallelism: policies.DegradedBroadcastParallelism,
+		DisableDegradedReads:         policies.DisableDegradedReads,
 		IntegrityCfg:                 integrityCfg,
 	})
 
 	m := &BackendManager{
 		Core:             c,
-		stores:           cfg.Stores,
+		stores:           stores.Metadata,
 		coord:            coord,
 		multipartManager: multipartManager,
 		objectManager:    objectManager,
-		dashboard:        dashboard.New(cfg.Dashboard, usage, cfg.Order),
+		dashboard:        dashboard.New(stores.Dashboard, usage, storage.Order),
 		integrityCfg:     integrityCfg,
 	}
 
-	c.SetMetricsCollector(metrics.New(cfg.Metrics, usage, backendNames, cfg.ReplicationFactor))
+	c.SetMetricsCollector(metrics.New(ops.Metrics, usage, backendNames, ops.ReplicationFactor))
 
 	return m
 }

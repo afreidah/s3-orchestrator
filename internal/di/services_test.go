@@ -7,7 +7,7 @@
 // internal/di. They verify that each factory returns a lifecycle.Runner
 // value (never nil), that the lockedTickerService's shouldRun / onError
 // hooks fire as configured, and that the watchdog safely iterates an empty
-// backend fleet. Nothing here exercises the *timing* behavior of Run  - 
+// backend fleet. Nothing here exercises the *timing* behavior of Run  -
 // lifecycle_test.go and the worker-specific suites cover that already.
 // -------------------------------------------------------------------------------
 
@@ -70,12 +70,20 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 	t.Helper()
 	mock := testutil.NewMockStore(t)
 	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Backends:        map[string]backend.ObjectBackend{},
-		Stores:          mock,
-		Dashboard:       mock,
-		Metrics:         mock,
-		Order:           []string{},
-		RoutingStrategy: config.RoutingPack,
+		Storage: proxy.StorageDeps{
+			Backends: map[string]backend.ObjectBackend{},
+			Order:    []string{},
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  mock,
+			Dashboard: mock,
+		},
+		Policies: proxy.PolicyConfig{
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: mock,
+		},
 	})
 	// BuildWorkers wires drain.Manager onto the manager (required for
 	// FlushUsage's CompletedBackends call); the worker handles it
@@ -122,12 +130,20 @@ func TestCleanupQueueService_ProcessedLogFires(t *testing.T) {
 		{ID: 1, BackendName: "missing-backend", ObjectKey: "k", Attempts: 0},
 	}
 	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Backends:        map[string]backend.ObjectBackend{},
-		Stores:          mock,
-		Dashboard:       mock,
-		Metrics:         mock,
-		Order:           []string{},
-		RoutingStrategy: config.RoutingPack,
+		Storage: proxy.StorageDeps{
+			Backends: map[string]backend.ObjectBackend{},
+			Order:    []string{},
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  mock,
+			Dashboard: mock,
+		},
+		Policies: proxy.PolicyConfig{
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: mock,
+		},
 	})
 	_ = proxytest.BuildWorkers(mgr, mock)
 	cw := worker.NewCleanupWorker(mgr, mock, 1, "test", 5*time.Minute)
@@ -188,7 +204,7 @@ func TestUsageFlushService_DoFlushCoversBothCalls(t *testing.T) {
 		locker:  fakeLocker{},
 		log:     slog.Default(),
 	}
-	svc.doFlush(context.Background())  // must not panic
+	svc.doFlush(context.Background())   // must not panic
 	svc.flushTick(context.Background()) // hits the no-Redis branch
 }
 
@@ -361,7 +377,8 @@ func TestLockedTickerService_RunStartupFires(t *testing.T) {
 // ctx.Done() path for the adaptive-interval flusher.
 func TestUsageFlushService_RunExitsOnCancel(t *testing.T) {
 	t.Parallel()
-	f := newServicesFixture(t); mgr := f.mgr
+	f := newServicesFixture(t)
+	mgr := f.mgr
 	mgr.SetUsageFlushConfig(&config.UsageFlushConfig{Interval: time.Hour})
 	svc := NewUsageFlushService(mgr, fakeLocker{})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -377,7 +394,8 @@ func TestUsageFlushService_RunExitsOnCancel(t *testing.T) {
 // error out.
 func TestUsageFlushService_DoFlushOnMockManager(t *testing.T) {
 	t.Parallel()
-	f := newServicesFixture(t); mgr := f.mgr
+	f := newServicesFixture(t)
+	mgr := f.mgr
 	svc := &usageFlushService{manager: mgr, locker: fakeLocker{}}
 	svc.doFlush(context.Background())
 	svc.flushTick(context.Background()) // exercises the non-Redis branch
@@ -406,7 +424,8 @@ func asTicker(t *testing.T, svc any) *tickrunner.Service {
 // panicking.
 func TestServiceClosures_ExerciseWorkAndShouldRun(t *testing.T) {
 	t.Parallel()
-	f := newServicesFixture(t); mgr := f.mgr
+	f := newServicesFixture(t)
+	mgr := f.mgr
 	ctx := context.Background()
 	locker := acquiringLocker{}
 
@@ -456,7 +475,8 @@ func TestLockedTickerService_RunTicksOnce(t *testing.T) {
 // once so the body of Run beyond the initial select is covered.
 func TestUsageFlushService_RunTicksOnce(t *testing.T) {
 	t.Parallel()
-	f := newServicesFixture(t); mgr := f.mgr
+	f := newServicesFixture(t)
+	mgr := f.mgr
 	mgr.SetUsageFlushConfig(&config.UsageFlushConfig{Interval: 2 * time.Millisecond})
 	svc := NewUsageFlushService(mgr, fakeLocker{})
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -472,7 +492,8 @@ func TestUsageFlushService_RunTicksOnce(t *testing.T) {
 // TestUsageFlushService_FlushTickWithAdaptiveSwitch verifies usage flush service_flush tick with adaptive switch.
 func TestUsageFlushService_FlushTickWithAdaptiveSwitch(t *testing.T) {
 	t.Parallel()
-	f := newServicesFixture(t); mgr := f.mgr
+	f := newServicesFixture(t)
+	mgr := f.mgr
 	mgr.SetUsageFlushConfig(&config.UsageFlushConfig{
 		Interval:          2 * time.Millisecond,
 		FastInterval:      time.Millisecond,
@@ -489,14 +510,16 @@ func TestUsageFlushService_FlushTickWithAdaptiveSwitch(t *testing.T) {
 // to error so doFlush's second guarded log path runs. The mock returns nil
 // for ListObjectsByBackend etc., but UpdateQuotaMetrics ultimately calls
 // MetricsCollector.UpdateQuotaMetrics, which needs DashboardStore methods
-//  -  those are stubbed by MockStore. So the happy path is fully covered;
+//   - those are stubbed by MockStore. So the happy path is fully covered;
+//
 // this test re-runs doFlush with a cancelled ctx which short-circuits
 // FlushUsage and exercises the post-error continuation.
 // TestUsageFlushService_DoFlushOnCancelledCtx verifies usage flush service_do flush on cancelled ctx.
 // TestUsageFlushService_DoFlushOnCancelledCtx verifies usage flush service_do flush on cancelled ctx.
 func TestUsageFlushService_DoFlushOnCancelledCtx(t *testing.T) {
 	t.Parallel()
-	f := newServicesFixture(t); mgr := f.mgr
+	f := newServicesFixture(t)
+	mgr := f.mgr
 	svc := &usageFlushService{manager: mgr, locker: fakeLocker{}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

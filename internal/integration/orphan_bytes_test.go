@@ -547,14 +547,22 @@ func TestOrphanBytesSpreadRouting_SpreadRoutingRespectsOrphanBytes(t *testing.T)
 	_ = ctx
 	stores := newStores(testStore)
 	spreadManager := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Backends:        testBackends,
-		Stores:          stores,
-		Dashboard:       testStore,
-		Metrics:         newMetricsAdapter(testStore),
-		Order:           testBackendOrder,
-		CacheTTL:        60 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingSpread,
+		Storage: proxy.StorageDeps{
+			Backends: testBackends,
+			Order:    testBackendOrder,
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  stores,
+			Dashboard: testStore,
+		},
+		Policies: proxy.PolicyConfig{
+			CacheTTL:        60 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingSpread,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: newMetricsAdapter(testStore),
+		},
 	})
 	_ = spreadManager
 	_ = proxytest.BuildWorkers(spreadManager, stores)

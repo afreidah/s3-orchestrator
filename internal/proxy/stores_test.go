@@ -57,12 +57,12 @@ func wireWorkersForTest(m *BackendManager, stores core.MetadataStore) *testWorke
 // picked up an error return.
 func newTestBackendManager(t *testing.T, cfg *BackendManagerConfig) *BackendManager {
 	t.Helper()
-	if cfg != nil && cfg.Stores != nil {
-		if cfg.Dashboard == nil {
-			cfg.Dashboard = cfg.Stores
+	if cfg != nil && cfg.Stores.Metadata != nil {
+		if cfg.Stores.Dashboard == nil {
+			cfg.Stores.Dashboard = cfg.Stores.Metadata
 		}
-		if cfg.Metrics == nil {
-			cfg.Metrics = cfg.Stores
+		if cfg.Operations.Metrics == nil {
+			cfg.Operations.Metrics = cfg.Stores.Metadata
 		}
 	}
 	return NewBackendManager(cfg)

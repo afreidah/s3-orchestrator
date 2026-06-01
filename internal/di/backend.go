@@ -256,25 +256,35 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	}
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
-		Backends:                     br.Backends,
-		Stores:                       stores,
-		PendingEnabled:               cfg.WritePath.PendingPattern.IsEnabled(),
-		Metrics:                      metricsDeps,
-		Dashboard:                    stores,
-		Order:                        br.Order,
-		CacheTTL:                     cfg.CircuitBreaker.CacheTTL,
-		BackendTimeout:               cfg.Server.BackendTimeout,
-		UsageLimits:                  br.UsageLimits,
-		RoutingStrategy:              cfg.RoutingStrategy,
-		ParallelBroadcast:            cfg.CircuitBreaker.ParallelBroadcast,
-		DegradedBroadcastParallelism: cfg.CircuitBreaker.DegradedBroadcastParallelism,
-		DisableDegradedReads:         cfg.CircuitBreaker.DegradedReadsEnabled != nil && !*cfg.CircuitBreaker.DegradedReadsEnabled,
-		Encryptor:                    enc,
-		ObjectCache:                  resolveOptionalCache(i),
-		CounterBackend:               resolveOptionalCounterBackend(i),
-		MaxObjectSizes:               br.MaxObjectSizes,
-		AdmissionSem:                 admissionSemFor(&cfg.Server),
-		ReplicationFactor:            replicationFactorFromInjector(i),
+		Storage: proxy.StorageDeps{
+			Backends: br.Backends,
+			Order:    br.Order,
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  stores,
+			Dashboard: stores,
+		},
+		Policies: proxy.PolicyConfig{
+			PendingEnabled:               cfg.WritePath.PendingPattern.IsEnabled(),
+			CacheTTL:                     cfg.CircuitBreaker.CacheTTL,
+			BackendTimeout:               cfg.Server.BackendTimeout,
+			UsageLimits:                  br.UsageLimits,
+			RoutingStrategy:              cfg.RoutingStrategy,
+			ParallelBroadcast:            cfg.CircuitBreaker.ParallelBroadcast,
+			DegradedBroadcastParallelism: cfg.CircuitBreaker.DegradedBroadcastParallelism,
+			DisableDegradedReads:         cfg.CircuitBreaker.DegradedReadsEnabled != nil && !*cfg.CircuitBreaker.DegradedReadsEnabled,
+			MaxObjectSizes:               br.MaxObjectSizes,
+		},
+		Features: proxy.FeatureDeps{
+			Encryptor:      enc,
+			ObjectCache:    resolveOptionalCache(i),
+			CounterBackend: resolveOptionalCounterBackend(i),
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics:           metricsDeps,
+			AdmissionSem:      admissionSemFor(&cfg.Server),
+			ReplicationFactor: replicationFactorFromInjector(i),
+		},
 	})
 
 	// Drop stale degraded-mode location cache entries on DB recovery so
