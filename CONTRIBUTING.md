@@ -49,6 +49,8 @@ This requires a `config.yaml` in the project root. See `docs/quickstart.md` for 
 make test
 ```
 
+For quick iteration, use `make check`. CI runs `make test`.
+
 ### Integration tests
 
 Integration tests use [testcontainers-go](https://golang.testcontainers.org/) to spin up PostgreSQL, MinIO, and Redis containers automatically — no manual setup required:

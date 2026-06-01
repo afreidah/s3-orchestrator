@@ -86,8 +86,15 @@ generate: ## Generate sqlc query code and interface mocks
 test: ## Run Go tests with coverage
 	go test -race -cover ./...
 
+test-fast: ## Run Go tests without race or coverage for quick iteration
+	go test ./...
+
 vet: ## Run Go vet static analysis
 	go vet ./...
+
+check: ## Run fast local checks for contributor iteration
+	$(MAKE) test-fast
+	$(MAKE) vet
 
 lint: ## Run Go linter
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...
