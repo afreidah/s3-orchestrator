@@ -421,13 +421,21 @@ func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveMock(t)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1", "b2"},
-		CacheTTL:        5 * time.Second,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
+			Order:    []string{"b1", "b2"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -456,13 +464,21 @@ func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1", "b2"},
-		CacheTTL:        5 * time.Second,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend()},
+			Order:    []string{"b1", "b2"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -778,14 +794,22 @@ func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1", "b2"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: map[string]backend.ObjectBackend{"b1": b1, "b2": b2},
+			Order:    []string{"b1", "b2"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers

@@ -39,12 +39,20 @@ func newAdminHandlerForTest(t testing.TB, opts ...func(*proxy.BackendManager, *p
 	mock := testutil.NewMockStore(t)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Backends:        map[string]backend.ObjectBackend{},
-		Stores:          mock,
-		Dashboard:       mock,
-		Metrics:         mock,
-		Order:           []string{},
-		RoutingStrategy: config.RoutingPack,
+		Storage: proxy.StorageDeps{
+			Backends: map[string]backend.ObjectBackend{},
+			Order:    []string{},
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  mock,
+			Dashboard: mock,
+		},
+		Policies: proxy.PolicyConfig{
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: mock,
+		},
 	})
 	workers := proxytest.BuildWorkers(mgr, mock)
 	workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 1})

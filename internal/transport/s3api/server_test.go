@@ -10,9 +10,9 @@
 package s3api
 
 import (
+	"context"
 	"io"
 	"log/slog"
-	"context"
 	"net/http"
 	"strings"
 	"sync"
@@ -56,9 +56,13 @@ func TestNewServer_AssignsScopedLogger(t *testing.T) {
 	t.Parallel()
 	mockStore := testutil.NewMockStore(t)
 	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Stores:    mockStore,
-		Dashboard: mockStore,
-		Metrics:   mockStore,
+		Stores: proxy.StoreDeps{
+			Metadata:  mockStore,
+			Dashboard: mockStore,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: mockStore,
+		},
 	})
 	t.Cleanup(mgr.Close)
 	srv := NewServer(mgr, 1024)

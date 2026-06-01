@@ -145,12 +145,20 @@ func newTestServer(t *testing.T) (*httptest.Server, *testutil.MockStore, *server
 	mockStore.GetBackendResp = "b1"
 
 	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
-		Stores:          mockStore,
-		Dashboard:       mockStore,
-		Metrics:         mockStore,
-		Order:           []string{"b1"},
-		RoutingStrategy: config.RoutingPack,
+		Storage: proxy.StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"b1": backend},
+			Order:    []string{"b1"},
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  mockStore,
+			Dashboard: mockStore,
+		},
+		Policies: proxy.PolicyConfig{
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: mockStore,
+		},
 	})
 	_ = proxytest.BuildWorkers(mgr, mockStore)
 	t.Cleanup(mgr.Close)
@@ -480,13 +488,21 @@ func newCapacityHintTestServer(t *testing.T, mockStore *testutil.MockStore) *htt
 	t.Helper()
 	backend := newServerMockBackend()
 	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
-		Stores:          mockStore,
-		Dashboard:       mockStore,
-		Metrics:         mockStore,
-		Order:           []string{"b1"},
-		MaxObjectSizes:  map[string]int64{"b1": 1},
-		RoutingStrategy: config.RoutingPack,
+		Storage: proxy.StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"b1": backend},
+			Order:    []string{"b1"},
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  mockStore,
+			Dashboard: mockStore,
+		},
+		Policies: proxy.PolicyConfig{
+			MaxObjectSizes:  map[string]int64{"b1": 1},
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: mockStore,
+		},
 	})
 	_ = proxytest.BuildWorkers(mgr, mockStore)
 	t.Cleanup(mgr.Close)
