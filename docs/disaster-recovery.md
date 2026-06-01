@@ -125,7 +125,7 @@ s3-orchestrator admin drain-status <backend-name>
 # Once complete, remove from config and restart
 ```
 
-See the [Admin Guide](admin-guide.md#draining-a-backend) for the full drain workflow.
+See the [Admin Guide](operations.md#draining-a-backend) for the full drain workflow.
 
 ### Preventing data loss
 
