@@ -110,24 +110,29 @@ type emptyEncAdmin struct{}
 func (emptyEncAdmin) ListEncryptedLocations(_ context.Context, _ string, _, _ int) ([]core.EncryptedLocation, error) {
 	return nil, nil
 }
+
 // UpdateEncryptionKey updates encryption key.
 func (emptyEncAdmin) UpdateEncryptionKey(_ context.Context, _, _ string, _ []byte, _ string) error {
 	return nil
 }
+
 // ListUnencryptedLocations lists unencrypted locations.
 func (emptyEncAdmin) ListUnencryptedLocations(_ context.Context, _, _ int) ([]core.UnencryptedLocation, error) {
 	return nil, nil
 }
+
 // MarkObjectEncrypted is a no-op stub on emptyEncAdmin so the type
 // satisfies the EncryptionAdmin interface. Tests that exercise the
 // success path use rowEncAdmin instead.
 func (emptyEncAdmin) MarkObjectEncrypted(_ context.Context, _, _ string, _ []byte, _ string, _, _ int64) error {
 	return nil
 }
+
 // ListAllEncryptedLocations lists all encrypted locations.
 func (emptyEncAdmin) ListAllEncryptedLocations(_ context.Context, _, _ int) ([]core.DecryptableLocation, error) {
 	return nil, nil
 }
+
 // MarkObjectDecrypted is a no-op stub on emptyEncAdmin so the type
 // satisfies the EncryptionAdmin interface for the decrypt-existing
 // path. Tests that exercise the success path supply a different
@@ -274,12 +279,20 @@ func TestEncryptExisting_HappyPathOneRow(t *testing.T) {
 	mock := testutil.NewMockStore(t)
 	fake := &fakeBackend{payload: []byte("hello world")}
 	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Backends:        map[string]backend.ObjectBackend{"backend-a": fake},
-		Stores:          mock,
-		Dashboard:       mock,
-		Metrics:         mock,
-		Order:           []string{"backend-a"},
-		RoutingStrategy: config.RoutingPack,
+		Storage: proxy.StorageDeps{
+			Backends: map[string]backend.ObjectBackend{"backend-a": fake},
+			Order:    []string{"backend-a"},
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  mock,
+			Dashboard: mock,
+		},
+		Policies: proxy.PolicyConfig{
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: mock,
+		},
 	})
 	workers := proxytest.BuildWorkers(mgr, mock)
 

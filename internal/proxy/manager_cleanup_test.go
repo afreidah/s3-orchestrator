@@ -655,15 +655,23 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]s3be.ObjectBackend{"b1": backend},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
-		AdmissionSem:    sem,
+		Storage: StorageDeps{
+			Backends: map[string]s3be.ObjectBackend{"b1": backend},
+			Order:    []string{"b1"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics:      store,
+			AdmissionSem: sem,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 

@@ -105,14 +105,22 @@ func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 	_, _ = cbBackend.PutObject(context.Background(), "k", nil, 0, "", nil)
 
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]backend.ObjectBackend{"b1": cbBackend},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
+		Storage: StorageDeps{
+			Backends: map[string]backend.ObjectBackend{"b1": cbBackend},
+			Order:    []string{"b1"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: store,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
@@ -454,15 +462,23 @@ func TestClean_AdmissionBlocked(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Backends:        map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend(), "b3": newMockBackend()},
-		Stores:          testStoresFromMock(store),
-		Dashboard:       store,
-		Metrics:         store,
-		Order:           []string{"b1", "b2", "b3"},
-		CacheTTL:        5 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
-		AdmissionSem:    sem,
+		Storage: StorageDeps{
+			Backends: map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend(), "b3": newMockBackend()},
+			Order:    []string{"b1", "b2", "b3"},
+		},
+		Stores: StoreDeps{
+			Metadata:  testStoresFromMock(store),
+			Dashboard: store,
+		},
+		Policies: PolicyConfig{
+			CacheTTL:        5 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics:      store,
+			AdmissionSem: sem,
+		},
 	})
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers

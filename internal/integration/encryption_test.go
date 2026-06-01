@@ -78,15 +78,25 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 	// Build a manager with encryption enabled using the same backends/store
 	stores := newStores(testStore)
 	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Backends:        testBackends,
-		Stores:          stores,
-		Dashboard:       testStore,
-		Metrics:         newMetricsAdapter(testStore),
-		Order:           testBackendOrder,
-		CacheTTL:        60 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
-		Encryptor:       enc,
+		Storage: proxy.StorageDeps{
+			Backends: testBackends,
+			Order:    testBackendOrder,
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  stores,
+			Dashboard: testStore,
+		},
+		Policies: proxy.PolicyConfig{
+			CacheTTL:        60 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Features: proxy.FeatureDeps{
+			Encryptor: enc,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: newMetricsAdapter(testStore),
+		},
 	})
 	workers := proxytest.BuildWorkers(mgr, stores)
 

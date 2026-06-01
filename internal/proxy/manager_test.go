@@ -376,8 +376,17 @@ func TestNewBackendManager_RequiredDepsPanic(t *testing.T) {
 		cfg  *BackendManagerConfig
 	}{
 		{"no stores", &BackendManagerConfig{}},
-		{"no dashboard", &BackendManagerConfig{Stores: mock}},
-		{"no metrics", &BackendManagerConfig{Stores: mock, Dashboard: mock}},
+		{"no dashboard", &BackendManagerConfig{
+			Stores: StoreDeps{
+				Metadata: mock,
+			},
+		}},
+		{"no metrics", &BackendManagerConfig{
+			Stores: StoreDeps{
+				Metadata:  mock,
+				Dashboard: mock,
+			},
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -402,10 +411,16 @@ func TestClearDrainState_NoDrainManager(t *testing.T) {
 	t.Parallel()
 	mock := newPermissiveMock(t)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Stores:          mock,
-		Dashboard:       mock,
-		Metrics:         mock,
-		RoutingStrategy: config.RoutingPack,
+		Stores: StoreDeps{
+			Metadata:  mock,
+			Dashboard: mock,
+		},
+		Policies: PolicyConfig{
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: OperationalDeps{
+			Metrics: mock,
+		},
 	})
 	defer mgr.Close()
 	if mgr.drainManager != nil {

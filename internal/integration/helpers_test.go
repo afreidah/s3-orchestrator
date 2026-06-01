@@ -322,15 +322,23 @@ func TestMain(m *testing.M) {
 	stores := newStores(failableStore)
 
 	manager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
-		Backends:        testBackends,
-		Stores:          stores,
-		PendingEnabled:  true,
-		Dashboard:       failableStore,
-		Metrics:         newMetricsAdapter(failableStore),
-		Order:           testBackendOrder,
-		CacheTTL:        60 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
+		Storage: proxy.StorageDeps{
+			Backends: testBackends,
+			Order:    testBackendOrder,
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  stores,
+			Dashboard: failableStore,
+		},
+		Policies: proxy.PolicyConfig{
+			PendingEnabled:  true,
+			CacheTTL:        60 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: newMetricsAdapter(failableStore),
+		},
 	})
 	workers := proxytest.BuildWorkers(manager, stores)
 	testManager = manager
@@ -552,14 +560,22 @@ func newThreeBackendManager(t *testing.T) (*proxy.BackendManager, *proxytest.Wor
 	t.Helper()
 	stores := newStores(testFailableStore)
 	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Backends:        allBackends,
-		Stores:          stores,
-		Dashboard:       testFailableStore,
-		Metrics:         newMetricsAdapter(testFailableStore),
-		Order:           allBackendOrder,
-		CacheTTL:        60 * time.Second,
-		BackendTimeout:  30 * time.Second,
-		RoutingStrategy: config.RoutingPack,
+		Storage: proxy.StorageDeps{
+			Backends: allBackends,
+			Order:    allBackendOrder,
+		},
+		Stores: proxy.StoreDeps{
+			Metadata:  stores,
+			Dashboard: testFailableStore,
+		},
+		Policies: proxy.PolicyConfig{
+			CacheTTL:        60 * time.Second,
+			BackendTimeout:  30 * time.Second,
+			RoutingStrategy: config.RoutingPack,
+		},
+		Operations: proxy.OperationalDeps{
+			Metrics: newMetricsAdapter(testFailableStore),
+		},
 	})
 	workers := proxytest.BuildWorkers(mgr, stores)
 	return mgr, workers
