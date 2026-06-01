@@ -304,7 +304,7 @@ func (w *Coordinator) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBack
 // storage.OrphanEnqueueFailed audit event so operators can pivot from
 // "metric incremented" to the exact backend/key/size, then run
 // POST /admin/api/reconcile to recover untracked orphans once DB
-// connectivity is restored. See docs/admin-guide.md for the runbook.
+// connectivity is restored. See docs/cleanup-and-lifecycle.md for the runbook.
 func (w *Coordinator) EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) {
 	if err := w.stores.EnqueueCleanup(ctx, backendName, objectKey, reason, sizeBytes); err != nil {
 		w.recordEnqueueFailure(ctx, backendName, objectKey, reason, sizeBytes, "enqueue", err)

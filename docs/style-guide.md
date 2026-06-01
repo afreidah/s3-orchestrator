@@ -675,7 +675,7 @@ shape uniform across contributors.
 4. Add a unit test in `internal/backend/<name>_test.go`. Integration
    coverage comes from the existing MinIO testcontainer suite for any
    S3-compatible provider.
-5. Update `README.md` and `docs/admin-guide.md` config sections.
+5. Update `README.md` and `docs/configuration.md` config sections.
 
 ### Adding a New Store Role
 
@@ -736,7 +736,7 @@ they truly belong to a new bounded concern - into a new role.
    take no suffix.
 3. Add the metric to the dashboard JSON if it is operator-facing
    (`grafana/s3-orchestrator.json`).
-4. Document the metric in `README.md` and `docs/admin-guide.md`.
+4. Document the metric in `docs/monitoring.md`.
 
 ---
 
@@ -1167,7 +1167,7 @@ When a PR changes config fields, API behavior, or deployment requirements, updat
 - `packaging/config.yaml` — sample config
 - `config.yaml` — local dev config
 - `README.md` — config reference section
-- `docs/admin-guide.md` — operational documentation
+- `docs/*.md` — per-topic operational documentation (see `docs/admin-guide.md` for the index)
 - `docs/security-hardening.md` — if security-relevant
 - `docs/disaster-recovery.md` — if it affects failure modes
 - `web/content/guides/*.md` — deployment guides

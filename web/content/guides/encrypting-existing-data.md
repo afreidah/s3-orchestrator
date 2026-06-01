@@ -34,7 +34,7 @@ encryption:
   master_key: "${ENCRYPTION_KEY}"
 ```
 
-You can also use a file-based key or Vault Transit. See the [admin guide](../../docs/admin-guide/#encryption) for all key source options.
+You can also use a file-based key or Vault Transit. See the [admin guide](../../docs/encryption/) for all key source options.
 
 ### Vault Transit (recommended for production)
 

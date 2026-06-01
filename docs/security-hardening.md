@@ -89,7 +89,7 @@ The master key wraps per-object DEKs using envelope encryption. Choose the key s
 
 - **Never commit encryption keys** to version control. Use `${ENV_VAR}` expansion or `master_key_file`.
 - **Restrict key file permissions:** `chmod 600 /path/to/keyfile && chown root:root /path/to/keyfile`
-- **Rotate keys periodically** using the `rotate-encryption-key` admin API. See the [Admin Guide](admin-guide.md#rotating-encryption-keys).
+- **Rotate keys periodically** using the `rotate-encryption-key` admin API. See the [Admin Guide](operations.md#rotating-encryption-keys).
 - **Keep previous keys** in the config until all DEKs have been re-wrapped. Removing an old key before rotation completes makes objects encrypted with that key unrecoverable.
 - **Back up your encryption keys** separately from your data backups. Without the key, encrypted data is unrecoverable.
 
@@ -472,7 +472,7 @@ For multi-instance deployments behind a load balancer, ensure all instances use 
 
 ## Credential Rotation
 
-S3 client credentials can be rotated without downtime using the SIGHUP reload mechanism. See the [admin guide](admin-guide.md#rotating-client-credentials) for the zero-downtime rotation procedure.
+S3 client credentials can be rotated without downtime using the SIGHUP reload mechanism. See the [admin guide](operations.md#rotating-client-credentials) for the zero-downtime rotation procedure.
 
 The admin API token (`ui.admin_token`, or `ui.admin_key` if `admin_token` is not set) requires a restart to change since the UI config section is not reloadable.
 
