@@ -184,7 +184,7 @@ telemetry:
 - **`unsigned_payload: true`** — GCS does not support `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` chunked signing.
 - **`strip_sdk_headers: true`** — AWS SDK v2 adds headers (`amz-sdk-invocation-id`, `amz-sdk-request`, `accept-encoding`) and a query parameter (`x-id`) that GCS does not include when verifying the SigV4 signature, causing `SignatureDoesNotMatch` errors.
 
-See the [Admin Guide](../../docs/admin-guide/#strip-sdk-headers) for more details.
+See the [Admin Guide](../../docs/backends/) for more details.
 {{% /notice %}}
 
 ## Prerequisites

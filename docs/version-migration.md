@@ -486,7 +486,7 @@ Cleanup queue rows that exhausted their retry budget previously stayed pinned in
 **Operator action items after upgrade:**
 
 - Set up an alert on `s3o_cleanup_dlq_depth > 0` so unrecoverable orphans surface promptly.
-- Use the SQL recipes in [admin-guide.md#cleanup-queue](../admin-guide/#cleanup-queue) and [disaster-recovery.md#cleanup-queue-recovery](../disaster-recovery/#cleanup-queue-recovery) to inspect and resolve DLQ entries.
+- Use the SQL recipes in [cleanup-and-lifecycle.md#cleanup-queue](../cleanup-and-lifecycle/#cleanup-queue) and [disaster-recovery.md#cleanup-queue-recovery](../disaster-recovery/#cleanup-queue-recovery) to inspect and resolve DLQ entries.
 
 ### v0.41.x
 
