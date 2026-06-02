@@ -34,16 +34,14 @@ Add as many S3-compatible backends as you want — OCI Object Storage, Backblaze
 
 ## What else is out there
 
-If you've gone looking for a tool that does this exact shape, the landscape is thinner than you'd expect:
+If you've gone looking for a tool that does something similar, there don't appear to be many options:
 
 | Project | What it is | Why it's not the same |
 |---|---|---|
 | **rclone `union` remote** | Client-side multi-remote stacking | Per-client config, no server endpoint, no central drain/rebalance/quota enforcement |
 | **MinIO Gateway** | Was a multi-backend S3 proxy | [Deprecated in 2022](https://blog.min.io/deprecation-of-the-minio-gateway/) |
-| **[Zenko CloudServer](https://github.com/scality/Zenko)** (Scality) | Multi-cloud data controller | Enterprise-shaped stack (K8s + MongoDB + Vault + Kafka); per-backend byte quotas not advertised; OSS pitching quieted ~2020 |
 | **[Flexify.IO](https://flexify.io/multi-cloud)** | Commercial multi-cloud S3 SaaS | Closed source; $0.03/GiB SaaS or $0.09/hr self-hosted |
 | **[gaul/s3proxy](https://github.com/gaul/s3proxy)**, **[oxyno-zeta/s3-proxy](https://oxyno-zeta.github.io/s3-proxy/)** | S3 API translation / routing proxies | Single backend at a time, or multi-bucket routing without quotas, replication, or a metadata layer |
-| **SeaweedFS, Garage, MinIO, RustFS** | Self-hosted distributed object stores | They ARE the storage layer, not orchestrators across existing S3 backends |
 
 ## Quickstart
 
@@ -75,7 +73,7 @@ Full credentials and troubleshooting: [docs/quickstart.md](docs/quickstart.md).
 | Static binary | Linux / macOS / Windows from [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases) |
 | From source | `git clone && make build` |
 
-**Database:** SQLite is embedded — no external dependencies for single-instance use. PostgreSQL 14+ is required for multi-instance deployments (`database.driver: postgres`); the schema migrates on boot.
+**Database:** SQLite is embedded — no external dependencies for single-instance use. PostgreSQL 14+ is also an option and is required for multi-instance deployments (`database.driver: postgres`); the schema migrates on boot.
 
 **Generate a config interactively:** `s3-orchestrator init`.
 
