@@ -150,7 +150,7 @@ func ProvideDatabaseBreaker(i do.Injector) (*breaker.CircuitBreaker, error)
 ProvideDatabaseBreaker constructs the shared \*breaker.CircuitBreaker every driver\-level SQL statement forwards calls through.
 
 <a name="ProvideDrainManager"></a>
-## func [ProvideDrainManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L185>)
+## func [ProvideDrainManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L184>)
 
 ```go
 func ProvideDrainManager(i do.Injector) (*drain.Manager, error)
@@ -285,13 +285,13 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 ProvideOverReplicationCleaner constructs the over\-replication cleanup worker.
 
 <a name="ProvidePendingReaper"></a>
-## func [ProvidePendingReaper](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L132>)
+## func [ProvidePendingReaper](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L131>)
 
 ```go
 func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error)
 ```
 
-ProvidePendingReaper constructs the pending\-reaper worker. This provider is registered in NewInjector ONLY when the pending pattern is enabled, so reaching this function implies the feature is on \(\#830\). Any nil dependency at this point is a wiring bug, not an intentional "feature off" signal \- it surfaces as an error so Optional\[\*worker.PendingReaper\] reports Failed instead of conflating it with Disabled.
+ProvidePendingReaper constructs the pending\-reaper worker. The provider is registered in NewInjector only when the pending pattern is enabled, so reaching this function implies the feature is on. Any nil dependency at this point is a wiring bug, not a "feature off" signal — it surfaces as an error so Optional\[\*worker.PendingReaper\] reports Failed instead of conflating it with Disabled.
 
 <a name="ProvideRateLimiter"></a>
 ## func [ProvideRateLimiter](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L71>)
@@ -312,7 +312,7 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error)
 ProvideRebalancer constructs the rebalancer worker.
 
 <a name="ProvideReconciler"></a>
-## func [ProvideReconciler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L167>)
+## func [ProvideReconciler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L166>)
 
 ```go
 func ProvideReconciler(i do.Injector) (*worker.Reconciler, error)
@@ -348,7 +348,7 @@ func ProvideS3Server(i do.Injector) (*s3api.Server, error)
 ProvideS3Server creates the S3\-compatible HTTP handler.
 
 <a name="ProvideScrubber"></a>
-## func [ProvideScrubber](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L148>)
+## func [ProvideScrubber](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L147>)
 
 ```go
 func ProvideScrubber(i do.Injector) (*worker.Scrubber, error)
