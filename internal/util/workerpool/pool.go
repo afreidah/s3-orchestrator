@@ -26,7 +26,7 @@ import (
 // is invoked once per item. If ctx is cancelled, remaining undispatched items
 // are skipped. In-flight items run to completion.
 //
-// Implementation note (#861): spawns at most min(concurrency, len(items))
+// Implementation note: spawns at most min(concurrency, len(items))
 // worker goroutines that consume from a shared jobs channel until the
 // dispatcher closes it. The earlier design spawned one goroutine per
 // item bounded by a counting semaphore, which produced N goroutines for

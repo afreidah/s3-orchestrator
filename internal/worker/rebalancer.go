@@ -350,7 +350,7 @@ func (r *Rebalancer) cachedSourceObjects(
 // loop would otherwise issue. Returns the lookup error so callers fail
 // planning rather than silently continue with empty placement data,
 // which previously caused unnecessary transfers when destinations
-// already held a copy (#921).
+// already held a copy.
 func (r *Rebalancer) fetchCopyMap(ctx context.Context, objects []core.ObjectLocation) (map[string][]string, error) {
 	keys := make([]string, len(objects))
 	for i := range objects {

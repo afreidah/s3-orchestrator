@@ -66,12 +66,11 @@ func (s *drainState) getErr() error {
 	return nil
 }
 
-// decrementActiveGauge fires telemetry.DrainActive.Dec() exactly once per
-// drainState across every code path that can finish the drain (success,
-// abort, cancel). Without the sync.Once the cancel-races-completion path
-// double-decremented the gauge - issue #883 - because finalizeDrain (or
-// abortDrainWithError) decremented when the drain goroutine finished and
-// CancelDrain decremented again after waking from <-state.done.
+// decrementActiveGauge fires telemetry.DrainActive.Dec() exactly once
+// per drainState across every termination path (success, abort,
+// cancel). The sync.Once prevents the cancel-races-completion path
+// from decrementing twice when finalizeDrain (or abortDrainWithError)
+// fires first and CancelDrain then wakes from <-state.done.
 func (s *drainState) decrementActiveGauge() {
 	s.gaugeDecOnce.Do(func() { telemetry.DrainActive.Dec() })
 }
@@ -420,7 +419,7 @@ func (d *Manager) removeReplicaSource(ctx context.Context, srcBackend backend.Ob
 // exists, so the object is streamed to a destination backend, the
 // metadata location is moved atomically, and the source bytes are then
 // deleted. The shared StreamCopy + MoveObjectLocation + cleanup +
-// accounting logic lives in writepath.Coordinator.MoveObject (#924);
+// accounting logic lives in writepath.Coordinator.MoveObject;
 // this helper picks the destination, calls MoveObject, and emits the
 // drain-specific audit on success.
 func (d *Manager) copyAndRemoveSource(ctx context.Context, srcBackend backend.ObjectBackend, srcName string, obj *core.ObjectLocation) bool {

@@ -3,15 +3,14 @@
 //
 // Author: Alex Freidah
 //
-// Per-operation success-finalization helpers shared by put.go, copy.go, and
-// delete.go. Each helper owns the same checklist for its mutation kind:
-// commit the metadata row (or skip when already committed), record
-// per-backend accounting, emit operation-completion observability, and
-// invalidate every cache tied to the key. Centralizing them here keeps the
-// per-mutation rules in one place so a future cache or metric addition
-// lands once instead of being re-derived inside each orchestration. See
-// #903 for the consolidation rationale and #881 for the accounting bug it
-// guards against re-occurring.
+// Per-operation success-finalization helpers shared by put.go, copy.go,
+// and delete.go. Each helper owns the same checklist for its mutation
+// kind: commit the metadata row (or skip when already committed),
+// record per-backend accounting, emit operation-completion
+// observability, and invalidate every cache tied to the key.
+// Centralising the checklist here keeps the per-mutation rules in one
+// place — a missing accounting call here previously surfaced as drift
+// between PUT and CopyObject usage counters.
 // -------------------------------------------------------------------------------
 
 package object
@@ -84,7 +83,7 @@ func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyContext
 // DeleteObject: operation-completion accounting (pinned to the first
 // copy's backend for label stability), completion observability, and
 // cache invalidation. Per-backend DELETE API-call accounting is owned
-// by DeleteOrEnqueue (#881) so this helper does NOT call APICall.
+// by DeleteOrEnqueue so this helper does NOT call APICall.
 func (o *Manager) finalizeDelete(ctx context.Context, span trace.Span, key string, copies []core.DeletedCopy, start time.Time) {
 	const operation = "DeleteObject"
 	if len(copies) > 0 {
@@ -98,7 +97,7 @@ func (o *Manager) finalizeDelete(ctx context.Context, span trace.Span, key strin
 // DeleteObjects: operation-completion accounting (empty backend label
 // because the batch spans many), per-key tally span attributes, and
 // completion observability. Per-key API-call accounting is owned by
-// DeleteOrEnqueue inside the fanout (#881).
+// DeleteOrEnqueue inside the fanout.
 func (o *Manager) finalizeBatchDelete(ctx context.Context, span trace.Span, batchSize int, results []DeleteObjectResult, start time.Time) {
 	const operation = "DeleteObjects"
 	successCount, errorCount := tallyDeleteResults(results)

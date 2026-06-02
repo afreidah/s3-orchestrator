@@ -6,7 +6,7 @@
 // Wraps *Rebalancer in a lifecycle.Runner backed by the shared
 // advisory-locked ticker primitive. Uses HandlePassResult so the
 // success-with-work logging + quota-metrics refresh stays identical
-// to replication and over-replication (#925).
+// to replication and over-replication.
 // -------------------------------------------------------------------------------
 
 package worker

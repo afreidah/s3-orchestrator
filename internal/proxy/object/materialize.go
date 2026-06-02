@@ -164,16 +164,15 @@ type materializedSource struct {
 }
 
 // materializeCopySource reads the source object from the first
-// reachable replica into a seekable buffer  -  in-memory for small
-// objects, a self-unlinking tempfile for large ones  -  and returns
-// it ready for handoff to PutObject. Failover iterates locations in
-// order; backend-side errors (including the backend timeout firing
-// per #882) are captured and a different replica is tried. When every
-// replica fails the most recent underlying error is returned so
-// callers can see why - the previous generic "failed to read source"
-// string lost the DeadlineExceeded signal entirely. Per-replica GETs
-// run under the backend timeout policy so a stalled source cannot
-// exceed backend_timeout; a tighter caller deadline still wins.
+// reachable replica into a seekable buffer (in-memory for small
+// objects, a self-unlinking tempfile for large ones) and returns it
+// ready for handoff to PutObject. Failover iterates locations in
+// order; backend-side errors (including backend-timeout cancellation)
+// are captured and a different replica is tried. On total failure the
+// most recent underlying error surfaces so the caller sees the real
+// signal (e.g. DeadlineExceeded) rather than a generic wrapper. Per-
+// replica GETs run under the backend timeout policy; a tighter caller
+// deadline still wins.
 func (o *Manager) materializeCopySource(
 	ctx context.Context,
 	sourceKey string,
@@ -198,15 +197,12 @@ func (o *Manager) materializeCopySource(
 }
 
 // tryMaterializeFromLocation attempts to download sourceKey from one
-// backend into a fresh seekable buffer. Returns (ms, nil) on success.
-// A (nil, nil) return means the replica was skipped without a hard
-// error (usage limits hit, backend not registered) - the caller moves
-// to the next replica without capturing an error. A (nil, err) return
-// is a real failure: the backend GET errored (including the
-// backend-timeout context firing per #882) or the buffer-side
-// materialization could not proceed. Errors are aggregated by the
-// caller so the last underlying failure surfaces when no replica
-// succeeds.
+// backend into a fresh seekable buffer. (ms, nil) on success.
+// (nil, nil) means the replica was skipped without a hard error
+// (usage limits hit, backend not registered) — caller moves on.
+// (nil, err) is a real failure (backend GET errored or
+// materialization failed). Errors are aggregated by the caller so the
+// last underlying failure surfaces when no replica succeeds.
 func (o *Manager) tryMaterializeFromLocation(
 	ctx context.Context,
 	sourceKey string,
@@ -223,7 +219,7 @@ func (o *Manager) tryMaterializeFromLocation(
 
 	// Wrap the source GET in the configured backend timeout so a
 	// stalled replica cannot block the materialize step past
-	// backend_timeout (#882). The same context covers the body
+	// backend_timeout. The same context covers the body
 	// drain inside newMaterializedBody because rcancel only fires
 	// on function return.
 	rctx, rcancel := o.core.WithTimeout(ctx)

@@ -6,7 +6,7 @@
 // Wraps *Replicator in a lifecycle.Runner backed by the shared
 // advisory-locked ticker primitive. Replication is the one service
 // that registers a Startup hook so the first pass fires immediately on
-// boot rather than waiting one tick (#925).
+// boot rather than waiting one tick.
 // -------------------------------------------------------------------------------
 
 package worker

@@ -394,9 +394,10 @@ func (m *BackendManager) LifecycleConfig() *config.LifecycleConfig {
 	return m.lifecycleCfg.Load()
 }
 
-// SetIntegrityConfig atomically stores the integrity configuration. The
-// scrubber's own SetConfig is invoked separately by the caller (serve)
-// since the scrubber is a top-level DI service after #676 B.
+// SetIntegrityConfig atomically stores the integrity configuration.
+// The scrubber's own SetConfig is invoked separately by the caller
+// (serve) because the scrubber is resolved through DI rather than held
+// on the manager.
 func (m *BackendManager) SetIntegrityConfig(cfg *config.IntegrityConfig) {
 	m.integrityCfg.Store(cfg)
 }
@@ -638,8 +639,8 @@ func (m *BackendManager) DeleteOrEnqueue(ctx context.Context, be backend.ObjectB
 	m.coord.DeleteOrEnqueue(ctx, be, backendName, key, reason, sizeBytes)
 }
 
-// MoveObject forwards to the write coordinator's shared move primitive
-// (#924). Drain and rebalancer both pass their narrow consumer
+// MoveObject forwards to the write coordinator's shared move primitive.
+// Drain and rebalancer both pass their narrow consumer
 // interface (drain.Core, worker.DataMover) here so the StreamCopy +
 // MoveObjectLocation CAS + orphan-cleanup branches + source-delete
 // accounting all funnel through one implementation - the same way
