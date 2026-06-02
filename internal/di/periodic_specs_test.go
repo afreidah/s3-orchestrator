@@ -25,6 +25,7 @@ import (
 
 	"github.com/samber/do/v2"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -102,7 +103,7 @@ func TestPeriodicServiceSpecs_IntervalsSane(t *testing.T) {
 // lifecycleManagerForMode builds the DI injector for a mode and returns
 // the resolved lifecycle manager. Hoisted out of the mode-matrix test
 // so the test body stays a flat sequence of subtests.
-func lifecycleManagerForMode(t *testing.T, mode string) *lifecycle.Manager {
+func lifecycleManagerForMode(t *testing.T, mode config.Mode) *lifecycle.Manager {
 	t.Helper()
 	cfg := happyPathConfig(t.TempDir())
 	cfg.WritePath.PendingPattern.Enabled = new(true)
@@ -121,7 +122,7 @@ func lifecycleManagerForMode(t *testing.T, mode string) *lifecycle.Manager {
 // assertModeRegistrations checks that every name in mustContain is in
 // names and every name in mustNotHave is absent. Hoisted to keep the
 // matrix loop body free of nested map/loop branches.
-func assertModeRegistrations(t *testing.T, mode string, names, mustContain, mustNotHave []string) {
+func assertModeRegistrations(t *testing.T, mode config.Mode, names, mustContain, mustNotHave []string) {
 	t.Helper()
 	have := make(map[string]struct{}, len(names))
 	for _, n := range names {
@@ -160,17 +161,17 @@ func TestLifecycleManager_ModeMatrix(t *testing.T) {
 	allModes := append(append([]string{}, proxyAlwaysOn...), workerExtras...)
 
 	tests := []struct {
-		mode        string
+		mode        config.Mode
 		mustContain []string
 		mustNotHave []string
 	}{
-		{mode: "proxy", mustContain: proxyAlwaysOn, mustNotHave: workerExtras},
-		{mode: "worker", mustContain: allModes},
-		{mode: "all", mustContain: allModes},
+		{mode: config.ModeAPI, mustContain: proxyAlwaysOn, mustNotHave: workerExtras},
+		{mode: config.ModeWorker, mustContain: allModes},
+		{mode: config.ModeAll, mustContain: allModes},
 	}
 
 	for _, tc := range tests {
-		t.Run(tc.mode, func(t *testing.T) {
+		t.Run(string(tc.mode), func(t *testing.T) {
 			t.Parallel()
 			mgr := lifecycleManagerForMode(t, tc.mode)
 			assertModeRegistrations(t, tc.mode, mgr.Names(), tc.mustContain, tc.mustNotHave)

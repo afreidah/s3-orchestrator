@@ -34,9 +34,14 @@ func Run(ctx context.Context, configPath, mode string, stdout io.Writer) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
+	m, err := config.ParseMode(mode)
+	if err != nil {
+		return err
+	}
+
 	rt, err := runtime.New(runtime.Options{
 		ConfigPath: configPath,
-		Mode:       mode,
+		Mode:       m,
 		Stdout:     stdout,
 	}, cfg)
 	if err != nil {

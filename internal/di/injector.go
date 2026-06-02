@@ -3,12 +3,13 @@
 //
 // Author: Alex Freidah
 //
-// NewInjector creates the DI container and registers every provider the
-// service needs. Providers are lazy - nothing is constructed until the
-// corresponding do.Invoke call. Optional components (encryption, cache,
-// Redis, notifications) register only when enabled in config; do.Invoke
-// returns an error for disabled services, which callers use to detect
-// absence.
+// NewInjector creates the DI container and delegates the per-domain
+// provider registrations to the grouped helpers below. Providers are
+// lazy — nothing is constructed until the matching do.Invoke call.
+// Optional components (encryption, cache, Redis, notifications, UI,
+// admin, flight recorder) register only when enabled in config;
+// do.Invoke returns an error for disabled services, which callers use
+// to detect absence.
 // -------------------------------------------------------------------------------
 
 // Package di is the single wiring point for the orchestrator. It uses
@@ -27,20 +28,39 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
-// NewInjector creates and configures the DI container. Required providers
-// are always registered. Optional providers register only when their config
-// section is enabled  -  do.Invoke returns an error for disabled services,
-// which callers use to detect absence.
-func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBuffer *telemetry.LogBuffer) do.Injector {
+// NewInjector creates the DI container and registers every provider
+// the service needs. The body is intentionally a flat sequence of
+// per-domain registration calls so a contributor can see the full
+// dependency graph in one screen; each helper below owns the
+// providers for its domain.
+func NewInjector(cfg *config.Config, mode config.Mode, logLevel *slog.LevelVar, logBuffer *telemetry.LogBuffer) do.Injector {
 	inj := do.New()
 
-	// --- Value providers (already-constructed) ---
+	registerValues(inj, cfg, mode, logLevel, logBuffer)
+	registerInfrastructure(inj)
+	registerBackendStack(inj)
+	registerWorkers(inj, cfg, mode)
+	registerTransport(inj)
+	registerOptionalFeatures(inj, cfg)
+
+	return inj
+}
+
+// registerValues seeds the injector with already-constructed values
+// (config, mode, log level, log buffer) so providers can resolve them
+// via do.Invoke without re-reading the YAML on every call.
+func registerValues(inj do.Injector, cfg *config.Config, mode config.Mode, logLevel *slog.LevelVar, logBuffer *telemetry.LogBuffer) {
 	do.ProvideValue(inj, cfg)
 	do.ProvideNamedValue(inj, "mode", mode)
 	do.ProvideValue(inj, logLevel)
 	do.ProvideValue(inj, logBuffer)
+}
 
-	// --- Required infrastructure ---
+// registerInfrastructure wires the always-on persistence,
+// observability, and identity primitives every other provider builds
+// on (metadata store, lifecycle / encryption admin views, notification
+// outbox, database circuit breaker, instance id, metric deps).
+func registerInfrastructure(inj do.Injector) {
 	do.Provide(inj, ProvideMetadataStore)
 	do.Provide(inj, ProvideLifecycleAdmin)
 	do.Provide(inj, ProvideEncryptionAdmin)
@@ -48,41 +68,53 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 	do.Provide(inj, ProvideDatabaseBreaker)
 	do.Provide(inj, ProvideInstanceID)
 	do.Provide(inj, ProvideMetricsDeps)
+}
 
+// registerBackendStack wires the storage-fleet root composition
+// objects: per-backend clients, the shared circuit-breaker registry,
+// and the BackendManager that orchestrates routing / replication /
+// drain across them.
+func registerBackendStack(inj do.Injector) {
 	do.Provide(inj, ProvideBackends)
 	do.Provide(inj, ProvideBreakerRegistry)
 	do.Provide(inj, ProvideBackendManager)
+}
 
-	// Worker providers  -  each takes BackendManager (worker.Ops) plus the
-	// per-worker store role from above. drain.Manager wires itself onto
-	// BackendManager via WireDrain so backendCore's eligibility filters
-	// see drain state.
+// registerWorkers wires the background workers and the drain manager.
+// PendingReaper and Reconciler register only when their feature is on
+// (pending-write pattern enabled / worker-side mode). drain.Manager
+// itself wires onto BackendManager via WireDrain so the eligibility
+// filters see drain state.
+func registerWorkers(inj do.Injector, cfg *config.Config, mode config.Mode) {
 	do.Provide(inj, ProvideRebalancer)
 	do.Provide(inj, ProvideReplicator)
 	do.Provide(inj, ProvideOverReplicationCleaner)
 	do.Provide(inj, ProvideCleanupWorker)
-	// PendingReaper is only registered when the pending-write pattern
-	// is enabled. Optional[*worker.PendingReaper] then reports
-	// Disabled when the feature is off, Applied when it constructs
-	// cleanly, and Failed when registration happened but construction
-	// errored - three distinct states instead of the previous (nil,nil)
-	// conflation.
 	if cfg.WritePath.PendingPattern.IsEnabled() {
 		do.Provide(inj, ProvidePendingReaper)
 	}
 	do.Provide(inj, ProvideScrubber)
 	do.Provide(inj, ProvideDrainManager)
+	if mode.IsWorker() {
+		do.Provide(inj, ProvideReconciler)
+	}
+}
 
+// registerTransport wires the always-on HTTP-side providers: bucket
+// auth, the S3 API server, and the lifecycle manager that supervises
+// the background services registered above. Conditional transport
+// surfaces (UI, admin) live in registerOptionalFeatures.
+func registerTransport(inj do.Injector) {
 	do.Provide(inj, ProvideBucketAuth)
 	do.Provide(inj, ProvideS3Server)
 	do.Provide(inj, ProvideLifecycleManager)
+}
 
-	// --- Worker-mode services (registered only in worker/all modes) ---
-	if mode == "worker" || mode == "all" {
-		do.Provide(inj, ProvideReconciler)
-	}
-
-	// --- Optional features (registered only when enabled) ---
+// registerOptionalFeatures wires every provider whose registration is
+// gated on a config flag. Disabled features intentionally never reach
+// the injector so do.Invoke returns a clear "not registered" error
+// the caller can distinguish from a runtime resolution failure.
+func registerOptionalFeatures(inj do.Injector, cfg *config.Config) {
 	if cfg.Encryption.Enabled {
 		do.Provide(inj, ProvideEncryptor)
 		do.Provide(inj, ProvideEncryptionProvider)
@@ -109,13 +141,7 @@ func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBu
 	if cfg.Debug.FlightRecorder.Enabled {
 		do.Provide(inj, ProvideFlightRecorderService)
 	}
-
-	return inj
 }
-
-// -------------------------------------------------------------------------
-// AUDIT WIRING
-// -------------------------------------------------------------------------
 
 // WireAuditMetrics connects the audit event counter to Prometheus. Called
 // from the main binary during startup, outside the injector.
