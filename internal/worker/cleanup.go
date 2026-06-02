@@ -154,7 +154,7 @@ func (w *CleanupWorker) processCleanupItem(
 
 	// 404 means the backend already agrees the object is gone, which is
 	// the desired end state. Drop the row so we don't burn 9 retries +
-	// a DLQ slot on a non-event. See issue #843.
+	// a DLQ slot on a non-event.
 	if backend.IsNotFound(delErr) {
 		w.completeCleanupAlreadyAbsent(ctx, item, processedCount)
 		return

@@ -239,10 +239,9 @@ func (b *S3Backend) GetObject(ctx context.Context, key string, rangeHeader strin
 		})
 }
 
-// mapGetObjectResult flattens an SDK GetObjectOutput into the package-local
-// GetObjectResult, defaulting ContentType to application/octet-stream when
-// the backend omits it. Extracted so GetObject's closure body stays under
-// the cognitive-complexity threshold.
+// mapGetObjectResult normalises an SDK GetObjectOutput into the
+// package-local GetObjectResult, defaulting ContentType to
+// application/octet-stream when the backend omits it.
 func mapGetObjectResult(result *s3.GetObjectOutput) *GetObjectResult {
 	out := &GetObjectResult{Body: result.Body, ContentType: "application/octet-stream"}
 	if result.ContentLength != nil {

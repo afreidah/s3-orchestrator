@@ -8,7 +8,7 @@
 // stuck half-open indefinitely when no new requests arrive.
 // Membership in the registry is decided once at DI construction time,
 // so the watchdog itself contains no type-assertion or
-// backend-discovery logic. Lives in the breaker package (#925).
+// backend-discovery logic. Lives in the breaker package.
 // -------------------------------------------------------------------------------
 
 package breaker

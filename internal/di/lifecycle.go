@@ -62,7 +62,7 @@ func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 	if ws.scrubber, err = do.Invoke[*worker.Scrubber](i); err != nil {
 		return ws, err
 	}
-	// PendingReaper is conditionally registered (#830): the provider is
+	// PendingReaper is conditionally registered: the provider is
 	// only present when cfg.WritePath.PendingPattern.IsEnabled() is
 	// true. do.Invoke returns an error for both "not registered" (
 	// feature off) and "registered but constructor failed". WireManager
@@ -72,9 +72,9 @@ func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 	return ws, nil
 }
 
-// registerWorkerServices registers the worker-mode lifecycle services on
-// sm. Pulled out of ProvideLifecycleManager so that function stays under
-// the cognitive-complexity ceiling.
+// registerWorkerServices registers the worker-mode lifecycle services
+// (multipart cleanup, cleanup queue, pending reaper, rebalancer,
+// replicator, over-replication, lifecycle, scrubber) on sm.
 func registerWorkerServices(sm *lifecycle.Manager, mgr *proxy.BackendManager, ws lifecycleWorkerSet, locker core.AdvisoryLocker, cfg *config.Config) {
 	sm.Register("multipart-cleanup", multipart.NewCleanupService(mgr.Multipart(), locker, cfg.CleanupQueue.MultipartStaleTimeout))
 	sm.Register("cleanup-queue", worker.NewCleanupQueueService(ws.cleanup, locker))

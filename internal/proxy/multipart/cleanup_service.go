@@ -6,7 +6,7 @@
 // Wraps *Manager.CleanupStaleMultipartUploads in a lifecycle.Runner
 // backed by the shared advisory-locked ticker primitive. Lives in the
 // multipart package (next to the worker that owns the work) rather
-// than internal/di (#925).
+// than internal/di.
 // -------------------------------------------------------------------------------
 
 package multipart

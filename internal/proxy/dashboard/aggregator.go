@@ -32,7 +32,7 @@ type Data struct {
 	// UnverifiedObjectCounts is per-backend count of objects with a
 	// NULL content_hash (objects that predate integrity verification or
 	// otherwise have not been checksummed). Drives the dashboard's
-	// "needs backfill" column when integrity is enabled. See #405.
+	// "needs backfill" column when integrity is enabled.
 	UnverifiedObjectCounts map[string]int64
 	ActiveMultipartCounts  map[string]int64
 	UsageStats             map[string]core.UsageStat

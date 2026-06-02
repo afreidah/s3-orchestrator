@@ -13,8 +13,8 @@
 //     manager-side lifecycleOps surface to read rules and process them.
 //
 // All other background-service factories live next to their owning
-// worker (internal/worker, internal/proxy/multipart, internal/breaker).
-// See #925 for the relocation rationale.
+// worker (internal/worker, internal/proxy/multipart, internal/breaker)
+// so the lifecycle.Runner constructor sits next to the work it owns.
 // -------------------------------------------------------------------------------
 
 package di

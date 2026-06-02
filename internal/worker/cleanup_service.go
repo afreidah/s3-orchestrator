@@ -6,7 +6,7 @@
 // Wraps *CleanupWorker in a lifecycle.Runner backed by the shared
 // advisory-locked ticker primitive. Lives next to the worker itself
 // (rather than in internal/di) so the run-loop semantics ship with the
-// worker that owns the work. See #925.
+// worker that owns the work.
 // -------------------------------------------------------------------------------
 
 package worker

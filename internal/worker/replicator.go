@@ -359,8 +359,9 @@ func (r *Replicator) FindReplicaTarget(ctx context.Context, key string, size int
 // source backend name that was successfully read from and the size_bytes
 // recorded on that source's ObjectLocation row (the size of the bytes that
 // were actually transferred). The input slice is cloned before sorting so
-// callers retain their original ordering; see #904 for the aliasing bug
-// the clone prevents.
+// callers retain their original ordering — without the clone, sort.Slice
+// reorders the caller's slice in place and the caller's later reads see
+// a different element at each index.
 func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []core.ObjectLocation, target string) (string, int64, error) {
 	targetBackend, err := r.ops.GetBackend(target)
 	if err != nil {
@@ -390,10 +391,8 @@ func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []cor
 	return "", 0, fmt.Errorf("all source copies failed for key %s", key)
 }
 
-// cmpHealthFirst orders two health flags so true (healthy) sorts before
-// false (unhealthy). The comparator inside CopyToReplica delegates to
-// this helper so the closure body stays a single expression and the
-// outer method stays under the cognitive-complexity ceiling.
+// cmpHealthFirst orders two health flags so true (healthy) sorts
+// before false (unhealthy).
 func cmpHealthFirst(aOK, bOK bool) int {
 	switch {
 	case aOK == bOK:

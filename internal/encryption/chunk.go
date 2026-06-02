@@ -57,7 +57,7 @@ var headerMagic = [4]byte{'S', 'E', 'N', 'C'}
 
 // chunkBuffers is the per-stream byte-buffer set shared by encryptReader
 // and decryptReader. Pooled on Encryptor.bufPool so the steady-state
-// Read path allocates nothing (see PR #885).
+// Read path allocates nothing.
 type chunkBuffers struct {
 	plain  []byte // chunkSize cap
 	framed []byte // NonceSize + chunkSize + TagSize cap
@@ -203,7 +203,7 @@ func (r *encryptReader) Read(p []byte) (int, error) {
 	// let gcm.Seal append ciphertext+tag. The buffer's capacity is
 	// pre-sized so neither the append nor Seal reallocates. Passing
 	// nil dst would force gcm.sliceForAppend to allocate per chunk,
-	// which used to dominate this service's allocator profile (#885).
+	// which used to dominate this service's allocator profile.
 	r.bufs.framed = append(r.bufs.framed[:0], r.bufs.nonce...)
 	r.bufs.framed = r.gcm.Seal(r.bufs.framed, r.bufs.nonce, plain, nil)
 	r.buf = r.bufs.framed
@@ -321,7 +321,7 @@ func (r *decryptReader) Read(p []byte) (int, error) {
 	// Open into the reusable plain buffer. bufs.plain has capacity
 	// chunkSize so gcm.Open's appended plaintext fits without
 	// reallocating; passing nil dst would force a fresh slice
-	// allocation per chunk via crypto/.../gcm.sliceForAppend (#885).
+	// allocation per chunk via crypto/.../gcm.sliceForAppend.
 	plain, err := r.gcm.Open(r.bufs.plain[:0], nonce, chunk[NonceSize:], nil)
 	if err != nil {
 		return 0, fmt.Errorf("decrypt chunk %d: %w", r.chunkIdx-1, err)

@@ -55,7 +55,7 @@ func registerAdminHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Confi
 	// Panic-recovery middleware wraps the rate-limited handler so a
 	// panic anywhere in the admin chain (handler or rate limiter)
 	// produces a JSON 500 with a request id instead of a TCP RST
-	// (#798).
+	//.
 	adminHTTP = httputil.PanicRecover("admin", adminPanicWriter)(adminHTTP)
 	mux.Handle("/admin/", adminHTTP)
 	slog.InfoContext(context.Background(), "admin API enabled",
@@ -67,10 +67,10 @@ func registerAdminHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Confi
 
 // registerUIHandler mounts the optional web UI dashboard.
 //
-// Panic recovery is intentionally NOT applied to the UI surface in
-// #798's first iteration. UI routes register themselves on the same
-// mux as the S3 catch-all, so wrapping requires re-architecting the UI
-// handler to expose its sub-routes for individual wrapping. UI is
+// Panic recovery is intentionally NOT applied to the UI surface.
+// UI routes register themselves on the same mux as the S3 catch-all,
+// so wrapping requires re-architecting the UI handler to expose its
+// sub-routes for individual wrapping. UI is
 // also the lowest panic-risk surface (mostly static reads from cached
 // data, no streaming bodies); the bulk of the recovery value comes
 // from S3 (large blast radius, complex paths) and admin (state-
@@ -94,7 +94,7 @@ func registerUIHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 // registerS3Handler mounts the S3 proxy on / with optional rate limiting
 // and admission control.
 //
-// Admission model (see #835 and internal/di/backend.go admissionSemFor):
+// Admission model (see internal/di/backend.go admissionSemFor):
 //
 //   - Split mode (both MaxConcurrentReads and MaxConcurrentWrites set):
 //     a fresh read semaphore is created here sized to MaxConcurrentReads;
@@ -162,8 +162,8 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 
 	// Panic-recovery middleware wraps the entire S3 stack (admission
 	// + rate-limit + handler) so a panic anywhere in the chain
-	// produces an S3-XML 500 with a request id rather than a TCP RST
-	// (#798). Outermost wrap so it catches panics that escape the
+	// produces an S3-XML 500 with a request id rather than a TCP RST.
+	// Outermost wrap so it catches panics that escape the
 	// inner middlewares too.
 	s3Handler = httputil.PanicRecover("s3", s3api.WriteS3Error)(s3Handler)
 
@@ -178,7 +178,7 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 // adminPanicWriter emits the admin surface's 500 response. Admin
 // clients are HTTP/JSON, so the panic-recovery message goes back as
 // a JSON {"error": "..."} body matching the rest of the admin error
-// shape (#798).
+// shape.
 func adminPanicWriter(w http.ResponseWriter, status int, _ string, message string) {
 	httputil.WriteJSONError(w, status, message)
 }

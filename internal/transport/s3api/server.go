@@ -319,8 +319,7 @@ func (s *Server) routeBucketRequest(ctx context.Context, w http.ResponseWriter, 
 }
 
 // objectRouteKey carries the path-derived identifiers a per-object
-// dispatcher needs. Bundling them keeps the dispatcher signatures under
-// the parameter-count limit.
+// dispatcher needs.
 type objectRouteKey struct {
 	method      string
 	bucket      string
