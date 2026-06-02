@@ -148,7 +148,7 @@ func generateSelfSignedCert(t *testing.T, dir string) (certPath, keyPath string)
 // injector, and forces eager construction of every service httpserver.New
 // will resolve so the tests do not have to drive the runtime package
 // directly. Returns the cfg, injector, and a cleanup func.
-func resolvedInjector(t *testing.T, cfg *config.Config, mode string) (do.Injector, func()) {
+func resolvedInjector(t *testing.T, cfg *config.Config, mode config.Mode) (do.Injector, func()) {
 	t.Helper()
 
 	var logLevel slog.LevelVar
@@ -556,7 +556,7 @@ func TestServer_RunWithSeparateMetrics(t *testing.T) {
 // reachable through a freshly assembled Server.
 func TestNew_HealthRoutesMounted(t *testing.T) {
 	cfg := loadCfg(t, validTestConfigYAML)
-	inj, cleanup := resolvedInjector(t, cfg, "all")
+	inj, cleanup := resolvedInjector(t, cfg, config.ModeAll)
 	defer cleanup()
 
 	var ready atomic.Bool
@@ -616,7 +616,7 @@ ui:
 `, port)
 
 	cfg := loadCfg(t, yaml)
-	inj, cleanup := resolvedInjector(t, cfg, "all")
+	inj, cleanup := resolvedInjector(t, cfg, config.ModeAll)
 	defer cleanup()
 
 	var ready atomic.Bool
@@ -665,7 +665,7 @@ backends:
     secret_access_key: sk
 `
 	cfg := loadCfg(t, yaml)
-	inj, cleanup := resolvedInjector(t, cfg, "all")
+	inj, cleanup := resolvedInjector(t, cfg, config.ModeAll)
 	defer cleanup()
 
 	var ready atomic.Bool

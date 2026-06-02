@@ -33,17 +33,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
-// Daemon mode strings. registerS3Handler and registerUIHandler are only
-// mounted in "api" and "all" modes; worker-only mode exposes neither.
-const (
-	ModeAPI = "api"
-	ModeAll = "all"
-)
-
 // Deps holds the dependencies New requires.
 type Deps struct {
 	Cfg       *config.Config
-	Mode      string
+	Mode      config.Mode
 	Injector  do.Injector
 	Ready     *atomic.Bool
 	DBBreaker func() *breaker.CircuitBreaker
@@ -82,7 +75,7 @@ func New(deps Deps) (*Server, error) {
 		return nil, err
 	}
 
-	if deps.Mode == ModeAPI || deps.Mode == ModeAll {
+	if deps.Mode.IsAPI() {
 		if err := registerUIHandler(mux, deps.Injector, deps.Cfg); err != nil {
 			return nil, err
 		}

@@ -48,7 +48,7 @@ import (
 // Options carries the inputs the CLI Run passes through to runtime.
 type Options struct {
 	ConfigPath string
-	Mode       string
+	Mode       config.Mode
 	Stdout     io.Writer
 }
 
