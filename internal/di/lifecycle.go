@@ -106,7 +106,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	mode, err := do.InvokeNamed[string](i, "mode")
+	mode, err := do.InvokeNamed[config.Mode](i, "mode")
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +118,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 		sm.Register("flight-recorder", fr)
 	}
 
-	if mode != "worker" && mode != "all" {
+	if !mode.IsWorker() {
 		return sm, nil
 	}
 
