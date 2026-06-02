@@ -85,7 +85,7 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 
 // clearExistingCopies deletes every prior copy of the key and accumulates
 // per-backend negative deltas in the supplied map (caller applies the
-// deltas in stable order via applyQuotaDeltas, see #687). Copies on
+// deltas in stable order via applyQuotaDeltas). Copies on
 // backends other than newBackend are returned as DeletedCopy entries so
 // the caller can enqueue them for physical orphan cleanup.
 func clearExistingCopies(ctx context.Context, tx TxAdapter, key, newBackend string, existing []ExistingCopy, deltas map[string]int64) ([]DeletedCopy, error) {

@@ -177,7 +177,7 @@ var (
 	)
 
 	// HTTPPanicRecoveredTotal counts panics caught by the HTTP panic-
-	// recovery middleware (#798). A non-zero value means a request
+	// recovery middleware. A non-zero value means a request
 	// handler panicked and the recovery layer translated it into a 500
 	// response; the matching slog.ErrorContext line carries the panic
 	// value, the captured stack, and the request id. Label scopes the

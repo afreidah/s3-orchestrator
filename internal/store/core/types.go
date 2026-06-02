@@ -157,12 +157,10 @@ type MultipartUpload struct {
 }
 
 // MultipartPart describes a single uploaded part of an active upload.
-// PartNumber is int (not int32) to match S3 SDK conventions and the
-// existing engine convention; the sqlc row's int32 column value is
-// widened by the engine adapter on read. UploadID is omitted because
-// parts are always queried in the context of a specific upload, and
-// adding it would push the struct past gocritic's hugeParam threshold
-// in callers that range over a slice of parts.
+// PartNumber is int (not int32) to match S3 SDK conventions; the
+// sqlc row's int32 value is widened by the engine adapter on read.
+// UploadID is omitted because parts are always queried in the context
+// of a specific upload.
 type MultipartPart struct {
 	PartNumber    int
 	ETag          string

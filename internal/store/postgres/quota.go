@@ -119,7 +119,7 @@ func (s *Store) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
 // GetUnverifiedObjectCounts returns the number of objects per backend whose
 // content_hash column is NULL (objects predating integrity verification
 // or otherwise not yet checksummed). Drives the dashboard's "needs
-// backfill" column. See #405.
+// backfill" column.
 func (s *Store) GetUnverifiedObjectCounts(ctx context.Context) (map[string]int64, error) {
 	rows, err := s.queries.GetUnverifiedObjectCountsByBackend(ctx)
 	if err != nil {

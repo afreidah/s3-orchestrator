@@ -78,15 +78,12 @@ func objectFromEnc(key, backend string, size int64, enc *EncryptionMeta) *Object
 // QUOTA DELTA APPLICATION
 // -------------------------------------------------------------------------
 
-// applyQuotaDeltas applies signed byte deltas to backend_quotas rows in
-// stable backend_name order. Acquiring backend_quotas row locks in a
-// deterministic global order is what prevents the deadlock storm
-// observed in #687 - any two concurrent transactions that touch the
-// same backend set request locks in the same sequence, so one queues
-// behind the other instead of forming a cycle.
-//
-// Negative deltas decrement (the SQL clamps to zero); positive deltas
-// increment; zero deltas are skipped so net-zero same-backend overwrites
+// applyQuotaDeltas applies signed byte deltas to backend_quotas rows
+// in stable backend_name order. The deterministic ordering prevents
+// row-lock cycles: concurrent transactions touching the same backend
+// set acquire locks in the same sequence and queue rather than
+// deadlock. Negative deltas decrement (SQL clamps to zero); positive
+// increment; zero is skipped so net-zero same-backend overwrites
 // produce no SQL call.
 func applyQuotaDeltas(ctx context.Context, tx TxAdapter, deltas map[string]int64) error {
 	if len(deltas) == 0 {

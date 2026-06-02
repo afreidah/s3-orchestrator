@@ -35,7 +35,7 @@ import (
 // header) come from bufPool. Reusing the same buffer set across streams
 // keeps the encrypt + decrypt hot path allocation-free once the pool is
 // warm; under load the orchestrator was previously dominated by these
-// per-stream allocations (PR #885).
+// per-stream allocations.
 type Encryptor struct {
 	provider  KeyProvider
 	chunkSize int

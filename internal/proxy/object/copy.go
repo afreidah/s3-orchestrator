@@ -148,7 +148,7 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 	// Content-Length survives to the backend. The dest PUT goes
 	// through the centralized backend-timeout policy so a stalled
 	// destination cannot tie up the request past the configured
-	// backend_timeout (#882).
+	// backend_timeout.
 	wctx, wcancel := o.core.WithTimeout(ctx)
 	defer wcancel()
 	etag, err := destBackend.PutObject(wctx, destKey, src.body, size, contentType, metadata)
@@ -216,7 +216,7 @@ type nativeCopyContext struct {
 // before the function decides whether to surface the error or fall back.
 // This guards against the ambiguous case where the backend completed the
 // copy server-side but the response was lost (timeout, dropped connection)
-// - falling back blindly would duplicate the work. See issue #884.
+// - falling back blindly would duplicate the work.
 func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyContext) (string, bool, error) {
 	copier, ok := req.destBackend.(s3be.BackendCopier)
 	if !ok {
@@ -247,11 +247,10 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyContext) (st
 // capability native-copy error to disambiguate "copy succeeded server-
 // side but the response was lost" from "copy actually failed." Returns
 // (etag, true) when the destination exists and the size matches the
-// expected source size; returns ("", false) otherwise so the caller
-// falls back to materialized copy. A 404 on the HEAD is treated as a
-// clean fallback signal; any other HEAD error is also a fallback but
-// is logged as a warn so operators see the probe failure mode. See
-// issue #884.
+// expected source size; ("", false) otherwise so the caller falls
+// back to materialized copy. A 404 on the HEAD is a clean fallback
+// signal; any other HEAD error is also a fallback but is logged as a
+// warn so operators see the probe failure mode.
 func (o *Manager) probeDestAfterAmbiguousCopy(ctx context.Context, req *nativeCopyContext, origErr error) (string, bool) {
 	hctx, hcancel := o.core.WithTimeout(ctx)
 	defer hcancel()

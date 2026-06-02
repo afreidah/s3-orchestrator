@@ -371,7 +371,7 @@ type pendingProbe struct {
 // discarded. With no cap the first call launches every backend at once
 // (historical behaviour). With a positive cap, the first cap probes
 // launch immediately and each failure replenishes the next pending
-// backend so at most cap goroutines are ever in flight (#858).
+// backend so at most cap goroutines are ever in flight.
 func (f *Failover) tryBackendsInParallel(
 	ctx context.Context,
 	operation, key string,

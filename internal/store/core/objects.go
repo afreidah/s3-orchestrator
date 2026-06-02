@@ -44,7 +44,7 @@ func RecordObjectAndClearPending(ctx context.Context, runner Runner, key, backen
 // recordObjectTx is the shared transactional body. When intentID is
 // non-empty the same transaction also deletes the corresponding
 // pending row. All per-backend quota deltas are aggregated and applied
-// in stable backend_name order via applyQuotaDeltas (see #687) so
+// in stable backend_name order via applyQuotaDeltas so
 // concurrent overwrites can never deadlock on backend_quotas row locks.
 func recordObjectTx(ctx context.Context, tx TxAdapter, key, backend string, size int64, enc *EncryptionMeta, intentID string) ([]DeletedCopy, error) {
 	if err := tx.AcquireKeyLock(ctx, key); err != nil {
@@ -81,7 +81,7 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, key, backend string, size
 // DeleteObject removes all copies of an object and decrements their
 // quotas. Returns ErrObjectNotFound if the object doesn't exist;
 // otherwise returns the deleted copies for cleanup. Quota deltas apply
-// in stable backend_name order (see #687).
+// in stable backend_name order.
 func DeleteObject(ctx context.Context, runner Runner, key string) ([]DeletedCopy, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) ([]DeletedCopy, error) {
 		existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
@@ -136,7 +136,7 @@ func DeleteObjectsBatch(ctx context.Context, runner Runner, keys []string) (map[
 		// Per-key copies for the caller, plus per-backend totals so we
 		// decrement each backend's quota exactly once instead of once
 		// per displaced copy. Deltas apply in stable backend_name
-		// order via applyQuotaDeltas (see #687); the previous
+		// order via applyQuotaDeltas; the previous
 		// map-iteration order was non-deterministic and let two
 		// concurrent batch deletes deadlock on backend_quotas locks.
 		copies := make(map[string][]DeletedCopy, len(keys))
@@ -192,7 +192,7 @@ func MoveObjectLocation(ctx context.Context, runner Runner, key, fromBackend, to
 		if err := tx.InsertObjectLocation(ctx, dest); err != nil {
 			return 0, err
 		}
-		// Apply both quota deltas in stable order (#687): a concurrent
+		// Apply both quota deltas in stable order: a concurrent
 		// move in the opposite direction (b1->b2 vs b2->b1) used to
 		// lock the two rows in opposite sequences and deadlock.
 		if err := applyQuotaDeltas(ctx, tx, map[string]int64{

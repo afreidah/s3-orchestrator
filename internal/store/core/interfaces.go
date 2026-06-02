@@ -85,10 +85,8 @@ type MultipartStore interface {
 }
 
 // CreateMultipartUploadParams bundles the fields a CreateMultipartUpload
-// row needs at insert time. Pulled into a struct because the optional
-// upload-level encryption fields would otherwise push the call signature
-// past gocritic's parameter-count limit and force every call site to
-// pass empty values for non-encrypted uploads.
+// row needs at insert time. The optional upload-level encryption fields
+// stay nil for non-encrypted uploads so call sites can omit them.
 type CreateMultipartUploadParams struct {
 	UploadID      string
 	ObjectKey     string

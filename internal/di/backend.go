@@ -90,7 +90,7 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 		if bcfg.MaxObjectSize > 0 {
 			maxSizes[bcfg.Name] = bcfg.MaxObjectSize
 		}
-		//nolint:sloglint // bootstrap log; no request/span ctx exists yet (#831)
+		//nolint:sloglint // bootstrap log; no request/span ctx exists yet
 		slog.Info("backend initialized",
 			logfmt.Component("di"),
 			"backend", bcfg.Name,
@@ -146,7 +146,7 @@ func ProvideEncryptor(i do.Injector) (*encryption.Encryptor, error) {
 	if err != nil {
 		return nil, err
 	}
-	//nolint:sloglint // bootstrap log; no request/span ctx exists yet (#831)
+	//nolint:sloglint // bootstrap log; no request/span ctx exists yet
 	slog.Info("server-side encryption enabled",
 		logfmt.Component("di"),
 		"chunk_size", cfg.Encryption.ChunkSize,
@@ -189,7 +189,7 @@ func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, er
 	if err != nil {
 		return nil, err
 	}
-	//nolint:sloglint // bootstrap log; no request/span ctx exists yet (#831)
+	//nolint:sloglint // bootstrap log; no request/span ctx exists yet
 	slog.Info("Redis shared counters enabled",
 		logfmt.Component("di"),
 		"address", cfg.Redis.Address,
@@ -211,7 +211,7 @@ func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error) {
 	if err != nil {
 		return nil, err
 	}
-	//nolint:sloglint // bootstrap log; no request/span ctx exists yet (#831)
+	//nolint:sloglint // bootstrap log; no request/span ctx exists yet
 	slog.Info("object data cache enabled",
 		logfmt.Component("di"),
 		"max_size", cfg.Cache.MaxSize,
@@ -299,30 +299,15 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 }
 
 // admissionSemFor returns the shared admission semaphore that lives on
-// BackendManager. Behaviour by configuration shape (#835 documents the
-// historical intent so future readers do not have to reverse-engineer it
-// from the call sites in transport/httpserver/routes.go):
-//
-//   - Split mode (both MaxConcurrentReads and MaxConcurrentWrites set):
-//     the returned channel is sized to MaxConcurrentWrites and acts as
-//     the "writes-and-workers" pool. The HTTP read pool is created
-//     locally in routes.go as a separate channel sized to
-//     MaxConcurrentReads. Background workers (cleanup, replication,
-//     rebalance, pending reaper, over-replication) all acquire from this
-//     same writes pool via WithAdmission, so reads are isolated from
-//     worker activity while writes share their budget with workers.
-//   - Merged mode (only MaxConcurrentRequests set): single channel sized
-//     to MaxConcurrentRequests acts as the global pool. HTTP reads,
-//     HTTP writes, and background workers all contend for the same
-//     slots. Simpler to operate; less isolation.
-//   - Neither set: returns nil (no admission cap; admission middleware
-//     is also not installed in routes.go).
-//
-// The asymmetry is intentional. Workers do write-like work (DELETE,
-// PUT, COPY) so grouping them with HTTP writes keeps the read budget a
-// clean ceiling on read-side traffic in split mode. Operators sizing
-// MaxConcurrentWrites should account for worker activity as well as
-// HTTP write traffic.
+// BackendManager. In split mode the returned channel is sized to
+// MaxConcurrentWrites and is shared by HTTP writes and all background
+// workers (cleanup, replication, rebalance, pending reaper,
+// over-replication); reads run on a separate read-only pool created in
+// routes.go. In merged mode a single channel sized to
+// MaxConcurrentRequests is shared by everything. Returns nil when
+// neither is set (no admission cap). The split-mode grouping is
+// deliberate: workers do write-like work, so operators sizing
+// MaxConcurrentWrites must account for worker traffic too.
 func admissionSemFor(s *config.ServerConfig) chan struct{} {
 	switch {
 	case s.MaxConcurrentReads > 0 && s.MaxConcurrentWrites > 0:

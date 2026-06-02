@@ -6,7 +6,7 @@
 // DeleteObject single-key fanout (metadata delete in one tx, then a
 // concurrent backend DELETE per copy) and DeleteObjects batch flattening
 // + bounded-concurrency worker pool. Per-backend DELETE API-call
-// accounting is owned by writepath.Coordinator.DeleteOrEnqueue (#881);
+// accounting is owned by writepath.Coordinator.DeleteOrEnqueue;
 // success-finalization helpers live in mutation_finalize.go.
 // -------------------------------------------------------------------------------
 

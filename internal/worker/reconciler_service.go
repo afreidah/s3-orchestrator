@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Wraps *Reconciler in a lifecycle.Runner backed by the shared
-// advisory-locked ticker primitive (#925).
+// advisory-locked ticker primitive.
 // -------------------------------------------------------------------------------
 
 package worker

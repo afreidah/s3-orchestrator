@@ -62,7 +62,7 @@ func WireManager(inj do.Injector) error {
 	// registered but its construction errored; log it so a broken-but-
 	// configured reaper does not silently turn into "feature off".
 	if prRes := Optional[*worker.PendingReaper](inj); prRes.Failed() {
-		//nolint:sloglint // bootstrap warn; no request/span ctx exists during wiring (#831)
+		//nolint:sloglint // bootstrap warn; no request/span ctx exists during wiring
 		slog.Warn("pending reaper resolution failed; manager will run without it",
 			logfmt.Component("di"),
 			"error", prRes.Err)

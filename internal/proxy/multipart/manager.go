@@ -76,7 +76,7 @@ type Manager struct {
 	encryptor    *encryption.Encryptor
 	objectCache  objcache.ObjectCache
 	dekCache     *syncutil.TTLCache[string, []byte]
-	integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig] // nil-safe; controls plaintext SHA-256 on Complete (#916)
+	integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig] // nil-safe; controls plaintext SHA-256 on Complete
 	log          *slog.Logger
 }
 
@@ -84,7 +84,7 @@ type Manager struct {
 // write coordinator. All dependencies must be non-nil; nothing is
 // patched in post-construction. integrityCfg is nil-safe - when nil or
 // disabled, CompleteMultipartUpload skips the plaintext-hash tee that
-// populates content_hash on the recorded location (#916). The
+// populates content_hash on the recorded location. The
 // component-scoped logger is built in the constructor body per the
 // project's logging convention.
 func New(core MultipartCore, coord *writepath.Coordinator, stores Stores, encryptor *encryption.Encryptor, objectCache objcache.ObjectCache, dekCacheTTL time.Duration, integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]) *Manager {
@@ -654,7 +654,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// Tee the plaintext stream through SHA-256 when integrity is on so
 	// the assembled object lands with a content_hash matching the
 	// regular PutObject path. Without this, the scrubber cannot verify
-	// multipart-completed objects (#916).
+	// multipart-completed objects.
 	hasher := mp.newIntegrityHasher()
 	assembleReader := io.Reader(pr)
 	if hasher != nil {
@@ -666,8 +666,8 @@ func (mp *Manager) completeMultipartUploadLocked(
 		return "", err
 	}
 
-	// Final assembly PUT runs under the configured backend timeout
-	// (#882). The pipe reader is fed by the part-download goroutines,
+	// Final assembly PUT runs under the configured backend timeout.
+	// The pipe reader is fed by the part-download goroutines,
 	// so the timeout covers the full "stream parts -> assemble -> PUT"
 	// pipeline; a tighter caller deadline (from the inbound HTTP
 	// request) still wins.
@@ -724,7 +724,7 @@ func (mp *Manager) cleanupCompletedUpload(ctx context.Context, span trace.Span, 
 // newIntegrityHasher returns a fresh SHA-256 hasher when integrity
 // verification is enabled, or nil to signal "skip hashing." Mirrors the
 // gate used by the regular PutObject path so the multipart-completed
-// object carries the same content_hash semantics (#916).
+// object carries the same content_hash semantics.
 func (mp *Manager) newIntegrityHasher() hash.Hash {
 	if mp.integrityCfg == nil {
 		return nil

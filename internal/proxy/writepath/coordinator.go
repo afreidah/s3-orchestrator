@@ -135,16 +135,15 @@ func (w *Coordinator) RecordObjectOrCleanup(ctx context.Context, span trace.Span
 	return nil
 }
 
-// RecoverFromRecordFailure runs the post-record-failure cleanup sequence
-// shared by RecordObjectOrCleanup and the multipart UploadPart record
-// path. Accounts for both API calls the failure path made (the original
-// PUT and the cleanup DELETE) regardless of whether the cleanup succeeds.
-// On cleanup failure the orphan is enqueued for the cleanup-queue worker
-// with the supplied reason. A backend 404 is treated as idempotent
+// RecoverFromRecordFailure runs the post-record-failure cleanup
+// sequence shared by RecordObjectOrCleanup and the multipart
+// UploadPart record path. Accounts for both API calls the failure
+// path made (the original PUT and the cleanup DELETE) regardless of
+// whether the cleanup succeeds; enqueues the orphan with the supplied
+// reason on cleanup failure. A backend 404 is treated as idempotent
 // success and skips the enqueue so the cleanup queue does not collect
-// phantom rows for objects the backend already agrees are gone (#880
-// completes the GH_ISSUE_843 story). Callers are responsible for the
-// failure log message and span status before/after this call.
+// phantom rows for objects already gone. Callers own the failure log
+// message and span status before/after this call.
 func (w *Coordinator) RecoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, backendName, key, cleanupReason string, size int64) {
 	w.core.Acct().APICall(backendName) // PUT that succeeded
 	delErr := w.core.DeleteWithTimeout(ctx, be, key)
@@ -155,7 +154,7 @@ func (w *Coordinator) RecoverFromRecordFailure(ctx context.Context, be backend.O
 	// A 404 means the backend already agrees the object is gone, which
 	// is the desired end state. Skip enqueueing so we don't seed the
 	// cleanup queue with rows the cleanup worker would also have to
-	// recognise as no-ops (#880).
+	// recognise as no-ops.
 	if backend.IsNotFound(delErr) {
 		w.log.InfoContext(ctx, "orphan cleanup target already absent on backend",
 			"key", key, "backend", backendName, "reason", cleanupReason)
@@ -280,7 +279,7 @@ func (w *Coordinator) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBack
 	// A 404 means the backend already agrees the object is gone, which
 	// is the desired end state. Skip enqueueing so we don't seed the
 	// cleanup queue with rows the cleanup worker would also have to
-	// recognise as no-ops. See issue #843.
+	// recognise as no-ops.
 	if backend.IsNotFound(err) {
 		w.log.InfoContext(ctx, "delete target already absent on backend, skipping cleanup enqueue",
 			"backend", backendName, "key", key, "reason", reason)
@@ -387,9 +386,9 @@ type MoveRequest struct {
 // raced row, and on success a source-side DeleteOrEnqueue plus the
 // canonical accounting (Egress on src + Ingress on dest).
 //
-// DeleteOrEnqueue owns the per-backend DELETE API-call tick (#881 /
-// #917) so this method does NOT call Acct().APICall(...) on the
-// destination cleanup or the source delete.
+// DeleteOrEnqueue owns the per-backend DELETE API-call tick, so this
+// method does NOT call Acct().APICall(...) on the destination cleanup
+// or the source delete.
 //
 // Returns:
 //   - (movedSize, nil) on success

@@ -101,9 +101,8 @@ func (s *Store) ClaimPendingCleanups(ctx context.Context, limit int, instanceID 
 	return items, nil
 }
 
-// selectClaimableRows fetches the next batch of cleanup_queue rows that
-// satisfy ClaimPendingCleanups' eligibility predicates. Extracted so the
-// outer ClaimPendingCleanups stays under the cognitive-complexity bar.
+// selectClaimableRows fetches the next batch of cleanup_queue rows
+// that satisfy ClaimPendingCleanups' eligibility predicates.
 func selectClaimableRows(ctx context.Context, tx *sql.Tx, now, cutoff string, limit int) ([]core.CleanupItem, error) {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT id, backend_name, object_key, reason, attempts, size_bytes,

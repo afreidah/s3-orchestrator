@@ -6,7 +6,7 @@
 // Wraps *PendingReaper in a lifecycle.Runner backed by the shared
 // advisory-locked ticker primitive. Returns nil when the reaper is
 // disabled so the lifecycle manager can skip registration without a
-// dependency hole. See #925.
+// dependency hole.
 // -------------------------------------------------------------------------------
 
 package worker

@@ -76,11 +76,10 @@ func Sorted(
 	return nil
 }
 
-// mergeState holds the rolling cursor pair plus the callbacks the merge
-// loop dispatches to. Pulling the four-variable cursor state into a struct
-// is the only way to extract the per-branch bodies into methods without
-// passing pointers to every variable on every call  -  and the extraction is
-// what keeps each method below the cognitive-complexity threshold.
+// mergeState holds the rolling cursor pair plus the callbacks the
+// merge loop dispatches to. Bundling the four-variable cursor state
+// lets per-branch advancement live in methods on mergeState rather
+// than free functions taking pointers to every cursor.
 type mergeState struct {
 	s3, db   keySource
 	s3Cur    Entry

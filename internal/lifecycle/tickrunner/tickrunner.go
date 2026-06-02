@@ -9,7 +9,7 @@
 // health snapshotting, and the worker-tick telemetry counters. Moved out
 // of internal/di to its own package so worker subsystems can construct
 // their own services without going through DI, leaving DI focused on
-// wiring (#925).
+// wiring.
 // -------------------------------------------------------------------------------
 
 package tickrunner
