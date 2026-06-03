@@ -2544,13 +2544,12 @@ func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 		t.Fatalf("expected 3 backends, got %v", backends)
 	}
 
-	// Start draining the first backend where the object was placed
+	// Mark the first backend draining so the cleaner scores its copy lowest,
+	// without launching the real drain goroutine -- that would race the
+	// explicit Clean below and remove the copy itself.
 	drainTarget := backends[0]
-
-	if err := mgr.Drain().StartDrain(ctx, drainTarget); err != nil {
-		t.Fatalf("StartDrain: %v", err)
-	}
-	defer mgr.Drain().CancelDrain(drainTarget)
+	mgr.Drain().SeedActiveForTest(drainTarget)
+	defer mgr.Drain().ClearState()
 
 	// Clean with factor=2 -> should remove 1 copy, preferring the draining backend (score 0)
 	removed, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{

@@ -104,7 +104,7 @@ type ReplicationStore interface {
 	RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string) (size int64, inserted bool, err error)
 	GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
 	CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error)
-	RemoveExcessCopy(ctx context.Context, key, backendName string, size int64) error
+	RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (removed bool, err error)
 }
 
 // CleanupStore defines cleanup queue and orphan byte tracking operations.

@@ -560,8 +560,7 @@ func TestStoreInt_GetUnverifiedObjectCounts(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // TestStoreInt_ReplicationQueries verifies the under/over-replication
-// queries run, GetObjectCopiesForUpdate runs, and CountOverReplicated
-// returns a non-error count.
+// queries run and CountOverReplicated returns a non-error count.
 func TestStoreInt_ReplicationQueries(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
@@ -576,9 +575,6 @@ func TestStoreInt_ReplicationQueries(t *testing.T) {
 	}
 	if _, err := s.CountOverReplicatedObjects(ctx, 1); err != nil {
 		t.Errorf("CountOverReplicatedObjects: %v", err)
-	}
-	if _, err := s.GetObjectCopiesForUpdate(ctx, uniqueKey(t, "missing")); err != nil {
-		t.Errorf("GetObjectCopiesForUpdate: %v", err)
 	}
 }
 

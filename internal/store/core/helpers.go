@@ -134,3 +134,17 @@ func displacedFromExisting(existing []ExistingCopy, newBackend string) []Deleted
 	}
 	return displaced
 }
+
+// copySizeForBackend returns the SizeBytes of the copy held on backendName
+// and true, or (0, false) when the locked re-read holds no copy there.
+// Reading the size from the locked set rather than the caller's stale value
+// keeps object_locations.size_bytes and backend_quotas.bytes_used in
+// agreement across a concurrent overwrite.
+func copySizeForBackend(existing []ExistingCopy, backendName string) (int64, bool) {
+	for _, ec := range existing {
+		if ec.BackendName == backendName {
+			return ec.SizeBytes, true
+		}
+	}
+	return 0, false
+}

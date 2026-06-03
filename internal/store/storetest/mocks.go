@@ -987,17 +987,18 @@ func (mr *MockMetadataStoreMockRecorder) RecordReplica(ctx, key, targetBackend, 
 }
 
 // RemoveExcessCopy mocks base method.
-func (m *MockMetadataStore) RemoveExcessCopy(ctx context.Context, key, backendName string, size int64) error {
+func (m *MockMetadataStore) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RemoveExcessCopy", ctx, key, backendName, size)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "RemoveExcessCopy", ctx, key, backendName, factor)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // RemoveExcessCopy indicates an expected call of RemoveExcessCopy.
-func (mr *MockMetadataStoreMockRecorder) RemoveExcessCopy(ctx, key, backendName, size any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) RemoveExcessCopy(ctx, key, backendName, factor any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveExcessCopy", reflect.TypeOf((*MockMetadataStore)(nil).RemoveExcessCopy), ctx, key, backendName, size)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveExcessCopy", reflect.TypeOf((*MockMetadataStore)(nil).RemoveExcessCopy), ctx, key, backendName, factor)
 }
 
 // RetryCleanupItem mocks base method.

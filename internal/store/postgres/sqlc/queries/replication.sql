@@ -59,12 +59,6 @@ FROM (
     HAVING COUNT(*) > @factor::bigint
 ) over_replicated;
 
--- name: GetObjectCopiesForUpdate :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
-FROM object_locations
-WHERE object_key = $1
-FOR UPDATE;
-
 -- name: InsertReplicaConditional :one
 -- Returns the size_bytes that was actually inserted into object_locations
 -- (read from the source row in the same statement). Caller uses this size

@@ -146,7 +146,7 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 		"b2": {BytesUsed: 100, BytesLimit: 1000}, // 10% -> higher score
 	}
 
-	removed := c.cleanObject(context.Background(), "key1", copies, 1, stats)
+	removed := c.cleanObject(context.Background(), "key1", copies, 1, 1, stats)
 	if removed != 1 {
 		t.Errorf("removed = %d, want 1", removed)
 	}
@@ -185,8 +185,39 @@ func TestCleanObject_DoesNotDoubleCountAPICalls(t *testing.T) {
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
 
-	if removed := c.cleanObject(context.Background(), "key1", copies, 1, stats); removed != 1 {
+	if removed := c.cleanObject(context.Background(), "key1", copies, 1, 1, stats); removed != 1 {
 		t.Errorf("removed = %d, want 1", removed)
+	}
+}
+
+// TestCleanObject_SkipsBackendDeleteOnRaceNoOp verifies that when
+// RemoveExcessCopy reports removed=false (a concurrent path already
+// absorbed the excess), the cleaner counts nothing and never touches the
+// backend -- no GetBackend, no DeleteOrEnqueue. The unset gomock
+// expectations assert the latter.
+func TestCleanObject_SkipsBackendDeleteOnRaceNoOp(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{removeExcessNoOp: true}
+
+	be1 := backendtest.NewMockObjectBackend(ctrl)
+	be2 := backendtest.NewMockObjectBackend(ctrl)
+	ops.EXPECT().IsDraining(gomock.Any()).Return(false).AnyTimes()
+	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be1, "b2": be2}).AnyTimes()
+
+	c := NewOverReplicationCleaner(ops, ms)
+	copies := []core.ObjectLocation{
+		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
+		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
+	}
+	stats := map[string]core.QuotaStat{
+		"b1": {BytesUsed: 900, BytesLimit: 1000},
+		"b2": {BytesUsed: 100, BytesLimit: 1000},
+	}
+
+	if removed := c.cleanObject(context.Background(), "key1", copies, 1, 1, stats); removed != 0 {
+		t.Errorf("removed = %d, want 0 on benign no-op", removed)
 	}
 }
 

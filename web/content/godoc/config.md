@@ -37,6 +37,10 @@ Package config provides YAML configuration loading with environment variable exp
 - [type LifecycleConfig](<#LifecycleConfig>)
 - [type LifecycleRule](<#LifecycleRule>)
 - [type MetricsConfig](<#MetricsConfig>)
+- [type Mode](<#Mode>)
+  - [func ParseMode\(s string\) \(Mode, error\)](<#ParseMode>)
+  - [func \(m Mode\) IsAPI\(\) bool](<#Mode.IsAPI>)
+  - [func \(m Mode\) IsWorker\(\) bool](<#Mode.IsWorker>)
 - [type NotificationConfig](<#NotificationConfig>)
 - [type NotificationEndpoint](<#NotificationEndpoint>)
 - [type PendingPatternConfig](<#PendingPatternConfig>)
@@ -573,6 +577,56 @@ type MetricsConfig struct {
     Pprof   bool   `yaml:"pprof"`  // Mount /debug/pprof/* on the metrics listener. Off by default; requires Listen to be set.
 }
 ```
+
+<a name="Mode"></a>
+## type [Mode](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/mode.go#L22>)
+
+Mode selects which subsystems the daemon brings up.
+
+- ModeAPI: HTTP server \+ S3 / UI / admin handlers. No background workers.
+- ModeWorker: background workers only \(rebalancer, replicator, cleanup, scrubber, reconciler, lifecycle, pending reaper\). No HTTP serving beyond health endpoints.
+- ModeAll: both, single\-instance deployment.
+
+```go
+type Mode string
+```
+
+<a name="ModeAPI"></a>Mode values accepted by the \-\-mode flag.
+
+```go
+const (
+    ModeAPI    Mode = "api"
+    ModeWorker Mode = "worker"
+    ModeAll    Mode = "all"
+)
+```
+
+<a name="ParseMode"></a>
+### func [ParseMode](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/mode.go#L34>)
+
+```go
+func ParseMode(s string) (Mode, error)
+```
+
+ParseMode validates a raw mode string and returns the typed constant. Empty input is rejected so a caller does not silently fall back to a default — the CLI provides its own default before reaching this point.
+
+<a name="Mode.IsAPI"></a>
+### func \(Mode\) [IsAPI](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/mode.go#L44>)
+
+```go
+func (m Mode) IsAPI() bool
+```
+
+IsAPI reports whether the mode brings up the API surface.
+
+<a name="Mode.IsWorker"></a>
+### func \(Mode\) [IsWorker](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/mode.go#L47>)
+
+```go
+func (m Mode) IsWorker() bool
+```
+
+IsWorker reports whether the mode brings up background workers.
 
 <a name="NotificationConfig"></a>
 ## type [NotificationConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/config/notifications.go#L21-L23>)

@@ -111,18 +111,6 @@ func (r GetOverReplicatedObjectsRow) GetKeyID() *string                { return 
 func (r GetOverReplicatedObjectsRow) GetPlaintextSize() *int64         { return r.PlaintextSize }
 func (r GetOverReplicatedObjectsRow) GetContentHash() *string          { return r.ContentHash }
 
-// GetObjectCopiesForUpdateRow
-
-func (r GetObjectCopiesForUpdateRow) GetObjectKey() string             { return r.ObjectKey }
-func (r GetObjectCopiesForUpdateRow) GetBackendName() string           { return r.BackendName }
-func (r GetObjectCopiesForUpdateRow) GetSizeBytes() int64              { return r.SizeBytes }
-func (r GetObjectCopiesForUpdateRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
-func (r GetObjectCopiesForUpdateRow) GetEncrypted() bool               { return r.Encrypted }
-func (r GetObjectCopiesForUpdateRow) GetEncryptionKey() []byte         { return r.EncryptionKey }
-func (r GetObjectCopiesForUpdateRow) GetKeyID() *string                { return r.KeyID }
-func (r GetObjectCopiesForUpdateRow) GetPlaintextSize() *int64         { return r.PlaintextSize }
-func (r GetObjectCopiesForUpdateRow) GetContentHash() *string          { return r.ContentHash }
-
 // GetRandomHashedObjectsRow
 
 func (r GetRandomHashedObjectsRow) GetObjectKey() string             { return r.ObjectKey }

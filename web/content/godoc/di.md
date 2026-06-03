@@ -14,7 +14,7 @@ Package di is the single wiring point for the orchestrator. It uses samber/do/v2
 ## Index
 
 - [func IsRegistered\[T any\]\(inj do.Injector\) bool](<#IsRegistered>)
-- [func NewInjector\(cfg \*config.Config, mode string, logLevel \*slog.LevelVar, logBuffer \*telemetry.LogBuffer\) do.Injector](<#NewInjector>)
+- [func NewInjector\(cfg \*config.Config, mode config.Mode, logLevel \*slog.LevelVar, logBuffer \*telemetry.LogBuffer\) do.Injector](<#NewInjector>)
 - [func NewLifecycleService\(manager lifecycleOps, locker tickrunner.AdvisoryLocker\) lifecycle.Runner](<#NewLifecycleService>)
 - [func NewUsageFlushService\(manager usageFlushOps, locker tickrunner.AdvisoryLocker\) lifecycle.Runner](<#NewUsageFlushService>)
 - [func ProvideAdminHandler\(i do.Injector\) \(\*admin.Handler, error\)](<#ProvideAdminHandler>)
@@ -69,13 +69,13 @@ func IsRegistered[T any](inj do.Injector) bool
 IsRegistered reports whether T has a provider registered in the injector or any ancestor scope. Cheap; does not invoke the constructor.
 
 <a name="NewInjector"></a>
-## func [NewInjector](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/injector.go#L34>)
+## func [NewInjector](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/injector.go#L36>)
 
 ```go
-func NewInjector(cfg *config.Config, mode string, logLevel *slog.LevelVar, logBuffer *telemetry.LogBuffer) do.Injector
+func NewInjector(cfg *config.Config, mode config.Mode, logLevel *slog.LevelVar, logBuffer *telemetry.LogBuffer) do.Injector
 ```
 
-NewInjector creates and configures the DI container. Required providers are always registered. Optional providers register only when their config section is enabled \- do.Invoke returns an error for disabled services, which callers use to detect absence.
+NewInjector creates the DI container and registers every provider the service needs. The body is intentionally a flat sequence of per\-domain registration calls so a contributor can see the full dependency graph in one screen; each helper below owns the providers for its domain.
 
 <a name="NewLifecycleService"></a>
 ## func [NewLifecycleService](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/services.go#L140>)
@@ -366,7 +366,7 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error)
 ProvideUIHandler creates the web dashboard handler.
 
 <a name="WireAuditMetrics"></a>
-## func [WireAuditMetrics](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/injector.go#L122>)
+## func [WireAuditMetrics](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/injector.go#L148>)
 
 ```go
 func WireAuditMetrics()
