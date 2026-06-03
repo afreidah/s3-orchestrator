@@ -87,7 +87,7 @@ func Permissive(m *MockMetadataStore) {
 	r.RecordObjectAndClearPending(a, a, a, a, a, a).Return(nil, nil).AnyTimes()
 	r.RecordPart(a, a, a, a, a, a).Return(nil).AnyTimes()
 	r.RecordReplica(a, a, a, a).Return(int64(0), false, nil).AnyTimes()
-	r.RemoveExcessCopy(a, a, a, a).Return(nil).AnyTimes()
+	r.RemoveExcessCopy(a, a, a, a).Return(true, nil).AnyTimes()
 	r.RetryCleanupItem(a, a, a, a).Return(nil).AnyTimes()
 	r.RetryNotification(a, a, a, a).Return(nil).AnyTimes()
 	r.RunMigrations(a).Return(nil).AnyTimes()

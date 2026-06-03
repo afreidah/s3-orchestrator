@@ -5,7 +5,8 @@
 //
 // Engine-agnostic transactional logic for replica management. RecordReplica
 // inserts a new replica copy iff the source copy still exists; RemoveExcessCopy
-// deletes a single copy and decrements the backend's quota.
+// re-reads copies under a key-scoped FOR-UPDATE lock and only deletes when the
+// live count still exceeds the configured replication factor.
 // -------------------------------------------------------------------------------
 
 package core
@@ -55,15 +56,39 @@ func RecordReplica(ctx context.Context, runner Runner, key, targetBackend, sourc
 // REMOVE EXCESS COPY
 // -------------------------------------------------------------------------
 
-// RemoveExcessCopy deletes one copy of an object from the given
-// backend inside a transaction, decrementing the backend quota
-// atomically. The caller must have already performed FOR UPDATE
-// locking and copy-count validation.
-func RemoveExcessCopy(ctx context.Context, runner Runner, key, backendName string, size int64) error {
-	return runner.WithTx(ctx, func(ctx context.Context, tx TxAdapter) error {
-		if err := tx.DeleteObjectFromBackend(ctx, key, backendName); err != nil {
-			return err
+// RemoveExcessCopy deletes one copy of an object from the given backend
+// inside a transaction. It acquires the key-scoped FOR-UPDATE lock,
+// re-reads the copy set, and only proceeds when the live count still
+// exceeds factor AND the target backend still holds a copy. Returns
+// true when a copy was removed, false when a concurrent deleter or
+// earlier cleaner tick already absorbed the excess (benign no-op).
+//
+// Pulling the size from the locked re-read instead of trusting the
+// caller's stale value keeps object_locations.size_bytes and
+// backend_quotas.bytes_used in agreement even when the object was
+// overwritten between the cleaner's scan and the per-copy tx.
+func RemoveExcessCopy(ctx context.Context, runner Runner, key, backendName string, factor int) (bool, error) {
+	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (bool, error) {
+		if err := tx.AcquireKeyLock(ctx, key); err != nil {
+			return false, err
 		}
-		return tx.DecrementBackendQuota(ctx, backendName, size)
+		existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
+		if err != nil {
+			return false, err
+		}
+		if len(existing) <= factor {
+			return false, nil
+		}
+		size, found := copySizeForBackend(existing, backendName)
+		if !found {
+			return false, nil
+		}
+		if err := tx.DeleteObjectFromBackend(ctx, key, backendName); err != nil {
+			return false, err
+		}
+		if err := tx.DecrementBackendQuota(ctx, backendName, size); err != nil {
+			return false, err
+		}
+		return true, nil
 	})
 }

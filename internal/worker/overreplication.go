@@ -146,7 +146,7 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task cleanupTask) {
 		defer telemetry.OverReplicationPending.Dec()
 		WithAdmission(ctx, c.ops, WorkerNameOverReplication, func() {
-			n := c.cleanObject(ctx, task.key, task.copies, task.excess, quotaStats)
+			n := c.cleanObject(ctx, task.key, task.copies, task.excess, cfg.Factor, quotaStats)
 			removed.Add(int64(n))
 		})
 	})
@@ -195,7 +195,7 @@ type scoredCopy struct {
 	score float64
 }
 
-// scoreCopy assigns a retention score to a copy based on its backend's state:
+// ScoreCopy assigns a retention score to a copy based on its backend's state:
 //   - draining backend: 0 (always remove first)
 //   - circuit-broken backend: 1 (remove next)
 //   - healthy backend: 2 + (1 - utilization_ratio), range [2..3]
@@ -203,8 +203,6 @@ type scoredCopy struct {
 // Among healthy backends, the most utilized backend gets the lowest score,
 // making its copy the first candidate for removal -- freeing space where it
 // is scarcest.
-// ScoreCopy score copy.
-// ScoreCopy score copy.
 func (c *OverReplicationCleaner) ScoreCopy(loc *core.ObjectLocation, stats map[string]core.QuotaStat) float64 {
 	if c.ops.IsDraining(loc.BackendName) {
 		return 0
@@ -229,8 +227,11 @@ func (c *OverReplicationCleaner) ScoreCopy(loc *core.ObjectLocation, stats map[s
 
 // cleanObject removes excess copies of a single object. Scores all copies,
 // sorts ascending, and removes the lowest-scoring copies until the count
-// reaches the target factor. Returns the number of copies removed.
-func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, copies []core.ObjectLocation, excess int, stats map[string]core.QuotaStat) int {
+// reaches the target factor. factor is forwarded to RemoveExcessCopy so
+// the per-victim tx can re-read the copy set under lock and skip a
+// removal that races with a concurrent client delete. Returns the
+// number of copies removed.
+func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, copies []core.ObjectLocation, excess, factor int, stats map[string]core.QuotaStat) int {
 	// Score each copy
 	scored := make([]scoredCopy, len(copies))
 	for i := range copies {
@@ -251,11 +252,17 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 
 		// Remove from metadata first so the replicator never sees a ghost
 		// copy. If the DB remove succeeds but the backend delete fails, the
-		// cleanup queue handles the orphan.
-		if err := c.store.RemoveExcessCopy(ctx, key, victim.BackendName, victim.SizeBytes); err != nil {
+		// cleanup queue handles the orphan. removed=false is the benign
+		// race outcome: a parallel client delete or earlier tick already
+		// absorbed the excess, so this victim no longer needs touching.
+		didRemove, err := c.store.RemoveExcessCopy(ctx, key, victim.BackendName, factor)
+		if err != nil {
 			c.log.WarnContext(ctx, "failed to remove metadata",
 				"key", key, "backend", victim.BackendName, "error", err)
 			telemetry.OverReplicationErrorsTotal.Inc()
+			continue
+		}
+		if !didRemove {
 			continue
 		}
 

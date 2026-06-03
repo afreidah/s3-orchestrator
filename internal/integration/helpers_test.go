@@ -921,11 +921,11 @@ func (f *FailableStore) CountOverReplicatedObjects(ctx context.Context, factor i
 
 // RemoveExcessCopy is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) RemoveExcessCopy(ctx context.Context, key, backendName string, size int64) error {
+func (f *FailableStore) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (bool, error) {
 	if f.isFailing() {
-		return errSimulatedDBOutage
+		return false, errSimulatedDBOutage
 	}
-	return f.inner.RemoveExcessCopy(ctx, key, backendName, size)
+	return f.inner.RemoveExcessCopy(ctx, key, backendName, factor)
 }
 
 // tripCircuitBreaker drives the test breaker through enough simulated

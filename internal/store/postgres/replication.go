@@ -130,20 +130,9 @@ func (s *Store) CountOverReplicatedObjects(ctx context.Context, factor int) (int
 	return count, nil
 }
 
-// RemoveExcessCopy deletes one copy of an object from the given
-// backend inside a transaction, decrementing the backend quota
-// atomically. Delegates to core.RemoveExcessCopy.
-func (s *Store) RemoveExcessCopy(ctx context.Context, key, backendName string, size int64) error {
-	return core.RemoveExcessCopy(ctx, s, key, backendName, size)
-}
-
-// GetObjectCopiesForUpdate retrieves all copies of an object under a FOR
-// UPDATE lock, suitable for use inside a transaction to prevent concurrent
-// modification during over-replication cleanup.
-func (s *Store) GetObjectCopiesForUpdate(ctx context.Context, key string) ([]core.ObjectLocation, error) {
-	rows, err := s.queries.GetObjectCopiesForUpdate(ctx, key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get copies for update: %w", err)
-	}
-	return toFatObjectLocations(rows), nil
+// RemoveExcessCopy delegates to core.RemoveExcessCopy, which acquires
+// the key-scoped FOR-UPDATE lock and only deletes when the live copy
+// count still exceeds factor.
+func (s *Store) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (bool, error) {
+	return core.RemoveExcessCopy(ctx, s, key, backendName, factor)
 }
