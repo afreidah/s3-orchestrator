@@ -134,9 +134,11 @@ func (s *Store) CountOverReplicatedObjects(ctx context.Context, factor int) (int
 	return count, nil
 }
 
-// RemoveExcessCopy delegates to core.RemoveExcessCopy.
-func (s *Store) RemoveExcessCopy(ctx context.Context, key, backendName string, size int64) error {
-	return core.RemoveExcessCopy(ctx, s, key, backendName, size)
+// RemoveExcessCopy delegates to core.RemoveExcessCopy, which acquires
+// the key-scoped FOR-UPDATE lock and only deletes when the live copy
+// count still exceeds factor.
+func (s *Store) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (bool, error) {
+	return core.RemoveExcessCopy(ctx, s, key, backendName, factor)
 }
 
 // scanObjectLocations converts sql.Rows into a slice of ObjectLocation.

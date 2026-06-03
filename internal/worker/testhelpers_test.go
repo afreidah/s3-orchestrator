@@ -61,6 +61,7 @@ type mockMetadataStore struct {
 	recordReplicaErr    error
 	replicaRecorded     int
 	removedCopies       int
+	removeExcessNoOp    bool
 	objectsByBackend    map[string][]core.ObjectLocation
 	moveSize            int64
 	staleDeleted        int
@@ -221,11 +222,15 @@ func (m *mockMetadataStore) CountOverReplicatedObjects(_ context.Context, _ int)
 	return m.overReplicatedCount, nil
 }
 
-// RemoveExcessCopy is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value.
-func (m *mockMetadataStore) RemoveExcessCopy(_ context.Context, _, _ string, _ int64) error {
+// RemoveExcessCopy is a stub on mockMetadataStore; reports a successful
+// removal so the cleaner counts it, or a benign no-op (removed=false) when
+// removeExcessNoOp is set, mimicking a race that already absorbed the excess.
+func (m *mockMetadataStore) RemoveExcessCopy(_ context.Context, _, _ string, _ int) (bool, error) {
+	if m.removeExcessNoOp {
+		return false, nil
+	}
 	m.removedCopies++
-	return nil
+	return true, nil
 }
 
 // ListObjectsByBackend is a stub on mockMetadataStore; returns either the test-set

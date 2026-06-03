@@ -28,55 +28,6 @@ func (q *Queries) CountOverReplicatedObjects(ctx context.Context, factor int64) 
 	return count, err
 }
 
-const getObjectCopiesForUpdate = `-- name: GetObjectCopiesForUpdate :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
-FROM object_locations
-WHERE object_key = $1
-FOR UPDATE
-`
-
-type GetObjectCopiesForUpdateRow struct {
-	ObjectKey     string
-	BackendName   string
-	SizeBytes     int64
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         *string
-	PlaintextSize *int64
-	ContentHash   *string
-	CreatedAt     pgtype.Timestamptz
-}
-
-func (q *Queries) GetObjectCopiesForUpdate(ctx context.Context, objectKey string) ([]GetObjectCopiesForUpdateRow, error) {
-	rows, err := q.db.Query(ctx, getObjectCopiesForUpdate, objectKey)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetObjectCopiesForUpdateRow{}
-	for rows.Next() {
-		var i GetObjectCopiesForUpdateRow
-		if err := rows.Scan(
-			&i.ObjectKey,
-			&i.BackendName,
-			&i.SizeBytes,
-			&i.Encrypted,
-			&i.EncryptionKey,
-			&i.KeyID,
-			&i.PlaintextSize,
-			&i.ContentHash,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getOverReplicatedObjects = `-- name: GetOverReplicatedObjects :many
 WITH over_replicated AS (
     SELECT object_key

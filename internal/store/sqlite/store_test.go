@@ -921,13 +921,80 @@ func TestRemoveExcessCopy(t *testing.T) {
 	mustRecordObject(t, s, "bucket/key1", "backend-a", 1024)
 	mustRecordReplica(t, s, "bucket/key1", "backend-b", "backend-a", 1024)
 
-	if err := s.RemoveExcessCopy(ctx, "bucket/key1", "backend-b", 1024); err != nil {
+	removed, err := s.RemoveExcessCopy(ctx, "bucket/key1", "backend-b", 1)
+	if err != nil {
 		t.Fatalf("RemoveExcessCopy: %v", err)
+	}
+	if !removed {
+		t.Fatalf("expected removed=true with 2 copies and factor=1")
 	}
 
 	locs, _ := s.GetAllObjectLocations(ctx, "bucket/key1")
 	if len(locs) != 1 {
 		t.Errorf("expected 1 copy after removal, got %d", len(locs))
+	}
+}
+
+// TestRemoveExcessCopy_NoOpWhenAtFactor pins the race where another
+// path (parallel client delete, factor raised mid-tick, an earlier
+// cleaner tick on the same batch) has already brought the copy count
+// down to factor before this tx acquires the lock. The re-read inside
+// the tx sees count == factor and bails without deleting -- otherwise
+// we under-replicate.
+func TestRemoveExcessCopy_NoOpWhenAtFactor(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mustRecordObject(t, s, "bucket/k-atfactor", "backend-a", 1024)
+
+	removed, err := s.RemoveExcessCopy(ctx, "bucket/k-atfactor", "backend-a", 1)
+	if err != nil {
+		t.Fatalf("RemoveExcessCopy: %v", err)
+	}
+	if removed {
+		t.Fatalf("expected removed=false when count==factor; would under-replicate")
+	}
+
+	locs, _ := s.GetAllObjectLocations(ctx, "bucket/k-atfactor")
+	if len(locs) != 1 {
+		t.Fatalf("expected 1 copy preserved, got %d", len(locs))
+	}
+}
+
+// TestRemoveExcessCopy_NoOpWhenVictimGone pins the race where the
+// scheduled victim copy has already been deleted by another path
+// between the cleaner's scan and the per-victim tx. The locked re-read
+// shows the victim missing; we no-op rather than blindly decrementing
+// the quota for a row that no longer exists.
+func TestRemoveExcessCopy_NoOpWhenVictimGone(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mustRecordObject(t, s, "bucket/k-vgone", "backend-a", 1024)
+	mustRecordReplica(t, s, "bucket/k-vgone", "backend-b", "backend-a", 1024)
+
+	// Simulate a parallel client landing the delete on backend-b
+	// before the cleaner's per-victim tx executes.
+	if err := s.DeleteObjectLocation(ctx, "bucket/k-vgone", "backend-b"); err != nil {
+		t.Fatalf("setup DeleteObjectLocation: %v", err)
+	}
+
+	removed, err := s.RemoveExcessCopy(ctx, "bucket/k-vgone", "backend-b", 1)
+	if err != nil {
+		t.Fatalf("RemoveExcessCopy: %v", err)
+	}
+	if removed {
+		t.Fatalf("expected removed=false when victim already gone")
+	}
+
+	locs, _ := s.GetAllObjectLocations(ctx, "bucket/k-vgone")
+	if len(locs) != 1 {
+		t.Fatalf("expected 1 copy preserved on backend-a, got %d", len(locs))
+	}
+	if locs[0].BackendName != "backend-a" {
+		t.Errorf("expected surviving copy on backend-a, got %s", locs[0].BackendName)
 	}
 }
 
