@@ -364,8 +364,8 @@ jobs:
           tags: |
             ghcr.io/afreidah/s3-orchestrator-webpage:${{ steps.version.outputs.version }}
             ghcr.io/afreidah/s3-orchestrator-webpage:latest
-          cache-from: type=gha,scope=webpage-v2
-          cache-to: type=gha,mode=max,scope=webpage-v2
+          cache-from: type=gha,scope=webpage-v3
+          cache-to: type=gha,mode=max,scope=webpage-v3
 
       - name: Sign image with cosign
         env:
