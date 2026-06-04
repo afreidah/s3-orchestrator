@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Loads and validates a configuration file without starting the server. Exits 0
-// on success with a brief summary, or exits 1 with validation errors.
+// on success with a brief summary, or exits 1 with validation errors. 
 // -------------------------------------------------------------------------------
 
 package main
