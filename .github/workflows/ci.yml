@@ -204,11 +204,11 @@ jobs:
   sonarqube:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [test, integration]
-    # Run whenever the upstream test job did not fail. Skipped is fine
-    # (no Go changed, so no coverage produced); the scan still inspects
-    # CSS, JS, YAML, and any non-Go files in the diff.
-    if: always() && github.actor != 'dependabot[bot]' && needs.test.result != 'failure' && needs.test.result != 'cancelled'
+    needs: [changes, test, integration]
+    # Skip non-Go pushes to main: with no coverage artifacts the scan
+    # reports 0% and clobbers main's stored new-code coverage. PRs still
+    # run (their gate has no coverage condition when no Go changed).
+    if: always() && github.actor != 'dependabot[bot]' && needs.test.result != 'failure' && needs.test.result != 'cancelled' && (needs.changes.outputs.go == 'true' || github.event_name == 'pull_request')
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
