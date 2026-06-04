@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Tests for the validateConfig function covering valid configs, missing files,
-// and invalid config content.
+// and invalid config content. 
 // -------------------------------------------------------------------------------
 
 package main
