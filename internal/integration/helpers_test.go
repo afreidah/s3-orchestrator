@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -399,6 +400,25 @@ func newS3Client(t *testing.T) *s3.Client {
 		Region:       "us-east-1",
 		Credentials:  credentials.NewStaticCredentialsProvider("test", "test", ""),
 		UsePathStyle: true,
+	})
+}
+
+// newResilientS3Client is newS3Client with a longer retry budget. The shared
+// MinIO container intermittently returns a transient 502 under concurrent load
+// on CI runners; the standard 3 attempts can all land inside that window. Used
+// by stress scenarios where a momentary backend hiccup is infra noise rather
+// than the invariant under test (a persistent 5xx still fails after retries).
+func newResilientS3Client(t *testing.T) *s3.Client {
+	t.Helper()
+	return s3.New(s3.Options{
+		BaseEndpoint: aws.String("http://" + proxyAddr),
+		Region:       "us-east-1",
+		Credentials:  credentials.NewStaticCredentialsProvider("test", "test", ""),
+		UsePathStyle: true,
+		Retryer: retry.NewStandard(func(o *retry.StandardOptions) {
+			o.MaxAttempts = 10
+			o.MaxBackoff = 1 * time.Second
+		}),
 	})
 }
 
