@@ -79,7 +79,10 @@ func TestEmptyObject_RoundTrip(t *testing.T) {
 // consistent: the object either exists with the written body or doesn't
 // exist at all. Neither goroutine should produce a protocol-level error.
 func TestConcurrentPutAndDelete_SameKey(t *testing.T) {
-	client := newS3Client(t)
+	// Resilient client: the storm hammers a shared MinIO container that
+	// transiently 502s under CI load, which is infra noise here, not the
+	// consistency invariant the test asserts.
+	client := newResilientS3Client(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "concurrent-pd")
 	body := bytes.Repeat([]byte("x"), 256)
