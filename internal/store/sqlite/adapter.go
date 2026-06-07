@@ -495,5 +495,70 @@ func (a *sqliteTxAdapter) DecrementOrphanBytes(ctx context.Context, backendName 
 	return nil
 }
 
+// AllBackendBytesUsed returns the current bytes_used for every
+// backend_quotas row, keyed by backend name.
+func (a *sqliteTxAdapter) AllBackendBytesUsed(ctx context.Context) (map[string]int64, error) {
+	rows, err := a.tx.QueryContext(ctx, `SELECT backend_name, bytes_used FROM backend_quotas`)
+	if err != nil {
+		return nil, fmt.Errorf("read all bytes_used: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]int64)
+	for rows.Next() {
+		var (
+			name string
+			used int64
+		)
+		if err := rows.Scan(&name, &used); err != nil {
+			return nil, fmt.Errorf("scan bytes_used: %w", err)
+		}
+		out[name] = used
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate bytes_used: %w", err)
+	}
+	return out, nil
+}
+
+// SumObjectSizesByBackend returns SUM(size_bytes) per backend from the
+// object_locations ledger, keyed by backend name.
+func (a *sqliteTxAdapter) SumObjectSizesByBackend(ctx context.Context) (map[string]int64, error) {
+	rows, err := a.tx.QueryContext(ctx,
+		`SELECT backend_name, COALESCE(SUM(size_bytes), 0) FROM object_locations GROUP BY backend_name`)
+	if err != nil {
+		return nil, fmt.Errorf("sum object sizes by backend: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]int64)
+	for rows.Next() {
+		var (
+			name  string
+			total int64
+		)
+		if err := rows.Scan(&name, &total); err != nil {
+			return nil, fmt.Errorf("scan object size sum: %w", err)
+		}
+		out[name] = total
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate object size sums: %w", err)
+	}
+	return out, nil
+}
+
+// SetBackendBytesUsed overwrites bytes_used with the authoritative value.
+func (a *sqliteTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName string, value int64) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := a.tx.ExecContext(ctx, `
+		UPDATE backend_quotas
+		SET bytes_used = ?, updated_at = ?
+		WHERE backend_name = ?`, value, now, backendName); err != nil {
+		return fmt.Errorf("set backend bytes_used: %w", err)
+	}
+	return nil
+}
+
 // Compile-time check that *sqliteTxAdapter satisfies core.TxAdapter.
 var _ core.TxAdapter = (*sqliteTxAdapter)(nil)

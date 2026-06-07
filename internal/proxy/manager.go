@@ -62,6 +62,7 @@ type Stores interface {
 	core.ExpiredObjectsLister
 	core.UsageFlusher
 	core.MultipartStore
+	core.QuotaStore
 }
 
 // StorageDeps groups the backend-fleet topology: the set of object
@@ -518,6 +519,14 @@ func (m *BackendManager) makeReconcileDeleter() reconcile.DeleterFn {
 		}
 		return nil
 	}
+}
+
+// ReconcileUsage recomputes each backend's bytes_used counter from the object
+// ledger, correcting drift in the incrementally maintained counter. Part of
+// the BackendSyncer contract the reconciler drives every pass; also exposed to
+// the admin reconcile-usage endpoint.
+func (m *BackendManager) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
+	return m.stores.ReconcileUsage(ctx)
 }
 
 // ReconcileBackend reconciles a single backend against the metadata store
