@@ -315,6 +315,12 @@ func (m *MockStore) GetQuotaStats(_ context.Context) (map[string]core.QuotaStat,
 	return map[string]core.QuotaStat{}, nil
 }
 
+// ReconcileUsage is a no-op stub: reconciliation is exercised against the real
+// store via testcontainers; the mock reports no adjustments.
+func (m *MockStore) ReconcileUsage(_ context.Context) (map[string]int64, error) {
+	return map[string]int64{}, nil
+}
+
 // GetObjectCounts returns the pre-configured object counts or error.
 func (m *MockStore) GetObjectCounts(_ context.Context) (map[string]int64, error) {
 	if m.GetObjectCountsErr != nil {

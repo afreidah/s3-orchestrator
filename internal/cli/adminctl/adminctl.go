@@ -65,6 +65,7 @@ Commands:
   scrub               Trigger an on-demand integrity scrub cycle (use -batch-size to override)
   backfill-checksums  Compute and store content hashes for all unhashed objects (use -batch-size to control pace)
   reconcile           Reconcile DB against backend (use -backend to scope to one backend)
+  usage-reconcile     Recompute bytes_used from the object ledger to correct quota drift
   cache-flush         Drop every entry from the in-memory object data cache
   cache-stats         Show object data cache entries, size, and capacity
   cache-invalidate    Drop a single key from the in-memory object data cache (requires -key)
@@ -140,6 +141,7 @@ var handlers = map[string]handler{
 	"backfill-checksums": cmdBackfillChecksums,
 	"remove-backend":     cmdRemoveBackend,
 	"reconcile":          cmdReconcile,
+	"usage-reconcile":    cmdUsageReconcile,
 	"cache-flush":        cmdCacheFlush,
 	"cache-stats":        cmdCacheStats,
 	"cache-invalidate":         cmdCacheInvalidate,
@@ -184,6 +186,14 @@ func cmdCleanupQueue(_ []string, baseAddr, token string, stdout, stderr io.Write
 // for the next periodic tick.
 func cmdUsageFlush(_ []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	return doPost(baseAddr+"/admin/api/usage-flush", "", token, stdout, stderr)
+}
+
+// cmdUsageReconcile implements `s3-orchestrator admin usage-reconcile`.
+// Recomputes each backend's bytes_used from the object ledger, correcting
+// drift in the incrementally maintained quota counter, and prints the
+// per-backend corrections applied.
+func cmdUsageReconcile(_ []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	return doPost(baseAddr+"/admin/api/usage-reconcile", "", token, stdout, stderr)
 }
 
 // cmdCacheFlush implements `s3-orchestrator admin cache-flush`. Drops
