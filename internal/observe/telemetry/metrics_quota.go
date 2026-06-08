@@ -54,6 +54,16 @@ var (
 		[]string{"backend"},
 	)
 
+	// UsageReconcileCorrectionsTotal counts per-backend bytes_used corrections
+	// applied by usage reconciliation. A steadily rising value means a write
+	// path is leaking the counter; the reconcile dashboard panel reads this.
+	UsageReconcileCorrectionsTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3o_quota_reconcile_corrections_total",
+			Help: "Per-backend bytes_used drift corrections applied by usage reconciliation",
+		},
+	)
+
 	// --- Object metrics ---
 
 	// ObjectCount tracks the number of objects stored per backend.

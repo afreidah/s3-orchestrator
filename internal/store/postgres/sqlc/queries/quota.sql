@@ -117,5 +117,20 @@ UPDATE backend_quotas
 SET orphan_bytes = GREATEST(0, orphan_bytes - @amount), updated_at = NOW()
 WHERE backend_name = @backend_name;
 
+-- name: SumObjectSizesByBackend :many
+-- Authoritative per-backend byte total from the object ledger. Used by usage
+-- reconciliation to recompute bytes_used, which is otherwise an incrementally
+-- maintained counter that drifts if any mutation path misses an adjustment.
+SELECT backend_name, COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes
+FROM object_locations
+GROUP BY backend_name;
+
+-- name: SetBackendBytesUsed :exec
+-- Overwrites bytes_used with an authoritative value (no bytes_limit guard,
+-- because the recomputed total is reality and the counter must follow it).
+UPDATE backend_quotas
+SET bytes_used = @bytes_used, updated_at = NOW()
+WHERE backend_name = @backend_name;
+
 -- name: DeleteQuota :exec
 DELETE FROM backend_quotas WHERE backend_name = $1;

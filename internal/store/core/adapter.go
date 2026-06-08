@@ -162,6 +162,21 @@ type QuotaTxAdapter interface {
 	// DecrementOrphanBytes debits delta bytes from the backend's
 	// orphan_bytes counter, clamped at zero.
 	DecrementOrphanBytes(ctx context.Context, backendName string, delta int64) error
+
+	// AllBackendBytesUsed returns the current bytes_used counter for every
+	// backend_quotas row, keyed by backend name. Used by usage
+	// reconciliation to diff the stored counter against the ledger truth.
+	AllBackendBytesUsed(ctx context.Context) (map[string]int64, error)
+
+	// SumObjectSizesByBackend returns the authoritative byte total per
+	// backend from object_locations (the ledger), keyed by backend name.
+	// Backends with no rows are absent from the map (treated as zero).
+	SumObjectSizesByBackend(ctx context.Context) (map[string]int64, error)
+
+	// SetBackendBytesUsed overwrites bytes_used with an authoritative
+	// value. Unlike Increment/Decrement it carries no bytes_limit guard:
+	// the recomputed ledger total is reality and the counter must follow.
+	SetBackendBytesUsed(ctx context.Context, backendName string, value int64) error
 }
 
 // -------------------------------------------------------------------------

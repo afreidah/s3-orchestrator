@@ -36,10 +36,12 @@ import (
 // -------------------------------------------------------------------------
 
 type fakeBackendOps struct {
-	dashData *dashboard.Data
-	dashErr  error
-	flushErr error
-	intCfg   *config.IntegrityConfig
+	dashData     *dashboard.Data
+	dashErr      error
+	flushErr     error
+	intCfg       *config.IntegrityConfig
+	reconcileMap map[string]int64
+	reconcileErr error
 }
 
 func (f *fakeBackendOps) GetDashboardData(_ context.Context) (*dashboard.Data, error) {
@@ -47,6 +49,9 @@ func (f *fakeBackendOps) GetDashboardData(_ context.Context) (*dashboard.Data, e
 }
 func (f *fakeBackendOps) FlushUsage(_ context.Context) error                                     { return f.flushErr }
 func (f *fakeBackendOps) UpdateQuotaMetrics(_ context.Context) error                             { return nil }
+func (f *fakeBackendOps) ReconcileUsage(_ context.Context) (map[string]int64, error) {
+	return f.reconcileMap, f.reconcileErr
+}
 func (f *fakeBackendOps) RecordUsage(_ string, _, _, _ int64)                                    {}
 func (f *fakeBackendOps) GetBackend(_ string) (backend.ObjectBackend, error)                     { return nil, errors.New("no backend") }
 func (f *fakeBackendOps) IntegrityConfig() *config.IntegrityConfig                               { return f.intCfg }
@@ -206,6 +211,51 @@ func TestHandleOverReplicationClean_Configured(t *testing.T) {
 	_ = json.NewDecoder(w.Body).Decode(&resp)
 	if resp["copies_removed"].(float64) != 3 {
 		t.Errorf("copies_removed = %v, want 3", resp["copies_removed"])
+	}
+}
+
+// -------------------------------------------------------------------------
+// USAGE RECONCILE
+// -------------------------------------------------------------------------
+
+// TestHandleReconcileUsage_Success exercises the success path: the handler
+// returns the per-backend bytes_used corrections from the store.
+func TestHandleReconcileUsage_Success(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler()
+	h.backendOps = &fakeBackendOps{reconcileMap: map[string]int64{"e2": -163}}
+
+	w := httptest.NewRecorder()
+	h.handleReconcileUsage(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/usage-reconcile", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Status      string           `json:"status"`
+		Adjustments map[string]int64 `json:"adjustments"`
+	}
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Status != "reconciled" {
+		t.Errorf("status = %q, want reconciled", resp.Status)
+	}
+	if resp.Adjustments["e2"] != -163 {
+		t.Errorf("e2 adjustment = %d, want -163", resp.Adjustments["e2"])
+	}
+}
+
+// TestHandleReconcileUsage_Error exercises the failure path: a store error
+// surfaces as a 500.
+func TestHandleReconcileUsage_Error(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler()
+	h.backendOps = &fakeBackendOps{reconcileErr: errors.New("db down")}
+
+	w := httptest.NewRecorder()
+	h.handleReconcileUsage(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/usage-reconcile", nil))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", w.Code)
 	}
 }
 

@@ -534,6 +534,9 @@ func (f *flushUsageFailingOps) FlushUsage(_ context.Context) error {
 func (f *flushUsageFailingOps) UpdateQuotaMetrics(ctx context.Context) error {
 	return f.inner.UpdateQuotaMetrics(ctx)
 }
+func (f *flushUsageFailingOps) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
+	return f.inner.ReconcileUsage(ctx)
+}
 func (f *flushUsageFailingOps) RecordUsage(name string, req, in, out int64) {
 	f.inner.RecordUsage(name, req, in, out)
 }
@@ -582,6 +585,9 @@ func (allFailingOps) FlushUsage(_ context.Context) error {
 }
 func (allFailingOps) UpdateQuotaMetrics(_ context.Context) error {
 	return errors.New("quota down")
+}
+func (allFailingOps) ReconcileUsage(_ context.Context) (map[string]int64, error) {
+	return nil, errors.New("reconcile down")
 }
 func (allFailingOps) RecordUsage(_ string, _, _, _ int64) {}
 func (allFailingOps) GetBackend(_ string) (backend.ObjectBackend, error) {

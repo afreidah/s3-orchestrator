@@ -15,6 +15,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"go.uber.org/mock/gomock"
@@ -39,6 +40,7 @@ func TestReconciler_SyncsAllBackends(t *testing.T) {
 	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", "unified", []string{"unified"}).Return(2, 5, nil)
 	syncer.EXPECT().SyncBackend(gomock.Any(), "b2", "unified", []string{"unified"}).Return(0, 10, nil)
 	syncer.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
+	syncer.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
 	r := NewReconciler(syncer, []string{"unified"})
 	r.Run(context.Background())
@@ -54,9 +56,42 @@ func TestReconciler_ContinuesOnBackendError(t *testing.T) {
 	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", "unified", gomock.Any()).Return(0, 0, context.DeadlineExceeded)
 	syncer.EXPECT().SyncBackend(gomock.Any(), "b2", "unified", gomock.Any()).Return(1, 0, nil)
 	syncer.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
+	syncer.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
 	r := NewReconciler(syncer, []string{"unified"})
 	r.Run(context.Background()) // should not panic
+}
+
+// TestReconciler_ReconcilesUsageEachPass verifies usage reconciliation runs
+// every pass even when nothing was imported (counter drift can exist
+// independently of imports, so it must not be gated on import count).
+func TestReconciler_ReconcilesUsageEachPass(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	syncer := NewMockBackendSyncer(ctrl)
+
+	syncer.EXPECT().BackendOrder().Return([]string{"b1"})
+	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", "unified", []string{"unified"}).Return(0, 0, nil)
+	// Zero imports: UpdateQuotaMetrics is skipped, but ReconcileUsage still runs.
+	syncer.EXPECT().ReconcileUsage(gomock.Any()).Return(map[string]int64{"b1": -100}, nil).Times(1)
+
+	r := NewReconciler(syncer, []string{"unified"})
+	r.Run(context.Background())
+}
+
+// TestReconciler_ReconcileUsageError verifies a usage-reconcile failure is
+// logged and swallowed so it never aborts the reconcile cycle.
+func TestReconciler_ReconcileUsageError(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	syncer := NewMockBackendSyncer(ctrl)
+
+	syncer.EXPECT().BackendOrder().Return([]string{"b1"})
+	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", "unified", []string{"unified"}).Return(0, 0, nil)
+	syncer.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, errors.New("db down")).Times(1)
+
+	r := NewReconciler(syncer, []string{"unified"})
+	r.Run(context.Background()) // must not panic
 }
 
 // TestReconcile_AllBackends verifies the reconcile all backends contract.
@@ -72,6 +107,7 @@ func TestReconcile_AllBackends(t *testing.T) {
 	syncer.EXPECT().ReconcileBackend(gomock.Any(), "b2", "unified", []string{"unified"}).
 		Return(&ReconcileResult{Imported: 0, Removed: 2, BackendsScanned: 1}, nil)
 	syncer.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
+	syncer.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
 	r := NewReconciler(syncer, []string{"unified"})
 	result, err := r.Reconcile(context.Background(), "")
@@ -99,6 +135,7 @@ func TestReconcile_SingleBackend(t *testing.T) {
 	syncer.EXPECT().ReconcileBackend(gomock.Any(), "b1", "unified", []string{"unified"}).
 		Return(&ReconcileResult{Imported: 0, Removed: 10, BackendsScanned: 1}, nil)
 	syncer.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
+	syncer.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
 	r := NewReconciler(syncer, []string{"unified"})
 	result, err := r.Reconcile(context.Background(), "b1")

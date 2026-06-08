@@ -372,5 +372,44 @@ func (a *pgTxAdapter) DecrementOrphanBytes(ctx context.Context, backendName stri
 	return nil
 }
 
+// AllBackendBytesUsed returns the current bytes_used for every
+// backend_quotas row, keyed by backend name.
+func (a *pgTxAdapter) AllBackendBytesUsed(ctx context.Context) (map[string]int64, error) {
+	rows, err := a.q.GetAllQuotaStats(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read all quota stats: %w", err)
+	}
+	out := make(map[string]int64, len(rows))
+	for _, r := range rows {
+		out[r.BackendName] = r.BytesUsed
+	}
+	return out, nil
+}
+
+// SumObjectSizesByBackend returns SUM(size_bytes) per backend from the
+// object_locations ledger, keyed by backend name.
+func (a *pgTxAdapter) SumObjectSizesByBackend(ctx context.Context) (map[string]int64, error) {
+	rows, err := a.q.SumObjectSizesByBackend(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sum object sizes by backend: %w", err)
+	}
+	out := make(map[string]int64, len(rows))
+	for _, r := range rows {
+		out[r.BackendName] = r.TotalBytes
+	}
+	return out, nil
+}
+
+// SetBackendBytesUsed overwrites bytes_used with the authoritative value.
+func (a *pgTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName string, value int64) error {
+	if err := a.q.SetBackendBytesUsed(ctx, db.SetBackendBytesUsedParams{
+		BytesUsed:   value,
+		BackendName: backendName,
+	}); err != nil {
+		return fmt.Errorf("set backend bytes_used: %w", err)
+	}
+	return nil
+}
+
 // Compile-time check that *pgTxAdapter satisfies core.TxAdapter.
 var _ core.TxAdapter = (*pgTxAdapter)(nil)

@@ -402,6 +402,18 @@ Forces an immediate flush of usage counters to the database. Flushes from Redis 
 {"status": "flushed"}
 ```
 
+### POST /admin/api/usage-reconcile
+
+Recomputes each backend's `bytes_used` from the authoritative object ledger (`SUM(object_locations.size_bytes)`), correcting drift in the incrementally maintained quota counter. The periodic reconcile pass runs this automatically; this endpoint forces it on demand.
+
+**Request:** No body required.
+
+**Response:** `adjustments` maps each corrected backend to the byte delta applied (negative when the counter was reduced); backends already in agreement are omitted.
+
+```json
+{"status": "reconciled", "adjustments": {"e2": -162801340}}
+```
+
 ### POST /admin/api/replicate
 
 Triggers one replication cycle. Returns immediately if replication is not configured or factor is 1.

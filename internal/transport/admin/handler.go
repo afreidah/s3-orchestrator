@@ -42,6 +42,7 @@ type BackendOps interface {
 	GetDashboardData(ctx context.Context) (*dashboard.Data, error)
 	FlushUsage(ctx context.Context) error
 	UpdateQuotaMetrics(ctx context.Context) error
+	ReconcileUsage(ctx context.Context) (map[string]int64, error)
 	RecordUsage(backendName string, requests, ingressBytes, egressBytes int64)
 	GetBackend(name string) (backend.ObjectBackend, error)
 	IntegrityConfig() *config.IntegrityConfig

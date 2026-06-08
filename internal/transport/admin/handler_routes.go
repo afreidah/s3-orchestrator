@@ -25,6 +25,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/api/object-locations", h.requireToken(h.handleObjectLocations))
 	mux.HandleFunc("GET /admin/api/cleanup-queue", h.requireToken(h.handleCleanupQueue))
 	mux.HandleFunc("POST /admin/api/usage-flush", h.requireToken(h.handleUsageFlush))
+	mux.HandleFunc("POST /admin/api/usage-reconcile", h.requireToken(h.handleReconcileUsage))
 	mux.HandleFunc("POST /admin/api/replicate", h.requireToken(h.handleReplicate))
 	mux.HandleFunc("GET /admin/api/log-level", h.requireToken(h.handleLogLevel))
 	mux.HandleFunc("PUT /admin/api/log-level", h.requireToken(h.handleLogLevel))

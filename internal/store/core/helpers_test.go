@@ -243,6 +243,20 @@ func (t *quotaTxStub) DecrementBackendQuota(_ context.Context, backend string, d
 	return nil
 }
 
+// AllBackendBytesUsed is a no-op stub on quotaTxStub; usage reconciliation
+// is exercised by the dedicated stub in usage_test.go.
+func (*quotaTxStub) AllBackendBytesUsed(context.Context) (map[string]int64, error) {
+	return nil, nil
+}
+
+// SumObjectSizesByBackend is a no-op stub on quotaTxStub.
+func (*quotaTxStub) SumObjectSizesByBackend(context.Context) (map[string]int64, error) {
+	return nil, nil
+}
+
+// SetBackendBytesUsed is a no-op stub on quotaTxStub.
+func (*quotaTxStub) SetBackendBytesUsed(context.Context, string, int64) error { return nil }
+
 // The remaining TxAdapter methods are unused by applyQuotaDeltas; stubs
 // return zero values so the type satisfies the full interface.
 // AcquireKeyLock is a no-op stub on quotaTxStub so the type satisfies the

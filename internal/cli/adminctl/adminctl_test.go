@@ -321,6 +321,7 @@ var simpleWrapperCases = []wrapperCase{
 	{"status", "status", nil, http.MethodGet, "/admin/api/status", ""},
 	{"cleanup-queue", "cleanup-queue", nil, http.MethodGet, "/admin/api/cleanup-queue", ""},
 	{"usage-flush", "usage-flush", nil, http.MethodPost, "/admin/api/usage-flush", ""},
+	{"usage-reconcile", "usage-reconcile", nil, http.MethodPost, "/admin/api/usage-reconcile", ""},
 	{"replicate", "replicate", nil, http.MethodPost, "/admin/api/replicate", ""},
 	{"over-replication", "over-replication", nil, http.MethodGet, "/admin/api/over-replication", ""},
 	{"over-replication-execute", "over-replication", []string{"-execute"}, http.MethodPost, "/admin/api/over-replication", ""},

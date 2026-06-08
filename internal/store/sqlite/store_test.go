@@ -998,6 +998,40 @@ func TestRemoveExcessCopy_NoOpWhenVictimGone(t *testing.T) {
 	}
 }
 
+// TestReconcileUsage_CorrectsDrift records objects so the ledger total is
+// known, corrupts the bytes_used counter, and verifies ReconcileUsage restores
+// it to SUM(object_locations.size_bytes) and reports the applied delta.
+func TestReconcileUsage_CorrectsDrift(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mustRecordObject(t, s, "bucket/k1", "backend-a", 100)
+	mustRecordObject(t, s, "bucket/k2", "backend-a", 250)
+
+	if _, err := s.rawDB.ExecContext(ctx,
+		`UPDATE backend_quotas SET bytes_used = 99999 WHERE backend_name = 'backend-a'`); err != nil {
+		t.Fatalf("corrupt bytes_used: %v", err)
+	}
+
+	adj, err := s.ReconcileUsage(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileUsage: %v", err)
+	}
+
+	var got int64
+	if err := s.rawDB.QueryRowContext(ctx,
+		`SELECT bytes_used FROM backend_quotas WHERE backend_name = 'backend-a'`).Scan(&got); err != nil {
+		t.Fatalf("read bytes_used: %v", err)
+	}
+	if got != 350 {
+		t.Errorf("bytes_used = %d, want 350 (ledger truth)", got)
+	}
+	if adj["backend-a"] != 350-99999 {
+		t.Errorf("adjustment = %d, want %d", adj["backend-a"], 350-99999)
+	}
+}
+
 // -------------------------------------------------------------------------
 // CLEANUP QUEUE
 // -------------------------------------------------------------------------

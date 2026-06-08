@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -124,6 +125,23 @@ func (h *Handler) handleUsageFlush(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "flushed"})
+}
+
+// handleReconcileUsage recomputes each backend's bytes_used from the object
+// ledger and returns the per-backend byte corrections that were applied.
+func (h *Handler) handleReconcileUsage(w http.ResponseWriter, r *http.Request) {
+	adjustments, err := h.backendOps.ReconcileUsage(r.Context())
+	if err != nil {
+		h.internalError(r.Context(), w, "usage reconcile failed", err)
+		return
+	}
+
+	audit.Log(r.Context(), "usage.reconcile",
+		slog.Int("backends_corrected", len(adjustments)))
+	httputil.WriteJSON(w, http.StatusOK, map[string]any{
+		"status":      "reconciled",
+		"adjustments": adjustments,
+	})
 }
 
 // handleLogLevel gets or sets the runtime log level.
