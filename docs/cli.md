@@ -26,7 +26,13 @@ s3-orchestrator validate -config config.yaml
 
 ### admin
 
-Operational CLI for inspecting and controlling a running instance. Reads `config.yaml` to discover the server address and admin token (`ui.admin_token`, falling back to `ui.admin_key`), then makes HTTP requests to the admin API.
+Operational CLI for inspecting and controlling a running instance. Resolves the server address and admin token with the precedence **flag &rarr; environment &rarr; config file**, loading `config.yaml` only when a value is still missing. This lets a local binary target a remote instance with just env vars and no server config:
+
+```bash
+export S3O_ADMIN_ADDR="https://s3.example.com"
+export S3O_ADMIN_TOKEN="$(your-secret-tool get admin-token)"
+s3-orchestrator admin usage-reconcile
+```
 
 ```bash
 s3-orchestrator admin [flags] <command>
@@ -36,8 +42,9 @@ s3-orchestrator admin [flags] <command>
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-config` | `config.yaml` | Path to configuration file |
-| `-addr` | from config | Override server address |
+| `-config` | `config.yaml` | Path to config file; loaded only when `-addr`/`-token` (or their env vars) are unset |
+| `-addr` | `$S3O_ADMIN_ADDR`, else config `server.listen_addr` | Server address |
+| `-token` | `$S3O_ADMIN_TOKEN`, else config `ui.admin_token` / `ui.admin_key` | Admin API token |
 
 **Commands:**
 
