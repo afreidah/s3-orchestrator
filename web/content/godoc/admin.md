@@ -35,7 +35,7 @@ Package admin provides the admin API handler for operational control endpoints.
 
 
 <a name="BackendOps"></a>
-## type [BackendOps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L41-L48>)
+## type [BackendOps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L41-L49>)
 
 BackendOps is the narrow surface of \*proxy.BackendManager that the admin handler depends on for operations not encapsulated by a named sub\-manager \(replicator, drain, scrubber, etc.\). \*proxy.BackendManager satisfies it.
 
@@ -44,6 +44,7 @@ type BackendOps interface {
     GetDashboardData(ctx context.Context) (*dashboard.Data, error)
     FlushUsage(ctx context.Context) error
     UpdateQuotaMetrics(ctx context.Context) error
+    ReconcileUsage(ctx context.Context) (map[string]int64, error)
     RecordUsage(backendName string, requests, ingressBytes, egressBytes int64)
     GetBackend(name string) (backend.ObjectBackend, error)
     IntegrityConfig() *config.IntegrityConfig
@@ -79,7 +80,7 @@ type BulkRewriteResult struct {
 ```
 
 <a name="Deps"></a>
-## type [Deps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L84-L102>)
+## type [Deps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L85-L103>)
 
 Deps groups the narrow role interfaces and infrastructure the admin handler touches. Each field carries the smallest contract the handler actually uses, so the constructor \(and the backing DI provider\) never hand the handler a god\-shaped \*proxy.BackendManager.
 
@@ -106,7 +107,7 @@ type Deps struct {
 ```
 
 <a name="Handler"></a>
-## type [Handler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L54-L78>)
+## type [Handler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L55-L79>)
 
 Handler serves the admin API endpoints.
 
@@ -117,7 +118,7 @@ type Handler struct {
 ```
 
 <a name="New"></a>
-### func [New](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L105>)
+### func [New](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L106>)
 
 ```go
 func New(d *Deps) *Handler
@@ -171,7 +172,7 @@ func (h *Handler) Scrub(ctx context.Context, batchSize int) ScrubResult
 Scrub runs one integrity\-verification scrub pass synchronously and returns the per\-pass counts. batchSize \<= 0 means use the configured ScrubberBatchSize. Skips when integrity verification is not enabled.
 
 <a name="Handler.SetReloadStatusProvider"></a>
-### func \(\*Handler\) [SetReloadStatusProvider](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L141>)
+### func \(\*Handler\) [SetReloadStatusProvider](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L142>)
 
 ```go
 func (h *Handler) SetReloadStatusProvider(fn func() any)
@@ -255,7 +256,7 @@ type ScrubberOps interface {
 ```
 
 <a name="WorkerHealth"></a>
-## type [WorkerHealth](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_status.go#L153-L159>)
+## type [WorkerHealth](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_status.go#L171-L177>)
 
 WorkerHealth is the JSON shape returned by /admin/api/workers. Mirrors lifecycle.WorkerHealth but lives here so the admin transport package owns its own response contract and does not import the lifecycle package directly. Field tags must stay in lockstep with the source type or the wire format silently diverges.
 
