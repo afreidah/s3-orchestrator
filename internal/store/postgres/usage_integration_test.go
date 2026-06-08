@@ -26,7 +26,6 @@ func TestStoreInt_ReconcileUsage_CorrectsDrift(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 
-	resetBytesUsed(t, s, "backend-a")
 	if _, err := s.RecordObject(ctx, uniqueKey(t, "recon-1"), "backend-a", 100, nil); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
@@ -34,10 +33,20 @@ func TestStoreInt_ReconcileUsage_CorrectsDrift(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	// Ledger truth for backend-a is now 350. Corrupt the counter to simulate
-	// the drift a degraded-backend cycle leaves behind.
+	// The shared container accumulates rows across tests, so read the actual
+	// ledger truth rather than assuming only this test's objects exist.
+	var truth int64
+	if err := s.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(size_bytes), 0) FROM object_locations WHERE backend_name = 'backend-a'`,
+	).Scan(&truth); err != nil {
+		t.Fatalf("read ledger sum: %v", err)
+	}
+
+	// Corrupt the counter to simulate the drift a degraded-backend cycle leaves
+	// behind, then reconcile back to truth.
+	corrupted := truth + 99999
 	if _, err := s.pool.Exec(ctx,
-		`UPDATE backend_quotas SET bytes_used = 99999 WHERE backend_name = 'backend-a'`); err != nil {
+		`UPDATE backend_quotas SET bytes_used = $1 WHERE backend_name = 'backend-a'`, corrupted); err != nil {
 		t.Fatalf("corrupt bytes_used: %v", err)
 	}
 
@@ -46,10 +55,10 @@ func TestStoreInt_ReconcileUsage_CorrectsDrift(t *testing.T) {
 		t.Fatalf("ReconcileUsage: %v", err)
 	}
 
-	if got := readBytesUsed(t, s, "backend-a"); got != 350 {
-		t.Errorf("bytes_used = %d, want 350 (ledger truth)", got)
+	if got := readBytesUsed(t, s, "backend-a"); got != truth {
+		t.Errorf("bytes_used = %d, want %d (ledger truth)", got, truth)
 	}
-	if adj["backend-a"] != 350-99999 {
-		t.Errorf("adjustment = %d, want %d", adj["backend-a"], 350-99999)
+	if adj["backend-a"] != truth-corrupted {
+		t.Errorf("adjustment = %d, want %d", adj["backend-a"], truth-corrupted)
 	}
 }

@@ -132,6 +132,21 @@ func TestReconcileUsage_ReadErrorPropagates(t *testing.T) {
 	}
 }
 
+// TestReconcileUsage_SumErrorPropagates verifies a failure summing the ledger
+// surfaces verbatim and writes nothing.
+func TestReconcileUsage_SumErrorPropagates(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("sum failed")
+	stub := &usageTxStub{
+		current:  map[string]int64{"b": 100},
+		truthErr: sentinel,
+	}
+	_, err := runReconcileUsage(stub)
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected sum error, got %v", err)
+	}
+}
+
 // TestReconcileUsage_WriteErrorPropagates verifies a failure applying the
 // correction surfaces verbatim.
 func TestReconcileUsage_WriteErrorPropagates(t *testing.T) {

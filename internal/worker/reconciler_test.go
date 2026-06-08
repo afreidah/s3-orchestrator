@@ -15,6 +15,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"go.uber.org/mock/gomock"
@@ -76,6 +77,21 @@ func TestReconciler_ReconcilesUsageEachPass(t *testing.T) {
 
 	r := NewReconciler(syncer, []string{"unified"})
 	r.Run(context.Background())
+}
+
+// TestReconciler_ReconcileUsageError verifies a usage-reconcile failure is
+// logged and swallowed so it never aborts the reconcile cycle.
+func TestReconciler_ReconcileUsageError(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	syncer := NewMockBackendSyncer(ctrl)
+
+	syncer.EXPECT().BackendOrder().Return([]string{"b1"})
+	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", "unified", []string{"unified"}).Return(0, 0, nil)
+	syncer.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, errors.New("db down")).Times(1)
+
+	r := NewReconciler(syncer, []string{"unified"})
+	r.Run(context.Background()) // must not panic
 }
 
 // TestReconcile_AllBackends verifies the reconcile all backends contract.
