@@ -177,7 +177,7 @@ func (h *Handler) handleAPIBackfillChecksums(w http.ResponseWriter, r *http.Requ
 		name:      "backfill-checksums",
 		resultKey: "processed",
 		run: func(ctx context.Context) (int, map[string]any, string, error) {
-			res := h.adminHandler.BackfillChecksums(ctx, 0)
+			res := h.adminHandler.BackfillChecksums(ctx, 0, 0, 0)
 			if res.Status == "skipped" {
 				return 0, nil, res.Reason, nil
 			}
