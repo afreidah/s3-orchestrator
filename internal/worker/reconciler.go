@@ -36,6 +36,7 @@ type BackendSyncer interface {
 	SyncBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (imported, skipped int, err error)
 	ReconcileBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (*ReconcileResult, error)
 	UpdateQuotaMetrics(ctx context.Context) error
+	ReconcileUsage(ctx context.Context) (map[string]int64, error)
 	BackendOrder() []string
 }
 
@@ -99,11 +100,32 @@ func (r *Reconciler) Run(ctx context.Context) {
 		}
 	}
 
+	r.reconcileUsage(ctx)
+
 	audit.Log(ctx, "storage.ReconcileComplete",
 		slog.Int("imported", totalImported),
 		slog.Int("skipped", totalSkipped),
 		slog.String("duration", duration.Round(time.Millisecond).String()),
 	)
+}
+
+// reconcileUsage recomputes bytes_used from the object ledger so the
+// incrementally maintained counter cannot drift permanently. Runs every pass
+// (drift can exist with zero imports); a failure is logged and swallowed so it
+// never aborts the reconcile cycle.
+func (r *Reconciler) reconcileUsage(ctx context.Context) {
+	adjustments, err := r.syncer.ReconcileUsage(ctx)
+	if err != nil {
+		r.log.WarnContext(ctx, "usage reconciliation failed", logfmt.Err(err))
+		return
+	}
+	if len(adjustments) == 0 {
+		return
+	}
+	telemetry.UsageReconcileCorrectionsTotal.Add(float64(len(adjustments)))
+	r.log.InfoContext(ctx, "usage reconciliation corrected drift",
+		"backends_corrected", len(adjustments))
+	audit.Log(ctx, "usage.reconcile", slog.Int("backends_corrected", len(adjustments)))
 }
 
 // Reconcile performs a full reconciliation for the given backend (or all

@@ -3,9 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// CLI wrapper around the admin API endpoints. Reads config to discover the
-// server address and admin token, then makes HTTP requests to the running
-// instance. Formats JSON responses for human consumption.
+// CLI wrapper around the admin API endpoints. Resolves the target server
+// address and admin token with the precedence flag -> environment
+// ($S3O_ADMIN_ADDR / $S3O_ADMIN_TOKEN) -> config file, loading the config only
+// when a value is still missing - so a local binary can target a remote
+// instance with no server config. Formats JSON responses for human consumption.
 // -------------------------------------------------------------------------------
 
 // Package adminctl implements the `s3-orchestrator admin ...` family of
@@ -22,6 +24,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -32,6 +35,11 @@ import (
 const (
 	adminBackendsPath = "/admin/api/backends/"
 	adminTokenHeader  = "X-Admin-Token"
+
+	// envAdminAddr and envAdminToken let a local binary target a remote
+	// instance without a server config; flags take precedence over both.
+	envAdminAddr  = "S3O_ADMIN_ADDR"
+	envAdminToken = "S3O_ADMIN_TOKEN" //nolint:gosec // G101: env var name, not a credential
 	flagBatchSize     = "batch-size"
 	fmtBatchSize      = "?batch_size=%d"
 	fmtError          = "error: %v\n"
@@ -41,12 +49,14 @@ const (
 )
 
 // Run is the CLI entry point for `s3-orchestrator admin`. It parses the
-// admin-level flags, loads config, then dispatches to a per-command handler.
+// admin-level flags, resolves the target address and token (flag -> env ->
+// config via resolveTarget), then dispatches to a per-command handler.
 // Returns the process exit code so the caller in cmd/ can os.Exit cleanly.
 func Run(args []string, stdout, stderr io.Writer) int { // codecov:ignore -- CLI entry point
 	fs := flag.NewFlagSet("admin", flag.ExitOnError)
-	configPath := fs.String("config", "config.yaml", "Path to configuration file")
-	addr := fs.String("addr", "", "Override server address (default: from config)")
+	configPath := fs.String("config", "config.yaml", "Path to config file (only loaded when -addr/-token or their env vars are unset)")
+	addr := fs.String("addr", "", "Server address (overrides $S3O_ADMIN_ADDR and config)")
+	tokenFlag := fs.String("token", "", "Admin API token (overrides $S3O_ADMIN_TOKEN and config)")
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, `Usage: s3-orchestrator admin [flags] <command>
 
@@ -65,6 +75,7 @@ Commands:
   scrub               Trigger an on-demand integrity scrub cycle (use -batch-size to override)
   backfill-checksums  Compute and store content hashes for all unhashed objects (use -batch-size to control pace)
   reconcile           Reconcile DB against backend (use -backend to scope to one backend)
+  usage-reconcile     Recompute bytes_used from the object ledger to correct quota drift
   cache-flush         Drop every entry from the in-memory object data cache
   cache-stats         Show object data cache entries, size, and capacity
   cache-invalidate    Drop a single key from the in-memory object data cache (requires -key)
@@ -83,30 +94,61 @@ Flags:
 		return 0
 	}
 
-	cfg, err := config.LoadConfig(*configPath)
+	baseAddr, token, err := resolveTarget(*addr, *tokenFlag, func() (*config.Config, error) {
+		return config.LoadConfig(*configPath)
+	})
 	if err != nil {
 		fmt.Fprintf(stderr, fmtError, err)
 		return 1
 	}
-
-	baseAddr := *addr
 	if baseAddr == "" {
-		baseAddr = cfg.Server.ListenAddr
+		fmt.Fprintln(stderr, "error: server address required (set -addr, $S3O_ADMIN_ADDR, or server.listen_addr in config)")
+		return 1
+	}
+	if token == "" {
+		fmt.Fprintln(stderr, "error: admin token required (set -token, $S3O_ADMIN_TOKEN, or ui.admin_token/admin_key in config)")
+		return 1
 	}
 	if !strings.HasPrefix(baseAddr, "http") {
 		baseAddr = "http://" + baseAddr
 	}
 
-	token := cfg.UI.AdminToken
-	if token == "" {
-		token = cfg.UI.AdminKey
-	}
-	if token == "" {
-		fmt.Fprintln(stderr, "error: ui.admin_token or ui.admin_key is required in config for admin commands")
-		return 1
+	return Command(fs.Arg(0), fs.Args()[1:], baseAddr, token, stdout, stderr)
+}
+
+// resolveTarget determines the admin API base address and token using the
+// precedence flag -> environment -> config. The config file is loaded (via
+// loadCfg) only when either value is still missing, so a local binary can
+// target a remote instance with just -addr/-token or $S3O_ADMIN_ADDR /
+// $S3O_ADMIN_TOKEN and no server config at all.
+func resolveTarget(addrFlag, tokenFlag string, loadCfg func() (*config.Config, error)) (string, string, error) {
+	addr := firstNonEmpty(addrFlag, os.Getenv(envAdminAddr))
+	token := firstNonEmpty(tokenFlag, os.Getenv(envAdminToken))
+	if addr != "" && token != "" {
+		return addr, token, nil
 	}
 
-	return Command(fs.Arg(0), fs.Args()[1:], baseAddr, token, stdout, stderr)
+	cfg, err := loadCfg()
+	if err != nil {
+		return "", "", err
+	}
+	if addr == "" {
+		addr = cfg.Server.ListenAddr
+	}
+	if token == "" {
+		token = firstNonEmpty(cfg.UI.AdminToken, cfg.UI.AdminKey)
+	}
+	return addr, token, nil
+}
+
+// firstNonEmpty returns the first non-empty string, or "" if all are empty.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // Command executes an admin CLI command, returning the exit code. Exposed so
@@ -140,6 +182,7 @@ var handlers = map[string]handler{
 	"backfill-checksums": cmdBackfillChecksums,
 	"remove-backend":     cmdRemoveBackend,
 	"reconcile":          cmdReconcile,
+	"usage-reconcile":    cmdUsageReconcile,
 	"cache-flush":        cmdCacheFlush,
 	"cache-stats":        cmdCacheStats,
 	"cache-invalidate":         cmdCacheInvalidate,
@@ -184,6 +227,14 @@ func cmdCleanupQueue(_ []string, baseAddr, token string, stdout, stderr io.Write
 // for the next periodic tick.
 func cmdUsageFlush(_ []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	return doPost(baseAddr+"/admin/api/usage-flush", "", token, stdout, stderr)
+}
+
+// cmdUsageReconcile implements `s3-orchestrator admin usage-reconcile`.
+// Recomputes each backend's bytes_used from the object ledger, correcting
+// drift in the incrementally maintained quota counter, and prints the
+// per-backend corrections applied.
+func cmdUsageReconcile(_ []string, baseAddr, token string, stdout, stderr io.Writer) int {
+	return doPost(baseAddr+"/admin/api/usage-reconcile", "", token, stdout, stderr)
 }
 
 // cmdCacheFlush implements `s3-orchestrator admin cache-flush`. Drops

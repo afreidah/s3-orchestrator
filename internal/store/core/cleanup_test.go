@@ -82,6 +82,18 @@ func (t *cleanupTxStub) IncrementBackendQuota(context.Context, string, int64) er
 // full TxAdapter interface; only the cleanup-touching methods carry
 // real test fixtures.
 func (t *cleanupTxStub) DecrementBackendQuota(context.Context, string, int64) error { return nil }
+// AllBackendBytesUsed is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
+func (t *cleanupTxStub) AllBackendBytesUsed(context.Context) (map[string]int64, error) {
+	return nil, nil
+}
+// SumObjectSizesByBackend is a no-op stub on cleanupTxStub.
+func (t *cleanupTxStub) SumObjectSizesByBackend(context.Context) (map[string]int64, error) {
+	return nil, nil
+}
+// SetBackendBytesUsed is a no-op stub on cleanupTxStub.
+func (t *cleanupTxStub) SetBackendBytesUsed(context.Context, string, int64) error { return nil }
 // DecrementOrphanBytes is a no-op stub on cleanupTxStub so the type satisfies the
 // full TxAdapter interface; only the cleanup-touching methods carry
 // real test fixtures.

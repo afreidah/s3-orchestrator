@@ -12,12 +12,153 @@ package adminctl
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/config"
 )
+
+// cfgLoader returns a loader that yields a Config with the given address and
+// admin credentials, used to exercise resolveTarget's config-fallback path.
+func cfgLoader(addr, adminToken, adminKey string) func() (*config.Config, error) {
+	return func() (*config.Config, error) {
+		c := &config.Config{}
+		c.Server.ListenAddr = addr
+		c.UI.AdminToken = adminToken
+		c.UI.AdminKey = adminKey
+		return c, nil
+	}
+}
+
+// mustNotLoad fails the test if the config loader is invoked - used to prove
+// resolveTarget skips the config file when addr and token come from flags/env.
+func mustNotLoad(t *testing.T) func() (*config.Config, error) {
+	return func() (*config.Config, error) {
+		t.Helper()
+		t.Fatal("config loader must not be called when addr and token are supplied")
+		return nil, nil
+	}
+}
+
+// TestResolveTarget_FlagsBeatEnvAndConfig verifies flags win over both the
+// environment and the config file (which is not even loaded).
+func TestResolveTarget_FlagsBeatEnvAndConfig(t *testing.T) {
+	t.Setenv(envAdminAddr, "env-addr")
+	t.Setenv(envAdminToken, "env-tok")
+	addr, tok, err := resolveTarget("flag-addr", "flag-tok", mustNotLoad(t))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if addr != "flag-addr" || tok != "flag-tok" {
+		t.Errorf("got (%q,%q), want (flag-addr, flag-tok)", addr, tok)
+	}
+}
+
+// TestResolveTarget_EnvUsedWhenNoFlags verifies env vars are used when no
+// flags are set, again without touching the config file.
+func TestResolveTarget_EnvUsedWhenNoFlags(t *testing.T) {
+	t.Setenv(envAdminAddr, "env-addr")
+	t.Setenv(envAdminToken, "env-tok")
+	addr, tok, err := resolveTarget("", "", mustNotLoad(t))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if addr != "env-addr" || tok != "env-tok" {
+		t.Errorf("got (%q,%q), want (env-addr, env-tok)", addr, tok)
+	}
+}
+
+// TestResolveTarget_ConfigFallback verifies that with neither flags nor env,
+// both values come from config, and admin_key is used when admin_token is empty.
+func TestResolveTarget_ConfigFallback(t *testing.T) {
+	t.Setenv(envAdminAddr, "")
+	t.Setenv(envAdminToken, "")
+	addr, tok, err := resolveTarget("", "", cfgLoader("cfg-addr", "", "cfg-key"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if addr != "cfg-addr" || tok != "cfg-key" {
+		t.Errorf("got (%q,%q), want (cfg-addr, cfg-key)", addr, tok)
+	}
+}
+
+// TestResolveTarget_AdminTokenPreferredOverKey verifies admin_token beats
+// admin_key when both are present in config.
+func TestResolveTarget_AdminTokenPreferredOverKey(t *testing.T) {
+	t.Setenv(envAdminAddr, "")
+	t.Setenv(envAdminToken, "")
+	_, tok, err := resolveTarget("", "", cfgLoader("a", "the-token", "the-key"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tok != "the-token" {
+		t.Errorf("token = %q, want the-token", tok)
+	}
+}
+
+// TestResolveTarget_FlagAddrConfigToken verifies the mixed case: address from a
+// flag, token from config (config is loaded because the token is still missing).
+func TestResolveTarget_FlagAddrConfigToken(t *testing.T) {
+	t.Setenv(envAdminAddr, "")
+	t.Setenv(envAdminToken, "")
+	addr, tok, err := resolveTarget("flag-addr", "", cfgLoader("cfg-addr", "", "cfg-key"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if addr != "flag-addr" || tok != "cfg-key" {
+		t.Errorf("got (%q,%q), want (flag-addr, cfg-key)", addr, tok)
+	}
+}
+
+// TestResolveTarget_LoaderError verifies a config load failure surfaces verbatim.
+func TestResolveTarget_LoaderError(t *testing.T) {
+	t.Setenv(envAdminAddr, "")
+	t.Setenv(envAdminToken, "")
+	sentinel := errors.New("bad config")
+	_, _, err := resolveTarget("", "", func() (*config.Config, error) { return nil, sentinel })
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected sentinel error, got %v", err)
+	}
+}
+
+// TestRun_FlagTarget drives Run end-to-end against a fake server using only
+// -addr/-token, proving the admin CLI works with no config file present.
+func TestRun_FlagTarget(t *testing.T) {
+	var gotToken string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotToken = r.Header.Get("X-Admin-Token")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	var out, errb bytes.Buffer
+	code := Run([]string{"-addr", srv.URL, "-token", "tok", "status"}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+	if gotToken != "tok" {
+		t.Errorf("server saw token %q, want tok", gotToken)
+	}
+}
+
+// TestFirstNonEmpty verifies the first non-empty string wins.
+func TestFirstNonEmpty(t *testing.T) {
+	t.Parallel()
+	if got := firstNonEmpty("", "", "third"); got != "third" {
+		t.Errorf("got %q, want third", got)
+	}
+	if got := firstNonEmpty("first", "second"); got != "first" {
+		t.Errorf("got %q, want first", got)
+	}
+	if got := firstNonEmpty("", ""); got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
 
 // TestCommand_Drain_MissingBackend verifies the command drain missing backend contract.
 // Asserts that exit code = , want 1.
@@ -321,6 +462,7 @@ var simpleWrapperCases = []wrapperCase{
 	{"status", "status", nil, http.MethodGet, "/admin/api/status", ""},
 	{"cleanup-queue", "cleanup-queue", nil, http.MethodGet, "/admin/api/cleanup-queue", ""},
 	{"usage-flush", "usage-flush", nil, http.MethodPost, "/admin/api/usage-flush", ""},
+	{"usage-reconcile", "usage-reconcile", nil, http.MethodPost, "/admin/api/usage-reconcile", ""},
 	{"replicate", "replicate", nil, http.MethodPost, "/admin/api/replicate", ""},
 	{"over-replication", "over-replication", nil, http.MethodGet, "/admin/api/over-replication", ""},
 	{"over-replication-execute", "over-replication", []string{"-execute"}, http.MethodPost, "/admin/api/over-replication", ""},

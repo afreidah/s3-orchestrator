@@ -926,6 +926,21 @@ func (mr *MockMetadataStoreMockRecorder) PromotePending(ctx, p any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PromotePending", reflect.TypeOf((*MockMetadataStore)(nil).PromotePending), ctx, p)
 }
 
+// ReconcileUsage mocks base method.
+func (m *MockMetadataStore) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReconcileUsage", ctx)
+	ret0, _ := ret[0].(map[string]int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ReconcileUsage indicates an expected call of ReconcileUsage.
+func (mr *MockMetadataStoreMockRecorder) ReconcileUsage(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReconcileUsage", reflect.TypeOf((*MockMetadataStore)(nil).ReconcileUsage), ctx)
+}
+
 // RecordObject mocks base method.
 func (m *MockMetadataStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta) ([]core.DeletedCopy, error) {
 	m.ctrl.T.Helper()

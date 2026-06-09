@@ -69,6 +69,12 @@ type QuotaStore interface {
 	GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error)
 	GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error)
 	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
+
+	// ReconcileUsage recomputes bytes_used from SUM(object_locations.size_bytes)
+	// per backend, correcting drift in the incrementally maintained counter.
+	// Returns the per-backend delta applied (truth - previous); only drifted
+	// backends are present.
+	ReconcileUsage(ctx context.Context) (map[string]int64, error)
 }
 
 // MultipartStore defines multipart upload lifecycle operations.

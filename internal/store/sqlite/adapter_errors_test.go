@@ -217,3 +217,30 @@ func TestAdapterErr_DecrementOrphanBytes(t *testing.T) {
 		t.Error("expected error from closed tx")
 	}
 }
+
+// TestAdapterErr_AllBackendBytesUsed verifies the Query error is wrapped.
+func TestAdapterErr_AllBackendBytesUsed(t *testing.T) {
+	t.Parallel()
+	a := closedAdapter(t, newTestStore(t))
+	if _, err := a.AllBackendBytesUsed(context.Background()); err == nil {
+		t.Error("expected error from closed tx")
+	}
+}
+
+// TestAdapterErr_SumObjectSizesByBackend verifies the Query error is wrapped.
+func TestAdapterErr_SumObjectSizesByBackend(t *testing.T) {
+	t.Parallel()
+	a := closedAdapter(t, newTestStore(t))
+	if _, err := a.SumObjectSizesByBackend(context.Background()); err == nil {
+		t.Error("expected error from closed tx")
+	}
+}
+
+// TestAdapterErr_SetBackendBytesUsed verifies the Exec error is wrapped.
+func TestAdapterErr_SetBackendBytesUsed(t *testing.T) {
+	t.Parallel()
+	a := closedAdapter(t, newTestStore(t))
+	if err := a.SetBackendBytesUsed(context.Background(), "backend-a", 100); err == nil {
+		t.Error("expected error from closed tx")
+	}
+}

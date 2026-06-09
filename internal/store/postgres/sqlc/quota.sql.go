@@ -329,6 +329,58 @@ func (q *Queries) IncrementQuota(ctx context.Context, arg IncrementQuotaParams) 
 	return result.RowsAffected(), nil
 }
 
+const setBackendBytesUsed = `-- name: SetBackendBytesUsed :exec
+UPDATE backend_quotas
+SET bytes_used = $1, updated_at = NOW()
+WHERE backend_name = $2
+`
+
+type SetBackendBytesUsedParams struct {
+	BytesUsed   int64
+	BackendName string
+}
+
+// Overwrites bytes_used with an authoritative value (no bytes_limit guard,
+// because the recomputed total is reality and the counter must follow it).
+func (q *Queries) SetBackendBytesUsed(ctx context.Context, arg SetBackendBytesUsedParams) error {
+	_, err := q.db.Exec(ctx, setBackendBytesUsed, arg.BytesUsed, arg.BackendName)
+	return err
+}
+
+const sumObjectSizesByBackend = `-- name: SumObjectSizesByBackend :many
+SELECT backend_name, COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes
+FROM object_locations
+GROUP BY backend_name
+`
+
+type SumObjectSizesByBackendRow struct {
+	BackendName string
+	TotalBytes  int64
+}
+
+// Authoritative per-backend byte total from the object ledger. Used by usage
+// reconciliation to recompute bytes_used, which is otherwise an incrementally
+// maintained counter that drifts if any mutation path misses an adjustment.
+func (q *Queries) SumObjectSizesByBackend(ctx context.Context) ([]SumObjectSizesByBackendRow, error) {
+	rows, err := q.db.Query(ctx, sumObjectSizesByBackend)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SumObjectSizesByBackendRow{}
+	for rows.Next() {
+		var i SumObjectSizesByBackendRow
+		if err := rows.Scan(&i.BackendName, &i.TotalBytes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertQuotaLimit = `-- name: UpsertQuotaLimit :exec
 
 INSERT INTO backend_quotas (backend_name, bytes_limit, bytes_used, updated_at)
