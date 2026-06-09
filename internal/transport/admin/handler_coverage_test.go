@@ -82,12 +82,18 @@ func (f *fakeOverRep) Clean(_ context.Context, _ config.ReplicationConfig) (int,
 type fakeScrubber struct {
 	scrubChecked, scrubFailed int
 	backfillProcessed         int
+	backfillMore              bool // when true, always report another batch (nextOffset != 0)
+	backfillCalls             int
 }
 
 func (f *fakeScrubber) Scrub(_ context.Context, _ int) (int, int) {
 	return f.scrubChecked, f.scrubFailed
 }
-func (f *fakeScrubber) Backfill(_ context.Context, _, _ int) (int, int) {
+func (f *fakeScrubber) Backfill(_ context.Context, batchSize, offset int) (int, int) {
+	f.backfillCalls++
+	if f.backfillMore {
+		return f.backfillProcessed, offset + batchSize
+	}
 	// Return processed for one batch then signal done with nextOffset=0.
 	return f.backfillProcessed, 0
 }
@@ -329,6 +335,41 @@ func TestHandleBackfillChecksums_IntegrityEnabled(t *testing.T) {
 	_ = json.NewDecoder(w.Body).Decode(&resp)
 	if resp["processed"].(float64) != 8 {
 		t.Errorf("processed = %v, want 8", resp["processed"])
+	}
+	if resp["done"] != true {
+		t.Errorf("done = %v, want true", resp["done"])
+	}
+}
+
+// TestHandleBackfillChecksums_BoundedByMax verifies that ?max caps the
+// objects processed in one request (so a single call fits the client
+// timeout) and that the response reports done=false when more remain.
+// delay_ms exercises the inter-batch pacing path.
+func TestHandleBackfillChecksums_BoundedByMax(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler()
+	h.backendOps = &fakeBackendOps{intCfg: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}}
+	sc := &fakeScrubber{backfillProcessed: 10, backfillMore: true}
+	h.scrubber = sc
+
+	w := httptest.NewRecorder()
+	h.handleBackfillChecksums(w, httptest.NewRequestWithContext(
+		context.Background(), http.MethodPost, "/admin/api/backfill-checksums?max=25&delay_ms=1", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	// 10 processed per batch, stops once total >= 25: 3 batches => 30.
+	if resp["processed"].(float64) != 30 {
+		t.Errorf("processed = %v, want 30", resp["processed"])
+	}
+	if resp["done"] != false {
+		t.Errorf("done = %v, want false (backlog not drained)", resp["done"])
+	}
+	if sc.backfillCalls != 3 {
+		t.Errorf("backfillCalls = %d, want 3", sc.backfillCalls)
 	}
 }
 

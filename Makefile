@@ -14,6 +14,11 @@ VERSION    ?= $(shell cat .version)
 FULL_TAG   := $(REGISTRY)/$(IMAGE):$(VERSION)
 PLATFORMS  := linux/amd64,linux/arm64
 
+# Install location for `make install` (override e.g. BINDIR=$(HOME)/.local/bin
+# for a no-sudo user install).
+PREFIX     ?= /usr/local
+BINDIR     ?= $(PREFIX)/bin
+
 # --- Go build flags ---
 GO_LDFLAGS := -s -w -X github.com/afreidah/s3-orchestrator/internal/observe/telemetry.Version=$(VERSION)
 
@@ -47,6 +52,15 @@ builder: ## Ensure the Buildx builder exists
 
 build: ## Build the Go binary for the local platform
 	go build -ldflags="$(GO_LDFLAGS)" -o s3-orchestrator ./cmd/s3-orchestrator
+
+install: build ## Install the binary to BINDIR (default /usr/local/bin; needs sudo, or set BINDIR=$(HOME)/.local/bin)
+	install -d $(BINDIR)
+	install -m 0755 s3-orchestrator $(BINDIR)/s3-orchestrator
+	@echo "installed s3-orchestrator $(VERSION) -> $(BINDIR)/s3-orchestrator"
+
+uninstall: ## Remove the installed binary from BINDIR
+	rm -f $(BINDIR)/s3-orchestrator
+	@echo "removed $(BINDIR)/s3-orchestrator"
 
 # -------------------------------------------------------------------------
 # DOCKER
@@ -571,5 +585,5 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: help builder build docker push generate test vet lint govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push clean
+.PHONY: help builder build install uninstall docker push generate test vet lint govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push clean
 .DEFAULT_GOAL := help

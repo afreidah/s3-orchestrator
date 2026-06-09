@@ -128,8 +128,14 @@ s3-orchestrator admin scrub -batch-size 500
 # Compute and store content hashes for all unhashed objects
 s3-orchestrator admin backfill-checksums
 
-# Backfill with a custom batch size (controls pace of backend reads)
+# Backfill with a custom batch size (objects fetched per pass)
 s3-orchestrator admin backfill-checksums -batch-size 50
+
+# Bound a single run and pace it so it fits the client timeout and
+# doesn't hammer backends: process at most 500 objects, pausing 250ms
+# between batches. The response reports "done" once the backlog drains;
+# re-run until done.
+s3-orchestrator admin backfill-checksums -max 500 -delay-ms 250
 
 # Reconcile all backends (import untracked objects, remove stale DB entries)
 s3-orchestrator admin reconcile

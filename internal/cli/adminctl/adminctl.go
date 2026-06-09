@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,7 +74,7 @@ Commands:
   drain-cancel        Cancel an active drain (requires backend name arg)
   remove-backend      Remove a backend and its data (requires backend name arg, --purge to delete S3 objects)
   scrub               Trigger an on-demand integrity scrub cycle (use -batch-size to override)
-  backfill-checksums  Compute and store content hashes for all unhashed objects (use -batch-size to control pace)
+  backfill-checksums  Compute and store content hashes for unhashed objects (use -max and -delay-ms to bound and pace each run)
   reconcile           Reconcile DB against backend (use -backend to scope to one backend)
   usage-reconcile     Recompute bytes_used from the object ledger to correct quota drift
   cache-flush         Drop every entry from the in-memory object data cache
@@ -396,21 +397,34 @@ func cmdScrub(args []string, baseAddr, token string, stdout, stderr io.Writer) i
 }
 
 // cmdBackfillChecksums implements `s3-orchestrator admin backfill-
-// checksums [-batch-size=N]`. Computes and stores content_hash for
-// objects predating the integrity feature. Default batch size is 100
-// per cycle to limit the per-call backend egress and DB write load.
+// checksums [-batch-size=N] [-max=N] [-delay-ms=N]`. Computes and stores
+// content_hash for objects predating the integrity feature. -max bounds
+// the objects processed per run (0 drains all) so a single call fits the
+// client timeout, and -delay-ms paces batches to avoid hammering backends.
 func cmdBackfillChecksums(args []string, baseAddr, token string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("backfill-checksums", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	batchSize := fs.Int(flagBatchSize, 100, "Objects per batch")
+	maxObjects := fs.Int("max", 0, "Cap objects processed this run (0 = drain entire backlog)")
+	delayMs := fs.Int("delay-ms", 0, "Pause between batches in milliseconds (rate-limits backend reads)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	url := baseAddr + "/admin/api/backfill-checksums"
+	q := url.Values{}
 	if *batchSize != 100 {
-		url += fmt.Sprintf(fmtBatchSize, *batchSize)
+		q.Set("batch_size", strconv.Itoa(*batchSize))
 	}
-	return doPost(url, "", token, stdout, stderr)
+	if *maxObjects > 0 {
+		q.Set("max", strconv.Itoa(*maxObjects))
+	}
+	if *delayMs > 0 {
+		q.Set("delay_ms", strconv.Itoa(*delayMs))
+	}
+	reqURL := baseAddr + "/admin/api/backfill-checksums"
+	if enc := q.Encode(); enc != "" {
+		reqURL += "?" + enc
+	}
+	return doPost(reqURL, "", token, stdout, stderr)
 }
 
 // cmdReconcile implements `s3-orchestrator admin reconcile

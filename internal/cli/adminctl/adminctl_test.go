@@ -473,6 +473,9 @@ var simpleWrapperCases = []wrapperCase{
 	{"scrub-batch", "scrub", []string{"-batch-size", "50"}, http.MethodPost, "/admin/api/scrub", "batch_size=50"},
 	{"backfill-checksums", "backfill-checksums", nil, http.MethodPost, "/admin/api/backfill-checksums", ""},
 	{"backfill-checksums-batch", "backfill-checksums", []string{"-batch-size", "50"}, http.MethodPost, "/admin/api/backfill-checksums", "batch_size=50"},
+	{"backfill-checksums-max", "backfill-checksums", []string{"-max", "200"}, http.MethodPost, "/admin/api/backfill-checksums", "max=200"},
+	{"backfill-checksums-delay", "backfill-checksums", []string{"-delay-ms", "500"}, http.MethodPost, "/admin/api/backfill-checksums", "delay_ms=500"},
+	{"backfill-checksums-all", "backfill-checksums", []string{"-batch-size", "50", "-max", "200", "-delay-ms", "500"}, http.MethodPost, "/admin/api/backfill-checksums", "batch_size=50&delay_ms=500&max=200"},
 	{"object-locations", "object-locations", []string{"-key", "my/key"}, http.MethodGet, "/admin/api/object-locations", "key=my/key"},
 }
 
