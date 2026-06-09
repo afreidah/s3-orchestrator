@@ -205,7 +205,7 @@ func TestBackfillChecksums_SkippedWhenIntegrityDisabled(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithManager(t)
 
-	res := h.BackfillChecksums(context.Background(), 0)
+	res := h.BackfillChecksums(context.Background(), 0, 0, 0)
 	if res.Status != "skipped" {
 		t.Errorf("Status = %q, want skipped", res.Status)
 	}
@@ -392,7 +392,7 @@ func TestBackfillChecksums_HappyPathEmptyStore(t *testing.T) {
 	h := newTestHandlerWithManager(t)
 	enableIntegrityForTest(t, h)
 
-	res := h.BackfillChecksums(context.Background(), 0)
+	res := h.BackfillChecksums(context.Background(), 0, 0, 0)
 	if res.Status != "ok" {
 		t.Errorf("Status = %q, want ok", res.Status)
 	}
