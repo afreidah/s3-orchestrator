@@ -440,7 +440,7 @@ func TestOrphanBytes_ReplicationRespectsOrphanBytes(t *testing.T) {
 		Factor:    2,
 		BatchSize: 10,
 	}
-	created, err := testWorkers.Replicator.Replicate(ctx, replCfg)
+	created, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -481,7 +481,7 @@ func TestOrphanBytes_OverwriteDisplacedCopiesCleanedUp(t *testing.T) {
 		Factor:    2,
 		BatchSize: 10,
 	}
-	created, err := testWorkers.Replicator.Replicate(ctx, replCfg)
+	created, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}

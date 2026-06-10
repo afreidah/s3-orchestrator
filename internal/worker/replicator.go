@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -73,14 +74,15 @@ func (r *Replicator) Config() *config.ReplicationConfig {
 
 // Replicate finds under-replicated objects and creates additional copies to
 // reach the target replication factor. Returns the number of copies created.
-func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
+// observer, when non-nil, receives a start and end step per object replicated.
+func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (int, error) {
 	return runOpsCycle(ctx, "Replicate", "replicate", func(ctx context.Context) (int, error) {
-		return r.replicate(ctx, cfg)
+		return r.replicate(ctx, cfg, observer)
 	})
 }
 
 // replicate is the body of Replicate after observe.Run sets up the span.
-func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
+func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (int, error) {
 	start := time.Now()
 	if cfg.Factor <= 1 {
 		return 0, nil
@@ -126,9 +128,15 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task replicaTask) {
 		defer telemetry.ReplicationPending.Dec()
 		WithAdmission(ctx, r.ops, WorkerNameReplicator, func() {
-			outcome := r.ReplicateObject(ctx, task.key, task.copies, task.needed)
-			r.reportObjectOutcome(ctx, &outcome)
-			created.Add(int32(outcome.Created)) //nolint:gosec // G115: Created is small per object
+			progress.Track(observer, task.key, func() string {
+				outcome := r.ReplicateObject(ctx, task.key, task.copies, task.needed)
+				r.reportObjectOutcome(ctx, &outcome)
+				created.Add(int32(outcome.Created)) //nolint:gosec // G115: Created is small per object
+				if outcome.Failed() > 0 {
+					return progress.StatusFailed
+				}
+				return progress.StatusOK
+			})
 		})
 	})
 

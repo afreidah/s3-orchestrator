@@ -14,10 +14,13 @@ package admin
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -30,15 +33,16 @@ type ReplicateResult struct {
 
 // Replicate runs one replication cycle synchronously and returns the
 // resulting counts. Skips when replication is unconfigured or factor <= 1.
-// Refreshes quota metrics on success. Exposed for callers (UI, tests) that
+// Refreshes quota metrics on success. observer, when non-nil, receives a start
+// and end step per object replicated. Exposed for callers (UI, tests) that
 // need the counts back as Go values rather than JSON.
-func (h *Handler) Replicate(ctx context.Context) (ReplicateResult, error) {
+func (h *Handler) Replicate(ctx context.Context, observer progress.Observer) (ReplicateResult, error) {
 	rcfg := h.replicator.Config()
 	if rcfg == nil || rcfg.Factor <= 1 {
 		return ReplicateResult{Status: "skipped", Reason: "replication not configured or factor <= 1"}, nil
 	}
 
-	created, err := h.replicator.Replicate(ctx, *rcfg)
+	created, err := h.replicator.Replicate(ctx, *rcfg, observer)
 	if err != nil {
 		return ReplicateResult{}, err
 	}
@@ -50,9 +54,16 @@ func (h *Handler) Replicate(ctx context.Context) (ReplicateResult, error) {
 	return ReplicateResult{Status: "ok", CopiesCreated: created}, nil
 }
 
-// handleReplicate triggers one replication cycle.
+// handleReplicate triggers one replication cycle. Streams per-object NDJSON
+// progress when the client accepts the stream content type; otherwise returns a
+// single JSON result.
 func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
-	res, err := h.Replicate(r.Context())
+	if acceptsStream(r) {
+		h.streamReplicate(w, r)
+		return
+	}
+
+	res, err := h.Replicate(r.Context(), nil)
 	if err != nil {
 		h.internalError(r.Context(), w, "replication failed", err)
 		return
@@ -68,6 +79,27 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_created": res.CopiesCreated})
+}
+
+// streamReplicate runs a replication cycle as an NDJSON step stream, one
+// "replicating <key>" line per object plus a terminal summary. Replication fans
+// objects out across a worker pool, so steps render as complete labeled lines
+// (sequential=false) to avoid interleaved output.
+func (h *Handler) streamReplicate(w http.ResponseWriter, r *http.Request) {
+	h.streamSteps(w, "replicate", "replicating", false, func(obs progress.Observer) (stepResult, error) {
+		res, err := h.Replicate(r.Context(), obs)
+		if err != nil {
+			return stepResult{}, err
+		}
+		if res.Status == "skipped" {
+			return stepResult{Skipped: res.Reason}, nil
+		}
+		return stepResult{
+			Processed: res.CopiesCreated,
+			Summary:   fmt.Sprintf("created %d copies", res.CopiesCreated),
+			Fields:    map[string]any{"copies_created": res.CopiesCreated},
+		}, nil
+	})
 }
 
 // handleOverReplicationStatus returns the count of over-replicated objects.
@@ -118,7 +150,12 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	removed, err := h.overRep.Clean(r.Context(), cfg)
+	if acceptsStream(r) {
+		h.streamOverReplication(w, r, cfg)
+		return
+	}
+
+	removed, err := h.overRep.Clean(r.Context(), cfg, nil)
 	if err != nil {
 		h.internalError(r.Context(), w, "over-replication cleanup failed", err)
 		return
@@ -129,4 +166,25 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_removed": removed})
+}
+
+// streamOverReplication runs an over-replication cleanup as an NDJSON step
+// stream, one "removing <key>" line per object plus a terminal summary. The
+// cleaner fans objects out across a worker pool, so steps render as complete
+// labeled lines (sequential=false) to avoid interleaved output.
+func (h *Handler) streamOverReplication(w http.ResponseWriter, r *http.Request, cfg config.ReplicationConfig) {
+	h.streamSteps(w, "over-replication", "removing", false, func(obs progress.Observer) (stepResult, error) {
+		removed, err := h.overRep.Clean(r.Context(), cfg, obs)
+		if err != nil {
+			return stepResult{}, err
+		}
+		if err := h.backendOps.UpdateQuotaMetrics(r.Context()); err != nil {
+			h.log.WarnContext(r.Context(), "failed to update quota metrics after admin over-replication cleanup", "error", err)
+		}
+		return stepResult{
+			Processed: removed,
+			Summary:   fmt.Sprintf("removed %d copies", removed),
+			Fields:    map[string]any{"copies_removed": removed},
+		}, nil
+	})
 }

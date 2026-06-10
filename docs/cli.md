@@ -45,6 +45,51 @@ s3-orchestrator admin [flags] <command>
 | `-config` | `config.yaml` | Path to config file; loaded only when `-addr`/`-token` (or their env vars) are unset |
 | `-addr` | `$S3O_ADMIN_ADDR`, else config `server.listen_addr` | Server address |
 | `-token` | `$S3O_ADMIN_TOKEN`, else config `ui.admin_token` / `ui.admin_key` | Admin API token |
+| `-json` | off | Emit raw JSON instead of human-readable text |
+
+**Output format:**
+
+Commands render human-readable text by default. Pass `-json` for the raw JSON
+the server returns, suitable for scripting (`jq`, etc.):
+
+```bash
+s3-orchestrator admin status            # human-readable summary
+s3-orchestrator admin -json status      # raw JSON for scripts
+```
+
+> **Migration note:** the default output is human-readable text. Earlier
+> versions printed JSON unconditionally; scripts that parse stdout must add
+> `-json` to keep the JSON contract.
+
+**Streaming progress:**
+
+The long-running commands stream per-item progress as they work rather than
+blocking on a single final payload. In text mode each item renders on one line,
+dotted out to its status and per-item duration; a final line summarizes the run.
+`-json` mode emits one JSON object per line (NDJSON): a `start` event, a
+`step_start`/`step_end` pair (or a single `step_end` for concurrent ops) per
+item, and a terminal `result`.
+
+| Command | Per-item verb | Item |
+|---------|---------------|------|
+| `backfill-checksums` | `hashing` | object key |
+| `scrub` | `verifying` | object key |
+| `reconcile` | `reconciling` | backend |
+| `replicate` | `replicating` | object key |
+| `over-replication --execute` | `removing` | object key |
+| `remove-backend --purge --confirm` | `deleting` | object key |
+
+```text
+$ s3-orchestrator admin backfill-checksums
+backfill-checksums started
+  hashing photos/a.jpg ............................. OK     (12ms)
+  hashing photos/b.jpg ............................. OK     (9ms)
+done: processed 2 (1.5s)
+```
+
+`replicate` and `over-replication` fan their work out across a worker pool, so
+each item prints as one complete line when it finishes (no live dots) to keep
+concurrent output from interleaving.
 
 **Commands:**
 

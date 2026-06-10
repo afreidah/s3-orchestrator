@@ -817,7 +817,7 @@ func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}

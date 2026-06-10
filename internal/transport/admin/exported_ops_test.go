@@ -165,7 +165,7 @@ func TestReplicate_SkippedWhenFactorAtOne(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithManager(t)
 
-	res, err := h.Replicate(context.Background())
+	res, err := h.Replicate(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestScrub_SkippedWhenIntegrityDisabled(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithManager(t)
 
-	res := h.Scrub(context.Background(), 0)
+	res := h.Scrub(context.Background(), 0, nil)
 	if res.Status != "skipped" {
 		t.Errorf("Status = %q, want skipped", res.Status)
 	}
@@ -205,7 +205,7 @@ func TestBackfillChecksums_SkippedWhenIntegrityDisabled(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithManager(t)
 
-	res := h.BackfillChecksums(context.Background(), 0, 0, 0)
+	res := h.BackfillChecksums(context.Background(), 0, 0, 0, nil)
 	if res.Status != "skipped" {
 		t.Errorf("Status = %q, want skipped", res.Status)
 	}
@@ -353,7 +353,7 @@ func TestReplicate_HappyPathEmptyStore(t *testing.T) {
 	// Bump replication factor so the skipped guard passes.
 	h.replicator.(*worker.Replicator).SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 10})
 
-	res, err := h.Replicate(context.Background())
+	res, err := h.Replicate(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestScrub_HappyPathEmptyStore(t *testing.T) {
 	// Enable integrity on the embedded manager so Scrub does not skip.
 	enableIntegrityForTest(t, h)
 
-	res := h.Scrub(context.Background(), 0)
+	res := h.Scrub(context.Background(), 0, nil)
 	if res.Status != "ok" {
 		t.Errorf("Status = %q, want ok", res.Status)
 	}
@@ -392,7 +392,7 @@ func TestBackfillChecksums_HappyPathEmptyStore(t *testing.T) {
 	h := newTestHandlerWithManager(t)
 	enableIntegrityForTest(t, h)
 
-	res := h.BackfillChecksums(context.Background(), 0, 0, 0)
+	res := h.BackfillChecksums(context.Background(), 0, 0, 0, nil)
 	if res.Status != "ok" {
 		t.Errorf("Status = %q, want ok", res.Status)
 	}

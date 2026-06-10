@@ -108,7 +108,7 @@ func TestReplicate_NoUnderReplicatedObjects(t *testing.T) {
 	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestReplicate_QueryError(t *testing.T) {
 	if _, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
-	}); err == nil {
+	}, nil); err == nil {
 		t.Fatal("expected error from GetUnderReplicatedObjects failure")
 	}
 }
@@ -201,7 +201,7 @@ func TestReplicate_Success(t *testing.T) {
 	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -583,7 +583,7 @@ func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -682,7 +682,7 @@ func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -731,7 +731,7 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 	created, err := workers.Replicator.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -794,7 +794,7 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 		Factor:             2,
 		BatchSize:          10,
 		UnhealthyThreshold: 0,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -856,7 +856,7 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 		Factor:             3,
 		BatchSize:          10,
 		UnhealthyThreshold: 0,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -919,7 +919,7 @@ func TestReplicate_UsesRecordedSize_NotFirstCopy(t *testing.T) {
 		Factor:             3,
 		BatchSize:          10,
 		UnhealthyThreshold: 0,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -968,7 +968,7 @@ func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
 		Factor:             2,
 		BatchSize:          10,
 		UnhealthyThreshold: time.Hour,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}

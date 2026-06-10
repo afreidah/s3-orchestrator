@@ -1971,7 +1971,7 @@ func TestReplicationBasic(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	created, err := testWorkers.Replicator.Replicate(ctx, replCfg)
+	created, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2032,7 +2032,7 @@ func TestReplicationOverwrite(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err = testWorkers.Replicator.Replicate(ctx, replCfg)
+	_, err = testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate v1: %v", err)
 	}
@@ -2057,7 +2057,7 @@ func TestReplicationOverwrite(t *testing.T) {
 	}
 
 	// Replicate again
-	created, err := testWorkers.Replicator.Replicate(ctx, replCfg)
+	created, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate v2: %v", err)
 	}
@@ -2108,7 +2108,7 @@ func TestReplicationDelete(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err = testWorkers.Replicator.Replicate(ctx, replCfg)
+	_, err = testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2172,7 +2172,7 @@ func TestReplicationReadFailover(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err = testWorkers.Replicator.Replicate(ctx, replCfg)
+	_, err = testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2227,7 +2227,7 @@ func TestReplicationAlreadyReplicated(t *testing.T) {
 	}
 
 	// First replication
-	created1, err := testWorkers.Replicator.Replicate(ctx, replCfg)
+	created1, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate 1: %v", err)
 	}
@@ -2236,7 +2236,7 @@ func TestReplicationAlreadyReplicated(t *testing.T) {
 	}
 
 	// Second replication  -  should be a no-op
-	created2, err := testWorkers.Replicator.Replicate(ctx, replCfg)
+	created2, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate 2: %v", err)
 	}
@@ -2280,7 +2280,7 @@ func TestReplicationNoSpace(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	created, err := testWorkers.Replicator.Replicate(ctx, replCfg)
+	created, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2313,7 +2313,7 @@ func TestRebalancerWithReplicas(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err = testWorkers.Replicator.Replicate(ctx, replCfg)
+	_, err = testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2393,7 +2393,7 @@ func TestOverReplicationBasic(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err = workers.Replicator.Replicate(ctx, replCfg)
+	_, err = workers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate to factor 3: %v", err)
 	}
@@ -2406,7 +2406,7 @@ func TestOverReplicationBasic(t *testing.T) {
 		Factor:      3,
 		BatchSize:   50,
 		Concurrency: 1,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Clean (at factor): %v", err)
 	}
@@ -2419,7 +2419,7 @@ func TestOverReplicationBasic(t *testing.T) {
 		Factor:      2,
 		BatchSize:   50,
 		Concurrency: 1,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Clean (over factor): %v", err)
 	}
@@ -2476,7 +2476,7 @@ func TestOverReplicationMultipleObjects(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err := workers.Replicator.Replicate(ctx, replCfg)
+	_, err := workers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2491,7 +2491,7 @@ func TestOverReplicationMultipleObjects(t *testing.T) {
 		Factor:      2,
 		BatchSize:   50,
 		Concurrency: 2,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
@@ -2534,7 +2534,7 @@ func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err = workers.Replicator.Replicate(ctx, replCfg)
+	_, err = workers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2556,7 +2556,7 @@ func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 		Factor:      2,
 		BatchSize:   50,
 		Concurrency: 1,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
@@ -2618,7 +2618,7 @@ func TestOverReplicationQuotaFreed(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err = workers.Replicator.Replicate(ctx, replCfg)
+	_, err = workers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2639,7 +2639,7 @@ func TestOverReplicationQuotaFreed(t *testing.T) {
 		Factor:      2,
 		BatchSize:   50,
 		Concurrency: 1,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
@@ -2709,7 +2709,7 @@ func TestOverReplicationCountPending(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	_, err = workers.Replicator.Replicate(ctx, replCfg)
+	_, err = workers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
@@ -2737,7 +2737,7 @@ func TestOverReplicationCountPending(t *testing.T) {
 		Factor:      2,
 		BatchSize:   50,
 		Concurrency: 1,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
@@ -4545,7 +4545,7 @@ func TestRemoveBackend(t *testing.T) {
 	}
 
 	// Remove without purge (just DB records).
-	if err := testManager.Drain().RemoveBackend(ctx, "minio-2", false); err != nil {
+	if err := testManager.Drain().RemoveBackend(ctx, "minio-2", false, nil); err != nil {
 		t.Fatalf("RemoveBackend: %v", err)
 	}
 

@@ -228,7 +228,7 @@ func TestClean_FactorOne_Noop(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c := NewOverReplicationCleaner(NewMockOps(ctrl), &mockMetadataStore{})
 
-	removed, err := c.Clean(context.Background(), config.ReplicationConfig{Factor: 1})
+	removed, err := c.Clean(context.Background(), config.ReplicationConfig{Factor: 1}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestClean_NothingOverReplicated(t *testing.T) {
 	ms := &mockMetadataStore{}
 
 	c := NewOverReplicationCleaner(ops, ms)
-	removed, err := c.Clean(context.Background(), config.ReplicationConfig{Factor: 2, BatchSize: 10, Concurrency: 1})
+	removed, err := c.Clean(context.Background(), config.ReplicationConfig{Factor: 2, BatchSize: 10, Concurrency: 1}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
