@@ -130,7 +130,7 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		ctx := context.Background()
-		removed, err := h.overRep.Clean(ctx, cfg)
+		removed, err := h.overRep.Clean(ctx, cfg, nil)
 		if err != nil {
 			h.log.ErrorContext(ctx, "over-replication cleanup failed", "error", err)
 			h.asyncOps.Complete(opCleanExcess, &asyncResult{Error: "cleanup failed"})

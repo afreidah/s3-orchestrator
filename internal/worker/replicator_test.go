@@ -427,7 +427,7 @@ func TestReplicate_FactorOne_Noop(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	r := NewReplicator(NewMockOps(ctrl), &mockMetadataStore{})
 
-	created, err := r.Replicate(context.Background(), config.ReplicationConfig{Factor: 1})
+	created, err := r.Replicate(context.Background(), config.ReplicationConfig{Factor: 1}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -448,7 +448,7 @@ func TestReplicate_NothingUnderReplicated(t *testing.T) {
 
 	r := NewReplicator(ops, ms)
 	cfg := config.ReplicationConfig{Factor: 2, BatchSize: 10, Concurrency: 1, UnhealthyThreshold: time.Hour}
-	created, err := r.Replicate(context.Background(), cfg)
+	created, err := r.Replicate(context.Background(), cfg, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

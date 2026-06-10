@@ -103,7 +103,7 @@ func raceReplicators(t *testing.T, ctx context.Context, cfg config.ReplicationCo
 	var wg sync.WaitGroup
 	for _, r := range rs {
 		wg.Go(func() {
-			created, err := r.Replicate(ctx, cfg)
+			created, err := r.Replicate(ctx, cfg, nil)
 			if err != nil {
 				t.Errorf("Replicate: %v", err)
 				return

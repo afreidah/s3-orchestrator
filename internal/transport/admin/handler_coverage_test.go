@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -47,14 +48,16 @@ type fakeBackendOps struct {
 func (f *fakeBackendOps) GetDashboardData(_ context.Context) (*dashboard.Data, error) {
 	return f.dashData, f.dashErr
 }
-func (f *fakeBackendOps) FlushUsage(_ context.Context) error                                     { return f.flushErr }
-func (f *fakeBackendOps) UpdateQuotaMetrics(_ context.Context) error                             { return nil }
+func (f *fakeBackendOps) FlushUsage(_ context.Context) error         { return f.flushErr }
+func (f *fakeBackendOps) UpdateQuotaMetrics(_ context.Context) error { return nil }
 func (f *fakeBackendOps) ReconcileUsage(_ context.Context) (map[string]int64, error) {
 	return f.reconcileMap, f.reconcileErr
 }
-func (f *fakeBackendOps) RecordUsage(_ string, _, _, _ int64)                                    {}
-func (f *fakeBackendOps) GetBackend(_ string) (backend.ObjectBackend, error)                     { return nil, errors.New("no backend") }
-func (f *fakeBackendOps) IntegrityConfig() *config.IntegrityConfig                               { return f.intCfg }
+func (f *fakeBackendOps) RecordUsage(_ string, _, _, _ int64) {}
+func (f *fakeBackendOps) GetBackend(_ string) (backend.ObjectBackend, error) {
+	return nil, errors.New("no backend")
+}
+func (f *fakeBackendOps) IntegrityConfig() *config.IntegrityConfig { return f.intCfg }
 
 type fakeReplicator struct {
 	cfg     *config.ReplicationConfig
@@ -63,21 +66,31 @@ type fakeReplicator struct {
 }
 
 func (f *fakeReplicator) Config() *config.ReplicationConfig { return f.cfg }
-func (f *fakeReplicator) Replicate(_ context.Context, _ config.ReplicationConfig) (int, error) {
+func (f *fakeReplicator) Replicate(_ context.Context, _ config.ReplicationConfig, observer progress.Observer) (int, error) {
+	for range f.created {
+		progress.Track(observer, "fake-key", func() string { return progress.StatusOK })
+	}
 	return f.created, f.err
 }
 
 type fakeOverRep struct {
-	cfg     *config.ReplicationConfig
-	count   int64
+	cfg      *config.ReplicationConfig
+	count    int64
 	countErr error
-	cleaned int
+	cleaned  int
 	cleanErr error
 }
 
-func (f *fakeOverRep) Config() *config.ReplicationConfig                              { return f.cfg }
-func (f *fakeOverRep) CountPending(_ context.Context, _ int) (int64, error)            { return f.count, f.countErr }
-func (f *fakeOverRep) Clean(_ context.Context, _ config.ReplicationConfig) (int, error) { return f.cleaned, f.cleanErr }
+func (f *fakeOverRep) Config() *config.ReplicationConfig { return f.cfg }
+func (f *fakeOverRep) CountPending(_ context.Context, _ int) (int64, error) {
+	return f.count, f.countErr
+}
+func (f *fakeOverRep) Clean(_ context.Context, _ config.ReplicationConfig, observer progress.Observer) (int, error) {
+	for range f.cleaned {
+		progress.Track(observer, "fake-key", func() string { return progress.StatusOK })
+	}
+	return f.cleaned, f.cleanErr
+}
 
 type fakeScrubber struct {
 	scrubChecked, scrubFailed int
@@ -86,11 +99,17 @@ type fakeScrubber struct {
 	backfillCalls             int
 }
 
-func (f *fakeScrubber) Scrub(_ context.Context, _ int) (int, int) {
+func (f *fakeScrubber) Scrub(_ context.Context, _ int, observer progress.Observer) (int, int) {
+	for range f.scrubChecked {
+		progress.Track(observer, "fake-key", func() string { return progress.StatusOK })
+	}
 	return f.scrubChecked, f.scrubFailed
 }
-func (f *fakeScrubber) Backfill(_ context.Context, batchSize, offset int) (int, int) {
+func (f *fakeScrubber) Backfill(_ context.Context, batchSize, offset int, observer progress.Observer) (int, int) {
 	f.backfillCalls++
+	for range f.backfillProcessed {
+		progress.Track(observer, "fake-key", func() string { return progress.StatusOK })
+	}
 	if f.backfillMore {
 		return f.backfillProcessed, offset + batchSize
 	}
@@ -107,6 +126,14 @@ func (f *fakeReconciler) Reconcile(_ context.Context, _ string) (*worker.Reconci
 	return f.result, f.err
 }
 
+func (f *fakeReconciler) ReconcileStreaming(_ context.Context, _ string, observer progress.Observer) (*worker.ReconcileResult, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	progress.Track(observer, "fake-backend", func() string { return progress.StatusOK })
+	return f.result, f.err
+}
+
 // newCoverageHandler builds a Handler wired entirely from the lightweight
 // fakes above so each test can dial in the precise branch it wants to
 // exercise without standing up a BackendManager.
@@ -114,9 +141,9 @@ func newCoverageHandler() *Handler {
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	return &Handler{
-		log:      slog.Default().With(logfmt.Component("admin")),
-		token:    "test-token",
-		logLevel: &lv,
+		log:       slog.Default().With(logfmt.Component("admin")),
+		token:     "test-token",
+		logLevel:  &lv,
 		dbHealthy: func() bool { return true },
 	}
 }

@@ -165,7 +165,7 @@ func TestClean_FactorDisabled(t *testing.T) {
 	removed, err := workers.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
 		Factor:    1,
 		BatchSize: 10,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestClean_NoOverReplicatedObjects(t *testing.T) {
 	removed, err := workers.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestClean_QueryError(t *testing.T) {
 	if _, err := workers.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
-	}); err == nil {
+	}, nil); err == nil {
 		t.Fatal("expected error from Clean")
 	}
 }
@@ -238,7 +238,7 @@ func TestClean_QuotaStatsError_StillCleansUp(t *testing.T) {
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestClean_RemovesExcessCopies(t *testing.T) {
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestClean_RemoveExcessCopyError(t *testing.T) {
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Clean should not return error for per-object failures: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestClean_MultipleObjects(t *testing.T) {
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestClean_BackendNotFoundDuringCleanup(t *testing.T) {
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
@@ -499,7 +499,7 @@ func TestClean_AdmissionBlocked(t *testing.T) {
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}

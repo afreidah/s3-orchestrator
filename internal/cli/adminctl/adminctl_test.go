@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
@@ -429,8 +430,32 @@ func TestCommand_ServerError(t *testing.T) {
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
+	// Text mode renders the error as a single "error: <message>" line on stderr.
+	if !strings.Contains(stderr.String(), "backend not found") {
+		t.Errorf("stderr = %q, want to contain 'backend not found'", stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Errorf("stdout = %q, want empty on text-mode error", stdout.String())
+	}
+}
+
+// TestCommand_ServerErrorJSON verifies that --json renders an error body as raw
+// JSON on stdout (the machine-readable contract) rather than the stderr line.
+func TestCommand_ServerErrorJSON(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "backend not found"})
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := CommandWithFormat("drain", []string{"bad"}, srv.URL, "tok", output.FormatJSON, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
 	if !strings.Contains(stdout.String(), "backend not found") {
-		t.Errorf("stdout = %q, want to contain 'backend not found'", stdout.String())
+		t.Errorf("stdout = %q, want JSON error body", stdout.String())
 	}
 }
 
@@ -871,5 +896,80 @@ func TestCommand_CacheInvalidatePrefix_MissingPrefix(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "-prefix is required") {
 		t.Errorf("stderr = %q, want to mention -prefix is required", stderr.String())
+	}
+}
+
+// TestErrorMessage verifies extraction of the "error" field and the fallback
+// to the trimmed raw body when the response is not the expected shape.
+func TestErrorMessage(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"error field", `{"error":"boom"}`, "boom"},
+		{"no error field", `{"status":"weird"}`, `{"status":"weird"}`},
+		{"empty error field", `{"error":""}`, `{"error":""}`},
+		{"non-json", "  plain text  ", "plain text"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := errorMessage([]byte(tc.body)); got != tc.want {
+				t.Errorf("errorMessage(%q) = %q, want %q", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCommand_TextVsJSONRendering verifies the format split on a generic
+// (no bespoke renderer) command: text mode renders a human "key: value" view,
+// JSON mode pretty-prints the raw body with indentation.
+func TestCommand_TextVsJSONRendering(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"entries":3,"capacity":100}`))
+	}))
+	defer srv.Close()
+
+	var textOut, textErr bytes.Buffer
+	if code := Command("cache-stats", nil, srv.URL, "tok", &textOut, &textErr); code != 0 {
+		t.Fatalf("text exit = %d (stderr=%q)", code, textErr.String())
+	}
+	if !strings.Contains(textOut.String(), "entries: 3") {
+		t.Errorf("text output = %q, want human key/value", textOut.String())
+	}
+	if strings.Contains(textOut.String(), "{") {
+		t.Errorf("text output should not contain JSON braces: %q", textOut.String())
+	}
+
+	var jsonOut, jsonErr bytes.Buffer
+	if code := CommandWithFormat("cache-stats", nil, srv.URL, "tok", output.FormatJSON, &jsonOut, &jsonErr); code != 0 {
+		t.Fatalf("json exit = %d (stderr=%q)", code, jsonErr.String())
+	}
+	if !strings.Contains(jsonOut.String(), "{\n  \"") {
+		t.Errorf("json output = %q, want indented JSON", jsonOut.String())
+	}
+}
+
+// TestCommand_FlagParseErrors verifies that every flag-parsing command exits 1
+// on an unknown flag rather than reaching the network.
+func TestCommand_FlagParseErrors(t *testing.T) {
+	t.Parallel()
+	cmds := []string{
+		"object-locations", "over-replication", "log-level", "scrub",
+		"backfill-checksums", "reconcile", "remove-backend",
+		"cache-invalidate", "cache-invalidate-prefix",
+	}
+	for _, cmd := range cmds {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			var stdout, stderr bytes.Buffer
+			code := Command(cmd, []string{"-nonexistent-flag"}, "http://unused.invalid", "tok", &stdout, &stderr)
+			if code != 1 {
+				t.Errorf("exit code = %d, want 1 on unknown flag", code)
+			}
+		})
 	}
 }
