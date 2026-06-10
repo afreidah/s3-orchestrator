@@ -82,21 +82,36 @@ func TestHandleBackfillChecksums_StreamsProgressAndResult(t *testing.T) {
 	}
 
 	// Each object emits a start and an end event; the key is carried on start.
-	var stepStarts, stepEnds int
-	for _, e := range events {
-		switch e.Kind {
-		case adminstream.KindStepStart:
-			stepStarts++
-			if e.Message == "" {
-				t.Error("step_start missing the object key")
-			}
-		case adminstream.KindStepEnd:
-			stepEnds++
-		}
-	}
+	stepStarts, stepEnds := countStepEvents(events)
 	if stepStarts != 30 || stepEnds != 30 {
 		t.Errorf("step events = %d start / %d end, want 30 / 30", stepStarts, stepEnds)
 	}
+	if !allStepStartsLabeled(events) {
+		t.Error("step_start missing the object key")
+	}
+}
+
+// countStepEvents tallies the step_start and step_end events in a stream.
+func countStepEvents(events []adminstream.Event) (starts, ends int) {
+	for _, e := range events {
+		switch e.Kind {
+		case adminstream.KindStepStart:
+			starts++
+		case adminstream.KindStepEnd:
+			ends++
+		}
+	}
+	return starts, ends
+}
+
+// allStepStartsLabeled reports whether every step_start carries its item key.
+func allStepStartsLabeled(events []adminstream.Event) bool {
+	for _, e := range events {
+		if e.Kind == adminstream.KindStepStart && e.Message == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func TestHandleBackfillChecksums_StreamsSkippedWhenDisabled(t *testing.T) {
@@ -157,21 +172,6 @@ func TestHandleReconcile_StreamsFailure(t *testing.T) {
 	}
 }
 
-// countLabeledStepEnds counts the labeled step_end events a concurrent
-// (sequential=false) op emits: one complete line per finished item, carrying
-// the verb+label in Message and no preceding step_start.
-func countLabeledStepEnds(events []adminstream.Event) (steps, stepStarts int) {
-	for _, e := range events {
-		switch e.Kind {
-		case adminstream.KindStepEnd:
-			steps++
-		case adminstream.KindStepStart:
-			stepStarts++
-		}
-	}
-	return steps, stepStarts
-}
-
 func TestHandleReplicate_StreamsProgressAndResult(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler()
@@ -200,7 +200,7 @@ func TestHandleReplicate_StreamsProgressAndResult(t *testing.T) {
 	}
 	// Replication fans out across a worker pool, so steps render as complete
 	// labeled lines (step_end only), never a live step_start prefix.
-	steps, stepStarts := countLabeledStepEnds(events)
+	stepStarts, steps := countStepEvents(events)
 	if steps != 3 || stepStarts != 0 {
 		t.Errorf("step events = %d step_end / %d step_start, want 3 / 0", steps, stepStarts)
 	}
@@ -242,7 +242,7 @@ func TestHandleOverReplicationClean_StreamsProgressAndResult(t *testing.T) {
 	if last.Processed != 2 {
 		t.Errorf("result processed = %d, want 2", last.Processed)
 	}
-	steps, stepStarts := countLabeledStepEnds(events)
+	stepStarts, steps := countStepEvents(events)
 	if steps != 2 || stepStarts != 0 {
 		t.Errorf("step events = %d step_end / %d step_start, want 2 / 0", steps, stepStarts)
 	}

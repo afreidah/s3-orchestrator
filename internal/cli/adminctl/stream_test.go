@@ -135,7 +135,7 @@ func TestStream_JSONPassthrough(t *testing.T) {
 		t.Fatalf("exit = %d", code)
 	}
 	// JSON mode re-emits each event as its own NDJSON line.
-	if n := strings.Count(strings.TrimSpace(stdout.String()), "\n"); n != 1 {
+	if strings.Count(strings.TrimSpace(stdout.String()), "\n") != 1 {
 		t.Errorf("expected 2 JSON lines, got:\n%s", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), `"event":"progress"`) {

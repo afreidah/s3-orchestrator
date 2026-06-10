@@ -115,41 +115,56 @@ func (h *Handler) BackfillChecksums(ctx context.Context, batchSize, maxObjects i
 	h.log.InfoContext(ctx, "Backfill-checksums started",
 		"batch_size", batchSize, "max_objects", maxObjects, "pause", pause)
 
-	// Count successfully hashed objects via the observer so the cumulative
-	// total stays in step with the per-object steps the caller renders.
 	var total int
-	counting := func(s progress.Step) {
+	done := h.drainBackfill(ctx, batchSize, maxObjects, pause, backfillCounter(observer, &total), &total)
+	return BackfillChecksumsResult{Status: "ok", Processed: total, Done: done}
+}
+
+// backfillCounter wraps observer so each successfully hashed object bumps total,
+// keeping the cumulative count in step with the per-object steps the caller
+// renders. The wrapped observer may be nil.
+func backfillCounter(observer progress.Observer, total *int) progress.Observer {
+	return func(s progress.Step) {
 		if s.Phase == progress.PhaseEnd && s.Status == progress.StatusOK {
-			total++
+			*total++
 		}
 		if observer != nil {
 			observer(s)
 		}
 	}
+}
 
-	done := false
+// drainBackfill runs backfill passes until the backlog drains, the max-objects
+// cap is hit, or the context is cancelled. Returns true only when the backlog
+// was fully drained.
+func (h *Handler) drainBackfill(ctx context.Context, batchSize, maxObjects int, pause time.Duration, observer progress.Observer, total *int) bool {
 	for offset := 0; ; {
-		_, nextOffset := h.scrubber.Backfill(ctx, batchSize, offset, counting)
+		_, nextOffset := h.scrubber.Backfill(ctx, batchSize, offset, observer)
 		if nextOffset == 0 {
-			done = true
-			break
+			return true
 		}
 		offset = nextOffset
-		if maxObjects > 0 && total >= maxObjects {
-			break
+		if maxObjects > 0 && *total >= maxObjects {
+			return false
 		}
 		if ctx.Err() != nil {
-			break
+			return false
 		}
-		if pause > 0 {
-			select {
-			case <-ctx.Done():
-				return BackfillChecksumsResult{Status: "ok", Processed: total}
-			case <-time.After(pause):
-			}
+		if pause > 0 && !sleepOrCancel(ctx, pause) {
+			return false
 		}
 	}
-	return BackfillChecksumsResult{Status: "ok", Processed: total, Done: done}
+}
+
+// sleepOrCancel waits for d or for ctx to be cancelled, returning false when
+// cancellation wins so the caller stops early.
+func sleepOrCancel(ctx context.Context, d time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(d):
+		return true
+	}
 }
 
 // handleBackfillChecksums triggers a checksum backfill pass. Optional query
