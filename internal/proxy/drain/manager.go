@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -490,8 +491,9 @@ func (d *Manager) pickDrainDestination(ctx context.Context, srcName string, obj 
 
 // RemoveBackend deletes all database records for a backend. If purge is true
 // and the backend is reachable, also deletes objects from the backend's S3
-// storage. This is destructive and cannot be undone.
-func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool) error {
+// storage. This is destructive and cannot be undone. observer, when non-nil,
+// receives a start and end step per object purged.
+func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool, observer progress.Observer) error {
 	if d.IsDraining(name) {
 		return fmt.Errorf("backend %q is currently draining, cancel the drain first", name)
 	}
@@ -502,7 +504,7 @@ func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool) er
 	if purge {
 		be, ok := d.infra.Backends()[name]
 		if ok {
-			d.PurgeBackendObjects(ctx, be, name)
+			d.PurgeBackendObjects(ctx, be, name, observer)
 		}
 	}
 
@@ -526,7 +528,7 @@ func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool) er
 // fails so a persistent DB error (constraint, partition, conflict)
 // cannot pin the loop on the same 100 rows forever; the same rows
 // would otherwise list-and-fail until the process was restarted.
-func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBackend, name string) {
+func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBackend, name string, observer progress.Observer) {
 	for {
 		objects, err := d.objects.ListObjectsByBackend(ctx, name, 100)
 		if err != nil {
@@ -540,18 +542,9 @@ func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBack
 
 		dbDeleted := 0
 		for i := range objects {
-			if err := d.infra.DeleteWithTimeout(ctx, be, objects[i].ObjectKey); err != nil {
-				d.log.WarnContext(ctx, "failed to delete object from backend during purge",
-					slog.String("backend", name), slog.String("key", objects[i].ObjectKey), "error", err)
-			}
-			d.infra.Acct().APICall(name)
-
-			if err := d.objects.DeleteObjectLocation(ctx, objects[i].ObjectKey, name); err != nil {
-				d.log.WarnContext(ctx, "failed to delete DB record during purge",
-					slog.String("backend", name), slog.String("key", objects[i].ObjectKey), "error", err)
-				continue
-			}
-			dbDeleted++
+			progress.Track(observer, objects[i].ObjectKey, func() string {
+				return d.purgeOneObject(ctx, be, name, objects[i].ObjectKey, &dbDeleted)
+			})
 		}
 
 		if dbDeleted == 0 {
@@ -560,4 +553,24 @@ func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBack
 			return
 		}
 	}
+}
+
+// purgeOneObject deletes a single object from the backend's S3 storage and its
+// metadata row, incrementing dbDeleted on a successful DB removal. Returns the
+// progress status: failed when the DB record could not be dropped (the signal
+// the page made no progress), ok otherwise.
+func (d *Manager) purgeOneObject(ctx context.Context, be backend.ObjectBackend, name, key string, dbDeleted *int) string {
+	if err := d.infra.DeleteWithTimeout(ctx, be, key); err != nil {
+		d.log.WarnContext(ctx, "failed to delete object from backend during purge",
+			slog.String("backend", name), slog.String("key", key), "error", err)
+	}
+	d.infra.Acct().APICall(name)
+
+	if err := d.objects.DeleteObjectLocation(ctx, key, name); err != nil {
+		d.log.WarnContext(ctx, "failed to delete DB record during purge",
+			slog.String("backend", name), slog.String("key", key), "error", err)
+		return progress.StatusFailed
+	}
+	*dbDeleted++
+	return progress.StatusOK
 }

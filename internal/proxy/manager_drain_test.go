@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -157,7 +158,7 @@ func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
 
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
-	mgr.drainManager.PurgeBackendObjects(context.Background(), backend, "b1")
+	mgr.drainManager.PurgeBackendObjects(context.Background(), backend, "b1", nil)
 
 	if len(c.deletedLocation) != 2 {
 		t.Fatalf("expected 2 DeleteObjectLocation calls, got %d", len(c.deletedLocation))
@@ -183,6 +184,53 @@ func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
 	}
 }
 
+// TestPurgeBackendObjects_EmitsProgressPerObject asserts the purge reports a
+// start and an end step through the observer for each object it deletes.
+func TestPurgeBackendObjects_EmitsProgressPerObject(t *testing.T) {
+	t.Parallel()
+	backend := newMockBackend()
+	backend.objects["obj1"] = mockObject{data: []byte("data1")}
+	backend.objects["obj2"] = mockObject{data: []byte("data2")}
+
+	c := &drainCalls{}
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(pagedLister([][]core.ObjectLocation{
+			{
+				{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 5},
+				{ObjectKey: "obj2", BackendName: "b1", SizeBytes: 5},
+			},
+			{},
+		}, nil, nil)).AnyTimes()
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubDeleteObjectLocation(c, nil)).AnyTimes()
+	storetest.Permissive(store)
+
+	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": backend})
+
+	var mu sync.Mutex
+	starts, ends := map[string]int{}, map[string]string{}
+	observer := func(s progress.Step) {
+		mu.Lock()
+		defer mu.Unlock()
+		if s.Phase == progress.PhaseStart {
+			starts[s.Label]++
+		} else {
+			ends[s.Label] = s.Status
+		}
+	}
+
+	mgr.drainManager.PurgeBackendObjects(context.Background(), backend, "b1", observer)
+
+	if starts["obj1"] != 1 || starts["obj2"] != 1 {
+		t.Errorf("start steps = %v, want one each for obj1/obj2", starts)
+	}
+	if ends["obj1"] != progress.StatusOK || ends["obj2"] != progress.StatusOK {
+		t.Errorf("end statuses = %v, want ok for obj1/obj2", ends)
+	}
+}
+
 // TestPurgeBackendObjects_ContinuesOnS3DeleteFailure asserts a missing
 // backend object still produces the DB delete.
 func TestPurgeBackendObjects_ContinuesOnS3DeleteFailure(t *testing.T) {
@@ -203,7 +251,7 @@ func TestPurgeBackendObjects_ContinuesOnS3DeleteFailure(t *testing.T) {
 
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
-	mgr.drainManager.PurgeBackendObjects(context.Background(), backend, "b1")
+	mgr.drainManager.PurgeBackendObjects(context.Background(), backend, "b1", nil)
 
 	if len(c.deletedLocation) != 1 {
 		t.Fatalf("expected 1 DeleteObjectLocation call, got %d", len(c.deletedLocation))
@@ -248,7 +296,7 @@ func TestPurgeBackendObjects_BailsOnZeroDBProgress(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		mgr.drainManager.PurgeBackendObjects(context.Background(), backend, "b1")
+		mgr.drainManager.PurgeBackendObjects(context.Background(), backend, "b1", nil)
 		close(done)
 	}()
 	select {
@@ -281,7 +329,7 @@ func TestRemoveBackend_PurgeTerminates(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- mgr.drainManager.RemoveBackend(context.Background(), "b1", true)
+		done <- mgr.drainManager.RemoveBackend(context.Background(), "b1", true, nil)
 	}()
 
 	select {
@@ -886,7 +934,7 @@ func TestPurgeBackendObjects_ListObjectsFails(t *testing.T) {
 
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	mgr.drainManager.PurgeBackendObjects(context.Background(), newMockBackend(), "b1")
+	mgr.drainManager.PurgeBackendObjects(context.Background(), newMockBackend(), "b1", nil)
 }
 
 // TestPurgeBackendObjects_S3DeleteFails_LogsWarning ensures the DB
@@ -910,7 +958,7 @@ func TestPurgeBackendObjects_S3DeleteFails_LogsWarning(t *testing.T) {
 
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
-	mgr.drainManager.PurgeBackendObjects(context.Background(), backend, "b1")
+	mgr.drainManager.PurgeBackendObjects(context.Background(), backend, "b1", nil)
 
 	if len(c.deletedLocation) != 1 {
 		t.Fatalf("expected 1 DeleteObjectLocation call, got %d", len(c.deletedLocation))
@@ -936,7 +984,7 @@ func TestPurgeBackendObjects_DBDeleteFails(t *testing.T) {
 
 	mgr := newDrainTestManager(t, store, map[string]*mockBackend{"b1": backend})
 
-	mgr.drainManager.PurgeBackendObjects(context.Background(), backend, "b1")
+	mgr.drainManager.PurgeBackendObjects(context.Background(), backend, "b1", nil)
 }
 
 // _ = s3be ensures the import stays in scope for the type-alias usage.

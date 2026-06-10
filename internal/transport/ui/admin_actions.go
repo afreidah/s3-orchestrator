@@ -121,7 +121,7 @@ func (h *Handler) handleAPIReplicate(w http.ResponseWriter, r *http.Request) {
 		name:      "replicate",
 		resultKey: "copies_created",
 		run: func(ctx context.Context) (int, map[string]any, string, error) {
-			res, err := h.adminHandler.Replicate(ctx)
+			res, err := h.adminHandler.Replicate(ctx, nil)
 			if err != nil {
 				return 0, nil, "", err
 			}
@@ -150,7 +150,7 @@ func (h *Handler) handleAPIScrub(w http.ResponseWriter, r *http.Request) {
 		name:      "scrub",
 		resultKey: "checked",
 		run: func(ctx context.Context) (int, map[string]any, string, error) {
-			res := h.adminHandler.Scrub(ctx, 0)
+			res := h.adminHandler.Scrub(ctx, 0, nil)
 			if res.Status == "skipped" {
 				return 0, nil, res.Reason, nil
 			}
@@ -177,7 +177,7 @@ func (h *Handler) handleAPIBackfillChecksums(w http.ResponseWriter, r *http.Requ
 		name:      "backfill-checksums",
 		resultKey: "processed",
 		run: func(ctx context.Context) (int, map[string]any, string, error) {
-			res := h.adminHandler.BackfillChecksums(ctx, 0, 0, 0)
+			res := h.adminHandler.BackfillChecksums(ctx, 0, 0, 0, nil)
 			if res.Status == "skipped" {
 				return 0, nil, res.Reason, nil
 			}

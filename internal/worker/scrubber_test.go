@@ -69,7 +69,7 @@ func TestScrub_MatchingHash(t *testing.T) {
 		Size: 11,
 	}, nil)
 
-	checked, failed := s.Scrub(context.Background(), 10)
+	checked, failed := s.Scrub(context.Background(), 10, nil)
 	if checked != 1 {
 		t.Errorf("expected 1 checked, got %d", checked)
 	}
@@ -96,7 +96,7 @@ func TestScrub_HashMismatch(t *testing.T) {
 		Size: 11,
 	}, nil)
 
-	checked, failed := s.Scrub(context.Background(), 10)
+	checked, failed := s.Scrub(context.Background(), 10, nil)
 	if checked != 1 {
 		t.Errorf("expected 1 checked, got %d", checked)
 	}
@@ -119,7 +119,7 @@ func TestScrub_BackendError(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().GetObject(gomock.Any(), "bucket/key1", "").Return(nil, errors.New("backend down"))
 
-	checked, failed := s.Scrub(context.Background(), 10)
+	checked, failed := s.Scrub(context.Background(), 10, nil)
 	if checked != 0 {
 		t.Errorf("expected 0 checked, got %d", checked)
 	}
@@ -135,7 +135,7 @@ func TestScrub_EmptyBatch(t *testing.T) {
 	s, _, _, ms := setupScrubber(t)
 	ms.randomHashedObjects = nil
 
-	checked, failed := s.Scrub(context.Background(), 10)
+	checked, failed := s.Scrub(context.Background(), 10, nil)
 	if checked != 0 || failed != 0 {
 		t.Errorf("expected 0/0, got %d/%d", checked, failed)
 	}
@@ -160,7 +160,7 @@ func TestBackfill_ComputesAndStoresHash(t *testing.T) {
 		Size: int64(len(body)),
 	}, nil)
 
-	processed, nextOffset := s.Backfill(context.Background(), 10, 0)
+	processed, nextOffset := s.Backfill(context.Background(), 10, 0, nil)
 	if processed != 1 {
 		t.Errorf("expected 1 processed, got %d", processed)
 	}
@@ -192,7 +192,7 @@ func TestBackfill_Pagination(t *testing.T) {
 		Size: 3,
 	}, nil).Times(5)
 
-	processed, nextOffset := s.Backfill(context.Background(), 5, 0)
+	processed, nextOffset := s.Backfill(context.Background(), 5, 0, nil)
 	if processed != 5 {
 		t.Errorf("expected 5 processed, got %d", processed)
 	}
@@ -220,7 +220,7 @@ func TestBackfill_UnencryptedObject(t *testing.T) {
 		Size: int64(len(body)),
 	}, nil)
 
-	processed, _ := s.Backfill(context.Background(), 10, 0)
+	processed, _ := s.Backfill(context.Background(), 10, 0, nil)
 	if processed != 1 {
 		t.Errorf("expected 1 processed, got %d", processed)
 	}
@@ -243,7 +243,7 @@ func TestBackfill_BackendError(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().GetObject(gomock.Any(), "bucket/key1", "").Return(nil, errors.New("timeout"))
 
-	processed, _ := s.Backfill(context.Background(), 10, 0)
+	processed, _ := s.Backfill(context.Background(), 10, 0, nil)
 	if processed != 0 {
 		t.Errorf("expected 0 processed, got %d", processed)
 	}
@@ -256,7 +256,7 @@ func TestBackfill_EmptyBatch(t *testing.T) {
 	s, _, _, ms := setupScrubber(t)
 	ms.objectsWithoutHash = nil
 
-	processed, nextOffset := s.Backfill(context.Background(), 10, 0)
+	processed, nextOffset := s.Backfill(context.Background(), 10, 0, nil)
 	if processed != 0 || nextOffset != 0 {
 		t.Errorf("expected 0/0, got %d/%d", processed, nextOffset)
 	}
@@ -292,7 +292,7 @@ func TestScrub_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	checked, failed := s.Scrub(ctx, 10)
+	checked, failed := s.Scrub(ctx, 10, nil)
 	if checked != 0 {
 		t.Errorf("expected 0 checked with cancelled context, got %d", checked)
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
@@ -43,7 +44,7 @@ type BackendSyncer interface {
 // Reconciler scans backends for untracked objects and imports them into the
 // metadata database.
 type Reconciler struct {
-	log *slog.Logger
+	log         *slog.Logger
 	syncer      BackendSyncer
 	bucketNames []string
 }
@@ -53,7 +54,7 @@ type Reconciler struct {
 func NewReconciler(syncer BackendSyncer, bucketNames []string) *Reconciler {
 	must.NotNil("syncer", syncer)
 	return &Reconciler{
-		log: slog.Default().With(logfmt.Component("reconciler")),
+		log:         slog.Default().With(logfmt.Component("reconciler")),
 		syncer:      syncer,
 		bucketNames: bucketNames,
 	}
@@ -132,6 +133,13 @@ func (r *Reconciler) reconcileUsage(ctx context.Context) {
 // backends if backendName is empty). Lists objects on each backend, diffs
 // against DB entries, imports untracked objects, and removes stale entries.
 func (r *Reconciler) Reconcile(ctx context.Context, backendName string) (*ReconcileResult, error) {
+	return r.ReconcileStreaming(ctx, backendName, nil)
+}
+
+// ReconcileStreaming is Reconcile with a per-backend observer. onBackend, when
+// non-nil, is called after each backend is reconciled so a streaming caller can
+// report incremental progress; pass nil for the non-streaming path.
+func (r *Reconciler) ReconcileStreaming(ctx context.Context, backendName string, observer progress.Observer) (*ReconcileResult, error) {
 	ctx = audit.WithRequestID(ctx, audit.NewID())
 
 	if len(r.bucketNames) == 0 {
@@ -147,14 +155,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, backendName string) (*Reconc
 
 	total := &ReconcileResult{}
 	for _, name := range backends {
-		result, err := r.syncer.ReconcileBackend(ctx, name, r.bucketNames[0], r.bucketNames)
-		if err != nil {
-			r.log.ErrorContext(ctx, "backend failed", "backend", name, "error", err)
-			continue
-		}
-		total.Imported += result.Imported
-		total.Removed += result.Removed
-		total.BackendsScanned += result.BackendsScanned
+		progress.Track(observer, name, func() string {
+			result, err := r.syncer.ReconcileBackend(ctx, name, r.bucketNames[0], r.bucketNames)
+			if err != nil {
+				r.log.ErrorContext(ctx, "backend failed", "backend", name, "error", err)
+				return progress.StatusFailed
+			}
+			total.Imported += result.Imported
+			total.Removed += result.Removed
+			total.BackendsScanned += result.BackendsScanned
+			return progress.StatusOK
+		})
 	}
 
 	if total.Imported > 0 || total.Removed > 0 {

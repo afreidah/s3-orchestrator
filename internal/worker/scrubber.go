@@ -32,6 +32,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -79,7 +80,7 @@ func (s *Scrubber) Config() *config.IntegrityConfig {
 
 // Scrub verifies a batch of objects with stored content hashes. Returns the
 // number of objects checked and the number of hash mismatches found.
-func (s *Scrubber) Scrub(ctx context.Context, batchSize int) (checked, failed int) {
+func (s *Scrubber) Scrub(ctx context.Context, batchSize int, observer progress.Observer) (checked, failed int) {
 	start := time.Now()
 	ctx = audit.WithRequestID(ctx, audit.NewID())
 	ctx, span := telemetry.StartSpan(ctx, "Scrub")
@@ -95,22 +96,39 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int) (checked, failed in
 		if ctx.Err() != nil {
 			break
 		}
-		match, verifyErr := s.verifyObject(ctx, &locs[i])
-		if verifyErr != nil {
-			s.log.WarnContext(ctx, "failed to verify object",
-				"key", locs[i].ObjectKey, "backend", locs[i].BackendName, "error", verifyErr)
-			continue
-		}
-		checked++
-		telemetry.IntegrityChecksTotal.WithLabelValues("scrub").Inc()
-		if !match {
-			failed++
+		if verified, matched := s.verifyOne(ctx, &locs[i], observer); verified {
+			checked++
+			telemetry.IntegrityChecksTotal.WithLabelValues("scrub").Inc()
+			if !matched {
+				failed++
+			}
 		}
 	}
 
 	s.log.InfoContext(ctx, "scrub cycle complete",
 		"checked", checked, "failed", failed, "duration", time.Since(start))
 	return checked, failed
+}
+
+// verifyOne verifies one object's stored hash, bracketing the work with
+// observer start/end steps. Returns whether the object was verified (no error)
+// and whether its hash matched.
+func (s *Scrubber) verifyOne(ctx context.Context, loc *core.ObjectLocation, observer progress.Observer) (verified, matched bool) {
+	progress.Track(observer, loc.ObjectKey, func() string {
+		match, verifyErr := s.verifyObject(ctx, loc)
+		if verifyErr != nil {
+			s.log.WarnContext(ctx, "failed to verify object",
+				"key", loc.ObjectKey, "backend", loc.BackendName, "error", verifyErr)
+			return progress.StatusFailed
+		}
+		verified = true
+		matched = match
+		if match {
+			return progress.StatusOK
+		}
+		return "mismatch"
+	})
+	return verified, matched
 }
 
 // verifyObject reads a single object, computes its hash, and compares to
@@ -144,9 +162,11 @@ func (s *Scrubber) verifyObject(ctx context.Context, loc *core.ObjectLocation) (
 
 // Backfill reads objects that have no stored content hash, computes the
 // SHA-256 digest, and stores it in the database. Processes up to batchSize
-// objects starting at the given offset. Returns the number of objects
-// processed and the next offset for pagination (0 when done).
-func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (processed, nextOffset int) {
+// objects starting at the given offset. observer, when non-nil, receives a
+// start step before each object is hashed and an end step after, carrying the
+// per-object outcome and duration. Returns the number of objects processed and
+// the next offset for pagination (0 when done).
+func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int, observer progress.Observer) (processed, nextOffset int) {
 	start := time.Now()
 	ctx = audit.WithRequestID(ctx, audit.NewID())
 	ctx, span := telemetry.StartSpan(ctx, "Backfill")
@@ -169,21 +189,9 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 		if ctx.Err() != nil {
 			break
 		}
-		loc := &locs[i]
-		hash, hashErr := s.readAndHash(ctx, loc)
-		if hashErr != nil {
-			s.log.WarnContext(ctx, "failed to hash object",
-				"key", loc.ObjectKey, "backend", loc.BackendName, "error", hashErr)
-			continue
+		if s.hashOne(ctx, &locs[i], observer) {
+			processed++
 		}
-
-		if err := s.store.UpdateContentHash(ctx, loc.ObjectKey, loc.BackendName, hash); err != nil {
-			s.log.WarnContext(ctx, "failed to store hash",
-				"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
-			continue
-		}
-
-		processed++
 	}
 
 	s.log.InfoContext(ctx, "backfill batch complete",
@@ -194,6 +202,28 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int) (process
 		return processed, offset + batchSize
 	}
 	return processed, 0
+}
+
+// hashOne computes and stores the hash for one object, bracketing the work with
+// observer start/end steps. Returns true when the hash was stored.
+func (s *Scrubber) hashOne(ctx context.Context, loc *core.ObjectLocation, observer progress.Observer) bool {
+	stored := false
+	progress.Track(observer, loc.ObjectKey, func() string {
+		hash, hashErr := s.readAndHash(ctx, loc)
+		if hashErr != nil {
+			s.log.WarnContext(ctx, "failed to hash object",
+				"key", loc.ObjectKey, "backend", loc.BackendName, "error", hashErr)
+			return progress.StatusFailed
+		}
+		if err := s.store.UpdateContentHash(ctx, loc.ObjectKey, loc.BackendName, hash); err != nil {
+			s.log.WarnContext(ctx, "failed to store hash",
+				"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+			return progress.StatusFailed
+		}
+		stored = true
+		return progress.StatusOK
+	})
+	return stored
 }
 
 // -------------------------------------------------------------------------

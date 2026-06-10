@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -77,10 +78,11 @@ func (c *OverReplicationCleaner) Config() *config.ReplicationConfig {
 // -------------------------------------------------------------------------
 
 // Clean finds over-replicated objects and removes excess copies to reach the
-// target replication factor. Returns the number of copies removed.
-func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
+// target replication factor. Returns the number of copies removed. observer,
+// when non-nil, receives a start and end step per object cleaned.
+func (c *OverReplicationCleaner) Clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (int, error) {
 	return runOpsCycle(ctx, "OverReplicationClean", "over_replication_clean", func(ctx context.Context) (int, error) {
-		return c.clean(ctx, cfg)
+		return c.clean(ctx, cfg, observer)
 	})
 }
 
@@ -95,7 +97,7 @@ type cleanOutcome struct {
 // clean is the body of Clean after observe.Run sets up the span. All
 // per-cycle telemetry and audit emission lives in reportCleanCycle so
 // the work below reads as straight business logic.
-func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
+func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (int, error) {
 	if cfg.Factor <= 1 {
 		return 0, nil
 	}
@@ -146,8 +148,11 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task cleanupTask) {
 		defer telemetry.OverReplicationPending.Dec()
 		WithAdmission(ctx, c.ops, WorkerNameOverReplication, func() {
-			n := c.cleanObject(ctx, task.key, task.copies, task.excess, cfg.Factor, quotaStats)
-			removed.Add(int64(n))
+			progress.Track(observer, task.key, func() string {
+				n := c.cleanObject(ctx, task.key, task.copies, task.excess, cfg.Factor, quotaStats)
+				removed.Add(int64(n))
+				return progress.StatusOK
+			})
 		})
 	})
 

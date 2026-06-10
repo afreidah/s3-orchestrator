@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -25,7 +26,7 @@ import (
 // worker is unconfigured; Replicate runs one cycle and returns the count.
 type ReplicatorOps interface {
 	Config() *config.ReplicationConfig
-	Replicate(ctx context.Context, cfg config.ReplicationConfig) (int, error)
+	Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (int, error)
 }
 
 // OverReplicationOps is the slice of *worker.OverReplicationCleaner the
@@ -33,18 +34,19 @@ type ReplicatorOps interface {
 type OverReplicationOps interface {
 	Config() *config.ReplicationConfig
 	CountPending(ctx context.Context, factor int) (int64, error)
-	Clean(ctx context.Context, cfg config.ReplicationConfig) (int, error)
+	Clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (int, error)
 }
 
 // ScrubberOps is the slice of *worker.Scrubber the admin handler uses for
 // the integrity-scrub and hash-backfill endpoints.
 type ScrubberOps interface {
-	Scrub(ctx context.Context, batchSize int) (checked, failed int)
-	Backfill(ctx context.Context, batchSize, offset int) (processed, nextOffset int)
+	Scrub(ctx context.Context, batchSize int, observer progress.Observer) (checked, failed int)
+	Backfill(ctx context.Context, batchSize, offset int, observer progress.Observer) (processed, nextOffset int)
 }
 
 // Reconciler is the slice of *worker.Reconciler the admin handler uses
 // for the on-demand reconciliation endpoint.
 type Reconciler interface {
 	Reconcile(ctx context.Context, backendName string) (*worker.ReconcileResult, error)
+	ReconcileStreaming(ctx context.Context, backendName string, observer progress.Observer) (*worker.ReconcileResult, error)
 }

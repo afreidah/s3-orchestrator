@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -77,7 +78,7 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 
 	// Non-purge removal: drop DB records immediately (reversible via sync)
 	if !purge {
-		if err := h.drain.RemoveBackend(r.Context(), name, false); err != nil {
+		if err := h.drain.RemoveBackend(r.Context(), name, false, nil); err != nil {
 			h.log.ErrorContext(r.Context(), "remove backend failed", slog.String("backend", name), "error", err)
 			httputil.WriteJSONError(w, http.StatusBadRequest, "remove failed")
 			return
@@ -92,7 +93,11 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 			httputil.WriteJSONError(w, http.StatusForbidden, "invalid or expired confirmation token")
 			return
 		}
-		if err := h.drain.RemoveBackend(r.Context(), name, true); err != nil {
+		if acceptsStream(r) {
+			h.streamRemovePurge(w, r, name)
+			return
+		}
+		if err := h.drain.RemoveBackend(r.Context(), name, true, nil); err != nil {
 			h.log.ErrorContext(r.Context(), "purge backend failed", slog.String("backend", name), "error", err)
 			httputil.WriteJSONError(w, http.StatusBadRequest, "purge failed")
 			return
@@ -116,6 +121,31 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 		"total_bytes":   totalBytes,
 		"confirm_token": token,
 		"expires_in":    int(removeConfirmTTL.Seconds()),
+	})
+}
+
+// streamRemovePurge runs a backend purge as an NDJSON step stream, one
+// "deleting <key>" line per object plus a terminal summary. Purge deletes
+// objects one at a time, so each step renders live (sequential=true): a prefix
+// when the object starts, the status when it finishes.
+func (h *Handler) streamRemovePurge(w http.ResponseWriter, r *http.Request, name string) {
+	h.streamSteps(w, "remove-backend", "deleting", true, func(obs progress.Observer) (stepResult, error) {
+		var purged int
+		counting := func(s progress.Step) {
+			if s.Phase == progress.PhaseEnd && s.Status == progress.StatusOK {
+				purged++
+			}
+			obs(s)
+		}
+		if err := h.drain.RemoveBackend(r.Context(), name, true, counting); err != nil {
+			h.log.ErrorContext(r.Context(), "purge backend failed", slog.String("backend", name), "error", err)
+			return stepResult{}, err
+		}
+		return stepResult{
+			Processed: purged,
+			Summary:   fmt.Sprintf("purged %d objects from backend %q", purged, name),
+			Fields:    map[string]any{"backend": name, "purged": purged},
+		}, nil
 	})
 }
 
