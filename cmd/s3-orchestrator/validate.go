@@ -3,45 +3,19 @@
 //
 // Author: Alex Freidah
 //
-// Loads and validates a configuration file without starting the server. Exits 0
-// on success with a brief summary, or exits 1 with validation errors. 
+// Thin shim into internal/cli/validatecmd, which loads and validates a
+// configuration file without starting the server.
 // -------------------------------------------------------------------------------
 
 package main
 
 import (
-	"flag"
-	"fmt"
-	"io"
 	"os"
 
-	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/cli/validatecmd"
 )
 
-// runValidate parses flags and delegates to validateConfig, exiting with the
-// appropriate status code.
-func runValidate() { // codecov:ignore -- os.Exit wrapper, logic tested via validateConfig
-	fs := flag.NewFlagSet("validate", flag.ExitOnError)
-	configPath := fs.String("config", "config.yaml", "Path to configuration file")
-	_ = fs.Parse(os.Args[1:])
-
-	if err := validateConfig(*configPath, os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-// validateConfig loads and validates a configuration file, writing a summary to
-// the given writer on success or returning the validation error.
-func validateConfig(path string, w io.Writer) error {
-	cfg, err := config.LoadConfig(path)
-	if err != nil {
-		return err
-	}
-
-	fmt.Fprintf(w, "config %s: valid\n", path)
-	fmt.Fprintf(w, "  backends: %d\n", len(cfg.Backends))
-	fmt.Fprintf(w, "  buckets:  %d\n", len(cfg.Buckets))
-	fmt.Fprintf(w, "  routing:  %s\n", cfg.RoutingStrategy)
-	return nil
+// runValidate dispatches into validatecmd.Run and exits with its status code.
+func runValidate() { // codecov:ignore -- thin wrapper around validatecmd.Run
+	os.Exit(validatecmd.Run(os.Args[1:], os.Stdout, os.Stderr))
 }
