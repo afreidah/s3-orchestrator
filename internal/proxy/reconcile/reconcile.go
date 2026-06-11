@@ -4,10 +4,12 @@
 // Author: Alex Freidah
 //
 // Diffs the live key set on a backend against the metadata store using a
-// streaming sorted-merge. Both inputs are walked in lexicographic key order
-// (S3 ListObjectsV2 is spec-mandated UTF-8 ordered, the DB cursor uses
-// ORDER BY object_key ASC) so the merge runs in O(page_size) memory
-// regardless of backend object count. Replaces the previous "materialise
+// streaming sorted-merge. Both inputs are walked in byte (C-collation) key
+// order (S3 ListObjectsV2 is spec-mandated UTF-8 byte ordered; the DB cursor
+// uses ORDER BY object_key COLLATE "C" ASC to match) so the merge runs in
+// O(page_size) memory regardless of backend object count. The byte-order match
+// is load-bearing: a locale-collated cursor mis-orders against the byte-order
+// merge comparison and reconcile oscillates. Replaces the previous "materialise
 // every key into a map" implementation that OOM'd at scale.
 // -------------------------------------------------------------------------------
 
