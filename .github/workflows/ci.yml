@@ -383,7 +383,18 @@ jobs:
       - name: Sign image with cosign
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
-        run: cosign sign --yes ghcr.io/afreidah/s3-orchestrator-webpage@${DIGEST}
+        # A Rekor 409 means the signature is already in the transparency log
+        # (slow public instance + client retry), so treat that one case as success.
+        run: |
+          set +e
+          out=$(cosign sign --yes ghcr.io/afreidah/s3-orchestrator-webpage@${DIGEST} 2>&1)
+          rc=$?
+          echo "$out"
+          if [ $rc -ne 0 ] && echo "$out" | grep -q "already exists in the transparency log"; then
+            echo "::warning::Rekor entry already present; treating as signed."
+            exit 0
+          fi
+          exit $rc
 
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
