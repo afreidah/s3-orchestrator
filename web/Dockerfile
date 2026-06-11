@@ -44,6 +44,11 @@ COPY web/content/godoc/_index.md /src/web/content/godoc/_index.md
 RUN hugo --minify
 
 FROM nginx:alpine
-RUN apk upgrade --no-cache
+# APK_CACHEBUST changes per build (CI passes the commit SHA) so this layer is
+# never served stale from the build cache: apk upgrade re-runs against the
+# current Alpine index and picks up base-image security patches even when the
+# nginx:alpine digest is unchanged.
+ARG APK_CACHEBUST=0
+RUN APK_CACHEBUST="$APK_CACHEBUST" apk upgrade --no-cache
 COPY --from=build /src/web/public /usr/share/nginx/html
 EXPOSE 80
