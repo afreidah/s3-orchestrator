@@ -38,11 +38,17 @@ LIMIT $2;
 -- order, starting strictly after the supplied cursor. Used by ReconcileBackend
 -- to drive a bounded-memory sorted-merge join against an S3 ListObjects walk.
 -- Pass '' as the cursor on the first call.
+--
+-- COLLATE "C" is required: the merge join compares keys in byte order (Go string
+-- comparison) against S3 ListObjectsV2, which is UTF-8 byte ordered. Without it,
+-- a locale-collated object_key column orders the cursor differently, the merge
+-- mis-pairs keys, and reconcile oscillates (false imports/removes that never
+-- converge). The cursor predicate and ORDER BY must use the same collation.
 -- name: ListObjectsByBackendKeyAsc :many
 SELECT object_key, backend_name, size_bytes, created_at
 FROM object_locations
-WHERE backend_name = $1 AND object_key > $2
-ORDER BY object_key ASC
+WHERE backend_name = $1 AND object_key COLLATE "C" > $2
+ORDER BY object_key COLLATE "C" ASC
 LIMIT $3;
 
 -- name: CheckObjectExistsOnBackend :one
