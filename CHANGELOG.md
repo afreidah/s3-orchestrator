@@ -3,6 +3,34 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.62.1] - 2026-06-11
+
+### Fixed
+- fix(ci,deps): patch webpage base image CVEs + bump pgx to v5.10.0 (#1027)
+
+### Other
+- GH_ISSUE_1025: human-readable CLI output + per-item progress streaming (#1026)
+- GH_ISSUE_1023: bound + rate-limit backfill-checksums; add make install (#1024)
+
+## [0.61.1] - 2026-06-08
+
+### Other
+- GH_ISSUE_1021: target a remote instance via admin flags/env, no full config (#1022)
+
+## [0.61.0] - 2026-06-08
+
+### Improved
+- update CHANGELOG.md for v0.60.40 (#1001)
+
+### Dependencies
+- chore(deps): bump the aws-sdk group with 4 updates (#1016)
+
+### Other
+- docs(web): reflect usage reconciliation in godoc + background-services diagram (#1020)
+- GH_ISSUE_1018: add usage reconciliation to correct bytes_used drift (#1019)
+- GH_ISSUE_1011: ride out transient MinIO 502s in concurrent put/delete test (#1015)
+- GH_ISSUE_1002: route over-replication cleaner through the TxAdapter lock seam (#1010)
+
 ## [0.60.40] - 2026-06-02
 
 ### Added
