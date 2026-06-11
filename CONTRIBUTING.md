@@ -178,8 +178,8 @@ make release-local
 ```
 cmd/s3-orchestrator/         Binary entry: subcommand dispatch + thin shims
   main.go                    Entry point, subcommand dispatch
-  admin.go / init_cmd.go / sync.go    Shims into internal/cli/{adminctl,initcmd,synccmd}
-  validate.go / version.go   Validate-config and version subcommands
+  admin.go / init_cmd.go / sync.go / validate.go    Shims into internal/cli/{adminctl,initcmd,synccmd,validatecmd}
+  version.go                 Version subcommand (trivial fmt.Printf)
 
 internal/
   cli/                       CLI-side dispatch and bootstrap
@@ -187,6 +187,7 @@ internal/
     adminctl/                Admin operational CLI (HTTP client wrapping the admin API)
     initcmd/                 Interactive config-file generator
     synccmd/                 Pre-existing bucket import CLI
+    validatecmd/             Config-file validation (load + summary, no server)
 
   di/                        Single wiring point for samber/do/v2
     injector.go              Every Provide<X> for stores, workers, handlers, backends
