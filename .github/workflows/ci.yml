@@ -361,6 +361,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           pull: true
           push: true
+          build-args: |
+            APK_CACHEBUST=${{ github.sha }}
           tags: |
             ghcr.io/afreidah/s3-orchestrator-webpage:${{ steps.version.outputs.version }}
             ghcr.io/afreidah/s3-orchestrator-webpage:latest

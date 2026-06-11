@@ -75,7 +75,13 @@ func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.Cir
 
 	cfg.MaxConns = dbCfg.MaxConns
 	cfg.MinConns = dbCfg.MinConns
-	cfg.MaxConnLifetime = dbCfg.MaxConnLifetime
+	// A zero lifetime means "unset": keep pgxpool's default rather than
+	// overriding it with 0. Since pgx v5.10.0 the pool expires connections at
+	// acquire time (createdAt + MaxConnLifetime), so a 0 lifetime expires every
+	// connection instantly and Acquire fails with "too many failed attempts".
+	if dbCfg.MaxConnLifetime > 0 {
+		cfg.MaxConnLifetime = dbCfg.MaxConnLifetime
+	}
 	cfg.ConnConfig.Tracer = otelpgx.NewTracer()
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
