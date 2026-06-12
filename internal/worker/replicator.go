@@ -386,11 +386,27 @@ func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []cor
 		return cmpHealthFirst(r.IsBackendHealthy(a.BackendName), r.IsBackendHealthy(b.BackendName))
 	})
 
+	// Drop sources whose breaker is open so a streamed copy never starts
+	// against a backend we already know is down - a slow or dead source
+	// otherwise stalls the copy and (before the phase-attribution fix) trips
+	// the healthy target's breaker. Fall back to the full set only when no
+	// source is currently healthy, so an object whose only copies sit on
+	// degraded backends still gets an attempt rather than being stranded.
+	candidates := make([]core.ObjectLocation, 0, len(ordered))
 	for i := range ordered {
+		if r.IsBackendHealthy(ordered[i].BackendName) {
+			candidates = append(candidates, ordered[i])
+		}
+	}
+	if len(candidates) == 0 {
+		candidates = ordered
+	}
+
+	for i := range candidates {
 		if ctx.Err() != nil {
 			return "", 0, ctx.Err()
 		}
-		sourceName, sourceSize, terminal, err := r.tryCopyFrom(ctx, key, target, targetBackend, &ordered[i])
+		sourceName, sourceSize, terminal, err := r.tryCopyFrom(ctx, key, target, targetBackend, &candidates[i])
 		if terminal {
 			return sourceName, sourceSize, err
 		}

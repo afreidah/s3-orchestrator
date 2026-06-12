@@ -271,6 +271,86 @@ func TestCopyToReplica_Success(t *testing.T) {
 	}
 }
 
+// newOpenBreakerBackend wraps a mock whose calls fail and trips its breaker
+// open (threshold 1), so IsBackendHealthy reports it unhealthy. Used to prove
+// CopyToReplica excludes dead sources from selection.
+func newOpenBreakerBackend(t *testing.T, ctrl *gomock.Controller, name string) *backend.CircuitBreakerBackend {
+	t.Helper()
+	inner := backendtest.NewMockObjectBackend(ctrl)
+	inner.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("billing account closed")).AnyTimes()
+	cb := backend.NewCircuitBreakerBackend(inner, name, 1, time.Hour)
+	if _, err := cb.GetObject(context.Background(), "trip", ""); err == nil {
+		t.Fatal("expected the priming call to fail")
+	}
+	if cb.IsHealthy() {
+		t.Fatal("expected breaker to be open after a failure")
+	}
+	return cb
+}
+
+// TestCopyToReplica_SkipsOpenBreakerSource verifies a source whose breaker is
+// open is excluded from selection: the copy starts against the healthy source
+// only, so a dead source can never stall a copy and trip the target.
+func TestCopyToReplica_SkipsOpenBreakerSource(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{}
+
+	deadSrc := newOpenBreakerBackend(t, ctrl, "b0")
+	healthySrc := backendtest.NewMockObjectBackend(ctrl)
+	dstBe := backendtest.NewMockObjectBackend(ctrl)
+
+	ops.EXPECT().GetBackend("b2").Return(dstBe, nil)
+	ops.EXPECT().Backends().
+		Return(map[string]backend.ObjectBackend{"b0": deadSrc, "b1": healthySrc}).AnyTimes()
+	// Only the healthy source may be streamed; an unexpected StreamCopy against
+	// deadSrc fails the test (no expectation registered for it).
+	ops.EXPECT().StreamCopy(gomock.Any(), healthySrc, dstBe, "key1").Return(nil)
+
+	r := NewReplicator(ops, ms)
+	// Dead source listed first to prove exclusion, not just ordering, is at work.
+	copies := []core.ObjectLocation{{BackendName: "b0", SizeBytes: 10}, {BackendName: "b1", SizeBytes: 4096}}
+
+	src, size, err := r.CopyToReplica(context.Background(), "key1", copies, "b2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if src != "b1" || size != 4096 {
+		t.Errorf("got (%q, %d), want (b1, 4096)", src, size)
+	}
+}
+
+// TestCopyToReplica_FallsBackWhenAllSourcesUnhealthy verifies an object whose
+// only copy sits on an open-breaker backend still gets a copy attempt rather
+// than being stranded.
+func TestCopyToReplica_FallsBackWhenAllSourcesUnhealthy(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{}
+
+	deadSrc := newOpenBreakerBackend(t, ctrl, "b0")
+	dstBe := backendtest.NewMockObjectBackend(ctrl)
+
+	ops.EXPECT().GetBackend("b2").Return(dstBe, nil)
+	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b0": deadSrc}).AnyTimes()
+	// With no healthy source, the fallback must still attempt the dead one.
+	ops.EXPECT().StreamCopy(gomock.Any(), deadSrc, dstBe, "key1").Return(nil)
+
+	r := NewReplicator(ops, ms)
+	copies := []core.ObjectLocation{{BackendName: "b0", SizeBytes: 7}}
+
+	src, _, err := r.CopyToReplica(context.Background(), "key1", copies, "b2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if src != "b0" {
+		t.Errorf("source = %q, want b0 (fallback attempt)", src)
+	}
+}
+
 // TestCopyToReplica_404CleansUpStaleMetadata verifies the copy to replica 404 cleans up stale metadata contract.
 // Asserts that staleDeleted = , want 1.
 func TestCopyToReplica_404CleansUpStaleMetadata(t *testing.T) {
