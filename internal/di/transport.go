@@ -147,6 +147,7 @@ type adminHandlerRequiredDeps struct {
 	enc        *encryption.Encryptor
 	stores     core.MetadataStore
 	replicator *worker.Replicator
+	rebalancer *worker.Rebalancer
 	overRep    *worker.OverReplicationCleaner
 	scrubber   *worker.Scrubber
 	drain      *drain.Manager
@@ -179,6 +180,9 @@ func resolveAdminHandlerRequiredDeps(i do.Injector) (adminHandlerRequiredDeps, e
 		return d, err
 	}
 	if d.replicator, err = do.Invoke[*worker.Replicator](i); err != nil {
+		return d, err
+	}
+	if d.rebalancer, err = do.Invoke[*worker.Rebalancer](i); err != nil {
 		return d, err
 	}
 	if d.overRep, err = do.Invoke[*worker.OverReplicationCleaner](i); err != nil {
@@ -245,6 +249,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	return admin.New(&admin.Deps{
 		BackendOps:   d.manager,
 		Replicator:   d.replicator,
+		Rebalancer:   d.rebalancer,
 		OverRep:      d.overRep,
 		Drain:        d.drain,
 		Scrubber:     d.scrubber,

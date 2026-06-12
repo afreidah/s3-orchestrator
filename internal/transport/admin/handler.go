@@ -56,6 +56,7 @@ type Handler struct {
 	log          *slog.Logger
 	backendOps   BackendOps
 	replicator   ReplicatorOps
+	rebalancer   RebalancerOps // nil when the worker pool is not wired
 	overRep      OverReplicationOps
 	drain        *drain.Manager
 	scrubber     ScrubberOps
@@ -85,18 +86,19 @@ type Handler struct {
 type Deps struct {
 	BackendOps   BackendOps
 	Replicator   ReplicatorOps
+	Rebalancer   RebalancerOps // nil when the worker pool is not wired
 	OverRep      OverReplicationOps
 	Drain        *drain.Manager
 	Scrubber     ScrubberOps
 	Lifecycle    core.BackendLifecycleStore
-	DBHealthy    func() bool            // typically *breaker.CircuitBreaker.IsHealthy
+	DBHealthy    func() bool           // typically *breaker.CircuitBreaker.IsHealthy
 	WorkerHealth func() []WorkerHealth // typically lifecycle.Manager.Health adapted
 	Encryption   core.EncryptionAdmin
 	Objects      core.ObjectStore
 	Cleanup      core.CleanupStore
 	Encryptor    *encryption.Encryptor
 	ObjectCache  cache.ObjectCache // nil when object data caching is disabled
-	FlightRec    io.WriterTo // nil when debug.flight_recorder.enabled is false
+	FlightRec    io.WriterTo       // nil when debug.flight_recorder.enabled is false
 	Reconciler   Reconciler
 	Token        string
 	LogLevel     *slog.LevelVar
@@ -116,6 +118,7 @@ func New(d *Deps) *Handler {
 		log:          slog.Default().With(logfmt.Component("admin")),
 		backendOps:   d.BackendOps,
 		replicator:   d.Replicator,
+		rebalancer:   d.Rebalancer,
 		overRep:      d.OverRep,
 		drain:        d.Drain,
 		scrubber:     d.Scrubber,

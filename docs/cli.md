@@ -91,6 +91,54 @@ done: processed 2 (1.5s)
 each item prints as one complete line when it finishes (no live dots) to keep
 concurrent output from interleaving.
 
+**Example output:**
+
+`reconcile` dots each backend out to its result and prints a summary line. Run
+it twice in a row and the second pass should converge toward a no-op:
+
+```text
+$ s3-orchestrator admin reconcile
+reconcile started
+  reconciling aws-east ........................... OK     (335ms)
+  reconciling backblaze .......................... OK     (510ms)
+  reconciling wasabi ............................. OK     (162ms)
+  reconciling minio .............................. OK     (261ms)
+done: imported 32, removed 4 across 4 backend(s) (1.3s)
+```
+
+Scope it to a single backend with `-backend`:
+
+```text
+$ s3-orchestrator admin reconcile -backend backblaze
+reconcile started
+  reconciling backblaze .......................... OK     (510ms)
+done: imported 0, removed 0 across 1 backend(s) (0.5s)
+```
+
+`replicate` reports how many missing replicas it created:
+
+```text
+$ s3-orchestrator admin replicate
+replicate started
+done: created 0 copies (12ms)
+```
+
+`usage-reconcile` lists the per-backend byte adjustments it applied to
+`bytes_used`, or an empty list when the ledger already matches:
+
+```text
+$ s3-orchestrator admin usage-reconcile
+adjustments:
+  aws-east: -3923096188
+  backblaze: -612311667
+  wasabi: -452341834
+status: reconciled
+
+$ s3-orchestrator admin usage-reconcile   # already consistent
+adjustments:
+status: reconciled
+```
+
 **Commands:**
 
 ```bash
@@ -121,6 +169,10 @@ s3-orchestrator admin cache-invalidate-prefix -prefix bucket/path/
 
 # Trigger one replication cycle (creates missing replicas)
 s3-orchestrator admin replicate
+
+# Trigger one rebalance cycle (redistribute objects across backends per the
+# configured strategy; falls back to "spread" with defaults when unconfigured)
+s3-orchestrator admin rebalance
 
 # Show count of over-replicated objects
 s3-orchestrator admin over-replication
@@ -186,7 +238,17 @@ s3-orchestrator admin backfill-checksums -max 500 -delay-ms 250
 s3-orchestrator admin reconcile
 
 # Reconcile a single backend
-s3-orchestrator admin reconcile -backend g3
+s3-orchestrator admin reconcile -backend backblaze
+
+# Show background worker last-tick health (503 in proxy-only mode)
+s3-orchestrator admin workers
+
+# Show the outcome of the last SIGHUP config reload
+s3-orchestrator admin reload-status
+
+# Download the flight-recorder trace ring buffer to a file for `go tool trace`
+# (requires debug.flight_recorder.enabled; -o sets the output path)
+s3-orchestrator admin trace-snapshot -o trace.bin
 ```
 
 The admin API requires `ui.admin_token` (or `ui.admin_key` as fallback) to be set in the configuration. All requests are authenticated via the `X-Admin-Token` header.
