@@ -70,7 +70,7 @@ type Stores interface {
 }
 
 type Manager struct {
-	core         MultipartCore          // infrastructure subset: backends, usage, timeout, error classification, metrics
+	core         MultipartRuntime       // infrastructure subset: backends, usage, timeout, error classification, metrics
 	coord        *writepath.Coordinator // write-path helpers shared with BackendManager and ObjectManager
 	stores       Stores                 // multipart row/part operations and WithAdvisoryLock
 	encryptor    *encryption.Encryptor
@@ -87,7 +87,7 @@ type Manager struct {
 // populates content_hash on the recorded location. The
 // component-scoped logger is built in the constructor body per the
 // project's logging convention.
-func New(core MultipartCore, coord *writepath.Coordinator, stores Stores, encryptor *encryption.Encryptor, objectCache objcache.ObjectCache, dekCacheTTL time.Duration, integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]) *Manager {
+func New(core MultipartRuntime, coord *writepath.Coordinator, stores Stores, encryptor *encryption.Encryptor, objectCache objcache.ObjectCache, dekCacheTTL time.Duration, integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]) *Manager {
 	must.NotNil("core", core)
 	must.NotNil("coord", coord)
 	must.NotNil("stores", stores)

@@ -89,7 +89,7 @@ type Stores interface {
 // Failover orchestrates per-key read failover across backends.
 // One instance per object.Manager; safe for concurrent reads.
 type Failover struct {
-	core              Core
+	core              ReadRuntime
 	stores            Stores
 	cache             LocationCache
 	parallelBroadcast bool
@@ -102,7 +102,7 @@ type Failover struct {
 
 // New constructs a Failover. When degradedReadsEnabled is false, a DB
 // outage surfaces as ErrServiceUnavailable instead of broadcasting.
-func New(infraCore Core, stores Stores, cache LocationCache, parallelBroadcast bool, degradedBroadcastParallelism int, degradedReadsEnabled bool) *Failover {
+func New(infraCore ReadRuntime, stores Stores, cache LocationCache, parallelBroadcast bool, degradedBroadcastParallelism int, degradedReadsEnabled bool) *Failover {
 	must.NotNil("core", infraCore)
 	must.NotNil("stores", stores)
 	must.NotNil("cache", cache)

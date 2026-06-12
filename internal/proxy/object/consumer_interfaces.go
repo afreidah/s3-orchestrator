@@ -3,7 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Narrow contracts the object Manager pulls from *infra.Core and
+// Narrow contracts the object Manager pulls from *infra.BackendRuntime and
 // *writepath.Coordinator. Pattern rationale: docs/style-guide.md
 // (Interface Design section).
 // -------------------------------------------------------------------------------
@@ -21,12 +21,12 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// ObjectWriteCore is the subset of *infra.Core the write-path Manager
+// ObjectWriteRuntime is the subset of *infra.BackendRuntime the write-path Manager
 // methods (put, copy, delete, mutation_finalize) reach for. IsDraining
 // is here for the post-PUT drain-race re-check in attemptPutOnBackend
 // (the upstream EligibleForWrite filter is racy; the re-check closes
 // the window).
-type ObjectWriteCore interface {
+type ObjectWriteRuntime interface {
 	GetBackend(name string) (backend.ObjectBackend, error)
 	IsDraining(name string) bool
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
@@ -35,11 +35,11 @@ type ObjectWriteCore interface {
 	Acct() *accounting.Recorder
 }
 
-// ObjectReadCore is the subset of *infra.Core the read-path Manager
+// ObjectReadRuntime is the subset of *infra.BackendRuntime the read-path Manager
 // methods (get, head, list, materialize) reach for. Usage() is still
 // needed for WithinLimits pre-flight checks; per-backend Record calls
 // flow through Acct.
-type ObjectReadCore interface {
+type ObjectReadRuntime interface {
 	Backends() map[string]backend.ObjectBackend
 	GetBackend(name string) (backend.ObjectBackend, error)
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
@@ -47,17 +47,17 @@ type ObjectReadCore interface {
 	Acct() *accounting.Recorder
 }
 
-// ObjectCore composes the read and write role interfaces above into the
-// single dependency object.Manager holds. *infra.Core satisfies both
+// ObjectRuntime composes the read and write role interfaces above into the
+// single dependency object.Manager holds. *infra.BackendRuntime satisfies both
 // implicitly, so production wiring stays one field; tests and future
 // consumers may depend on the narrower role that matches their actual
 // call surface. BackendOrder() is intentionally NOT included here — it
 // is only used by *readpath.Failover, which receives its own
-// readpath.Core via Deps.BroadcastCore so the transitive requirement
-// does not bleed into ObjectCore.
-type ObjectCore interface {
-	ObjectWriteCore
-	ObjectReadCore
+// readpath.ReadRuntime via Deps.BroadcastCore so the transitive requirement
+// does not bleed into ObjectRuntime.
+type ObjectRuntime interface {
+	ObjectWriteRuntime
+	ObjectReadRuntime
 }
 
 // WriteRouter is the routing subset of *writepath.Coordinator: pick a
