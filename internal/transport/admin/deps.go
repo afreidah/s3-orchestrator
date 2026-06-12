@@ -29,6 +29,14 @@ type ReplicatorOps interface {
 	Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (int, error)
 }
 
+// RebalancerOps is the slice of *worker.Rebalancer the admin handler uses
+// for the on-demand rebalance endpoint. Config returns nil when the worker
+// is unconfigured; Rebalance runs one cycle and returns the move count.
+type RebalancerOps interface {
+	Config() *config.RebalanceConfig
+	Rebalance(ctx context.Context, cfg config.RebalanceConfig) (int, error)
+}
+
 // OverReplicationOps is the slice of *worker.OverReplicationCleaner the
 // admin handler uses for the over-replication status and cleanup endpoints.
 type OverReplicationOps interface {
