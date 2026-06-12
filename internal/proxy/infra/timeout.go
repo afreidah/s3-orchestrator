@@ -15,6 +15,7 @@ package infra
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -61,6 +62,13 @@ func (p *timeoutPolicy) DeleteWithTimeout(ctx context.Context, be backend.Object
 // configured backend timeout applied to each leg. Returns a
 // *backend.CopyError tagged with the failing phase so callers can
 // distinguish read-side from write-side failures.
+//
+// PutObject consumes the source body live, so a write-leg error can
+// actually originate in a slow or failing source read. The body is wrapped
+// in a readTracker: if the read errored, the failure is attributed to the
+// read phase (retry another source) rather than the write phase (blame the
+// target), preventing a degraded source from tripping a healthy target's
+// breaker.
 func (p *timeoutPolicy) StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error {
 	rctx, rcancel := p.WithTimeout(ctx)
 	defer rcancel()
@@ -72,9 +80,32 @@ func (p *timeoutPolicy) StreamCopy(ctx context.Context, src, dst backend.ObjectB
 
 	wctx, wcancel := p.WithTimeout(ctx)
 	defer wcancel()
-	_, err = dst.PutObject(wctx, key, result.Body, result.Size, result.ContentType, result.Metadata)
+	tracked := &readTracker{r: result.Body}
+	_, err = dst.PutObject(wctx, key, tracked, result.Size, result.ContentType, result.Metadata)
 	if err != nil {
-		return &backend.CopyError{Phase: backend.CopyPhaseWrite, Err: err}
+		phase := backend.CopyPhaseWrite
+		if tracked.readErr != nil {
+			phase = backend.CopyPhaseRead
+		}
+		return &backend.CopyError{Phase: phase, Err: err}
 	}
 	return nil
+}
+
+// readTracker wraps the source body so StreamCopy can tell whether a copy
+// failure originated in the source read. It records the first non-EOF read
+// error; the destination's PutObject reads through it.
+type readTracker struct {
+	r       io.Reader
+	readErr error
+}
+
+// Read proxies to the wrapped reader, capturing the first real read error
+// (io.EOF is the normal end-of-stream signal, not a failure).
+func (t *readTracker) Read(p []byte) (int, error) {
+	n, err := t.r.Read(p)
+	if err != nil && err != io.EOF && t.readErr == nil {
+		t.readErr = err
+	}
+	return n, err
 }
