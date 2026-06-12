@@ -13,6 +13,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 
@@ -53,9 +54,15 @@ func (cb *CircuitBreakerBackend) Unwrap() ObjectBackend {
 
 // isBackendError returns true for errors that indicate backend health issues.
 // 404/NoSuchKey errors are excluded because they indicate a healthy backend
-// with a missing object, not a backend failure.
+// with a missing object, not a backend failure. Context cancellation and
+// deadline are excluded too: they signal a caller-side timeout or shutdown,
+// not the wrapped backend's health, and counting them lets a slow source or
+// caller cancellation falsely trip an otherwise healthy backend's breaker.
 func isBackendError(err error) bool {
 	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 	return !IsNotFound(err)
