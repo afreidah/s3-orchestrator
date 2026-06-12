@@ -24,10 +24,10 @@ var (
 	_ object.CleanupWriter = (*writepath.Coordinator)(nil)
 )
 
-// ObjectCore role split: *infra.Core satisfies the read and write
+// ObjectRuntime role split: *infra.BackendRuntime satisfies the read and write
 // Manager-side roles plus the composite.
 var (
-	_ object.ObjectWriteCore = (*infra.Core)(nil)
-	_ object.ObjectReadCore  = (*infra.Core)(nil)
-	_ object.ObjectCore      = (*infra.Core)(nil)
+	_ object.ObjectWriteRuntime = (*infra.BackendRuntime)(nil)
+	_ object.ObjectReadRuntime  = (*infra.BackendRuntime)(nil)
+	_ object.ObjectRuntime      = (*infra.BackendRuntime)(nil)
 )

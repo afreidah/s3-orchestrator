@@ -1,9 +1,9 @@
 // -------------------------------------------------------------------------------
-// Core Composition Tests
+// BackendRuntime Composition Tests
 //
 // Author: Alex Freidah
 //
-// Pins the forwarding contract of *Core: every public method routes to
+// Pins the forwarding contract of *BackendRuntime: every public method routes to
 // the right capability service and returns what the underlying service
 // returns. Complements capabilities_test.go (which tests each capability
 // in isolation) by exercising the composition layer end-to-end so the
@@ -30,7 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// fakeBackend is a no-op backend used by Core forwarder tests. None of
+// fakeBackend is a no-op backend used by BackendRuntime forwarder tests. None of
 // its methods are exercised here; the type only needs to satisfy the
 // interface so the registry holds something.
 type fakeBackend struct{}
@@ -46,9 +46,9 @@ func (fakeBackend) HeadObject(context.Context, string) (*backend.HeadObjectResul
 }
 func (fakeBackend) DeleteObject(context.Context, string) error { return nil }
 
-// newTestCore constructs a *Core with sensible defaults so the
+// newTestCore constructs a *BackendRuntime with sensible defaults so the
 // forwarder tests focus on behavior, not wiring boilerplate.
-func newTestCore(t *testing.T) *Core {
+func newTestCore(t *testing.T) *BackendRuntime {
 	t.Helper()
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
 	return New(&Config{

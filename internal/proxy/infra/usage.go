@@ -8,7 +8,7 @@
 // configured limits?" In isolation: no knowledge of which backends
 // exist, who is draining, or which circuit breakers are open. The
 // composition of "registered AND not draining AND not unhealthy AND
-// within limits" lives in *Core; this type only owns the limits half.
+// within limits" lives in *BackendRuntime; this type only owns the limits half.
 // -------------------------------------------------------------------------------
 
 package infra
@@ -18,7 +18,7 @@ import (
 )
 
 // usagePolicy owns the runtime usage tracker and the static per-backend
-// max-object-size map (sourced once at Core construction from the
+// max-object-size map (sourced once at BackendRuntime construction from the
 // backend config).
 type usagePolicy struct {
 	usage          *counter.UsageTracker

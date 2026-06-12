@@ -25,7 +25,7 @@ import (
 
 // errorClassifier is a stateless helper that maps store errors to S3
 // errors. Held as a struct (rather than free functions) so the
-// composition layer in *Core can swap it for a different policy in
+// composition layer in *BackendRuntime can swap it for a different policy in
 // tests without touching callers.
 type errorClassifier struct{}
 

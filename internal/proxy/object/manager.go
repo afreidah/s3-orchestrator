@@ -47,7 +47,7 @@ type Stores interface {
 // Manager handles object-level CRUD operations with read failover,
 // broadcast reads during degraded mode, and location caching.
 type Manager struct {
-	core              ObjectCore        // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics
+	core              ObjectRuntime     // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics
 	coord             ObjectCoordinator // write-path helpers shared with BackendManager and MultipartManager
 	stores            Stores            // direct store access for read paths and quota inspection
 	encryptor         *encryption.Encryptor
@@ -61,12 +61,12 @@ type Manager struct {
 
 // Deps bundles the dependencies New needs so the call signature stays
 // under the parameter-count ceiling. Core and Coord are
-// consumer-declared interfaces; the concrete *infra.Core and
+// consumer-declared interfaces; the concrete *infra.BackendRuntime and
 // *writepath.Coordinator that BackendManager builds satisfy them
 // implicitly.
 type Deps struct {
-	Core              ObjectCore
-	BroadcastCore     readpath.Core // narrow consumer interface for the failover broadcaster; satisfied by the same *infra.Core that backs Core
+	Core              ObjectRuntime
+	BroadcastCore     readpath.ReadRuntime // narrow consumer interface for the failover broadcaster; satisfied by the same *infra.BackendRuntime that backs Core
 	Coord             ObjectCoordinator
 	Stores            Stores
 	Encryptor         *encryption.Encryptor

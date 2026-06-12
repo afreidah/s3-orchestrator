@@ -38,7 +38,7 @@ type httpError struct {
 func (e *httpError) Error() string       { return e.msg }
 func (e *httpError) HTTPStatusCode() int { return e.code }
 
-// newCoordinatorWithBackend builds a Coordinator whose infra.Core knows
+// newCoordinatorWithBackend builds a Coordinator whose infra.BackendRuntime knows
 // about a single named backend. Used by DeleteOrEnqueue branch tests so
 // the backend's DeleteObject can be controlled directly through the
 // gomock recorder. A real (in-memory) UsageTracker is supplied so the

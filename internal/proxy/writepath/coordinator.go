@@ -35,7 +35,7 @@ import (
 // TYPE
 // -------------------------------------------------------------------------
 
-// Coordinator bundles the infrastructure subset (WritepathCore) with
+// Coordinator bundles the infrastructure subset (WriteRuntime) with
 // the metadata-store contract and the pending-pattern flag so the
 // write-path helpers can be expressed as plain methods on a value owned
 // by BackendManager. The managers hold a *Coordinator rather than a
@@ -53,18 +53,18 @@ type Stores interface {
 }
 
 type Coordinator struct {
-	core           WritepathCore // infrastructure subset: backends, usage, routing, eligibility, error classification, delete-with-timeout
+	core           WriteRuntime // infrastructure subset: backends, usage, routing, eligibility, error classification, delete-with-timeout
 	stores         Stores
 	pendingEnabled bool
 	log            *slog.Logger
 }
 
 // New constructs a Coordinator. The supplied core must observe the same
-// admission, usage, drain, and backend state as the *infra.Core embedded
+// admission, usage, drain, and backend state as the *infra.BackendRuntime embedded
 // in BackendManager (in production they are the same instance). The
 // component-scoped logger is built in the constructor body per the
 // project's logging convention.
-func New(core WritepathCore, stores Stores, pendingEnabled bool) *Coordinator {
+func New(core WriteRuntime, stores Stores, pendingEnabled bool) *Coordinator {
 	must.NotNil("core", core)
 	must.NotNil("stores", stores)
 	return &Coordinator{

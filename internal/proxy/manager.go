@@ -157,11 +157,11 @@ type BackendManagerConfig struct {
 }
 
 // BackendManager manages multiple storage backends with quota tracking.
-// Embeds *infra.Core for non-store infrastructure (backends, usage,
+// Embeds *infra.BackendRuntime for non-store infrastructure (backends, usage,
 // admission, draining, metrics) and holds the per-role store views and
 // hot-reloadable configuration. Store-touching write-path helpers are
 // methods on *BackendManager (manager_writepath.go); pure infra
-// primitives stay on *infra.Core.
+// primitives stay on *infra.BackendRuntime.
 //
 // Workers (rebalancer, replicator, scrubber, ...) are resolved through
 // DI at the call site rather than carried on the manager. The dashboard
@@ -171,12 +171,12 @@ type BackendManagerConfig struct {
 // DrainManager is the one dependency wired post-construction via
 // WireDrain. The cycle (drain.Manager needs *BackendManager and
 // mgr.multipartManager) makes constructor injection impractical without
-// redesigning drain.Core. Code paths that depend on DrainManager
+// redesigning drain.DrainRuntime. Code paths that depend on DrainManager
 // (FlushUsage, ClearDrainState) nil-guard the field so a manager
 // constructed without WireDrain (every test path that does not need
 // drain behavior) remains usable.
 type BackendManager struct {
-	*infra.Core
+	*infra.BackendRuntime
 	stores           Stores                 // narrow store-role view; see Stores interface above
 	coord            *writepath.Coordinator // shared write-path helpers (also held by objectManager and multipartManager)
 	multipartManager *multipart.Manager     // multipart upload lifecycle; expose via Multipart()
@@ -291,7 +291,7 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 	})
 
 	m := &BackendManager{
-		Core:             c,
+		BackendRuntime:   c,
 		stores:           stores.Metadata,
 		coord:            coord,
 		multipartManager: multipartManager,
@@ -324,7 +324,7 @@ func (m *BackendManager) ClearDrainState() {
 // configured. The HTTP admission controller should use this channel so that
 // HTTP requests and background services share one concurrency budget.
 func (m *BackendManager) AdmissionSem() chan struct{} {
-	return m.Core.AdmissionSem()
+	return m.BackendRuntime.AdmissionSem()
 }
 
 // Close stops every background cache eviction goroutine the manager
@@ -650,7 +650,7 @@ func (m *BackendManager) DeleteOrEnqueue(ctx context.Context, be backend.ObjectB
 
 // MoveObject forwards to the write coordinator's shared move primitive.
 // Drain and rebalancer both pass their narrow consumer
-// interface (drain.Core, worker.DataMover) here so the StreamCopy +
+// interface (drain.DrainRuntime, worker.DataMover) here so the StreamCopy +
 // MoveObjectLocation CAS + orphan-cleanup branches + source-delete
 // accounting all funnel through one implementation - the same way
 // DeleteOrEnqueue does.
