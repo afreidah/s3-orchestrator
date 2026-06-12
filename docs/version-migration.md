@@ -149,7 +149,7 @@ When the read path is in degraded mode (one source unhealthy) it fires probe rea
 
 **Consumer-declared interfaces for proxy subpackages ([#847](https://github.com/afreidah/s3-orchestrator/pull/847), v0.49.0)**
 
-The proxy package was split into subpackages (`object`, `multipart`, `readpath`, `writepath`, `accounting`, etc.), each declaring its own narrow consumer interface against `*infra.Core` and the metadata store rather than importing the root `proxy` package. Internally-significant refactor.
+The proxy package was split into subpackages (`object`, `multipart`, `readpath`, `writepath`, `accounting`, etc.), each declaring its own narrow consumer interface against `*infra.BackendRuntime` and the metadata store rather than importing the root `proxy` package. Internally-significant refactor.
 
 Operator-visible: structured-log entries that used `component=backend_manager` now use `component=object`, `component=multipart`, or `component=writepath` depending on the subsystem doing the logging.
 

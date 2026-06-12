@@ -31,7 +31,7 @@ type staticDrainChecker map[string]bool
 func (s staticDrainChecker) IsDraining(name string) bool { return s[name] }
 
 // TestBackendCore_LogFallback covers the nil-safe behaviour of Log():
-// when *infra.Core was constructed without a log field, the helper returns
+// when *infra.BackendRuntime was constructed without a log field, the helper returns
 // slog.Default() so callers never dereference a nil logger.
 func TestBackendCore_LogFallback(t *testing.T) {
 	t.Parallel()

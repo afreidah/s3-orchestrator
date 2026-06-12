@@ -176,7 +176,7 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 }
 
 // ProvideDrainManager constructs the drain manager. Depends on
-// BackendManager (drain.Core seam), the cleanup worker (for the
+// BackendManager (drain.DrainRuntime seam), the cleanup worker (for the
 // cleanup-queue flush before backend deletion), and the wide
 // MetadataStore for the object/quota/lifecycle role surfaces. The
 // returned manager is wired onto BackendManager by di.WireManager so

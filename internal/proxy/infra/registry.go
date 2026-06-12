@@ -7,7 +7,7 @@
 // dynamic drain checker that decides which backends are currently in
 // service. Hides the circuit-breaker probe logic so write-eligibility
 // callers do not have to know about the breaker implementation. Used
-// internally by *Core; consumers reach the same methods through Core's
+// internally by *BackendRuntime; consumers reach the same methods through BackendRuntime's
 // public surface (Backends, BackendOrder, GetBackend, etc.).
 // -------------------------------------------------------------------------------
 
@@ -37,7 +37,7 @@ func newBackendRegistry(backends map[string]backend.ObjectBackend, order []strin
 	return &backendRegistry{backends: backends, order: order}
 }
 
-// SetDrainChecker installs the drain manager after Core has been
+// SetDrainChecker installs the drain manager after BackendRuntime has been
 // constructed.
 func (r *backendRegistry) SetDrainChecker(d DrainChecker) {
 	r.drainMgr = d

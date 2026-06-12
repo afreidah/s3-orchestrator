@@ -33,10 +33,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
-// Core is the slice of proxy infrastructure the Manager needs. Defined
+// DrainRuntime is the slice of proxy infrastructure the Manager needs. Defined
 // here at the consumer so the proxy package can satisfy it structurally
 // without exporting a god interface.
-type Core interface {
+type DrainRuntime interface {
 	Backends() map[string]backend.ObjectBackend
 	GetBackend(name string) (backend.ObjectBackend, error)
 	BackendOrder() []string
@@ -87,8 +87,8 @@ type Progress struct {
 
 // Manager handles draining and removing backends.
 type Manager struct {
-	log *slog.Logger
-	infra            Core
+	log              *slog.Logger
+	infra            DrainRuntime
 	objects          core.ObjectStore
 	quota            core.QuotaStore
 	backendLifecycle core.BackendLifecycleStore
@@ -101,7 +101,7 @@ type Manager struct {
 
 // New creates a Manager.
 func New(
-	infra Core,
+	infra DrainRuntime,
 	objects core.ObjectStore,
 	quota core.QuotaStore,
 	backendLifecycle core.BackendLifecycleStore,

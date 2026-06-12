@@ -3,7 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Narrow contracts the read-failover Failover pulls from *infra.Core,
+// Narrow contracts the read-failover Failover pulls from *infra.BackendRuntime,
 // the metadata store, and the location cache. Pattern rationale:
 // docs/style-guide.md (Interface Design section).
 // -------------------------------------------------------------------------------
@@ -15,10 +15,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 )
 
-// Core is the subset of *infra.Core the Failover orchestrator needs:
+// ReadRuntime is the subset of *infra.BackendRuntime the Failover orchestrator needs:
 // backend registry + lookup, and the accounting Recorder that owns
 // the per-backend usage / per-operation metric semantics.
-type Core interface {
+type ReadRuntime interface {
 	Backends() map[string]backend.ObjectBackend
 	BackendOrder() []string
 	Acct() *accounting.Recorder

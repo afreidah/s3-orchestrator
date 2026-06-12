@@ -1,9 +1,9 @@
 // -------------------------------------------------------------------------------
-// Backend Core - Composition Layer for Storage Infrastructure
+// Backend BackendRuntime - Composition Layer for Storage Infrastructure
 //
 // Author: Alex Freidah
 //
-// *Core is the public-facing composition root that other proxy
+// *BackendRuntime is the public-facing composition root that other proxy
 // subpackages (object, multipart, writepath, readpath) consume through
 // their own consumer-declared interfaces. Internally it owns five
 // focused capability services and delegates to them:
@@ -17,11 +17,11 @@
 //                       and telemetry side effects
 //   - admissionGate   : bounded-concurrency admission semaphore
 //
-// The public surface of *Core is unchanged from before this split: it
+// The public surface of *BackendRuntime is unchanged from before this split: it
 // still exposes Backends(), GetBackend(), WithTimeout(), and friends.
 // The methods are now thin forwards into the appropriate capability,
 // which keeps the consumer-declared interface pattern intact (callers
-// still see methods on *Core, not new producer-side interfaces) and
+// still see methods on *BackendRuntime, not new producer-side interfaces) and
 // makes each capability easy to test in isolation.
 // -------------------------------------------------------------------------------
 
@@ -46,14 +46,14 @@ import (
 )
 
 // DrainChecker reports whether a named backend is currently being drained.
-// *Core consumes this so drain ownership can live in the drain subpackage
-// while *Core filters write eligibility.
+// *BackendRuntime consumes this so drain ownership can live in the drain subpackage
+// while *BackendRuntime filters write eligibility.
 type DrainChecker interface {
 	IsDraining(name string) bool
 }
 
-// Config bundles every input *Core needs at construction. Exposed so
-// callers (root proxy package, tests) can build a *Core directly.
+// Config bundles every input *BackendRuntime needs at construction. Exposed so
+// callers (root proxy package, tests) can build a *BackendRuntime directly.
 type Config struct {
 	Backends         map[string]backend.ObjectBackend
 	Order            []string
@@ -66,10 +66,10 @@ type Config struct {
 	Log              *slog.Logger
 }
 
-// Core composes the five capability services every proxy subpackage
+// BackendRuntime composes the five capability services every proxy subpackage
 // needs. Per-role store views live on the root-package BackendManager;
-// *Core deliberately holds none.
-type Core struct {
+// *BackendRuntime deliberately holds none.
+type BackendRuntime struct {
 	registry         *backendRegistry
 	usage            *usagePolicy
 	timeouts         *timeoutPolicy
@@ -81,14 +81,14 @@ type Core struct {
 	recorder         *accounting.Recorder
 }
 
-// New constructs a *Core from cfg. The drain checker is wired
+// New constructs a *BackendRuntime from cfg. The drain checker is wired
 // post-construction via SetDrainChecker to break the
 // BackendManager ↔ drain.Manager cycle. The accounting Recorder is
-// built here so every consumer of *Core shares one instance that
+// built here so every consumer of *BackendRuntime shares one instance that
 // observes the same usage tracker and the (later-wired) metrics
 // collector via the closure over c.RecordOperation.
-func New(cfg *Config) *Core {
-	c := &Core{
+func New(cfg *Config) *BackendRuntime {
+	c := &BackendRuntime{
 		registry:         newBackendRegistry(cfg.Backends, cfg.Order),
 		usage:            newUsagePolicy(cfg.Usage, cfg.MaxObjectSizes),
 		timeouts:         newTimeoutPolicy(cfg.BackendTimeout),
@@ -110,26 +110,26 @@ func New(cfg *Config) *Core {
 // Acct().APICall / Egress / Ingress / Operation instead of reaching
 // through Usage() and RecordOperation directly so the per-backend
 // accounting rules stay centralised.
-func (c *Core) Acct() *accounting.Recorder {
+func (c *BackendRuntime) Acct() *accounting.Recorder {
 	return c.recorder
 }
 
-// SetMetricsCollector installs the metrics collector after Core
+// SetMetricsCollector installs the metrics collector after BackendRuntime
 // construction. The collector depends on the usage tracker which is
-// owned by *Core, so the collector is built after *Core and wired
+// owned by *BackendRuntime, so the collector is built after *BackendRuntime and wired
 // back in.
-func (c *Core) SetMetricsCollector(m *metrics.Collector) {
+func (c *BackendRuntime) SetMetricsCollector(m *metrics.Collector) {
 	c.metricsCollector = m
 }
 
 // MetricsCollector returns the wired metrics collector (nil if unset).
-func (c *Core) MetricsCollector() *metrics.Collector {
+func (c *BackendRuntime) MetricsCollector() *metrics.Collector {
 	return c.metricsCollector
 }
 
 // Log returns the component-scoped logger; falls back to slog.Default()
-// when *Core was constructed without one.
-func (c *Core) Log() *slog.Logger {
+// when *BackendRuntime was constructed without one.
+func (c *BackendRuntime) Log() *slog.Logger {
 	if c.log == nil {
 		return slog.Default()
 	}
@@ -137,7 +137,7 @@ func (c *Core) Log() *slog.Logger {
 }
 
 // RoutingStrategy returns the configured routing strategy.
-func (c *Core) RoutingStrategy() config.RoutingStrategy {
+func (c *BackendRuntime) RoutingStrategy() config.RoutingStrategy {
 	return c.routingStrategy
 }
 
@@ -145,10 +145,10 @@ func (c *Core) RoutingStrategy() config.RoutingStrategy {
 // DRAIN WIRING
 // -------------------------------------------------------------------------
 
-// SetDrainChecker installs the drain manager after Core has been
+// SetDrainChecker installs the drain manager after BackendRuntime has been
 // constructed; mirrors the historic post-construction WireDrain call
 // on BackendManager.
-func (c *Core) SetDrainChecker(d DrainChecker) {
+func (c *BackendRuntime) SetDrainChecker(d DrainChecker) {
 	c.registry.SetDrainChecker(d)
 }
 
@@ -157,34 +157,34 @@ func (c *Core) SetDrainChecker(d DrainChecker) {
 // -------------------------------------------------------------------------
 
 // GetBackend returns the named backend, or an error if it doesn't exist.
-func (c *Core) GetBackend(name string) (backend.ObjectBackend, error) {
+func (c *BackendRuntime) GetBackend(name string) (backend.ObjectBackend, error) {
 	return c.registry.Get(name)
 }
 
 // Backends returns the backend map (worker.Ops contract).
-func (c *Core) Backends() map[string]backend.ObjectBackend {
+func (c *BackendRuntime) Backends() map[string]backend.ObjectBackend {
 	return c.registry.All()
 }
 
 // BackendOrder returns the configured backend ordering (worker.Ops contract).
-func (c *Core) BackendOrder() []string {
+func (c *BackendRuntime) BackendOrder() []string {
 	return c.registry.Order()
 }
 
 // IsDraining returns true if the named backend is currently being drained.
 // Returns false when no drain manager is wired.
-func (c *Core) IsDraining(name string) bool {
+func (c *BackendRuntime) IsDraining(name string) bool {
 	return c.registry.IsDraining(name)
 }
 
 // ExcludeDraining filters out backends that are currently draining.
-func (c *Core) ExcludeDraining(eligible []string) []string {
+func (c *BackendRuntime) ExcludeDraining(eligible []string) []string {
 	return c.registry.ExcludeDraining(eligible)
 }
 
 // ExcludeUnhealthy filters out backends whose circuit breaker is open
 // and not probe-eligible.
-func (c *Core) ExcludeUnhealthy(eligible []string) []string {
+func (c *BackendRuntime) ExcludeUnhealthy(eligible []string) []string {
 	return c.registry.ExcludeUnhealthy(eligible)
 }
 
@@ -193,13 +193,13 @@ func (c *Core) ExcludeUnhealthy(eligible []string) []string {
 // -------------------------------------------------------------------------
 
 // Usage returns the usage tracker (worker.Ops contract).
-func (c *Core) Usage() *counter.UsageTracker {
+func (c *BackendRuntime) Usage() *counter.UsageTracker {
 	return c.usage.Tracker()
 }
 
 // MaxObjectSize returns the per-backend max object size; 0 means
 // unlimited.
-func (c *Core) MaxObjectSize(name string) int64 {
+func (c *BackendRuntime) MaxObjectSize(name string) int64 {
 	return c.usage.MaxObjectSize(name)
 }
 
@@ -207,7 +207,7 @@ func (c *Core) MaxObjectSize(name string) int64 {
 // circuit-broken, and within usage limits / max-object-size for the
 // given operation. Composed pipeline of registry filters + usage
 // filter so each capability owns its half of the decision.
-func (c *Core) EligibleForWrite(apiCalls, egress, ingress int64) []string {
+func (c *BackendRuntime) EligibleForWrite(apiCalls, egress, ingress int64) []string {
 	eligible := c.registry.ExcludeDraining(c.registry.Order())
 	eligible = c.registry.ExcludeUnhealthy(eligible)
 	return c.usage.FilterEligible(eligible, apiCalls, egress, ingress)
@@ -220,12 +220,12 @@ func (c *Core) EligibleForWrite(apiCalls, egress, ingress int64) []string {
 // AcquireAdmission blocks until a slot is available, or returns false
 // if ctx is cancelled. Returns true immediately when no semaphore is
 // wired.
-func (c *Core) AcquireAdmission(ctx context.Context) bool {
+func (c *BackendRuntime) AcquireAdmission(ctx context.Context) bool {
 	return c.admission.Acquire(ctx)
 }
 
 // ReleaseAdmission returns a slot to the admission semaphore.
-func (c *Core) ReleaseAdmission() {
+func (c *BackendRuntime) ReleaseAdmission() {
 	c.admission.Release()
 }
 
@@ -233,7 +233,7 @@ func (c *Core) ReleaseAdmission() {
 // unwired). Callers that need the raw channel (split admission
 // controllers) read this; the AcquireAdmission/ReleaseAdmission
 // methods are preferred.
-func (c *Core) AdmissionSem() chan struct{} {
+func (c *BackendRuntime) AdmissionSem() chan struct{} {
 	return c.admission.Sem()
 }
 
@@ -243,20 +243,20 @@ func (c *Core) AdmissionSem() chan struct{} {
 
 // WithTimeout returns a context with the configured backend timeout
 // applied.
-func (c *Core) WithTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+func (c *BackendRuntime) WithTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	return c.timeouts.WithTimeout(ctx)
 }
 
 // DeleteWithTimeout deletes an object from a backend using the
 // configured backend timeout.
-func (c *Core) DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error {
+func (c *BackendRuntime) DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error {
 	return c.timeouts.DeleteWithTimeout(ctx, be, key)
 }
 
 // StreamCopy reads an object from src and writes it to dst with
 // timeouts applied to each leg. Returns a *backend.CopyError tagged
 // with the failing phase.
-func (c *Core) StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error {
+func (c *BackendRuntime) StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error {
 	return c.timeouts.StreamCopy(ctx, src, dst, key)
 }
 
@@ -266,20 +266,20 @@ func (c *Core) StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, k
 
 // ClassifyWriteError translates store errors from write-path operations
 // into S3-compatible errors and updates the tracing span.
-func (c *Core) ClassifyWriteError(span trace.Span, operation string, err error) error {
+func (c *BackendRuntime) ClassifyWriteError(span trace.Span, operation string, err error) error {
 	return c.classifier.ClassifyWriteError(span, operation, err)
 }
 
 // -------------------------------------------------------------------------
-// METRICS (delegates directly; collector lives on Core)
+// METRICS (delegates directly; collector lives on BackendRuntime)
 // -------------------------------------------------------------------------
 
 // RecordOperation delegates to the metrics collector.
-func (c *Core) RecordOperation(operation, backend string, start time.Time, err error) {
+func (c *BackendRuntime) RecordOperation(operation, backend string, start time.Time, err error) {
 	c.metricsCollector.RecordOperation(operation, backend, start, err)
 }
 
 // UpdateQuotaMetrics refreshes Prometheus gauges from the metadata store.
-func (c *Core) UpdateQuotaMetrics(ctx context.Context) error {
+func (c *BackendRuntime) UpdateQuotaMetrics(ctx context.Context) error {
 	return c.metricsCollector.UpdateQuotaMetrics(ctx)
 }
