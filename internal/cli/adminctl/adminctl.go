@@ -65,6 +65,7 @@ Commands:
   cleanup-queue       Show cleanup queue depth and pending items
   usage-flush         Force flush usage counters to database
   replicate           Trigger one replication cycle
+  rebalance           Trigger one rebalance cycle to redistribute objects across backends
   over-replication    Show or clean over-replicated objects (use --execute to clean)
   log-level           View or set the runtime log level (use -set to change)
   drain               Start draining a backend (requires backend name arg)
@@ -75,6 +76,12 @@ Commands:
   backfill-checksums  Compute and store content hashes for unhashed objects (use -max and -delay-ms to bound and pace each run)
   reconcile           Reconcile DB against backend (use -backend to scope to one backend)
   usage-reconcile     Recompute bytes_used from the object ledger to correct quota drift
+  encrypt-existing    Encrypt all unencrypted objects in place (requires encryption enabled)
+  decrypt-existing    Decrypt all encrypted objects back to plaintext (requires encryption enabled)
+  rotate-encryption-key  Re-wrap all DEKs sealed with -old-key-id under the current primary key
+  workers             Show background worker last-tick health
+  reload-status       Show the outcome of the last SIGHUP config reload
+  trace-snapshot      Download the flight-recorder trace ring buffer to a file (use -o)
   cache-flush         Drop every entry from the in-memory object data cache
   cache-stats         Show object data cache entries, size, and capacity
   cache-invalidate    Drop a single key from the in-memory object data cache (requires -key)
@@ -165,6 +172,7 @@ var handlers = map[string]handler{
 	"cleanup-queue":           cmdCleanupQueue,
 	"usage-flush":             cmdUsageFlush,
 	"replicate":               cmdReplicate,
+	"rebalance":               cmdRebalance,
 	"over-replication":        cmdOverReplication,
 	"log-level":               cmdLogLevel,
 	"drain":                   cmdDrain,
@@ -175,6 +183,12 @@ var handlers = map[string]handler{
 	"remove-backend":          cmdRemoveBackend,
 	"reconcile":               cmdReconcile,
 	"usage-reconcile":         cmdUsageReconcile,
+	"encrypt-existing":        cmdEncryptExisting,
+	"decrypt-existing":        cmdDecryptExisting,
+	"rotate-encryption-key":   cmdRotateEncryptionKey,
+	"workers":                 cmdWorkers,
+	"reload-status":           cmdReloadStatus,
+	"trace-snapshot":          cmdTraceSnapshot,
 	"cache-flush":             cmdCacheFlush,
 	"cache-stats":             cmdCacheStats,
 	"cache-invalidate":        cmdCacheInvalidate,
