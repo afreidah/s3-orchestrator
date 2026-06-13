@@ -48,14 +48,14 @@ import (
 // BACKEND MANAGER
 // -------------------------------------------------------------------------
 
-// Stores is the narrow persistence surface BackendManager itself touches:
+// ManagerStores is the narrow persistence surface BackendManager itself touches:
 // object import / delete, cleanup-queue sweep, lifecycle expiry listing,
 // usage-delta flush, and the multipart count it exposes to the s3api
 // transport. Sub-managers (object, writepath, multipart, readpath)
 // receive their own narrower role-composite interfaces through their
 // constructors; the *core.MetadataStore handed in via BackendManagerConfig
 // is the composition-root concrete that satisfies all of them.
-type Stores interface {
+type ManagerStores interface {
 	core.ObjectStore
 	core.CleanupStore
 	core.ExpiredObjectsLister
@@ -184,7 +184,7 @@ type BackendManagerConfig struct {
 // nil-guard the field so a manager built without drain stays usable.
 type BackendManager struct {
 	runtime          *infra.BackendRuntime  // backend fleet/admission/usage/metrics; expose via Runtime()
-	stores           Stores                 // narrow store-role view; see Stores interface above
+	stores           ManagerStores          // narrow store-role view; see ManagerStores interface above
 	coord            *writepath.Coordinator // shared write-path helpers (also held by objectManager and multipartManager)
 	multipartManager *multipart.Manager     // multipart upload lifecycle; expose via Multipart()
 	objectManager    *object.Manager        // CRUD, read failover, broadcast reads; expose via Objects()
