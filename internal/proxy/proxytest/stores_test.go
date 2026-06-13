@@ -69,6 +69,6 @@ func TestBuildWorkers(t *testing.T) {
 		t.Error("Drain not wired")
 	}
 	if mgr.Drain() == nil {
-		t.Error("drain manager not installed via WireDrain")
+		t.Error("drain manager not injected into BackendManager")
 	}
 }

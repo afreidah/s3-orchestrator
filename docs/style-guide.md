@@ -193,15 +193,17 @@ Group related fields with inline comments explaining non-obvious fields:
 
 ```go
 type BackendManager struct {
-    *backendCore                                     // embeds backend fleet, admission, drain, metrics
-    stores          Stores                           // narrow store-role composite; see Stores interface
-    pendingEnabled  bool                             // mirrors cfg.PendingEnabled for write-path branches
-    routingStrategy config.RoutingStrategy           // RoutingPack or RoutingSpread
-    rebalanceCfg    syncutil.AtomicConfig[config.RebalanceConfig]
-    replicationCfg  syncutil.AtomicConfig[config.ReplicationConfig]
-    Rebalancer      *worker.Rebalancer
-    Replicator      *worker.Replicator
-    Scrubber        *worker.Scrubber
+    runtime          *infra.BackendRuntime  // backend fleet/admission/usage/metrics; expose via Runtime()
+    stores           Stores                 // narrow store-role view; see Stores interface
+    coord            *writepath.Coordinator // shared write-path helpers (also held by objectManager and multipartManager)
+    multipartManager *multipart.Manager     // multipart upload lifecycle; expose via Multipart()
+    objectManager    *object.Manager        // CRUD, read failover, broadcast reads; expose via Objects()
+    dashboard        *dashboard.Aggregator  // web UI data aggregation
+    drainManager     *drain.Manager         // nil-able; expose via Drain()
+
+    usageFlushCfg syncutil.AtomicConfig[config.UsageFlushConfig]
+    lifecycleCfg  syncutil.AtomicConfig[config.LifecycleConfig]
+    integrityCfg  *syncutil.AtomicConfig[config.IntegrityConfig] // shared with objectManager
 }
 ```
 
@@ -518,9 +520,9 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
     if err != nil {
         return nil, err
     }
-    rb := worker.NewRebalancer(mgr, stores)
-    mgr.Rebalancer = rb
-    return rb, nil
+    // Runtime primitives come from the backend runtime; the manager
+    // supplies the Placement facet (target selection, delete/move).
+    return worker.NewRebalancer(mgr.Runtime(), mgr, stores), nil
 }
 ```
 
@@ -786,17 +788,20 @@ once in its constructor with the canonical `component` attribute:
 
 ```go
 type PendingReaper struct {
-    deps  CleanupOps
-    store PendingReaperStore
-    log   *slog.Logger
+    deps      CleanupOps
+    placement Placement
+    store     PendingReaperStore
+    log       *slog.Logger
     // ...
 }
 
-func NewPendingReaper(deps CleanupOps, store PendingReaperStore) *PendingReaper {
+func NewPendingReaper(deps CleanupOps, placement Placement, store PendingReaperStore, concurrency int, minAge time.Duration, batchSize int) *PendingReaper {
     return &PendingReaper{
-        deps:  deps,
-        store: store,
-        log:   slog.Default().With(logfmt.Component("pending_reaper")),
+        deps:      deps,
+        placement: placement,
+        store:     store,
+        log:       slog.Default().With(logfmt.Component("pending_reaper")),
+        // ...
     }
 }
 

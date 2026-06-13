@@ -21,9 +21,9 @@ import (
 )
 
 // backendRegistry owns the per-process backend map, the configured
-// iteration order, and the (later-wired) drain checker. drainMgr is
-// set post-construction to break the BackendManager ↔ drain.Manager
-// cycle the historic WireDrain call worked around.
+// iteration order, and the drain checker. drainMgr is set via
+// SetDrainChecker once the drain manager exists, since it is built after
+// the runtime.
 type backendRegistry struct {
 	backends map[string]backend.ObjectBackend
 	order    []string
@@ -63,8 +63,8 @@ func (r *backendRegistry) Get(name string) (backend.ObjectBackend, error) {
 }
 
 // IsDraining returns true if the named backend is currently being
-// drained. Returns false when no drain manager is wired (the historic
-// pre-WireDrain state during early startup).
+// drained. Returns false when no drain manager is set (e.g. early
+// startup before SetDrainChecker).
 func (r *backendRegistry) IsDraining(name string) bool {
 	if r.drainMgr == nil {
 		return false

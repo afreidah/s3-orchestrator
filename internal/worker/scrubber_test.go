@@ -36,25 +36,26 @@ func hashString(s string) string {
 }
 
 // setupScrubber sets up scrubber.
-func setupScrubber(t *testing.T) (*Scrubber, *MockScrubberOps, *backendtest.MockObjectBackend, *mockMetadataStore) {
+func setupScrubber(t *testing.T) (*Scrubber, *MockScrubberOps, *MockPlacement, *backendtest.MockObjectBackend, *mockMetadataStore) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	ops := NewMockScrubberOps(ctrl)
+	pl := NewMockPlacement(ctrl)
 	be := backendtest.NewMockObjectBackend(ctrl)
 	ms := &mockMetadataStore{}
-	s := NewScrubber(ops, ms, nil)
+	s := NewScrubber(ops, pl, ms, nil)
 	s.SetConfig(&config.IntegrityConfig{
 		Enabled:           true,
 		ScrubberBatchSize: 100,
 	})
-	return s, ops, be, ms
+	return s, ops, pl, be, ms
 }
 
 // TestScrub_MatchingHash verifies the scrub matching hash contract.
 // Asserts that expected 1 checked, got.
 func TestScrub_MatchingHash(t *testing.T) {
 	t.Parallel()
-	s, ops, be, ms := setupScrubber(t)
+	s, ops, _, be, ms := setupScrubber(t)
 	body := "hello world"
 	expectedHash := hashString(body)
 
@@ -82,7 +83,7 @@ func TestScrub_MatchingHash(t *testing.T) {
 // Asserts that expected 1 checked, got.
 func TestScrub_HashMismatch(t *testing.T) {
 	t.Parallel()
-	s, ops, be, ms := setupScrubber(t)
+	s, ops, pl, be, ms := setupScrubber(t)
 
 	ms.randomHashedObjects = []core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "badhash"},
@@ -90,7 +91,7 @@ func TestScrub_HashMismatch(t *testing.T) {
 	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), be, "b1", "bucket/key1", "integrity_scrub_failed", int64(11))
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, "b1", "bucket/key1", "integrity_scrub_failed", int64(11))
 	be.EXPECT().GetObject(gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader("hello world")),
 		Size: 11,
@@ -109,7 +110,7 @@ func TestScrub_HashMismatch(t *testing.T) {
 // Asserts that expected 0 checked, got.
 func TestScrub_BackendError(t *testing.T) {
 	t.Parallel()
-	s, ops, be, ms := setupScrubber(t)
+	s, ops, _, be, ms := setupScrubber(t)
 
 	ms.randomHashedObjects = []core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "somehash"},
@@ -132,7 +133,7 @@ func TestScrub_BackendError(t *testing.T) {
 // Asserts that expected 0/0, got /.
 func TestScrub_EmptyBatch(t *testing.T) {
 	t.Parallel()
-	s, _, _, ms := setupScrubber(t)
+	s, _, _, _, ms := setupScrubber(t)
 	ms.randomHashedObjects = nil
 
 	checked, failed := s.Scrub(context.Background(), 10, nil)
@@ -145,7 +146,7 @@ func TestScrub_EmptyBatch(t *testing.T) {
 // Asserts that expected 1 processed, got.
 func TestBackfill_ComputesAndStoresHash(t *testing.T) {
 	t.Parallel()
-	s, ops, be, ms := setupScrubber(t)
+	s, ops, _, be, ms := setupScrubber(t)
 	body := "backfill me"
 	expectedHash := hashString(body)
 
@@ -176,7 +177,7 @@ func TestBackfill_ComputesAndStoresHash(t *testing.T) {
 // Asserts that expected 5 processed, got.
 func TestBackfill_Pagination(t *testing.T) {
 	t.Parallel()
-	s, ops, be, ms := setupScrubber(t)
+	s, ops, _, be, ms := setupScrubber(t)
 
 	// Return a full batch to trigger pagination
 	locs := make([]core.ObjectLocation, 5)
@@ -205,7 +206,7 @@ func TestBackfill_Pagination(t *testing.T) {
 // Asserts that expected 1 processed, got.
 func TestBackfill_UnencryptedObject(t *testing.T) {
 	t.Parallel()
-	s, ops, be, ms := setupScrubber(t)
+	s, ops, _, be, ms := setupScrubber(t)
 	body := "plaintext object"
 	expectedHash := hashString(body)
 
@@ -233,7 +234,7 @@ func TestBackfill_UnencryptedObject(t *testing.T) {
 // Asserts that expected 0 processed, got.
 func TestBackfill_BackendError(t *testing.T) {
 	t.Parallel()
-	s, ops, be, ms := setupScrubber(t)
+	s, ops, _, be, ms := setupScrubber(t)
 
 	ms.objectsWithoutHash = []core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 10},
@@ -253,7 +254,7 @@ func TestBackfill_BackendError(t *testing.T) {
 // Asserts that expected 0/0, got /.
 func TestBackfill_EmptyBatch(t *testing.T) {
 	t.Parallel()
-	s, _, _, ms := setupScrubber(t)
+	s, _, _, _, ms := setupScrubber(t)
 	ms.objectsWithoutHash = nil
 
 	processed, nextOffset := s.Backfill(context.Background(), 10, 0, nil)
@@ -267,7 +268,7 @@ func TestBackfill_EmptyBatch(t *testing.T) {
 func TestScrubber_SetConfig(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	s := NewScrubber(NewMockScrubberOps(ctrl), &mockMetadataStore{}, nil)
+	s := NewScrubber(NewMockScrubberOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{}, nil)
 	if s.Config() != nil {
 		t.Fatal("expected nil config initially")
 	}
@@ -283,7 +284,7 @@ func TestScrubber_SetConfig(t *testing.T) {
 // Asserts that expected 0 checked with cancelled context, got.
 func TestScrub_ContextCancelled(t *testing.T) {
 	t.Parallel()
-	s, _, _, ms := setupScrubber(t)
+	s, _, _, _, ms := setupScrubber(t)
 	ms.randomHashedObjects = []core.ObjectLocation{
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "hash"},
 		{ObjectKey: "bucket/key2", BackendName: "b1", SizeBytes: 11, ContentHash: "hash"},

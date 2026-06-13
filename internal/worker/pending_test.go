@@ -33,14 +33,15 @@ import (
 // metadata store. concurrency=1 keeps test goroutine ordering predictable;
 // minAge=0 lets the constructor fall back to its default (5m) which is
 // irrelevant here since GetStalePending is mocked.
-func setupReaper(t *testing.T) (*PendingReaper, *MockCleanupOps, *backendtest.MockObjectBackend, *mockMetadataStore) {
+func setupReaper(t *testing.T) (*PendingReaper, *MockCleanupOps, *MockPlacement, *backendtest.MockObjectBackend, *mockMetadataStore) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	ops := NewMockCleanupOps(ctrl)
+	pl := NewMockPlacement(ctrl)
 	be := backendtest.NewMockObjectBackend(ctrl)
 	ms := &mockMetadataStore{}
-	r := NewPendingReaper(ops, ms, 1, time.Minute, 50)
-	return r, ops, be, ms
+	r := NewPendingReaper(ops, pl, ms, 1, time.Minute, 50)
+	return r, ops, pl, be, ms
 }
 
 // pendingFixture returns a PendingObject for the reaper test rows.
@@ -63,7 +64,7 @@ func pendingFixture(intentID, key, backendName string) core.PendingObject {
 func TestNewPendingReaper_AppliesZeroDefaults(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	r := NewPendingReaper(NewMockCleanupOps(ctrl), &mockMetadataStore{}, 0, 0, 0)
+	r := NewPendingReaper(NewMockCleanupOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{}, 0, 0, 0)
 	if r.concurrency != 4 {
 		t.Errorf("concurrency = %d, want 4", r.concurrency)
 	}
@@ -84,7 +85,7 @@ func TestNewPendingReaper_AppliesZeroDefaults(t *testing.T) {
 // no longer in config is dropped rather than left to wedge the queue.
 func TestProcessPendingQueue_BackendNotRegisteredDropsIntent(t *testing.T) {
 	t.Parallel()
-	r, ops, _, ms := setupReaper(t)
+	r, ops, _, _, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "gone")}
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
@@ -105,7 +106,7 @@ func TestProcessPendingQueue_BackendNotRegisteredDropsIntent(t *testing.T) {
 // recover.
 func TestProcessPendingQueue_HeadNotFoundDropsIntent(t *testing.T) {
 	t.Parallel()
-	r, ops, be, ms := setupReaper(t)
+	r, ops, _, be, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
@@ -129,7 +130,7 @@ func TestProcessPendingQueue_HeadNotFoundDropsIntent(t *testing.T) {
 // for the next tick rather than dropping or promoting on partial info.
 func TestProcessPendingQueue_HeadTransientErrorLeavesIntent(t *testing.T) {
 	t.Parallel()
-	r, ops, be, ms := setupReaper(t)
+	r, ops, _, be, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
@@ -155,7 +156,7 @@ func TestProcessPendingQueue_HeadTransientErrorLeavesIntent(t *testing.T) {
 // PromotePending; on Committed, the intent is resolved successfully.
 func TestProcessPendingQueue_HeadOKPromotes(t *testing.T) {
 	t.Parallel()
-	r, ops, be, ms := setupReaper(t)
+	r, ops, _, be, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ms.promoteResult = core.PendingPromoteCommitted
@@ -180,7 +181,7 @@ func TestProcessPendingQueue_HeadOKPromotes(t *testing.T) {
 // (the store deleted the row in-txn) and skips the displaced-cleanup step.
 func TestProcessPendingQueue_PromoteSupersededCounts(t *testing.T) {
 	t.Parallel()
-	r, ops, be, ms := setupReaper(t)
+	r, ops, _, be, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ms.promoteResult = core.PendingPromoteSuperseded
@@ -202,7 +203,7 @@ func TestProcessPendingQueue_PromoteSupersededCounts(t *testing.T) {
 // erroring.
 func TestProcessPendingQueue_PromoteAlreadyResolved(t *testing.T) {
 	t.Parallel()
-	r, ops, be, ms := setupReaper(t)
+	r, ops, _, be, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ms.promoteResult = core.PendingPromoteAlreadyResolved
@@ -225,7 +226,7 @@ func TestProcessPendingQueue_PromoteAlreadyResolved(t *testing.T) {
 // reaper must still handle it sanely.
 func TestProcessPendingQueue_PromoteAmbiguousLeavesIntent(t *testing.T) {
 	t.Parallel()
-	r, ops, be, ms := setupReaper(t)
+	r, ops, _, be, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ms.promoteResult = core.PendingPromoteAmbiguous
@@ -250,7 +251,7 @@ func TestProcessPendingQueue_PromoteAmbiguousLeavesIntent(t *testing.T) {
 // row for the next tick.
 func TestProcessPendingQueue_PromoteErrorIsFailed(t *testing.T) {
 	t.Parallel()
-	r, ops, be, ms := setupReaper(t)
+	r, ops, _, be, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ms.promoteErr = errors.New("db blip")
@@ -273,7 +274,7 @@ func TestProcessPendingQueue_PromoteErrorIsFailed(t *testing.T) {
 // requests under load.
 func TestProcessPendingQueue_AdmissionBlockedSkips(t *testing.T) {
 	t.Parallel()
-	r, ops, _, ms := setupReaper(t)
+	r, ops, _, _, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(false)
@@ -289,7 +290,7 @@ func TestProcessPendingQueue_AdmissionBlockedSkips(t *testing.T) {
 // backends fans out cleanup deletes for each.
 func TestProcessPendingQueue_PromoteWithDisplacedEnqueues(t *testing.T) {
 	t.Parallel()
-	r, ops, be, ms := setupReaper(t)
+	r, ops, pl, be, ms := setupReaper(t)
 
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ms.promoteResult = core.PendingPromoteCommitted
@@ -303,7 +304,7 @@ func TestProcessPendingQueue_PromoteWithDisplacedEnqueues(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 	ops.EXPECT().GetBackend("b2").Return(be2, nil)
-	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), be2, "b2", "bucket/k", "overwrite_displaced", int64(200))
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be2, "b2", "bucket/k", "overwrite_displaced", int64(200))
 
 	resolved, _ := r.ProcessPendingQueue(context.Background())
 	if resolved != 1 {
@@ -315,7 +316,7 @@ func TestProcessPendingQueue_PromoteWithDisplacedEnqueues(t *testing.T) {
 // without errors and updates depth gauge to 0.
 func TestProcessPendingQueue_EmptyBatchIsNoOp(t *testing.T) {
 	t.Parallel()
-	r, _, _, ms := setupReaper(t)
+	r, _, _, _, ms := setupReaper(t)
 
 	ms.stalePending = nil
 	resolved, failed := r.ProcessPendingQueue(context.Background())
@@ -331,7 +332,7 @@ func TestProcessPendingQueue_EmptyBatchIsNoOp(t *testing.T) {
 // counted as failed so they remain queued for the next tick.
 func TestProcessPendingQueue_SkipsBackendWithOpenBreaker(t *testing.T) {
 	t.Parallel()
-	r, ops, _, ms := setupReaper(t)
+	r, ops, _, _, ms := setupReaper(t)
 
 	ctrl := gomock.NewController(t)
 	rawBE := backendtest.NewMockObjectBackend(ctrl)
@@ -369,7 +370,7 @@ func TestProcessPendingQueue_SkipsBackendWithOpenBreaker(t *testing.T) {
 // and records the API call against the backend's usage counter.
 func TestProbeBackend_Found(t *testing.T) {
 	t.Parallel()
-	r, ops, be, _ := setupReaper(t)
+	r, ops, _, be, _ := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
 
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
@@ -385,7 +386,7 @@ func TestProbeBackend_Found(t *testing.T) {
 // probeNotFound  -  the signal that lets the reaper drop the intent.
 func TestProbeBackend_NotFound(t *testing.T) {
 	t.Parallel()
-	r, ops, be, _ := setupReaper(t)
+	r, ops, _, be, _ := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
 
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
@@ -402,7 +403,7 @@ func TestProbeBackend_NotFound(t *testing.T) {
 // than acting on inconclusive information.
 func TestProbeBackend_TransientError(t *testing.T) {
 	t.Parallel()
-	r, ops, be, _ := setupReaper(t)
+	r, ops, _, be, _ := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
 
 	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
@@ -422,7 +423,7 @@ func TestProbeBackend_TransientError(t *testing.T) {
 // the row and counts as resolved without emitting a head_404 audit log.
 func TestDropIntent_BackendRemoved(t *testing.T) {
 	t.Parallel()
-	r, _, _, ms := setupReaper(t)
+	r, _, _, _, ms := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "gone")
 
 	var resolvedCount, failedCount atomic.Int32
@@ -441,7 +442,7 @@ func TestDropIntent_BackendRemoved(t *testing.T) {
 // reaper activity with backend state.
 func TestDropIntent_Head404(t *testing.T) {
 	t.Parallel()
-	r, _, _, ms := setupReaper(t)
+	r, _, _, _, ms := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
 
 	var resolvedCount, failedCount atomic.Int32
@@ -476,11 +477,12 @@ func TestDropIntent_DeleteFailureCountedAsFailed(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockCleanupOps(ctrl)
+	pl := NewMockPlacement(ctrl)
 	ms := &failingDeleteStore{
 		mockMetadataStore: &mockMetadataStore{},
 		deleteErr:         errors.New("db down"),
 	}
-	r := NewPendingReaper(ops, ms, 1, time.Minute, 50)
+	r := NewPendingReaper(ops, pl, ms, 1, time.Minute, 50)
 	p := pendingFixture("i1", "bucket/k", "b1")
 
 	var resolvedCount, failedCount atomic.Int32
@@ -500,12 +502,12 @@ func TestDropIntent_DeleteFailureCountedAsFailed(t *testing.T) {
 // backends so orphan bytes do not accumulate.
 func TestOnPromoteCommitted_FansOutDisplacedCleanup(t *testing.T) {
 	t.Parallel()
-	r, ops, _, _ := setupReaper(t)
+	r, ops, pl, _, _ := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
 	be2 := backendtest.NewMockObjectBackend(gomock.NewController(t))
 
 	ops.EXPECT().GetBackend("b2").Return(be2, nil)
-	ops.EXPECT().DeleteOrEnqueue(gomock.Any(), be2, "b2", "bucket/k", "overwrite_displaced", int64(200))
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be2, "b2", "bucket/k", "overwrite_displaced", int64(200))
 
 	var resolvedCount atomic.Int32
 	displaced := []core.DeletedCopy{{BackendName: "b2", SizeBytes: 200}}
@@ -522,7 +524,7 @@ func TestOnPromoteCommitted_FansOutDisplacedCleanup(t *testing.T) {
 // resolved.
 func TestOnPromoteCommitted_DisplacedBackendNotRegistered(t *testing.T) {
 	t.Parallel()
-	r, ops, _, _ := setupReaper(t)
+	r, ops, _, _, _ := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
 
 	ops.EXPECT().GetBackend("gone").Return(nil, errors.New("not found"))
@@ -541,7 +543,7 @@ func TestOnPromoteCommitted_DisplacedBackendNotRegistered(t *testing.T) {
 // store already deleted the pending row in-txn.
 func TestOnPromoteSuperseded_CountsResolved(t *testing.T) {
 	t.Parallel()
-	r, _, _, ms := setupReaper(t)
+	r, _, _, _, ms := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
 
 	var resolvedCount atomic.Int32
@@ -560,7 +562,7 @@ func TestOnPromoteSuperseded_CountsResolved(t *testing.T) {
 // operator-review-required state is never silently lost.
 func TestOnPromoteAmbiguous_CountsFailed(t *testing.T) {
 	t.Parallel()
-	r, _, _, ms := setupReaper(t)
+	r, _, _, _, ms := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
 
 	var failedCount atomic.Int32

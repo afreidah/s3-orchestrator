@@ -91,18 +91,18 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 	// workers with test-specific configs below.
 	_ = proxytest.BuildWorkers(mgr, mock)
 
-	rb := worker.NewRebalancer(mgr, mock)
+	rb := worker.NewRebalancer(mgr.Runtime(), mgr, mock)
 	rb.SetConfig(&config.RebalanceConfig{})
 
-	rp := worker.NewReplicator(mgr, mock)
+	rp := worker.NewReplicator(mgr.Runtime(), mgr, mock)
 	rp.SetConfig(&config.ReplicationConfig{Factor: 1})
 
-	or := worker.NewOverReplicationCleaner(mgr, mock)
+	or := worker.NewOverReplicationCleaner(mgr.Runtime(), mgr, mock)
 	or.SetConfig(&config.ReplicationConfig{Factor: 1})
 
-	cw := worker.NewCleanupWorker(mgr, mock, 10, "test-instance", 5*time.Minute)
+	cw := worker.NewCleanupWorker(mgr.Runtime(), mock, 10, "test-instance", 5*time.Minute)
 
-	sc := worker.NewScrubber(mgr, mock, nil)
+	sc := worker.NewScrubber(mgr.Runtime(), mgr, mock, nil)
 	sc.SetConfig(&config.IntegrityConfig{})
 
 	mgr.SetLifecycleConfig(&config.LifecycleConfig{})
@@ -146,7 +146,7 @@ func TestCleanupQueueService_ProcessedLogFires(t *testing.T) {
 		},
 	})
 	_ = proxytest.BuildWorkers(mgr, mock)
-	cw := worker.NewCleanupWorker(mgr, mock, 1, "test", 5*time.Minute)
+	cw := worker.NewCleanupWorker(mgr.Runtime(), mock, 1, "test", 5*time.Minute)
 	t.Cleanup(mgr.Close)
 
 	svc := worker.NewCleanupQueueService(cw, acquiringLocker{}).(*tickrunner.Service)

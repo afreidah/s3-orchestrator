@@ -30,7 +30,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
@@ -106,12 +105,6 @@ type PolicyConfig struct {
 	PendingEnabled bool
 	// MaxObjectSizes is the per-backend max object size in bytes (0 = unlimited).
 	MaxObjectSizes map[string]int64
-	// MultipartDEKCacheTTL pegs the lifetime of cached unwrapped DEKs
-	// the MultipartManager uses to avoid re-unwrapping the upload-level
-	// DEK on every UploadPart. Zero falls back to a 1h default which
-	// is shorter than the typical multipart_stale_timeout but long
-	// enough to absorb a reasonable upload's part stream.
-	MultipartDEKCacheTTL time.Duration
 }
 
 // FeatureDeps groups optional capabilities. Each field is nil-able and
@@ -144,52 +137,59 @@ type OperationalDeps struct {
 	ReplicationFactor func() int
 }
 
+// Collaborators groups the sub-managers built by the composition root and
+// injected so the drain manager (which needs the write coordinator as its
+// mover and the multipart abort hook) and the BackendManager share the
+// same instances.
+//
+// Coord, Multipart, and IntegrityCfg are required: the drain manager and
+// the BackendManager must hold the same coordinator, multipart manager,
+// and integrity-config pointer. Drain is nil-able; the methods that
+// consult it (FlushUsage, ClearDrainState, GetDashboardData) nil-guard
+// the field.
+type Collaborators struct {
+	Coord        *writepath.Coordinator
+	Multipart    *multipart.Manager
+	Drain        *drain.Manager
+	IntegrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]
+}
+
 // BackendManagerConfig groups the constructor parameters by capability
 // so contributors can see at a glance which fields belong together:
-// topology, persistence, runtime policy, optional features, and
-// operational deps. Each sub-struct documents its own field semantics.
+// topology, persistence, runtime policy, optional features, operational
+// deps, and pre-built collaborators. Each sub-struct documents its own
+// field semantics.
 type BackendManagerConfig struct {
-	Storage    StorageDeps
-	Stores     StoreDeps
-	Policies   PolicyConfig
-	Features   FeatureDeps
-	Operations OperationalDeps
+	Runtime       *infra.BackendRuntime // backend fleet/admission/usage/metrics infrastructure, built by the composition root
+	Storage       StorageDeps
+	Stores        StoreDeps
+	Policies      PolicyConfig
+	Features      FeatureDeps
+	Operations    OperationalDeps
+	Collaborators Collaborators
 }
 
 // BackendManager manages multiple storage backends with quota tracking.
-// Embeds *infra.BackendRuntime for non-store infrastructure (backends, usage,
-// admission, draining, metrics) and holds the per-role store views and
-// hot-reloadable configuration. Store-touching write-path helpers are
-// methods on *BackendManager (manager_writepath.go); pure infra
-// primitives stay on *infra.BackendRuntime.
+// It holds the backend runtime (non-store infrastructure: backends,
+// usage, admission, draining, metrics) as a named field reached via
+// Runtime(), plus the per-role store views and hot-reloadable config.
+// Store-touching write-path helpers are methods on *BackendManager
+// (manager_writepath.go); pure infra primitives stay on the runtime.
 //
 // Workers (rebalancer, replicator, scrubber, ...) are resolved through
-// DI at the call site rather than carried on the manager. The dashboard
-// aggregator, hot-reload paths, and tests that previously read
-// mgr.Replicator etc. now invoke do.Invoke directly.
+// DI at the call site rather than carried on the manager.
 //
-// DrainManager is the one dependency wired post-construction via
-// WireDrain. The cycle (drain.Manager needs *BackendManager and
-// mgr.multipartManager) makes constructor injection impractical without
-// redesigning drain.DrainRuntime. Code paths that depend on DrainManager
-// (FlushUsage, ClearDrainState) nil-guard the field so a manager
-// constructed without WireDrain (every test path that does not need
-// drain behavior) remains usable.
+// The drain manager is an injected collaborator. It is nil-able; the
+// methods that consult it (FlushUsage, ClearDrainState, GetDashboardData)
+// nil-guard the field so a manager built without drain stays usable.
 type BackendManager struct {
-	*infra.BackendRuntime
+	runtime          *infra.BackendRuntime  // backend fleet/admission/usage/metrics; expose via Runtime()
 	stores           Stores                 // narrow store-role view; see Stores interface above
 	coord            *writepath.Coordinator // shared write-path helpers (also held by objectManager and multipartManager)
 	multipartManager *multipart.Manager     // multipart upload lifecycle; expose via Multipart()
 	objectManager    *object.Manager        // CRUD, read failover, broadcast reads; expose via Objects()
 	dashboard        *dashboard.Aggregator  // web UI data aggregation
-
-	// drainManager is the single post-construction wiring point. Set by
-	// WireDrain after both *BackendManager and *drain.Manager have been
-	// constructed (the dependency cycle prevents constructor injection).
-	// Nil-able by design; FlushUsage and ClearDrainState guard the
-	// access so tests that do not exercise drain behavior need not call
-	// WireDrain. Expose via Drain().
-	drainManager *drain.Manager
+	drainManager     *drain.Manager         // nil-able; expose via Drain()
 
 	usageFlushCfg syncutil.AtomicConfig[config.UsageFlushConfig]
 	lifecycleCfg  syncutil.AtomicConfig[config.LifecycleConfig]
@@ -205,21 +205,13 @@ func (m *BackendManager) Multipart() *multipart.Manager { return m.multipartMana
 // Multipart().
 func (m *BackendManager) Objects() *object.Manager { return m.objectManager }
 
-// Drain returns the drain manager, or nil if WireDrain has not been
-// called yet (test paths that do not exercise drain behavior). Callers
-// that touch the result must nil-guard.
-func (m *BackendManager) Drain() *drain.Manager { return m.drainManager }
+// Runtime returns the backend runtime so workers, drain, and transport
+// can depend on it directly for fleet/admission/usage primitives.
+func (m *BackendManager) Runtime() *infra.BackendRuntime { return m.runtime }
 
-// WireDrain installs the drain.Manager: stores it on BackendManager so
-// dashboard rendering and drain-aware tests can reach it, and points
-// backendCore.drainMgr at it so eligibility filters see drain state.
-// Called by the drain DI provider after both values exist. The
-// dependency cycle between drain.Manager and BackendManager prevents
-// passing the drain manager through the constructor.
-func (m *BackendManager) WireDrain(d *drain.Manager) {
-	m.drainManager = d
-	m.SetDrainChecker(d)
-}
+// Drain returns the drain manager, or nil when the manager was built
+// without one. Callers that touch the result must nil-guard.
+func (m *BackendManager) Drain() *drain.Manager { return m.drainManager }
 
 // NewBackendManager constructs a BackendManager. Required dependencies
 // (cfg, Stores, Dashboard, Metrics) panic via must.NotNil at
@@ -230,56 +222,27 @@ func (m *BackendManager) WireDrain(d *drain.Manager) {
 // receives.
 func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 	must.NotNil("cfg", cfg)
+	must.NotNil("cfg.Runtime", cfg.Runtime)
 	must.NotNil("cfg.Stores.Metadata", cfg.Stores.Metadata)
 	must.NotNil("cfg.Stores.Dashboard", cfg.Stores.Dashboard)
-	must.NotNil("cfg.Operations.Metrics", cfg.Operations.Metrics)
 
-	storage := cfg.Storage
+	collab := cfg.Collaborators
+	must.NotNil("cfg.Collaborators.Coord", collab.Coord)
+	must.NotNil("cfg.Collaborators.Multipart", collab.Multipart)
+	must.NotNil("cfg.Collaborators.IntegrityCfg", collab.IntegrityCfg)
+
 	stores := cfg.Stores
 	policies := cfg.Policies
 	features := cfg.Features
-	ops := cfg.Operations
+	c := cfg.Runtime
 
-	backendNames := make([]string, 0, len(storage.Backends))
-	for name := range storage.Backends {
-		backendNames = append(backendNames, name)
-	}
-
-	counters := features.CounterBackend
-	if counters == nil {
-		counters = counter.NewLocalCounterBackend(backendNames)
-	}
-	usage := counter.NewUsageTracker(counters, policies.UsageLimits)
-
-	c := infra.New(&infra.Config{
-		Backends:        storage.Backends,
-		Order:           storage.Order,
-		BackendTimeout:  policies.BackendTimeout,
-		Usage:           usage,
-		RoutingStrategy: policies.RoutingStrategy,
-		MaxObjectSizes:  policies.MaxObjectSizes,
-		AdmissionSem:    ops.AdmissionSem,
-		Log:             slog.Default().With(logfmt.Component("backend_manager")),
-	})
-
-	dekCacheTTL := policies.MultipartDEKCacheTTL
-	if dekCacheTTL == 0 {
-		dekCacheTTL = time.Hour
-	}
-
-	coord := writepath.New(c, stores.Metadata, policies.PendingEnabled)
-
-	// Shared with object.Manager so SIGHUP-driven integrity config
-	// changes flip both write paths atomically. Multipart's nil-safe
-	// hasher gate reads through this pointer on each Complete.
-	integrityCfg := &syncutil.AtomicConfig[config.IntegrityConfig]{}
-	multipartManager := multipart.New(c, coord, stores.Metadata, features.Encryptor, features.ObjectCache, dekCacheTTL, integrityCfg)
-
+	// object.Manager and dashboard.Aggregator are private to the manager,
+	// so it builds them here from the injected coordinator and runtime.
 	cache := object.NewLocationCache(policies.CacheTTL)
 	objectManager := object.New(&object.Deps{
 		Core:                         c,
 		BroadcastCore:                c,
-		Coord:                        coord,
+		Coord:                        collab.Coord,
 		Stores:                       stores.Metadata,
 		Encryptor:                    features.Encryptor,
 		LocationCache:                cache,
@@ -287,22 +250,19 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		ParallelBroadcast:            policies.ParallelBroadcast,
 		DegradedBroadcastParallelism: policies.DegradedBroadcastParallelism,
 		DisableDegradedReads:         policies.DisableDegradedReads,
-		IntegrityCfg:                 integrityCfg,
+		IntegrityCfg:                 collab.IntegrityCfg,
 	})
 
-	m := &BackendManager{
-		BackendRuntime:   c,
+	return &BackendManager{
+		runtime:          c,
 		stores:           stores.Metadata,
-		coord:            coord,
-		multipartManager: multipartManager,
+		coord:            collab.Coord,
+		multipartManager: collab.Multipart,
 		objectManager:    objectManager,
-		dashboard:        dashboard.New(stores.Dashboard, usage, storage.Order),
-		integrityCfg:     integrityCfg,
+		dashboard:        dashboard.New(stores.Dashboard, c.Usage(), cfg.Storage.Order),
+		drainManager:     collab.Drain,
+		integrityCfg:     collab.IntegrityCfg,
 	}
-
-	c.SetMetricsCollector(metrics.New(ops.Metrics, usage, backendNames, ops.ReplicationFactor))
-
-	return m
 }
 
 // ClearCache removes all entries from the location cache.
@@ -311,8 +271,7 @@ func (m *BackendManager) ClearCache() {
 }
 
 // ClearDrainState removes all entries from the draining map. Used by tests
-// to reset state between runs. No-op when DrainManager has not been
-// wired (tests that do not need drain behavior skip WireDrain).
+// to reset state between runs. No-op when the manager has no drain manager.
 func (m *BackendManager) ClearDrainState() {
 	if m.drainManager == nil {
 		return
@@ -324,7 +283,7 @@ func (m *BackendManager) ClearDrainState() {
 // configured. The HTTP admission controller should use this channel so that
 // HTTP requests and background services share one concurrency budget.
 func (m *BackendManager) AdmissionSem() chan struct{} {
-	return m.BackendRuntime.AdmissionSem()
+	return m.runtime.AdmissionSem()
 }
 
 // Close stops every background cache eviction goroutine the manager
@@ -340,13 +299,13 @@ func (m *BackendManager) Close() {
 // RecordUsage increments the in-memory usage counters for a backend.
 // Exposed for admin operations that bypass the normal manager request path.
 func (m *BackendManager) RecordUsage(backendName string, apiCalls, egress, ingress int64) {
-	m.Usage().Record(backendName, apiCalls, egress, ingress)
+	m.runtime.Usage().Record(backendName, apiCalls, egress, ingress)
 }
 
 // UpdateUsageLimits replaces the per-backend usage limits. Safe to call
 // concurrently with request handling.
 func (m *BackendManager) UpdateUsageLimits(limits map[string]core.UsageLimits) {
-	m.Usage().UpdateLimits(limits)
+	m.runtime.Usage().UpdateLimits(limits)
 }
 
 // FlushUsage flushes accumulated in-memory usage counters to the database.
@@ -359,7 +318,7 @@ func (m *BackendManager) FlushUsage(ctx context.Context) error {
 	if m.drainManager != nil {
 		skip = m.drainManager.CompletedBackends()
 	}
-	return m.Usage().FlushUsage(ctx, m.stores, skip)
+	return m.runtime.Usage().FlushUsage(ctx, m.stores, skip)
 }
 
 // RedisCounterConfigured returns true when the counter backend is a Redis
@@ -367,7 +326,7 @@ func (m *BackendManager) FlushUsage(ctx context.Context) error {
 // whether an advisory lock is needed  -  the lock must be held even during
 // fallback to prevent double-counting when Redis recovers mid-flush.
 func (m *BackendManager) RedisCounterConfigured() bool {
-	_, ok := m.Usage().Backend().(*counter.RedisCounterBackend)
+	_, ok := m.runtime.Usage().Backend().(*counter.RedisCounterBackend)
 	return ok
 }
 
@@ -410,7 +369,7 @@ func (m *BackendManager) IntegrityConfig() *config.IntegrityConfig {
 
 // NearUsageLimit returns true if any backend is approaching its usage limits.
 func (m *BackendManager) NearUsageLimit(threshold float64) bool {
-	return m.Usage().NearLimit(threshold)
+	return m.runtime.Usage().NearLimit(threshold)
 }
 
 // -------------------------------------------------------------------------
@@ -429,7 +388,7 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 		return 0, 0, err
 	}
 
-	m.Log().InfoContext(ctx, "starting backend sync", "backend", backendName, "bucket", bucket)
+	m.runtime.Log().InfoContext(ctx, "starting backend sync", "backend", backendName, "bucket", bucket)
 
 	bucketPrefix := internalkey.Prefix(bucket)
 	otherPrefixes := reconcile.SiblingPrefixes(knownBuckets, bucket)
@@ -446,13 +405,13 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 	// Record ListObjectsV2 API calls against the backend's usage quota:
 	// each page is one API request to the backend provider.
 	if apiPages > 0 {
-		m.Acct().APICalls(backendName, apiPages)
+		m.runtime.Acct().APICalls(backendName, apiPages)
 	}
 	if err != nil {
 		return imported, skipped, err
 	}
 
-	m.Log().InfoContext(ctx, "backend sync complete", "backend", backendName, "bucket", bucket,
+	m.runtime.Log().InfoContext(ctx, "backend sync complete", "backend", backendName, "bucket", bucket,
 		"imported", imported, "skipped", skipped)
 	return imported, skipped, nil
 }
@@ -514,7 +473,7 @@ func (m *BackendManager) makeReconcileDeleter() reconcile.DeleterFn {
 			return err
 		}
 		if _, err := m.stores.SweepStaleCleanupQueueRows(ctx, key, backendName); err != nil {
-			m.Log().WarnContext(ctx, "failed to sweep cleanup_queue rows for stale key",
+			m.runtime.Log().WarnContext(ctx, "failed to sweep cleanup_queue rows for stale key",
 				slog.String("key", key), slog.String("backend", backendName), "error", err)
 		}
 		return nil
@@ -557,12 +516,12 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 	res := &reconcile.Result{}
 	mergeErr := reconcile.Sorted(
 		ctx, s3, dbIter,
-		reconcile.ImportHandler(m.Log(), backendName, m.stores.ImportObject, res),
-		reconcile.DeleteHandler(m.Log(), backendName, m.makeReconcileDeleter(), res),
+		reconcile.ImportHandler(m.runtime.Log(), backendName, m.stores.ImportObject, res),
+		reconcile.DeleteHandler(m.runtime.Log(), backendName, m.makeReconcileDeleter(), res),
 	)
 
 	if pages := atomic.LoadInt64(&apiPages); pages > 0 {
-		m.Acct().APICalls(backendName, pages)
+		m.runtime.Acct().APICalls(backendName, pages)
 	}
 	if mergeErr != nil {
 		return &worker.ReconcileResult{BackendsScanned: 1, Imported: int(res.Imported), Removed: int(res.Removed)},
@@ -581,7 +540,7 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 // ListObjects API the reconciler drives. The interface return makes the
 // dependency narrow so tests can substitute a fake.
 func (m *BackendManager) resolveS3Backend(name string) (reconcile.ObjectLister, error) {
-	be, err := m.GetBackend(name)
+	be, err := m.runtime.GetBackend(name)
 	if err != nil {
 		return nil, err
 	}
@@ -619,7 +578,7 @@ func (m *BackendManager) CountActiveMultipartUploads(ctx context.Context, bucket
 // the same routing strategy as normal writes. Excludes backends that
 // already hold a copy of the object.
 func (m *BackendManager) SelectReplicaTarget(ctx context.Context, size int64, exclusion map[string]bool) (string, error) {
-	eligible := m.EligibleForWrite(1, 0, size)
+	eligible := m.runtime.EligibleForWrite(1, 0, size)
 	filtered := make([]string, 0, len(eligible))
 	for _, name := range eligible {
 		if !exclusion[name] {
@@ -640,22 +599,30 @@ func (m *BackendManager) SelectReplicaTarget(ctx context.Context, size int64, ex
 // PASS-THROUGHS
 // -------------------------------------------------------------------------
 
-// DeleteOrEnqueue forwards to the write coordinator. Worker and drain
-// interfaces accept *BackendManager and call DeleteOrEnqueue on it; the
-// implementation lives on the coordinator now, but the call site shape
-// stays the same.
+// DeleteOrEnqueue forwards to the write coordinator. The worker
+// Placement and drain Mover interfaces call it on *BackendManager.
 func (m *BackendManager) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
 	m.coord.DeleteOrEnqueue(ctx, be, backendName, key, reason, sizeBytes)
 }
 
-// MoveObject forwards to the write coordinator's shared move primitive.
-// Drain and rebalancer both pass their narrow consumer
-// interface (drain.DrainRuntime, worker.DataMover) here so the StreamCopy +
-// MoveObjectLocation CAS + orphan-cleanup branches + source-delete
-// accounting all funnel through one implementation - the same way
-// DeleteOrEnqueue does.
+// MoveObject forwards to the write coordinator's shared move primitive so
+// the StreamCopy + MoveObjectLocation CAS + orphan-cleanup + source-delete
+// accounting all funnel through one implementation.
 func (m *BackendManager) MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error) {
 	return m.coord.MoveObject(ctx, req)
+}
+
+// UpdateQuotaMetrics forwards to the runtime. The usage-flush and
+// reconcile services consume it alongside the manager's store-coupled
+// helpers, so the manager exposes it as part of its orchestration surface.
+func (m *BackendManager) UpdateQuotaMetrics(ctx context.Context) error {
+	return m.runtime.UpdateQuotaMetrics(ctx)
+}
+
+// BackendOrder forwards to the runtime. The reconciler iterates the fleet
+// in this order while reconciling backend state against the stores.
+func (m *BackendManager) BackendOrder() []string {
+	return m.runtime.BackendOrder()
 }
 
 // GetDashboardData delegates to the dashboard.Aggregator and enriches the
@@ -668,8 +635,8 @@ func (m *BackendManager) GetDashboardData(ctx context.Context) (*dashboard.Data,
 	}
 
 	data.DrainingBackends = make(map[string]drain.Progress)
-	for _, name := range m.BackendOrder() {
-		if !m.IsDraining(name) {
+	for _, name := range m.runtime.BackendOrder() {
+		if !m.runtime.IsDraining(name) {
 			continue
 		}
 		progress, err := m.drainManager.GetDrainProgress(ctx, name)
@@ -679,7 +646,7 @@ func (m *BackendManager) GetDashboardData(ctx context.Context) (*dashboard.Data,
 	}
 
 	data.UnhealthyBackends = make(map[string]bool)
-	for name, be := range m.Backends() {
+	for name, be := range m.runtime.Backends() {
 		if cb, ok := be.(*backend.CircuitBreakerBackend); ok && !cb.IsHealthy() {
 			data.UnhealthyBackends[name] = true
 		}

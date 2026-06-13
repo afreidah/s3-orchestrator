@@ -25,6 +25,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/instanceid"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -84,7 +87,7 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewRebalancer(c.Mgr, c.Stores), nil
+	return worker.NewRebalancer(c.Mgr.Runtime(), c.Mgr, c.Stores), nil
 }
 
 // ProvideReplicator constructs the replication worker.
@@ -93,7 +96,7 @@ func ProvideReplicator(i do.Injector) (*worker.Replicator, error) {
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewReplicator(c.Mgr, c.Stores), nil
+	return worker.NewReplicator(c.Mgr.Runtime(), c.Mgr, c.Stores), nil
 }
 
 // ProvideOverReplicationCleaner constructs the over-replication cleanup worker.
@@ -102,16 +105,27 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewOverReplicationCleaner(c.Mgr, c.Stores), nil
+	return worker.NewOverReplicationCleaner(c.Mgr.Runtime(), c.Mgr, c.Stores), nil
 }
 
-// ProvideCleanupWorker constructs the cleanup-queue worker.
+// ProvideCleanupWorker constructs the cleanup-queue worker. It resolves
+// the backend runtime and store directly rather than through the manager
+// so the drain manager (which takes this worker's ProcessCleanupQueue
+// hook) can be built before the manager.
 func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
-	c, err := resolveWorkerCoreWithCfg(i)
+	cfg, err := do.Invoke[*config.Config](i)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolve Config: %w", err)
 	}
-	concurrency := c.Cfg.CleanupQueue.Concurrency
+	rt, err := do.Invoke[*infra.BackendRuntime](i)
+	if err != nil {
+		return nil, fmt.Errorf("resolve BackendRuntime: %w", err)
+	}
+	stores, err := do.Invoke[core.MetadataStore](i)
+	if err != nil {
+		return nil, fmt.Errorf("resolve MetadataStore: %w", err)
+	}
+	concurrency := cfg.CleanupQueue.Concurrency
 	if concurrency <= 0 {
 		concurrency = 10
 	}
@@ -119,7 +133,7 @@ func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve InstanceID: %w", err)
 	}
-	return worker.NewCleanupWorker(c.Mgr, c.Stores, concurrency, id.String(), c.Cfg.CleanupQueue.ClaimGracePeriod), nil
+	return worker.NewCleanupWorker(rt, stores, concurrency, id.String(), cfg.CleanupQueue.ClaimGracePeriod), nil
 }
 
 // ProvidePendingReaper constructs the pending-reaper worker. The
@@ -140,7 +154,7 @@ func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error) {
 	if c.Stores == nil {
 		return nil, fmt.Errorf("pending pattern enabled but MetadataStore resolved to nil")
 	}
-	return worker.NewPendingReaper(c.Mgr, c.Stores, 0, cfg.WritePath.PendingPattern.MinAge, cfg.WritePath.PendingPattern.BatchSize), nil
+	return worker.NewPendingReaper(c.Mgr.Runtime(), c.Mgr, c.Stores, 0, cfg.WritePath.PendingPattern.MinAge, cfg.WritePath.PendingPattern.BatchSize), nil
 }
 
 // ProvideScrubber constructs the integrity-verification worker.
@@ -155,7 +169,7 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 			enc = e
 		}
 	}
-	return worker.NewScrubber(c.Mgr, c.Stores, enc), nil
+	return worker.NewScrubber(c.Mgr.Runtime(), c.Mgr, c.Stores, enc), nil
 }
 
 // ProvideReconciler constructs the bucket reconciler worker. Registered
@@ -175,27 +189,40 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 	return worker.NewReconciler(c.Mgr, bktNames), nil
 }
 
-// ProvideDrainManager constructs the drain manager. Depends on
-// BackendManager (drain.DrainRuntime seam), the cleanup worker (for the
-// cleanup-queue flush before backend deletion), and the wide
-// MetadataStore for the object/quota/lifecycle role surfaces. The
-// returned manager is wired onto BackendManager by di.WireManager so
-// the provider itself stays free of mutation side effects.
+// ProvideDrainManager constructs the drain manager from the backend
+// runtime (fleet/copy/delete primitives), the write coordinator (its
+// mover), the wide MetadataStore for the object/quota/lifecycle role
+// surfaces, the multipart manager's abort hook, and the cleanup worker's
+// queue flush. None of these is the BackendManager, so drain builds
+// before the manager and is injected into it.
 func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
-	c, err := resolveWorkerCore(i)
+	rt, err := do.Invoke[*infra.BackendRuntime](i)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolve BackendRuntime: %w", err)
+	}
+	coord, err := do.Invoke[*writepath.Coordinator](i)
+	if err != nil {
+		return nil, fmt.Errorf("resolve WriteCoordinator: %w", err)
+	}
+	stores, err := do.Invoke[core.MetadataStore](i)
+	if err != nil {
+		return nil, fmt.Errorf("resolve MetadataStore: %w", err)
+	}
+	mp, err := do.Invoke[*multipart.Manager](i)
+	if err != nil {
+		return nil, fmt.Errorf("resolve MultipartManager: %w", err)
 	}
 	cleanup, err := do.Invoke[*worker.CleanupWorker](i)
 	if err != nil {
 		return nil, fmt.Errorf("resolve CleanupWorker: %w", err)
 	}
 	return drain.New(
-		c.Mgr,
-		c.Stores,
-		c.Stores,
-		c.Stores,
-		c.Mgr.Multipart().AbortMultipartUploadsOnBackend,
+		rt,
+		coord,
+		stores,
+		stores,
+		stores,
+		mp.AbortMultipartUploadsOnBackend,
 		cleanup.ProcessCleanupQueue,
 	), nil
 }
