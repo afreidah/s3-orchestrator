@@ -32,6 +32,14 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// Error-wrap formats shared by the worker dependency-resolution helpers so
+// the wrapped message stays identical across providers.
+const (
+	errResolveConfig        = "resolve Config: %w"
+	errResolveRuntime       = "resolve BackendRuntime: %w"
+	errResolveMetadataStore = "resolve MetadataStore: %w"
+)
+
 // workerCore bundles the dependencies every background worker needs.
 type workerCore struct {
 	Mgr    *proxy.BackendManager
@@ -56,7 +64,7 @@ func resolveWorkerCore(i do.Injector) (workerCore, error) {
 	}
 	stores, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
-		return c, fmt.Errorf("resolve MetadataStore: %w", err)
+		return c, fmt.Errorf(errResolveMetadataStore, err)
 	}
 	c.Mgr = mgr
 	c.Stores = stores
@@ -70,7 +78,7 @@ func resolveWorkerCoreWithCfg(i do.Injector) (workerCoreWithCfg, error) {
 	var c workerCoreWithCfg
 	cfg, err := do.Invoke[*config.Config](i)
 	if err != nil {
-		return c, fmt.Errorf("resolve Config: %w", err)
+		return c, fmt.Errorf(errResolveConfig, err)
 	}
 	core, err := resolveWorkerCore(i)
 	if err != nil {
@@ -115,15 +123,15 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 	cfg, err := do.Invoke[*config.Config](i)
 	if err != nil {
-		return nil, fmt.Errorf("resolve Config: %w", err)
+		return nil, fmt.Errorf(errResolveConfig, err)
 	}
 	rt, err := do.Invoke[*infra.BackendRuntime](i)
 	if err != nil {
-		return nil, fmt.Errorf("resolve BackendRuntime: %w", err)
+		return nil, fmt.Errorf(errResolveRuntime, err)
 	}
 	stores, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
-		return nil, fmt.Errorf("resolve MetadataStore: %w", err)
+		return nil, fmt.Errorf(errResolveMetadataStore, err)
 	}
 	concurrency := cfg.CleanupQueue.Concurrency
 	if concurrency <= 0 {
@@ -145,7 +153,7 @@ func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error) {
 	cfg, err := do.Invoke[*config.Config](i)
 	if err != nil {
-		return nil, fmt.Errorf("resolve Config: %w", err)
+		return nil, fmt.Errorf(errResolveConfig, err)
 	}
 	c, err := resolveWorkerCore(i)
 	if err != nil {
@@ -198,7 +206,7 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
 	rt, err := do.Invoke[*infra.BackendRuntime](i)
 	if err != nil {
-		return nil, fmt.Errorf("resolve BackendRuntime: %w", err)
+		return nil, fmt.Errorf(errResolveRuntime, err)
 	}
 	coord, err := do.Invoke[*writepath.Coordinator](i)
 	if err != nil {
@@ -206,7 +214,7 @@ func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
 	}
 	stores, err := do.Invoke[core.MetadataStore](i)
 	if err != nil {
-		return nil, fmt.Errorf("resolve MetadataStore: %w", err)
+		return nil, fmt.Errorf(errResolveMetadataStore, err)
 	}
 	mp, err := do.Invoke[*multipart.Manager](i)
 	if err != nil {
