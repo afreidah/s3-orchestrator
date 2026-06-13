@@ -128,7 +128,7 @@ func testBackendRuntime(cfg *BackendManagerConfig) *infra.BackendRuntime {
 }
 
 // testStoresFromMock returns m typed as the wide metadata-store contract
-// every consumer depends on. A no-op identity since proxy.Stores has been
-// folded into core.MetadataStore; kept so existing call sites read the
+// every consumer depends on. A no-op identity since proxy.ManagerStores is
+// satisfied by core.MetadataStore; kept so existing call sites read the
 // same way as the production DI wiring.
 func testStoresFromMock(m core.MetadataStore) core.MetadataStore { return m }
