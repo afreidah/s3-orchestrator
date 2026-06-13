@@ -41,11 +41,11 @@ import (
 // by BackendManager. The managers hold a *Coordinator rather than a
 // *BackendManager back-pointer, eliminating the post-construction
 // wiring step.
-// Stores is the narrow persistence surface the write coordinator needs:
+// CoordinatorStores is the narrow persistence surface the write coordinator needs:
 // object record/move, write-target selection (quota), pending-intent
 // insert/promote, and cleanup enqueue/recovery. Declared locally so
 // writepath does not pull in the full MetadataStore.
-type Stores interface {
+type CoordinatorStores interface {
 	core.ObjectStore
 	core.QuotaStore
 	core.PendingStore
@@ -54,17 +54,17 @@ type Stores interface {
 
 type Coordinator struct {
 	core           WriteRuntime // infrastructure subset: backends, usage, routing, eligibility, error classification, delete-with-timeout
-	stores         Stores
+	stores         CoordinatorStores
 	pendingEnabled bool
 	log            *slog.Logger
 }
 
 // New constructs a Coordinator. The supplied core must observe the same
-// admission, usage, drain, and backend state as the *infra.BackendRuntime embedded
-// in BackendManager (in production they are the same instance). The
+// admission, usage, drain, and backend state as the *infra.BackendRuntime
+// held by BackendManager (in production they are the same instance). The
 // component-scoped logger is built in the constructor body per the
 // project's logging convention.
-func New(core WriteRuntime, stores Stores, pendingEnabled bool) *Coordinator {
+func New(core WriteRuntime, stores CoordinatorStores, pendingEnabled bool) *Coordinator {
 	must.NotNil("core", core)
 	must.NotNil("stores", stores)
 	return &Coordinator{

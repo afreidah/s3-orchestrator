@@ -10,7 +10,7 @@ import "github.com/afreidah/s3-orchestrator/internal/store/core"
 
 // MetadataStore is the union of every narrow store role interface. It
 // exists only as a mockgen target so a single generated MockMetadataStore
-// can stand in wherever a fully-populated proxy.Stores or a
+// can stand in wherever a fully-populated proxy.ManagerStores or a
 // concreteStore-shaped DI value is needed. Production code never depends
 // on this composite - production callers consume the narrow roles
 // declared in internal/store/core directly.

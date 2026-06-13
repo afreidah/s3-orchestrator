@@ -36,10 +36,10 @@ import (
 // GetObject") in the same end-to-end trace.
 const managerSpanPrefix = "Manager "
 
-// Stores is the narrow persistence surface object.Manager needs: object
+// ObjectStores is the narrow persistence surface object.Manager needs: object
 // CRUD + list, plus quota stats. Declared locally so the manager does
 // not pull in the full MetadataStore.
-type Stores interface {
+type ObjectStores interface {
 	core.ObjectStore
 	core.QuotaStore
 }
@@ -49,7 +49,7 @@ type Stores interface {
 type Manager struct {
 	core              ObjectRuntime     // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics
 	coord             ObjectCoordinator // write-path helpers shared with BackendManager and MultipartManager
-	stores            Stores            // direct store access for read paths and quota inspection
+	stores            ObjectStores      // direct store access for read paths and quota inspection
 	encryptor         *encryption.Encryptor
 	cache             *LocationCache
 	objectCache       objcache.ObjectCache // nil when object data caching is disabled
@@ -68,7 +68,7 @@ type Deps struct {
 	Core              ObjectRuntime
 	BroadcastCore     readpath.ReadRuntime // narrow consumer interface for the failover broadcaster; satisfied by the same *infra.BackendRuntime that backs Core
 	Coord             ObjectCoordinator
-	Stores            Stores
+	Stores            ObjectStores
 	Encryptor         *encryption.Encryptor
 	LocationCache     *LocationCache
 	ObjectCache       objcache.ObjectCache
