@@ -124,6 +124,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 	lv.Set(slog.LevelInfo)
 	adminHandler := admin.New(&admin.Deps{
 		BackendOps: mgr,
+		RuntimeOps: mgr.Runtime(),
 		Replicator: workers.Replicator,
 		OverRep:    workers.OverReplicationCleaner,
 		Drain:      mgr.Drain(),

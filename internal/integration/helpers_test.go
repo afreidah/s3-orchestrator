@@ -322,7 +322,7 @@ func TestMain(m *testing.M) {
 
 	stores := newStores(failableStore)
 
-	manager := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+	manager := proxytest.BuildManager(&proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: testBackends,
 			Order:    testBackendOrder,

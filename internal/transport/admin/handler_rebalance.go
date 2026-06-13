@@ -70,7 +70,7 @@ func (h *Handler) Rebalance(ctx context.Context) (RebalanceResult, error) {
 		return RebalanceResult{}, err
 	}
 
-	if mErr := h.backendOps.UpdateQuotaMetrics(ctx); mErr != nil {
+	if mErr := h.runtimeOps.UpdateQuotaMetrics(ctx); mErr != nil {
 		h.log.WarnContext(ctx, "failed to update quota metrics after rebalance", "error", mErr)
 	}
 	return RebalanceResult{Status: "ok", Moved: moved}, nil

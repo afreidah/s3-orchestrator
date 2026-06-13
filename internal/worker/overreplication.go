@@ -50,17 +50,20 @@ type OverReplicationCleanerStore interface {
 // configured replication factor. Embeds *backendCore for access to shared
 // infrastructure.
 type OverReplicationCleaner struct {
-	log   *slog.Logger
-	ops   Ops
-	store OverReplicationCleanerStore
-	cfg   syncutil.AtomicConfig[config.ReplicationConfig]
+	log       *slog.Logger
+	ops       Ops
+	placement Placement
+	store     OverReplicationCleanerStore
+	cfg       syncutil.AtomicConfig[config.ReplicationConfig]
 }
 
-// NewOverReplicationCleaner creates a cleaner that shares the given core.
-func NewOverReplicationCleaner(ops Ops, store OverReplicationCleanerStore) *OverReplicationCleaner {
+// NewOverReplicationCleaner creates a cleaner with fleet operations, write-path
+// placement, and a metadata store.
+func NewOverReplicationCleaner(ops Ops, placement Placement, store OverReplicationCleanerStore) *OverReplicationCleaner {
 	must.NotNil("ops", ops)
+	must.NotNil("placement", placement)
 	must.NotNil("store", store)
-	return &OverReplicationCleaner{ops: ops, store: store, log: slog.Default().With(logfmt.Component("over_replication"))}
+	return &OverReplicationCleaner{ops: ops, placement: placement, store: store, log: slog.Default().With(logfmt.Component("over_replication"))}
 }
 
 // SetConfig atomically stores the replication configuration.
@@ -279,7 +282,7 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 			continue
 		}
 
-		c.ops.DeleteOrEnqueue(ctx, be, victim.BackendName, key, "over_replication", victim.SizeBytes)
+		c.placement.DeleteOrEnqueue(ctx, be, victim.BackendName, key, "over_replication", victim.SizeBytes)
 
 		audit.Log(ctx, "over_replication.remove",
 			slog.String("key", key),

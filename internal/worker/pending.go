@@ -45,6 +45,7 @@ type PendingReaperStore interface {
 // yet had a chance to clear the intent on the synchronous path.
 type PendingReaper struct {
 	deps        CleanupOps
+	placement   Placement
 	store       PendingReaperStore
 	log         *slog.Logger
 	concurrency int
@@ -55,8 +56,9 @@ type PendingReaper struct {
 // NewPendingReaper creates a PendingReaper with explicit dependencies.
 // concurrency, minAge, and batchSize fall back to safe defaults when zero
 // or negative.
-func NewPendingReaper(deps CleanupOps, store PendingReaperStore, concurrency int, minAge time.Duration, batchSize int) *PendingReaper {
+func NewPendingReaper(deps CleanupOps, placement Placement, store PendingReaperStore, concurrency int, minAge time.Duration, batchSize int) *PendingReaper {
 	must.NotNil("deps", deps)
+	must.NotNil("placement", placement)
 	must.NotNil("store", store)
 	if concurrency <= 0 {
 		concurrency = 4
@@ -69,6 +71,7 @@ func NewPendingReaper(deps CleanupOps, store PendingReaperStore, concurrency int
 	}
 	return &PendingReaper{
 		deps:        deps,
+		placement:   placement,
 		store:       store,
 		log:         slog.Default().With(logfmt.Component("pending_reaper")),
 		concurrency: concurrency,
@@ -265,7 +268,7 @@ func (r *PendingReaper) onPromoteCommitted(ctx context.Context, p *core.PendingO
 				"backend", dc.BackendName, "key", p.ObjectKey)
 			continue
 		}
-		r.deps.DeleteOrEnqueue(ctx, dcBackend, dc.BackendName, p.ObjectKey, "overwrite_displaced", dc.SizeBytes)
+		r.placement.DeleteOrEnqueue(ctx, dcBackend, dc.BackendName, p.ObjectKey, "overwrite_displaced", dc.SizeBytes)
 	}
 }
 

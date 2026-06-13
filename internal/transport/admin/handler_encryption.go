@@ -358,7 +358,7 @@ func runBulkRewriteCounts[L bulkRewriteRow](h *Handler, ctx context.Context, op 
 func processBulkLocation[L bulkRewriteRow](h *Handler, ctx context.Context, op bulkRewriteOp[L], loc L) bool {
 	key, backendName, sizeBytes := loc.rewriteKey(), loc.rewriteBackend(), loc.rewriteSize()
 
-	be, err := h.backendOps.GetBackend(backendName)
+	be, err := h.runtimeOps.GetBackend(backendName)
 	if err != nil {
 		h.log.WarnContext(ctx, op.logTag+": backend not found", "key", key, "backend", backendName, "error", err)
 		op.counter.WithLabelValues("error").Inc()

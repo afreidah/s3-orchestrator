@@ -11,7 +11,7 @@
 
 package worker
 
-//go:generate mockgen -destination=mock_ops_test.go -package=worker github.com/afreidah/s3-orchestrator/internal/worker Ops,CleanupOps,ScrubberOps,BackendSyncer
+//go:generate mockgen -destination=mock_ops_test.go -package=worker github.com/afreidah/s3-orchestrator/internal/worker Ops,CleanupOps,ScrubberOps,Placement,BackendSyncer
 
 import (
 	"context"
@@ -28,7 +28,6 @@ type BackendAccess interface {
 	BackendOrder() []string
 	IsDraining(name string) bool
 	ExcludeDraining(eligible []string) []string
-	SelectReplicaTarget(ctx context.Context, size int64, exclusion map[string]bool) (string, error)
 }
 
 // AdmissionControl gates concurrent access to backends.
@@ -43,8 +42,15 @@ type DataMover interface {
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
 	StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error
 	DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error
-	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
+}
+
+// Placement is the store-coupled write-path facet (target selection, move,
+// delete-or-enqueue) workers get from the BackendManager, kept apart from the
+// runtime roles so the manager need not re-export runtime methods.
+type Placement interface {
+	SelectReplicaTarget(ctx context.Context, size int64, exclusion map[string]bool) (string, error)
 	MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error)
+	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
 }
 
 // UsageAccessor provides usage tracking.

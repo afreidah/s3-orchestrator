@@ -145,9 +145,9 @@ func (c *BackendRuntime) RoutingStrategy() config.RoutingStrategy {
 // DRAIN WIRING
 // -------------------------------------------------------------------------
 
-// SetDrainChecker installs the drain manager after BackendRuntime has been
-// constructed; mirrors the historic post-construction WireDrain call
-// on BackendManager.
+// SetDrainChecker points the eligibility filter at the drain manager so
+// IsDraining reflects live drain state. Called once the drain manager
+// exists, since it is built after the runtime.
 func (c *BackendRuntime) SetDrainChecker(d DrainChecker) {
 	c.registry.SetDrainChecker(d)
 }

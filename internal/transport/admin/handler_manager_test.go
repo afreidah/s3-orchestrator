@@ -71,6 +71,7 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 	return &Handler{
 		log:        slog.Default().With(logfmt.Component("admin")),
 		backendOps: mgr,
+		runtimeOps: mgr.Runtime(),
 		replicator: workers.Replicator,
 		overRep:    workers.OverReplicationCleaner,
 		drain:      mgr.Drain(),
@@ -531,17 +532,11 @@ func (f *flushUsageFailingOps) GetDashboardData(ctx context.Context) (*dashboard
 func (f *flushUsageFailingOps) FlushUsage(_ context.Context) error {
 	return errors.New("flush failed")
 }
-func (f *flushUsageFailingOps) UpdateQuotaMetrics(ctx context.Context) error {
-	return f.inner.UpdateQuotaMetrics(ctx)
-}
 func (f *flushUsageFailingOps) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
 	return f.inner.ReconcileUsage(ctx)
 }
 func (f *flushUsageFailingOps) RecordUsage(name string, req, in, out int64) {
 	f.inner.RecordUsage(name, req, in, out)
-}
-func (f *flushUsageFailingOps) GetBackend(name string) (backend.ObjectBackend, error) {
-	return f.inner.GetBackend(name)
 }
 func (f *flushUsageFailingOps) IntegrityConfig() *config.IntegrityConfig {
 	return f.inner.IntegrityConfig()

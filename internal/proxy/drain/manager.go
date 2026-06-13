@@ -33,18 +33,25 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
-// DrainRuntime is the slice of proxy infrastructure the Manager needs. Defined
-// here at the consumer so the proxy package can satisfy it structurally
-// without exporting a god interface.
+// DrainRuntime is the backend-runtime slice the Manager needs: fleet
+// enumeration, per-backend copy/delete primitives, and usage accounting.
+// Defined here at the consumer so *infra.BackendRuntime satisfies it
+// structurally without the drain package importing infra.
 type DrainRuntime interface {
 	Backends() map[string]backend.ObjectBackend
 	GetBackend(name string) (backend.ObjectBackend, error)
 	BackendOrder() []string
 	StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error
 	DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error
+	Acct() *accounting.Recorder
+}
+
+// Mover funnels deletes and cross-backend moves through the write
+// coordinator's shared primitives (orphan cleanup, MoveObjectLocation
+// CAS, source-delete accounting). *writepath.Coordinator satisfies it.
+type Mover interface {
 	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
 	MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error)
-	Acct() *accounting.Recorder
 }
 
 // drainState tracks a single in-progress drain operation.
@@ -89,6 +96,7 @@ type Progress struct {
 type Manager struct {
 	log              *slog.Logger
 	infra            DrainRuntime
+	mover            Mover
 	objects          core.ObjectStore
 	quota            core.QuotaStore
 	backendLifecycle core.BackendLifecycleStore
@@ -102,6 +110,7 @@ type Manager struct {
 // New creates a Manager.
 func New(
 	infra DrainRuntime,
+	mover Mover,
 	objects core.ObjectStore,
 	quota core.QuotaStore,
 	backendLifecycle core.BackendLifecycleStore,
@@ -109,6 +118,7 @@ func New(
 	processCleanupQueue func(ctx context.Context) (processed, failed int),
 ) *Manager {
 	must.NotNil("infra", infra)
+	must.NotNil("mover", mover)
 	must.NotNil("objects", objects)
 	must.NotNil("quota", quota)
 	must.NotNil("backendLifecycle", backendLifecycle)
@@ -116,6 +126,7 @@ func New(
 	must.NotNil("processCleanupQueue", processCleanupQueue)
 	return &Manager{
 		infra:                 infra,
+		mover:                 mover,
 		objects:               objects,
 		quota:                 quota,
 		backendLifecycle:      backendLifecycle,
@@ -406,7 +417,7 @@ func (d *Manager) removeReplicaSource(ctx context.Context, srcBackend backend.Ob
 			slog.String("key", obj.ObjectKey), slog.String("backend", srcName), "error", err)
 		return false
 	}
-	d.infra.DeleteOrEnqueue(ctx, srcBackend, srcName, obj.ObjectKey, "drain_source_delete", obj.SizeBytes)
+	d.mover.DeleteOrEnqueue(ctx, srcBackend, srcName, obj.ObjectKey, "drain_source_delete", obj.SizeBytes)
 
 	audit.Log(ctx, "storage.DrainRemoveReplica",
 		slog.String("key", obj.ObjectKey),
@@ -429,7 +440,7 @@ func (d *Manager) copyAndRemoveSource(ctx context.Context, srcBackend backend.Ob
 		return false
 	}
 
-	movedSize, err := d.infra.MoveObject(ctx, &writepath.MoveRequest{
+	movedSize, err := d.mover.MoveObject(ctx, &writepath.MoveRequest{
 		Key:                obj.ObjectKey,
 		SizeBytes:          obj.SizeBytes,
 		SrcBackend:         srcBackend,

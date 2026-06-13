@@ -3,18 +3,12 @@
 //
 // Author: Alex Freidah
 //
-// WireManager performs the post-construction assembly that connects the
-// BackendManager to its drain manager. Workers are no longer carried as
-// fields on BackendManager (every consumer resolves them through DI), so
-// WireManager's job has narrowed to: verify every required worker
-// provider resolves cleanly (a smoke check at boot rather than at first
-// request), then install the drain.Manager via WireDrain.
+// WireManager verifies that every required worker provider resolves
+// cleanly (a smoke check at boot rather than at first request) and points
+// the backend runtime's eligibility filter at the drain manager so
+// IsDraining reflects live drain state.
 //
-// Called once from cli/serve after NewInjector. The drain.Manager
-// installation is the one piece of post-construction wiring on the
-// manager  -  documented on the struct, required because of a
-// constructor-time dependency cycle between drain.Manager and
-// BackendManager.
+// Called once from cli/serve after NewInjector.
 // -------------------------------------------------------------------------------
 
 package di
@@ -32,8 +26,8 @@ import (
 )
 
 // WireManager resolves the BackendManager plus every required worker
-// (as a smoke check that construction succeeded) and installs the drain
-// manager onto the BackendManager. Returns the first error from
+// (as a smoke check that construction succeeded) and points the runtime's
+// eligibility filter at the drain manager. Returns the first error from
 // resolving a required dependency; the optional PendingReaper Failed
 // resolution is logged so a broken provider stays distinguishable from
 // an intentionally absent one.
@@ -76,7 +70,7 @@ func WireManager(inj do.Injector) error {
 	if err != nil {
 		return fmt.Errorf("resolve DrainManager: %w", err)
 	}
-	mgr.WireDrain(dm)
+	mgr.Runtime().SetDrainChecker(dm)
 
 	return nil
 }

@@ -64,6 +64,7 @@ func newAdminHandlerForTest(t testing.TB, opts ...func(*proxy.BackendManager, *p
 	lv := new(slog.LevelVar)
 	return admin.New(&admin.Deps{
 		BackendOps: mgr,
+		RuntimeOps: mgr.Runtime(),
 		Replicator: workers.Replicator,
 		OverRep:    workers.OverReplicationCleaner,
 		Drain:      mgr.Drain(),

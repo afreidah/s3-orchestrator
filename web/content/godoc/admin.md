@@ -19,40 +19,42 @@ Package admin provides the admin API handler for operational control endpoints.
 - [type Deps](<#Deps>)
 - [type Handler](<#Handler>)
   - [func New\(d \*Deps\) \*Handler](<#New>)
-  - [func \(h \*Handler\) BackfillChecksums\(ctx context.Context, batchSize int\) BackfillChecksumsResult](<#Handler.BackfillChecksums>)
+  - [func \(h \*Handler\) BackfillChecksums\(ctx context.Context, batchSize, maxObjects int, pause time.Duration, observer progress.Observer\) BackfillChecksumsResult](<#Handler.BackfillChecksums>)
   - [func \(h \*Handler\) EncryptExisting\(ctx context.Context\) BulkRewriteResult](<#Handler.EncryptExisting>)
+  - [func \(h \*Handler\) Rebalance\(ctx context.Context\) \(RebalanceResult, error\)](<#Handler.Rebalance>)
   - [func \(h \*Handler\) Register\(mux \*http.ServeMux\)](<#Handler.Register>)
-  - [func \(h \*Handler\) Replicate\(ctx context.Context\) \(ReplicateResult, error\)](<#Handler.Replicate>)
-  - [func \(h \*Handler\) Scrub\(ctx context.Context, batchSize int\) ScrubResult](<#Handler.Scrub>)
+  - [func \(h \*Handler\) Replicate\(ctx context.Context, observer progress.Observer\) \(ReplicateResult, error\)](<#Handler.Replicate>)
+  - [func \(h \*Handler\) Scrub\(ctx context.Context, batchSize int, observer progress.Observer\) ScrubResult](<#Handler.Scrub>)
   - [func \(h \*Handler\) SetReloadStatusProvider\(fn func\(\) any\)](<#Handler.SetReloadStatusProvider>)
 - [type OverReplicationOps](<#OverReplicationOps>)
+- [type RebalanceResult](<#RebalanceResult>)
+- [type RebalancerOps](<#RebalancerOps>)
 - [type Reconciler](<#Reconciler>)
 - [type ReplicateResult](<#ReplicateResult>)
 - [type ReplicatorOps](<#ReplicatorOps>)
+- [type RuntimeOps](<#RuntimeOps>)
 - [type ScrubResult](<#ScrubResult>)
 - [type ScrubberOps](<#ScrubberOps>)
 - [type WorkerHealth](<#WorkerHealth>)
 
 
 <a name="BackendOps"></a>
-## type [BackendOps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L41-L49>)
+## type [BackendOps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L43-L49>)
 
-BackendOps is the narrow surface of \*proxy.BackendManager that the admin handler depends on for operations not encapsulated by a named sub\-manager \(replicator, drain, scrubber, etc.\). \*proxy.BackendManager satisfies it.
+BackendOps is the narrow surface of \*proxy.BackendManager that the admin handler depends on for store\-coupled operations not encapsulated by a named sub\-manager \(replicator, drain, scrubber, etc.\). \*proxy.BackendManager satisfies it.
 
 ```go
 type BackendOps interface {
     GetDashboardData(ctx context.Context) (*dashboard.Data, error)
     FlushUsage(ctx context.Context) error
-    UpdateQuotaMetrics(ctx context.Context) error
     ReconcileUsage(ctx context.Context) (map[string]int64, error)
     RecordUsage(backendName string, requests, ingressBytes, egressBytes int64)
-    GetBackend(name string) (backend.ObjectBackend, error)
     IntegrityConfig() *config.IntegrityConfig
 }
 ```
 
 <a name="BackfillChecksumsResult"></a>
-## type [BackfillChecksumsResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_integrity.go#L70-L74>)
+## type [BackfillChecksumsResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_integrity.go#L91-L96>)
 
 BackfillChecksumsResult is the outcome of a checksum backfill pass.
 
@@ -61,6 +63,7 @@ type BackfillChecksumsResult struct {
     Status    string // "ok" or "skipped"
     Reason    string // populated when Status is "skipped"
     Processed int
+    Done      bool // true when no unhashed objects remained after this pass
 }
 ```
 
@@ -80,14 +83,16 @@ type BulkRewriteResult struct {
 ```
 
 <a name="Deps"></a>
-## type [Deps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L85-L103>)
+## type [Deps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L98-L118>)
 
 Deps groups the narrow role interfaces and infrastructure the admin handler touches. Each field carries the smallest contract the handler actually uses, so the constructor \(and the backing DI provider\) never hand the handler a god\-shaped \*proxy.BackendManager.
 
 ```go
 type Deps struct {
     BackendOps   BackendOps
+    RuntimeOps   RuntimeOps
     Replicator   ReplicatorOps
+    Rebalancer   RebalancerOps // nil when the worker pool is not wired
     OverRep      OverReplicationOps
     Drain        *drain.Manager
     Scrubber     ScrubberOps
@@ -107,7 +112,7 @@ type Deps struct {
 ```
 
 <a name="Handler"></a>
-## type [Handler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L55-L79>)
+## type [Handler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L66-L92>)
 
 Handler serves the admin API endpoints.
 
@@ -118,7 +123,7 @@ type Handler struct {
 ```
 
 <a name="New"></a>
-### func [New](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L106>)
+### func [New](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L121>)
 
 ```go
 func New(d *Deps) *Handler
@@ -127,13 +132,13 @@ func New(d *Deps) *Handler
 New creates a new admin API handler from its narrow dependency bag.
 
 <a name="Handler.BackfillChecksums"></a>
-### func \(\*Handler\) [BackfillChecksums](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_integrity.go#L80>)
+### func \(\*Handler\) [BackfillChecksums](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_integrity.go#L106>)
 
 ```go
-func (h *Handler) BackfillChecksums(ctx context.Context, batchSize int) BackfillChecksumsResult
+func (h *Handler) BackfillChecksums(ctx context.Context, batchSize, maxObjects int, pause time.Duration, observer progress.Observer) BackfillChecksumsResult
 ```
 
-BackfillChecksums computes and stores content hashes for objects that don't have one, paginating internally until all objects are processed or the context is cancelled. batchSize \<= 0 means use 100. Skips when integrity verification is not enabled.
+BackfillChecksums computes and stores content hashes for objects that don't have one. It processes batchSize objects per pass, pausing for pause between passes to rate\-limit backend reads, and stops after maxObjects objects \(maxObjects \<= 0 drains the whole backlog\). batchSize \<= 0 means use 100. Done reports whether the backlog is fully drained. observer, when non\-nil, receives a start and end event for each object so a streaming caller can report per\-object progress. Skips when integrity verification is not enabled.
 
 <a name="Handler.EncryptExisting"></a>
 ### func \(\*Handler\) [EncryptExisting](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_encryption.go#L218>)
@@ -143,6 +148,15 @@ func (h *Handler) EncryptExisting(ctx context.Context) BulkRewriteResult
 ```
 
 EncryptExisting downloads every unencrypted object, encrypts it, re\-uploads the ciphertext, and updates the DB record. Returns counts. Skips when encryption is not configured.
+
+<a name="Handler.Rebalance"></a>
+### func \(\*Handler\) [Rebalance](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_rebalance.go#L46>)
+
+```go
+func (h *Handler) Rebalance(ctx context.Context) (RebalanceResult, error)
+```
+
+Rebalance runs one rebalance cycle synchronously and returns the number of objects moved. Skips when the rebalancer worker is not wired. Applies the same defaults the dashboard does so a manual run works even when rebalance was never configured. Exposed for callers \(UI, tests\) that need the count back as a Go value rather than JSON.
 
 <a name="Handler.Register"></a>
 ### func \(\*Handler\) [Register](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_routes.go#L22>)
@@ -154,25 +168,25 @@ func (h *Handler) Register(mux *http.ServeMux)
 Register mounts the admin API routes on the given mux.
 
 <a name="Handler.Replicate"></a>
-### func \(\*Handler\) [Replicate](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_replication.go#L35>)
+### func \(\*Handler\) [Replicate](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_replication.go#L39>)
 
 ```go
-func (h *Handler) Replicate(ctx context.Context) (ReplicateResult, error)
+func (h *Handler) Replicate(ctx context.Context, observer progress.Observer) (ReplicateResult, error)
 ```
 
-Replicate runs one replication cycle synchronously and returns the resulting counts. Skips when replication is unconfigured or factor \<= 1. Refreshes quota metrics on success. Exposed for callers \(UI, tests\) that need the counts back as Go values rather than JSON.
+Replicate runs one replication cycle synchronously and returns the resulting counts. Skips when replication is unconfigured or factor \<= 1. Refreshes quota metrics on success. observer, when non\-nil, receives a start and end step per object replicated. Exposed for callers \(UI, tests\) that need the counts back as Go values rather than JSON.
 
 <a name="Handler.Scrub"></a>
-### func \(\*Handler\) [Scrub](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_integrity.go#L35>)
+### func \(\*Handler\) [Scrub](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_integrity.go#L39>)
 
 ```go
-func (h *Handler) Scrub(ctx context.Context, batchSize int) ScrubResult
+func (h *Handler) Scrub(ctx context.Context, batchSize int, observer progress.Observer) ScrubResult
 ```
 
-Scrub runs one integrity\-verification scrub pass synchronously and returns the per\-pass counts. batchSize \<= 0 means use the configured ScrubberBatchSize. Skips when integrity verification is not enabled.
+Scrub runs one integrity\-verification scrub pass synchronously and returns the per\-pass counts. batchSize \<= 0 means use the configured ScrubberBatchSize. observer, when non\-nil, receives a start and end step per object verified. Skips when integrity verification is not enabled.
 
 <a name="Handler.SetReloadStatusProvider"></a>
-### func \(\*Handler\) [SetReloadStatusProvider](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L142>)
+### func \(\*Handler\) [SetReloadStatusProvider](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L160>)
 
 ```go
 func (h *Handler) SetReloadStatusProvider(fn func() any)
@@ -181,7 +195,7 @@ func (h *Handler) SetReloadStatusProvider(fn func() any)
 SetReloadStatusProvider wires the callback that returns the most recent reload result. Called by the runtime after the reload coordinator is built. Routing through a setter rather than constructor injection avoids the import cycle that would result from admin importing the reload package directly.
 
 <a name="OverReplicationOps"></a>
-## type [OverReplicationOps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/deps.go#L33-L37>)
+## type [OverReplicationOps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/deps.go#L42-L46>)
 
 OverReplicationOps is the slice of \*worker.OverReplicationCleaner the admin handler uses for the over\-replication status and cleanup endpoints.
 
@@ -189,23 +203,49 @@ OverReplicationOps is the slice of \*worker.OverReplicationCleaner the admin han
 type OverReplicationOps interface {
     Config() *config.ReplicationConfig
     CountPending(ctx context.Context, factor int) (int64, error)
-    Clean(ctx context.Context, cfg config.ReplicationConfig) (int, error)
+    Clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (int, error)
+}
+```
+
+<a name="RebalanceResult"></a>
+## type [RebalanceResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_rebalance.go#L35-L39>)
+
+RebalanceResult is the outcome of a one\-shot rebalance cycle.
+
+```go
+type RebalanceResult struct {
+    Status string // "ok" or "skipped"
+    Reason string // populated when Status is "skipped"
+    Moved  int
+}
+```
+
+<a name="RebalancerOps"></a>
+## type [RebalancerOps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/deps.go#L35-L38>)
+
+RebalancerOps is the slice of \*worker.Rebalancer the admin handler uses for the on\-demand rebalance endpoint. Config returns nil when the worker is unconfigured; Rebalance runs one cycle and returns the move count.
+
+```go
+type RebalancerOps interface {
+    Config() *config.RebalanceConfig
+    Rebalance(ctx context.Context, cfg config.RebalanceConfig) (int, error)
 }
 ```
 
 <a name="Reconciler"></a>
-## type [Reconciler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/deps.go#L48-L50>)
+## type [Reconciler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/deps.go#L57-L60>)
 
 Reconciler is the slice of \*worker.Reconciler the admin handler uses for the on\-demand reconciliation endpoint.
 
 ```go
 type Reconciler interface {
     Reconcile(ctx context.Context, backendName string) (*worker.ReconcileResult, error)
+    ReconcileStreaming(ctx context.Context, backendName string, observer progress.Observer) (*worker.ReconcileResult, error)
 }
 ```
 
 <a name="ReplicateResult"></a>
-## type [ReplicateResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_replication.go#L25-L29>)
+## type [ReplicateResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_replication.go#L28-L32>)
 
 ReplicateResult is the outcome of a one\-shot replication cycle.
 
@@ -218,19 +258,31 @@ type ReplicateResult struct {
 ```
 
 <a name="ReplicatorOps"></a>
-## type [ReplicatorOps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/deps.go#L26-L29>)
+## type [ReplicatorOps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/deps.go#L27-L30>)
 
 ReplicatorOps is the slice of \*worker.Replicator the admin handler uses for the synchronous replicate\-now endpoint. Config returns nil when the worker is unconfigured; Replicate runs one cycle and returns the count.
 
 ```go
 type ReplicatorOps interface {
     Config() *config.ReplicationConfig
-    Replicate(ctx context.Context, cfg config.ReplicationConfig) (int, error)
+    Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (int, error)
+}
+```
+
+<a name="RuntimeOps"></a>
+## type [RuntimeOps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler.go#L54-L57>)
+
+RuntimeOps is the backend\-runtime surface the admin handler reaches directly: backend lookup and the post\-mutation quota\-metric refresh. \*infra.BackendRuntime satisfies it.
+
+```go
+type RuntimeOps interface {
+    GetBackend(name string) (backend.ObjectBackend, error)
+    UpdateQuotaMetrics(ctx context.Context) error
 }
 ```
 
 <a name="ScrubResult"></a>
-## type [ScrubResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_integrity.go#L25-L30>)
+## type [ScrubResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/handler_integrity.go#L28-L33>)
 
 ScrubResult is the outcome of one on\-demand scrub cycle.
 
@@ -244,14 +296,14 @@ type ScrubResult struct {
 ```
 
 <a name="ScrubberOps"></a>
-## type [ScrubberOps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/deps.go#L41-L44>)
+## type [ScrubberOps](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/transport/admin/deps.go#L50-L53>)
 
 ScrubberOps is the slice of \*worker.Scrubber the admin handler uses for the integrity\-scrub and hash\-backfill endpoints.
 
 ```go
 type ScrubberOps interface {
-    Scrub(ctx context.Context, batchSize int) (checked, failed int)
-    Backfill(ctx context.Context, batchSize, offset int) (processed, nextOffset int)
+    Scrub(ctx context.Context, batchSize int, observer progress.Observer) (checked, failed int)
+    Backfill(ctx context.Context, batchSize, offset int, observer progress.Observer) (processed, nextOffset int)
 }
 ```
 

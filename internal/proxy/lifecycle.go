@@ -60,7 +60,7 @@ func (m *BackendManager) applyLifecycleRule(ctx context.Context, rule config.Lif
 	for {
 		objects, err := m.stores.ListExpiredObjects(ctx, rule.Prefix, cutoff, batchSize)
 		if err != nil {
-			m.Log().ErrorContext(ctx, "failed to list expired objects",
+			m.runtime.Log().ErrorContext(ctx, "failed to list expired objects",
 				slog.String("prefix", rule.Prefix), "error", err)
 			failed++
 			return deleted, failed
@@ -73,7 +73,7 @@ func (m *BackendManager) applyLifecycleRule(ctx context.Context, rule config.Lif
 		failed += batchFailed
 
 		if batchDeleted == 0 {
-			m.Log().WarnContext(ctx, "batch yielded zero deletions, stopping rule",
+			m.runtime.Log().WarnContext(ctx, "batch yielded zero deletions, stopping rule",
 				"prefix", rule.Prefix, "batch_failed", len(objects))
 			return deleted, failed
 		}
@@ -88,7 +88,7 @@ func (m *BackendManager) applyLifecycleRule(ctx context.Context, rule config.Lif
 func (m *BackendManager) deleteLifecycleBatch(ctx context.Context, rule config.LifecycleRule, objects []core.ObjectLocation) (deleted, failed int) {
 	for i := range objects {
 		if err := m.objectManager.DeleteObject(ctx, objects[i].ObjectKey); err != nil {
-			m.Log().WarnContext(ctx, "failed to delete expired object",
+			m.runtime.Log().WarnContext(ctx, "failed to delete expired object",
 				slog.String("key", objects[i].ObjectKey), "error", err)
 			telemetry.LifecycleFailedTotal.Inc()
 			failed++

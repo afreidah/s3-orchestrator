@@ -45,17 +45,20 @@ type ReplicatorStore interface {
 
 // Replicator creates additional copies of under-replicated objects across backends.
 type Replicator struct {
-	log   *slog.Logger
-	ops   Ops
-	store ReplicatorStore
-	cfg   syncutil.AtomicConfig[config.ReplicationConfig]
+	log       *slog.Logger
+	ops       Ops
+	placement Placement
+	store     ReplicatorStore
+	cfg       syncutil.AtomicConfig[config.ReplicationConfig]
 }
 
-// NewReplicator creates a Replicator with fleet operations and a metadata store.
-func NewReplicator(ops Ops, store ReplicatorStore) *Replicator {
+// NewReplicator creates a Replicator with fleet operations, write-path
+// placement, and a metadata store.
+func NewReplicator(ops Ops, placement Placement, store ReplicatorStore) *Replicator {
 	must.NotNil("ops", ops)
+	must.NotNil("placement", placement)
 	must.NotNil("store", store)
-	return &Replicator{ops: ops, store: store, log: slog.Default().With(logfmt.Component("replicator"))}
+	return &Replicator{ops: ops, placement: placement, store: store, log: slog.Default().With(logfmt.Component("replicator"))}
 }
 
 // SetConfig atomically stores the replication configuration.
@@ -353,7 +356,7 @@ func maxCopySize(copies []core.ObjectLocation) int64 {
 // routing strategy as normal writes. Returns empty string if no suitable
 // target exists.
 func (r *Replicator) FindReplicaTarget(ctx context.Context, key string, size int64, exclusion map[string]bool) string {
-	name, err := r.ops.SelectReplicaTarget(ctx, size, exclusion)
+	name, err := r.placement.SelectReplicaTarget(ctx, size, exclusion)
 	if err != nil {
 		r.log.WarnContext(ctx, "target selection failed",
 			"key", key, "error", err)
@@ -479,7 +482,7 @@ func (r *Replicator) CleanupOrphan(ctx context.Context, backendName, key string,
 	if !ok {
 		return
 	}
-	r.ops.DeleteOrEnqueue(ctx, be, backendName, key, "replication_orphan", sizeBytes)
+	r.placement.DeleteOrEnqueue(ctx, be, backendName, key, "replication_orphan", sizeBytes)
 }
 
 // UnhealthyBackends returns backend names whose circuit breakers have been

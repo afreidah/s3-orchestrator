@@ -81,9 +81,9 @@ func registerWorkerServices(sm *lifecycle.Manager, mgr *proxy.BackendManager, ws
 	if svc := worker.NewPendingReaperService(ws.pendingReaper, locker, cfg.WritePath.PendingPattern.ReaperTick); svc != nil {
 		sm.Register("pending-reaper", svc)
 	}
-	sm.Register("rebalancer", worker.NewRebalancerService(mgr, ws.rebalancer, locker))
-	sm.Register("replicator", worker.NewReplicatorService(mgr, ws.replicator, locker))
-	sm.Register("over-replication", worker.NewOverReplicationService(mgr, ws.overRep, locker))
+	sm.Register("rebalancer", worker.NewRebalancerService(mgr.Runtime(), ws.rebalancer, locker))
+	sm.Register("replicator", worker.NewReplicatorService(mgr.Runtime(), ws.replicator, locker))
+	sm.Register("over-replication", worker.NewOverReplicationService(mgr.Runtime(), ws.overRep, locker))
 	sm.Register("lifecycle", NewLifecycleService(mgr, locker))
 	sm.Register("scrubber", worker.NewScrubberService(ws.scrubber, locker))
 }

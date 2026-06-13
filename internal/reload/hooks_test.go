@@ -555,6 +555,7 @@ func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 	var lv slog.LevelVar
 	adminHandler := admin.New(&admin.Deps{
 		BackendOps: mgr,
+		RuntimeOps: mgr.Runtime(),
 		Replicator: workers.Replicator,
 		OverRep:    workers.OverReplicationCleaner,
 		Drain:      mgr.Drain(),

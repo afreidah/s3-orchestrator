@@ -248,6 +248,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	frRes := Optional[*debug.FlightRecorderService](i)
 	return admin.New(&admin.Deps{
 		BackendOps:   d.manager,
+		RuntimeOps:   d.manager.Runtime(),
 		Replicator:   d.replicator,
 		Rebalancer:   d.rebalancer,
 		OverRep:      d.overRep,
