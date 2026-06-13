@@ -74,6 +74,8 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        TEXT backend_name FK',
     '        TEXT content_type',
     '        JSONB metadata',
+    '        BYTEA encryption_key',
+    '        TEXT key_id',
     '        TIMESTAMPTZ created_at',
     '    }',
     '',
@@ -198,7 +200,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>plaintext_size</td><td>BIGINT</td><td>Original size before encryption</td></tr>' +
         '<tr><td>content_hash</td><td>TEXT</td><td>SHA-256 hex digest of plaintext (nullable)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Insert timestamp</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_backend (backend_name) &bull; idx_object_locations_key_pattern (object_key text_pattern_ops) &bull; idx_object_locations_created (created_at)</p>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_backend (backend_name) &bull; idx_object_locations_key_pattern (object_key text_pattern_ops) &bull; idx_object_locations_created (created_at) &bull; idx_object_locations_key_created (object_key, created_at) &bull; idx_object_locations_backend_key_collate_c (backend_name, object_key COLLATE "C")</p>' +
         '<p>Used by: <a href="../write-path/">write path</a> (RecordObject), <a href="../read-path/">read path</a> (GetAllObjectLocations), <a href="../background-services/">replicator</a> (GetUnderReplicatedObjects), directory tree listing, <a href="../encryption/">key rotation</a>.</p>' +
         '<p class="ac-metric">Key queries: InsertObjectLocation, ListObjectsByPrefix, GetDirectoryStats, GetUnderReplicatedObjects, BackendObjectStats</p>'
     },
@@ -212,8 +214,10 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td class="fk">backend_name</td><td>TEXT</td><td>FK &rarr; backend_quotas</td></tr>' +
         '<tr><td>content_type</td><td>TEXT</td><td>MIME type from initiation</td></tr>' +
         '<tr><td>metadata</td><td>JSONB</td><td>User metadata (x-amz-meta-*)</td></tr>' +
+        '<tr><td>encryption_key</td><td>BYTEA</td><td>Packed nonce + wrapped DEK (nullable)</td></tr>' +
+        '<tr><td>key_id</td><td>TEXT</td><td>KMS/Vault key version identifier (nullable)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Upload initiation time</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK on upload_id &bull; idx_multipart_uploads_created (created_at) &bull; idx_multipart_uploads_key_pattern (object_key text_pattern_ops)</p>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on upload_id &bull; idx_multipart_uploads_created (created_at) &bull; idx_multipart_uploads_key_pattern (object_key text_pattern_ops) &bull; idx_multipart_uploads_backend_name (backend_name)</p>' +
         '<p>Used by: CreateMultipartUpload, UploadPart, CompleteMultipartUpload, AbortMultipartUpload, <a href="../background-services/">stale upload cleanup</a> (GetStaleMultipartUploads), drain (GetMultipartUploadsByBackend), quota available-space calculation (inflight parts JOIN).</p>' +
         '<p class="ac-metric">Key queries: CreateMultipartUpload, GetMultipartUpload, GetStaleMultipartUploads, GetMultipartUploadsByBackend, ListMultipartUploadsByPrefix</p>'
     },
@@ -307,7 +311,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>plaintext_size</td><td>BIGINT</td><td>Logical object size (pre-encryption)</td></tr>' +
         '<tr><td>content_hash</td><td>TEXT</td><td>SHA-256 of the plaintext (when integrity is enabled)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Intent creation time; reaper only considers rows older than <code>write_path.pending_pattern.min_age</code> (default 5m)</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK on intent_id &bull; idx_pending_objects_created_at (created_at) for the reaper\'s age-cursored scan</p>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on intent_id &bull; idx_pending_objects_created (created_at) for the reaper\'s age-cursored scan &bull; idx_pending_objects_backend (backend_name)</p>' +
         '<p>Used by: <code>writepath.Coordinator.InsertPendingIntent</code> (inserts on PUT entry) &bull; <code>RecordObjectAndPromoteIntent</code> (delete on successful commit) &bull; <code>RecoverFromRecordFailure</code> (delete on drain race / commit failure) &bull; <a href="../background-services/">PendingReaper</a> (HEAD-probes the backend and promotes / drops stale intents). The reaper claims rows individually with <code>SELECT ... FOR UPDATE SKIP LOCKED</code>; no advisory lock is required because two reapers ticking concurrently always pick disjoint sets.</p>' +
         '<p class="ac-metric">Metrics: s3o_pending_intents_enqueued_total, s3o_pending_intents_resolved_total{status=committed|promoted|dropped|ambiguous|already_resolved}, s3o_pending_intents_depth &bull; Audit events: pending_reaper.promoted, pending_reaper.dropped, pending_reaper.superseded</p>'
     },
@@ -437,3 +441,4 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | `00009_cleanup_dlq` | Add `cleanup_dlq` table so retry-exhausted cleanup rows surface for operator action |
 | `00010_multipart_upload_encryption` | Add `encryption_key` and `key_id` columns to `multipart_uploads` so every part of an encrypted upload shares one wrapped DEK |
 | `00011_cleanup_queue_claim` | Add `claimed_at` and `claimed_by` to `cleanup_queue`; replace the partial index with `idx_cleanup_queue_claim (next_retry, created_at) WHERE attempts < 10`; supports the `ClaimPendingCleanups` `FOR UPDATE SKIP LOCKED` worker pattern that prevents cross-instance double-processing |
+| `00012_reconcile_cursor_collation_index` | Add `idx_object_locations_backend_key_collate_c (backend_name, object_key COLLATE "C")` so the reconcile sorted-merge cursor's byte-ordered scan is index-backed |

@@ -345,7 +345,7 @@ func TestPutObject_DrainRace_AbortsAndFailsOver(t *testing.T) {
 	healthy := newMockBackend()
 	store, _ := eligibleStore(t)
 	mgr := newTestManagerWithOrder(t, store, map[string]*mockBackend{"b1": drained, "b2": healthy}, []string{"b1", "b2"})
-	mgr.SetDrainChecker(&flippingDrainChecker{backend: "b1"})
+	mgr.Runtime().SetDrainChecker(&flippingDrainChecker{backend: "b1"})
 
 	before := testutil.ToFloat64(telemetry.DrainRaceAbortedTotal)
 	etag, err := mgr.objectManager.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
@@ -379,7 +379,7 @@ func TestPutObject_DrainRace_AllBackendsDraining(t *testing.T) {
 	mgr := newTestManagerWithOrder(t, store, map[string]*mockBackend{"b1": drainedA, "b2": drainedB}, []string{"b1", "b2"})
 	// Drain checker that flips both backends to draining after their
 	// EligibleForWrite check; the per-attempt re-check fires for each.
-	mgr.SetDrainChecker(&allFlippingDrainChecker{})
+	mgr.Runtime().SetDrainChecker(&allFlippingDrainChecker{})
 
 	_, err := mgr.objectManager.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
 	if err == nil {
@@ -503,7 +503,7 @@ func TestCanAcceptWrite_NoCapacity(t *testing.T) {
 	}
 	mgr := newTestManagerWithLimits(t, newPermissiveMock(t), map[string]*mockBackend{"b1": newMockBackend()}, limits)
 
-	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 1})
+	mgr.Runtime().Usage().SetBaseline("b1", core.UsageStat{APIRequests: 1})
 
 	if mgr.objectManager.CanAcceptWrite(100) {
 		t.Error("CanAcceptWrite should return false when no backend has capacity")
@@ -584,10 +584,10 @@ func TestPutObject_BackendFailure_StillRecordsUsage(t *testing.T) {
 	if _, err := mgr.objectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err == nil {
 		t.Fatal("expected error from backend failure")
 	}
-	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := mgr.Runtime().Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (failed call still counts)", got)
 	}
-	if got := mgr.Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 0 {
+	if got := mgr.Runtime().Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 0 {
 		t.Errorf("ingressBytes = %d, want 0 (upload failed)", got)
 	}
 }
@@ -629,7 +629,7 @@ func TestPutObject_RecordFailure_LeavesBackendBytesAndPendingIntent(t *testing.T
 	if c.insertPending[0].ObjectKey != "cleanup-key" || c.insertPending[0].BackendName != "b1" {
 		t.Errorf("InsertPending called with %+v", c.insertPending[0])
 	}
-	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := mgr.Runtime().Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (PUT only)", got)
 	}
 }
@@ -751,9 +751,9 @@ func TestPutObject_WriteFailover_AllBackendsFail(t *testing.T) {
 	if _, err := mgr.objectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err == nil {
 		t.Fatal("expected error when all backends fail")
 	}
-	total := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests) +
-		mgr.Usage().Backend().Load("b2", counter.FieldAPIRequests) +
-		mgr.Usage().Backend().Load("b3", counter.FieldAPIRequests)
+	total := mgr.Runtime().Usage().Backend().Load("b1", counter.FieldAPIRequests) +
+		mgr.Runtime().Usage().Backend().Load("b2", counter.FieldAPIRequests) +
+		mgr.Runtime().Usage().Backend().Load("b3", counter.FieldAPIRequests)
 	if total != 3 {
 		t.Errorf("total API requests = %d, want 3 (one per failed backend)", total)
 	}
@@ -823,16 +823,16 @@ func TestPutObject_WriteFailover_UsageTracking(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := mgr.Runtime().Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("b1 apiRequests = %d, want 1", got)
 	}
-	if got := mgr.Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 0 {
+	if got := mgr.Runtime().Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 0 {
 		t.Errorf("b1 ingressBytes = %d, want 0", got)
 	}
-	if got := mgr.Usage().Backend().Load("b2", counter.FieldAPIRequests); got != 1 {
+	if got := mgr.Runtime().Usage().Backend().Load("b2", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("b2 apiRequests = %d, want 1", got)
 	}
-	if got := mgr.Usage().Backend().Load("b2", counter.FieldIngressBytes); got != 4 {
+	if got := mgr.Runtime().Usage().Backend().Load("b2", counter.FieldIngressBytes); got != 4 {
 		t.Errorf("b2 ingressBytes = %d, want 4", got)
 	}
 }
@@ -1690,10 +1690,10 @@ func TestDeleteObject_RecordsOneAPICallPerCopy(t *testing.T) {
 		t.Fatalf("DeleteObject: %v", err)
 	}
 
-	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := mgr.Runtime().Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("b1 apiRequests = %d, want 1", got)
 	}
-	if got := mgr.Usage().Backend().Load("b2", counter.FieldAPIRequests); got != 1 {
+	if got := mgr.Runtime().Usage().Backend().Load("b2", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("b2 apiRequests = %d, want 1", got)
 	}
 }
@@ -1725,7 +1725,7 @@ func TestDeleteObjects_RecordsOneAPICallPerCopy(t *testing.T) {
 
 	mgr.objectManager.DeleteObjects(context.Background(), []string{"a", "b", "c"})
 
-	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 3 {
+	if got := mgr.Runtime().Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 3 {
 		t.Errorf("b1 apiRequests = %d, want 3 (one per key, not 2*N)", got)
 	}
 }
@@ -2850,7 +2850,7 @@ func TestPutObject_UsageLimitOverflow(t *testing.T) {
 	store, _ := putObjectStore(t, "b2")
 	mgr := newTestManagerWithLimits(t, store, map[string]*mockBackend{"b1": b1, "b2": b2}, limits)
 
-	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
+	mgr.Runtime().Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
 
 	etag, err := mgr.objectManager.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 	if err != nil {
@@ -2886,7 +2886,7 @@ func TestGetObject_UsageLimitSkipsBackend(t *testing.T) {
 	}, nil)
 	mgr := newTestManagerWithLimits(t, store, map[string]*mockBackend{"b1": b1, "b2": b2}, limits)
 
-	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
+	mgr.Runtime().Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
 
 	result, err := mgr.objectManager.GetObject(context.Background(), "key", "")
 	if err != nil {
@@ -2913,7 +2913,7 @@ func TestGetObject_AllCopiesOverLimit(t *testing.T) {
 	}, nil)
 	mgr := newTestManagerWithLimits(t, store, map[string]*mockBackend{"b1": b1}, limits)
 
-	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
+	mgr.Runtime().Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
 
 	if _, err := mgr.objectManager.GetObject(context.Background(), "key", ""); !errors.Is(err, core.ErrUsageLimitExceeded) {
 		t.Fatalf("expected st.ErrUsageLimitExceeded, got %v", err)
@@ -2932,7 +2932,7 @@ func TestDeleteObject_AlwaysAllowed(t *testing.T) {
 	store := deleteObjectStore(t, []core.DeletedCopy{{BackendName: "b1", SizeBytes: 2}}, nil)
 	mgr := newTestManagerWithLimits(t, store, map[string]*mockBackend{"b1": backend}, limits)
 
-	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 100, EgressBytes: 100, IngressBytes: 100})
+	mgr.Runtime().Usage().SetBaseline("b1", core.UsageStat{APIRequests: 100, EgressBytes: 100, IngressBytes: 100})
 
 	if err := mgr.objectManager.DeleteObject(context.Background(), "del-key"); err != nil {
 		t.Fatalf("DeleteObject should always succeed regardless of limits: %v", err)
@@ -2952,7 +2952,7 @@ func TestPutObject_UsageLimitRejectionsMetric(t *testing.T) {
 	mgr := newTestManagerWithLimits(t, store, map[string]*mockBackend{"b1": newMockBackend()}, limits)
 	defer mgr.Close()
 
-	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
+	mgr.Runtime().Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
 
 	before := testutil.ToFloat64(telemetry.UsageLimitRejectionsTotal.WithLabelValues("PutObject", "write"))
 
@@ -2981,7 +2981,7 @@ func TestGetObject_UsageLimitRejectionsMetric(t *testing.T) {
 	mgr := newTestManagerWithLimits(t, store, map[string]*mockBackend{"b1": b1}, limits)
 	defer mgr.Close()
 
-	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
+	mgr.Runtime().Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
 
 	before := testutil.ToFloat64(telemetry.UsageLimitRejectionsTotal.WithLabelValues("GetObject", "read"))
 

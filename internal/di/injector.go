@@ -77,14 +77,16 @@ func registerInfrastructure(inj do.Injector) {
 func registerBackendStack(inj do.Injector) {
 	do.Provide(inj, ProvideBackends)
 	do.Provide(inj, ProvideBreakerRegistry)
+	do.Provide(inj, ProvideBackendRuntime)
+	do.Provide(inj, ProvideIntegrityConfig)
+	do.Provide(inj, ProvideWriteCoordinator)
+	do.Provide(inj, ProvideMultipartManager)
 	do.Provide(inj, ProvideBackendManager)
 }
 
 // registerWorkers wires the background workers and the drain manager.
 // PendingReaper and Reconciler register only when their feature is on
-// (pending-write pattern enabled / worker-side mode). drain.Manager
-// itself wires onto BackendManager via WireDrain so the eligibility
-// filters see drain state.
+// (pending-write pattern enabled / worker-side mode).
 func registerWorkers(inj do.Injector, cfg *config.Config, mode config.Mode) {
 	do.Provide(inj, ProvideRebalancer)
 	do.Provide(inj, ProvideReplicator)

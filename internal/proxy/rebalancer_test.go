@@ -865,10 +865,10 @@ func TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete(t *testing.T) {
 		t.Fatal("ExecuteOneMove returned false on the success path")
 	}
 
-	if got := mgr.Usage().Backend().Load("src", counter.FieldAPIRequests); got != 2 {
+	if got := mgr.Runtime().Usage().Backend().Load("src", counter.FieldAPIRequests); got != 2 {
 		t.Errorf("src apiRequests = %d, want 2 (Egress + DeleteOrEnqueue, no double-count)", got)
 	}
-	if got := mgr.Usage().Backend().Load("dest", counter.FieldAPIRequests); got != 1 {
+	if got := mgr.Runtime().Usage().Backend().Load("dest", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("dest apiRequests = %d, want 1 (Ingress only)", got)
 	}
 }

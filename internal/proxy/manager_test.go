@@ -102,7 +102,7 @@ func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 	mgr := newUsageManagerWithLimits(t, []string{"b1"}, newPermissiveMock(t), limits)
 
 	// Initially within limits
-	if !mgr.Usage().WithinLimits("b1", 50, 0, 0) {
+	if !mgr.Runtime().Usage().WithinLimits("b1", 50, 0, 0) {
 		t.Fatal("should be within initial limits")
 	}
 
@@ -112,11 +112,11 @@ func TestUpdateUsageLimits_SwapsLimits(t *testing.T) {
 	})
 
 	// Now 50 should exceed the new limit
-	if mgr.Usage().WithinLimits("b1", 50, 0, 0) {
+	if mgr.Runtime().Usage().WithinLimits("b1", 50, 0, 0) {
 		t.Error("should exceed updated limit of 10")
 	}
 	// But 5 should still be within limits
-	if !mgr.Usage().WithinLimits("b1", 5, 0, 0) {
+	if !mgr.Runtime().Usage().WithinLimits("b1", 5, 0, 0) {
 		t.Error("should be within updated limit of 10")
 	}
 }
@@ -274,7 +274,7 @@ func TestNearUsageLimit_AboveThreshold(t *testing.T) {
 	mgr := newUsageManagerWithLimits(t, []string{"b1"}, newPermissiveMock(t), limits)
 
 	// Set baseline at 90% of limit
-	mgr.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 90})
+	mgr.Runtime().Usage().SetBaseline("b1", core.UsageStat{APIRequests: 90})
 
 	if !mgr.NearUsageLimit(0.8) {
 		t.Error("should be near limit at 90% usage with 80% threshold")
@@ -324,7 +324,7 @@ func TestUpdateUsageLimits_ConcurrentAccess(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 100 {
-				_ = mgr.Usage().WithinLimits("b1", 1, 0, 0)
+				_ = mgr.Runtime().Usage().WithinLimits("b1", 1, 0, 0)
 			}
 		}()
 	}
@@ -406,7 +406,7 @@ func TestNewBackendManager_RequiredDepsPanic(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // TestClearDrainState_NoDrainManager pins the nil-guard: a manager
-// constructed without WireDrain must not panic on ClearDrainState.
+// constructed without a drain manager must not panic on ClearDrainState.
 func TestClearDrainState_NoDrainManager(t *testing.T) {
 	t.Parallel()
 	mock := newPermissiveMock(t)
@@ -424,7 +424,7 @@ func TestClearDrainState_NoDrainManager(t *testing.T) {
 	})
 	defer mgr.Close()
 	if mgr.drainManager != nil {
-		t.Fatal("expected DrainManager nil prior to WireDrain")
+		t.Fatal("expected drain manager nil when none is injected")
 	}
 	mgr.ClearDrainState()
 }
@@ -439,4 +439,23 @@ func TestClearDrainState_ClearsWiredDrain(t *testing.T) {
 	workers := wireWorkersForTest(mgr, store)
 	_ = workers
 	mgr.ClearDrainState()
+}
+
+// TestManagerRuntimeFacades covers the manager's runtime-facing facade
+// methods: UpdateQuotaMetrics and BackendOrder forward to the runtime, and
+// Drain returns the injected drain manager.
+func TestManagerRuntimeFacades(t *testing.T) {
+	t.Parallel()
+	mgr := newUsageManager(t, []string{"b1", "b2"}, newPermissiveMock(t))
+	defer mgr.Close()
+
+	if err := mgr.UpdateQuotaMetrics(context.Background()); err != nil {
+		t.Fatalf("UpdateQuotaMetrics: %v", err)
+	}
+	if got := len(mgr.BackendOrder()); got != 2 {
+		t.Errorf("BackendOrder len = %d, want 2", got)
+	}
+	if mgr.Drain() == nil {
+		t.Error("Drain() = nil, want the injected drain manager")
+	}
 }
