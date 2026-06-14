@@ -83,6 +83,7 @@ Follow the conventions in [`docs/style-guide.md`](docs/style-guide.md). Key poin
 - ASCII-only characters (no Unicode dashes or special characters)
 - Streaming over buffering for object data (`io.Pipe`, never buffer full objects)
 - Context propagation through all function chains
+- `must.NotNil` is only for already-resolved internal wiring (a nil there is a programmer bug); anything from config, user input, the network, or an optional dependency returns an error instead — see Constructor Patterns in the style guide
 
 ## Working with sqlc
 
