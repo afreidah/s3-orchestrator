@@ -89,12 +89,9 @@ type FailoverStores interface {
 // Failover orchestrates per-key read failover across backends.
 // One instance per object.Manager; safe for concurrent reads.
 type Failover struct {
-	core              ReadRuntime
-	stores            FailoverStores
-	cache             LocationCache
-	parallelBroadcast bool
-	// degradedBroadcastParallelism caps concurrent probes in a parallel broadcast; 0 means uncapped.
-	degradedBroadcastParallelism int
+	core        ReadRuntime
+	stores      FailoverStores
+	broadcaster *Broadcaster // degraded-mode fan-out; used only on DB outage
 	// degradedReadsEnabled false makes degraded reads fail fast instead of broadcasting.
 	degradedReadsEnabled bool
 	log                  *slog.Logger
@@ -118,13 +115,16 @@ func New(deps FailoverDeps) *Failover {
 	must.NotNil("Stores", deps.Stores)
 	must.NotNil("Cache", deps.Cache)
 	return &Failover{
-		core:                         deps.Core,
-		stores:                       deps.Stores,
-		cache:                        deps.Cache,
-		parallelBroadcast:            deps.ParallelBroadcast,
-		degradedBroadcastParallelism: deps.DegradedBroadcastParallelism,
-		degradedReadsEnabled:         deps.DegradedReadsEnabled,
-		log:                          slog.Default().With(logfmt.Component("readpath")),
+		core:                 deps.Core,
+		stores:               deps.Stores,
+		degradedReadsEnabled: deps.DegradedReadsEnabled,
+		log:                  slog.Default().With(logfmt.Component("readpath")),
+		broadcaster: &Broadcaster{
+			core:        deps.Core,
+			cache:       deps.Cache,
+			parallel:    deps.ParallelBroadcast,
+			parallelism: deps.DegradedBroadcastParallelism,
+		},
 	}
 }
 
@@ -133,9 +133,10 @@ func New(deps FailoverDeps) *Failover {
 // -------------------------------------------------------------------------
 
 // Read runs the full read-with-failover protocol: starts the span,
-// resolves all locations for the key, and tries each backend in
-// turn. On core.ErrDBUnavailable falls back to broadcastRead. Returns
-// the winning backend name and any error.
+// resolves all locations for the key, and tries each backend in turn. On
+// core.ErrDBUnavailable it enters degraded mode and delegates to the
+// broadcaster (unless degraded reads are disabled). Returns the winning
+// backend name and any error.
 func (f *Failover) Read(ctx context.Context, operation, key string, probe Probe) (string, error) {
 	start := time.Now()
 
@@ -151,7 +152,13 @@ func (f *Failover) Read(ctx context.Context, operation, key string, probe Probe)
 			return "", err
 		}
 		if errors.Is(err, core.ErrDBUnavailable) {
-			return f.broadcastRead(ctx, operation, key, start, span, probe)
+			span.SetAttributes(telemetry.AttrDegradedMode.Bool(true))
+			telemetry.DegradedReadsTotal.WithLabelValues(operation).Inc()
+			if !f.degradedReadsEnabled {
+				observe.MarkSpanError(span, "degraded reads disabled by operator")
+				return "", core.ErrServiceUnavailable
+			}
+			return f.broadcaster.Read(ctx, operation, key, start, span, probe)
 		}
 		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to find object location: %w", err)
@@ -215,348 +222,4 @@ func failoverFailureResult(span trace.Span, operation string, locations []core.O
 	}
 	observe.RecordSpanError(span, lastErr)
 	return lastErr
-}
-
-// -------------------------------------------------------------------------
-// DEGRADED-MODE BROADCAST
-// -------------------------------------------------------------------------
-
-// broadcastRead tries all backends when the DB is unavailable. Checks
-// the location cache first for a known-good backend, then dispatches
-// to either parallel or sequential broadcast based on configuration.
-func (f *Failover) broadcastRead(ctx context.Context, operation, key string, start time.Time, span trace.Span, probe Probe) (winner string, retErr error) {
-	span.SetAttributes(telemetry.AttrDegradedMode.Bool(true))
-	telemetry.DegradedReadsTotal.WithLabelValues(operation).Inc()
-
-	if !f.degradedReadsEnabled {
-		observe.MarkSpanError(span, "degraded reads disabled by operator")
-		return "", core.ErrServiceUnavailable
-	}
-
-	bcStart := time.Now()
-	cacheHit := false
-	defer func() {
-		telemetry.DegradedBroadcastDuration.WithLabelValues(operation, broadcastOutcome(cacheHit, retErr)).
-			Observe(time.Since(bcStart).Seconds())
-	}()
-
-	// --- Check location cache first ---
-	if cachedBackend, ok := f.cache.Get(key); ok {
-		if be, exists := f.core.Backends()[cachedBackend]; exists {
-			// Degraded mode: no DB row available, probe must handle nil loc.
-			size, cleanup, err := probe(ctx, cachedBackend, nil, be)
-			if err == nil {
-				cleanup()
-				f.core.Acct().Operation(operation, cachedBackend, start, nil)
-				span.SetAttributes(telemetry.AttrCacheHit.Bool(true))
-				span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
-				span.SetStatus(codes.Ok, "")
-				telemetry.DegradedCacheHitsTotal.Inc()
-				cacheHit = true
-				return cachedBackend, nil
-			}
-			// Cache hit but backend failed - fall through to broadcast.
-			// The probe already released its timeout on the error path.
-		}
-	}
-
-	concurrency := 1
-	if f.parallelBroadcast {
-		concurrency = len(f.core.BackendOrder())
-	}
-	return f.tryAllBackends(ctx, operation, key, start, span, concurrency, probe)
-}
-
-// broadcastOutcome classifies the terminal state of a degraded broadcast
-// for the DegradedBroadcastDuration histogram label. cache_hit and
-// success are both wins; not_found is "all backends agreed the key is
-// missing"; error covers any other failure (provider divergence,
-// network, usage limits).
-func broadcastOutcome(cacheHit bool, err error) string {
-	switch {
-	case cacheHit:
-		return "cache_hit"
-	case err == nil:
-		return "success"
-	case errors.Is(err, core.ErrObjectNotFound):
-		return "not_found"
-	default:
-		return "error"
-	}
-}
-
-// tryAllBackends dispatches to the sequential or parallel branch based
-// on concurrency. Both branches return the first backend whose probe
-// succeeds and cache the winner's name for future degraded reads.
-func (f *Failover) tryAllBackends(
-	ctx context.Context,
-	operation, key string,
-	start time.Time,
-	span trace.Span,
-	concurrency int,
-	probe Probe,
-) (string, error) {
-	if concurrency <= 1 {
-		return f.tryBackendsSequentially(ctx, operation, key, start, span, probe)
-	}
-	return f.tryBackendsInParallel(ctx, operation, key, start, span, probe)
-}
-
-// tryBackendsSequentially walks BackendOrder one backend at a time. The
-// first success short-circuits and is recorded as the broadcast winner;
-// otherwise the last error (if any) is wrapped as a degraded-read failure.
-func (f *Failover) tryBackendsSequentially(
-	ctx context.Context,
-	operation, key string,
-	start time.Time,
-	span trace.Span,
-	probe Probe,
-) (string, error) {
-	var lastErr error
-	var tally broadcastErrTally
-	for _, name := range f.core.BackendOrder() {
-		be, ok := f.core.Backends()[name]
-		if !ok {
-			continue
-		}
-		// Degraded mode: no DB row available, probe must handle nil loc.
-		size, cleanup, err := probe(ctx, name, nil, be)
-		if err != nil {
-			lastErr = err
-			tally.add(err)
-			continue
-		}
-		cleanup()
-		f.recordBroadcastWinner(operation, key, name, size, start, span, false)
-		return name, nil
-	}
-	tally.recordMixedOutcomes(operation)
-	return broadcastAllFailed(span, lastErr)
-}
-
-// broadcastErrTally tracks the 404-vs-other distribution of probe
-// errors so the all-failed terminal can flag provider-divergence storms
-// hidden under not_found.
-type broadcastErrTally struct {
-	notFound int
-	other    int
-}
-
-func (t *broadcastErrTally) add(err error) {
-	if backend.IsNotFound(err) {
-		t.notFound++
-	} else {
-		t.other++
-	}
-}
-
-func (t *broadcastErrTally) recordMixedOutcomes(operation string) {
-	if t.notFound > 0 && t.other > 0 {
-		telemetry.DegradedBroadcastMixedOutcomesTotal.WithLabelValues(operation).Inc()
-	}
-}
-
-// broadcastResult carries one parallel-probe outcome back to the
-// fan-in loop. cleanup is the success-path cleanup the orchestrator
-// invokes either inline (winner) or via the loser-drain goroutine.
-type broadcastResult struct {
-	name    string
-	size    int64
-	err     error
-	cleanup func()
-}
-
-// pendingProbe is one eligible backend awaiting (or running) its probe.
-// Held in a flat slice so the rolling-window launcher can pick the next
-// pending entry deterministically as slots free up.
-type pendingProbe struct {
-	name string
-	be   backend.ObjectBackend
-}
-
-// tryBackendsInParallel launches probes for eligible backends in
-// BackendOrder, capped to degradedBroadcastParallelism, and returns the
-// first success, cancelling the losing probes' contexts so their
-// in-flight backend round trips, decryption, and integrity work stop
-// promptly instead of running to completion only to have their results
-// discarded. With no cap the first call launches every backend at once
-// (historical behaviour). With a positive cap, the first cap probes
-// launch immediately and each failure replenishes the next pending
-// backend so at most cap goroutines are ever in flight.
-func (f *Failover) tryBackendsInParallel(
-	ctx context.Context,
-	operation, key string,
-	start time.Time,
-	span trace.Span,
-	probe Probe,
-) (string, error) {
-	pending := f.eligibleBackends()
-	if len(pending) == 0 {
-		return broadcastAllFailed(span, nil)
-	}
-
-	initial := broadcastSlotCount(f.degradedBroadcastParallelism, len(pending))
-	ch := make(chan broadcastResult, len(pending))
-	cancels := make(map[string]context.CancelFunc, initial)
-
-	// launched tracks how many probes have been started so far. The
-	// receive loop calls launchNext after each failure to refill a
-	// free slot; on success the remaining pending entries are never
-	// launched because the winner cancels the in-flight set.
-	launched := 0
-	launchNext := func() bool {
-		if launched >= len(pending) {
-			return false
-		}
-		p := pending[launched]
-		launched++
-		probeCtx, cancel := context.WithCancel(ctx) //nolint:gosec // G118: cancel reaches the call graph via cancels map -> cancelLosers / all-failed loop.
-		cancels[p.name] = cancel
-		go runBackendProbe(probeCtx, p.name, p.be, probe, ch)
-		return true
-	}
-	for range initial {
-		launchNext()
-	}
-
-	var lastErr error
-	var tally broadcastErrTally
-	received := 0
-	for received < launched {
-		r := <-ch
-		received++
-		if r.err != nil {
-			lastErr = r.err
-			tally.add(r.err)
-			launchNext() // backfill the slot; harmless when no pending probes remain
-			continue
-		}
-		if r.cleanup != nil {
-			r.cleanup()
-		}
-		// Winner declared: cancel every in-flight probe so losing
-		// backends stop wasting CPU, network, and API quota on work
-		// that will be discarded. Backends that were pending but never
-		// launched do not need cancellation - no goroutine exists yet.
-		// The winner's context is intentionally left alive: the
-		// response body is bound to it and the caller is still reading
-		// from it; the per-probe ctx is reaped naturally when the
-		// parent request ctx ends.
-		cancelLosers(cancels, r.name)
-		if remaining := launched - received; remaining > 0 {
-			go drainAndCleanupLosers(ch, remaining)
-		}
-		f.recordBroadcastWinner(operation, key, r.name, r.size, start, span, true)
-		return r.name, nil
-	}
-	// All probes failed: no body to preserve, cancel every per-probe
-	// context so any straggler in a retry/backoff returns immediately.
-	for _, cancel := range cancels {
-		cancel()
-	}
-	tally.recordMixedOutcomes(operation)
-	return broadcastAllFailed(span, lastErr)
-}
-
-// eligibleBackends returns the pending probes in BackendOrder, skipping
-// any name absent from the backend map. The slice is the rolling-window
-// launcher's source of truth: launched indexes into it; on success the
-// remaining tail is simply never started.
-func (f *Failover) eligibleBackends() []pendingProbe {
-	order := f.core.BackendOrder()
-	backends := f.core.Backends()
-	pending := make([]pendingProbe, 0, len(order))
-	for _, name := range order {
-		if be, ok := backends[name]; ok {
-			pending = append(pending, pendingProbe{name: name, be: be})
-		}
-	}
-	return pending
-}
-
-// broadcastSlotCount returns the initial in-flight slot count for the
-// rolling window: the configured cap clamped to the eligible-backend
-// count, with limit <= 0 meaning "no cap" (fan out to every backend at
-// once, preserving the historical behaviour).
-func broadcastSlotCount(limit, eligible int) int {
-	if limit <= 0 || limit > eligible {
-		return eligible
-	}
-	return limit
-}
-
-// cancelLosers invokes every cancel func except the winner's. The
-// winner's context must stay alive because its response body is bound
-// to it.
-func cancelLosers(cancels map[string]context.CancelFunc, winner string) {
-	for name, cancel := range cancels {
-		if name != winner {
-			cancel()
-		}
-	}
-}
-
-// runBackendProbe is the per-backend goroutine body. On success it
-// forwards the probe's cleanup so the orchestrator (winner) or the
-// loser-drain (everyone else) can release the timeout context promptly
-// instead of waiting for the deadline to fire on its own.
-func runBackendProbe(
-	ctx context.Context,
-	name string,
-	be backend.ObjectBackend,
-	probe Probe,
-	ch chan<- broadcastResult,
-) {
-	// Degraded mode: no DB row available, probe must handle nil loc.
-	size, cleanup, err := probe(ctx, name, nil, be)
-	if err != nil {
-		ch <- broadcastResult{name: name, err: err}
-		return
-	}
-	ch <- broadcastResult{name: name, size: size, cleanup: cleanup}
-}
-
-// drainAndCleanupLosers reads the remaining results from ch after a
-// winner has been declared and invokes any cleanup the losers returned.
-// Best-effort: a sender that panicked or closed early is tolerated.
-func drainAndCleanupLosers(ch <-chan broadcastResult, remaining int) {
-	defer func() { recover() }() //nolint:errcheck // best-effort drain
-	for range remaining {
-		if lr := <-ch; lr.cleanup != nil {
-			lr.cleanup()
-		}
-	}
-}
-
-// recordBroadcastWinner caches the winner's name for future degraded
-// reads, emits operation metrics, and sets the success-path span
-// attributes.
-func (f *Failover) recordBroadcastWinner(
-	operation, key, name string,
-	size int64,
-	start time.Time,
-	span trace.Span,
-	parallel bool,
-) {
-	f.cache.Set(key, name)
-	f.core.Acct().Operation(operation, name, start, nil)
-	span.SetAttributes(telemetry.AttrBackendName.String(name))
-	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
-	if parallel {
-		span.SetAttributes(telemetry.AttrParallelBroadcast.Bool(true))
-	}
-	span.SetStatus(codes.Ok, "")
-}
-
-// broadcastAllFailed builds the all-failed return value. When at least
-// one backend returned an error, that error is wrapped so the server
-// can distinguish "backend unreachable" (502) from "object not found"
-// (404).
-func broadcastAllFailed(span trace.Span, lastErr error) (string, error) {
-	if lastErr != nil {
-		observe.RecordSpanError(span, lastErr)
-		return "", fmt.Errorf("all backends failed during degraded read: %w", lastErr)
-	}
-	observe.MarkSpanError(span, "no backends available")
-	return "", core.ErrObjectNotFound
 }

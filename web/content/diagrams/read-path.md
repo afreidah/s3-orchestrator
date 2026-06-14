@@ -148,7 +148,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     FANOUT: {
       title: 'Broadcast to All Backends',
       badge: 'process', badgeText: 'broadcast',
-      body: '<p>Tries every configured backend to find the object without DB guidance. Two strategies (configured via <code>parallel_broadcast</code>):</p><p><b>Sequential</b>: iterates backends in order, stops at first success. Lower resource usage but higher latency.</p><p><b>Parallel</b>: launches a goroutine per backend, returns the first success via buffered channel. Losing goroutines\' bodies are closed via <code>sync.Once</code>. Lower latency but more API calls.</p><p>On success, caches the backend mapping (<code>cache.Set(key, name)</code>) so future degraded reads skip the broadcast.</p><p class="ac-metric">Span attribute: s3o.parallel_broadcast=true</p>'
+      body: '<p>Tries every configured backend to find the object without DB guidance. Two strategies (configured via <code>parallel_broadcast</code>):</p><p><b>Sequential</b>: iterates backends in order, stops at first success. Lower resource usage but higher latency.</p><p><b>Parallel</b>: launches a bounded window of goroutines (capped by <code>degraded_broadcast_parallelism</code>), returns the first success via a buffered channel, then cancels the losing probes\' contexts so their in-flight work stops promptly. Lower latency but more API calls.</p><p>On success, caches the backend mapping (<code>cache.Set(key, name)</code>) so future degraded reads skip the broadcast.</p><p class="ac-metric">Span attribute: s3o.parallel_broadcast=true</p>'
     },
     BFAIL: {
       title: 'Return Last Error (Broadcast)',
@@ -158,7 +158,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     COPIES: {
       title: 'Iterate Copies with Failover',
       badge: 'process', badgeText: 'failover loop',
-      body: '<p><code>withReadFailover()</code> iterates through all copies returned by the DB lookup. Each copy is tried in order (primary first, then replicas).</p><p>On failure, logs a warning and moves to the next copy. If all copies fail, returns the last error. If all copies were skipped due to usage limits, returns <code>ErrUsageLimitExceeded</code> specifically.</p><p class="ac-metric">Span attribute: s3o.failover=true (when primary fails)</p>'
+      body: '<p><code>readpath.Failover.Read</code> iterates through all copies returned by the DB lookup. Each copy is tried in order (primary first, then replicas).</p><p>On failure, logs a warning and moves to the next copy. If all copies fail, returns the last error. If all copies were skipped due to usage limits, returns <code>ErrUsageLimitExceeded</code> specifically.</p><p class="ac-metric">Span attribute: s3o.failover=true (when primary fails)</p>'
     },
     ULIMIT: {
       title: 'Usage Limit Check (Pre-fetch)',
