@@ -415,7 +415,7 @@ func TestResolveOptionalEncryptor_EnabledMissing(t *testing.T) {
 func TestNewInjector_DefaultsRegisterRequiredOnly(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{}
-	inj := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
+	inj := NewInjector(InjectorDeps{Config: cfg, Mode: "all", LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
 	defer func() { _ = inj.Shutdown() }()
 
 	joined := strings.Join(listServiceNames(inj), ",")
@@ -533,7 +533,7 @@ func TestNewInjector_HappyPathResolvesEverything(t *testing.T) {
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("config validation: %v", err)
 	}
-	inj := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
+	inj := NewInjector(InjectorDeps{Config: cfg, Mode: "all", LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
 	t.Cleanup(func() { _ = inj.Shutdown() })
 
 	if _, err := do.Invoke[*BackendsResult](inj); err != nil {
@@ -585,7 +585,7 @@ func TestNewInjector_WorkerModeResolvesLifecycle(t *testing.T) {
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("config validation: %v", err)
 	}
-	inj := NewInjector(cfg, "worker", new(slog.LevelVar), telemetry.NewLogBuffer())
+	inj := NewInjector(InjectorDeps{Config: cfg, Mode: "worker", LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
 	t.Cleanup(func() { _ = inj.Shutdown() })
 
 	if _, err := do.Invoke[*lifecycle.Manager](inj); err != nil {
@@ -633,7 +633,7 @@ func TestNewInjector_PendingReaperDisabled(t *testing.T) {
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("config validation: %v", err)
 	}
-	inj := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
+	inj := NewInjector(InjectorDeps{Config: cfg, Mode: "all", LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
 	t.Cleanup(func() { _ = inj.Shutdown() })
 
 	if IsRegistered[*worker.PendingReaper](inj) {
@@ -665,7 +665,7 @@ func TestNewInjector_NotifierResolvesWhenEndpointsConfigured(t *testing.T) {
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("config validation: %v", err)
 	}
-	inj := NewInjector(cfg, "worker", new(slog.LevelVar), telemetry.NewLogBuffer())
+	inj := NewInjector(InjectorDeps{Config: cfg, Mode: "worker", LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
 	t.Cleanup(func() { _ = inj.Shutdown() })
 
 	if _, err := do.Invoke[*notify.Notifier](inj); err != nil {
@@ -703,7 +703,7 @@ func TestProvideReconciler_HappyPath(t *testing.T) {
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("config validation: %v", err)
 	}
-	inj := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
+	inj := NewInjector(InjectorDeps{Config: cfg, Mode: "all", LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
 	t.Cleanup(func() { _ = inj.Shutdown() })
 	rec, err := do.Invoke[*worker.Reconciler](inj)
 	if err != nil {
@@ -722,7 +722,7 @@ func TestNewInjector_ReconcilerNotRegisteredInAPIMode(t *testing.T) {
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("config validation: %v", err)
 	}
-	inj := NewInjector(cfg, "api", new(slog.LevelVar), telemetry.NewLogBuffer())
+	inj := NewInjector(InjectorDeps{Config: cfg, Mode: "api", LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
 	t.Cleanup(func() { _ = inj.Shutdown() })
 	if _, err := do.Invoke[*worker.Reconciler](inj); !errors.Is(err, do.ErrServiceNotFound) {
 		t.Fatalf("expected ErrServiceNotFound in api mode, got %v", err)
@@ -738,7 +738,7 @@ func TestResolveAdminHandlerRequiredDeps_PartialDeps(t *testing.T) {
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("config validation: %v", err)
 	}
-	full := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
+	full := NewInjector(InjectorDeps{Config: cfg, Mode: "all", LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
 	t.Cleanup(func() { _ = full.Shutdown() })
 
 	mgr, err := do.Invoke[*proxy.BackendManager](full)
@@ -875,7 +875,7 @@ func TestProvideAdminHandler_ReconcilerFailedLogsAndContinues(t *testing.T) {
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("config validation: %v", err)
 	}
-	inj := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
+	inj := NewInjector(InjectorDeps{Config: cfg, Mode: "all", LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
 	t.Cleanup(func() { _ = inj.Shutdown() })
 
 	if err := WireManager(inj); err != nil {

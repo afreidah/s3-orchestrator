@@ -60,7 +60,7 @@ func TestCircuitBreakerBackend_CopyObject_ForwardsWhenSupported(t *testing.T) {
 		t.Fatalf("seed put: %v", err)
 	}
 
-	cb := NewCircuitBreakerBackend(inner, "test", 3, time.Minute)
+	cb := NewCircuitBreakerBackend(inner, CircuitBreakerConfig{Name: "test", Threshold: 3, Timeout: time.Minute})
 	etag, err := cb.CopyObject(context.Background(), "src", "dst", "", nil)
 	if err != nil {
 		t.Fatalf("CopyObject: %v", err)
@@ -80,7 +80,7 @@ func TestCircuitBreakerBackend_CopyObject_ForwardsWhenSupported(t *testing.T) {
 func TestCircuitBreakerBackend_CopyObject_ReturnsNotSupportedWhenInnerLacksIt(t *testing.T) {
 	t.Parallel()
 	inner := newMockBackend() // does not implement BackendCopier
-	cb := NewCircuitBreakerBackend(inner, "test", 3, time.Minute)
+	cb := NewCircuitBreakerBackend(inner, CircuitBreakerConfig{Name: "test", Threshold: 3, Timeout: time.Minute})
 	_, err := cb.CopyObject(context.Background(), "src", "dst", "", nil)
 	if !errors.Is(err, ErrCopyNotSupported) {
 		t.Fatalf("err = %v, want ErrCopyNotSupported", err)
@@ -96,7 +96,7 @@ func TestCircuitBreakerBackend_CopyObject_FailureTripsBreaker(t *testing.T) {
 	inner := newCopyingMockBackend()
 	inner.copyErr = errors.New("backend on fire")
 
-	cb := NewCircuitBreakerBackend(inner, "test", 1, time.Minute)
+	cb := NewCircuitBreakerBackend(inner, CircuitBreakerConfig{Name: "test", Threshold: 1, Timeout: time.Minute})
 	if _, err := cb.CopyObject(context.Background(), "src", "dst", "", nil); err == nil {
 		t.Fatal("expected error on first call")
 	}

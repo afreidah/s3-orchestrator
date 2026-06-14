@@ -617,6 +617,19 @@ genuinely missing dependency surfaces at boot, not at first use.
 
 ### Constructor Patterns
 
+**Parameter threshold.** A constructor with **four or more parameters**, or
+with two or more same-typed primitives (bool/int/string) whose call-site
+order is ambiguous, takes a single `Deps` (dependency bag) or `Config`
+(value config) struct instead of a positional list — named fields document
+each argument and make transposition impossible. `context.Context` stays
+the first positional argument, never inside the struct; three or fewer
+distinct-typed parameters stay positional. Pass the struct by pointer when
+it is large (`gocritic` flags structs over ~80 bytes), by value otherwise.
+Capability sub-structs (the `BackendManagerConfig` Storage / Stores /
+Policies / Features / Operations grouping) are reserved for genuinely large
+configs whose fields come from different sources — a flat `Deps` is the
+default.
+
 Constructors at the DI/wiring boundary panic on missing required
 dependencies via `internal/util/must`. The boundary is the set of
 constructors a DI provider or a test fixture builds directly:

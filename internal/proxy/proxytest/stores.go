@@ -42,8 +42,16 @@ func BuildManager(cfg *proxy.BackendManagerConfig) *proxy.BackendManager {
 
 	integrityCfg := &syncutil.AtomicConfig[config.IntegrityConfig]{}
 	coord := writepath.New(rt, stores, cfg.Policies.PendingEnabled)
-	mp := multipart.New(rt, coord, stores, cfg.Features.Encryptor, cfg.Features.ObjectCache, time.Hour, integrityCfg)
-	cleanup := worker.NewCleanupWorker(rt, stores, 10, "test-instance", 5*time.Minute)
+	mp := multipart.New(&multipart.Deps{
+		Core:         rt,
+		Coord:        coord,
+		Stores:       stores,
+		Encryptor:    cfg.Features.Encryptor,
+		ObjectCache:  cfg.Features.ObjectCache,
+		DEKCacheTTL:  time.Hour,
+		IntegrityCfg: integrityCfg,
+	})
+	cleanup := worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: rt, Store: stores, Concurrency: 10, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	dm := drain.New(rt, coord, stores, stores, stores, mp.AbortMultipartUploadsOnBackend, cleanup.ProcessCleanupQueue)
 
 	cfg.Collaborators = proxy.Collaborators{
@@ -81,7 +89,12 @@ func backendRuntimeFromConfig(cfg *proxy.BackendManagerConfig) *infra.BackendRun
 		Log:             slog.Default().With(logfmt.Component("backend_manager")),
 	})
 	if cfg.Operations.Metrics != nil {
-		rt.SetMetricsCollector(metrics.New(cfg.Operations.Metrics, usage, backendNames, cfg.Operations.ReplicationFactor))
+		rt.SetMetricsCollector(metrics.New(metrics.CollectorDeps{
+			Store:             cfg.Operations.Metrics,
+			Usage:             usage,
+			BackendNames:      backendNames,
+			ReplicationFactor: cfg.Operations.ReplicationFactor,
+		}))
 	}
 	return rt
 }
@@ -110,9 +123,9 @@ func BuildWorkers(mgr *proxy.BackendManager, m core.MetadataStore) *Workers {
 	w.Rebalancer = worker.NewRebalancer(mgr.Runtime(), mgr, m)
 	w.Replicator = worker.NewReplicator(mgr.Runtime(), mgr, m)
 	w.OverReplicationCleaner = worker.NewOverReplicationCleaner(mgr.Runtime(), mgr, m)
-	w.CleanupWorker = worker.NewCleanupWorker(mgr.Runtime(), m, 10, "test-instance", 5*time.Minute)
-	w.PendingReaper = worker.NewPendingReaper(mgr.Runtime(), mgr, m, 0, 0, 0)
-	w.Scrubber = worker.NewScrubber(mgr.Runtime(), mgr, m, nil)
+	w.CleanupWorker = worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: mgr.Runtime(), Store: m, Concurrency: 10, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+	w.PendingReaper = worker.NewPendingReaper(worker.PendingReaperDeps{Ops: mgr.Runtime(), Placement: mgr, Store: m})
+	w.Scrubber = worker.NewScrubber(worker.ScrubberDeps{Ops: mgr.Runtime(), Placement: mgr, Store: m})
 	w.Drain = mgr.Drain()
 	return w
 }

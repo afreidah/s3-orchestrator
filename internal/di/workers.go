@@ -141,7 +141,13 @@ func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve InstanceID: %w", err)
 	}
-	return worker.NewCleanupWorker(rt, stores, concurrency, id.String(), cfg.CleanupQueue.ClaimGracePeriod), nil
+	return worker.NewCleanupWorker(worker.CleanupWorkerDeps{
+		Ops:              rt,
+		Store:            stores,
+		Concurrency:      concurrency,
+		InstanceID:       id.String(),
+		ClaimGracePeriod: cfg.CleanupQueue.ClaimGracePeriod,
+	}), nil
 }
 
 // ProvidePendingReaper constructs the pending-reaper worker. The
@@ -162,7 +168,13 @@ func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error) {
 	if c.Stores == nil {
 		return nil, fmt.Errorf("pending pattern enabled but MetadataStore resolved to nil")
 	}
-	return worker.NewPendingReaper(c.Mgr.Runtime(), c.Mgr, c.Stores, 0, cfg.WritePath.PendingPattern.MinAge, cfg.WritePath.PendingPattern.BatchSize), nil
+	return worker.NewPendingReaper(worker.PendingReaperDeps{
+		Ops:       c.Mgr.Runtime(),
+		Placement: c.Mgr,
+		Store:     c.Stores,
+		MinAge:    cfg.WritePath.PendingPattern.MinAge,
+		BatchSize: cfg.WritePath.PendingPattern.BatchSize,
+	}), nil
 }
 
 // ProvideScrubber constructs the integrity-verification worker.
@@ -177,7 +189,12 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 			enc = e
 		}
 	}
-	return worker.NewScrubber(c.Mgr.Runtime(), c.Mgr, c.Stores, enc), nil
+	return worker.NewScrubber(worker.ScrubberDeps{
+		Ops:       c.Mgr.Runtime(),
+		Placement: c.Mgr,
+		Store:     c.Stores,
+		Encryptor: enc,
+	}), nil
 }
 
 // ProvideReconciler constructs the bucket reconciler worker. Registered

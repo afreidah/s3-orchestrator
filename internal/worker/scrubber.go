@@ -58,12 +58,21 @@ type Scrubber struct {
 	cfg       syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
-// NewScrubber creates a Scrubber with the given dependencies and optional encryptor.
-func NewScrubber(deps ScrubberOps, placement Placement, store ScrubberStore, encryptor *encryption.Encryptor) *Scrubber {
-	must.NotNil("deps", deps)
-	must.NotNil("placement", placement)
-	must.NotNil("store", store)
-	return &Scrubber{deps: deps, placement: placement, store: store, encryptor: encryptor, log: slog.Default().With(logfmt.Component("scrubber"))}
+// ScrubberDeps groups the scrubber's constructor dependencies. Encryptor
+// is optional (nil when encryption is disabled).
+type ScrubberDeps struct {
+	Ops       ScrubberOps
+	Placement Placement
+	Store     ScrubberStore
+	Encryptor *encryption.Encryptor
+}
+
+// NewScrubber creates a Scrubber with the given dependencies.
+func NewScrubber(deps ScrubberDeps) *Scrubber {
+	must.NotNil("Ops", deps.Ops)
+	must.NotNil("Placement", deps.Placement)
+	must.NotNil("Store", deps.Store)
+	return &Scrubber{deps: deps.Ops, placement: deps.Placement, store: deps.Store, encryptor: deps.Encryptor, log: slog.Default().With(logfmt.Component("scrubber"))}
 }
 
 // SetConfig atomically stores the integrity configuration.

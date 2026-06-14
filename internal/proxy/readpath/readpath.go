@@ -100,19 +100,30 @@ type Failover struct {
 	log                  *slog.Logger
 }
 
-// New constructs a Failover. When degradedReadsEnabled is false, a DB
+// FailoverDeps groups the read-failover constructor parameters. The three
+// degraded-mode flags are named fields so call sites can't transpose them.
+type FailoverDeps struct {
+	Core                         ReadRuntime
+	Stores                       FailoverStores
+	Cache                        LocationCache
+	ParallelBroadcast            bool
+	DegradedBroadcastParallelism int
+	DegradedReadsEnabled         bool
+}
+
+// New constructs a Failover. When DegradedReadsEnabled is false, a DB
 // outage surfaces as ErrServiceUnavailable instead of broadcasting.
-func New(infraCore ReadRuntime, stores FailoverStores, cache LocationCache, parallelBroadcast bool, degradedBroadcastParallelism int, degradedReadsEnabled bool) *Failover {
-	must.NotNil("core", infraCore)
-	must.NotNil("stores", stores)
-	must.NotNil("cache", cache)
+func New(deps FailoverDeps) *Failover {
+	must.NotNil("Core", deps.Core)
+	must.NotNil("Stores", deps.Stores)
+	must.NotNil("Cache", deps.Cache)
 	return &Failover{
-		core:                         infraCore,
-		stores:                       stores,
-		cache:                        cache,
-		parallelBroadcast:            parallelBroadcast,
-		degradedBroadcastParallelism: degradedBroadcastParallelism,
-		degradedReadsEnabled:         degradedReadsEnabled,
+		core:                         deps.Core,
+		stores:                       deps.Stores,
+		cache:                        deps.Cache,
+		parallelBroadcast:            deps.ParallelBroadcast,
+		degradedBroadcastParallelism: deps.DegradedBroadcastParallelism,
+		degradedReadsEnabled:         deps.DegradedReadsEnabled,
 		log:                          slog.Default().With(logfmt.Component("readpath")),
 	}
 }

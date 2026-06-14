@@ -510,7 +510,12 @@ func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, buck
 	s3 := reconcile.NewS3KeyStream(ctx, s3b, bucketPrefix, otherPrefixes, &apiPages)
 	defer s3.Stop()
 
-	dbIter := reconcile.NewDBCursorStream(m.stores, backendName, bucketPrefix, otherPrefixes)
+	dbIter := reconcile.NewDBCursorStream(reconcile.DBCursorStreamDeps{
+		Store:         m.stores,
+		BackendName:   backendName,
+		BucketPrefix:  bucketPrefix,
+		OtherPrefixes: otherPrefixes,
+	})
 	defer dbIter.Stop()
 
 	res := &reconcile.Result{}

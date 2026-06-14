@@ -123,7 +123,7 @@ func TestCore_ExcludeUnhealthy_DropsOpenBreakers(t *testing.T) {
 	t.Parallel()
 	// Build a CB-wrapped backend whose underlying call fails repeatedly
 	// so the breaker trips.
-	cb := backend.NewCircuitBreakerBackend(fakeBackend{}, "flaky", 1, time.Hour)
+	cb := backend.NewCircuitBreakerBackend(fakeBackend{}, backend.CircuitBreakerConfig{Name: "flaky", Threshold: 1, Timeout: time.Hour})
 	c := New(&Config{
 		Backends: map[string]backend.ObjectBackend{"healthy": fakeBackend{}, "flaky": cb},
 		Order:    []string{"healthy", "flaky"},
