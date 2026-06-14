@@ -68,7 +68,9 @@ type Config struct {
 
 // BackendRuntime composes the five capability services every proxy subpackage
 // needs. Per-role store views live on the root-package BackendManager;
-// *BackendRuntime deliberately holds none.
+// *BackendRuntime deliberately holds none. For which methods belong here
+// versus on *BackendManager, see docs/style-guide.md "Where new methods
+// live: infra.BackendRuntime vs *BackendManager".
 type BackendRuntime struct {
 	registry         *backendRegistry
 	usage            *usagePolicy

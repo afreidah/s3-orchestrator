@@ -620,6 +620,35 @@ func TestNewInjector_WorkerModeResolvesLifecycle(t *testing.T) {
 	}
 }
 
+// TestNewInjector_RootsResolveInEveryMode builds the injector in each run
+// mode and resolves the always-registered roots. BackendManager and
+// lifecycle.Manager are registered unconditionally and transitively pull
+// in the bulk of the graph, so a registered-but-unresolvable provider
+// surfaces here in CI rather than as a production startup panic after a
+// mode change. Complements the "all" (every provider) and "worker"
+// (every worker) resolution tests above by covering api mode explicitly.
+func TestNewInjector_RootsResolveInEveryMode(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []config.Mode{"api", "worker", "all"} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			cfg := happyPathConfig(t.TempDir())
+			if err := cfg.SetDefaultsAndValidate(); err != nil {
+				t.Fatalf("config validation: %v", err)
+			}
+			inj := NewInjector(InjectorDeps{Config: cfg, Mode: mode, LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
+			t.Cleanup(func() { _ = inj.Shutdown() })
+
+			if _, err := do.Invoke[*proxy.BackendManager](inj); err != nil {
+				t.Fatalf("BackendManager: %v", err)
+			}
+			if _, err := do.Invoke[*lifecycle.Manager](inj); err != nil {
+				t.Fatalf("lifecycle.Manager: %v", err)
+			}
+		})
+	}
+}
+
 // TestNewInjector_PendingReaperDisabled covers the conditional
 // registration (#830): when the pending pattern is off in config,
 // no PendingReaper provider is registered and Optional reports

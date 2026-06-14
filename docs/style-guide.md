@@ -306,6 +306,23 @@ For interfaces that exist to *provide* a value (typical "Acct" / "Stores" / "Con
 
 Multi-method interfaces are exempt: `worker.Ops`, `ObjectRuntime`, `MultipartCoordinator` describe a role (or a composite of sub-roles), not a single action, so the `-er` form does not apply.
 
+### Where new methods live: `infra.BackendRuntime` vs `*BackendManager`
+
+The split is by **persistence coupling**:
+
+- **`infra.BackendRuntime`** owns methods that touch only backend objects,
+  in-memory usage counters, admission, timeouts, error classification, and
+  metrics — no `store.X` calls. Keeping them store-free is what lets every
+  worker reuse the runtime through the role interfaces without dragging the
+  metadata-store dependency along.
+- **`*BackendManager` methods** (typically in `manager_writepath.go` or a
+  sibling `manager_*.go`) own methods that read or write the metadata store,
+  open transactions, or coordinate multiple sub-managers.
+
+When in doubt: if the method needs the store, it is a manager method;
+otherwise it belongs on the runtime. The consumer interface for the method
+is declared by whichever side hosts it.
+
 ### Per-Backend Accounting: Use the Recorder
 
 Per-backend usage and per-operation metric accounting flow through one shared helper: `internal/proxy/accounting.Recorder`. Every consumer holds the same `*accounting.Recorder` (resolved via `core.Acct()`) and calls the named methods rather than the underlying `Usage().Record(...)` or `RecordOperation(...)`:
@@ -664,6 +681,17 @@ fail at boot for I/O, parsing, or network reasons keep the
 `httputil.NewCertReloader` (reads cert files),
 `httpserver.New` (binds a port). The DI provider chains the error
 upstream.
+
+**When NOT to use `must.NotNil`.** It is for already-resolved internal
+dependencies whose absence is a programmer wiring bug — nothing else. Do
+not reach for it on:
+
+- values derived from config or user input (validate in `internal/config.SetDefaultsAndValidate` and return an error);
+- network clients, file paths, or external services that can fail at runtime;
+- optional or feature-gated dependencies — use `Optional[T]` or an explicit nil-check rather than panicking.
+
+The test: if a nil here could result from anything other than a developer
+mis-wiring the program, return an error instead of panicking.
 
 **Tests must satisfy the boundary.** When a test constructs one of
 these types directly, it provides real or `gomock`-generated deps for

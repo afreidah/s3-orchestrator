@@ -239,28 +239,53 @@ func (b *S3Backend) GetObject(ctx context.Context, key string, rangeHeader strin
 		})
 }
 
-// mapGetObjectResult normalises an SDK GetObjectOutput into the
-// package-local GetObjectResult, defaulting ContentType to
+// objectAttrs holds the object-metadata fields shared by the GetObject and
+// HeadObject SDK responses after nil-pointer unwrapping.
+type objectAttrs struct {
+	Size         int64
+	ContentType  string
+	ETag         string
+	LastModified time.Time
+	Metadata     map[string]string
+}
+
+// objectAttrsFromSDK unwraps the nil-able metadata fields common to the
+// GetObject and HeadObject SDK outputs, defaulting ContentType to
 // application/octet-stream when the backend omits it.
+func objectAttrsFromSDK(contentLength *int64, contentType, etag *string, lastModified *time.Time, metadata map[string]string) objectAttrs {
+	attrs := objectAttrs{ContentType: "application/octet-stream"}
+	if contentLength != nil {
+		attrs.Size = *contentLength
+	}
+	if contentType != nil {
+		attrs.ContentType = *contentType
+	}
+	if etag != nil {
+		attrs.ETag = *etag
+	}
+	if lastModified != nil {
+		attrs.LastModified = *lastModified
+	}
+	if len(metadata) > 0 {
+		attrs.Metadata = metadata
+	}
+	return attrs
+}
+
+// mapGetObjectResult normalises an SDK GetObjectOutput into the
+// package-local GetObjectResult.
 func mapGetObjectResult(result *s3.GetObjectOutput) *GetObjectResult {
-	out := &GetObjectResult{Body: result.Body, ContentType: "application/octet-stream"}
-	if result.ContentLength != nil {
-		out.Size = *result.ContentLength
-	}
-	if result.ContentType != nil {
-		out.ContentType = *result.ContentType
-	}
-	if result.ETag != nil {
-		out.ETag = *result.ETag
+	a := objectAttrsFromSDK(result.ContentLength, result.ContentType, result.ETag, result.LastModified, result.Metadata)
+	out := &GetObjectResult{
+		Body:         result.Body,
+		Size:         a.Size,
+		ContentType:  a.ContentType,
+		ETag:         a.ETag,
+		LastModified: a.LastModified,
+		Metadata:     a.Metadata,
 	}
 	if result.ContentRange != nil {
 		out.ContentRange = *result.ContentRange
-	}
-	if result.LastModified != nil {
-		out.LastModified = *result.LastModified
-	}
-	if len(result.Metadata) > 0 {
-		out.Metadata = result.Metadata
 	}
 	return out
 }
@@ -281,23 +306,14 @@ func (b *S3Backend) HeadObject(ctx context.Context, key string) (*HeadObjectResu
 				return nil, fmt.Errorf("head object failed: %w", err)
 			}
 
-			out := &HeadObjectResult{ContentType: "application/octet-stream"}
-			if result.ContentLength != nil {
-				out.Size = *result.ContentLength
-			}
-			if result.ContentType != nil {
-				out.ContentType = *result.ContentType
-			}
-			if result.ETag != nil {
-				out.ETag = *result.ETag
-			}
-			if result.LastModified != nil {
-				out.LastModified = *result.LastModified
-			}
-			if len(result.Metadata) > 0 {
-				out.Metadata = result.Metadata
-			}
-			return out, nil
+			a := objectAttrsFromSDK(result.ContentLength, result.ContentType, result.ETag, result.LastModified, result.Metadata)
+			return &HeadObjectResult{
+				Size:         a.Size,
+				ContentType:  a.ContentType,
+				ETag:         a.ETag,
+				LastModified: a.LastModified,
+				Metadata:     a.Metadata,
+			}, nil
 		})
 }
 
