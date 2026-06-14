@@ -19,6 +19,7 @@ Package di is the single wiring point for the orchestrator. It uses samber/do/v2
 - [func NewUsageFlushService\(manager usageFlushOps, locker tickrunner.AdvisoryLocker\) lifecycle.Runner](<#NewUsageFlushService>)
 - [func ProvideAdminHandler\(i do.Injector\) \(\*admin.Handler, error\)](<#ProvideAdminHandler>)
 - [func ProvideBackendManager\(i do.Injector\) \(\*proxy.BackendManager, error\)](<#ProvideBackendManager>)
+- [func ProvideBackendRuntime\(i do.Injector\) \(\*infra.BackendRuntime, error\)](<#ProvideBackendRuntime>)
 - [func ProvideBreakerRegistry\(i do.Injector\) \(\*breaker.Registry, error\)](<#ProvideBreakerRegistry>)
 - [func ProvideBucketAuth\(i do.Injector\) \(\*auth.BucketRegistry, error\)](<#ProvideBucketAuth>)
 - [func ProvideCleanupWorker\(i do.Injector\) \(\*worker.CleanupWorker, error\)](<#ProvideCleanupWorker>)
@@ -29,11 +30,13 @@ Package di is the single wiring point for the orchestrator. It uses samber/do/v2
 - [func ProvideEncryptor\(i do.Injector\) \(\*encryption.Encryptor, error\)](<#ProvideEncryptor>)
 - [func ProvideFlightRecorderService\(i do.Injector\) \(\*debug.FlightRecorderService, error\)](<#ProvideFlightRecorderService>)
 - [func ProvideInstanceID\(\_ do.Injector\) \(instanceid.ID, error\)](<#ProvideInstanceID>)
+- [func ProvideIntegrityConfig\(\_ do.Injector\) \(\*syncutil.AtomicConfig\[config.IntegrityConfig\], error\)](<#ProvideIntegrityConfig>)
 - [func ProvideLifecycleAdmin\(i do.Injector\) \(core.LifecycleAdmin, error\)](<#ProvideLifecycleAdmin>)
 - [func ProvideLifecycleManager\(i do.Injector\) \(\*lifecycle.Manager, error\)](<#ProvideLifecycleManager>)
 - [func ProvideLoginThrottle\(\_ do.Injector\) \(\*httputil.LoginThrottle, error\)](<#ProvideLoginThrottle>)
 - [func ProvideMetadataStore\(i do.Injector\) \(core.MetadataStore, error\)](<#ProvideMetadataStore>)
 - [func ProvideMetricsDeps\(i do.Injector\) \(metrics.Deps, error\)](<#ProvideMetricsDeps>)
+- [func ProvideMultipartManager\(i do.Injector\) \(\*multipart.Manager, error\)](<#ProvideMultipartManager>)
 - [func ProvideNotificationOutbox\(i do.Injector\) \(core.NotificationOutbox, error\)](<#ProvideNotificationOutbox>)
 - [func ProvideNotifier\(i do.Injector\) \(\*notify.Notifier, error\)](<#ProvideNotifier>)
 - [func ProvideObjectCache\(i do.Injector\) \(objcache.ObjectCache, error\)](<#ProvideObjectCache>)
@@ -47,6 +50,7 @@ Package di is the single wiring point for the orchestrator. It uses samber/do/v2
 - [func ProvideS3Server\(i do.Injector\) \(\*s3api.Server, error\)](<#ProvideS3Server>)
 - [func ProvideScrubber\(i do.Injector\) \(\*worker.Scrubber, error\)](<#ProvideScrubber>)
 - [func ProvideUIHandler\(i do.Injector\) \(\*ui.Handler, error\)](<#ProvideUIHandler>)
+- [func ProvideWriteCoordinator\(i do.Injector\) \(\*writepath.Coordinator, error\)](<#ProvideWriteCoordinator>)
 - [func WireAuditMetrics\(\)](<#WireAuditMetrics>)
 - [func WireManager\(inj do.Injector\) error](<#WireManager>)
 - [type BackendsResult](<#BackendsResult>)
@@ -96,7 +100,7 @@ func NewUsageFlushService(manager usageFlushOps, locker tickrunner.AdvisoryLocke
 NewUsageFlushService constructs the usage flush background service.
 
 <a name="ProvideAdminHandler"></a>
-## func [ProvideAdminHandler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L216>)
+## func [ProvideAdminHandler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L220>)
 
 ```go
 func ProvideAdminHandler(i do.Injector) (*admin.Handler, error)
@@ -105,16 +109,25 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error)
 ProvideAdminHandler creates the admin API handler.
 
 <a name="ProvideBackendManager"></a>
-## func [ProvideBackendManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L232>)
+## func [ProvideBackendManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L347>)
 
 ```go
 func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error)
 ```
 
-ProvideBackendManager creates the central orchestration manager with the narrow per\-role store interfaces supplied. Also installs a recovery listener on the DB breaker so the degraded\-mode location cache is cleared the moment the DB transitions back to closed.
+
+
+<a name="ProvideBackendRuntime"></a>
+## func [ProvideBackendRuntime](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L308>)
+
+```go
+func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error)
+```
+
+ProvideBackendManager creates the central orchestration manager with the narrow per\-role store interfaces supplied. Also installs a recovery listener on the DB breaker so the degraded\-mode location cache is cleared the moment the DB transitions back to closed. ProvideBackendRuntime builds the backend runtime: the fleet registry, usage tracker, admission semaphore, timeout policy, error classification, and metrics collector. Constructing it here \(rather than inside NewBackendManager\) makes the runtime a first\-class, independently\-resolvable dependency that workers, drain, and the manager all share, instead of a promoted embed only reachable through the manager.
 
 <a name="ProvideBreakerRegistry"></a>
-## func [ProvideBreakerRegistry](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L115>)
+## func [ProvideBreakerRegistry](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L121>)
 
 ```go
 func ProvideBreakerRegistry(i do.Injector) (*breaker.Registry, error)
@@ -132,13 +145,13 @@ func ProvideBucketAuth(i do.Injector) (*auth.BucketRegistry, error)
 ProvideBucketAuth creates the credential\-to\-bucket registry.
 
 <a name="ProvideCleanupWorker"></a>
-## func [ProvideCleanupWorker](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L109>)
+## func [ProvideCleanupWorker](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L115>)
 
 ```go
 func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error)
 ```
 
-ProvideCleanupWorker constructs the cleanup\-queue worker.
+ProvideCleanupWorker constructs the cleanup\-queue worker. It resolves the backend runtime and store directly rather than through the manager so the drain manager \(which takes this worker's ProcessCleanupQueue hook\) can be built before the manager.
 
 <a name="ProvideDatabaseBreaker"></a>
 ## func [ProvideDatabaseBreaker](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/store.go#L89>)
@@ -150,13 +163,13 @@ func ProvideDatabaseBreaker(i do.Injector) (*breaker.CircuitBreaker, error)
 ProvideDatabaseBreaker constructs the shared \*breaker.CircuitBreaker every driver\-level SQL statement forwards calls through.
 
 <a name="ProvideDrainManager"></a>
-## func [ProvideDrainManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L184>)
+## func [ProvideDrainManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L198>)
 
 ```go
 func ProvideDrainManager(i do.Injector) (*drain.Manager, error)
 ```
 
-ProvideDrainManager constructs the drain manager. Depends on BackendManager \(drain.Core seam\), the cleanup worker \(for the cleanup\-queue flush before backend deletion\), and the wide MetadataStore for the object/quota/lifecycle role surfaces. The returned manager is wired onto BackendManager by di.WireManager so the provider itself stays free of mutation side effects.
+ProvideDrainManager constructs the drain manager from the backend runtime \(fleet/copy/delete primitives\), the write coordinator \(its mover\), the wide MetadataStore for the object/quota/lifecycle role surfaces, the multipart manager's abort hook, and the cleanup worker's queue flush. None of these is the BackendManager, so drain builds before the manager and is injected into it.
 
 <a name="ProvideEncryptionAdmin"></a>
 ## func [ProvideEncryptionAdmin](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/store.go#L77>)
@@ -168,7 +181,7 @@ func ProvideEncryptionAdmin(i do.Injector) (core.EncryptionAdmin, error)
 ProvideEncryptionAdmin aliases the wide MetadataStore as its EncryptionAdmin role for the admin HTTP handler's key rotation and encrypt/decrypt batch ops.
 
 <a name="ProvideEncryptionProvider"></a>
-## func [ProvideEncryptionProvider](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L160>)
+## func [ProvideEncryptionProvider](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L166>)
 
 ```go
 func ProvideEncryptionProvider(i do.Injector) (encryption.KeyProvider, error)
@@ -177,7 +190,7 @@ func ProvideEncryptionProvider(i do.Injector) (encryption.KeyProvider, error)
 ProvideEncryptionProvider creates the key provider for admin key rotation operations. Only registered when encryption is enabled.
 
 <a name="ProvideEncryptor"></a>
-## func [ProvideEncryptor](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L136>)
+## func [ProvideEncryptor](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L142>)
 
 ```go
 func ProvideEncryptor(i do.Injector) (*encryption.Encryptor, error)
@@ -202,6 +215,15 @@ func ProvideInstanceID(_ do.Injector) (instanceid.ID, error)
 ```
 
 ProvideInstanceID resolves a stable per\-process identifier used as the claimed\_by stamp on cleanup\_queue rows. The identifier is generated once at first invoke and reused everywhere the value is needed.
+
+<a name="ProvideIntegrityConfig"></a>
+## func [ProvideIntegrityConfig](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L237>)
+
+```go
+func ProvideIntegrityConfig(_ do.Injector) (*syncutil.AtomicConfig[config.IntegrityConfig], error)
+```
+
+ProvideIntegrityConfig provides the atomic integrity config shared by the multipart manager and the object manager so a SIGHUP flips both write paths' hashing behavior in one swap.
 
 <a name="ProvideLifecycleAdmin"></a>
 ## func [ProvideLifecycleAdmin](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/store.go#L71>)
@@ -248,6 +270,15 @@ func ProvideMetricsDeps(i do.Injector) (metrics.Deps, error)
 
 ProvideMetricsDeps aliases the wide MetadataStore as the metrics.Deps subset metrics.Collector uses to refresh Prometheus gauges.
 
+<a name="ProvideMultipartManager"></a>
+## func [ProvideMultipartManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L263>)
+
+```go
+func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error)
+```
+
+ProvideMultipartManager builds the multipart upload lifecycle manager. Built outside the BackendManager so the drain manager can take its AbortMultipartUploadsOnBackend hook directly.
+
 <a name="ProvideNotificationOutbox"></a>
 ## func [ProvideNotificationOutbox](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/store.go#L83>)
 
@@ -258,7 +289,7 @@ func ProvideNotificationOutbox(i do.Injector) (core.NotificationOutbox, error)
 ProvideNotificationOutbox aliases the wide MetadataStore as its NotificationOutbox role for the notifier worker.
 
 <a name="ProvideNotifier"></a>
-## func [ProvideNotifier](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L267>)
+## func [ProvideNotifier](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/transport.go#L273>)
 
 ```go
 func ProvideNotifier(i do.Injector) (*notify.Notifier, error)
@@ -267,7 +298,7 @@ func ProvideNotifier(i do.Injector) (*notify.Notifier, error)
 ProvideNotifier creates the webhook notification system.
 
 <a name="ProvideObjectCache"></a>
-## func [ProvideObjectCache](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L201>)
+## func [ProvideObjectCache](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L207>)
 
 ```go
 func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error)
@@ -276,7 +307,7 @@ func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error)
 ProvideObjectCache creates the in\-memory LRU object data cache.
 
 <a name="ProvideOverReplicationCleaner"></a>
-## func [ProvideOverReplicationCleaner](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L100>)
+## func [ProvideOverReplicationCleaner](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L103>)
 
 ```go
 func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleaner, error)
@@ -285,7 +316,7 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 ProvideOverReplicationCleaner constructs the over\-replication cleanup worker.
 
 <a name="ProvidePendingReaper"></a>
-## func [ProvidePendingReaper](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L131>)
+## func [ProvidePendingReaper](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L145>)
 
 ```go
 func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error)
@@ -303,7 +334,7 @@ func ProvideRateLimiter(i do.Injector) (*s3api.RateLimiter, error)
 ProvideRateLimiter creates the per\-IP rate limiter.
 
 <a name="ProvideRebalancer"></a>
-## func [ProvideRebalancer](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L82>)
+## func [ProvideRebalancer](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L85>)
 
 ```go
 func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error)
@@ -312,7 +343,7 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error)
 ProvideRebalancer constructs the rebalancer worker.
 
 <a name="ProvideReconciler"></a>
-## func [ProvideReconciler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L166>)
+## func [ProvideReconciler](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L180>)
 
 ```go
 func ProvideReconciler(i do.Injector) (*worker.Reconciler, error)
@@ -321,7 +352,7 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error)
 ProvideReconciler constructs the bucket reconciler worker. Registered only in worker/all modes because reconciliation is a worker\-side background task. Returns the reconciler so the lifecycle manager can register a service for it; the reconciler is also resolvable directly for the admin handler's inspection endpoints.
 
 <a name="ProvideRedisCounterBackend"></a>
-## func [ProvideRedisCounterBackend](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L169>)
+## func [ProvideRedisCounterBackend](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L175>)
 
 ```go
 func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, error)
@@ -330,7 +361,7 @@ func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, er
 ProvideRedisCounterBackend creates the shared Redis counter backend.
 
 <a name="ProvideReplicator"></a>
-## func [ProvideReplicator](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L91>)
+## func [ProvideReplicator](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L94>)
 
 ```go
 func ProvideReplicator(i do.Injector) (*worker.Replicator, error)
@@ -348,7 +379,7 @@ func ProvideS3Server(i do.Injector) (*s3api.Server, error)
 ProvideS3Server creates the S3\-compatible HTTP handler.
 
 <a name="ProvideScrubber"></a>
-## func [ProvideScrubber](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L147>)
+## func [ProvideScrubber](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/workers.go#L161>)
 
 ```go
 func ProvideScrubber(i do.Injector) (*worker.Scrubber, error)
@@ -365,8 +396,17 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error)
 
 ProvideUIHandler creates the web dashboard handler.
 
+<a name="ProvideWriteCoordinator"></a>
+## func [ProvideWriteCoordinator](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L244>)
+
+```go
+func ProvideWriteCoordinator(i do.Injector) (*writepath.Coordinator, error)
+```
+
+ProvideWriteCoordinator builds the write coordinator: the shared delete/move/orphan\-cleanup primitive the manager, multipart manager, object manager, and drain manager all route writes through.
+
 <a name="WireAuditMetrics"></a>
-## func [WireAuditMetrics](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/injector.go#L148>)
+## func [WireAuditMetrics](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/injector.go#L150>)
 
 ```go
 func WireAuditMetrics()
@@ -375,16 +415,16 @@ func WireAuditMetrics()
 WireAuditMetrics connects the audit event counter to Prometheus. Called from the main binary during startup, outside the injector.
 
 <a name="WireManager"></a>
-## func [WireManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/wiring.go#L40>)
+## func [WireManager](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/wiring.go#L34>)
 
 ```go
 func WireManager(inj do.Injector) error
 ```
 
-WireManager resolves the BackendManager plus every required worker \(as a smoke check that construction succeeded\) and installs the drain manager onto the BackendManager. Returns the first error from resolving a required dependency; the optional PendingReaper Failed resolution is logged so a broken provider stays distinguishable from an intentionally absent one.
+WireManager resolves the BackendManager plus every required worker \(as a smoke check that construction succeeded\) and points the runtime's eligibility filter at the drain manager. Returns the first error from resolving a required dependency; the optional PendingReaper Failed resolution is logged so a broken provider stays distinguishable from an intentionally absent one.
 
 <a name="BackendsResult"></a>
-## type [BackendsResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L43-L53>)
+## type [BackendsResult](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L49-L59>)
 
 BackendsResult groups the outputs of backend initialization so multiple providers can resolve it without re\-running construction.
 
@@ -403,7 +443,7 @@ type BackendsResult struct {
 ```
 
 <a name="ProvideBackends"></a>
-### func [ProvideBackends](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L57>)
+### func [ProvideBackends](<https://github.com/afreidah/s3-orchestrator/blob/main/internal/di/backend.go#L63>)
 
 ```go
 func ProvideBackends(i do.Injector) (*BackendsResult, error)

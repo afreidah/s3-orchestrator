@@ -30,31 +30,43 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
 // BackendOps is the narrow surface of *proxy.BackendManager that the admin
-// handler depends on for operations not encapsulated by a named sub-manager
-// (replicator, drain, scrubber, etc.). *proxy.BackendManager satisfies it.
+// handler depends on for store-coupled operations not encapsulated by a named
+// sub-manager (replicator, drain, scrubber, etc.). *proxy.BackendManager
+// satisfies it.
 type BackendOps interface {
 	GetDashboardData(ctx context.Context) (*dashboard.Data, error)
 	FlushUsage(ctx context.Context) error
-	UpdateQuotaMetrics(ctx context.Context) error
 	ReconcileUsage(ctx context.Context) (map[string]int64, error)
 	RecordUsage(backendName string, requests, ingressBytes, egressBytes int64)
-	GetBackend(name string) (backend.ObjectBackend, error)
 	IntegrityConfig() *config.IntegrityConfig
 }
 
-// Compile-time assertion: *proxy.BackendManager implements BackendOps.
-var _ BackendOps = (*proxy.BackendManager)(nil)
+// RuntimeOps is the backend-runtime surface the admin handler reaches
+// directly: backend lookup and the post-mutation quota-metric refresh.
+// *infra.BackendRuntime satisfies it.
+type RuntimeOps interface {
+	GetBackend(name string) (backend.ObjectBackend, error)
+	UpdateQuotaMetrics(ctx context.Context) error
+}
+
+// Compile-time assertions.
+var (
+	_ BackendOps = (*proxy.BackendManager)(nil)
+	_ RuntimeOps = (*infra.BackendRuntime)(nil)
+)
 
 // Handler serves the admin API endpoints.
 type Handler struct {
 	log          *slog.Logger
 	backendOps   BackendOps
+	runtimeOps   RuntimeOps
 	replicator   ReplicatorOps
 	rebalancer   RebalancerOps // nil when the worker pool is not wired
 	overRep      OverReplicationOps
@@ -85,6 +97,7 @@ type Handler struct {
 // hand the handler a god-shaped *proxy.BackendManager.
 type Deps struct {
 	BackendOps   BackendOps
+	RuntimeOps   RuntimeOps
 	Replicator   ReplicatorOps
 	Rebalancer   RebalancerOps // nil when the worker pool is not wired
 	OverRep      OverReplicationOps
@@ -108,6 +121,7 @@ type Deps struct {
 func New(d *Deps) *Handler {
 	must.NotNil("d", d)
 	must.NotNil("d.BackendOps", d.BackendOps)
+	must.NotNil("d.RuntimeOps", d.RuntimeOps)
 	must.NotNil("d.Drain", d.Drain)
 	must.NotNil("d.Lifecycle", d.Lifecycle)
 	must.NotNil("d.Objects", d.Objects)
@@ -117,6 +131,7 @@ func New(d *Deps) *Handler {
 	return &Handler{
 		log:          slog.Default().With(logfmt.Component("admin")),
 		backendOps:   d.BackendOps,
+		runtimeOps:   d.RuntimeOps,
 		replicator:   d.Replicator,
 		rebalancer:   d.Rebalancer,
 		overRep:      d.OverRep,

@@ -28,20 +28,28 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
+// InjectorDeps groups the values NewInjector seeds the container with.
+type InjectorDeps struct {
+	Config    *config.Config
+	Mode      config.Mode
+	LogLevel  *slog.LevelVar
+	LogBuffer *telemetry.LogBuffer
+}
+
 // NewInjector creates the DI container and registers every provider
 // the service needs. The body is intentionally a flat sequence of
 // per-domain registration calls so a contributor can see the full
 // dependency graph in one screen; each helper below owns the
 // providers for its domain.
-func NewInjector(cfg *config.Config, mode config.Mode, logLevel *slog.LevelVar, logBuffer *telemetry.LogBuffer) do.Injector {
+func NewInjector(deps InjectorDeps) do.Injector {
 	inj := do.New()
 
-	registerValues(inj, cfg, mode, logLevel, logBuffer)
+	registerValues(inj, deps.Config, deps.Mode, deps.LogLevel, deps.LogBuffer)
 	registerInfrastructure(inj)
 	registerBackendStack(inj)
-	registerWorkers(inj, cfg, mode)
+	registerWorkers(inj, deps.Config, deps.Mode)
 	registerTransport(inj)
-	registerOptionalFeatures(inj, cfg)
+	registerOptionalFeatures(inj, deps.Config)
 
 	return inj
 }
@@ -77,14 +85,16 @@ func registerInfrastructure(inj do.Injector) {
 func registerBackendStack(inj do.Injector) {
 	do.Provide(inj, ProvideBackends)
 	do.Provide(inj, ProvideBreakerRegistry)
+	do.Provide(inj, ProvideBackendRuntime)
+	do.Provide(inj, ProvideIntegrityConfig)
+	do.Provide(inj, ProvideWriteCoordinator)
+	do.Provide(inj, ProvideMultipartManager)
 	do.Provide(inj, ProvideBackendManager)
 }
 
 // registerWorkers wires the background workers and the drain manager.
 // PendingReaper and Reconciler register only when their feature is on
-// (pending-write pattern enabled / worker-side mode). drain.Manager
-// itself wires onto BackendManager via WireDrain so the eligibility
-// filters see drain state.
+// (pending-write pattern enabled / worker-side mode).
 func registerWorkers(inj do.Injector, cfg *config.Config, mode config.Mode) {
 	do.Provide(inj, ProvideRebalancer)
 	do.Provide(inj, ProvideReplicator)

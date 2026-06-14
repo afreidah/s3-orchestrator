@@ -419,7 +419,7 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 	if backend.hasObject("__multipart/upload-1/1") {
 		t.Error("part temp key should be deleted")
 	}
-	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
+	if got := mgr.Runtime().Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
 		t.Errorf("apiRequests = %d, want 2 (1 part delete + 1 abort)", got)
 	}
 }
@@ -707,7 +707,7 @@ func TestUploadPart_UsageLimitExceeded(t *testing.T) {
 
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	mgr.Usage().UpdateLimits(map[string]core.UsageLimits{
+	mgr.Runtime().Usage().UpdateLimits(map[string]core.UsageLimits{
 		"b1": {IngressByteLimit: 1},
 	})
 
@@ -737,7 +737,7 @@ func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
 	if backend.hasObject("__multipart/upload-1/1") {
 		t.Error("orphaned part should be deleted from backend")
 	}
-	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
+	if got := mgr.Runtime().Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
 		t.Errorf("apiRequests = %d, want 2 (PUT + orphan DELETE)", got)
 	}
 }
@@ -892,10 +892,10 @@ func TestCompleteMultipartUpload_UsageRecords2NPlus1APICalls(t *testing.T) {
 	}
 
 	wantAPICalls := int64(2*3 + 1)
-	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != wantAPICalls {
+	if got := mgr.Runtime().Usage().Backend().Load("b1", counter.FieldAPIRequests); got != wantAPICalls {
 		t.Errorf("apiRequests = %d, want %d (2*N+1 where N=3)", got, wantAPICalls)
 	}
-	if got := mgr.Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 9 {
+	if got := mgr.Runtime().Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 9 {
 		t.Errorf("ingressBytes = %d, want 9", got)
 	}
 }
@@ -919,10 +919,10 @@ func TestUploadPart_BackendFailure_StillRecordsUsage(t *testing.T) {
 	if _, err := mgr.multipartManager.UploadPart(context.Background(), "multi", "key", "upload-1", 1, bytes.NewReader([]byte("data")), 4); err == nil {
 		t.Fatal("expected error from backend failure")
 	}
-	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := mgr.Runtime().Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (failed call still counts)", got)
 	}
-	if got := mgr.Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 0 {
+	if got := mgr.Runtime().Usage().Backend().Load("b1", counter.FieldIngressBytes); got != 0 {
 		t.Errorf("ingressBytes = %d, want 0 (upload failed)", got)
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/tls"
 	"log/slog"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/samber/do/v2"
@@ -29,8 +30,13 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -74,9 +80,11 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 		}
 		var be backend.ObjectBackend = s3be
 		if cfg.BackendCircuitBreaker.Enabled {
-			cbBackend := backend.NewCircuitBreakerBackend(s3be, bcfg.Name,
-				cfg.BackendCircuitBreaker.FailureThreshold,
-				cfg.BackendCircuitBreaker.OpenTimeout)
+			cbBackend := backend.NewCircuitBreakerBackend(s3be, backend.CircuitBreakerConfig{
+				Name:      bcfg.Name,
+				Threshold: cfg.BackendCircuitBreaker.FailureThreshold,
+				Timeout:   cfg.BackendCircuitBreaker.OpenTimeout,
+			})
 			breakers = append(breakers, cbBackend)
 			be = cbBackend
 		}
@@ -222,6 +230,78 @@ func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error) {
 }
 
 // -------------------------------------------------------------------------
+// WRITE-PATH COLLABORATOR PROVIDERS
+// -------------------------------------------------------------------------
+
+// ProvideIntegrityConfig provides the atomic integrity config shared by the
+// multipart manager and the object manager so a SIGHUP flips both write
+// paths' hashing behavior in one swap.
+func ProvideIntegrityConfig(_ do.Injector) (*syncutil.AtomicConfig[config.IntegrityConfig], error) {
+	return &syncutil.AtomicConfig[config.IntegrityConfig]{}, nil
+}
+
+// ProvideWriteCoordinator builds the write coordinator: the shared
+// delete/move/orphan-cleanup primitive the manager, multipart manager,
+// object manager, and drain manager all route writes through.
+func ProvideWriteCoordinator(i do.Injector) (*writepath.Coordinator, error) {
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	rt, err := do.Invoke[*infra.BackendRuntime](i)
+	if err != nil {
+		return nil, err
+	}
+	stores, err := do.Invoke[core.MetadataStore](i)
+	if err != nil {
+		return nil, err
+	}
+	return writepath.New(rt, stores, cfg.WritePath.PendingPattern.IsEnabled()), nil
+}
+
+// ProvideMultipartManager builds the multipart upload lifecycle manager.
+// Built outside the BackendManager so the drain manager can take its
+// AbortMultipartUploadsOnBackend hook directly.
+func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	rt, err := do.Invoke[*infra.BackendRuntime](i)
+	if err != nil {
+		return nil, err
+	}
+	coord, err := do.Invoke[*writepath.Coordinator](i)
+	if err != nil {
+		return nil, err
+	}
+	stores, err := do.Invoke[core.MetadataStore](i)
+	if err != nil {
+		return nil, err
+	}
+	integrityCfg, err := do.Invoke[*syncutil.AtomicConfig[config.IntegrityConfig]](i)
+	if err != nil {
+		return nil, err
+	}
+	enc, err := resolveOptionalEncryptor(i, cfg.Encryption.Enabled)
+	if err != nil {
+		return nil, err
+	}
+	// dekCacheTTL pegs how long cached unwrapped DEKs live so UploadPart
+	// need not re-unwrap the upload-level DEK on every part.
+	const dekCacheTTL = time.Hour
+	return multipart.New(&multipart.Deps{
+		Core:         rt,
+		Coord:        coord,
+		Stores:       stores,
+		Encryptor:    enc,
+		ObjectCache:  resolveOptionalCache(i),
+		DEKCacheTTL:  dekCacheTTL,
+		IntegrityCfg: integrityCfg,
+	}), nil
+}
+
+// -------------------------------------------------------------------------
 // MANAGER PROVIDER
 // -------------------------------------------------------------------------
 
@@ -229,8 +309,62 @@ func ProvideObjectCache(i do.Injector) (objcache.ObjectCache, error) {
 // narrow per-role store interfaces supplied. Also installs a recovery
 // listener on the DB breaker so the degraded-mode location cache is
 // cleared the moment the DB transitions back to closed.
+// ProvideBackendRuntime builds the backend runtime: the fleet registry,
+// usage tracker, admission semaphore, timeout policy, error classification,
+// and metrics collector. Constructing it here (rather than inside
+// NewBackendManager) makes the runtime a first-class, independently-resolvable
+// dependency that workers, drain, and the manager all share, instead of a
+// promoted embed only reachable through the manager.
+func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	br, err := do.Invoke[*BackendsResult](i)
+	if err != nil {
+		return nil, err
+	}
+	metricsDeps, err := do.Invoke[metrics.Deps](i)
+	if err != nil {
+		return nil, err
+	}
+
+	backendNames := make([]string, 0, len(br.Backends))
+	for name := range br.Backends {
+		backendNames = append(backendNames, name)
+	}
+
+	counters := resolveOptionalCounterBackend(i)
+	if counters == nil {
+		counters = counter.NewLocalCounterBackend(backendNames)
+	}
+	usage := counter.NewUsageTracker(counters, br.UsageLimits)
+
+	rt := infra.New(&infra.Config{
+		Backends:        br.Backends,
+		Order:           br.Order,
+		BackendTimeout:  cfg.Server.BackendTimeout,
+		Usage:           usage,
+		RoutingStrategy: cfg.RoutingStrategy,
+		MaxObjectSizes:  br.MaxObjectSizes,
+		AdmissionSem:    admissionSemFor(&cfg.Server),
+		Log:             slog.Default().With(logfmt.Component("backend_manager")),
+	})
+	rt.SetMetricsCollector(metrics.New(metrics.CollectorDeps{
+		Store:             metricsDeps,
+		Usage:             usage,
+		BackendNames:      backendNames,
+		ReplicationFactor: replicationFactorFromInjector(i),
+	}))
+	return rt, nil
+}
+
 func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	runtime, err := do.Invoke[*infra.BackendRuntime](i)
 	if err != nil {
 		return nil, err
 	}
@@ -254,8 +388,25 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	if err != nil {
 		return nil, err
 	}
+	coord, err := do.Invoke[*writepath.Coordinator](i)
+	if err != nil {
+		return nil, err
+	}
+	multipartManager, err := do.Invoke[*multipart.Manager](i)
+	if err != nil {
+		return nil, err
+	}
+	integrityCfg, err := do.Invoke[*syncutil.AtomicConfig[config.IntegrityConfig]](i)
+	if err != nil {
+		return nil, err
+	}
+	drainManager, err := do.Invoke[*drain.Manager](i)
+	if err != nil {
+		return nil, err
+	}
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
+		Runtime: runtime,
 		Storage: proxy.StorageDeps{
 			Backends: br.Backends,
 			Order:    br.Order,
@@ -284,6 +435,12 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 			Metrics:           metricsDeps,
 			AdmissionSem:      admissionSemFor(&cfg.Server),
 			ReplicationFactor: replicationFactorFromInjector(i),
+		},
+		Collaborators: proxy.Collaborators{
+			Coord:        coord,
+			Multipart:    multipartManager,
+			Drain:        drainManager,
+			IntegrityCfg: integrityCfg,
 		},
 	})
 

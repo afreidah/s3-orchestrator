@@ -36,10 +36,10 @@ import (
 // GetObject") in the same end-to-end trace.
 const managerSpanPrefix = "Manager "
 
-// Stores is the narrow persistence surface object.Manager needs: object
+// ObjectStores is the narrow persistence surface object.Manager needs: object
 // CRUD + list, plus quota stats. Declared locally so the manager does
 // not pull in the full MetadataStore.
-type Stores interface {
+type ObjectStores interface {
 	core.ObjectStore
 	core.QuotaStore
 }
@@ -47,9 +47,9 @@ type Stores interface {
 // Manager handles object-level CRUD operations with read failover,
 // broadcast reads during degraded mode, and location caching.
 type Manager struct {
-	core              ObjectCore        // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics
+	core              ObjectRuntime     // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics
 	coord             ObjectCoordinator // write-path helpers shared with BackendManager and MultipartManager
-	stores            Stores            // direct store access for read paths and quota inspection
+	stores            ObjectStores      // direct store access for read paths and quota inspection
 	encryptor         *encryption.Encryptor
 	cache             *LocationCache
 	objectCache       objcache.ObjectCache // nil when object data caching is disabled
@@ -61,14 +61,14 @@ type Manager struct {
 
 // Deps bundles the dependencies New needs so the call signature stays
 // under the parameter-count ceiling. Core and Coord are
-// consumer-declared interfaces; the concrete *infra.Core and
+// consumer-declared interfaces; the concrete *infra.BackendRuntime and
 // *writepath.Coordinator that BackendManager builds satisfy them
 // implicitly.
 type Deps struct {
-	Core              ObjectCore
-	BroadcastCore     readpath.Core // narrow consumer interface for the failover broadcaster; satisfied by the same *infra.Core that backs Core
+	Core              ObjectRuntime
+	BroadcastCore     readpath.ReadRuntime // narrow consumer interface for the failover broadcaster; satisfied by the same *infra.BackendRuntime that backs Core
 	Coord             ObjectCoordinator
-	Stores            Stores
+	Stores            ObjectStores
 	Encryptor         *encryption.Encryptor
 	LocationCache     *LocationCache
 	ObjectCache       objcache.ObjectCache
@@ -105,8 +105,15 @@ func New(d *Deps) *Manager {
 		objectCache:       d.ObjectCache,
 		parallelBroadcast: d.ParallelBroadcast,
 		integrityCfg:      d.IntegrityCfg,
-		failover:          readpath.New(d.BroadcastCore, d.Stores, d.LocationCache, d.ParallelBroadcast, d.DegradedBroadcastParallelism, !d.DisableDegradedReads),
-		log:               slog.Default().With(logfmt.Component("object")),
+		failover: readpath.New(readpath.FailoverDeps{
+			Core:                         d.BroadcastCore,
+			Stores:                       d.Stores,
+			Cache:                        d.LocationCache,
+			ParallelBroadcast:            d.ParallelBroadcast,
+			DegradedBroadcastParallelism: d.DegradedBroadcastParallelism,
+			DegradedReadsEnabled:         !d.DisableDegradedReads,
+		}),
+		log: slog.Default().With(logfmt.Component("object")),
 	}
 }
 
