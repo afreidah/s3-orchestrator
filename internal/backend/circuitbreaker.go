@@ -13,6 +13,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 
@@ -35,9 +36,22 @@ var _ ObjectBackend = (*CircuitBreakerBackend)(nil)
 // logic. The breaker is wired to the telemetry hook so transitions surface
 // on the standard CircuitBreaker* metrics and the BackendCircuit*
 // notification events.
-func NewCircuitBreakerBackend(real ObjectBackend, name string, threshold int, timeout time.Duration) *CircuitBreakerBackend {
-	cb := breaker.NewCircuitBreaker(name, threshold, timeout, isBackendError, breaker.ErrBackendUnavailable)
-	cb.SetOnStateChange(telemetry.NewCircuitBreakerHook(name))
+// CircuitBreakerConfig configures the circuit breaker wrapping a backend.
+type CircuitBreakerConfig struct {
+	Name      string
+	Threshold int
+	Timeout   time.Duration
+}
+
+func NewCircuitBreakerBackend(real ObjectBackend, cfg CircuitBreakerConfig) *CircuitBreakerBackend {
+	cb := breaker.NewCircuitBreaker(breaker.Config{
+		Name:      cfg.Name,
+		Threshold: cfg.Threshold,
+		Timeout:   cfg.Timeout,
+		IsError:   isBackendError,
+		Sentinel:  breaker.ErrBackendUnavailable,
+	})
+	cb.SetOnStateChange(telemetry.NewCircuitBreakerHook(cfg.Name))
 	return &CircuitBreakerBackend{
 		real:           real,
 		CircuitBreaker: cb,
@@ -53,9 +67,15 @@ func (cb *CircuitBreakerBackend) Unwrap() ObjectBackend {
 
 // isBackendError returns true for errors that indicate backend health issues.
 // 404/NoSuchKey errors are excluded because they indicate a healthy backend
-// with a missing object, not a backend failure.
+// with a missing object, not a backend failure. Context cancellation and
+// deadline are excluded too: they signal a caller-side timeout or shutdown,
+// not the wrapped backend's health, and counting them lets a slow source or
+// caller cancellation falsely trip an otherwise healthy backend's breaker.
 func isBackendError(err error) bool {
 	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 	return !IsNotFound(err)

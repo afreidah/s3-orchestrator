@@ -60,19 +60,19 @@ const spanPrefix = "Manager "
 // existence. Concurrent UploadPart calls on the same uploadID with a
 // cold cache will each issue their own Unwrap; the design accepts that
 // minor cold-start cost in exchange for not pulling in singleflight.
-// Stores is the narrow persistence surface multipart needs: multipart
+// MultipartStores is the narrow persistence surface multipart needs: multipart
 // row/part operations and the advisory lock used to serialize stale-upload
 // sweeps. Declared locally so multipart does not pull in the full
 // MetadataStore.
-type Stores interface {
+type MultipartStores interface {
 	core.MultipartStore
 	core.AdvisoryLocker
 }
 
 type Manager struct {
-	core         MultipartCore          // infrastructure subset: backends, usage, timeout, error classification, metrics
+	core         MultipartRuntime       // infrastructure subset: backends, usage, timeout, error classification, metrics
 	coord        *writepath.Coordinator // write-path helpers shared with BackendManager and ObjectManager
-	stores       Stores                 // multipart row/part operations and WithAdvisoryLock
+	stores       MultipartStores        // multipart row/part operations and WithAdvisoryLock
 	encryptor    *encryption.Encryptor
 	objectCache  objcache.ObjectCache
 	dekCache     *syncutil.TTLCache[string, []byte]
@@ -87,20 +87,34 @@ type Manager struct {
 // populates content_hash on the recorded location. The
 // component-scoped logger is built in the constructor body per the
 // project's logging convention.
-func New(core MultipartCore, coord *writepath.Coordinator, stores Stores, encryptor *encryption.Encryptor, objectCache objcache.ObjectCache, dekCacheTTL time.Duration, integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]) *Manager {
-	must.NotNil("core", core)
-	must.NotNil("coord", coord)
-	must.NotNil("stores", stores)
+func New(deps *Deps) *Manager {
+	must.NotNil("deps", deps)
+	must.NotNil("Core", deps.Core)
+	must.NotNil("Coord", deps.Coord)
+	must.NotNil("Stores", deps.Stores)
 	return &Manager{
-		core:         core,
-		coord:        coord,
-		stores:       stores,
-		encryptor:    encryptor,
-		objectCache:  objectCache,
-		dekCache:     syncutil.NewTTLCache[string, []byte](dekCacheTTL),
-		integrityCfg: integrityCfg,
+		core:         deps.Core,
+		coord:        deps.Coord,
+		stores:       deps.Stores,
+		encryptor:    deps.Encryptor,
+		objectCache:  deps.ObjectCache,
+		dekCache:     syncutil.NewTTLCache[string, []byte](deps.DEKCacheTTL),
+		integrityCfg: deps.IntegrityCfg,
 		log:          slog.Default().With(logfmt.Component("multipart")),
 	}
+}
+
+// Deps groups the multipart manager's constructor parameters: backend
+// runtime, shared write coordinator, store surface, optional encryption /
+// object cache, the DEK-cache TTL, and the shared integrity config.
+type Deps struct {
+	Core         MultipartRuntime
+	Coord        *writepath.Coordinator
+	Stores       MultipartStores
+	Encryptor    *encryption.Encryptor // nil when encryption is disabled
+	ObjectCache  objcache.ObjectCache  // nil when object caching is disabled
+	DEKCacheTTL  time.Duration
+	IntegrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
 // Close stops the per-upload DEK cache eviction loop.

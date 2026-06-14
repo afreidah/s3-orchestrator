@@ -293,7 +293,7 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	if backend.hasObject("orphan.txt") {
 		t.Error("expected orphan to be deleted from backend")
 	}
-	if got := mgr.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
+	if got := mgr.Runtime().Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("apiRequests = %d, want 1 (cleanup delete)", got)
 	}
 }

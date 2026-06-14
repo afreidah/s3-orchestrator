@@ -612,7 +612,7 @@ func TestMetricsCollector_OrphanBytesSubtractedFromAvailable(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	mc := metrics.New(store, counter.NewUsageTracker(nil, nil), []string{"b1"}, func() int { return 0 })
+	mc := metrics.New(metrics.CollectorDeps{Store: store, Usage: counter.NewUsageTracker(nil, nil), BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics: %v", err)
 	}

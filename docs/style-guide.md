@@ -193,15 +193,17 @@ Group related fields with inline comments explaining non-obvious fields:
 
 ```go
 type BackendManager struct {
-    *backendCore                                     // embeds backend fleet, admission, drain, metrics
-    stores          Stores                           // narrow store-role composite; see Stores interface
-    pendingEnabled  bool                             // mirrors cfg.PendingEnabled for write-path branches
-    routingStrategy config.RoutingStrategy           // RoutingPack or RoutingSpread
-    rebalanceCfg    syncutil.AtomicConfig[config.RebalanceConfig]
-    replicationCfg  syncutil.AtomicConfig[config.ReplicationConfig]
-    Rebalancer      *worker.Rebalancer
-    Replicator      *worker.Replicator
-    Scrubber        *worker.Scrubber
+    runtime          *infra.BackendRuntime  // backend fleet/admission/usage/metrics; expose via Runtime()
+    stores           Stores                 // narrow store-role view; see Stores interface
+    coord            *writepath.Coordinator // shared write-path helpers (also held by objectManager and multipartManager)
+    multipartManager *multipart.Manager     // multipart upload lifecycle; expose via Multipart()
+    objectManager    *object.Manager        // CRUD, read failover, broadcast reads; expose via Objects()
+    dashboard        *dashboard.Aggregator  // web UI data aggregation
+    drainManager     *drain.Manager         // nil-able; expose via Drain()
+
+    usageFlushCfg syncutil.AtomicConfig[config.UsageFlushConfig]
+    lifecycleCfg  syncutil.AtomicConfig[config.LifecycleConfig]
+    integrityCfg  *syncutil.AtomicConfig[config.IntegrityConfig] // shared with objectManager
 }
 ```
 
@@ -209,7 +211,7 @@ type BackendManager struct {
 
 This codebase follows the Go-idiomatic "accept interfaces, return structs" pattern: **producer packages export concrete `*Type` values with no producer-side interface**, and **each consumer declares its own narrow interface** listing only the methods it actually calls. The concrete type satisfies every consumer's local interface because Go interfaces are structurally typed.
 
-Applied across `internal/store` (the per-role store interfaces consumed at use sites), `internal/worker` (`Ops`, `CleanupOps`, `ScrubberOps` in `ops_runtime.go`), and the `internal/proxy/*` subpackages (`MultipartCore`/`MultipartCoordinator`, `ObjectCore`/`ObjectCoordinator`, `WritepathCore`).
+Applied across `internal/store` (the per-role store interfaces consumed at use sites), `internal/worker` (`Ops`, `CleanupOps`, `ScrubberOps` in `ops_runtime.go`), and the `internal/proxy/*` subpackages (`MultipartRuntime`/`MultipartCoordinator`, `ObjectRuntime`/`ObjectCoordinator`, `WriteRuntime`).
 
 **Rationale:**
 - A consumer's dependency footprint is documented in its own source file.
@@ -229,13 +231,13 @@ Applied across `internal/store` (the per-role store interfaces consumed at use s
 | `internal/worker/ops_runtime.go` | Worker-side `Ops` / `CleanupOps` / `ScrubberOps` interfaces against the proxy infrastructure |
 | `internal/store/core/interfaces.go` | Per-role narrow store interfaces (consumers compose them when they need to declare a minimal store dependency) |
 
-**Naming convention:** `<Consumer><Provider>` — e.g. the multipart subpackage's view of `*infra.Core` is `MultipartCore`; the object subpackage's view of `*writepath.Coordinator` is `ObjectCoordinator`. The prefix names the consumer, the suffix names the producer concept.
+**Naming convention:** `<Consumer><Provider>` — e.g. the multipart subpackage's view of `*infra.BackendRuntime` is `MultipartRuntime`; the object subpackage's view of `*writepath.Coordinator` is `ObjectCoordinator`. The prefix names the consumer, the suffix names the producer concept.
 
-**Constructor shape:** consumers take the interfaces, not concrete pointers. Composition-layer code (the root proxy package, DI providers) passes the concrete `*infra.Core`, `*writepath.Coordinator`, `*object.Manager`, etc., and the concrete types satisfy the interfaces implicitly.
+**Constructor shape:** consumers take the interfaces, not concrete pointers. Composition-layer code (the root proxy package, DI providers) passes the concrete `*infra.BackendRuntime`, `*writepath.Coordinator`, `*object.Manager`, etc., and the concrete types satisfy the interfaces implicitly.
 
 ```go
 // internal/proxy/multipart/consumer_interfaces.go
-type MultipartCore interface {
+type MultipartRuntime interface {
     GetBackend(name string) (backend.ObjectBackend, error)
     Usage() *counter.UsageTracker
     WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
@@ -244,12 +246,12 @@ type MultipartCore interface {
 
 // internal/proxy/multipart/manager.go
 type Manager struct {
-    core  MultipartCore        // not *infra.Core
+    core  MultipartRuntime        // not *infra.BackendRuntime
     coord MultipartCoordinator // not *writepath.Coordinator
     // ...
 }
 
-func New(core MultipartCore, coord MultipartCoordinator, ...) *Manager { ... }
+func New(core MultipartRuntime, coord MultipartCoordinator, ...) *Manager { ... }
 ```
 
 **Mocking:** generated mocks are not produced eagerly. When a test actually needs to mock a consumer-declared interface, add a `//go:generate mockgen -source=consumer_interfaces.go -destination=mock/<file>.go -package=<pkg>mock` directive at the top of the consumer interface file and run `make generate`. Until a mock is needed, the interface declaration alone documents the dependency surface — generating unused mocks is busywork.
@@ -259,7 +261,7 @@ func New(core MultipartCore, coord MultipartCoordinator, ...) *Manager { ... }
 1. **Multiple implementations actually exist** (a real polymorphism point, e.g. `keySource` over S3 iter + DB iter).
 2. **A test fake genuinely benefits from the seam** — a hand-rolled fake or `gomock`-generated mock that lets tests exercise the consumer without standing up the real producer (e.g. `worker.Ops` mocked across ~60 test sites; `admin.ReplicatorOps`/`OverReplicationOps`/`ScrubberOps`/`Reconciler` whose fakes drive admin handler branches).
 3. **An import cycle would otherwise form** (e.g. `readpath.LocationCache` — without the interface, `readpath` would have to import `object` which already imports `readpath`).
-4. **The interface models a real domain boundary** between subsystems (`drain.Core`, `MultipartCore`, `ObjectCore`, `WritepathCore`).
+4. **The interface models a real domain boundary** between subsystems (`drain.DrainRuntime`, `MultipartRuntime`, `ObjectRuntime`, `WriteRuntime`).
 
 If none apply — single impl, single consumer, no test fake, no cycle, no boundary — pass the concrete `*Type` directly. Examples cut under #918: `readpath.ObjectLocationLister`, `multipart.MultipartCoordinator`, `multipart.StaleCleaner`, `accounting.UsageTracker`.
 
@@ -285,7 +287,7 @@ If none apply — single impl, single consumer, no test fake, no cycle, no bound
 
   The single concrete `MetadataStore` satisfies every such composite implicitly, so DI wiring stays one line per provider while each consumer's dependency footprint is documented in its own source file. This rule exists because a feature package that takes `MetadataStore` whole gives the misleading impression it might call any DB role — auditing the actual surface then requires reading the implementation, which defeats the point of consumer-declared interfaces.
 
-**Producer-side interfaces are an anti-pattern.** `*infra.Core`, `*writepath.Coordinator`, `*object.Manager`, `*multipart.Manager` are exported as concrete pointer types with no sibling `Core`/`Coordinator`/`Manager` interface that mirrors their public surface. Producer-side interfaces force every consumer to mock the full producer API, which is exactly what this pattern is built to avoid.
+**Producer-side interfaces are an anti-pattern.** `*infra.BackendRuntime`, `*writepath.Coordinator`, `*object.Manager`, `*multipart.Manager` are exported as concrete pointer types with no sibling `Core`/`Coordinator`/`Manager` interface that mirrors their public surface. Producer-side interfaces force every consumer to mock the full producer API, which is exactly what this pattern is built to avoid.
 
 **Logger is not a behavior dependency.** Never include `Log() *slog.Logger` in a consumer-declared interface. The logger is observability infrastructure: it has no return value the consumer depends on, and the per-component scope is a property of the consumer itself, not of the producer. Components build their own `log *slog.Logger` field in the constructor body via `slog.Default().With(logfmt.Component("<slug>"))` (see Logging and Audit), so each subsystem owns its component name and tests do not need to thread a logger through dependency interfaces.
 
@@ -302,7 +304,7 @@ If none apply — single impl, single consumer, no test fake, no cycle, no bound
 
 For interfaces that exist to *provide* a value (typical "Acct" / "Stores" / "Config" getters), name the interface after the returned type plus `Provider` or `Source` — `RecorderProvider` for `Acct() *Recorder`, `ConfigSource` for `Config() *Config`. The `Provider` / `Source` suffix is also an agent noun and satisfies the rule.
 
-Multi-method interfaces are exempt: `worker.Ops`, `ObjectCore`, `MultipartCoordinator` describe a role (or a composite of sub-roles), not a single action, so the `-er` form does not apply.
+Multi-method interfaces are exempt: `worker.Ops`, `ObjectRuntime`, `MultipartCoordinator` describe a role (or a composite of sub-roles), not a single action, so the `-er` form does not apply.
 
 ### Per-Backend Accounting: Use the Recorder
 
@@ -518,9 +520,9 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
     if err != nil {
         return nil, err
     }
-    rb := worker.NewRebalancer(mgr, stores)
-    mgr.Rebalancer = rb
-    return rb, nil
+    // Runtime primitives come from the backend runtime; the manager
+    // supplies the Placement facet (target selection, delete/move).
+    return worker.NewRebalancer(mgr.Runtime(), mgr, stores), nil
 }
 ```
 
@@ -614,6 +616,19 @@ genuinely missing dependency surfaces at boot, not at first use.
   the injector itself.
 
 ### Constructor Patterns
+
+**Parameter threshold.** A constructor with **four or more parameters**, or
+with two or more same-typed primitives (bool/int/string) whose call-site
+order is ambiguous, takes a single `Deps` (dependency bag) or `Config`
+(value config) struct instead of a positional list — named fields document
+each argument and make transposition impossible. `context.Context` stays
+the first positional argument, never inside the struct; three or fewer
+distinct-typed parameters stay positional. Pass the struct by pointer when
+it is large (`gocritic` flags structs over ~80 bytes), by value otherwise.
+Capability sub-structs (the `BackendManagerConfig` Storage / Stores /
+Policies / Features / Operations grouping) are reserved for genuinely large
+configs whose fields come from different sources — a flat `Deps` is the
+default.
 
 Constructors at the DI/wiring boundary panic on missing required
 dependencies via `internal/util/must`. The boundary is the set of
@@ -786,17 +801,20 @@ once in its constructor with the canonical `component` attribute:
 
 ```go
 type PendingReaper struct {
-    deps  CleanupOps
-    store PendingReaperStore
-    log   *slog.Logger
+    deps      CleanupOps
+    placement Placement
+    store     PendingReaperStore
+    log       *slog.Logger
     // ...
 }
 
-func NewPendingReaper(deps CleanupOps, store PendingReaperStore) *PendingReaper {
+func NewPendingReaper(deps CleanupOps, placement Placement, store PendingReaperStore, concurrency int, minAge time.Duration, batchSize int) *PendingReaper {
     return &PendingReaper{
-        deps:  deps,
-        store: store,
-        log:   slog.Default().With(logfmt.Component("pending_reaper")),
+        deps:      deps,
+        placement: placement,
+        store:     store,
+        log:       slog.Default().With(logfmt.Component("pending_reaper")),
+        // ...
     }
 }
 

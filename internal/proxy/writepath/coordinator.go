@@ -35,17 +35,17 @@ import (
 // TYPE
 // -------------------------------------------------------------------------
 
-// Coordinator bundles the infrastructure subset (WritepathCore) with
+// Coordinator bundles the infrastructure subset (WriteRuntime) with
 // the metadata-store contract and the pending-pattern flag so the
 // write-path helpers can be expressed as plain methods on a value owned
 // by BackendManager. The managers hold a *Coordinator rather than a
 // *BackendManager back-pointer, eliminating the post-construction
 // wiring step.
-// Stores is the narrow persistence surface the write coordinator needs:
+// CoordinatorStores is the narrow persistence surface the write coordinator needs:
 // object record/move, write-target selection (quota), pending-intent
 // insert/promote, and cleanup enqueue/recovery. Declared locally so
 // writepath does not pull in the full MetadataStore.
-type Stores interface {
+type CoordinatorStores interface {
 	core.ObjectStore
 	core.QuotaStore
 	core.PendingStore
@@ -53,18 +53,18 @@ type Stores interface {
 }
 
 type Coordinator struct {
-	core           WritepathCore // infrastructure subset: backends, usage, routing, eligibility, error classification, delete-with-timeout
-	stores         Stores
+	core           WriteRuntime // infrastructure subset: backends, usage, routing, eligibility, error classification, delete-with-timeout
+	stores         CoordinatorStores
 	pendingEnabled bool
 	log            *slog.Logger
 }
 
 // New constructs a Coordinator. The supplied core must observe the same
-// admission, usage, drain, and backend state as the *infra.Core embedded
-// in BackendManager (in production they are the same instance). The
+// admission, usage, drain, and backend state as the *infra.BackendRuntime
+// held by BackendManager (in production they are the same instance). The
 // component-scoped logger is built in the constructor body per the
 // project's logging convention.
-func New(core WritepathCore, stores Stores, pendingEnabled bool) *Coordinator {
+func New(core WriteRuntime, stores CoordinatorStores, pendingEnabled bool) *Coordinator {
 	must.NotNil("core", core)
 	must.NotNil("stores", stores)
 	return &Coordinator{

@@ -314,6 +314,7 @@ func TestEncryptExisting_HappyPathOneRow(t *testing.T) {
 	h := &Handler{
 		log:        slog.Default().With(logfmt.Component("admin")),
 		backendOps: mgr,
+		runtimeOps: mgr.Runtime(),
 		replicator: workers.Replicator,
 		overRep:    workers.OverReplicationCleaner,
 		drain:      mgr.Drain(),
@@ -412,6 +413,7 @@ func TestNew_FromDeps(t *testing.T) {
 	src := newTestHandlerWithManager(t)
 	deps := &Deps{
 		BackendOps: src.backendOps,
+		RuntimeOps: src.runtimeOps,
 		Replicator: src.replicator,
 		OverRep:    src.overRep,
 		Drain:      src.drain,

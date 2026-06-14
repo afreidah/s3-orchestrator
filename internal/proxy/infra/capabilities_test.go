@@ -3,8 +3,8 @@
 //
 // Author: Alex Freidah
 //
-// One focused test per capability the *Core composes. Each test
-// exercises the capability in isolation (no Core construction, no
+// One focused test per capability the *BackendRuntime composes. Each test
+// exercises the capability in isolation (no BackendRuntime construction, no
 // metrics collector, no DB) so a regression in one capability's
 // behavior is localised at the failure site instead of surfacing
 // through an integration test in a sibling package.

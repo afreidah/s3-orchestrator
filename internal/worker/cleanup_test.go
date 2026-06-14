@@ -41,7 +41,7 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "orphan.txt").Return(nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	processed, failed := w.ProcessCleanupQueue(context.Background())
 
 	if processed != 1 {
@@ -68,7 +68,7 @@ func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
 	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "stuck.txt").Return(errors.New("timeout"))
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	_, failed := w.ProcessCleanupQueue(context.Background())
 
 	if failed != 1 {
@@ -100,7 +100,7 @@ func TestProcessCleanupQueue_DeleteReturns404_IdempotentSuccess(t *testing.T) {
 
 	before := readCounterValue(t, telemetry.CleanupQueueProcessedTotal.WithLabelValues("success_absent"))
 
-	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	processed, failed := w.ProcessCleanupQueue(context.Background())
 
 	if processed != 1 {
@@ -131,7 +131,7 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(false)
 
-	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	processed, failed := w.ProcessCleanupQueue(context.Background())
 
 	if processed != 0 || failed != 0 {
@@ -154,7 +154,7 @@ func TestProcessCleanupQueue_BackendNotFound(t *testing.T) {
 	ops.EXPECT().GetBackend("gone").Return(nil, errors.New("not found"))
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	processed, _ := w.ProcessCleanupQueue(context.Background())
 
 	if processed != 1 {
@@ -205,7 +205,7 @@ func TestProcessCleanupQueue_Exhausted_MovesToDLQ(t *testing.T) {
 	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "doomed.txt").Return(errors.New("permanent failure"))
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	_, failed := w.ProcessCleanupQueue(context.Background())
 
 	if failed != 1 {
@@ -244,7 +244,7 @@ func TestProcessCleanupQueue_Exhausted_DLQMoveFails(t *testing.T) {
 	ops.EXPECT().DeleteWithTimeout(gomock.Any(), gomock.Any(), "doomed2.txt").Return(errors.New("upstream timeout"))
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	_, failed := w.ProcessCleanupQueue(context.Background())
 
 	if failed != 1 {
@@ -274,7 +274,7 @@ func TestProcessCleanupQueue_ReclaimedRow_IncrementsMetric(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	before := readCounterValue(t, telemetry.CleanupQueueStaleClaimsRecoveredTotal.WithLabelValues(backend))
-	w := NewCleanupWorker(ops, ms, 1, "test-instance", 5*time.Minute)
+	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	w.ProcessCleanupQueue(context.Background())
 	after := readCounterValue(t, telemetry.CleanupQueueStaleClaimsRecoveredTotal.WithLabelValues(backend))
 

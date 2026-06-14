@@ -48,16 +48,22 @@ type fakeBackendOps struct {
 func (f *fakeBackendOps) GetDashboardData(_ context.Context) (*dashboard.Data, error) {
 	return f.dashData, f.dashErr
 }
-func (f *fakeBackendOps) FlushUsage(_ context.Context) error         { return f.flushErr }
-func (f *fakeBackendOps) UpdateQuotaMetrics(_ context.Context) error { return nil }
+func (f *fakeBackendOps) FlushUsage(_ context.Context) error { return f.flushErr }
 func (f *fakeBackendOps) ReconcileUsage(_ context.Context) (map[string]int64, error) {
 	return f.reconcileMap, f.reconcileErr
 }
 func (f *fakeBackendOps) RecordUsage(_ string, _, _, _ int64) {}
-func (f *fakeBackendOps) GetBackend(_ string) (backend.ObjectBackend, error) {
+func (f *fakeBackendOps) IntegrityConfig() *config.IntegrityConfig { return f.intCfg }
+
+// fakeRuntimeOps is the RuntimeOps double: the runtime surface the handler
+// reaches directly. GetBackend errors by default (rewrite tests cover the
+// not-found branch); UpdateQuotaMetrics is a no-op success.
+type fakeRuntimeOps struct{}
+
+func (fakeRuntimeOps) GetBackend(_ string) (backend.ObjectBackend, error) {
 	return nil, errors.New("no backend")
 }
-func (f *fakeBackendOps) IntegrityConfig() *config.IntegrityConfig { return f.intCfg }
+func (fakeRuntimeOps) UpdateQuotaMetrics(_ context.Context) error { return nil }
 
 type fakeReplicator struct {
 	cfg     *config.ReplicationConfig
@@ -141,10 +147,11 @@ func newCoverageHandler() *Handler {
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	return &Handler{
-		log:       slog.Default().With(logfmt.Component("admin")),
-		token:     "test-token",
-		logLevel:  &lv,
-		dbHealthy: func() bool { return true },
+		log:        slog.Default().With(logfmt.Component("admin")),
+		runtimeOps: fakeRuntimeOps{},
+		token:      "test-token",
+		logLevel:   &lv,
+		dbHealthy:  func() bool { return true },
 	}
 }
 

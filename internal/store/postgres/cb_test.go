@@ -45,7 +45,7 @@ func (s *stubDBTX) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row {
 // newCB builds a database breaker with a tight failure threshold so a
 // single error trips it, suitable for asserting the open-circuit branch.
 func newCB(threshold int) *breaker.CircuitBreaker {
-	return breaker.NewCircuitBreaker("test", threshold, time.Minute, isDBErrorForTest, core.ErrDBUnavailable)
+	return breaker.NewCircuitBreaker(breaker.Config{Name: "test", Threshold: threshold, Timeout: time.Minute, IsError: isDBErrorForTest, Sentinel: core.ErrDBUnavailable})
 }
 
 // isDBErrorForTest treats any non-sentinel error as a DB error. The

@@ -79,18 +79,18 @@ func NoopCleanup() {
 	// meant to be a noop function
 }
 
-// Stores is the narrow persistence surface read failover needs: object
+// FailoverStores is the narrow persistence surface read failover needs: object
 // location lookups for the normal DB-backed path. Declared locally so
 // readpath does not pull in the full MetadataStore.
-type Stores interface {
+type FailoverStores interface {
 	core.ObjectStore
 }
 
 // Failover orchestrates per-key read failover across backends.
 // One instance per object.Manager; safe for concurrent reads.
 type Failover struct {
-	core              Core
-	stores            Stores
+	core              ReadRuntime
+	stores            FailoverStores
 	cache             LocationCache
 	parallelBroadcast bool
 	// degradedBroadcastParallelism caps concurrent probes in a parallel broadcast; 0 means uncapped.
@@ -100,19 +100,30 @@ type Failover struct {
 	log                  *slog.Logger
 }
 
-// New constructs a Failover. When degradedReadsEnabled is false, a DB
+// FailoverDeps groups the read-failover constructor parameters. The three
+// degraded-mode flags are named fields so call sites can't transpose them.
+type FailoverDeps struct {
+	Core                         ReadRuntime
+	Stores                       FailoverStores
+	Cache                        LocationCache
+	ParallelBroadcast            bool
+	DegradedBroadcastParallelism int
+	DegradedReadsEnabled         bool
+}
+
+// New constructs a Failover. When DegradedReadsEnabled is false, a DB
 // outage surfaces as ErrServiceUnavailable instead of broadcasting.
-func New(infraCore Core, stores Stores, cache LocationCache, parallelBroadcast bool, degradedBroadcastParallelism int, degradedReadsEnabled bool) *Failover {
-	must.NotNil("core", infraCore)
-	must.NotNil("stores", stores)
-	must.NotNil("cache", cache)
+func New(deps FailoverDeps) *Failover {
+	must.NotNil("Core", deps.Core)
+	must.NotNil("Stores", deps.Stores)
+	must.NotNil("Cache", deps.Cache)
 	return &Failover{
-		core:                         infraCore,
-		stores:                       stores,
-		cache:                        cache,
-		parallelBroadcast:            parallelBroadcast,
-		degradedBroadcastParallelism: degradedBroadcastParallelism,
-		degradedReadsEnabled:         degradedReadsEnabled,
+		core:                         deps.Core,
+		stores:                       deps.Stores,
+		cache:                        deps.Cache,
+		parallelBroadcast:            deps.ParallelBroadcast,
+		degradedBroadcastParallelism: deps.DegradedBroadcastParallelism,
+		degradedReadsEnabled:         deps.DegradedReadsEnabled,
 		log:                          slog.Default().With(logfmt.Component("readpath")),
 	}
 }

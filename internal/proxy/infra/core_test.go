@@ -1,9 +1,9 @@
 // -------------------------------------------------------------------------------
-// Core Composition Tests
+// BackendRuntime Composition Tests
 //
 // Author: Alex Freidah
 //
-// Pins the forwarding contract of *Core: every public method routes to
+// Pins the forwarding contract of *BackendRuntime: every public method routes to
 // the right capability service and returns what the underlying service
 // returns. Complements capabilities_test.go (which tests each capability
 // in isolation) by exercising the composition layer end-to-end so the
@@ -30,7 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// fakeBackend is a no-op backend used by Core forwarder tests. None of
+// fakeBackend is a no-op backend used by BackendRuntime forwarder tests. None of
 // its methods are exercised here; the type only needs to satisfy the
 // interface so the registry holds something.
 type fakeBackend struct{}
@@ -46,9 +46,9 @@ func (fakeBackend) HeadObject(context.Context, string) (*backend.HeadObjectResul
 }
 func (fakeBackend) DeleteObject(context.Context, string) error { return nil }
 
-// newTestCore constructs a *Core with sensible defaults so the
+// newTestCore constructs a *BackendRuntime with sensible defaults so the
 // forwarder tests focus on behavior, not wiring boilerplate.
-func newTestCore(t *testing.T) *Core {
+func newTestCore(t *testing.T) *BackendRuntime {
 	t.Helper()
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
 	return New(&Config{
@@ -123,7 +123,7 @@ func TestCore_ExcludeUnhealthy_DropsOpenBreakers(t *testing.T) {
 	t.Parallel()
 	// Build a CB-wrapped backend whose underlying call fails repeatedly
 	// so the breaker trips.
-	cb := backend.NewCircuitBreakerBackend(fakeBackend{}, "flaky", 1, time.Hour)
+	cb := backend.NewCircuitBreakerBackend(fakeBackend{}, backend.CircuitBreakerConfig{Name: "flaky", Threshold: 1, Timeout: time.Hour})
 	c := New(&Config{
 		Backends: map[string]backend.ObjectBackend{"healthy": fakeBackend{}, "flaky": cb},
 		Order:    []string{"healthy", "flaky"},
@@ -261,6 +261,96 @@ func TestCore_StreamCopy_TagsReadPhaseOnGetError(t *testing.T) {
 	}
 	if ce.Phase != backend.CopyPhaseRead {
 		t.Errorf("phase = %v, want CopyPhaseRead", ce.Phase)
+	}
+}
+
+// errReader delivers a prefix then fails with err, simulating a source body
+// that stalls or breaks mid-stream (a degraded source returning 200 then
+// dying). The destination's PutObject reads through it and observes err.
+type errReader struct {
+	prefix []byte
+	pos    int
+	err    error
+}
+
+func (r *errReader) Read(p []byte) (int, error) {
+	if r.pos < len(r.prefix) {
+		n := copy(p, r.prefix[r.pos:])
+		r.pos += n
+		return n, nil
+	}
+	return 0, r.err
+}
+
+// stallingSourceBackend's GetObject succeeds but hands back a body that errors
+// mid-read, so the failure only surfaces while the destination is uploading.
+type stallingSourceBackend struct {
+	fakeBackend
+	err error
+}
+
+func (s *stallingSourceBackend) GetObject(_ context.Context, _ string, _ string) (*backend.GetObjectResult, error) {
+	return &backend.GetObjectResult{
+		Body: io.NopCloser(&errReader{prefix: []byte("partial"), err: s.err}),
+		Size: 100,
+	}, nil
+}
+
+// propagatingDstBackend uploads by draining the body and surfaces any read
+// error, like a real backend whose PUT fails when the source stream breaks.
+type propagatingDstBackend struct{ fakeBackend }
+
+func (propagatingDstBackend) PutObject(_ context.Context, _ string, body io.Reader, _ int64, _ string, _ map[string]string) (string, error) {
+	if _, err := io.Copy(io.Discard, body); err != nil {
+		return "", err
+	}
+	return "etag", nil
+}
+
+// writeRejectingBackend drains the body cleanly (the source is fine) then
+// rejects the write with its own error, e.g. AccessDenied on the target.
+type writeRejectingBackend struct{ fakeBackend }
+
+func (writeRejectingBackend) PutObject(_ context.Context, _ string, body io.Reader, _ int64, _ string, _ map[string]string) (string, error) {
+	_, _ = io.Copy(io.Discard, body)
+	return "", errors.New("access denied")
+}
+
+// TestCore_StreamCopy_SourceStallTaggedReadPhase verifies a source body that
+// fails mid-read is attributed to the read phase even though the error
+// surfaces from the destination's PutObject - so a degraded source makes the
+// copier retry another source instead of tripping the healthy target's breaker.
+func TestCore_StreamCopy_SourceStallTaggedReadPhase(t *testing.T) {
+	t.Parallel()
+	src := &stallingSourceBackend{err: context.DeadlineExceeded}
+	dst := propagatingDstBackend{}
+	c := newTestCore(t)
+	err := c.StreamCopy(context.Background(), src, dst, "k")
+	ce, ok := errors.AsType[*backend.CopyError](err)
+	if !ok {
+		t.Fatalf("err = %v, want *backend.CopyError", err)
+	}
+	if ce.Phase != backend.CopyPhaseRead {
+		t.Errorf("phase = %v, want CopyPhaseRead (a source stall must not blame the target)", ce.Phase)
+	}
+}
+
+// TestCore_StreamCopy_GenuineWriteErrorTaggedWritePhase verifies the
+// read-tracker does not over-correct: when the body reads cleanly and the
+// target itself rejects the write, the failure is still tagged write phase
+// (terminal) so the copier does not pointlessly retry other sources.
+func TestCore_StreamCopy_GenuineWriteErrorTaggedWritePhase(t *testing.T) {
+	t.Parallel()
+	src := &readableBackend{payload: []byte("hello")}
+	dst := writeRejectingBackend{}
+	c := newTestCore(t)
+	err := c.StreamCopy(context.Background(), src, dst, "k")
+	ce, ok := errors.AsType[*backend.CopyError](err)
+	if !ok {
+		t.Fatalf("err = %v, want *backend.CopyError", err)
+	}
+	if ce.Phase != backend.CopyPhaseWrite {
+		t.Errorf("phase = %v, want CopyPhaseWrite (a real target rejection stays terminal)", ce.Phase)
 	}
 }
 

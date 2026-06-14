@@ -40,7 +40,7 @@ func TestRecordOperation_Success(t *testing.T) {
 	t.Parallel()
 	store := stubMetricsStore(t)
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 0 })
+	mc := metrics.New(metrics.CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 	mc.RecordOperation("PutObject", "b1", time.Now(), nil)
 }
 
@@ -49,7 +49,7 @@ func TestRecordOperation_Error(t *testing.T) {
 	t.Parallel()
 	store := stubMetricsStore(t)
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 0 })
+	mc := metrics.New(metrics.CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 	mc.RecordOperation("GetObject", "b1", time.Now(), errors.New("backend down"))
 }
 
@@ -79,7 +79,7 @@ func TestUpdateQuotaMetrics_Success(t *testing.T) {
 	storetest.Permissive(store)
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
-	mc := metrics.New(store, usage, []string{"b1", "b2"}, func() int { return 0 })
+	mc := metrics.New(metrics.CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1", "b2"}, ReplicationFactor: func() int { return 0 }})
 
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics: %v", err)
@@ -105,7 +105,7 @@ func TestUpdateQuotaMetrics_CapacityWarning(t *testing.T) {
 	storetest.Permissive(store)
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2", "b3"}), nil)
-	mc := metrics.New(store, usage, []string{"b1", "b2", "b3"}, func() int { return 0 })
+	mc := metrics.New(metrics.CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1", "b2", "b3"}, ReplicationFactor: func() int { return 0 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestUpdateQuotaMetrics_QuotaStatsError(t *testing.T) {
 	storetest.Permissive(store)
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 0 })
+	mc := metrics.New(metrics.CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err == nil {
 		t.Fatal("expected error from GetQuotaStats failure")
 	}
@@ -141,7 +141,7 @@ func TestUpdateQuotaMetrics_ObjectCountsError(t *testing.T) {
 	storetest.Permissive(store)
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 0 })
+	mc := metrics.New(metrics.CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("expected nil error (object counts error is non-fatal): %v", err)
 	}
@@ -162,7 +162,7 @@ func TestUpdateQuotaMetrics_MultipartCountsError(t *testing.T) {
 	storetest.Permissive(store)
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 0 })
+	mc := metrics.New(metrics.CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("expected nil error (multipart counts error is non-fatal): %v", err)
 	}
@@ -183,7 +183,7 @@ func TestUpdateQuotaMetrics_UsageForPeriodError(t *testing.T) {
 	storetest.Permissive(store)
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 0 })
+	mc := metrics.New(metrics.CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("expected nil error (usage error is non-fatal): %v", err)
 	}
@@ -207,7 +207,7 @@ func TestUpdateQuotaMetrics_ReplicationPending(t *testing.T) {
 	storetest.Permissive(store)
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 2 })
+	mc := metrics.New(metrics.CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 2 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestUpdateQuotaMetrics_ReplicationPendingSkippedWhenDisabled(t *testing.T) 
 	storetest.Permissive(store)
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 0 })
+	mc := metrics.New(metrics.CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 0 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestUpdateQuotaMetrics_ReplicationPendingQueryError(t *testing.T) {
 	storetest.Permissive(store)
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
-	mc := metrics.New(store, usage, []string{"b1"}, func() int { return 2 })
+	mc := metrics.New(metrics.CollectorDeps{Store: store, Usage: usage, BackendNames: []string{"b1"}, ReplicationFactor: func() int { return 2 }})
 	if err := mc.UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("expected nil error (under-replicated query error is non-fatal): %v", err)
 	}
@@ -296,12 +296,12 @@ func TestUpdateQuotaMetrics_ReplicationFactorFromManager(t *testing.T) {
 	})
 	workers := wireWorkersForTest(mgr, store)
 
-	if err := mgr.MetricsCollector().UpdateQuotaMetrics(context.Background()); err != nil {
+	if err := mgr.Runtime().MetricsCollector().UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics (no repl config): %v", err)
 	}
 
 	workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 50})
-	if err := mgr.MetricsCollector().UpdateQuotaMetrics(context.Background()); err != nil {
+	if err := mgr.Runtime().MetricsCollector().UpdateQuotaMetrics(context.Background()); err != nil {
 		t.Fatalf("UpdateQuotaMetrics (with repl config): %v", err)
 	}
 }

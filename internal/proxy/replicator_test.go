@@ -746,7 +746,7 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 // newTrippedCBBackend wraps a mock backend in a CircuitBreakerBackend
 // and immediately trips the circuit.
 func newTrippedCBBackend(b *mockBackend, name string) *backend.CircuitBreakerBackend {
-	cbb := backend.NewCircuitBreakerBackend(b, name, 1, time.Hour)
+	cbb := backend.NewCircuitBreakerBackend(b, backend.CircuitBreakerConfig{Name: name, Threshold: 1, Timeout: time.Hour})
 	_ = cbb.PostCheck(errors.New("forced failure"))
 	return cbb
 }
@@ -927,10 +927,10 @@ func TestReplicate_UsesRecordedSize_NotFirstCopy(t *testing.T) {
 		t.Fatalf("expected 1 created, got %d", created)
 	}
 
-	if got := mgr.Usage().Backend().Load("b2", counter.FieldEgressBytes); got != 200 {
+	if got := mgr.Runtime().Usage().Backend().Load("b2", counter.FieldEgressBytes); got != 200 {
 		t.Errorf("source egress = %d, want 200 (recorded size, not copies[0].SizeBytes)", got)
 	}
-	if got := mgr.Usage().Backend().Load("b3", counter.FieldIngressBytes); got != 200 {
+	if got := mgr.Runtime().Usage().Backend().Load("b3", counter.FieldIngressBytes); got != 200 {
 		t.Errorf("target ingress = %d, want 200 (recorded size, not copies[0].SizeBytes)", got)
 	}
 }
@@ -1014,7 +1014,7 @@ func TestIsBackendHealthy_UnknownBackend(t *testing.T) {
 // reports healthy.
 func TestIsBackendHealthy_CBHealthy(t *testing.T) {
 	t.Parallel()
-	cbb := backend.NewCircuitBreakerBackend(newMockBackend(), "b1", 3, time.Minute)
+	cbb := backend.NewCircuitBreakerBackend(newMockBackend(), backend.CircuitBreakerConfig{Name: "b1", Threshold: 3, Timeout: time.Minute})
 	store := newPermissiveMock(t)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Storage: StorageDeps{

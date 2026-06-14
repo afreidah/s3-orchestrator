@@ -118,8 +118,7 @@ func TestNewRedisCounterBackend_HappyPath(t *testing.T) {
 // counters" log).
 func TestRecordFailure_LogsFallbackAndPostCheckError(t *testing.T) {
 	sentinel := errors.New("redis unavailable")
-	cb := breaker.NewCircuitBreaker("redis", 1, time.Second,
-		func(error) bool { return true }, sentinel)
+	cb := breaker.NewCircuitBreaker(breaker.Config{Name: "redis", Threshold: 1, Timeout: time.Second, IsError: func(error) bool { return true }, Sentinel: sentinel})
 
 	r := &RedisCounterBackend{
 		cb:    cb,
@@ -288,8 +287,7 @@ func TestTryRecover_NoDEL(t *testing.T) {
 
 // newTestCB creates a circuit breaker in the open state for recovery tests.
 func newTestCB() *breaker.CircuitBreaker {
-	cb := breaker.NewCircuitBreaker("test-redis", 1, time.Millisecond,
-		func(error) bool { return true }, errors.New("redis unavailable"))
+	cb := breaker.NewCircuitBreaker(breaker.Config{Name: "test-redis", Threshold: 1, Timeout: time.Millisecond, IsError: func(error) bool { return true }, Sentinel: errors.New("redis unavailable")})
 	// Trip the circuit so tryRecover's recovery transition can close it.
 	_ = cb.PostCheck(errors.New("trigger"))
 	return cb
@@ -351,8 +349,7 @@ func TestTryRecover_TolerantOfTransientErrorAfterRecovery(t *testing.T) {
 	// Use a threshold of 3 so the test can prove the failure counter
 	// was reset (one post-recovery error must not trip a 3-strike
 	// breaker).
-	cb := breaker.NewCircuitBreaker("test-redis", 3, time.Millisecond,
-		func(error) bool { return true }, errors.New("redis unavailable"))
+	cb := breaker.NewCircuitBreaker(breaker.Config{Name: "test-redis", Threshold: 3, Timeout: time.Millisecond, IsError: func(error) bool { return true }, Sentinel: errors.New("redis unavailable")})
 	for range 3 {
 		_ = cb.PostCheck(errors.New("outage"))
 	}

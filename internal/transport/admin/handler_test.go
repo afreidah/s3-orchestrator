@@ -591,9 +591,10 @@ func newTestHandler() *Handler {
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	return &Handler{
-		log:      slog.Default().With(logfmt.Component("admin")),
-		token:    "test-token",
-		logLevel: &lv,
+		log:        slog.Default().With(logfmt.Component("admin")),
+		runtimeOps: fakeRuntimeOps{},
+		token:      "test-token",
+		logLevel:   &lv,
 	}
 }
 
