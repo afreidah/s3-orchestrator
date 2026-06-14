@@ -45,17 +45,20 @@ type ReplicatorStore interface {
 
 // Replicator creates additional copies of under-replicated objects across backends.
 type Replicator struct {
-	log   *slog.Logger
-	ops   Ops
-	store ReplicatorStore
-	cfg   syncutil.AtomicConfig[config.ReplicationConfig]
+	log       *slog.Logger
+	ops       Ops
+	placement Placement
+	store     ReplicatorStore
+	cfg       syncutil.AtomicConfig[config.ReplicationConfig]
 }
 
-// NewReplicator creates a Replicator with fleet operations and a metadata store.
-func NewReplicator(ops Ops, store ReplicatorStore) *Replicator {
+// NewReplicator creates a Replicator with fleet operations, write-path
+// placement, and a metadata store.
+func NewReplicator(ops Ops, placement Placement, store ReplicatorStore) *Replicator {
 	must.NotNil("ops", ops)
+	must.NotNil("placement", placement)
 	must.NotNil("store", store)
-	return &Replicator{ops: ops, store: store, log: slog.Default().With(logfmt.Component("replicator"))}
+	return &Replicator{ops: ops, placement: placement, store: store, log: slog.Default().With(logfmt.Component("replicator"))}
 }
 
 // SetConfig atomically stores the replication configuration.
@@ -353,7 +356,7 @@ func maxCopySize(copies []core.ObjectLocation) int64 {
 // routing strategy as normal writes. Returns empty string if no suitable
 // target exists.
 func (r *Replicator) FindReplicaTarget(ctx context.Context, key string, size int64, exclusion map[string]bool) string {
-	name, err := r.ops.SelectReplicaTarget(ctx, size, exclusion)
+	name, err := r.placement.SelectReplicaTarget(ctx, size, exclusion)
 	if err != nil {
 		r.log.WarnContext(ctx, "target selection failed",
 			"key", key, "error", err)
@@ -386,11 +389,27 @@ func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []cor
 		return cmpHealthFirst(r.IsBackendHealthy(a.BackendName), r.IsBackendHealthy(b.BackendName))
 	})
 
+	// Drop sources whose breaker is open so a streamed copy never starts
+	// against a backend we already know is down - a slow or dead source
+	// otherwise stalls the copy and (before the phase-attribution fix) trips
+	// the healthy target's breaker. Fall back to the full set only when no
+	// source is currently healthy, so an object whose only copies sit on
+	// degraded backends still gets an attempt rather than being stranded.
+	candidates := make([]core.ObjectLocation, 0, len(ordered))
 	for i := range ordered {
+		if r.IsBackendHealthy(ordered[i].BackendName) {
+			candidates = append(candidates, ordered[i])
+		}
+	}
+	if len(candidates) == 0 {
+		candidates = ordered
+	}
+
+	for i := range candidates {
 		if ctx.Err() != nil {
 			return "", 0, ctx.Err()
 		}
-		sourceName, sourceSize, terminal, err := r.tryCopyFrom(ctx, key, target, targetBackend, &ordered[i])
+		sourceName, sourceSize, terminal, err := r.tryCopyFrom(ctx, key, target, targetBackend, &candidates[i])
 		if terminal {
 			return sourceName, sourceSize, err
 		}
@@ -463,7 +482,7 @@ func (r *Replicator) CleanupOrphan(ctx context.Context, backendName, key string,
 	if !ok {
 		return
 	}
-	r.ops.DeleteOrEnqueue(ctx, be, backendName, key, "replication_orphan", sizeBytes)
+	r.placement.DeleteOrEnqueue(ctx, be, backendName, key, "replication_orphan", sizeBytes)
 }
 
 // UnhealthyBackends returns backend names whose circuit breakers have been

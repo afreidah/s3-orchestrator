@@ -13,6 +13,7 @@ package backend
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -23,7 +24,7 @@ import (
 
 // newTestCBBackend constructs a new test cbbackend.
 func newTestCBBackend(mock *mockBackend, threshold int, timeout time.Duration) *CircuitBreakerBackend {
-	return NewCircuitBreakerBackend(mock, "test-backend", threshold, timeout)
+	return NewCircuitBreakerBackend(mock, CircuitBreakerConfig{Name: "test-backend", Threshold: threshold, Timeout: timeout})
 }
 
 // -------------------------------------------------------------------------
@@ -231,7 +232,7 @@ func TestCBBackend_NestedUnwrap(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
 	cb1 := newTestCBBackend(mock, 3, time.Minute)
-	cb2 := NewCircuitBreakerBackend(cb1, "outer", 3, time.Minute)
+	cb2 := NewCircuitBreakerBackend(cb1, CircuitBreakerConfig{Name: "outer", Threshold: 3, Timeout: time.Minute})
 
 	// Unwrap one layer
 	inner := cb2.Unwrap()
@@ -346,5 +347,30 @@ func TestIsBackendError_PlainError(t *testing.T) {
 	t.Parallel()
 	if !isBackendError(errors.New("connection refused")) {
 		t.Error("plain error should be a backend error")
+	}
+}
+
+// TestIsBackendError_ContextErrors verifies caller-side cancellation and
+// deadline (including wrapped) never count toward a backend's failure
+// threshold: they signal a timeout/shutdown, not the backend's health, and
+// counting them is what let a slow source cascade-trip healthy backends.
+func TestIsBackendError_ContextErrors(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"canceled", context.Canceled},
+		{"deadline", context.DeadlineExceeded},
+		{"wrapped canceled", fmt.Errorf("put object failed: %w", context.Canceled)},
+		{"wrapped deadline", fmt.Errorf("write to target: %w", context.DeadlineExceeded)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if isBackendError(tc.err) {
+				t.Errorf("%v should not count as a backend error", tc.err)
+			}
+		})
 	}
 }

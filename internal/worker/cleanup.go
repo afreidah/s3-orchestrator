@@ -42,19 +42,28 @@ type CleanupWorker struct {
 	claimGracePeriod time.Duration
 }
 
-// NewCleanupWorker creates a CleanupWorker with explicit dependencies.
-// instanceID is stamped into cleanup_queue.claimed_by for observability;
-// claimGracePeriod is the threshold past which an outstanding claim becomes
+// CleanupWorkerDeps groups the cleanup worker's constructor parameters.
+// InstanceID is stamped into cleanup_queue.claimed_by for observability;
+// ClaimGracePeriod is the threshold past which an outstanding claim becomes
 // reclaimable by another worker tick (typically 5m).
-func NewCleanupWorker(deps CleanupOps, store CleanupWorkerStore, concurrency int, instanceID string, claimGracePeriod time.Duration) *CleanupWorker {
-	must.NotNil("deps", deps)
-	must.NotNil("store", store)
+type CleanupWorkerDeps struct {
+	Ops              CleanupOps
+	Store            CleanupWorkerStore
+	Concurrency      int
+	InstanceID       string
+	ClaimGracePeriod time.Duration
+}
+
+// NewCleanupWorker creates a CleanupWorker with the given dependencies.
+func NewCleanupWorker(deps CleanupWorkerDeps) *CleanupWorker {
+	must.NotNil("Ops", deps.Ops)
+	must.NotNil("Store", deps.Store)
 	return &CleanupWorker{
-		deps:             deps,
-		store:            store,
-		concurrency:      concurrency,
-		instanceID:       instanceID,
-		claimGracePeriod: claimGracePeriod,
+		deps:             deps.Ops,
+		store:            deps.Store,
+		concurrency:      deps.Concurrency,
+		instanceID:       deps.InstanceID,
+		claimGracePeriod: deps.ClaimGracePeriod,
 		log:              slog.Default().With(logfmt.Component("cleanup_worker")),
 	}
 }

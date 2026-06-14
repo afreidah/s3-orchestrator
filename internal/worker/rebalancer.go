@@ -46,17 +46,20 @@ type RebalancerStore interface {
 
 // Rebalancer moves objects between backends to optimize space distribution.
 type Rebalancer struct {
-	log   *slog.Logger
-	ops   Ops
-	store RebalancerStore
-	cfg   syncutil.AtomicConfig[config.RebalanceConfig]
+	log       *slog.Logger
+	ops       Ops
+	placement Placement
+	store     RebalancerStore
+	cfg       syncutil.AtomicConfig[config.RebalanceConfig]
 }
 
-// NewRebalancer creates a Rebalancer with fleet operations and a metadata store.
-func NewRebalancer(ops Ops, store RebalancerStore) *Rebalancer {
+// NewRebalancer creates a Rebalancer with fleet operations, write-path
+// placement, and a metadata store.
+func NewRebalancer(ops Ops, placement Placement, store RebalancerStore) *Rebalancer {
 	must.NotNil("ops", ops)
+	must.NotNil("placement", placement)
 	must.NotNil("store", store)
-	return &Rebalancer{ops: ops, store: store, log: slog.Default().With(logfmt.Component("rebalancer"))}
+	return &Rebalancer{ops: ops, placement: placement, store: store, log: slog.Default().With(logfmt.Component("rebalancer"))}
 }
 
 // SetConfig atomically stores the rebalance configuration.
@@ -561,7 +564,7 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 		return false
 	}
 
-	movedSize, err := r.ops.MoveObject(ctx, &writepath.MoveRequest{
+	movedSize, err := r.placement.MoveObject(ctx, &writepath.MoveRequest{
 		Key:                move.ObjectKey,
 		SizeBytes:          move.SizeBytes,
 		SrcBackend:         srcBackend,

@@ -47,7 +47,7 @@ func (h *Handler) Replicate(ctx context.Context, observer progress.Observer) (Re
 		return ReplicateResult{}, err
 	}
 
-	if mErr := h.backendOps.UpdateQuotaMetrics(ctx); mErr != nil {
+	if mErr := h.runtimeOps.UpdateQuotaMetrics(ctx); mErr != nil {
 		h.log.WarnContext(ctx, "failed to update quota metrics after replicate", "error", mErr)
 	}
 
@@ -161,7 +161,7 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.backendOps.UpdateQuotaMetrics(r.Context()); err != nil {
+	if err := h.runtimeOps.UpdateQuotaMetrics(r.Context()); err != nil {
 		h.log.WarnContext(r.Context(), "failed to update quota metrics after admin over-replication cleanup", "error", err)
 	}
 
@@ -178,7 +178,7 @@ func (h *Handler) streamOverReplication(w http.ResponseWriter, r *http.Request, 
 		if err != nil {
 			return stepResult{}, err
 		}
-		if err := h.backendOps.UpdateQuotaMetrics(r.Context()); err != nil {
+		if err := h.runtimeOps.UpdateQuotaMetrics(r.Context()); err != nil {
 			h.log.WarnContext(r.Context(), "failed to update quota metrics after admin over-replication cleanup", "error", err)
 		}
 		return stepResult{

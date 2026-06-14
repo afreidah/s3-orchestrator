@@ -1,7 +1,7 @@
 -- ---------------------------------------------------------------------------
 -- S3 Orchestrator — Consolidated SQLite Schema (v1)
 --
--- Translates all 7 PostgreSQL migrations into a single idempotent schema.
+-- Translates the PostgreSQL migrations into a single idempotent schema.
 -- Translation rules applied:
 --   BIGSERIAL        → INTEGER PRIMARY KEY AUTOINCREMENT  (id columns only)
 --   TIMESTAMPTZ      → TEXT  (ISO-8601 strings)
