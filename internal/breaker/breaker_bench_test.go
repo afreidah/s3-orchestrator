@@ -19,7 +19,7 @@ import (
 // BenchmarkPreCheck_Closed measures the cost of PreCheck when the circuit is
 // closed (healthy). This is the steady-state per-request overhead.
 func BenchmarkPreCheck_Closed(b *testing.B) {
-	cb := NewCircuitBreaker("bench", 5, 15*time.Second, func(error) bool { return true }, errors.New("open"))
+	cb := NewCircuitBreaker(Config{Name: "bench", Threshold: 5, Timeout: 15 * time.Second, IsError: func(error) bool { return true }, Sentinel: errors.New("open")})
 
 	for b.Loop() {
 		_ = cb.PreCheck()
@@ -29,7 +29,7 @@ func BenchmarkPreCheck_Closed(b *testing.B) {
 // BenchmarkPostCheck_Success measures the cost of PostCheck with a nil error
 // (successful operation). This is called after every store/backend call.
 func BenchmarkPostCheck_Success(b *testing.B) {
-	cb := NewCircuitBreaker("bench", 5, 15*time.Second, func(error) bool { return true }, errors.New("open"))
+	cb := NewCircuitBreaker(Config{Name: "bench", Threshold: 5, Timeout: 15 * time.Second, IsError: func(error) bool { return true }, Sentinel: errors.New("open")})
 
 	for b.Loop() {
 		_ = cb.PostCheck(nil)
@@ -39,7 +39,7 @@ func BenchmarkPostCheck_Success(b *testing.B) {
 // BenchmarkPrePostCheck_RoundTrip measures the combined cost of a
 // PreCheck + PostCheck pair on the closed-state happy path.
 func BenchmarkPrePostCheck_RoundTrip(b *testing.B) {
-	cb := NewCircuitBreaker("bench", 5, 15*time.Second, func(error) bool { return true }, errors.New("open"))
+	cb := NewCircuitBreaker(Config{Name: "bench", Threshold: 5, Timeout: 15 * time.Second, IsError: func(error) bool { return true }, Sentinel: errors.New("open")})
 
 	for b.Loop() {
 		_ = cb.PreCheck()
@@ -50,7 +50,7 @@ func BenchmarkPrePostCheck_RoundTrip(b *testing.B) {
 // BenchmarkPreCheck_Concurrent measures PreCheck throughput under concurrent
 // load with the circuit closed.
 func BenchmarkPreCheck_Concurrent(b *testing.B) {
-	cb := NewCircuitBreaker("bench", 5, 15*time.Second, func(error) bool { return true }, errors.New("open"))
+	cb := NewCircuitBreaker(Config{Name: "bench", Threshold: 5, Timeout: 15 * time.Second, IsError: func(error) bool { return true }, Sentinel: errors.New("open")})
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {

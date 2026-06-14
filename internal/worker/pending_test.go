@@ -40,7 +40,7 @@ func setupReaper(t *testing.T) (*PendingReaper, *MockCleanupOps, *MockPlacement,
 	pl := NewMockPlacement(ctrl)
 	be := backendtest.NewMockObjectBackend(ctrl)
 	ms := &mockMetadataStore{}
-	r := NewPendingReaper(ops, pl, ms, 1, time.Minute, 50)
+	r := NewPendingReaper(PendingReaperDeps{Ops: ops, Placement: pl, Store: ms, Concurrency: 1, MinAge: time.Minute, BatchSize: 50})
 	return r, ops, pl, be, ms
 }
 
@@ -64,7 +64,7 @@ func pendingFixture(intentID, key, backendName string) core.PendingObject {
 func TestNewPendingReaper_AppliesZeroDefaults(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	r := NewPendingReaper(NewMockCleanupOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{}, 0, 0, 0)
+	r := NewPendingReaper(PendingReaperDeps{Ops: NewMockCleanupOps(ctrl), Placement: NewMockPlacement(ctrl), Store: &mockMetadataStore{}})
 	if r.concurrency != 4 {
 		t.Errorf("concurrency = %d, want 4", r.concurrency)
 	}
@@ -336,7 +336,7 @@ func TestProcessPendingQueue_SkipsBackendWithOpenBreaker(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	rawBE := backendtest.NewMockObjectBackend(ctrl)
-	cb := backend.NewCircuitBreakerBackend(rawBE, "broken", 1, time.Hour)
+	cb := backend.NewCircuitBreakerBackend(rawBE, backend.CircuitBreakerConfig{Name: "broken", Threshold: 1, Timeout: time.Hour})
 
 	// Trip the breaker: one HEAD failure with threshold=1 opens it. With a
 	// 1h openTimeout no time has elapsed, so ProbeEligible is false.
@@ -482,7 +482,7 @@ func TestDropIntent_DeleteFailureCountedAsFailed(t *testing.T) {
 		mockMetadataStore: &mockMetadataStore{},
 		deleteErr:         errors.New("db down"),
 	}
-	r := NewPendingReaper(ops, pl, ms, 1, time.Minute, 50)
+	r := NewPendingReaper(PendingReaperDeps{Ops: ops, Placement: pl, Store: ms, Concurrency: 1, MinAge: time.Minute, BatchSize: 50})
 	p := pendingFixture("i1", "bucket/k", "b1")
 
 	var resolvedCount, failedCount atomic.Int32

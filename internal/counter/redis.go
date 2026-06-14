@@ -116,9 +116,13 @@ func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backend
 	}
 
 	sentinel := errors.New("redis unavailable")
-	cb := breaker.NewCircuitBreaker("redis", cfg.FailureThreshold, cfg.OpenTimeout, func(err error) bool {
-		return err != nil
-	}, sentinel)
+	cb := breaker.NewCircuitBreaker(breaker.Config{
+		Name:      "redis",
+		Threshold: cfg.FailureThreshold,
+		Timeout:   cfg.OpenTimeout,
+		IsError:   func(err error) bool { return err != nil },
+		Sentinel:  sentinel,
+	})
 	cb.SetOnStateChange(telemetry.NewCircuitBreakerHook("redis"))
 
 	r := &RedisCounterBackend{

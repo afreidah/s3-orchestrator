@@ -80,9 +80,11 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 		}
 		var be backend.ObjectBackend = s3be
 		if cfg.BackendCircuitBreaker.Enabled {
-			cbBackend := backend.NewCircuitBreakerBackend(s3be, bcfg.Name,
-				cfg.BackendCircuitBreaker.FailureThreshold,
-				cfg.BackendCircuitBreaker.OpenTimeout)
+			cbBackend := backend.NewCircuitBreakerBackend(s3be, backend.CircuitBreakerConfig{
+				Name:      bcfg.Name,
+				Threshold: cfg.BackendCircuitBreaker.FailureThreshold,
+				Timeout:   cfg.BackendCircuitBreaker.OpenTimeout,
+			})
 			breakers = append(breakers, cbBackend)
 			be = cbBackend
 		}
@@ -288,7 +290,15 @@ func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
 	// dekCacheTTL pegs how long cached unwrapped DEKs live so UploadPart
 	// need not re-unwrap the upload-level DEK on every part.
 	const dekCacheTTL = time.Hour
-	return multipart.New(rt, coord, stores, enc, resolveOptionalCache(i), dekCacheTTL, integrityCfg), nil
+	return multipart.New(&multipart.Deps{
+		Core:         rt,
+		Coord:        coord,
+		Stores:       stores,
+		Encryptor:    enc,
+		ObjectCache:  resolveOptionalCache(i),
+		DEKCacheTTL:  dekCacheTTL,
+		IntegrityCfg: integrityCfg,
+	}), nil
 }
 
 // -------------------------------------------------------------------------
@@ -340,7 +350,12 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 		AdmissionSem:    admissionSemFor(&cfg.Server),
 		Log:             slog.Default().With(logfmt.Component("backend_manager")),
 	})
-	rt.SetMetricsCollector(metrics.New(metricsDeps, usage, backendNames, replicationFactorFromInjector(i)))
+	rt.SetMetricsCollector(metrics.New(metrics.CollectorDeps{
+		Store:             metricsDeps,
+		Usage:             usage,
+		BackendNames:      backendNames,
+		ReplicationFactor: replicationFactorFromInjector(i),
+	}))
 	return rt, nil
 }
 

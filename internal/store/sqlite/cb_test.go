@@ -19,7 +19,7 @@ import (
 // newCB builds a database breaker with a tight failure threshold so a
 // single error trips it.
 func newCB(threshold int) *breaker.CircuitBreaker {
-	return breaker.NewCircuitBreaker("test", threshold, time.Minute, isDBErrorForTest, core.ErrDBUnavailable)
+	return breaker.NewCircuitBreaker(breaker.Config{Name: "test", Threshold: threshold, Timeout: time.Minute, IsError: isDBErrorForTest, Sentinel: core.ErrDBUnavailable})
 }
 
 // isDBErrorForTest treats any non-sentinel error as a DB error.

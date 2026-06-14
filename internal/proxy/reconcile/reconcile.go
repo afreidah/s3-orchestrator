@@ -312,14 +312,23 @@ type DBCursorStream struct {
 	exhausted bool
 }
 
+// DBCursorStreamDeps groups the cursor stream's parameters. BackendName and
+// BucketPrefix are named fields so the two adjacent strings can't be swapped.
+type DBCursorStreamDeps struct {
+	Store         DBKeyLister
+	BackendName   string
+	BucketPrefix  string
+	OtherPrefixes []string
+}
+
 // NewDBCursorStream prepares the iterator without issuing any query yet  -
 // the first next call pulls the first page.
-func NewDBCursorStream(s DBKeyLister, backendName, bucketPrefix string, otherPrefixes []string) *DBCursorStream {
+func NewDBCursorStream(deps DBCursorStreamDeps) *DBCursorStream {
 	return &DBCursorStream{
-		store:         s,
-		backendName:   backendName,
-		bucketPrefix:  bucketPrefix,
-		otherPrefixes: otherPrefixes,
+		store:         deps.Store,
+		backendName:   deps.BackendName,
+		bucketPrefix:  deps.BucketPrefix,
+		otherPrefixes: deps.OtherPrefixes,
 	}
 }
 

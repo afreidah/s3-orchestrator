@@ -32,7 +32,7 @@ func TestWatchdog_CheckAllEmptyRegistry(t *testing.T) {
 // branch by cancelling the context before the first tick fires.
 func TestWatchdog_RunExitsOnCancel(t *testing.T) {
 	t.Parallel()
-	cb := NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, errors.New("sentinel"))
+	cb := NewCircuitBreaker(Config{Name: "t", Threshold: 3, Timeout: time.Second, IsError: func(error) bool { return false }, Sentinel: errors.New("sentinel")})
 	w := &watchdog{registry: NewRegistry(cb)}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -48,7 +48,7 @@ func TestWatchdog_RunExitsOnCancel(t *testing.T) {
 // fan-out path itself is what is exercised.
 func TestWatchdog_CheckAllResetsRegisteredBreakers(t *testing.T) {
 	t.Parallel()
-	dbCB := NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, errors.New("sentinel"))
+	dbCB := NewCircuitBreaker(Config{Name: "t", Threshold: 3, Timeout: time.Second, IsError: func(error) bool { return false }, Sentinel: errors.New("sentinel")})
 	w := &watchdog{registry: NewRegistry(dbCB)}
 	w.checkAll() // must not panic
 }
