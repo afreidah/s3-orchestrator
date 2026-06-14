@@ -18,19 +18,20 @@ RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
 RUN go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest
+# Discover packages the same way `make web-godoc` does so the published site
+# never silently drops a package. The exclude pattern mirrors GODOC_EXCLUDES
+# in the Makefile - keep the two in sync.
 RUN mkdir -p /godoc && \
-    for spec in \
-        proxy store backend config counter encryption lifecycle breaker worker notify cache \
-        transport/s3api:s3api transport/admin:admin transport/ui:ui transport/auth:auth transport/httputil:httputil \
-        observe/telemetry:telemetry observe/audit:audit observe/event:event \
-        util/bufpool:bufpool util/syncutil:syncutil util/workerpool:workerpool; \
-    do \
-        pkg=${spec%%:*}; \
-        name=${spec##*:}; \
-        printf -- '---\ntitle: "%s"\n---\n\n' "$name" > /godoc/$name.md && \
-        gomarkdoc ./internal/$pkg >> /godoc/$name.md && \
-        sed -i '/^# '"$name"'$/d' /godoc/$name.md; \
-    done
+    go list -f '{{.ImportPath}}' ./internal/... \
+        | sed 's|^github.com/afreidah/s3-orchestrator/internal/||' \
+        | grep -vE '^(integration|testutil|testutil/.*|backend/backendtest|store/postgres/sqlc|store/postgres/migrations|.*/testdata|.*/testdata/.*)$' \
+        | sort \
+        | while read pkg; do \
+            name=$(basename "$pkg"); \
+            printf -- '---\ntitle: "%s"\n---\n\n' "$name" > /godoc/$name.md; \
+            gomarkdoc ./internal/$pkg >> /godoc/$name.md; \
+            sed -i '/^# '"$name"'$/d' /godoc/$name.md; \
+        done
 
 FROM --platform=$BUILDPLATFORM hugomods/hugo:latest AS build
 WORKDIR /src/web
