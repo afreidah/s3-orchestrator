@@ -24,7 +24,7 @@ import (
 
 // newTestCBBackend constructs a new test cbbackend.
 func newTestCBBackend(mock *mockBackend, threshold int, timeout time.Duration) *CircuitBreakerBackend {
-	return NewCircuitBreakerBackend(mock, "test-backend", threshold, timeout)
+	return NewCircuitBreakerBackend(mock, CircuitBreakerConfig{Name: "test-backend", Threshold: threshold, Timeout: timeout})
 }
 
 // -------------------------------------------------------------------------
@@ -232,7 +232,7 @@ func TestCBBackend_NestedUnwrap(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
 	cb1 := newTestCBBackend(mock, 3, time.Minute)
-	cb2 := NewCircuitBreakerBackend(cb1, "outer", 3, time.Minute)
+	cb2 := NewCircuitBreakerBackend(cb1, CircuitBreakerConfig{Name: "outer", Threshold: 3, Timeout: time.Minute})
 
 	// Unwrap one layer
 	inner := cb2.Unwrap()

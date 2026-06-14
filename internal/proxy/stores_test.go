@@ -46,9 +46,9 @@ func wireWorkersForTest(m *BackendManager, stores core.MetadataStore) *testWorke
 	w.Rebalancer = worker.NewRebalancer(m.Runtime(), m, stores)
 	w.Replicator = worker.NewReplicator(m.Runtime(), m, stores)
 	w.OverReplicationCleaner = worker.NewOverReplicationCleaner(m.Runtime(), m, stores)
-	w.CleanupWorker = worker.NewCleanupWorker(m.Runtime(), stores, 10, "test-instance", 5*time.Minute)
-	w.PendingReaper = worker.NewPendingReaper(m.Runtime(), m, stores, 0, 0, 0)
-	w.Scrubber = worker.NewScrubber(m.Runtime(), m, stores, nil)
+	w.CleanupWorker = worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: m.Runtime(), Store: stores, Concurrency: 10, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
+	w.PendingReaper = worker.NewPendingReaper(worker.PendingReaperDeps{Ops: m.Runtime(), Placement: m, Store: stores})
+	w.Scrubber = worker.NewScrubber(worker.ScrubberDeps{Ops: m.Runtime(), Placement: m, Store: stores})
 	dm := drain.New(
 		m.Runtime(),
 		m,
@@ -95,7 +95,15 @@ func newTestBackendManager(t *testing.T, cfg *BackendManagerConfig) *BackendMana
 func testCollaborators(cfg *BackendManagerConfig) Collaborators {
 	integrityCfg := &syncutil.AtomicConfig[config.IntegrityConfig]{}
 	coord := writepath.New(cfg.Runtime, cfg.Stores.Metadata, cfg.Policies.PendingEnabled)
-	mp := multipart.New(cfg.Runtime, coord, cfg.Stores.Metadata, cfg.Features.Encryptor, cfg.Features.ObjectCache, time.Hour, integrityCfg)
+	mp := multipart.New(&multipart.Deps{
+		Core:         cfg.Runtime,
+		Coord:        coord,
+		Stores:       cfg.Stores.Metadata,
+		Encryptor:    cfg.Features.Encryptor,
+		ObjectCache:  cfg.Features.ObjectCache,
+		DEKCacheTTL:  time.Hour,
+		IntegrityCfg: integrityCfg,
+	})
 	return Collaborators{Coord: coord, Multipart: mp, IntegrityCfg: integrityCfg}
 }
 
@@ -122,7 +130,12 @@ func testBackendRuntime(cfg *BackendManagerConfig) *infra.BackendRuntime {
 		Log:             slog.Default().With(logfmt.Component("backend_manager")),
 	})
 	if cfg.Operations.Metrics != nil {
-		rt.SetMetricsCollector(metrics.New(cfg.Operations.Metrics, usage, backendNames, cfg.Operations.ReplicationFactor))
+		rt.SetMetricsCollector(metrics.New(metrics.CollectorDeps{
+			Store:             cfg.Operations.Metrics,
+			Usage:             usage,
+			BackendNames:      backendNames,
+			ReplicationFactor: cfg.Operations.ReplicationFactor,
+		}))
 	}
 	return rt
 }

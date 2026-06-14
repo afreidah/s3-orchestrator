@@ -95,7 +95,7 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 	// handler) rather than the bare default.
 	r.log = slog.Default().With(logfmt.Component("runtime"))
 
-	r.inj = di.NewInjector(cfg, opts.Mode, &r.logLevel, obs.LogBuffer)
+	r.inj = di.NewInjector(di.InjectorDeps{Config: cfg, Mode: opts.Mode, LogLevel: &r.logLevel, LogBuffer: obs.LogBuffer})
 
 	manager, err := resolveRequiredServices(r.inj, cfg)
 	if err != nil {

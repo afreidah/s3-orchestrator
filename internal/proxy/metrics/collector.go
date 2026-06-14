@@ -51,14 +51,23 @@ type Collector struct {
 	log               *slog.Logger
 }
 
+// CollectorDeps groups the metrics collector's constructor parameters.
+// ReplicationFactor returns 0 when replication is disabled.
+type CollectorDeps struct {
+	Store             Deps
+	Usage             *counter.UsageTracker
+	BackendNames      []string
+	ReplicationFactor func() int
+}
+
 // New creates a Collector with references to the store and usage tracker
 // needed for gauge refreshes.
-func New(store Deps, usage *counter.UsageTracker, backendNames []string, replicationFactor func() int) *Collector {
+func New(deps CollectorDeps) *Collector {
 	return &Collector{
-		store:             store,
-		usage:             usage,
-		backendNames:      backendNames,
-		replicationFactor: replicationFactor,
+		store:             deps.Store,
+		usage:             deps.Usage,
+		backendNames:      deps.BackendNames,
+		replicationFactor: deps.ReplicationFactor,
 		log:               slog.Default().With(logfmt.Component("metrics_collector")),
 	}
 }

@@ -105,8 +105,15 @@ func New(d *Deps) *Manager {
 		objectCache:       d.ObjectCache,
 		parallelBroadcast: d.ParallelBroadcast,
 		integrityCfg:      d.IntegrityCfg,
-		failover:          readpath.New(d.BroadcastCore, d.Stores, d.LocationCache, d.ParallelBroadcast, d.DegradedBroadcastParallelism, !d.DisableDegradedReads),
-		log:               slog.Default().With(logfmt.Component("object")),
+		failover: readpath.New(readpath.FailoverDeps{
+			Core:                         d.BroadcastCore,
+			Stores:                       d.Stores,
+			Cache:                        d.LocationCache,
+			ParallelBroadcast:            d.ParallelBroadcast,
+			DegradedBroadcastParallelism: d.DegradedBroadcastParallelism,
+			DegradedReadsEnabled:         !d.DisableDegradedReads,
+		}),
+		log: slog.Default().With(logfmt.Component("object")),
 	}
 }
 

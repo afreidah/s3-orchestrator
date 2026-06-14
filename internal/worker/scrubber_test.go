@@ -43,7 +43,7 @@ func setupScrubber(t *testing.T) (*Scrubber, *MockScrubberOps, *MockPlacement, *
 	pl := NewMockPlacement(ctrl)
 	be := backendtest.NewMockObjectBackend(ctrl)
 	ms := &mockMetadataStore{}
-	s := NewScrubber(ops, pl, ms, nil)
+	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: pl, Store: ms})
 	s.SetConfig(&config.IntegrityConfig{
 		Enabled:           true,
 		ScrubberBatchSize: 100,
@@ -268,7 +268,7 @@ func TestBackfill_EmptyBatch(t *testing.T) {
 func TestScrubber_SetConfig(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	s := NewScrubber(NewMockScrubberOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{}, nil)
+	s := NewScrubber(ScrubberDeps{Ops: NewMockScrubberOps(ctrl), Placement: NewMockPlacement(ctrl), Store: &mockMetadataStore{}})
 	if s.Config() != nil {
 		t.Fatal("expected nil config initially")
 	}

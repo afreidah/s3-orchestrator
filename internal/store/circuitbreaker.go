@@ -22,7 +22,13 @@ import (
 // circuit. Wires the telemetry hook so CircuitBreakerState /
 // CircuitBreakerTransitionsTotal are populated.
 func NewDatabaseBreaker(cfg config.CircuitBreakerConfig) *breaker.CircuitBreaker {
-	cb := breaker.NewCircuitBreaker("database", cfg.FailureThreshold, cfg.OpenTimeout, isDBError, core.ErrDBUnavailable)
+	cb := breaker.NewCircuitBreaker(breaker.Config{
+		Name:      "database",
+		Threshold: cfg.FailureThreshold,
+		Timeout:   cfg.OpenTimeout,
+		IsError:   isDBError,
+		Sentinel:  core.ErrDBUnavailable,
+	})
 	cb.SetOnStateChange(telemetry.NewDatabaseBreakerHook("database"))
 	return cb
 }

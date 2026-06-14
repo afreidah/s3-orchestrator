@@ -110,7 +110,7 @@ func lifecycleManagerForMode(t *testing.T, mode config.Mode) *lifecycle.Manager 
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("config validation: %v", err)
 	}
-	inj := NewInjector(cfg, mode, new(slog.LevelVar), telemetry.NewLogBuffer())
+	inj := NewInjector(InjectorDeps{Config: cfg, Mode: mode, LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
 	t.Cleanup(func() { _ = inj.Shutdown() })
 	mgr, err := do.Invoke[*lifecycle.Manager](inj)
 	if err != nil {

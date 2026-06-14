@@ -53,13 +53,24 @@ type PendingReaper struct {
 	batchSize   int
 }
 
-// NewPendingReaper creates a PendingReaper with explicit dependencies.
-// concurrency, minAge, and batchSize fall back to safe defaults when zero
+// PendingReaperDeps groups the pending reaper's constructor parameters.
+// Concurrency, MinAge, and BatchSize fall back to safe defaults when zero
 // or negative.
-func NewPendingReaper(deps CleanupOps, placement Placement, store PendingReaperStore, concurrency int, minAge time.Duration, batchSize int) *PendingReaper {
-	must.NotNil("deps", deps)
-	must.NotNil("placement", placement)
-	must.NotNil("store", store)
+type PendingReaperDeps struct {
+	Ops         CleanupOps
+	Placement   Placement
+	Store       PendingReaperStore
+	Concurrency int
+	MinAge      time.Duration
+	BatchSize   int
+}
+
+// NewPendingReaper creates a PendingReaper with the given dependencies.
+func NewPendingReaper(deps PendingReaperDeps) *PendingReaper {
+	must.NotNil("Ops", deps.Ops)
+	must.NotNil("Placement", deps.Placement)
+	must.NotNil("Store", deps.Store)
+	concurrency, minAge, batchSize := deps.Concurrency, deps.MinAge, deps.BatchSize
 	if concurrency <= 0 {
 		concurrency = 4
 	}
@@ -70,9 +81,9 @@ func NewPendingReaper(deps CleanupOps, placement Placement, store PendingReaperS
 		batchSize = 50
 	}
 	return &PendingReaper{
-		deps:        deps,
-		placement:   placement,
-		store:       store,
+		deps:        deps.Ops,
+		placement:   deps.Placement,
+		store:       deps.Store,
 		log:         slog.Default().With(logfmt.Component("pending_reaper")),
 		concurrency: concurrency,
 		minAge:      minAge,

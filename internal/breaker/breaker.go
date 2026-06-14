@@ -104,27 +104,29 @@ type CircuitBreaker struct {
 	onStateChange func(StateChangeInfo)
 }
 
-// NewCircuitBreaker creates a new circuit breaker.
-//
-//   - name: identifier for logging and labels (e.g. "database", "oci-backend")
-//   - threshold: consecutive failures before opening
-//   - timeout: delay before probing recovery
-//   - isError: filter that returns true for errors that should count as failures
-//   - sentinel: the error returned when the circuit is open (e.g. ErrDBUnavailable)
-//
-// Use SetOnStateChange after construction to install metric / event hooks.
-func NewCircuitBreaker(name string, threshold int, timeout time.Duration, isError func(error) bool, sentinel error) *CircuitBreaker {
+// Config configures a CircuitBreaker. Use SetOnStateChange after
+// construction to install metric / event hooks.
+type Config struct {
+	Name      string           // identifier for logging and labels (e.g. "database", "oci-backend")
+	Threshold int              // consecutive failures before opening
+	Timeout   time.Duration    // delay before probing recovery
+	IsError   func(error) bool // returns true for errors that should count as failures
+	Sentinel  error            // error returned when the circuit is open (e.g. ErrDBUnavailable)
+}
+
+// NewCircuitBreaker creates a new circuit breaker from cfg.
+func NewCircuitBreaker(cfg Config) *CircuitBreaker {
 	return &CircuitBreaker{
 		state:         StateClosed,
-		failThreshold: threshold,
-		openTimeout:   timeout,
-		name:          name,
+		failThreshold: cfg.Threshold,
+		openTimeout:   cfg.Timeout,
+		name:          cfg.Name,
 		log: slog.Default().With(
 			logfmt.Component("circuit_breaker"),
-			"breaker_name", name,
+			"breaker_name", cfg.Name,
 		),
-		isError:  isError,
-		sentinel: sentinel,
+		isError:  cfg.IsError,
+		sentinel: cfg.Sentinel,
 	}
 }
 

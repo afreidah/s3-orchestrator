@@ -283,7 +283,7 @@ func newOpenBreakerBackend(t *testing.T, ctrl *gomock.Controller, name string) *
 	inner := backendtest.NewMockObjectBackend(ctrl)
 	inner.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("billing account closed")).AnyTimes()
-	cb := backend.NewCircuitBreakerBackend(inner, name, 1, time.Hour)
+	cb := backend.NewCircuitBreakerBackend(inner, backend.CircuitBreakerConfig{Name: name, Threshold: 1, Timeout: time.Hour})
 	if _, err := cb.GetObject(context.Background(), "trip", ""); err == nil {
 		t.Fatal("expected the priming call to fail")
 	}

@@ -28,20 +28,28 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
+// InjectorDeps groups the values NewInjector seeds the container with.
+type InjectorDeps struct {
+	Config    *config.Config
+	Mode      config.Mode
+	LogLevel  *slog.LevelVar
+	LogBuffer *telemetry.LogBuffer
+}
+
 // NewInjector creates the DI container and registers every provider
 // the service needs. The body is intentionally a flat sequence of
 // per-domain registration calls so a contributor can see the full
 // dependency graph in one screen; each helper below owns the
 // providers for its domain.
-func NewInjector(cfg *config.Config, mode config.Mode, logLevel *slog.LevelVar, logBuffer *telemetry.LogBuffer) do.Injector {
+func NewInjector(deps InjectorDeps) do.Injector {
 	inj := do.New()
 
-	registerValues(inj, cfg, mode, logLevel, logBuffer)
+	registerValues(inj, deps.Config, deps.Mode, deps.LogLevel, deps.LogBuffer)
 	registerInfrastructure(inj)
 	registerBackendStack(inj)
-	registerWorkers(inj, cfg, mode)
+	registerWorkers(inj, deps.Config, deps.Mode)
 	registerTransport(inj)
-	registerOptionalFeatures(inj, cfg)
+	registerOptionalFeatures(inj, deps.Config)
 
 	return inj
 }

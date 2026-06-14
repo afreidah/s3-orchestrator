@@ -36,7 +36,7 @@ func TestWireManager_HappyPath(t *testing.T) {
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("config validation: %v", err)
 	}
-	inj := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
+	inj := NewInjector(InjectorDeps{Config: cfg, Mode: "all", LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
 	t.Cleanup(func() { _ = inj.Shutdown() })
 
 	if err := WireManager(inj); err != nil {
@@ -200,7 +200,7 @@ func TestWireManager_PendingReaperFailedLogsAndContinues(t *testing.T) {
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("config validation: %v", err)
 	}
-	inj := NewInjector(cfg, "all", new(slog.LevelVar), telemetry.NewLogBuffer())
+	inj := NewInjector(InjectorDeps{Config: cfg, Mode: "all", LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
 	t.Cleanup(func() { _ = inj.Shutdown() })
 
 	boom := errors.New("pending reaper construction failed")

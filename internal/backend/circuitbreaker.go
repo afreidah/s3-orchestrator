@@ -36,9 +36,22 @@ var _ ObjectBackend = (*CircuitBreakerBackend)(nil)
 // logic. The breaker is wired to the telemetry hook so transitions surface
 // on the standard CircuitBreaker* metrics and the BackendCircuit*
 // notification events.
-func NewCircuitBreakerBackend(real ObjectBackend, name string, threshold int, timeout time.Duration) *CircuitBreakerBackend {
-	cb := breaker.NewCircuitBreaker(name, threshold, timeout, isBackendError, breaker.ErrBackendUnavailable)
-	cb.SetOnStateChange(telemetry.NewCircuitBreakerHook(name))
+// CircuitBreakerConfig configures the circuit breaker wrapping a backend.
+type CircuitBreakerConfig struct {
+	Name      string
+	Threshold int
+	Timeout   time.Duration
+}
+
+func NewCircuitBreakerBackend(real ObjectBackend, cfg CircuitBreakerConfig) *CircuitBreakerBackend {
+	cb := breaker.NewCircuitBreaker(breaker.Config{
+		Name:      cfg.Name,
+		Threshold: cfg.Threshold,
+		Timeout:   cfg.Timeout,
+		IsError:   isBackendError,
+		Sentinel:  breaker.ErrBackendUnavailable,
+	})
+	cb.SetOnStateChange(telemetry.NewCircuitBreakerHook(cfg.Name))
 	return &CircuitBreakerBackend{
 		real:           real,
 		CircuitBreaker: cb,

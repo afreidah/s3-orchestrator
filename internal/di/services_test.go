@@ -100,9 +100,9 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 	or := worker.NewOverReplicationCleaner(mgr.Runtime(), mgr, mock)
 	or.SetConfig(&config.ReplicationConfig{Factor: 1})
 
-	cw := worker.NewCleanupWorker(mgr.Runtime(), mock, 10, "test-instance", 5*time.Minute)
+	cw := worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: mgr.Runtime(), Store: mock, Concurrency: 10, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 
-	sc := worker.NewScrubber(mgr.Runtime(), mgr, mock, nil)
+	sc := worker.NewScrubber(worker.ScrubberDeps{Ops: mgr.Runtime(), Placement: mgr, Store: mock})
 	sc.SetConfig(&config.IntegrityConfig{})
 
 	mgr.SetLifecycleConfig(&config.LifecycleConfig{})
@@ -146,7 +146,7 @@ func TestCleanupQueueService_ProcessedLogFires(t *testing.T) {
 		},
 	})
 	_ = proxytest.BuildWorkers(mgr, mock)
-	cw := worker.NewCleanupWorker(mgr.Runtime(), mock, 1, "test", 5*time.Minute)
+	cw := worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: mgr.Runtime(), Store: mock, Concurrency: 1, InstanceID: "test", ClaimGracePeriod: 5 * time.Minute})
 	t.Cleanup(mgr.Close)
 
 	svc := worker.NewCleanupQueueService(cw, acquiringLocker{}).(*tickrunner.Service)
@@ -229,7 +229,7 @@ func TestServiceConstructors_AllReturnNonNil(t *testing.T) {
 		{"Replicator", worker.NewReplicatorService(f.mgr, f.replicator, locker)},
 		{"Reconcile", worker.NewReconcileService(worker.NewReconciler(f.mgr, nil), locker, time.Hour)},
 		{"Scrubber", worker.NewScrubberService(f.scrubber, locker)},
-		{"Watchdog", breaker.NewWatchdog(breaker.NewRegistry(breaker.NewCircuitBreaker("t", 3, time.Second, func(error) bool { return false }, core.ErrDBUnavailable)))},
+		{"Watchdog", breaker.NewWatchdog(breaker.NewRegistry(breaker.NewCircuitBreaker(breaker.Config{Name: "t", Threshold: 3, Timeout: time.Second, IsError: func(error) bool { return false }, Sentinel: core.ErrDBUnavailable})))},
 	}
 	for _, tc := range tests {
 		if tc.svc == nil {

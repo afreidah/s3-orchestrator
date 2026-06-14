@@ -45,11 +45,11 @@ func TestBackendCore_LogFallback(t *testing.T) {
 // Asserts that expected 1 eligible backend, got.
 func TestExcludeUnhealthy_FiltersOpenCircuitBreaker(t *testing.T) {
 	t.Parallel()
-	healthy := backend.NewCircuitBreakerBackend(newMockBackend(), "healthy", 3, 15*time.Second)
+	healthy := backend.NewCircuitBreakerBackend(newMockBackend(), backend.CircuitBreakerConfig{Name: "healthy", Threshold: 3, Timeout: 15 * time.Second})
 
 	failingMock := newMockBackend()
 	failingMock.putErr = errors.New("backend down")
-	unhealthy := backend.NewCircuitBreakerBackend(failingMock, "unhealthy", 1, 15*time.Second)
+	unhealthy := backend.NewCircuitBreakerBackend(failingMock, backend.CircuitBreakerConfig{Name: "unhealthy", Threshold: 1, Timeout: 15 * time.Second})
 
 	_, _ = unhealthy.PutObject(context.TODO(), "key", strings.NewReader("x"), 1, "", nil)
 
@@ -72,8 +72,8 @@ func TestExcludeUnhealthy_FiltersOpenCircuitBreaker(t *testing.T) {
 // TestExcludeUnhealthy_AllHealthy verifies the exclude unhealthy all healthy contract.
 func TestExcludeUnhealthy_AllHealthy(t *testing.T) {
 	t.Parallel()
-	b1 := backend.NewCircuitBreakerBackend(newMockBackend(), "b1", 3, 15*time.Second)
-	b2 := backend.NewCircuitBreakerBackend(newMockBackend(), "b2", 3, 15*time.Second)
+	b1 := backend.NewCircuitBreakerBackend(newMockBackend(), backend.CircuitBreakerConfig{Name: "b1", Threshold: 3, Timeout: 15 * time.Second})
+	b2 := backend.NewCircuitBreakerBackend(newMockBackend(), backend.CircuitBreakerConfig{Name: "b2", Threshold: 3, Timeout: 15 * time.Second})
 
 	c := infra.New(&infra.Config{
 		Backends: map[string]backend.ObjectBackend{
@@ -93,11 +93,11 @@ func TestExcludeUnhealthy_AllUnhealthy_TimeoutNotElapsed(t *testing.T) {
 	t.Parallel()
 	failingMock1 := newMockBackend()
 	failingMock1.putErr = errors.New("backend down")
-	b1 := backend.NewCircuitBreakerBackend(failingMock1, "b1", 1, 15*time.Second)
+	b1 := backend.NewCircuitBreakerBackend(failingMock1, backend.CircuitBreakerConfig{Name: "b1", Threshold: 1, Timeout: 15 * time.Second})
 
 	failingMock2 := newMockBackend()
 	failingMock2.putErr = errors.New("backend down")
-	b2 := backend.NewCircuitBreakerBackend(failingMock2, "b2", 1, 15*time.Second)
+	b2 := backend.NewCircuitBreakerBackend(failingMock2, backend.CircuitBreakerConfig{Name: "b2", Threshold: 1, Timeout: 15 * time.Second})
 
 	_, _ = b1.PutObject(context.TODO(), "key", strings.NewReader("x"), 1, "", nil)
 	_, _ = b2.PutObject(context.TODO(), "key", strings.NewReader("x"), 1, "", nil)
@@ -120,11 +120,11 @@ func TestExcludeUnhealthy_AllUnhealthy_ProbeEligible(t *testing.T) {
 	t.Parallel()
 	failingMock1 := newMockBackend()
 	failingMock1.putErr = errors.New("backend down")
-	b1 := backend.NewCircuitBreakerBackend(failingMock1, "b1", 1, 1*time.Millisecond)
+	b1 := backend.NewCircuitBreakerBackend(failingMock1, backend.CircuitBreakerConfig{Name: "b1", Threshold: 1, Timeout: 1 * time.Millisecond})
 
 	failingMock2 := newMockBackend()
 	failingMock2.putErr = errors.New("backend down")
-	b2 := backend.NewCircuitBreakerBackend(failingMock2, "b2", 1, 1*time.Millisecond)
+	b2 := backend.NewCircuitBreakerBackend(failingMock2, backend.CircuitBreakerConfig{Name: "b2", Threshold: 1, Timeout: 1 * time.Millisecond})
 
 	_, _ = b1.PutObject(context.TODO(), "key", strings.NewReader("x"), 1, "", nil)
 	_, _ = b2.PutObject(context.TODO(), "key", strings.NewReader("x"), 1, "", nil)
@@ -154,7 +154,7 @@ func TestExcludeUnhealthy_HalfOpenAllowedForProbe(t *testing.T) {
 	t.Parallel()
 	failingMock := newMockBackend()
 	failingMock.putErr = errors.New("backend down")
-	b := backend.NewCircuitBreakerBackend(failingMock, "probe", 1, 1*time.Millisecond)
+	b := backend.NewCircuitBreakerBackend(failingMock, backend.CircuitBreakerConfig{Name: "probe", Threshold: 1, Timeout: 1 * time.Millisecond})
 
 	_, _ = b.PutObject(context.TODO(), "key", strings.NewReader("x"), 1, "", nil)
 	if b.State() != breaker.StateOpen {
@@ -324,7 +324,7 @@ func TestEligibleForWrite_CombinesAllFilters(t *testing.T) {
 
 	failingMock := newMockBackend()
 	failingMock.putErr = errors.New("down")
-	unhealthy := backend.NewCircuitBreakerBackend(failingMock, "unhealthy", 1, 30*time.Second)
+	unhealthy := backend.NewCircuitBreakerBackend(failingMock, backend.CircuitBreakerConfig{Name: "unhealthy", Threshold: 1, Timeout: 30 * time.Second})
 	_, _ = unhealthy.PutObject(context.TODO(), "k", strings.NewReader("x"), 1, "", nil)
 
 	overLimit := newMockBackend()

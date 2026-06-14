@@ -89,7 +89,7 @@ func resolvedInjector(t *testing.T, cfg *config.Config, logLevel *slog.LevelVar)
 	telemetry.BuildInfo.WithLabelValues(telemetry.Version, goruntime.Version()).Set(1)
 	di.WireAuditMetrics()
 
-	inj := di.NewInjector(cfg, "all", logLevel, logBuffer)
+	inj := di.NewInjector(di.InjectorDeps{Config: cfg, Mode: "all", LogLevel: logLevel, LogBuffer: logBuffer})
 
 	if _, err := do.Invoke[core.LifecycleAdmin](inj); err != nil {
 		t.Fatalf("invoke LifecycleAdmin: %v", err)

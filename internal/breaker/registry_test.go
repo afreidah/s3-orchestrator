@@ -73,7 +73,7 @@ func TestRegistry_EmptyResetIsNoOp(t *testing.T) {
 // TestRegistry_RealCircuitBreakerSatisfiesInterface verifies that a real
 // *CircuitBreaker can be registered without type assertions.
 func TestRegistry_RealCircuitBreakerSatisfiesInterface(t *testing.T) {
-	cb := NewCircuitBreaker("test", 1, 0, func(error) bool { return true }, ErrBackendUnavailable)
+	cb := NewCircuitBreaker(Config{Name: "test", Threshold: 1, Timeout: 0, IsError: func(error) bool { return true }, Sentinel: ErrBackendUnavailable})
 	r := NewRegistry(cb)
 	if r.Len() != 1 {
 		t.Fatalf("Len = %d, want 1", r.Len())

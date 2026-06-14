@@ -228,7 +228,7 @@ func TestGetDashboardData_UnhealthyBackends(t *testing.T) {
 
 	mock := newMockBackend()
 	mock.putErr = errors.New("down")
-	cbBackend := backend.NewCircuitBreakerBackend(mock, "b1", 1, time.Minute)
+	cbBackend := backend.NewCircuitBreakerBackend(mock, backend.CircuitBreakerConfig{Name: "b1", Threshold: 1, Timeout: time.Minute})
 	// Trip the circuit.
 	_, _ = cbBackend.PutObject(context.Background(), "k", nil, 0, "", nil)
 
@@ -284,7 +284,7 @@ func TestGetDashboardData_HealthyBackendsNotMarked(t *testing.T) {
 		AnyTimes()
 	storetest.Permissive(store)
 
-	cbBackend := backend.NewCircuitBreakerBackend(newMockBackend(), "b1", 5, time.Minute)
+	cbBackend := backend.NewCircuitBreakerBackend(newMockBackend(), backend.CircuitBreakerConfig{Name: "b1", Threshold: 5, Timeout: time.Minute})
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Storage: StorageDeps{
 			Backends: map[string]backend.ObjectBackend{"b1": cbBackend},

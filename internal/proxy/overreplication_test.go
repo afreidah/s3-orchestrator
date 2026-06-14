@@ -110,7 +110,7 @@ func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 	store := newPermissiveMock(t)
 	mock := newMockBackend()
 	mock.putErr = errors.New("backend down")
-	cbBackend := backend.NewCircuitBreakerBackend(mock, "b1", 1, time.Minute)
+	cbBackend := backend.NewCircuitBreakerBackend(mock, backend.CircuitBreakerConfig{Name: "b1", Threshold: 1, Timeout: time.Minute})
 	_, _ = cbBackend.PutObject(context.Background(), "k", nil, 0, "", nil)
 
 	mgr := newTestBackendManager(t, &BackendManagerConfig{

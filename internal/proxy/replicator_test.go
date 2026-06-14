@@ -746,7 +746,7 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 // newTrippedCBBackend wraps a mock backend in a CircuitBreakerBackend
 // and immediately trips the circuit.
 func newTrippedCBBackend(b *mockBackend, name string) *backend.CircuitBreakerBackend {
-	cbb := backend.NewCircuitBreakerBackend(b, name, 1, time.Hour)
+	cbb := backend.NewCircuitBreakerBackend(b, backend.CircuitBreakerConfig{Name: name, Threshold: 1, Timeout: time.Hour})
 	_ = cbb.PostCheck(errors.New("forced failure"))
 	return cbb
 }
@@ -1014,7 +1014,7 @@ func TestIsBackendHealthy_UnknownBackend(t *testing.T) {
 // reports healthy.
 func TestIsBackendHealthy_CBHealthy(t *testing.T) {
 	t.Parallel()
-	cbb := backend.NewCircuitBreakerBackend(newMockBackend(), "b1", 3, time.Minute)
+	cbb := backend.NewCircuitBreakerBackend(newMockBackend(), backend.CircuitBreakerConfig{Name: "b1", Threshold: 3, Timeout: time.Minute})
 	store := newPermissiveMock(t)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Storage: StorageDeps{

@@ -30,7 +30,7 @@ import (
 // shares testManager and testStore but carries a distinct instanceID.
 // Lets a test spin up N workers all racing on the same queue.
 func newAuxCleanupWorker(instanceID string) *worker.CleanupWorker {
-	return worker.NewCleanupWorker(testManager.Runtime(), testStore, 10, instanceID, 5*time.Minute)
+	return worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: testManager.Runtime(), Store: testStore, Concurrency: 10, InstanceID: instanceID, ClaimGracePeriod: 5 * time.Minute})
 }
 
 // TestInt_CleanupQueue_ConcurrentWorkersProcessExactlyOnce enqueues N

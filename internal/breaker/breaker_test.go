@@ -32,7 +32,7 @@ var errSentinel = errors.New("circuit open")
 
 // newTestBreaker constructs a new test breaker.
 func newTestBreaker(threshold int, timeout time.Duration) *CircuitBreaker {
-	return NewCircuitBreaker("test", threshold, timeout, alwaysError, errSentinel)
+	return NewCircuitBreaker(Config{Name: "test", Threshold: threshold, Timeout: timeout, IsError: alwaysError, Sentinel: errSentinel})
 }
 
 // -------------------------------------------------------------------------
@@ -237,7 +237,7 @@ func TestCB_OpenDuration_ZeroAfterRecovery(t *testing.T) {
 // TestCB_FilteredErrorsDontTrip verifies the cb filtered errors dont trip path by exercising cb.PostCheck, cb.IsHealthy.
 func TestCB_FilteredErrorsDontTrip(t *testing.T) {
 	t.Parallel()
-	cb := NewCircuitBreaker("test", 1, time.Minute, neverError, errSentinel)
+	cb := NewCircuitBreaker(Config{Name: "test", Threshold: 1, Timeout: time.Minute, IsError: neverError, Sentinel: errSentinel})
 
 	for range 10 {
 		_ = cb.PostCheck(errTest)

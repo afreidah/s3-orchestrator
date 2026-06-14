@@ -347,7 +347,7 @@ func TestDBCursorStream_DrainsAcrossPages(t *testing.T) {
 			{{ObjectKey: "vb/c"}, {ObjectKey: "vb/d"}},
 		},
 	}
-	it := NewDBCursorStream(lister, "be1", "vb/", nil)
+	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1", BucketPrefix: "vb/"})
 	got := drainStream(t, it)
 	want := []string{"vb/a", "vb/b", "vb/c", "vb/d"}
 	if !slices.Equal(got, want) {
@@ -367,7 +367,7 @@ func TestDBCursorStream_FiltersSiblingBucket(t *testing.T) {
 			},
 		},
 	}
-	it := NewDBCursorStream(lister, "be1", "vb/", []string{"other/"})
+	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1", BucketPrefix: "vb/", OtherPrefixes: []string{"other/"}})
 	got := drainStream(t, it)
 	if !slices.Equal(got, []string{"vb/a", "vb/b"}) {
 		t.Errorf("sibling-bucket row not filtered: %v", got)
@@ -386,7 +386,7 @@ func TestDBCursorStream_PropagatesError(t *testing.T) {
 		err:   want,
 		errAt: 1, // fail on the second page fetch
 	}
-	it := NewDBCursorStream(lister, "be1", "vb/", nil)
+	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1", BucketPrefix: "vb/"})
 	ctx := context.Background()
 
 	// Page 1  -  should succeed.
@@ -410,7 +410,7 @@ func TestDBCursorStream_PropagatesError(t *testing.T) {
 func TestDBCursorStream_StopIsNoop(t *testing.T) {
 	t.Parallel()
 	lister := &fakeLister{pages: [][]core.ObjectLocation{{{ObjectKey: "vb/a"}}}}
-	it := NewDBCursorStream(lister, "be1", "vb/", nil)
+	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1", BucketPrefix: "vb/"})
 	it.Stop()
 	it.Stop() // idempotent
 	got := drainStream(t, it)
@@ -427,7 +427,7 @@ func TestDBCursorStream_ContextCancellation(t *testing.T) {
 	}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	it := NewDBCursorStream(lister, "be1", "vb/", nil)
+	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1", BucketPrefix: "vb/"})
 	_, ok, err := it.Next(ctx)
 	if ok || err == nil {
 		t.Errorf("cancelled ctx should abort: ok=%v err=%v", ok, err)
