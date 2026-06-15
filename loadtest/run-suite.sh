@@ -25,19 +25,19 @@ BINARY="${PERF_BINARY:-./loadtest/s3-loadtest}"
 # Profile-driven knobs. Edit these to retune; no caller env vars needed.
 case "$PROFILE" in
   smoke)
-    DURATION=60s; RATE=200; SEED=500
+    DURATION=60s; RATE=200; SEED=500; COLD_SEED=2000
     SIZES="1024,65536"
     RAMP_FROM=100; RAMP_TO=500; RAMP_STEP=100
     MPU_CONCURRENCY=5; MPU_PART_COUNT=3; MPU_PART_SIZE=5242880
     ;;
   baseline)
-    DURATION=60s; RATE=500; SEED=1000
+    DURATION=60s; RATE=500; SEED=1000; COLD_SEED=3000
     SIZES="1024,1048576,104857600"
     RAMP_FROM=200; RAMP_TO=2000; RAMP_STEP=200
     MPU_CONCURRENCY=10; MPU_PART_COUNT=5; MPU_PART_SIZE=5242880
     ;;
   saturation)
-    DURATION=30s; RATE=200; SEED=1000
+    DURATION=30s; RATE=200; SEED=1000; COLD_SEED=3000
     SIZES="1048576"
     RAMP_FROM=200; RAMP_TO=5000; RAMP_STEP=200
     MPU_CONCURRENCY=20; MPU_PART_COUNT=5; MPU_PART_SIZE=5242880
@@ -97,7 +97,7 @@ if [[ -n "${S3O_ADMIN_TOKEN:-}" ]]; then
   run_scenario "get-cold" "$BINARY" \
     -endpoint "$ENDPOINT" -bucket "$BUCKET" \
     -op get -rate "$RATE" -duration "$DURATION" \
-    -sizes "$SIZES" -seed "$SEED" \
+    -sizes "$SIZES" -seed "$COLD_SEED" -cold \
     -cache-flush-before -admin-token "$S3O_ADMIN_TOKEN" \
     -output-json "$RESULTS_DIR/get-cold.json"
 else
