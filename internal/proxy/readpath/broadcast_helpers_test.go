@@ -14,6 +14,7 @@ package readpath
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -40,7 +41,7 @@ func noopSpan() trace.Span {
 // Asserts that name = , want empty.
 func TestBroadcastAllFailed_NilErrorReturnsObjectNotFound(t *testing.T) {
 	t.Parallel()
-	name, err := broadcastAllFailed(noopSpan(), nil)
+	_, name, err := broadcastAllFailed[int](noopSpan(), nil)
 	if name != "" {
 		t.Errorf("name = %q, want empty", name)
 	}
@@ -54,7 +55,7 @@ func TestBroadcastAllFailed_NilErrorReturnsObjectNotFound(t *testing.T) {
 func TestBroadcastAllFailed_WrapsLastError(t *testing.T) {
 	t.Parallel()
 	lastErr := errors.New("backend on fire")
-	name, err := broadcastAllFailed(noopSpan(), lastErr)
+	_, name, err := broadcastAllFailed[int](noopSpan(), lastErr)
 	if name != "" {
 		t.Errorf("name = %q, want empty", name)
 	}
@@ -76,13 +77,13 @@ func TestBroadcastAllFailed_WrapsLastError(t *testing.T) {
 // the deadline fires.
 func TestDrainAndCleanupLosers_InvokesCleanupOnEachResult(t *testing.T) {
 	t.Parallel()
-	ch := make(chan broadcastResult, 3)
+	ch := make(chan broadcastResult[int], 3)
 	var cleanups atomic.Int32
 	mkCleanup := func() func() { return func() { cleanups.Add(1) } }
 
-	ch <- broadcastResult{name: "a", cleanup: mkCleanup()}
-	ch <- broadcastResult{name: "b", cleanup: mkCleanup()}
-	ch <- broadcastResult{name: "c", cleanup: mkCleanup()}
+	ch <- broadcastResult[int]{name: "a", cleanup: mkCleanup()}
+	ch <- broadcastResult[int]{name: "b", cleanup: mkCleanup()}
+	ch <- broadcastResult[int]{name: "c", cleanup: mkCleanup()}
 
 	drainAndCleanupLosers(context.Background(), "GET", ch, 3, time.Second)
 	if got := cleanups.Load(); got != 3 {
@@ -94,12 +95,12 @@ func TestDrainAndCleanupLosers_InvokesCleanupOnEachResult(t *testing.T) {
 // results whose cleanup is nil (errored probes) without panicking.
 func TestDrainAndCleanupLosers_ToleratesNilCleanup(t *testing.T) {
 	t.Parallel()
-	ch := make(chan broadcastResult, 2)
+	ch := make(chan broadcastResult[int], 2)
 	var cleanups atomic.Int32
 	cleanupFn := func() { cleanups.Add(1) }
 
-	ch <- broadcastResult{name: "errored", err: errors.New("fail")} // nil cleanup
-	ch <- broadcastResult{name: "won", cleanup: cleanupFn}
+	ch <- broadcastResult[int]{name: "errored", err: errors.New("fail")} // nil cleanup
+	ch <- broadcastResult[int]{name: "won", cleanup: cleanupFn}
 
 	drainAndCleanupLosers(context.Background(), "GET", ch, 2, time.Second)
 	if got := cleanups.Load(); got != 1 {
@@ -115,9 +116,9 @@ func TestDrainAndCleanupLosers_ToleratesNilCleanup(t *testing.T) {
 func TestDrainAndCleanupLosers_TimesOutOnHungProbe(t *testing.T) {
 	t.Parallel()
 	const op = "drain-timeout-test"
-	ch := make(chan broadcastResult, 2)
+	ch := make(chan broadcastResult[int], 2)
 	var cleanups atomic.Int32
-	ch <- broadcastResult{name: "reported", cleanup: func() { cleanups.Add(1) }}
+	ch <- broadcastResult[int]{name: "reported", cleanup: func() { cleanups.Add(1) }}
 	// The second probe is "hung": it never sends, so remaining (2) exceeds
 	// what arrives. The old unbounded drain blocked here forever.
 
@@ -147,7 +148,7 @@ func TestDrainAndCleanupLosers_TimesOutOnHungProbe(t *testing.T) {
 // the (here, very long) timeout.
 func TestDrainAndCleanupLosers_ReturnsOnContextCancel(t *testing.T) {
 	t.Parallel()
-	ch := make(chan broadcastResult) // unbuffered; nothing is ever sent
+	ch := make(chan broadcastResult[int]) // unbuffered; nothing is ever sent
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -217,5 +218,90 @@ func TestCancelLosers_UnknownWinnerCancelsEveryone(t *testing.T) {
 
 	if ctxA.Err() == nil || ctxB.Err() == nil {
 		t.Errorf("expected both contexts cancelled, got a=%v b=%v", ctxA.Err(), ctxB.Err())
+	}
+}
+
+// -------------------------------------------------------------------------
+// pure helpers
+// -------------------------------------------------------------------------
+
+// TestBroadcastSlotCount covers the rolling-window slot clamp: a non-positive
+// limit means "no cap" (fan out to every eligible backend), a limit above the
+// eligible count is clamped down, and a limit at or below it is honoured.
+func TestBroadcastSlotCount(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name            string
+		limit, eligible int
+		want            int
+	}{
+		{"uncapped zero", 0, 5, 5},
+		{"uncapped negative", -1, 5, 5},
+		{"cap above eligible", 10, 5, 5},
+		{"cap below eligible", 2, 5, 2},
+		{"cap equals eligible", 5, 5, 5},
+	}
+	for _, c := range cases {
+		if got := broadcastSlotCount(c.limit, c.eligible); got != c.want {
+			t.Errorf("%s: broadcastSlotCount(%d, %d) = %d, want %d", c.name, c.limit, c.eligible, got, c.want)
+		}
+	}
+}
+
+// TestBroadcastOutcome covers the terminal-state classifier for the duration
+// histogram label: cache hits and clean successes are wins, a not-found chain
+// (even when wrapped) is "not_found", and anything else is "error".
+func TestBroadcastOutcome(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		cacheHit bool
+		err      error
+		want     string
+	}{
+		{"cache hit beats error", true, errors.New("ignored"), "cache_hit"},
+		{"clean success", false, nil, "success"},
+		{"not found", false, core.ErrObjectNotFound, "not_found"},
+		{"wrapped not found", false, fmt.Errorf("read: %w", core.ErrObjectNotFound), "not_found"},
+		{"other error", false, errors.New("boom"), "error"},
+	}
+	for _, c := range cases {
+		if got := broadcastOutcome(c.cacheHit, c.err); got != c.want {
+			t.Errorf("%s: broadcastOutcome(%v, %v) = %q, want %q", c.name, c.cacheHit, c.err, got, c.want)
+		}
+	}
+}
+
+// TestDrainTimeoutOrDefault verifies the loser-drain bound falls back to the
+// default only for a non-positive configured timeout.
+func TestDrainTimeoutOrDefault(t *testing.T) {
+	t.Parallel()
+	if got := drainTimeoutOrDefault(0); got != defaultDrainTimeout {
+		t.Errorf("zero -> %v, want default %v", got, defaultDrainTimeout)
+	}
+	if got := drainTimeoutOrDefault(-time.Second); got != defaultDrainTimeout {
+		t.Errorf("negative -> %v, want default %v", got, defaultDrainTimeout)
+	}
+	if got := drainTimeoutOrDefault(2 * time.Second); got != 2*time.Second {
+		t.Errorf("positive -> %v, want 2s", got)
+	}
+}
+
+// TestFailoverFailureResult verifies the failure path distinguishes "every
+// copy declined for usage limits" (ErrUsageLimitExceeded) from a genuine
+// last error (returned verbatim).
+func TestFailoverFailureResult(t *testing.T) {
+	t.Parallel()
+	locs := []core.ObjectLocation{{BackendName: "a"}, {BackendName: "b"}}
+	boom := errors.New("boom")
+
+	if err := failoverFailureResult(noopSpan(), "GetObject", locs, ErrUsageLimitSkip, len(locs)); !errors.Is(err, core.ErrUsageLimitExceeded) {
+		t.Errorf("all-skipped: got %v, want ErrUsageLimitExceeded", err)
+	}
+	if err := failoverFailureResult(noopSpan(), "GetObject", locs, boom, 1); !errors.Is(err, boom) {
+		t.Errorf("partial-skip: got %v, want boom", err)
+	}
+	if err := failoverFailureResult(noopSpan(), "GetObject", locs, boom, 0); !errors.Is(err, boom) {
+		t.Errorf("no-skip: got %v, want boom", err)
 	}
 }
