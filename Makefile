@@ -109,9 +109,13 @@ vet: ## Run Go vet static analysis
 check: ## Run fast local checks for contributor iteration
 	$(MAKE) test-fast
 	$(MAKE) vet
+	$(MAKE) doc-stub-check
 
 lint: ## Run Go linter
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...
+
+doc-stub-check: ## Fail if tautological '// Foo foo.' doc-comment stubs reappear
+	bash scripts/check-doc-stubs.sh
 
 govulncheck: ## Scan Go dependencies for known vulnerabilities
 	go tool govulncheck ./...

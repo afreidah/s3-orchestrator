@@ -23,6 +23,16 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+// TestMain clears the S3O_ADMIN_* environment variables before the suite runs.
+// A developer's exported admin addr/token would otherwise leak into the tests
+// that exercise config-file loading, which Run skips whenever those env vars
+// are set.
+func TestMain(m *testing.M) {
+	os.Unsetenv(envAdminAddr)
+	os.Unsetenv(envAdminToken)
+	os.Exit(m.Run())
+}
+
 // cfgLoader returns a loader that yields a Config with the given address and
 // admin credentials, used to exercise resolveTarget's config-fallback path.
 func cfgLoader(addr, adminToken, adminKey string) func() (*config.Config, error) {
