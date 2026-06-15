@@ -24,6 +24,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"maps"
@@ -56,6 +57,7 @@ type scenarioConfig struct {
 	duration     time.Duration
 	workers      uint64
 	seedCount    int
+	cold         bool
 	listPrefix   string
 	listMaxKeys  int
 	signer       *v4.Signer
@@ -107,6 +109,25 @@ type hardwareInfo struct {
 	GoVersion string `json:"go_version"`
 }
 
+// validateRampFlags checks the saturation-find ramp flags. multiSize reports
+// whether more than one object size was requested; ramp mode sweeps a single
+// dimension, so it is incompatible with a size sweep.
+func validateRampFlags(rampTo, rate, rampStep int, multiSize bool) error {
+	if rampTo <= 0 {
+		return nil
+	}
+	if multiSize {
+		return errors.New("-ramp-to and -sizes are mutually exclusive (one swept dimension at a time)")
+	}
+	if rampTo <= rate {
+		return fmt.Errorf("-ramp-to (%d) must exceed -rate (%d)", rampTo, rate)
+	}
+	if rampStep <= 0 {
+		return errors.New("-ramp-step must be positive")
+	}
+	return nil
+}
+
 // main is the program entry point.
 func main() {
 	var (
@@ -130,6 +151,7 @@ func main() {
 		rampErrThreshold  = flag.Float64("ramp-error-threshold", 0.05, "Error rate threshold (0..1) for ramp termination")
 		cacheFlushBefore  = flag.Bool("cache-flush-before", false, "POST /admin/api/cache/flush before each scenario step (requires -admin-token)")
 		adminToken        = flag.String("admin-token", "", "Admin token for cache-flush calls (also read from S3O_ADMIN_TOKEN env var)")
+		cold              = flag.Bool("cold", false, "Cold-cache read mode for -op get: read each seeded object exactly once so every GET is a first touch; the run lasts one pass over the working set, not -duration")
 	)
 	flag.Parse()
 	if *adminToken == "" {
@@ -142,22 +164,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *rampTo > 0 {
-		if len(sizes) > 1 {
-			fmt.Fprintln(os.Stderr, "error: -ramp-to and -sizes are mutually exclusive (one swept dimension at a time)")
-			os.Exit(1)
-		}
-		if *rampTo <= *rateFlag {
-			fmt.Fprintf(os.Stderr, "error: -ramp-to (%d) must exceed -rate (%d)\n", *rampTo, *rateFlag)
-			os.Exit(1)
-		}
-		if *rampStep <= 0 {
-			fmt.Fprintln(os.Stderr, "error: -ramp-step must be positive")
-			os.Exit(1)
-		}
+	if err := validateRampFlags(*rampTo, *rateFlag, *rampStep, len(sizes) > 1); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
 	}
 	if *cacheFlushBefore && *adminToken == "" {
 		fmt.Fprintln(os.Stderr, "error: -cache-flush-before requires -admin-token (or S3O_ADMIN_TOKEN env var)")
+		os.Exit(1)
+	}
+	if *cold && *op != "get" {
+		fmt.Fprintln(os.Stderr, "error: -cold only applies to -op get")
 		os.Exit(1)
 	}
 
@@ -176,6 +192,7 @@ func main() {
 		duration:    *dur,
 		workers:     *workers,
 		seedCount:   *seedN,
+		cold:        *cold,
 		listPrefix:  *listPrefix,
 		listMaxKeys: *listMaxKeys,
 		signer:      signer,
@@ -232,7 +249,8 @@ func runSizes(cfg *scenarioConfig, sizes []int, flushBefore bool, endpoint, admi
 		}
 		if flushBefore {
 			if err := flushAdminCache(endpoint, adminToken); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: cache flush failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "error: cache flush failed: %v (cold-cache results would be silently warm; check the admin token)\n", err)
+				os.Exit(1)
 			}
 		}
 		r, err := runScenario(cfg, sz)
@@ -257,7 +275,8 @@ func runRamp(cfg *scenarioConfig, size, rampTo, step int, errThreshold float64, 
 		cfg.rate = rate
 		if flushBefore {
 			if err := flushAdminCache(endpoint, adminToken); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: cache flush failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "error: cache flush failed: %v (cold-cache results would be silently warm; check the admin token)\n", err)
+				os.Exit(1)
 			}
 		}
 		r, err := runScenario(cfg, size)
@@ -365,11 +384,19 @@ func runScenario(cfg *scenarioConfig, size int) (runResult, error) {
 	rate := vegeta.Rate{Freq: cfg.rate, Per: time.Second}
 	atk := vegeta.NewAttacker(vegeta.Workers(cfg.workers))
 
+	// Cold mode runs exactly one pass over the working set so every GET is a
+	// first touch (the read cache is populated on GET, not on the seeding PUT).
+	// The pass length is len(keys)/rate, not the -duration flag.
+	attackDuration := cfg.duration
+	if cfg.cold && len(keys) > 0 {
+		attackDuration = time.Duration(float64(len(keys)) / float64(cfg.rate) * float64(time.Second))
+	}
+
 	fmt.Printf("Attacking %s/%s at %d req/s for %s [%s, size=%d]\n",
-		cfg.endpoint, cfg.bucket, cfg.rate, cfg.duration, cfg.op, size)
+		cfg.endpoint, cfg.bucket, cfg.rate, attackDuration, cfg.op, size)
 
 	var metrics vegeta.Metrics
-	for res := range atk.Attack(targeter, rate, cfg.duration, cfg.op) {
+	for res := range atk.Attack(targeter, rate, attackDuration, cfg.op) {
 		metrics.Add(res)
 	}
 	metrics.Close()
