@@ -17,9 +17,13 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // noopSpan returns a no-op trace.Span suitable for helpers that only call
@@ -80,7 +84,7 @@ func TestDrainAndCleanupLosers_InvokesCleanupOnEachResult(t *testing.T) {
 	ch <- broadcastResult{name: "b", cleanup: mkCleanup()}
 	ch <- broadcastResult{name: "c", cleanup: mkCleanup()}
 
-	drainAndCleanupLosers(ch, 3)
+	drainAndCleanupLosers(context.Background(), "GET", ch, 3, time.Second)
 	if got := cleanups.Load(); got != 3 {
 		t.Errorf("cleanup invocations = %d, want 3", got)
 	}
@@ -97,9 +101,65 @@ func TestDrainAndCleanupLosers_ToleratesNilCleanup(t *testing.T) {
 	ch <- broadcastResult{name: "errored", err: errors.New("fail")} // nil cleanup
 	ch <- broadcastResult{name: "won", cleanup: cleanupFn}
 
-	drainAndCleanupLosers(ch, 2)
+	drainAndCleanupLosers(context.Background(), "GET", ch, 2, time.Second)
 	if got := cleanups.Load(); got != 1 {
 		t.Errorf("cleanup invocations = %d, want 1 (nil cleanup skipped)", got)
+	}
+}
+
+// TestDrainAndCleanupLosers_TimesOutOnHungProbe is the regression test for the
+// goroutine leak: when a cancelled probe never sends its result, the drain must
+// return at its timeout instead of blocking forever, count the timeout, and
+// still run cleanup for the loser that did report. The unique operation label
+// isolates the counter assertion from other parallel tests.
+func TestDrainAndCleanupLosers_TimesOutOnHungProbe(t *testing.T) {
+	t.Parallel()
+	const op = "drain-timeout-test"
+	ch := make(chan broadcastResult, 2)
+	var cleanups atomic.Int32
+	ch <- broadcastResult{name: "reported", cleanup: func() { cleanups.Add(1) }}
+	// The second probe is "hung": it never sends, so remaining (2) exceeds
+	// what arrives. The old unbounded drain blocked here forever.
+
+	before := testutil.ToFloat64(telemetry.DegradedBroadcastDrainTimeoutTotal.WithLabelValues(op))
+
+	done := make(chan struct{})
+	go func() {
+		drainAndCleanupLosers(context.Background(), op, ch, 2, 20*time.Millisecond)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("drainAndCleanupLosers did not return; the timeout bound is broken")
+	}
+
+	if got := cleanups.Load(); got != 1 {
+		t.Errorf("cleanup invocations = %d, want 1 (the reported loser)", got)
+	}
+	if after := testutil.ToFloat64(telemetry.DegradedBroadcastDrainTimeoutTotal.WithLabelValues(op)); after != before+1 {
+		t.Errorf("drain-timeout counter delta = %v, want 1", after-before)
+	}
+}
+
+// TestDrainAndCleanupLosers_ReturnsOnContextCancel verifies the drain also
+// exits promptly when the request context is cancelled, without waiting out
+// the (here, very long) timeout.
+func TestDrainAndCleanupLosers_ReturnsOnContextCancel(t *testing.T) {
+	t.Parallel()
+	ch := make(chan broadcastResult) // unbuffered; nothing is ever sent
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan struct{})
+	go func() {
+		drainAndCleanupLosers(ctx, "GET", ch, 1, time.Hour)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("drainAndCleanupLosers ignored ctx cancellation")
 	}
 }
 
@@ -159,4 +219,3 @@ func TestCancelLosers_UnknownWinnerCancelsEveryone(t *testing.T) {
 		t.Errorf("expected both contexts cancelled, got a=%v b=%v", ctxA.Err(), ctxB.Err())
 	}
 }
-

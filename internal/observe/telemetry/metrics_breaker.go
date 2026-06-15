@@ -111,4 +111,13 @@ var (
 		},
 		[]string{"operation"},
 	)
+
+	// DegradedBroadcastDrainTimeoutTotal counts loser-drain goroutines that hit their bounded timeout because a probe never returned after cancellation.
+	DegradedBroadcastDrainTimeoutTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3o_degraded_broadcast_drain_timeout_total",
+			Help: "Loser-drain goroutines that gave up at the bounded timeout because a cancelled probe never returned. Non-zero means a backend is stranding goroutines under degraded fan-out.",
+		},
+		[]string{"operation"},
+	)
 )

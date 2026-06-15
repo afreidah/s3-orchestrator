@@ -287,6 +287,8 @@ By default, degraded reads try each backend sequentially. When `parallel_broadca
 
 For fleets with many configured backends, set `degraded_broadcast_parallelism` to cap how many backends are probed at once. With a positive value, probes run as a rolling window: the first N launch immediately and each failure replenishes the slot with the next pending backend, so at most N goroutines (and at most N concurrent backend API calls / TLS handshakes) are in flight at any time. The default of `0` preserves the historical "fan out to every backend at once" behaviour.
 
+`backend_timeout` also bounds the cleanup of losing probes after a winner is declared, so a backend that hangs instead of honouring cancellation cannot strand a goroutine. The `s3o_degraded_broadcast_drain_timeout_total` metric increments whenever that bound is hit, surfacing a misbehaving backend.
+
 The other defaults are sensible for most deployments. Increase `cache_ttl` if you have many read-heavy clients and want fewer backend round-trips during outages.
 
 ### backend_circuit_breaker

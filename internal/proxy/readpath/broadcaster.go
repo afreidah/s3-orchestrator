@@ -34,10 +34,25 @@ import (
 // degraded mode exists precisely because the store is unreachable - and
 // caches the winning backend for subsequent degraded reads.
 type Broadcaster struct {
-	core        ReadRuntime
-	cache       LocationCache
-	parallel    bool // fan out to every backend at once vs. one at a time
-	parallelism int  // cap on concurrent probes when parallel; 0 means uncapped
+	core         ReadRuntime
+	cache        LocationCache
+	parallel     bool          // fan out to every backend at once vs. one at a time
+	parallelism  int           // cap on concurrent probes when parallel; 0 means uncapped
+	drainTimeout time.Duration // bound on the loser-drain so a hung probe can't strand the goroutine
+}
+
+// defaultDrainTimeout bounds the loser-drain when no backend timeout is
+// configured; it mirrors the config BackendTimeout default and guards
+// zero-value construction (notably in tests).
+const defaultDrainTimeout = 30 * time.Second
+
+// drainTimeoutOrDefault returns the configured backend timeout, or
+// defaultDrainTimeout when it is unset, so the drain bound is never zero.
+func drainTimeoutOrDefault(backendTimeout time.Duration) time.Duration {
+	if backendTimeout <= 0 {
+		return defaultDrainTimeout
+	}
+	return backendTimeout
 }
 
 // Read tries all backends when the DB is unavailable. Checks the location
@@ -255,7 +270,7 @@ func (b *Broadcaster) tryBackendsInParallel(
 		// parent request ctx ends.
 		cancelLosers(cancels, r.name)
 		if remaining := launched - received; remaining > 0 {
-			go drainAndCleanupLosers(ch, remaining)
+			go drainAndCleanupLosers(ctx, operation, ch, remaining, b.drainTimeout)
 		}
 		b.recordBroadcastWinner(operation, key, r.name, r.size, start, span, true)
 		return r.name, nil
@@ -327,14 +342,26 @@ func runBackendProbe(
 	ch <- broadcastResult{name: name, size: size, cleanup: cleanup}
 }
 
-// drainAndCleanupLosers reads the remaining results from ch after a
-// winner has been declared and invokes any cleanup the losers returned.
-// Best-effort: a sender that panicked or closed early is tolerated.
-func drainAndCleanupLosers(ch <-chan broadcastResult, remaining int) {
-	defer func() { recover() }() //nolint:errcheck // best-effort drain
+// drainAndCleanupLosers reads the remaining results from ch after a winner
+// has been declared and invokes any cleanup the losers returned. It is bounded
+// by timeout (and the request ctx) so a hung backend that never returns after
+// cancellation cannot strand this goroutine indefinitely; a timeout is counted
+// so the leak is observable rather than silent.
+func drainAndCleanupLosers(ctx context.Context, operation string, ch <-chan broadcastResult, remaining int, timeout time.Duration) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	for range remaining {
-		if lr := <-ch; lr.cleanup != nil {
-			lr.cleanup()
+		select {
+		case lr := <-ch:
+			if lr.cleanup != nil {
+				lr.cleanup()
+			}
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			telemetry.DegradedBroadcastDrainTimeoutTotal.WithLabelValues(operation).Inc()
+			return
 		}
 	}
 }
