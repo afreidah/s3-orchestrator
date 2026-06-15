@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -79,6 +80,8 @@ type Deps struct {
 	// DisableDegradedReads makes the degraded path fail fast instead of broadcasting.
 	DisableDegradedReads bool
 	IntegrityCfg         *syncutil.AtomicConfig[config.IntegrityConfig]
+	// BackendTimeout bounds the degraded-mode loser-drain goroutine.
+	BackendTimeout time.Duration
 }
 
 // New creates a Manager sharing the given core infrastructure and
@@ -105,13 +108,14 @@ func New(d *Deps) *Manager {
 		objectCache:       d.ObjectCache,
 		parallelBroadcast: d.ParallelBroadcast,
 		integrityCfg:      d.IntegrityCfg,
-		failover: readpath.New(readpath.FailoverDeps{
+		failover: readpath.New(&readpath.FailoverDeps{
 			Core:                         d.BroadcastCore,
 			Stores:                       d.Stores,
 			Cache:                        d.LocationCache,
 			ParallelBroadcast:            d.ParallelBroadcast,
 			DegradedBroadcastParallelism: d.DegradedBroadcastParallelism,
 			DegradedReadsEnabled:         !d.DisableDegradedReads,
+			BackendTimeout:               d.BackendTimeout,
 		}),
 		log: slog.Default().With(logfmt.Component("object")),
 	}

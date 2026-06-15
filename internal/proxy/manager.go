@@ -251,6 +251,7 @@ func NewBackendManager(cfg *BackendManagerConfig) *BackendManager {
 		DegradedBroadcastParallelism: policies.DegradedBroadcastParallelism,
 		DisableDegradedReads:         policies.DisableDegradedReads,
 		IntegrityCfg:                 collab.IntegrityCfg,
+		BackendTimeout:               policies.BackendTimeout,
 	})
 
 	return &BackendManager{

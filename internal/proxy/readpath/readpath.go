@@ -106,11 +106,16 @@ type FailoverDeps struct {
 	ParallelBroadcast            bool
 	DegradedBroadcastParallelism int
 	DegradedReadsEnabled         bool
+	// BackendTimeout bounds the loser-drain goroutine after a winner is
+	// declared so a hung backend can't strand it. Zero falls back to a
+	// safe default.
+	BackendTimeout time.Duration
 }
 
 // New constructs a Failover. When DegradedReadsEnabled is false, a DB
 // outage surfaces as ErrServiceUnavailable instead of broadcasting.
-func New(deps FailoverDeps) *Failover {
+func New(deps *FailoverDeps) *Failover {
+	must.NotNil("deps", deps)
 	must.NotNil("Core", deps.Core)
 	must.NotNil("Stores", deps.Stores)
 	must.NotNil("Cache", deps.Cache)
@@ -120,10 +125,11 @@ func New(deps FailoverDeps) *Failover {
 		degradedReadsEnabled: deps.DegradedReadsEnabled,
 		log:                  slog.Default().With(logfmt.Component("readpath")),
 		broadcaster: &Broadcaster{
-			core:        deps.Core,
-			cache:       deps.Cache,
-			parallel:    deps.ParallelBroadcast,
-			parallelism: deps.DegradedBroadcastParallelism,
+			core:         deps.Core,
+			cache:        deps.Cache,
+			parallel:     deps.ParallelBroadcast,
+			parallelism:  deps.DegradedBroadcastParallelism,
+			drainTimeout: drainTimeoutOrDefault(deps.BackendTimeout),
 		},
 	}
 }
