@@ -180,8 +180,13 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 
 	escapedPrefix := likeEscaper.Replace(prefix)
 
-	// Get aggregate stats for all immediate children (dirs + files).
-	stats, err := s.queries.GetDirectoryStats(ctx, escapedPrefix)
+	// Get aggregate stats for all immediate children (dirs + files). NameStart
+	// uses the unescaped prefix length so likeEscaper's '\_' insertions don't
+	// shift the child-name substring offset (see GetDirectoryStats).
+	stats, err := s.queries.GetDirectoryStats(ctx, db.GetDirectoryStatsParams{
+		Prefix:    escapedPrefix,
+		NameStart: int32(len(prefix) + 1), //nolint:gosec // G115: directory prefix length is small and bounded
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get directory stats: %w", err)
 	}

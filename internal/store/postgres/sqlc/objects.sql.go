@@ -183,22 +183,27 @@ func (q *Queries) GetCopiesForKeysForUpdate(ctx context.Context, objectKeys []st
 
 const getDirectoryStats = `-- name: GetDirectoryStats :many
 SELECT
-    (CASE WHEN position('/' IN substring(object_key FROM length($1::text) + 1)) > 0
-         THEN substring(object_key FROM length($1::text) + 1
-              FOR position('/' IN substring(object_key FROM length($1::text) + 1)))
-         ELSE substring(object_key FROM length($1::text) + 1)
+    (CASE WHEN position('/' IN substr(object_key, $1::int)) > 0
+         THEN substr(object_key, $1::int,
+              position('/' IN substr(object_key, $1::int)))
+         ELSE substr(object_key, $1::int)
     END)::text AS name,
-    (CASE WHEN position('/' IN substring(object_key FROM length($1::text) + 1)) > 0
+    (CASE WHEN position('/' IN substr(object_key, $1::int)) > 0
          THEN true ELSE false
     END)::boolean AS is_dir,
     COUNT(DISTINCT object_key) AS file_count,
     COALESCE(SUM(size_bytes), 0)::bigint AS total_size
 FROM object_locations
-WHERE object_key LIKE $1::text || '%' ESCAPE '\'
-  AND length(object_key) > length($1::text)
+WHERE object_key LIKE $2::text || '%' ESCAPE '\'
+  AND length(object_key) >= $1::int
 GROUP BY name, is_dir
 ORDER BY is_dir DESC, name ASC
 `
+
+type GetDirectoryStatsParams struct {
+	NameStart int32
+	Prefix    string
+}
 
 type GetDirectoryStatsRow struct {
 	Name      string
@@ -212,8 +217,11 @@ type GetDirectoryStatsRow struct {
 // file_count counts distinct object_keys (logical files); total_size sums
 // every replica row in object_locations so directory totals reflect real
 // physical storage consumption, matching the Storage Summary semantics.
-func (q *Queries) GetDirectoryStats(ctx context.Context, prefix string) ([]GetDirectoryStatsRow, error) {
-	rows, err := q.db.Query(ctx, getDirectoryStats, prefix)
+// @prefix is LIKE-escaped for the WHERE match; @name_start is the 1-based
+// character position where the child name begins (len(unescaped prefix) + 1),
+// so escaped wildcards (e.g. '\_') don't shift the substring cut point.
+func (q *Queries) GetDirectoryStats(ctx context.Context, arg GetDirectoryStatsParams) ([]GetDirectoryStatsRow, error) {
+	rows, err := q.db.Query(ctx, getDirectoryStats, arg.NameStart, arg.Prefix)
 	if err != nil {
 		return nil, err
 	}
