@@ -25,9 +25,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// dirTestPrefix builds a per-test directory prefix that contains no LIKE
-// special characters (% _ \) so it survives the SQL escape pass without
-// confusing length-based substring math in GetDirectoryStats.
+// dirTestPrefix builds a per-test directory prefix free of LIKE special
+// characters (% _ \) so these replication-semantics tests stay focused on
+// roll-up behaviour; the LIKE-escaping path has its own coverage in
+// TestPgListDirectoryChildren_UnderscorePrefix.
 func dirTestPrefix(t *testing.T, label string) string {
 	t.Helper()
 	clean := strings.ReplaceAll(t.Name(), "_", "-")
@@ -141,6 +142,55 @@ func TestPgListDirectoryChildren_DirRollupPhysicalBytes(t *testing.T) {
 	}
 	if got.TotalSize != 250 {
 		t.Errorf("TotalSize = %d, want 250 (physical: 100+100+50)", got.TotalSize)
+	}
+}
+
+// TestPgListDirectoryChildren_UnderscorePrefix is the regression test for the
+// bug where a directory whose name contained an underscore listed empty. The
+// caller LIKE-escapes the prefix ('_' -> '\_'), which lengthens it; reusing
+// that escaped length as the child-name substring offset cut one character too
+// deep, so every child name was mangled, missed the file lookup, and was
+// dropped. Both a file child and a subdirectory child must surface.
+func TestPgListDirectoryChildren_UnderscorePrefix(t *testing.T) {
+	resetState(t)
+	ctx := context.Background()
+	// The underscore is the whole point, so build the prefix directly rather
+	// than via dirTestPrefix (which strips LIKE specials).
+	prefix := "dirtest_underscore/"
+	fileKey := prefix + "file.txt"
+	subKey := prefix + "sub/inner.txt"
+
+	if _, err := testStore.RecordObject(ctx, fileKey, "minio-1", 100, nil); err != nil {
+		t.Fatalf("RecordObject(file): %v", err)
+	}
+	if _, err := testStore.RecordObject(ctx, subKey, "minio-1", 50, nil); err != nil {
+		t.Fatalf("RecordObject(sub): %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = testStore.DeleteObject(bg, fileKey)
+		_, _ = testStore.DeleteObject(bg, subKey)
+	})
+
+	result, err := testStore.ListDirectoryChildren(ctx, prefix, "", 100)
+	if err != nil {
+		t.Fatalf("ListDirectoryChildren: %v", err)
+	}
+
+	file := findEntryByName(result.Entries, fileKey)
+	if file == nil {
+		t.Fatalf("file child missing under underscore prefix %q; got %+v", prefix, result.Entries)
+	}
+	if file.IsDir || file.TotalSize != 100 {
+		t.Errorf("file entry = %+v, want IsDir=false TotalSize=100", file)
+	}
+
+	dir := findEntryByName(result.Entries, prefix+"sub/")
+	if dir == nil || !dir.IsDir {
+		t.Fatalf("subdirectory child missing under underscore prefix; got %+v", result.Entries)
+	}
+	if dir.FileCount != 1 {
+		t.Errorf("subdir FileCount = %d, want 1", dir.FileCount)
 	}
 }
 

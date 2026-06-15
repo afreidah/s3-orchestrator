@@ -1285,6 +1285,34 @@ func TestListDirectoryChildren(t *testing.T) {
 	}
 }
 
+// TestListDirectoryChildren_UnderscorePrefix guards the SQLite directory query
+// against the LIKE-escaping offset bug that affected the Postgres side: the
+// caller escapes '_' to '\_', and reusing that escaped length for the
+// child-name substring offset would mangle and drop every child. A prefix
+// containing an underscore must still list its file and subdirectory children.
+// SQLite already passes the unescaped prefix length here; this keeps the two
+// implementations in parity.
+func TestListDirectoryChildren_UnderscorePrefix(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mustRecordObject(t, s, "dir_test/file.txt", "backend-a", 100)
+	mustRecordObject(t, s, "dir_test/sub/inner.txt", "backend-a", 50)
+
+	result, err := s.ListDirectoryChildren(ctx, "dir_test/", "", 100)
+	if err != nil {
+		t.Fatalf("ListDirectoryChildren: %v", err)
+	}
+
+	if file := findEntry(result.Entries, "dir_test/file.txt"); file == nil || file.IsDir {
+		t.Errorf("missing file child under underscore prefix; got %+v", result.Entries)
+	}
+	if dir := findEntry(result.Entries, "dir_test/sub/"); dir == nil || !dir.IsDir {
+		t.Errorf("missing subdirectory child under underscore prefix; got %+v", result.Entries)
+	}
+}
+
 // seedReplicationFixture creates a 2-replica object plus a single-copy
 // object under "bucket/" so the replication-aware listing tests share a
 // stable fixture. Physical bytes for the bucket/ roll-up is
@@ -2400,4 +2428,3 @@ func TestStore_CleanupDLQDepth_CountsRows(t *testing.T) {
 		t.Errorf("depth=%d, want 2", depth)
 	}
 }
-

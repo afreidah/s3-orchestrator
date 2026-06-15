@@ -21,7 +21,7 @@ hits=$(
 	done
 )
 
-if [ -n "$hits" ]; then
+if [[ -n "$hits" ]]; then
 	echo "doc-comment stubs found (the comment just respells the identifier):" >&2
 	echo "$hits" >&2
 	echo "Replace each with a real doc comment, or remove it." >&2

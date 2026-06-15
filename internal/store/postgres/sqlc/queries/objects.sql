@@ -93,20 +93,23 @@ RETURNING true AS inserted;
 -- file_count counts distinct object_keys (logical files); total_size sums
 -- every replica row in object_locations so directory totals reflect real
 -- physical storage consumption, matching the Storage Summary semantics.
+-- @prefix is LIKE-escaped for the WHERE match; @name_start is the 1-based
+-- character position where the child name begins (len(unescaped prefix) + 1),
+-- so escaped wildcards (e.g. '\_') don't shift the substring cut point.
 SELECT
-    (CASE WHEN position('/' IN substring(object_key FROM length(@prefix::text) + 1)) > 0
-         THEN substring(object_key FROM length(@prefix::text) + 1
-              FOR position('/' IN substring(object_key FROM length(@prefix::text) + 1)))
-         ELSE substring(object_key FROM length(@prefix::text) + 1)
+    (CASE WHEN position('/' IN substr(object_key, @name_start::int)) > 0
+         THEN substr(object_key, @name_start::int,
+              position('/' IN substr(object_key, @name_start::int)))
+         ELSE substr(object_key, @name_start::int)
     END)::text AS name,
-    (CASE WHEN position('/' IN substring(object_key FROM length(@prefix::text) + 1)) > 0
+    (CASE WHEN position('/' IN substr(object_key, @name_start::int)) > 0
          THEN true ELSE false
     END)::boolean AS is_dir,
     COUNT(DISTINCT object_key) AS file_count,
     COALESCE(SUM(size_bytes), 0)::bigint AS total_size
 FROM object_locations
 WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
-  AND length(object_key) > length(@prefix::text)
+  AND length(object_key) >= @name_start::int
 GROUP BY name, is_dir
 ORDER BY is_dir DESC, name ASC;
 
