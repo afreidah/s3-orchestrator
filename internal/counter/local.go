@@ -105,10 +105,7 @@ func (l *LocalCounterBackend) Swap(backend, field string) int64 {
 	return 0
 }
 
-// Add increments a single counter field for a backend.
 // AddAll increments all three counter fields (API requests, egress, ingress) atomically.
-// AddAll add all.
-// AddAll add all.
 func (l *LocalCounterBackend) AddAll(backend string, apiReqs, egress, ingress int64) {
 	c := l.get(backend)
 	if c == nil {
@@ -125,10 +122,7 @@ func (l *LocalCounterBackend) AddAll(backend string, apiReqs, egress, ingress in
 	}
 }
 
-// Load returns the current value of a counter field.
 // LoadAll returns all three counter values for a backend.
-// LoadAll load all.
-// LoadAll load all.
 func (l *LocalCounterBackend) LoadAll(backend string) LoadAllResult {
 	c := l.get(backend)
 	if c == nil {
