@@ -256,7 +256,14 @@ func TestExecuteOneMove_Success(t *testing.T) {
 	ms := &mockMetadataStore{}
 
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
-	pl.EXPECT().MoveObject(gomock.Any(), gomock.Any()).Return(int64(100), nil)
+	// Capture the request so the rebalance reason profile wiring is asserted,
+	// not just the happy-path return.
+	var got *writepath.MoveRequest
+	pl.EXPECT().MoveObject(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req *writepath.MoveRequest) (int64, error) {
+			got = req
+			return int64(100), nil
+		})
 
 	r := NewRebalancer(ops, pl, ms)
 	ok := r.ExecuteOneMove(context.Background(), RebalanceMove{
@@ -264,6 +271,9 @@ func TestExecuteOneMove_Success(t *testing.T) {
 	}, "spread")
 	if !ok {
 		t.Error("expected successful move")
+	}
+	if got == nil || got.Reasons != writepath.RebalanceMoveReasons {
+		t.Errorf("MoveRequest.Reasons = %+v, want RebalanceMoveReasons", got.Reasons)
 	}
 }
 

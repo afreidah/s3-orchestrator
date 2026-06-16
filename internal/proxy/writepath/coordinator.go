@@ -367,17 +367,40 @@ type MoveRequest struct {
 	DestBackend backend.ObjectBackend
 	DestName    string
 
-	// OrphanReason names the cleanup-queue reason used when
-	// MoveObjectLocation errors after the destination PUT has landed.
-	OrphanReason string
-	// StaleOrphanReason names the cleanup-queue reason used when
-	// MoveObjectLocation returns movedSize=0 (another process won the
-	// race; the destination bytes are now orphaned).
-	StaleOrphanReason string
-	// SourceDeleteReason names the cleanup-queue reason used for the
-	// successful-move source delete.
-	SourceDeleteReason string
+	// Reasons names the cleanup-queue reason labels for this move's orphan,
+	// stale-orphan, and source-delete paths. Callers pass a named profile
+	// (RebalanceMoveReasons, DrainMoveReasons) rather than three strings.
+	Reasons MoveReasonProfile
 }
+
+// MoveReasonProfile groups the cleanup-queue reason labels a move emits across
+// its three cleanup paths, so callers select a named profile instead of
+// repeating the same strings - and the labels stay consistent and typo-free.
+type MoveReasonProfile struct {
+	// Orphan is used when MoveObjectLocation errors after the destination PUT
+	// has landed, leaving the destination bytes orphaned.
+	Orphan string
+	// StaleOrphan is used when MoveObjectLocation reports a raced row
+	// (movedSize=0): another process won, so the destination bytes are orphaned.
+	StaleOrphan string
+	// SourceDelete is used for the source-side delete after a successful move.
+	SourceDelete string
+}
+
+// RebalanceMoveReasons and DrainMoveReasons are the cleanup-queue reason
+// profiles for the two subsystems that move objects.
+var (
+	RebalanceMoveReasons = MoveReasonProfile{
+		Orphan:       "rebalance_orphan",
+		StaleOrphan:  "rebalance_stale_orphan",
+		SourceDelete: "rebalance_source_delete",
+	}
+	DrainMoveReasons = MoveReasonProfile{
+		Orphan:       "drain_orphan",
+		StaleOrphan:  "drain_stale_orphan",
+		SourceDelete: "drain_source_delete",
+	}
+)
 
 // MoveObject performs a single src -> dest object move with cleanup
 // semantics that drain and rebalance share: StreamCopy the source body
@@ -404,14 +427,14 @@ func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, 
 	if err != nil {
 		// Destination has the bytes but the metadata CAS failed;
 		// enqueue the orphan so the cleanup worker collects it.
-		w.DeleteOrEnqueue(ctx, req.DestBackend, req.DestName, req.Key, req.OrphanReason, req.SizeBytes)
+		w.DeleteOrEnqueue(ctx, req.DestBackend, req.DestName, req.Key, req.Reasons.Orphan, req.SizeBytes)
 		return 0, fmt.Errorf("move object location %s -> %s: %w", req.SrcName, req.DestName, err)
 	}
 	if movedSize == 0 {
 		// Raced: another process moved or deleted the row. The
 		// destination bytes are orphaned; enqueue them so the cleanup
 		// worker collects them.
-		w.DeleteOrEnqueue(ctx, req.DestBackend, req.DestName, req.Key, req.StaleOrphanReason, req.SizeBytes)
+		w.DeleteOrEnqueue(ctx, req.DestBackend, req.DestName, req.Key, req.Reasons.StaleOrphan, req.SizeBytes)
 		return 0, ErrMoveStale
 	}
 
@@ -419,7 +442,7 @@ func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, 
 	// Ingress include their own single API-call tick (one for the
 	// source GET, one for the dest PUT); DeleteOrEnqueue includes the
 	// source DELETE tick. No additional Acct().APICall calls.
-	w.DeleteOrEnqueue(ctx, req.SrcBackend, req.SrcName, req.Key, req.SourceDeleteReason, movedSize)
+	w.DeleteOrEnqueue(ctx, req.SrcBackend, req.SrcName, req.Key, req.Reasons.SourceDelete, movedSize)
 	w.core.Acct().Egress(req.SrcName, movedSize)
 	w.core.Acct().Ingress(req.DestName, movedSize)
 	return movedSize, nil

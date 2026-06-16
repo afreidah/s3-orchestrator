@@ -565,15 +565,13 @@ func (r *Rebalancer) ExecuteOneMove(ctx context.Context, move RebalanceMove, str
 	}
 
 	movedSize, err := r.placement.MoveObject(ctx, &writepath.MoveRequest{
-		Key:                move.ObjectKey,
-		SizeBytes:          move.SizeBytes,
-		SrcBackend:         srcBackend,
-		SrcName:            move.FromBackend,
-		DestBackend:        destBackend,
-		DestName:           move.ToBackend,
-		OrphanReason:       "rebalance_orphan",
-		StaleOrphanReason:  "rebalance_stale_orphan",
-		SourceDeleteReason: "rebalance_source_delete",
+		Key:         move.ObjectKey,
+		SizeBytes:   move.SizeBytes,
+		SrcBackend:  srcBackend,
+		SrcName:     move.FromBackend,
+		DestBackend: destBackend,
+		DestName:    move.ToBackend,
+		Reasons:     writepath.RebalanceMoveReasons,
 	})
 	if err != nil {
 		if errors.Is(err, writepath.ErrMoveStale) {

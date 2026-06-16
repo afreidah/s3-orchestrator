@@ -15,7 +15,10 @@ package writepath
 import (
 	"context"
 	"errors"
+	"io"
+	"strings"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel/trace/noop"
 	"go.uber.org/mock/gomock"
@@ -61,6 +64,114 @@ func newCoordinatorWithStore(store core.MetadataStore, pendingEnabled bool) *Coo
 		Backends: map[string]s3be.ObjectBackend{},
 	})
 	return New(c, store, pendingEnabled)
+}
+
+// newCoordinatorWith2Backends builds a Coordinator that knows a source and a
+// destination backend, so MoveObject's StreamCopy (GetObject src -> PutObject
+// dest) and its cleanup paths can be driven through the gomock recorders.
+func newCoordinatorWith2Backends(srcName string, src s3be.ObjectBackend, destName string, dest s3be.ObjectBackend, store core.MetadataStore) *Coordinator {
+	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{srcName, destName}), nil)
+	c := infra.New(&infra.Config{
+		Backends:       map[string]s3be.ObjectBackend{srcName: src, destName: dest},
+		BackendTimeout: 5 * time.Second,
+		Usage:          usage,
+	})
+	return New(c, store, true)
+}
+
+// expectStreamCopyOK wires the happy StreamCopy: read 4 bytes from src, write
+// them to dest.
+func expectStreamCopyOK(src, dest *backendtest.MockObjectBackend) {
+	src.EXPECT().GetObject(gomock.Any(), "k", "").
+		Return(&s3be.GetObjectResult{Body: io.NopCloser(strings.NewReader("data")), Size: 4}, nil)
+	dest.EXPECT().PutObject(gomock.Any(), "k", gomock.Any(), int64(4), gomock.Any(), gomock.Any()).
+		Return("etag", nil)
+}
+
+// TestMoveObject_CASError_OrphansDestWithProfileReason pins the metadata-CAS
+// failure path: the destination bytes are orphaned with the profile's Orphan
+// reason.
+func TestMoveObject_CASError_OrphansDestWithProfileReason(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	src := backendtest.NewMockObjectBackend(ctrl)
+	dest := backendtest.NewMockObjectBackend(ctrl)
+	expectStreamCopyOK(src, dest)
+	// CAS errors -> orphan cleanup on dest; force the enqueue by failing the delete.
+	dest.EXPECT().DeleteObject(gomock.Any(), "k").Return(errors.New("delete failed"))
+
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().MoveObjectLocation(gomock.Any(), "k", "src", "dest").Return(int64(0), errors.New("cas failed"))
+	store.EXPECT().EnqueueCleanup(gomock.Any(), "dest", "k", RebalanceMoveReasons.Orphan, int64(4)).Return(nil).Times(1)
+	storetest.Permissive(store)
+
+	coord := newCoordinatorWith2Backends("src", src, "dest", dest, store)
+	if _, err := coord.MoveObject(context.Background(), moveReq(src, dest)); err == nil {
+		t.Fatal("expected error on CAS failure")
+	}
+}
+
+// TestMoveObject_Stale_StaleOrphansDestWithProfileReason pins the raced-row
+// path (movedSize=0): the destination bytes are orphaned with the StaleOrphan
+// reason and the call returns ErrMoveStale.
+func TestMoveObject_Stale_StaleOrphansDestWithProfileReason(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	src := backendtest.NewMockObjectBackend(ctrl)
+	dest := backendtest.NewMockObjectBackend(ctrl)
+	expectStreamCopyOK(src, dest)
+	dest.EXPECT().DeleteObject(gomock.Any(), "k").Return(errors.New("delete failed"))
+
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().MoveObjectLocation(gomock.Any(), "k", "src", "dest").Return(int64(0), nil)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), "dest", "k", RebalanceMoveReasons.StaleOrphan, int64(4)).Return(nil).Times(1)
+	storetest.Permissive(store)
+
+	coord := newCoordinatorWith2Backends("src", src, "dest", dest, store)
+	if _, err := coord.MoveObject(context.Background(), moveReq(src, dest)); !errors.Is(err, ErrMoveStale) {
+		t.Fatalf("err = %v, want ErrMoveStale", err)
+	}
+}
+
+// TestMoveObject_Success_SourceDeleteWithProfileReason pins the success path:
+// the source copy is deleted with the SourceDelete reason and the authoritative
+// moved size is returned.
+func TestMoveObject_Success_SourceDeleteWithProfileReason(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	src := backendtest.NewMockObjectBackend(ctrl)
+	dest := backendtest.NewMockObjectBackend(ctrl)
+	expectStreamCopyOK(src, dest)
+	// Success -> source delete; force the enqueue by failing the delete so the
+	// SourceDelete reason is observable on EnqueueCleanup.
+	src.EXPECT().DeleteObject(gomock.Any(), "k").Return(errors.New("delete failed"))
+
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().MoveObjectLocation(gomock.Any(), "k", "src", "dest").Return(int64(4), nil)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), "src", "k", RebalanceMoveReasons.SourceDelete, int64(4)).Return(nil).Times(1)
+	storetest.Permissive(store)
+
+	coord := newCoordinatorWith2Backends("src", src, "dest", dest, store)
+	movedSize, err := coord.MoveObject(context.Background(), moveReq(src, dest))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if movedSize != 4 {
+		t.Errorf("movedSize = %d, want 4", movedSize)
+	}
+}
+
+// moveReq builds the standard rebalance MoveRequest the MoveObject tests share.
+func moveReq(src, dest s3be.ObjectBackend) *MoveRequest {
+	return &MoveRequest{
+		Key:         "k",
+		SizeBytes:   4,
+		SrcBackend:  src,
+		SrcName:     "src",
+		DestBackend: dest,
+		DestName:    "dest",
+		Reasons:     RebalanceMoveReasons,
+	}
 }
 
 // TestInsertPendingIntent_CopiesEncryptionMeta drives the enc != nil

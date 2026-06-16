@@ -120,37 +120,30 @@ func registerTransport(inj do.Injector) {
 	do.Provide(inj, ProvideLifecycleManager)
 }
 
-// registerOptionalFeatures wires every provider whose registration is
-// gated on a config flag. Disabled features intentionally never reach
-// the injector so do.Invoke returns a clear "not registered" error
-// the caller can distinguish from a runtime resolution failure.
+// provideIf registers provider only when enabled. A disabled feature never
+// reaches the injector, so do.Invoke returns a clear "not registered" error the
+// caller can distinguish from a runtime resolution failure. It keeps
+// registerOptionalFeatures a flat, scannable table instead of a stack of if
+// blocks.
+func provideIf[T any](inj do.Injector, enabled bool, provider func(do.Injector) (T, error)) {
+	if enabled {
+		do.Provide(inj, provider)
+	}
+}
+
+// registerOptionalFeatures wires every provider whose registration is gated on
+// a config flag. Reads top to bottom as "provide X when its flag is set".
 func registerOptionalFeatures(inj do.Injector, cfg *config.Config) {
-	if cfg.Encryption.Enabled {
-		do.Provide(inj, ProvideEncryptor)
-		do.Provide(inj, ProvideEncryptionProvider)
-	}
-	if cfg.Redis != nil {
-		do.Provide(inj, ProvideRedisCounterBackend)
-	}
-	if cfg.Cache.Enabled {
-		do.Provide(inj, ProvideObjectCache)
-	}
-	if cfg.RateLimit.Enabled {
-		do.Provide(inj, ProvideRateLimiter)
-	}
-	if cfg.UI.Enabled {
-		do.Provide(inj, ProvideLoginThrottle)
-		do.Provide(inj, ProvideUIHandler)
-	}
-	if cfg.UI.AdminKey != "" {
-		do.Provide(inj, ProvideAdminHandler)
-	}
-	if len(cfg.Notifications.Endpoints) > 0 {
-		do.Provide(inj, ProvideNotifier)
-	}
-	if cfg.Debug.FlightRecorder.Enabled {
-		do.Provide(inj, ProvideFlightRecorderService)
-	}
+	provideIf(inj, cfg.Encryption.Enabled, ProvideEncryptor)
+	provideIf(inj, cfg.Encryption.Enabled, ProvideEncryptionProvider)
+	provideIf(inj, cfg.Redis != nil, ProvideRedisCounterBackend)
+	provideIf(inj, cfg.Cache.Enabled, ProvideObjectCache)
+	provideIf(inj, cfg.RateLimit.Enabled, ProvideRateLimiter)
+	provideIf(inj, cfg.UI.Enabled, ProvideLoginThrottle)
+	provideIf(inj, cfg.UI.Enabled, ProvideUIHandler)
+	provideIf(inj, cfg.UI.AdminKey != "", ProvideAdminHandler)
+	provideIf(inj, len(cfg.Notifications.Endpoints) > 0, ProvideNotifier)
+	provideIf(inj, cfg.Debug.FlightRecorder.Enabled, ProvideFlightRecorderService)
 }
 
 // WireAuditMetrics connects the audit event counter to Prometheus. Called
