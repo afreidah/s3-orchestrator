@@ -203,13 +203,13 @@ func (r *Rebalancer) PlanPackTight(ctx context.Context, stats map[string]core.Qu
 
 	var plan []RebalanceMove
 	remaining := batchSize
-	objectCache := make(map[string][]core.ObjectLocation)
+	candidates := r.newCandidateCache(batchSize)
 
 	for di := 0; di < len(backends) && remaining > 0; di++ {
 		if ctx.Err() != nil {
 			return plan, ctx.Err()
 		}
-		moves, err := r.packMovesIntoDestination(ctx, di, backends, simUsed, objectCache, &remaining)
+		moves, err := r.packMovesIntoDestination(ctx, di, backends, simUsed, candidates, &remaining)
 		if err != nil {
 			return nil, err
 		}
@@ -249,7 +249,7 @@ func (r *Rebalancer) packMovesIntoDestination(
 	di int,
 	backends []backendUtil,
 	simUsed map[string]int64,
-	objectCache map[string][]core.ObjectLocation,
+	candidates *candidateCache,
 	remaining *int,
 ) ([]RebalanceMove, error) {
 	dest := backends[di]
@@ -265,16 +265,12 @@ func (r *Rebalancer) packMovesIntoDestination(
 			continue
 		}
 
-		objects, err := r.cachedSourceObjects(ctx, src.Name, *remaining, objectCache)
-		if err != nil {
-			return nil, err
-		}
-		copyMap, err := r.fetchCopyMap(ctx, objects)
+		sc, err := candidates.forBackend(ctx, src.Name)
 		if err != nil {
 			return nil, err
 		}
 
-		moves := r.packMovesFromSource(src, dest, objects, copyMap, simUsed, &destFree, remaining)
+		moves := r.packMovesFromSource(src, dest, sc.Objects, sc.Placement, simUsed, &destFree, remaining)
 		plan = append(plan, moves...)
 	}
 	return plan, nil
@@ -286,7 +282,7 @@ func (r *Rebalancer) packMovesIntoDestination(
 func (r *Rebalancer) packMovesFromSource(
 	src, dest backendUtil,
 	objects []core.ObjectLocation,
-	copyMap map[string][]string,
+	placement PlacementSet,
 	simUsed map[string]int64,
 	destFree *int64,
 	remaining *int,
@@ -302,7 +298,7 @@ func (r *Rebalancer) packMovesFromSource(
 		if !srcLessUtilized(src, dest, simUsed) {
 			break
 		}
-		if slices.Contains(copyMap[objects[oi].ObjectKey], dest.Name) {
+		if placement.Has(objects[oi].ObjectKey, dest.Name) {
 			continue
 		}
 
@@ -326,26 +322,6 @@ func srcLessUtilized(src, dest backendUtil, simUsed map[string]int64) bool {
 	srcRatio := float64(simUsed[src.Name]) / float64(src.Limit)
 	destRatio := float64(simUsed[dest.Name]) / float64(dest.Limit)
 	return srcRatio < destRatio
-}
-
-// cachedSourceObjects returns ListObjectsByBackend results for a source,
-// caching the slice across destination iterations to avoid the same source
-// being re-queried by the outer pack loop.
-func (r *Rebalancer) cachedSourceObjects(
-	ctx context.Context,
-	src string,
-	limit int,
-	cache map[string][]core.ObjectLocation,
-) ([]core.ObjectLocation, error) {
-	if objs, ok := cache[src]; ok {
-		return objs, nil
-	}
-	objs, err := r.store.ListObjectsByBackend(ctx, src, limit)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list objects on %s: %w", src, err)
-	}
-	cache[src] = objs
-	return objs, nil
 }
 
 // fetchCopyMap batches GetObjectBackendsForKeys for every candidate
@@ -469,6 +445,7 @@ func (r *Rebalancer) spreadMovesFromSource(
 	if err != nil {
 		return nil, err
 	}
+	placement := NewPlacementSet(copyMap)
 
 	var moves []RebalanceMove
 	for oi := range objects {
@@ -478,7 +455,7 @@ func (r *Rebalancer) spreadMovesFromSource(
 		if objects[oi].SizeBytes > src.Balance {
 			continue
 		}
-		bestDest := findSpreadDestination(&objects[oi], destinations, copyMap, stats, simUsed)
+		bestDest := findSpreadDestination(&objects[oi], destinations, placement, stats, simUsed)
 		if bestDest < 0 {
 			continue
 		}
@@ -506,16 +483,12 @@ func (r *Rebalancer) spreadMovesFromSource(
 func findSpreadDestination(
 	obj *core.ObjectLocation,
 	destinations []backendBalance,
-	copyMap map[string][]string,
+	placement PlacementSet,
 	stats map[string]core.QuotaStat,
 	simUsed map[string]int64,
 ) int {
-	copySet := make(map[string]bool, len(copyMap[obj.ObjectKey]))
-	for _, b := range copyMap[obj.ObjectKey] {
-		copySet[b] = true
-	}
 	for di := range destinations {
-		if copySet[destinations[di].Name] {
+		if placement.Has(obj.ObjectKey, destinations[di].Name) {
 			continue
 		}
 		deficit := -destinations[di].Balance
