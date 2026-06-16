@@ -55,26 +55,34 @@ const spanPrefix = "Manager "
 // core.ErrUsageLimitExceeded rather than as the last underlying error.
 var ErrUsageLimitSkip = errors.New("backend skipped: usage limits exceeded")
 
-// Probe is the per-backend callback the caller provides. loc carries
-// the matching ObjectLocation row so callbacks that need encryption
-// metadata can read it directly without a side-channel lookup; loc is
-// nil in degraded-mode broadcasts where the DB is unreachable.
-// beName is always populated (loc.BackendName during failover, or the
-// degraded-mode caller's chosen name) so callbacks have a single
-// source for span / usage attribution.
-//
-// The callback owns its own timeout context and is responsible for
-// releasing it on the error path. On success it returns a cleanup func
-// the orchestrator invokes once the winner is declared; that cleanup
-// either releases the timeout immediately (HEAD - no streaming body)
-// or is a no-op because the callback already attached the cancel to
-// the result body's Close (GET).
-type Probe func(ctx context.Context, beName string, loc *core.ObjectLocation, b backend.ObjectBackend) (size int64, cleanup func(), err error)
+// ProbeResult is the outcome of one successful backend probe. Value is the
+// operation's result (e.g. *backend.GetObjectResult) and flows back to the
+// caller when this probe wins. Cleanup releases the result's transient
+// resources when the probe loses the race (e.g. closing a discarded GET body);
+// it is never invoked on the winner, whose Value owns its own lifecycle.
+// Cleanup may be NoopCleanup when there is nothing to release.
+type ProbeResult[T any] struct {
+	Value   T
+	Size    int64
+	Cleanup func()
+}
 
-// NoopCleanup is the cleanup a Probe returns when there is nothing for
-// the orchestrator to release: error paths where the callback already
-// cancelled its own timeout, and the GET success path where the cancel
-// is attached to the body's Close.
+// Probe is the per-backend callback the caller provides. loc carries the
+// matching ObjectLocation row so callbacks that need encryption metadata can
+// read it directly without a side-channel lookup; loc is nil in degraded-mode
+// broadcasts where the DB is unreachable. beName is always populated
+// (loc.BackendName during failover, or the degraded-mode caller's chosen name)
+// so callbacks have a single source for span / usage attribution.
+//
+// The callback owns its own timeout context: it must release it on the error
+// path, and for a winning result it transfers ownership to Value (a GET
+// attaches the cancel to the body's Close; a HEAD has no body and releases the
+// timeout before returning). A losing result is released via ProbeResult.Cleanup.
+type Probe[T any] func(ctx context.Context, beName string, loc *core.ObjectLocation, b backend.ObjectBackend) (ProbeResult[T], error)
+
+// NoopCleanup is the ProbeResult.Cleanup a Probe returns when a losing result
+// holds nothing to release - e.g. a HEAD, which carries no body and has already
+// cancelled its own timeout before returning.
 func NoopCleanup() {
 	// meant to be a noop function
 }
@@ -143,34 +151,46 @@ func New(deps *FailoverDeps) *Failover {
 // core.ErrDBUnavailable it enters degraded mode and delegates to the
 // broadcaster (unless degraded reads are disabled). Returns the winning
 // backend name and any error.
-func (f *Failover) Read(ctx context.Context, operation, key string, probe Probe) (string, error) {
+// readOp bundles the per-read context shared by every failover and broadcast
+// helper: the operation label, key, start time, and span. Grouping them keeps
+// the helper signatures small and the call sites readable.
+type readOp struct {
+	operation string
+	key       string
+	start     time.Time
+	span      trace.Span
+}
+
+func Read[T any](ctx context.Context, f *Failover, operation, key string, probe Probe[T]) (T, string, error) {
+	var zero T
 	start := time.Now()
 
 	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation,
 		telemetry.AttrObjectKey.String(key),
 	)
 	defer span.End()
+	op := readOp{operation: operation, key: key, start: start, span: span}
 
 	locations, err := f.stores.GetAllObjectLocations(ctx, key)
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
 			observe.MarkSpanError(span, "object not found")
-			return "", err
+			return zero, "", err
 		}
 		if errors.Is(err, core.ErrDBUnavailable) {
 			span.SetAttributes(telemetry.AttrDegradedMode.Bool(true))
 			telemetry.DegradedReadsTotal.WithLabelValues(operation).Inc()
 			if !f.degradedReadsEnabled {
 				observe.MarkSpanError(span, "degraded reads disabled by operator")
-				return "", core.ErrServiceUnavailable
+				return zero, "", core.ErrServiceUnavailable
 			}
-			return f.broadcaster.Read(ctx, operation, key, start, span, probe)
+			return broadcastRead(ctx, f.broadcaster, op, probe)
 		}
 		observe.RecordSpanError(span, err)
-		return "", fmt.Errorf("failed to find object location: %w", err)
+		return zero, "", fmt.Errorf("failed to find object location: %w", err)
 	}
 
-	return f.tryEachLocation(ctx, operation, key, start, span, locations, probe)
+	return tryEachLocation(ctx, f, op, locations, probe)
 }
 
 // tryEachLocation walks the resolved location list and runs the probe
@@ -178,11 +198,12 @@ func (f *Failover) Read(ctx context.Context, operation, key string, probe Probe)
 // count of usage-limit skips so the failure-path return distinguishes
 // "all backends declined for usage limits" from "all backends genuinely
 // failed."
-func (f *Failover) tryEachLocation(ctx context.Context, operation, key string, start time.Time, span trace.Span, locations []core.ObjectLocation, probe Probe) (string, error) {
+func tryEachLocation[T any](ctx context.Context, f *Failover, op readOp, locations []core.ObjectLocation, probe Probe[T]) (T, string, error) {
+	var zero T
 	var lastErr error
 	var limitSkips int
 	for i := range locations {
-		span.SetAttributes(telemetry.AttrBackendName.String(locations[i].BackendName))
+		op.span.SetAttributes(telemetry.AttrBackendName.String(locations[i].BackendName))
 		name := locations[i].BackendName
 
 		be, ok := f.core.Backends()[name]
@@ -191,30 +212,31 @@ func (f *Failover) tryEachLocation(ctx context.Context, operation, key string, s
 			continue
 		}
 
-		size, cleanup, err := probe(ctx, name, &locations[i], be)
+		res, err := probe(ctx, name, &locations[i], be)
 		if err != nil {
 			lastErr = err
 			if errors.Is(err, ErrUsageLimitSkip) {
 				limitSkips++
 			}
 			if i < len(locations)-1 {
-				f.log.WarnContext(ctx, operation+": copy failed, trying next",
-					"key", key, "failed_backend", name, "error", err)
+				f.log.WarnContext(ctx, op.operation+": copy failed, trying next",
+					"key", op.key, "failed_backend", name, "error", err)
 			}
 			continue
 		}
 
-		cleanup()
-		f.core.Acct().Operation(operation, name, start, nil)
+		// First success wins; it returns immediately, so there are no losers to
+		// clean up here. The winner's Value owns its own lifecycle.
+		f.core.Acct().Operation(op.operation, name, op.start, nil)
 		if i > 0 {
-			span.SetAttributes(telemetry.AttrFailover.Bool(true))
+			op.span.SetAttributes(telemetry.AttrFailover.Bool(true))
 		}
-		span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
-		span.SetStatus(codes.Ok, "")
-		return name, nil
+		op.span.SetAttributes(telemetry.AttrObjectSize.Int64(res.Size))
+		op.span.SetStatus(codes.Ok, "")
+		return res.Value, name, nil
 	}
 
-	return "", failoverFailureResult(span, operation, locations, lastErr, limitSkips)
+	return zero, "", failoverFailureResult(op.span, op.operation, locations, lastErr, limitSkips)
 }
 
 // failoverFailureResult finalises the span and chooses between the
