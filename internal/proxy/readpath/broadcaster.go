@@ -181,86 +181,37 @@ type broadcastResult[T any] struct {
 	cleanup func()
 }
 
-// pendingProbe is one eligible backend awaiting (or running) its probe.
-// Held in a flat slice so the rolling-window launcher can pick the next
-// pending entry deterministically as slots free up.
-type pendingProbe struct {
-	name string
-	be   backend.ObjectBackend
-}
-
-// tryBackendsInParallel launches probes for eligible backends in
-// BackendOrder, capped to parallelism, and returns the first success,
-// cancelling the losing probes' contexts so their in-flight backend round
-// trips, decryption, and integrity work stop promptly instead of running
-// to completion only to have their results discarded. With no cap the
-// first call launches every backend at once (historical behaviour). With
-// a positive cap, the first cap probes launch immediately and each failure
-// replenishes the next pending backend so at most cap goroutines are ever
-// in flight.
+// tryBackendsInParallel runs the eligible backends through a bounded rolling
+// window via ProbeScheduler, then applies degraded-read policy to the outcome:
+// record the winner, or classify the collected failures (404 vs other) and wrap
+// the all-failed terminal. The concurrency mechanics live in the scheduler.
 func tryBackendsInParallel[T any](ctx context.Context, b *Broadcaster, op readOp, probe Probe[T]) (T, string, error) {
 	pending := b.eligibleBackends()
 	if len(pending) == 0 {
 		return broadcastAllFailed[T](op.span, nil)
 	}
 
-	initial := broadcastSlotCount(b.parallelism, len(pending))
-	ch := make(chan broadcastResult[T], len(pending))
-	cancels := make(map[string]context.CancelFunc, initial)
-
-	// launched tracks how many probes have been started so far. The
-	// receive loop calls launchNext after each failure to refill a
-	// free slot; on success the remaining pending entries are never
-	// launched because the winner cancels the in-flight set.
-	launched := 0
-	launchNext := func() bool {
-		if launched >= len(pending) {
-			return false
-		}
-		p := pending[launched]
-		launched++
-		probeCtx, cancel := context.WithCancel(ctx) //nolint:gosec // G118: cancel reaches the call graph via cancels map -> cancelLosers / all-failed loop.
-		cancels[p.name] = cancel
-		go runBackendProbe(probeCtx, p.name, p.be, probe, ch)
-		return true
+	sched := &ProbeScheduler[T]{
+		pending:      pending,
+		parallelism:  b.parallelism,
+		drainTimeout: b.drainTimeout,
+		operation:    op.operation,
 	}
-	for range initial {
-		launchNext()
+	res, errs, found := sched.FirstSuccess(ctx, probe)
+	if found {
+		b.recordBroadcastWinner(op, res.name, res.size, true)
+		return res.value, res.name, nil
 	}
 
-	var lastErr error
 	var tally broadcastErrTally
-	received := 0
-	for received < launched {
-		r := <-ch
-		received++
-		if r.err != nil {
-			lastErr = r.err
-			tally.add(r.err)
-			launchNext() // backfill the slot; harmless when no pending probes remain
-			continue
-		}
-		// Winner declared: cancel every in-flight probe so losing backends
-		// stop wasting CPU, network, and API quota on work that will be
-		// discarded. Backends that were pending but never launched do not
-		// need cancellation - no goroutine exists yet. The winner's context
-		// is intentionally left alive: its Value owns the streaming body and
-		// the caller is still reading from it; the per-probe ctx is reaped
-		// when the parent request ctx ends. The winner's cleanup is likewise
-		// never invoked - that would release the very result we return.
-		cancelLosers(cancels, r.name)
-		if remaining := launched - received; remaining > 0 {
-			go drainAndCleanupLosers(ctx, op.operation, ch, remaining, b.drainTimeout)
-		}
-		b.recordBroadcastWinner(op, r.name, r.size, true)
-		return r.value, r.name, nil
-	}
-	// All probes failed: no body to preserve, cancel every per-probe
-	// context so any straggler in a retry/backoff returns immediately.
-	for _, cancel := range cancels {
-		cancel()
+	for _, e := range errs {
+		tally.add(e)
 	}
 	tally.recordMixedOutcomes(op.operation)
+	var lastErr error
+	if n := len(errs); n > 0 {
+		lastErr = errs[n-1]
+	}
 	return broadcastAllFailed[T](op.span, lastErr)
 }
 
@@ -278,72 +229,6 @@ func (b *Broadcaster) eligibleBackends() []pendingProbe {
 		}
 	}
 	return pending
-}
-
-// broadcastSlotCount returns the initial in-flight slot count for the
-// rolling window: the configured cap clamped to the eligible-backend
-// count, with limit <= 0 meaning "no cap" (fan out to every backend at
-// once, preserving the historical behaviour).
-func broadcastSlotCount(limit, eligible int) int {
-	if limit <= 0 || limit > eligible {
-		return eligible
-	}
-	return limit
-}
-
-// cancelLosers invokes every cancel func except the winner's. The
-// winner's context must stay alive because its response body is bound
-// to it.
-func cancelLosers(cancels map[string]context.CancelFunc, winner string) {
-	for name, cancel := range cancels {
-		if name != winner {
-			cancel()
-		}
-	}
-}
-
-// runBackendProbe is the per-backend goroutine body. It forwards the probe's
-// result and cleanup so the fan-in loop can surface the winner's value and the
-// loser-drain can release every other result promptly instead of waiting for
-// each deadline to fire on its own.
-func runBackendProbe[T any](
-	ctx context.Context,
-	name string,
-	be backend.ObjectBackend,
-	probe Probe[T],
-	ch chan<- broadcastResult[T],
-) {
-	// Degraded mode: no DB row available, probe must handle nil loc.
-	res, err := probe(ctx, name, nil, be)
-	if err != nil {
-		ch <- broadcastResult[T]{name: name, err: err}
-		return
-	}
-	ch <- broadcastResult[T]{name: name, value: res.Value, size: res.Size, cleanup: res.Cleanup}
-}
-
-// drainAndCleanupLosers reads the remaining results from ch after a winner
-// has been declared and invokes any cleanup the losers returned. It is bounded
-// by timeout (and the request ctx) so a hung backend that never returns after
-// cancellation cannot strand this goroutine indefinitely; a timeout is counted
-// so the leak is observable rather than silent.
-func drainAndCleanupLosers[T any](ctx context.Context, operation string, ch <-chan broadcastResult[T], remaining int, timeout time.Duration) {
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	for range remaining {
-		select {
-		case lr := <-ch:
-			if lr.cleanup != nil {
-				lr.cleanup()
-			}
-		case <-ctx.Done():
-			return
-		case <-timer.C:
-			telemetry.DegradedBroadcastDrainTimeoutTotal.WithLabelValues(operation).Inc()
-			return
-		}
-	}
 }
 
 // recordBroadcastWinner caches the winner's name for future degraded
