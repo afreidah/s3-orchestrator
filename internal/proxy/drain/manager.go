@@ -441,15 +441,13 @@ func (d *Manager) copyAndRemoveSource(ctx context.Context, srcBackend backend.Ob
 	}
 
 	movedSize, err := d.mover.MoveObject(ctx, &writepath.MoveRequest{
-		Key:                obj.ObjectKey,
-		SizeBytes:          obj.SizeBytes,
-		SrcBackend:         srcBackend,
-		SrcName:            srcName,
-		DestBackend:        destBackend,
-		DestName:           destName,
-		OrphanReason:       "drain_orphan",
-		StaleOrphanReason:  "drain_stale_orphan",
-		SourceDeleteReason: "drain_source_delete",
+		Key:         obj.ObjectKey,
+		SizeBytes:   obj.SizeBytes,
+		SrcBackend:  srcBackend,
+		SrcName:     srcName,
+		DestBackend: destBackend,
+		DestName:    destName,
+		Reasons:     writepath.DrainMoveReasons,
 	})
 	if err != nil {
 		if !errors.Is(err, writepath.ErrMoveStale) {
