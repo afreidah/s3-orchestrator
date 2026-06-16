@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sync"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
@@ -39,12 +38,10 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 		return cached, nil
 	}
 
-	var result *s3be.GetObjectResult
-	var once sync.Once
-
-	backendName, err := o.failover.Read(ctx, "GetObject", key, func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (int64, func(), error) {
-		return o.getObjectAttempt(ctx, key, rangeHeader, beName, backend, loc, &once, &result)
-	})
+	result, backendName, err := readpath.Read(ctx, o.failover, "GetObject", key,
+		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.GetObjectResult], error) {
+			return o.getObjectAttempt(ctx, key, rangeHeader, beName, backend, loc)
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -83,18 +80,19 @@ func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string
 // for GetObject. It owns the per-attempt timeout, applies usage limits,
 // translates encrypted ranges, decrypts and verifies the body, and records
 // the winning result via once. loc is nil in degraded-mode broadcasts.
-func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName string, backend s3be.ObjectBackend, loc *core.ObjectLocation, once *sync.Once, result **s3be.GetObjectResult) (int64, func(), error) {
+func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName string, backend s3be.ObjectBackend, loc *core.ObjectLocation) (readpath.ProbeResult[*s3be.GetObjectResult], error) {
+	var fail readpath.ProbeResult[*s3be.GetObjectResult]
 	bctx, bcancel := o.core.WithTimeout(ctx)
 
 	if !o.core.Usage().WithinLimits(beName, 1, 0, 0) {
 		bcancel()
-		return 0, readpath.NoopCleanup, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
+		return fail, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 	}
 	// Encrypted reads need the location row to unwrap the DEK; without it
 	// (degraded broadcast with the DB unreachable) we cannot decrypt.
 	if o.encryptor != nil && loc == nil {
 		bcancel()
-		return 0, readpath.NoopCleanup, core.ErrServiceUnavailable
+		return fail, core.ErrServiceUnavailable
 	}
 
 	actualRange, rng, ptStart, ptEnd := o.resolveBackendRange(rangeHeader, loc)
@@ -103,31 +101,34 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 	if err != nil {
 		bcancel()
 		o.core.Acct().APICall(beName)
-		return 0, readpath.NoopCleanup, err
+		return fail, err
 	}
 	if !o.core.Usage().WithinLimits(beName, 1, r.Size, 0) {
 		_ = r.Body.Close()
 		bcancel()
 		o.core.Acct().APICall(beName)
-		return 0, readpath.NoopCleanup, fmt.Errorf("backend %s egress: %w", beName, readpath.ErrUsageLimitSkip)
+		return fail, fmt.Errorf("backend %s egress: %w", beName, readpath.ErrUsageLimitSkip)
 	}
 
 	if loc != nil && loc.Encrypted && o.encryptor != nil {
 		if err := decryptResponse(ctx, o.encryptor, r, loc, rng, ptStart, ptEnd); err != nil {
 			_ = r.Body.Close()
 			bcancel()
-			return 0, readpath.NoopCleanup, err
+			return fail, err
 		}
 	}
 
 	o.maybeWrapIntegrityReader(ctx, r, loc, key, beName, backend)
 
+	// The body owns the timeout cancel via Close. The winner's body streams to
+	// the client (cancel fires when the client closes it); a losing result is
+	// released by Cleanup, which closes the body and so cancels the timeout.
 	r.Body = ioutilx.WithCancel(r.Body, bcancel)
-	once.Do(func() { *result = r })
-	if *result != r {
-		_ = r.Body.Close()
-	}
-	return r.Size, readpath.NoopCleanup, nil
+	return readpath.ProbeResult[*s3be.GetObjectResult]{
+		Value:   r,
+		Size:    r.Size,
+		Cleanup: func() { _ = r.Body.Close() },
+	}, nil
 }
 
 // resolveBackendRange translates a plaintext Range header into the actual
