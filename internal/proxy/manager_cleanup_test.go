@@ -280,7 +280,8 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 
 	mgr, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 1 {
 		t.Errorf("expected processed=1, got %d", processed)
 	}
@@ -315,7 +316,8 @@ func TestProcessCleanupQueue_DeleteFails_SchedulesRetry(t *testing.T) {
 
 	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 0 {
 		t.Errorf("expected processed=0, got %d", processed)
 	}
@@ -351,7 +353,8 @@ func TestProcessCleanupQueue_BackendNotFound_RemovesItem(t *testing.T) {
 
 	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 1 {
 		t.Errorf("expected processed=1, got %d", processed)
 	}
@@ -369,7 +372,8 @@ func TestProcessCleanupQueue_EmptyQueue(t *testing.T) {
 	store := newPermissiveMock(t)
 	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 0 || failed != 0 {
 		t.Errorf("expected 0/0, got %d/%d", processed, failed)
 	}
@@ -390,7 +394,8 @@ func TestProcessCleanupQueue_FetchError(t *testing.T) {
 
 	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 0 || failed != 0 {
 		t.Errorf("expected 0/0 on fetch error, got %d/%d", processed, failed)
 	}
@@ -414,7 +419,8 @@ func TestProcessCleanupQueue_MaxAttemptsReached_MovesToDLQ(t *testing.T) {
 
 	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 0 {
 		t.Errorf("expected processed=0, got %d", processed)
 	}
@@ -465,7 +471,8 @@ func TestProcessCleanupQueue_CompleteItemError(t *testing.T) {
 
 	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 1 {
 		t.Errorf("expected processed=1 (delete succeeded), got %d", processed)
 	}
@@ -500,7 +507,8 @@ func TestProcessCleanupQueue_RetryItemError(t *testing.T) {
 
 	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 0 {
 		t.Errorf("expected processed=0, got %d", processed)
 	}
@@ -522,7 +530,8 @@ func TestProcessCleanupQueue_QueueDepthError(t *testing.T) {
 
 	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 0 || failed != 0 {
 		t.Errorf("expected 0/0, got %d/%d", processed, failed)
 	}
@@ -551,7 +560,8 @@ func TestProcessCleanupQueue_BackendNotFound_CompleteItemError(t *testing.T) {
 
 	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 1 {
 		t.Errorf("expected processed=1, got %d", processed)
 	}
@@ -585,7 +595,8 @@ func TestProcessCleanupQueue_Concurrent(t *testing.T) {
 	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
 	start := time.Now()
-	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	elapsed := time.Since(start)
 
 	if processed != 10 {
@@ -678,7 +689,8 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(ctx)
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(ctx)
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 0 {
 		t.Errorf("expected processed=0 when admission blocked, got %d", processed)
 	}

@@ -45,9 +45,9 @@ func NewPendingReaperService(reaper *PendingReaper, locker tickrunner.AdvisoryLo
 		Name:     slug,
 		Log:      log,
 		Work: func(ctx context.Context) error {
-			resolved, failed := reaper.ProcessPendingQueue(ctx)
-			if resolved > 0 || failed > 0 {
-				log.InfoContext(ctx, "pending queue processed", "resolved", resolved, "failed", failed)
+			sum := reaper.ProcessPendingQueue(ctx)
+			if sum.Succeeded > 0 || sum.Failed > 0 {
+				log.InfoContext(ctx, "pending queue processed", "resolved", sum.Succeeded, "failed", sum.Failed)
 			}
 			return nil
 		},

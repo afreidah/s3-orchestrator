@@ -31,10 +31,10 @@ type ReplicatorOps interface {
 
 // RebalancerOps is the slice of *worker.Rebalancer the admin handler uses
 // for the on-demand rebalance endpoint. Config returns nil when the worker
-// is unconfigured; Rebalance runs one cycle and returns the move count.
+// is unconfigured; Rebalance runs one cycle and returns its work summary.
 type RebalancerOps interface {
 	Config() *config.RebalanceConfig
-	Rebalance(ctx context.Context, cfg config.RebalanceConfig) (int, error)
+	Rebalance(ctx context.Context, cfg config.RebalanceConfig) (worker.WorkSummary, error)
 }
 
 // OverReplicationOps is the slice of *worker.OverReplicationCleaner the
@@ -48,8 +48,8 @@ type OverReplicationOps interface {
 // ScrubberOps is the slice of *worker.Scrubber the admin handler uses for
 // the integrity-scrub and hash-backfill endpoints.
 type ScrubberOps interface {
-	Scrub(ctx context.Context, batchSize int, observer progress.Observer) (checked, failed int)
-	Backfill(ctx context.Context, batchSize, offset int, observer progress.Observer) (processed, nextOffset int)
+	Scrub(ctx context.Context, batchSize int, observer progress.Observer) worker.WorkSummary
+	Backfill(ctx context.Context, batchSize, offset int, observer progress.Observer) (worker.WorkSummary, int)
 }
 
 // Reconciler is the slice of *worker.Reconciler the admin handler uses

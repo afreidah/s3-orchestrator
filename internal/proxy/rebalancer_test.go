@@ -228,7 +228,7 @@ func TestExecuteMoves_Concurrent(t *testing.T) {
 	}
 
 	start := time.Now()
-	moved := workers.Rebalancer.ExecuteMoves(context.Background(), plan, "spread", 3)
+	moved := workers.Rebalancer.ExecuteMoves(context.Background(), plan, "spread", 3).Succeeded
 	elapsed := time.Since(start)
 
 	if moved != 5 {
@@ -281,7 +281,7 @@ func TestExecuteMoves_PartialFailure(t *testing.T) {
 		{ObjectKey: "ok2", FromBackend: "src", ToBackend: "dest", SizeBytes: 4},
 	}
 
-	moved := workers.Rebalancer.ExecuteMoves(context.Background(), plan, "spread", 3)
+	moved := workers.Rebalancer.ExecuteMoves(context.Background(), plan, "spread", 3).Succeeded
 	if moved != 2 {
 		t.Errorf("moved = %d, want 2 (one should fail)", moved)
 	}
@@ -322,7 +322,7 @@ func TestExecuteMoves_SequentialFallback(t *testing.T) {
 		{ObjectKey: "a", FromBackend: "src", ToBackend: "dest", SizeBytes: 5},
 		{ObjectKey: "b", FromBackend: "src", ToBackend: "dest", SizeBytes: 5},
 	}
-	moved := workers.Rebalancer.ExecuteMoves(context.Background(), plan, "pack", 1)
+	moved := workers.Rebalancer.ExecuteMoves(context.Background(), plan, "pack", 1).Succeeded
 	if moved != 2 {
 		t.Errorf("moved = %d, want 2", moved)
 	}
@@ -463,11 +463,12 @@ func TestRebalance_BelowThreshold_Skips(t *testing.T) {
 		"b2": newMockBackend(),
 	})
 
-	moved, err := workers.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
+	movedSum, err := workers.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
 		Strategy:  "spread",
 		BatchSize: 10,
 		Threshold: 0.20,
 	})
+	moved := movedSum.Succeeded
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -495,11 +496,12 @@ func TestRebalance_EmptyPlan_Skips(t *testing.T) {
 		"b2": newMockBackend(),
 	})
 
-	moved, err := workers.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
+	movedSum, err := workers.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
 		Strategy:  "pack",
 		BatchSize: 10,
 		Threshold: 0.10,
 	})
+	moved := movedSum.Succeeded
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1282,7 +1284,7 @@ func TestExecuteMoves_AdmissionBlocked(t *testing.T) {
 
 	moved := workers.Rebalancer.ExecuteMoves(ctx, []worker.RebalanceMove{
 		{ObjectKey: "key1", FromBackend: "b1", ToBackend: "b2", SizeBytes: 4},
-	}, "pack", 1)
+	}, "pack", 1).Succeeded
 	if moved != 0 {
 		t.Errorf("expected 0 moves when admission blocked, got %d", moved)
 	}

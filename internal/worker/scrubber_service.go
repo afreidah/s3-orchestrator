@@ -45,9 +45,9 @@ func NewScrubberService(scrubber *Scrubber, locker tickrunner.AdvisoryLocker) li
 			if icfg == nil {
 				return nil
 			}
-			checked, failed := scrubber.Scrub(ctx, icfg.ScrubberBatchSize, nil)
-			if checked > 0 || failed > 0 {
-				log.InfoContext(ctx, "scrub completed", "checked", checked, "failed", failed)
+			sum := scrubber.Scrub(ctx, icfg.ScrubberBatchSize, nil)
+			if sum.Attempted > 0 || sum.Failed > 0 {
+				log.InfoContext(ctx, "scrub completed", "checked", sum.Attempted, "failed", sum.Failed)
 			}
 			return nil
 		},

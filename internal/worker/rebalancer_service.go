@@ -47,8 +47,8 @@ func NewRebalancerService(manager tickrunner.QuotaMetricsRefresher, rebalancer *
 			if rcfg == nil {
 				return nil
 			}
-			moved, err := rebalancer.Rebalance(ctx, *rcfg)
-			return tickrunner.HandlePassResult(ctx, log, manager, moved, err, "objects_moved")
+			sum, err := rebalancer.Rebalance(ctx, *rcfg)
+			return tickrunner.HandlePassResult(ctx, log, manager, sum.Succeeded, err, "objects_moved")
 		},
 	})
 }

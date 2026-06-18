@@ -16,6 +16,7 @@
 package di
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/samber/do/v2"
@@ -241,6 +242,12 @@ func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve CleanupWorker: %w", err)
 	}
+	// drain wants a (processed, failed) callback; adapt the WorkSummary return
+	// so drain stays decoupled from worker.WorkSummary.
+	processCleanup := func(ctx context.Context) (int, int) {
+		sum := cleanup.ProcessCleanupQueue(ctx)
+		return sum.Succeeded, sum.Failed
+	}
 	return drain.New(
 		rt,
 		coord,
@@ -248,6 +255,6 @@ func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
 		stores,
 		stores,
 		mp.AbortMultipartUploadsOnBackend,
-		cleanup.ProcessCleanupQueue,
+		processCleanup,
 	), nil
 }

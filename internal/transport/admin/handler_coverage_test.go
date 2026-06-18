@@ -105,22 +105,23 @@ type fakeScrubber struct {
 	backfillCalls             int
 }
 
-func (f *fakeScrubber) Scrub(_ context.Context, _ int, observer progress.Observer) (int, int) {
+func (f *fakeScrubber) Scrub(_ context.Context, _ int, observer progress.Observer) worker.WorkSummary {
 	for range f.scrubChecked {
 		progress.Track(observer, "fake-key", func() string { return progress.StatusOK })
 	}
-	return f.scrubChecked, f.scrubFailed
+	return worker.WorkSummary{Attempted: f.scrubChecked, Succeeded: f.scrubChecked - f.scrubFailed, Failed: f.scrubFailed}
 }
-func (f *fakeScrubber) Backfill(_ context.Context, batchSize, offset int, observer progress.Observer) (int, int) {
+func (f *fakeScrubber) Backfill(_ context.Context, batchSize, offset int, observer progress.Observer) (worker.WorkSummary, int) {
 	f.backfillCalls++
 	for range f.backfillProcessed {
 		progress.Track(observer, "fake-key", func() string { return progress.StatusOK })
 	}
+	sum := worker.WorkSummary{Attempted: f.backfillProcessed, Succeeded: f.backfillProcessed}
 	if f.backfillMore {
-		return f.backfillProcessed, offset + batchSize
+		return sum, offset + batchSize
 	}
-	// Return processed for one batch then signal done with nextOffset=0.
-	return f.backfillProcessed, 0
+	// One batch processed, then signal done with nextOffset=0.
+	return sum, 0
 }
 
 type fakeReconciler struct {

@@ -60,7 +60,8 @@ func runReaperTick(t *testing.T) (resolved, failed int) {
 		t.Fatal("test manager has no PendingReaper wired")
 	}
 	backdatePendingRows(t)
-	return testWorkers.PendingReaper.ProcessPendingQueue(context.Background())
+	sum := testWorkers.PendingReaper.ProcessPendingQueue(context.Background())
+	return sum.Succeeded, sum.Failed
 }
 
 // TestPending_HappyPath verifies that a successful PUT clears the pending
@@ -218,7 +219,8 @@ func TestPending_ReaperRespectsMinAge(t *testing.T) {
 
 	// Tick WITHOUT backdating: the row's created_at = NOW() is far
 	// younger than the 5m default min-age, so the reaper must skip it.
-	resolved, failed := testWorkers.PendingReaper.ProcessPendingQueue(ctx)
+	pendSum := testWorkers.PendingReaper.ProcessPendingQueue(ctx)
+	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 0 || failed != 0 {
 		t.Errorf("reaper tick on young row: resolved=%d failed=%d, want both 0", resolved, failed)
 	}

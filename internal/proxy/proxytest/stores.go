@@ -3,6 +3,7 @@
 package proxytest
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 	"time"
@@ -52,7 +53,11 @@ func BuildManager(cfg *proxy.BackendManagerConfig) *proxy.BackendManager {
 		IntegrityCfg: integrityCfg,
 	})
 	cleanup := worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: rt, Store: stores, Concurrency: 10, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
-	dm := drain.New(rt, coord, stores, stores, stores, mp.AbortMultipartUploadsOnBackend, cleanup.ProcessCleanupQueue)
+	processCleanup := func(ctx context.Context) (int, int) {
+		sum := cleanup.ProcessCleanupQueue(ctx)
+		return sum.Succeeded, sum.Failed
+	}
+	dm := drain.New(rt, coord, stores, stores, stores, mp.AbortMultipartUploadsOnBackend, processCleanup)
 
 	cfg.Collaborators = proxy.Collaborators{
 		Coord:        coord,
