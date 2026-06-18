@@ -1270,7 +1270,7 @@ func TestRebalancePackTight(t *testing.T) {
 	}
 
 	// Step 2: these overflow to minio-2 (minio-1 is full)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		key := fmt.Sprintf("rebal-pack/obj-%d-%d", i, time.Now().UnixNano())
 		_, err := client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String(virtualBucket),
@@ -1340,7 +1340,7 @@ func TestRebalancePackTight(t *testing.T) {
 	// No-op case: all objects already on the most-full backend
 	resetState(t)
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		key := fmt.Sprintf("rebal-pack/noop-%d-%d", i, time.Now().UnixNano())
 		_, err := client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String(virtualBucket),
@@ -1538,7 +1538,7 @@ func TestRebalanceSpreadEven(t *testing.T) {
 	// Fill minio-1 near capacity: 5 x 200 = 1000 bytes (97.6% of 1024)
 	// minio-2 is empty (0% of 2048)
 	// Spread should equalize: target = 1000/3072 = 32.5%
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		key := fmt.Sprintf("rebal-spread/obj-%d-%d", i, time.Now().UnixNano())
 		_, err := client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String(virtualBucket),
@@ -1761,7 +1761,7 @@ func TestRebalanceSpreadStableAcrossCycles(t *testing.T) {
 	resetState(t)
 
 	// Setup: 5 x 200-byte objects on minio-1
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		_, err := client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String(virtualBucket),
 			Key:           aws.String(fmt.Sprintf("stable/obj-%d-%d", i, time.Now().UnixNano())),
@@ -1818,7 +1818,7 @@ func TestRebalanceSpreadBatchLimited(t *testing.T) {
 
 	// 5 x 100-byte objects on minio-1. With batch_size=2, it takes
 	// multiple cycles. No object should move twice.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		_, err := client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String(virtualBucket),
 			Key:           aws.String(fmt.Sprintf("batch/obj-%d-%d", i, time.Now().UnixNano())),
@@ -4541,7 +4541,7 @@ func TestRemoveBackend(t *testing.T) {
 
 	// Directly record objects on minio-2 via the store so we can test
 	// remove without affecting minio-1 (which other tests depend on).
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		key := fmt.Sprintf("%s/remove-test-%d-%d", virtualBucket, i, time.Now().UnixNano())
 		if _, err := testStore.RecordObject(ctx, key, "minio-2", 100, nil); err != nil {
 			t.Fatalf("RecordObject: %v", err)

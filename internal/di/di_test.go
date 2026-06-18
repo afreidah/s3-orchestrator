@@ -832,7 +832,7 @@ func TestResolveAdminHandlerRequiredDeps_PartialDeps(t *testing.T) {
 			do.ProvideValue(i, cb)
 			do.ProvideValue[core.EncryptionAdmin](i, stores)
 			do.ProvideValue(i, new(slog.LevelVar))
-			do.ProvideValue[core.MetadataStore](i, stores)
+			do.ProvideValue(i, stores)
 		}},
 		{"+replicator", func(i do.Injector) {
 			do.ProvideValue(i, cfg)
@@ -840,7 +840,7 @@ func TestResolveAdminHandlerRequiredDeps_PartialDeps(t *testing.T) {
 			do.ProvideValue(i, cb)
 			do.ProvideValue[core.EncryptionAdmin](i, stores)
 			do.ProvideValue(i, new(slog.LevelVar))
-			do.ProvideValue[core.MetadataStore](i, stores)
+			do.ProvideValue(i, stores)
 			do.ProvideValue(i, repl)
 		}},
 		{"+overRep", func(i do.Injector) {
@@ -849,7 +849,7 @@ func TestResolveAdminHandlerRequiredDeps_PartialDeps(t *testing.T) {
 			do.ProvideValue(i, cb)
 			do.ProvideValue[core.EncryptionAdmin](i, stores)
 			do.ProvideValue(i, new(slog.LevelVar))
-			do.ProvideValue[core.MetadataStore](i, stores)
+			do.ProvideValue(i, stores)
 			do.ProvideValue(i, repl)
 			do.ProvideValue(i, overRep)
 		}},
@@ -859,7 +859,7 @@ func TestResolveAdminHandlerRequiredDeps_PartialDeps(t *testing.T) {
 			do.ProvideValue(i, cb)
 			do.ProvideValue[core.EncryptionAdmin](i, stores)
 			do.ProvideValue(i, new(slog.LevelVar))
-			do.ProvideValue[core.MetadataStore](i, stores)
+			do.ProvideValue(i, stores)
 			do.ProvideValue(i, repl)
 			do.ProvideValue(i, overRep)
 			do.ProvideValue(i, scrubber)

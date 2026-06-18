@@ -212,6 +212,7 @@ func TestPresignedDELETE(t *testing.T) {
 		t.Errorf("HeadObject after presigned DELETE: expected 404, got %v", err)
 	}
 }
+
 // runConcurrentPutDelete fires two goroutines  -  one repeatedly PUTting the
 // same key and one repeatedly DELETEing it  -  and returns a closed error
 // channel containing any protocol-level errors either goroutine saw.
@@ -221,7 +222,7 @@ func runConcurrentPutDelete(ctx context.Context, client *s3.Client, key string, 
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < rounds; i++ {
+		for i := range rounds {
 			_, err := client.PutObject(ctx, &s3.PutObjectInput{
 				Bucket:        aws.String(virtualBucket),
 				Key:           aws.String(key),
@@ -236,7 +237,7 @@ func runConcurrentPutDelete(ctx context.Context, client *s3.Client, key string, 
 	}()
 	go func() {
 		defer wg.Done()
-		for i := 0; i < rounds; i++ {
+		for i := range rounds {
 			_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
 				Bucket: aws.String(virtualBucket),
 				Key:    aws.String(key),

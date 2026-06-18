@@ -16,6 +16,7 @@ package httputil
 import (
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 )
 
@@ -94,8 +95,8 @@ func ipInNets(ipStr string, nets []*net.IPNet) bool {
 // trusted, returns the leftmost (original client).
 func rightmostUntrusted(xff string, trusted []*net.IPNet) string {
 	parts := strings.Split(xff, ",")
-	for i := len(parts) - 1; i >= 0; i-- {
-		ip := strings.TrimSpace(parts[i])
+	for _, part := range slices.Backward(parts) {
+		ip := strings.TrimSpace(part)
 		if ip == "" {
 			continue
 		}
