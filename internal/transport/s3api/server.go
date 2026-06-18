@@ -374,7 +374,7 @@ func (s *Server) routePlainObjectRequest(ctx context.Context, w http.ResponseWri
 	switch method {
 	case http.MethodPut:
 		if copySource := r.Header.Get("X-Amz-Copy-Source"); copySource != "" {
-			st, e := s.handleCopyObject(ctx, w, r, bucket, internalKey, copySource)
+			st, e := s.handleCopyObject(ctx, w, bucket, internalKey, copySource)
 			return "CopyObject", st, 0, 0, e, true
 		}
 		st, e := s.handlePut(ctx, w, r, internalKey)

@@ -114,6 +114,10 @@ check: ## Run fast local checks for contributor iteration
 lint: ## Run Go linter
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...
 
+modernize: ## Report gopls modernization/hygiene hints (skips generated files)
+	GOFLAGS=-tags=integration go run golang.org/x/tools/gopls@v0.22.0 check -severity=hint \
+		$$(git ls-files '*.go' | xargs grep -L 'DO NOT EDIT')
+
 doc-stub-check: ## Fail if tautological '// Foo foo.' doc-comment stubs reappear
 	bash scripts/check-doc-stubs.sh
 

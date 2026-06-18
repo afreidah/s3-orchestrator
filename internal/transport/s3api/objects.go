@@ -258,7 +258,7 @@ func (s *Server) handleDelete(ctx context.Context, w http.ResponseWriter, _ *htt
 // Copies an object from the source key to the destination key, potentially
 // across backends, with atomic quota tracking. Only same-bucket copies are
 // allowed (no cross-bucket copying).
-func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, destInternalKey, copySource string) (int, error) {
+func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, bucket, destInternalKey, copySource string) (int, error) {
 	// --- Parse x-amz-copy-source header (may be URL-encoded) ---
 	decoded, err := url.PathUnescape(copySource)
 	if err != nil {
