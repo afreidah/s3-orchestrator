@@ -56,14 +56,14 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		ctx := context.Background()
-		moved, err := h.rebalancer.Rebalance(ctx, runCfg)
+		sum, err := h.rebalancer.Rebalance(ctx, runCfg)
 		if err != nil {
 			h.log.ErrorContext(ctx, "rebalance failed", "error", err)
 			h.asyncOps.Complete("rebalance", &asyncResult{Error: "rebalance failed"})
 			return
 		}
-		h.log.InfoContext(ctx, "manual rebalance completed", "moved", moved)
-		h.asyncOps.Complete("rebalance", &asyncResult{OK: true, Count: moved})
+		h.log.InfoContext(ctx, "manual rebalance completed", "moved", sum.Succeeded)
+		h.asyncOps.Complete("rebalance", &asyncResult{OK: true, Count: sum.Succeeded})
 	}()
 
 	httputil.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "started"})

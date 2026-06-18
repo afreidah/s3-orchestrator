@@ -66,7 +66,8 @@ func TestInt_PendingReaper_SupersededByNewerLocation(t *testing.T) {
 	// Run the reaper directly (skip runReaperTick's backdate; we
 	// already backdated above and want to preserve the NOW() created_at
 	// on the object_locations row).
-	resolved, failed := testWorkers.PendingReaper.ProcessPendingQueue(ctx)
+	pendSum := testWorkers.PendingReaper.ProcessPendingQueue(ctx)
+	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 1 || failed != 0 {
 		t.Errorf("reaper tick: resolved=%d failed=%d, want resolved=1 failed=0", resolved, failed)
 	}

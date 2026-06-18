@@ -222,7 +222,8 @@ func TestCleanupWorker_SuccessfulDelete_DecrementsOrphanBytes(t *testing.T) {
 
 	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 1 || failed != 0 {
 		t.Fatalf("expected processed=1 failed=0, got %d/%d", processed, failed)
 	}
@@ -253,7 +254,8 @@ func TestCleanupWorker_SuccessfulDelete_ZeroSize_SkipsDecrement(t *testing.T) {
 
 	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	processed, _ := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, _ := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 1 {
 		t.Fatalf("expected processed=1, got %d", processed)
 	}
@@ -281,7 +283,8 @@ func TestCleanupWorker_Exhausted_MovesToDLQ_PreservesOrphanBytes(t *testing.T) {
 
 	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	_, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	_, failed := cleanSum.Succeeded, cleanSum.Failed
 	if failed != 1 {
 		t.Fatalf("expected failed=1, got %d", failed)
 	}
@@ -323,7 +326,8 @@ func TestCleanupWorker_RetryNotExhausted_NoOrphanBytesChange(t *testing.T) {
 
 	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	_, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	_, failed := cleanSum.Succeeded, cleanSum.Failed
 	if failed != 1 {
 		t.Fatalf("expected failed=1, got %d", failed)
 	}
@@ -556,7 +560,8 @@ func TestOrphanBytes_FullLifecycle(t *testing.T) {
 		{ID: 1, BackendName: "b1", ObjectKey: "file.txt", Reason: "delete_failed", Attempts: 0, SizeBytes: 1024},
 	}
 
-	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 1 || failed != 0 {
 		t.Fatalf("step 2: expected processed=1 failed=0, got %d/%d", processed, failed)
 	}
@@ -733,7 +738,8 @@ func TestCleanupWorker_CompleteCleanupItem_DBError(t *testing.T) {
 
 	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	processed, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 1 || failed != 0 {
 		t.Fatalf("expected processed=1 failed=0, got %d/%d", processed, failed)
 	}
@@ -758,7 +764,8 @@ func TestCleanupWorker_Exhausted_DLQMoveFails(t *testing.T) {
 
 	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": backend})
 
-	_, failed := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	cleanSum := workers.CleanupWorker.ProcessCleanupQueue(context.Background())
+	_, failed := cleanSum.Succeeded, cleanSum.Failed
 	if failed != 1 {
 		t.Fatalf("expected failed=1, got %d", failed)
 	}

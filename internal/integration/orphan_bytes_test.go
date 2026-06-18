@@ -200,7 +200,8 @@ func TestOrphanBytes_CleanupSuccessDecrementsOrphanBytes(t *testing.T) {
 		t.Fatalf("orphan_bytes before cleanup = %d, want 100", orphanBefore)
 	}
 
-	processed, failed := testWorkers.CleanupWorker.ProcessCleanupQueue(ctx)
+	cleanSum := testWorkers.CleanupWorker.ProcessCleanupQueue(ctx)
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 1 {
 		t.Errorf("processed = %d, want 1", processed)
 	}
@@ -350,7 +351,8 @@ func TestOrphanBytes_CleanupZeroSizeSkipsOrphanDecrement(t *testing.T) {
 
 	setOrphanBytes(t, backend, 200)
 
-	processed, _ := testWorkers.CleanupWorker.ProcessCleanupQueue(ctx)
+	cleanSum := testWorkers.CleanupWorker.ProcessCleanupQueue(ctx)
+	processed, _ := cleanSum.Succeeded, cleanSum.Failed
 	if processed != 1 {
 		t.Errorf("processed = %d, want 1", processed)
 	}

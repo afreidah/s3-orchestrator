@@ -1313,7 +1313,8 @@ func TestRebalancePackTight(t *testing.T) {
 		Threshold: 0,
 	}
 
-	moved, err := testWorkers.Rebalancer.Rebalance(ctx, packCfg)
+	movedSum, err := testWorkers.Rebalancer.Rebalance(ctx, packCfg)
+	moved := movedSum.Succeeded
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1353,7 +1354,8 @@ func TestRebalancePackTight(t *testing.T) {
 	}
 
 	// minio-1 is 97.6% (1000/1024), minio-2 is 0%  -  nothing to consolidate
-	moved, err = testWorkers.Rebalancer.Rebalance(ctx, packCfg)
+	movedSum, err = testWorkers.Rebalancer.Rebalance(ctx, packCfg)
+	moved = movedSum.Succeeded
 	if err != nil {
 		t.Fatalf("Rebalance noop: %v", err)
 	}
@@ -1422,7 +1424,8 @@ func TestRebalancePackTinyToFuller_DestHasRoom(t *testing.T) {
 	t.Logf("before: minio-1=%d (%.1f%%) minio-2=%d (%.1f%%)",
 		m1Before, float64(m1Before)/1024*100, m2Before, float64(m2Before)/2048*100)
 
-	moved, err := testWorkers.Rebalancer.Rebalance(ctx, packCfg)
+	movedSum, err := testWorkers.Rebalancer.Rebalance(ctx, packCfg)
+	moved := movedSum.Succeeded
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1508,7 +1511,8 @@ func TestRebalancePackTinyToFuller_DestIsFull(t *testing.T) {
 	t.Logf("before: minio-1=%d minio-2=%d",
 		queryQuotaUsed(t, "minio-1"), queryQuotaUsed(t, "minio-2"))
 
-	moved, err := testWorkers.Rebalancer.Rebalance(ctx, packCfg)
+	movedSum, err := testWorkers.Rebalancer.Rebalance(ctx, packCfg)
+	moved := movedSum.Succeeded
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1562,7 +1566,8 @@ func TestRebalanceSpreadEven(t *testing.T) {
 		Threshold: 0,
 	}
 
-	moved, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg)
+	movedSum, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg)
+	moved := movedSum.Succeeded
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1675,7 +1680,8 @@ func TestRebalanceSpreadAlreadyBalanced(t *testing.T) {
 		Threshold: 0,
 	}
 
-	moved, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg)
+	movedSum, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg)
+	moved := movedSum.Succeeded
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1724,7 +1730,8 @@ func TestRebalanceSpreadOversizedObject(t *testing.T) {
 		Threshold: 0,
 	}
 
-	moved, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg)
+	movedSum, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg)
+	moved := movedSum.Succeeded
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}
@@ -1774,7 +1781,8 @@ func TestRebalanceSpreadStableAcrossCycles(t *testing.T) {
 	}
 
 	// Cycle 1
-	moved1, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg)
+	moved1Sum, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg)
+	moved1 := moved1Sum.Succeeded
 	if err != nil {
 		t.Fatalf("Cycle 1: %v", err)
 	}
@@ -1783,7 +1791,8 @@ func TestRebalanceSpreadStableAcrossCycles(t *testing.T) {
 	t.Logf("cycle 1: moved %d, minio-1=%d minio-2=%d", moved1, m1After1, m2After1)
 
 	// Cycle 2  -  should be a no-op, nothing bounces
-	moved2, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg)
+	moved2Sum, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg)
+	moved2 := moved2Sum.Succeeded
 	if err != nil {
 		t.Fatalf("Cycle 2: %v", err)
 	}
@@ -1832,7 +1841,8 @@ func TestRebalanceSpreadBatchLimited(t *testing.T) {
 	}
 
 	// Cycle 1: moves 2
-	moved1, err := testWorkers.Rebalancer.Rebalance(ctx, smallBatchCfg)
+	moved1Sum, err := testWorkers.Rebalancer.Rebalance(ctx, smallBatchCfg)
+	moved1 := moved1Sum.Succeeded
 	if err != nil {
 		t.Fatalf("Cycle 1: %v", err)
 	}
@@ -1845,7 +1855,8 @@ func TestRebalanceSpreadBatchLimited(t *testing.T) {
 	}
 
 	// Cycle 2: moves remaining needed
-	moved2, err := testWorkers.Rebalancer.Rebalance(ctx, smallBatchCfg)
+	moved2Sum, err := testWorkers.Rebalancer.Rebalance(ctx, smallBatchCfg)
+	moved2 := moved2Sum.Succeeded
 	if err != nil {
 		t.Fatalf("Cycle 2: %v", err)
 	}
@@ -1859,7 +1870,8 @@ func TestRebalanceSpreadBatchLimited(t *testing.T) {
 	}
 
 	// Cycle 3: should stabilize
-	moved3, err := testWorkers.Rebalancer.Rebalance(ctx, smallBatchCfg)
+	moved3Sum, err := testWorkers.Rebalancer.Rebalance(ctx, smallBatchCfg)
+	moved3 := moved3Sum.Succeeded
 	if err != nil {
 		t.Fatalf("Cycle 3: %v", err)
 	}
@@ -1927,7 +1939,8 @@ func TestRebalanceThresholdSkip(t *testing.T) {
 		Threshold: 0.99, // extremely high threshold
 	}
 
-	moved, err := testWorkers.Rebalancer.Rebalance(ctx, skipCfg)
+	movedSum, err := testWorkers.Rebalancer.Rebalance(ctx, skipCfg)
+	moved := movedSum.Succeeded
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
 	}

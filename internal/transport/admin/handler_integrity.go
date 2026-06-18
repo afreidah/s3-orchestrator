@@ -44,8 +44,8 @@ func (h *Handler) Scrub(ctx context.Context, batchSize int, observer progress.Ob
 	if batchSize <= 0 {
 		batchSize = icfg.ScrubberBatchSize
 	}
-	checked, failed := h.scrubber.Scrub(ctx, batchSize, observer)
-	return ScrubResult{Status: "ok", Checked: checked, Failed: failed}
+	sum := h.scrubber.Scrub(ctx, batchSize, observer)
+	return ScrubResult{Status: "ok", Checked: sum.Attempted, Failed: sum.Failed}
 }
 
 // handleScrub triggers an on-demand scrub cycle. Accepts an optional batch_size
