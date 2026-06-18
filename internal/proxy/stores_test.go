@@ -3,6 +3,7 @@
 package proxy
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 	"time"
@@ -49,6 +50,10 @@ func wireWorkersForTest(m *BackendManager, stores core.MetadataStore) *testWorke
 	w.CleanupWorker = worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: m.Runtime(), Store: stores, Concurrency: 10, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	w.PendingReaper = worker.NewPendingReaper(worker.PendingReaperDeps{Ops: m.Runtime(), Placement: m, Store: stores})
 	w.Scrubber = worker.NewScrubber(worker.ScrubberDeps{Ops: m.Runtime(), Placement: m, Store: stores})
+	processCleanup := func(ctx context.Context) (int, int) {
+		sum := w.CleanupWorker.ProcessCleanupQueue(ctx)
+		return sum.Succeeded, sum.Failed
+	}
 	dm := drain.New(
 		m.Runtime(),
 		m,
@@ -56,7 +61,7 @@ func wireWorkersForTest(m *BackendManager, stores core.MetadataStore) *testWorke
 		stores,
 		stores,
 		m.multipartManager.AbortMultipartUploadsOnBackend,
-		w.CleanupWorker.ProcessCleanupQueue,
+		processCleanup,
 	)
 	m.drainManager = dm
 	m.Runtime().SetDrainChecker(dm)

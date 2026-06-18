@@ -12,7 +12,6 @@ package worker
 import (
 	"context"
 	"log/slog"
-	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -22,7 +21,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
-	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
 
 // CleanupWorkerStore is the narrow persistence surface the cleanup worker
@@ -96,7 +94,7 @@ func CleanupBackoff(attempts int32) time.Duration {
 
 // ProcessCleanupQueue fetches pending cleanup items and attempts to
 // delete the orphaned objects from their respective backends.
-func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, failed int) {
+func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) WorkSummary {
 	ctx, span := telemetry.StartSpan(ctx, "ProcessCleanupQueue",
 		telemetry.AttrOperation.String("cleanup_queue"),
 	)
@@ -106,7 +104,7 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 	items, err := w.store.ClaimPendingCleanups(ctx, 50, w.instanceID, graceCutoff)
 	if err != nil {
 		w.log.ErrorContext(ctx, "failed to claim pending cleanups", "error", err)
-		return 0, 0
+		return WorkSummary{}
 	}
 
 	for _, item := range items {
@@ -127,54 +125,52 @@ func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) (processed, fai
 		)
 	}
 
-	var processedCount, failedCount atomic.Int32
-
-	workerpool.Run(ctx, w.concurrency, items, func(ctx context.Context, item core.CleanupItem) {
+	runner := BatchRunner[core.CleanupItem]{Name: "cleanup", Log: w.log, Concurrency: w.concurrency}
+	sum := runner.Run(ctx, items, func(ctx context.Context, item core.CleanupItem) ItemResult {
+		var res ItemResult
 		WithAdmission(ctx, w.deps, WorkerNameCleanup, func() {
-			w.processCleanupItem(ctx, &item, &processedCount, &failedCount)
+			res = w.processCleanupItem(ctx, &item)
 		})
+		return res
 	})
 
 	w.recordCleanupDepths(ctx)
-	return int(processedCount.Load()), int(failedCount.Load())
+	return sum
 }
 
 // processCleanupItem handles one cleanup queue row: resolve the backend,
 // attempt the delete, and either complete, retry, or graduate the row to
 // the DLQ depending on the outcome.
-func (w *CleanupWorker) processCleanupItem(
-	ctx context.Context,
-	item *core.CleanupItem,
-	processedCount, failedCount *atomic.Int32,
-) {
+func (w *CleanupWorker) processCleanupItem(ctx context.Context, item *core.CleanupItem) ItemResult {
 	be, err := w.deps.GetBackend(item.BackendName)
 	if err != nil {
-		w.completeUnknownBackendItem(ctx, item, processedCount)
-		return
+		w.completeUnknownBackendItem(ctx, item)
+		return ItemResult{Outcome: ItemSucceeded, Status: "success"}
 	}
 
 	delErr := w.deps.DeleteWithTimeout(ctx, be, item.ObjectKey)
 	w.deps.Acct().APICall(item.BackendName)
 
 	if delErr == nil {
-		w.completeCleanupSuccess(ctx, item, processedCount)
-		return
+		w.completeCleanupSuccess(ctx, item)
+		return ItemResult{Outcome: ItemSucceeded, Status: "success"}
 	}
 
 	// 404 means the backend already agrees the object is gone, which is
 	// the desired end state. Drop the row so we don't burn 9 retries +
 	// a DLQ slot on a non-event.
 	if backend.IsNotFound(delErr) {
-		w.completeCleanupAlreadyAbsent(ctx, item, processedCount)
-		return
+		w.completeCleanupAlreadyAbsent(ctx, item)
+		return ItemResult{Outcome: ItemSucceeded, Status: "success_absent"}
 	}
 
 	newAttempts := item.Attempts + 1
 	if newAttempts >= maxCleanupAttempts {
-		w.exhaustCleanupToDLQ(ctx, item, newAttempts, delErr, failedCount)
-		return
+		w.exhaustCleanupToDLQ(ctx, item, newAttempts, delErr)
+		return ItemResult{Outcome: ItemFailed, Status: "exhausted"}
 	}
-	w.scheduleCleanupRetry(ctx, item, delErr, failedCount)
+	w.scheduleCleanupRetry(ctx, item, delErr)
+	return ItemResult{Outcome: ItemFailed, Status: "retry"}
 }
 
 // completeCleanupAlreadyAbsent retires a cleanup row whose backend
@@ -183,12 +179,11 @@ func (w *CleanupWorker) processCleanupItem(
 // operators distinguish "we deleted it" from "it was already gone" on
 // dashboards. The accounting effect is identical (orphan_bytes is
 // decremented by CompleteCleanupItem).
-func (w *CleanupWorker) completeCleanupAlreadyAbsent(ctx context.Context, item *core.CleanupItem, processedCount *atomic.Int32) {
+func (w *CleanupWorker) completeCleanupAlreadyAbsent(ctx context.Context, item *core.CleanupItem) {
 	if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
 		w.log.ErrorContext(ctx, logMsgCompleteCleanupFailed, slog.Int64("cleanup_id", item.ID), "error", err)
 	}
 	telemetry.CleanupQueueProcessedTotal.WithLabelValues("success_absent").Inc()
-	processedCount.Add(1)
 	w.log.InfoContext(ctx, "cleanup target already absent on backend",
 		slog.String("backend", item.BackendName),
 		slog.String("key", item.ObjectKey),
@@ -205,25 +200,23 @@ func (w *CleanupWorker) completeCleanupAlreadyAbsent(ctx context.Context, item *
 // completeUnknownBackendItem retires a cleanup row whose backend is no
 // longer registered. Treated as success because the configured fleet
 // cannot have an orphan on a backend it does not know about.
-func (w *CleanupWorker) completeUnknownBackendItem(ctx context.Context, item *core.CleanupItem, processedCount *atomic.Int32) {
+func (w *CleanupWorker) completeUnknownBackendItem(ctx context.Context, item *core.CleanupItem) {
 	w.log.WarnContext(ctx, "backend not found, removing item",
 		"backend", item.BackendName, "key", item.ObjectKey)
 	if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
 		w.log.ErrorContext(ctx, logMsgCompleteCleanupFailed, slog.Int64("cleanup_id", item.ID), "error", err)
 	}
 	telemetry.CleanupQueueProcessedTotal.WithLabelValues("success").Inc()
-	processedCount.Add(1)
 }
 
 // completeCleanupSuccess records a successful backend delete: complete
 // the row (which atomically decrements orphan_bytes for the backing
 // backend in a single CTE), audit, and bump the success counter.
-func (w *CleanupWorker) completeCleanupSuccess(ctx context.Context, item *core.CleanupItem, processedCount *atomic.Int32) {
+func (w *CleanupWorker) completeCleanupSuccess(ctx context.Context, item *core.CleanupItem) {
 	if err := w.store.CompleteCleanupItem(ctx, item.ID); err != nil {
 		w.log.ErrorContext(ctx, logMsgCompleteCleanupFailed, slog.Int64("cleanup_id", item.ID), "error", err)
 	}
 	telemetry.CleanupQueueProcessedTotal.WithLabelValues("success").Inc()
-	processedCount.Add(1)
 	audit.Log(ctx, "cleanup_queue.processed",
 		slog.String("key", item.ObjectKey),
 		slog.String("backend", item.BackendName),
@@ -240,7 +233,6 @@ func (w *CleanupWorker) exhaustCleanupToDLQ(
 	item *core.CleanupItem,
 	newAttempts int32,
 	delErr error,
-	failedCount *atomic.Int32,
 ) {
 	w.log.ErrorContext(ctx, "max attempts reached, moving to DLQ",
 		slog.String("key", item.ObjectKey),
@@ -253,7 +245,6 @@ func (w *CleanupWorker) exhaustCleanupToDLQ(
 		w.log.ErrorContext(ctx, "failed to move cleanup item to DLQ",
 			slog.Int64("cleanup_id", item.ID), "error", mvErr)
 		telemetry.CleanupQueueProcessedTotal.WithLabelValues("exhausted").Inc()
-		failedCount.Add(1)
 		return
 	}
 	if moved {
@@ -282,18 +273,16 @@ func (w *CleanupWorker) exhaustCleanupToDLQ(
 		}
 	}
 	telemetry.CleanupQueueProcessedTotal.WithLabelValues("exhausted").Inc()
-	failedCount.Add(1)
 }
 
 // scheduleCleanupRetry stamps the next retry deadline on a still-eligible
 // cleanup row using exponential backoff.
-func (w *CleanupWorker) scheduleCleanupRetry(ctx context.Context, item *core.CleanupItem, delErr error, failedCount *atomic.Int32) {
+func (w *CleanupWorker) scheduleCleanupRetry(ctx context.Context, item *core.CleanupItem, delErr error) {
 	telemetry.CleanupQueueProcessedTotal.WithLabelValues("retry").Inc()
 	backoff := CleanupBackoff(item.Attempts)
 	if err := w.store.RetryCleanupItem(ctx, item.ID, backoff, delErr.Error()); err != nil {
 		w.log.ErrorContext(ctx, "failed to update cleanup retry", "id", item.ID, "error", err)
 	}
-	failedCount.Add(1)
 }
 
 // recordCleanupDepths refreshes the cleanup-queue and DLQ depth gauges

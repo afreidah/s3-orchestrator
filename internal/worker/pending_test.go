@@ -15,7 +15,6 @@ package worker
 import (
 	"context"
 	"errors"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -92,7 +91,8 @@ func TestProcessPendingQueue_BackendNotRegisteredDropsIntent(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("gone").Return(nil, errors.New("not found"))
 
-	resolved, failed := r.ProcessPendingQueue(context.Background())
+	pendSum := r.ProcessPendingQueue(context.Background())
+	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 1 || failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 1/0", resolved, failed)
 	}
@@ -116,7 +116,8 @@ func TestProcessPendingQueue_HeadNotFoundDropsIntent(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(nil, &httpError{code: 404, msg: "NoSuchKey"})
 
-	resolved, failed := r.ProcessPendingQueue(context.Background())
+	pendSum := r.ProcessPendingQueue(context.Background())
+	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 1 || failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 1/0", resolved, failed)
 	}
@@ -140,7 +141,8 @@ func TestProcessPendingQueue_HeadTransientErrorLeavesIntent(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(nil, errors.New("connection reset"))
 
-	resolved, failed := r.ProcessPendingQueue(context.Background())
+	pendSum := r.ProcessPendingQueue(context.Background())
+	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 0 || failed != 1 {
 		t.Errorf("resolved=%d failed=%d, want 0/1", resolved, failed)
 	}
@@ -167,7 +169,8 @@ func TestProcessPendingQueue_HeadOKPromotes(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
-	resolved, failed := r.ProcessPendingQueue(context.Background())
+	pendSum := r.ProcessPendingQueue(context.Background())
+	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 1 || failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 1/0", resolved, failed)
 	}
@@ -192,7 +195,8 @@ func TestProcessPendingQueue_PromoteSupersededCounts(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
-	resolved, failed := r.ProcessPendingQueue(context.Background())
+	pendSum := r.ProcessPendingQueue(context.Background())
+	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 1 || failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 1/0", resolved, failed)
 	}
@@ -214,7 +218,8 @@ func TestProcessPendingQueue_PromoteAlreadyResolved(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
-	resolved, failed := r.ProcessPendingQueue(context.Background())
+	pendSum := r.ProcessPendingQueue(context.Background())
+	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 1 || failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 1/0", resolved, failed)
 	}
@@ -237,7 +242,8 @@ func TestProcessPendingQueue_PromoteAmbiguousLeavesIntent(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
-	resolved, failed := r.ProcessPendingQueue(context.Background())
+	pendSum := r.ProcessPendingQueue(context.Background())
+	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 0 || failed != 1 {
 		t.Errorf("resolved=%d failed=%d, want 0/1", resolved, failed)
 	}
@@ -262,7 +268,8 @@ func TestProcessPendingQueue_PromoteErrorIsFailed(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
-	resolved, failed := r.ProcessPendingQueue(context.Background())
+	pendSum := r.ProcessPendingQueue(context.Background())
+	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 0 || failed != 1 {
 		t.Errorf("resolved=%d failed=%d, want 0/1", resolved, failed)
 	}
@@ -279,7 +286,8 @@ func TestProcessPendingQueue_AdmissionBlockedSkips(t *testing.T) {
 	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(false)
 
-	resolved, failed := r.ProcessPendingQueue(context.Background())
+	pendSum := r.ProcessPendingQueue(context.Background())
+	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 0 || failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 0/0 when admission denied", resolved, failed)
 	}
@@ -306,7 +314,8 @@ func TestProcessPendingQueue_PromoteWithDisplacedEnqueues(t *testing.T) {
 	ops.EXPECT().GetBackend("b2").Return(be2, nil)
 	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be2, "b2", "bucket/k", "overwrite_displaced", int64(200))
 
-	resolved, _ := r.ProcessPendingQueue(context.Background())
+	pendSum := r.ProcessPendingQueue(context.Background())
+	resolved, _ := pendSum.Succeeded, pendSum.Failed
 	if resolved != 1 {
 		t.Errorf("resolved=%d, want 1", resolved)
 	}
@@ -319,7 +328,8 @@ func TestProcessPendingQueue_EmptyBatchIsNoOp(t *testing.T) {
 	r, _, _, _, ms := setupReaper(t)
 
 	ms.stalePending = nil
-	resolved, failed := r.ProcessPendingQueue(context.Background())
+	pendSum := r.ProcessPendingQueue(context.Background())
+	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 0 || failed != 0 {
 		t.Errorf("resolved=%d failed=%d, want 0/0 for empty queue", resolved, failed)
 	}
@@ -353,7 +363,8 @@ func TestProcessPendingQueue_SkipsBackendWithOpenBreaker(t *testing.T) {
 	ops.EXPECT().ReleaseAdmission().Times(2)
 	ops.EXPECT().GetBackend("broken").Return(cb, nil).Times(2)
 
-	resolved, failed := r.ProcessPendingQueue(context.Background())
+	pendSum := r.ProcessPendingQueue(context.Background())
+	resolved, failed := pendSum.Succeeded, pendSum.Failed
 	if resolved != 0 {
 		t.Errorf("resolved = %d, want 0", resolved)
 	}
@@ -426,11 +437,8 @@ func TestDropIntent_BackendRemoved(t *testing.T) {
 	r, _, _, _, ms := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "gone")
 
-	var resolvedCount, failedCount atomic.Int32
-	r.dropIntent(context.Background(), &p, "backend_removed", &resolvedCount, &failedCount)
-
-	if resolvedCount.Load() != 1 || failedCount.Load() != 0 {
-		t.Errorf("resolved=%d failed=%d, want 1/0", resolvedCount.Load(), failedCount.Load())
+	if got := r.dropIntent(context.Background(), &p, "backend_removed"); got != ItemSucceeded {
+		t.Errorf("dropIntent outcome = %v, want ItemSucceeded", got)
 	}
 	if len(ms.deletedPendingIDs) != 1 || ms.deletedPendingIDs[0] != "i1" {
 		t.Errorf("deletedPendingIDs = %v, want [i1]", ms.deletedPendingIDs)
@@ -445,11 +453,8 @@ func TestDropIntent_Head404(t *testing.T) {
 	r, _, _, _, ms := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
 
-	var resolvedCount, failedCount atomic.Int32
-	r.dropIntent(context.Background(), &p, "head_404", &resolvedCount, &failedCount)
-
-	if resolvedCount.Load() != 1 || failedCount.Load() != 0 {
-		t.Errorf("resolved=%d failed=%d, want 1/0", resolvedCount.Load(), failedCount.Load())
+	if got := r.dropIntent(context.Background(), &p, "head_404"); got != ItemSucceeded {
+		t.Errorf("dropIntent outcome = %v, want ItemSucceeded", got)
 	}
 	if len(ms.deletedPendingIDs) != 1 {
 		t.Errorf("deletedPendingIDs = %v, want one entry", ms.deletedPendingIDs)
@@ -485,11 +490,8 @@ func TestDropIntent_DeleteFailureCountedAsFailed(t *testing.T) {
 	r := NewPendingReaper(PendingReaperDeps{Ops: ops, Placement: pl, Store: ms, Concurrency: 1, MinAge: time.Minute, BatchSize: 50})
 	p := pendingFixture("i1", "bucket/k", "b1")
 
-	var resolvedCount, failedCount atomic.Int32
-	r.dropIntent(context.Background(), &p, "head_404", &resolvedCount, &failedCount)
-
-	if resolvedCount.Load() != 0 || failedCount.Load() != 1 {
-		t.Errorf("resolved=%d failed=%d, want 0/1 on delete failure", resolvedCount.Load(), failedCount.Load())
+	if got := r.dropIntent(context.Background(), &p, "head_404"); got != ItemFailed {
+		t.Errorf("dropIntent outcome = %v, want ItemFailed on delete failure", got)
 	}
 }
 
@@ -509,13 +511,8 @@ func TestOnPromoteCommitted_FansOutDisplacedCleanup(t *testing.T) {
 	ops.EXPECT().GetBackend("b2").Return(be2, nil)
 	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be2, "b2", "bucket/k", "overwrite_displaced", int64(200))
 
-	var resolvedCount atomic.Int32
 	displaced := []core.DeletedCopy{{BackendName: "b2", SizeBytes: 200}}
-	r.onPromoteCommitted(context.Background(), &p, displaced, &resolvedCount)
-
-	if resolvedCount.Load() != 1 {
-		t.Errorf("resolvedCount = %d, want 1", resolvedCount.Load())
-	}
+	r.onPromoteCommitted(context.Background(), &p, displaced)
 }
 
 // TestOnPromoteCommitted_DisplacedBackendNotRegistered verifies the
@@ -529,48 +526,39 @@ func TestOnPromoteCommitted_DisplacedBackendNotRegistered(t *testing.T) {
 
 	ops.EXPECT().GetBackend("gone").Return(nil, errors.New("not found"))
 
-	var resolvedCount atomic.Int32
 	displaced := []core.DeletedCopy{{BackendName: "gone", SizeBytes: 50}}
-	r.onPromoteCommitted(context.Background(), &p, displaced, &resolvedCount)
-
-	if resolvedCount.Load() != 1 {
-		t.Errorf("resolvedCount = %d, want 1 (intent still resolved)", resolvedCount.Load())
-	}
+	// A displaced copy on an unregistered backend must be logged and skipped,
+	// not panic.
+	r.onPromoteCommitted(context.Background(), &p, displaced)
 }
 
-// TestOnPromoteSuperseded_CountsResolved verifies the timestamp drop
-// branch updates accounting without taking any further action  -  the
-// store already deleted the pending row in-txn.
-func TestOnPromoteSuperseded_CountsResolved(t *testing.T) {
+// TestOnPromoteSuperseded_NoFurtherDelete verifies the timestamp drop branch
+// takes no further store action - the store already deleted the pending row
+// in-txn. The resolved-count classification is covered end-to-end by the
+// ProcessPendingQueue tests.
+func TestOnPromoteSuperseded_NoFurtherDelete(t *testing.T) {
 	t.Parallel()
 	r, _, _, _, ms := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
 
-	var resolvedCount atomic.Int32
-	r.onPromoteSuperseded(context.Background(), &p, &resolvedCount)
+	r.onPromoteSuperseded(context.Background(), &p)
 
-	if resolvedCount.Load() != 1 {
-		t.Errorf("resolvedCount = %d, want 1", resolvedCount.Load())
-	}
 	if len(ms.deletedPendingIDs) != 0 {
 		t.Errorf("onPromoteSuperseded must not call DeletePending again; deletedPendingIDs = %v", ms.deletedPendingIDs)
 	}
 }
 
-// TestOnPromoteAmbiguous_CountsFailed verifies the ambiguous branch
-// updates only the failed counter and does not delete the row, so an
-// operator-review-required state is never silently lost.
-func TestOnPromoteAmbiguous_CountsFailed(t *testing.T) {
+// TestOnPromoteAmbiguous_DoesNotDeleteRow verifies the ambiguous branch leaves
+// the row in place for operator review rather than silently dropping it. The
+// failed-count classification is covered end-to-end by the ProcessPendingQueue
+// tests.
+func TestOnPromoteAmbiguous_DoesNotDeleteRow(t *testing.T) {
 	t.Parallel()
 	r, _, _, _, ms := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
 
-	var failedCount atomic.Int32
-	r.onPromoteAmbiguous(context.Background(), &p, &failedCount)
+	r.onPromoteAmbiguous(context.Background(), &p)
 
-	if failedCount.Load() != 1 {
-		t.Errorf("failedCount = %d, want 1", failedCount.Load())
-	}
 	if len(ms.deletedPendingIDs) != 0 {
 		t.Errorf("ambiguous branch must not delete the row; deletedPendingIDs = %v", ms.deletedPendingIDs)
 	}

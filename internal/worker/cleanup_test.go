@@ -42,7 +42,8 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
-	processed, failed := w.ProcessCleanupQueue(context.Background())
+	cleanSum := w.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 
 	if processed != 1 {
 		t.Errorf("expected processed=1, got %d", processed)
@@ -69,7 +70,8 @@ func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
-	_, failed := w.ProcessCleanupQueue(context.Background())
+	cleanSum := w.ProcessCleanupQueue(context.Background())
+	_, failed := cleanSum.Succeeded, cleanSum.Failed
 
 	if failed != 1 {
 		t.Errorf("expected failed=1, got %d", failed)
@@ -101,7 +103,8 @@ func TestProcessCleanupQueue_DeleteReturns404_IdempotentSuccess(t *testing.T) {
 	before := readCounterValue(t, telemetry.CleanupQueueProcessedTotal.WithLabelValues("success_absent"))
 
 	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
-	processed, failed := w.ProcessCleanupQueue(context.Background())
+	cleanSum := w.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 
 	if processed != 1 {
 		t.Errorf("expected processed=1 (404 = idempotent success), got %d", processed)
@@ -132,7 +135,8 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(false)
 
 	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
-	processed, failed := w.ProcessCleanupQueue(context.Background())
+	cleanSum := w.ProcessCleanupQueue(context.Background())
+	processed, failed := cleanSum.Succeeded, cleanSum.Failed
 
 	if processed != 0 || failed != 0 {
 		t.Errorf("expected 0/0 when blocked, got %d/%d", processed, failed)
@@ -155,7 +159,8 @@ func TestProcessCleanupQueue_BackendNotFound(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
-	processed, _ := w.ProcessCleanupQueue(context.Background())
+	cleanSum := w.ProcessCleanupQueue(context.Background())
+	processed, _ := cleanSum.Succeeded, cleanSum.Failed
 
 	if processed != 1 {
 		t.Errorf("expected processed=1 (item removed), got %d", processed)
@@ -206,7 +211,8 @@ func TestProcessCleanupQueue_Exhausted_MovesToDLQ(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
-	_, failed := w.ProcessCleanupQueue(context.Background())
+	cleanSum := w.ProcessCleanupQueue(context.Background())
+	_, failed := cleanSum.Succeeded, cleanSum.Failed
 
 	if failed != 1 {
 		t.Errorf("expected failed=1 (exhausted), got %d", failed)
@@ -245,7 +251,8 @@ func TestProcessCleanupQueue_Exhausted_DLQMoveFails(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
 	w := NewCleanupWorker(CleanupWorkerDeps{Ops: ops, Store: ms, Concurrency: 1, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
-	_, failed := w.ProcessCleanupQueue(context.Background())
+	cleanSum := w.ProcessCleanupQueue(context.Background())
+	_, failed := cleanSum.Succeeded, cleanSum.Failed
 
 	if failed != 1 {
 		t.Errorf("expected failed=1 even on DLQ-move failure, got %d", failed)

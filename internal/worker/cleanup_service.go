@@ -35,9 +35,9 @@ func NewCleanupQueueService(cleanup *CleanupWorker, locker tickrunner.AdvisoryLo
 		Name:     slug,
 		Log:      log,
 		Work: func(ctx context.Context) error {
-			processed, failed := cleanup.ProcessCleanupQueue(ctx)
-			if processed > 0 || failed > 0 {
-				log.InfoContext(ctx, "queue processed", "processed", processed, "failed", failed)
+			sum := cleanup.ProcessCleanupQueue(ctx)
+			if sum.Succeeded > 0 || sum.Failed > 0 {
+				log.InfoContext(ctx, "queue processed", "processed", sum.Succeeded, "failed", sum.Failed)
 			}
 			return nil
 		},

@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // fakeRebalancer is a minimal RebalancerOps for the handler tests. It records
@@ -38,9 +39,9 @@ type fakeRebalancer struct {
 
 func (f *fakeRebalancer) Config() *config.RebalanceConfig { return f.cfg }
 
-func (f *fakeRebalancer) Rebalance(_ context.Context, cfg config.RebalanceConfig) (int, error) {
+func (f *fakeRebalancer) Rebalance(_ context.Context, cfg config.RebalanceConfig) (worker.WorkSummary, error) {
 	f.gotcfg = cfg
-	return f.moved, f.err
+	return worker.WorkSummary{Succeeded: f.moved}, f.err
 }
 
 // TestHandleRebalance_HappyPath drives the success branch: the handler runs
