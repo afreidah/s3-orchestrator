@@ -58,6 +58,31 @@ func (p *timeoutPolicy) DeleteWithTimeout(ctx context.Context, be backend.Object
 	return be.DeleteObject(dctx, key)
 }
 
+// GetWithTimeout issues a GET against be with the configured backend timeout.
+// GET returns a streaming body whose lifetime the caller owns, so on success
+// the cancel func is handed back instead of being deferred: synchronous readers
+// defer it next to Body.Close, while streaming callers pass it to
+// ioutilx.WithCancel so the timeout context is released when the body is closed.
+// On error there is no body to own, so the context is released before returning.
+func (p *timeoutPolicy) GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error) {
+	gctx, gcancel := p.WithTimeout(ctx)
+	result, err := be.GetObject(gctx, key, rangeHeader)
+	if err != nil {
+		gcancel()
+		return nil, nil, err
+	}
+	return result, gcancel, nil
+}
+
+// HeadWithTimeout issues a HEAD against be with the configured backend timeout.
+// HEAD carries no body, so the timeout context is fully released before
+// returning, mirroring DeleteWithTimeout.
+func (p *timeoutPolicy) HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error) {
+	hctx, hcancel := p.WithTimeout(ctx)
+	defer hcancel()
+	return be.HeadObject(hctx, key)
+}
+
 // StreamCopy reads an object from src and writes it to dst with the
 // configured backend timeout applied to each leg. Returns a
 // *backend.CopyError tagged with the failing phase so callers can

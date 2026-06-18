@@ -262,6 +262,18 @@ func (c *BackendRuntime) StreamCopy(ctx context.Context, src, dst backend.Object
 	return c.timeouts.StreamCopy(ctx, src, dst, key)
 }
 
+// GetWithTimeout issues a GET against be using the configured backend
+// timeout, returning the result and a cancel func the caller owns.
+func (c *BackendRuntime) GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error) {
+	return c.timeouts.GetWithTimeout(ctx, be, key, rangeHeader)
+}
+
+// HeadWithTimeout issues a HEAD against be using the configured backend
+// timeout.
+func (c *BackendRuntime) HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error) {
+	return c.timeouts.HeadWithTimeout(ctx, be, key)
+}
+
 // -------------------------------------------------------------------------
 // ERROR CLASSIFICATION (forwards to errorClassifier)
 // -------------------------------------------------------------------------

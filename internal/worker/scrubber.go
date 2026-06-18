@@ -243,14 +243,12 @@ func (s *Scrubber) readAndHash(ctx context.Context, loc *core.ObjectLocation) (s
 		return "", err
 	}
 
-	bctx, bcancel := s.deps.WithTimeout(ctx)
-	defer bcancel()
-
-	result, err := be.GetObject(bctx, loc.ObjectKey, "")
+	result, cancel, err := s.deps.GetWithTimeout(ctx, be, loc.ObjectKey, "")
 	if err != nil {
 		s.deps.Acct().APICall(loc.BackendName)
 		return "", fmt.Errorf("get object: %w", err)
 	}
+	defer cancel()
 	defer result.Body.Close()
 
 	s.deps.Acct().Egress(loc.BackendName, result.Size)
