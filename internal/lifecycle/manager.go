@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"slices"
 	"sync"
 	"time"
 
@@ -178,15 +179,15 @@ func (m *Manager) Stop(timeout time.Duration) {
 	}
 	perService := timeout / time.Duration(stoppable)
 
-	for i := len(m.services) - 1; i >= 0; i-- {
-		s, ok := m.services[i].runner.(Stopper)
+	for _, v := range slices.Backward(m.services) {
+		s, ok := v.runner.(Stopper)
 		if !ok {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), perService)
 		if err := s.Stop(ctx); err != nil {
 			m.log.ErrorContext(ctx, "service stop error",
-				"service", m.services[i].name,
+				"service", v.name,
 				"error", err,
 			)
 		}

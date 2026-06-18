@@ -120,7 +120,7 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 // loginCookies performs a login and returns the session and CSRF cookies.
 // loginCookies login cookies.
 // loginCookies login cookies.
-func loginCookies(t *testing.T, h *Handler, mux *http.ServeMux) (session *http.Cookie, csrf *http.Cookie) {
+func loginCookies(t *testing.T, _ *Handler, mux *http.ServeMux) (session *http.Cookie, csrf *http.Cookie) {
 	t.Helper()
 
 	form := url.Values{

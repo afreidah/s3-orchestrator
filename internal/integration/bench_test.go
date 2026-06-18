@@ -82,7 +82,7 @@ func BenchmarkListObjects(b *testing.B) {
 	// Pre-populate objects for listing.
 	const populateCount = 200
 	data := []byte("list-bench-payload")
-	for i := 0; i < populateCount; i++ {
+	for i := range populateCount {
 		key := fmt.Sprintf("bench-list/%04d.txt", i)
 		_, err := client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String(virtualBucket),
@@ -97,7 +97,7 @@ func BenchmarkListObjects(b *testing.B) {
 
 	prefix := "bench-list/"
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 			Bucket:  aws.String(virtualBucket),
 			Prefix:  aws.String(prefix),
@@ -117,7 +117,7 @@ func BenchmarkRebalance(b *testing.B) {
 	// Pre-populate small objects.
 	const populateCount = 50
 	data := []byte("rebalance-bench-payload")
-	for i := 0; i < populateCount; i++ {
+	for i := range populateCount {
 		key := fmt.Sprintf("bench-rebal/%04d.txt", i)
 		_, err := client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String(virtualBucket),
@@ -138,7 +138,7 @@ func BenchmarkRebalance(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := testWorkers.Rebalancer.Rebalance(ctx, cfg)
 		if err != nil {
 			b.Fatalf("Rebalance: %v", err)
