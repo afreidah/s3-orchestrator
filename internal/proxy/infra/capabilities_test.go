@@ -15,6 +15,8 @@ package infra
 import (
 	"context"
 	"errors"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,6 +146,121 @@ func TestTimeoutPolicy_WithTimeout_NoTimeoutReturnsRealCancel(t *testing.T) {
 	cancel()
 	if ctx.Err() == nil {
 		t.Error("cancel() did not cancel the context")
+	}
+}
+
+// fakeTimeoutBackend captures the context of the last GET/HEAD call so the
+// lifecycle tests can assert the per-call timeout context is released (or still
+// live) at the right moment. A nil getErr/headErr yields a minimal success.
+type fakeTimeoutBackend struct {
+	backend.ObjectBackend
+	gotCtx  context.Context
+	getErr  error
+	headErr error
+}
+
+func (f *fakeTimeoutBackend) GetObject(ctx context.Context, _, _ string) (*backend.GetObjectResult, error) {
+	f.gotCtx = ctx
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	return &backend.GetObjectResult{Body: io.NopCloser(strings.NewReader("ok")), Size: 2}, nil
+}
+
+func (f *fakeTimeoutBackend) HeadObject(ctx context.Context, _ string) (*backend.HeadObjectResult, error) {
+	f.gotCtx = ctx
+	if f.headErr != nil {
+		return nil, f.headErr
+	}
+	return &backend.HeadObjectResult{Size: 2}, nil
+}
+
+func TestTimeoutPolicy_GetWithTimeout_SuccessHandsBackLiveCancel(t *testing.T) {
+	t.Parallel()
+	p := newTimeoutPolicy(1 * time.Hour)
+	be := &fakeTimeoutBackend{}
+
+	result, cancel, err := p.GetWithTimeout(context.Background(), be, "k", "")
+	if err != nil {
+		t.Fatalf("GetWithTimeout err = %v, want nil", err)
+	}
+	if result == nil || result.Body == nil {
+		t.Fatal("expected non-nil result with body")
+	}
+	defer result.Body.Close()
+	// The body's lifetime is the caller's: the context stays live until cancel.
+	if be.gotCtx.Err() != nil {
+		t.Error("call context cancelled before caller released it")
+	}
+	cancel()
+	if be.gotCtx.Err() == nil {
+		t.Error("cancel() did not release the call context")
+	}
+}
+
+func TestTimeoutPolicy_GetWithTimeout_ErrorReleasesContext(t *testing.T) {
+	t.Parallel()
+	p := newTimeoutPolicy(1 * time.Hour)
+	wantErr := errors.New("boom")
+	be := &fakeTimeoutBackend{getErr: wantErr}
+
+	result, cancel, err := p.GetWithTimeout(context.Background(), be, "k", "")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
+	if result != nil || cancel != nil {
+		t.Fatalf("on error want nil result and cancel, got %v, %v", result, cancel)
+	}
+	// No body to own on error, so the context must already be released.
+	if be.gotCtx.Err() == nil {
+		t.Error("error path left the call context un-cancelled")
+	}
+}
+
+func TestTimeoutPolicy_GetWithTimeout_RespectsTighterParentDeadline(t *testing.T) {
+	t.Parallel()
+	p := newTimeoutPolicy(1 * time.Hour)
+	be := &fakeTimeoutBackend{}
+	parent, parentCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer parentCancel()
+
+	_, cancel, err := p.GetWithTimeout(parent, be, "k", "")
+	if err != nil {
+		t.Fatalf("GetWithTimeout err = %v", err)
+	}
+	defer cancel()
+	dl, ok := be.gotCtx.Deadline()
+	if !ok || time.Until(dl) > 100*time.Millisecond {
+		t.Errorf("call deadline not tightened to parent's 50ms (ok=%v)", ok)
+	}
+}
+
+func TestTimeoutPolicy_HeadWithTimeout_ReleasesContextOnReturn(t *testing.T) {
+	t.Parallel()
+	p := newTimeoutPolicy(1 * time.Hour)
+	be := &fakeTimeoutBackend{}
+
+	result, err := p.HeadWithTimeout(context.Background(), be, "k")
+	if err != nil || result == nil {
+		t.Fatalf("HeadWithTimeout = %v, %v; want result, nil", result, err)
+	}
+	// HEAD has no body, so the context is fully released before return.
+	if be.gotCtx.Err() == nil {
+		t.Error("HeadWithTimeout did not release the call context on return")
+	}
+}
+
+func TestTimeoutPolicy_HeadWithTimeout_PropagatesError(t *testing.T) {
+	t.Parallel()
+	p := newTimeoutPolicy(1 * time.Hour)
+	wantErr := errors.New("nope")
+	be := &fakeTimeoutBackend{headErr: wantErr}
+
+	if _, err := p.HeadWithTimeout(context.Background(), be, "k"); !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
+	if be.gotCtx.Err() == nil {
+		t.Error("error path left the call context un-cancelled")
 	}
 }
 

@@ -82,30 +82,26 @@ func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string
 // the winning result via once. loc is nil in degraded-mode broadcasts.
 func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName string, backend s3be.ObjectBackend, loc *core.ObjectLocation) (readpath.ProbeResult[*s3be.GetObjectResult], error) {
 	var fail readpath.ProbeResult[*s3be.GetObjectResult]
-	bctx, bcancel := o.core.WithTimeout(ctx)
 
 	if !o.core.Usage().WithinLimits(beName, 1, 0, 0) {
-		bcancel()
 		return fail, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 	}
 	// Encrypted reads need the location row to unwrap the DEK; without it
 	// (degraded broadcast with the DB unreachable) we cannot decrypt.
 	if o.encryptor != nil && loc == nil {
-		bcancel()
 		return fail, core.ErrServiceUnavailable
 	}
 
 	actualRange, rng, ptStart, ptEnd := o.resolveBackendRange(rangeHeader, loc)
 
-	r, err := backend.GetObject(bctx, key, actualRange)
+	r, cancel, err := o.core.GetWithTimeout(ctx, backend, key, actualRange)
 	if err != nil {
-		bcancel()
 		o.core.Acct().APICall(beName)
 		return fail, err
 	}
 	if !o.core.Usage().WithinLimits(beName, 1, r.Size, 0) {
 		_ = r.Body.Close()
-		bcancel()
+		cancel()
 		o.core.Acct().APICall(beName)
 		return fail, fmt.Errorf("backend %s egress: %w", beName, readpath.ErrUsageLimitSkip)
 	}
@@ -113,7 +109,7 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 	if loc != nil && loc.Encrypted && o.encryptor != nil {
 		if err := decryptResponse(ctx, o.encryptor, r, loc, rng, ptStart, ptEnd); err != nil {
 			_ = r.Body.Close()
-			bcancel()
+			cancel()
 			return fail, err
 		}
 	}
@@ -123,7 +119,7 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 	// The body owns the timeout cancel via Close. The winner's body streams to
 	// the client (cancel fires when the client closes it); a losing result is
 	// released by Cleanup, which closes the body and so cancels the timeout.
-	r.Body = ioutilx.WithCancel(r.Body, bcancel)
+	r.Body = ioutilx.WithCancel(r.Body, cancel)
 	return readpath.ProbeResult[*s3be.GetObjectResult]{
 		Value:   r,
 		Size:    r.Size,

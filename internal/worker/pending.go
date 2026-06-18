@@ -194,9 +194,7 @@ const (
 // Records one API call against the backend's usage tracker regardless of
 // outcome so usage accounting remains accurate during reaper sweeps.
 func (r *PendingReaper) probeBackend(ctx context.Context, be backend.ObjectBackend, p *core.PendingObject) probeOutcome {
-	hctx, hcancel := r.deps.WithTimeout(ctx)
-	_, err := be.HeadObject(hctx, p.ObjectKey)
-	hcancel()
+	_, err := r.deps.HeadWithTimeout(ctx, be, p.ObjectKey)
 	r.deps.Acct().APICall(p.BackendName)
 
 	switch {

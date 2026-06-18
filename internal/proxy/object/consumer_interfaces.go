@@ -43,6 +43,8 @@ type ObjectReadRuntime interface {
 	Backends() map[string]backend.ObjectBackend
 	GetBackend(name string) (backend.ObjectBackend, error)
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
+	GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error)
+	HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error)
 	Usage() *counter.UsageTracker
 	Acct() *accounting.Recorder
 }

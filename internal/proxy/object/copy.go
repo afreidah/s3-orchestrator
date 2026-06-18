@@ -45,9 +45,7 @@ func (o *Manager) headSourceForCopy(
 		if !ok {
 			continue
 		}
-		bctx, bcancel := o.core.WithTimeout(ctx)
-		headResult, err := be.HeadObject(bctx, sourceKey)
-		bcancel()
+		headResult, err := o.core.HeadWithTimeout(ctx, be, sourceKey)
 		if err != nil {
 			continue
 		}
@@ -252,9 +250,7 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyContext) (st
 // signal; any other HEAD error is also a fallback but is logged as a
 // warn so operators see the probe failure mode.
 func (o *Manager) probeDestAfterAmbiguousCopy(ctx context.Context, req *nativeCopyContext, origErr error) (string, bool) {
-	hctx, hcancel := o.core.WithTimeout(ctx)
-	defer hcancel()
-	head, headErr := req.destBackend.HeadObject(hctx, req.destKey)
+	head, headErr := o.core.HeadWithTimeout(ctx, req.destBackend, req.destKey)
 	base := []any{
 		"source_key", req.sourceKey,
 		"dest_key", req.destKey,

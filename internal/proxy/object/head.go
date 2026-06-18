@@ -27,14 +27,11 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*s3be.HeadObjectR
 	result, backendName, err := readpath.Read(ctx, o.failover, "HeadObject", key,
 		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.HeadObjectResult], error) {
 			var fail readpath.ProbeResult[*s3be.HeadObjectResult]
-			bctx, bcancel := o.core.WithTimeout(ctx)
 			if !o.core.Usage().WithinLimits(beName, 1, 0, 0) {
-				bcancel()
 				return fail, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 			}
-			r, err := backend.HeadObject(bctx, key)
+			r, err := o.core.HeadWithTimeout(ctx, backend, key)
 			if err != nil {
-				bcancel()
 				o.core.Acct().APICall(beName) // API call was made even on failure
 				return fail, err
 			}
@@ -44,10 +41,8 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*s3be.HeadObjectR
 				r.Size = loc.PlaintextSize
 			}
 
-			// HEAD carries no streaming body, so the timeout is released as soon
-			// as the metadata is in hand; a losing result then has nothing to
-			// release, so Cleanup is a no-op.
-			bcancel()
+			// HEAD carries no streaming body, so a losing result has nothing to
+			// release; Cleanup is a no-op.
 			return readpath.ProbeResult[*s3be.HeadObjectResult]{
 				Value:   r,
 				Size:    r.Size,

@@ -63,12 +63,11 @@ func TestScrub_MatchingHash(t *testing.T) {
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: expectedHash},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	be.EXPECT().GetObject(gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader(body)),
 		Size: 11,
-	}, nil)
+	}, func() {}, nil)
 
 	scrubSum := s.Scrub(context.Background(), 10, nil)
 	checked, failed := scrubSum.Attempted, scrubSum.Failed
@@ -90,13 +89,12 @@ func TestScrub_HashMismatch(t *testing.T) {
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "badhash"},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, "b1", "bucket/key1", "integrity_scrub_failed", int64(11))
-	be.EXPECT().GetObject(gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader("hello world")),
 		Size: 11,
-	}, nil)
+	}, func() {}, nil)
 
 	scrubSum := s.Scrub(context.Background(), 10, nil)
 	checked, failed := scrubSum.Attempted, scrubSum.Failed
@@ -118,9 +116,8 @@ func TestScrub_BackendError(t *testing.T) {
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "somehash"},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	be.EXPECT().GetObject(gomock.Any(), "bucket/key1", "").Return(nil, errors.New("backend down"))
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(nil, nil, errors.New("backend down"))
 
 	scrubSum := s.Scrub(context.Background(), 10, nil)
 	checked, failed := scrubSum.Attempted, scrubSum.Failed
@@ -158,12 +155,11 @@ func TestBackfill_ComputesAndStoresHash(t *testing.T) {
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: int64(len(body))},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	be.EXPECT().GetObject(gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader(body)),
 		Size: int64(len(body)),
-	}, nil)
+	}, func() {}, nil)
 
 	backfillSum, nextOffset := s.Backfill(context.Background(), 10, 0, nil)
 	processed := backfillSum.Succeeded
@@ -191,12 +187,11 @@ func TestBackfill_Pagination(t *testing.T) {
 	}
 	ms.objectsWithoutHash = locs
 	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(5)
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {}).Times(5)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	be.EXPECT().GetObject(gomock.Any(), gomock.Any(), "").Return(&backend.GetObjectResult{
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), gomock.Any(), "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader("abc")),
 		Size: 3,
-	}, nil).Times(5)
+	}, func() {}, nil).Times(5)
 
 	backfillSum, nextOffset := s.Backfill(context.Background(), 5, 0, nil)
 	processed := backfillSum.Succeeded
@@ -220,12 +215,11 @@ func TestBackfill_UnencryptedObject(t *testing.T) {
 		{ObjectKey: "bucket/plain", BackendName: "b1", SizeBytes: int64(len(body)), Encrypted: false},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	be.EXPECT().GetObject(gomock.Any(), "bucket/plain", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/plain", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader(body)),
 		Size: int64(len(body)),
-	}, nil)
+	}, func() {}, nil)
 
 	backfillSum, _ := s.Backfill(context.Background(), 10, 0, nil)
 	processed := backfillSum.Succeeded
@@ -247,9 +241,8 @@ func TestBackfill_BackendError(t *testing.T) {
 		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 10},
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	be.EXPECT().GetObject(gomock.Any(), "bucket/key1", "").Return(nil, errors.New("timeout"))
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(nil, nil, errors.New("timeout"))
 
 	backfillSum, _ := s.Backfill(context.Background(), 10, 0, nil)
 	processed := backfillSum.Succeeded

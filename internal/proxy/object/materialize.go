@@ -217,17 +217,14 @@ func (o *Manager) tryMaterializeFromLocation(
 		return nil, nil
 	}
 
-	// Wrap the source GET in the configured backend timeout so a
-	// stalled replica cannot block the materialize step past
-	// backend_timeout. The same context covers the body
-	// drain inside newMaterializedBody because rcancel only fires
-	// on function return.
-	rctx, rcancel := o.core.WithTimeout(ctx)
-	defer rcancel()
-	result, err := be.GetObject(rctx, sourceKey, "")
+	// The backend timeout covers the body drain inside
+	// newMaterializedBody too: cancel only fires on function return, by
+	// which point the body has been fully materialized.
+	result, cancel, err := o.core.GetWithTimeout(ctx, be, sourceKey, "")
 	if err != nil {
 		return nil, err
 	}
+	defer cancel()
 	defer result.Body.Close()
 
 	mb, err := newMaterializedBody(result.Body, size, nil)

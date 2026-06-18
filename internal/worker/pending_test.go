@@ -112,9 +112,8 @@ func TestProcessPendingQueue_HeadNotFoundDropsIntent(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(nil, &httpError{code: 404, msg: "NoSuchKey"})
+	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(nil, &httpError{code: 404, msg: "NoSuchKey"})
 
 	pendSum := r.ProcessPendingQueue(context.Background())
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
@@ -137,9 +136,8 @@ func TestProcessPendingQueue_HeadTransientErrorLeavesIntent(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(nil, errors.New("connection reset"))
+	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(nil, errors.New("connection reset"))
 
 	pendSum := r.ProcessPendingQueue(context.Background())
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
@@ -165,9 +163,8 @@ func TestProcessPendingQueue_HeadOKPromotes(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
+	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
 	pendSum := r.ProcessPendingQueue(context.Background())
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
@@ -191,9 +188,8 @@ func TestProcessPendingQueue_PromoteSupersededCounts(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
+	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
 	pendSum := r.ProcessPendingQueue(context.Background())
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
@@ -214,9 +210,8 @@ func TestProcessPendingQueue_PromoteAlreadyResolved(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
+	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
 	pendSum := r.ProcessPendingQueue(context.Background())
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
@@ -238,9 +233,8 @@ func TestProcessPendingQueue_PromoteAmbiguousLeavesIntent(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
+	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
 	pendSum := r.ProcessPendingQueue(context.Background())
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
@@ -264,9 +258,8 @@ func TestProcessPendingQueue_PromoteErrorIsFailed(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
+	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
 	pendSum := r.ProcessPendingQueue(context.Background())
 	resolved, failed := pendSum.Succeeded, pendSum.Failed
@@ -308,9 +301,8 @@ func TestProcessPendingQueue_PromoteWithDisplacedEnqueues(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
 	ops.EXPECT().ReleaseAdmission()
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
+	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 	ops.EXPECT().GetBackend("b2").Return(be2, nil)
 	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be2, "b2", "bucket/k", "overwrite_displaced", int64(200))
 
@@ -384,9 +376,8 @@ func TestProbeBackend_Found(t *testing.T) {
 	r, ops, _, be, _ := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
 
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder())
-	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
+	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 
 	if got := r.probeBackend(context.Background(), be, &p); got != probeFound {
 		t.Errorf("got %v, want probeFound", got)
@@ -400,9 +391,8 @@ func TestProbeBackend_NotFound(t *testing.T) {
 	r, ops, _, be, _ := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
 
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder())
-	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(nil, &httpError{code: 404, msg: "NoSuchKey"})
+	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(nil, &httpError{code: 404, msg: "NoSuchKey"})
 
 	if got := r.probeBackend(context.Background(), be, &p); got != probeNotFound {
 		t.Errorf("got %v, want probeNotFound", got)
@@ -417,9 +407,8 @@ func TestProbeBackend_TransientError(t *testing.T) {
 	r, ops, _, be, _ := setupReaper(t)
 	p := pendingFixture("i1", "bucket/k", "b1")
 
-	ops.EXPECT().WithTimeout(gomock.Any()).Return(context.Background(), func() {})
 	ops.EXPECT().Acct().Return(newTestRecorder())
-	be.EXPECT().HeadObject(gomock.Any(), "bucket/k").Return(nil, errors.New("connection reset"))
+	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(nil, errors.New("connection reset"))
 
 	if got := r.probeBackend(context.Background(), be, &p); got != probeError {
 		t.Errorf("got %v, want probeError", got)
