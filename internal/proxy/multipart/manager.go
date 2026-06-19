@@ -16,6 +16,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"hash/fnv"
@@ -874,17 +875,13 @@ func (mp *Manager) streamOnePart(
 
 	src := io.Reader(result.Body)
 	if part.Encrypted && mp.encryptor != nil {
-		_, wrappedDEK, unpackErr := encryption.UnpackKeyData(part.EncryptionKey)
-		if unpackErr != nil {
-			telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "unpack_failed").Inc()
-			return fmt.Errorf("unpack part %d key: %w", part.PartNumber, unpackErr)
-		}
-		decrypted, decErr := mp.encryptor.Decrypt(ctx, result.Body, wrappedDEK, part.KeyID)
+		decrypted, _, decErr := mp.encryptor.DecryptStored(ctx, result.Body, part.EncryptionKey, part.KeyID, part.PlaintextSize, nil)
 		if decErr != nil {
-			telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "decrypt_failed").Inc()
+			if errors.Is(decErr, encryption.ErrInvalidKeyData) {
+				return fmt.Errorf("unpack part %d key: %w", part.PartNumber, decErr)
+			}
 			return fmt.Errorf("decrypt part %d: %w", part.PartNumber, decErr)
 		}
-		telemetry.EncryptionOpsTotal.WithLabelValues("decrypt").Inc()
 		src = decrypted
 	}
 

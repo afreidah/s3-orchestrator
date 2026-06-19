@@ -256,16 +256,10 @@ func (s *Scrubber) readAndHash(ctx context.Context, loc *core.ObjectLocation) (s
 	// Decrypt if the object is encrypted  -  hash is computed on plaintext
 	var reader io.Reader = result.Body
 	if loc.Encrypted && s.encryptor != nil {
-		_, wrappedDEK, unpackErr := encryption.UnpackKeyData(loc.EncryptionKey)
-		if unpackErr != nil {
-			return "", fmt.Errorf("unpack key data: %w", unpackErr)
-		}
-		decrypted, decErr := s.encryptor.Decrypt(ctx, result.Body, wrappedDEK, loc.KeyID)
+		decrypted, _, decErr := s.encryptor.DecryptStored(ctx, result.Body, loc.EncryptionKey, loc.KeyID, loc.PlaintextSize, nil)
 		if decErr != nil {
-			telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "decrypt_failed").Inc()
 			return "", fmt.Errorf("decrypt: %w", decErr)
 		}
-		telemetry.EncryptionOpsTotal.WithLabelValues("decrypt").Inc()
 		reader = decrypted
 	}
 
