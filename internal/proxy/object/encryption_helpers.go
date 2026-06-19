@@ -126,33 +126,23 @@ func encryptBody(ctx context.Context, enc *encryption.Encryptor, body io.Reader,
 
 // decryptResponse decrypts a GetObject response body in place. Handles both
 // full reads and range requests. Mutates r.Body, r.Size, and r.ContentRange.
-// The caller must close r.Body on error.
+// Decrypt ops/errors telemetry is owned by Encryptor.DecryptStored; this only
+// adds the mid-stream metric wrapper. The caller must close r.Body on error.
 func decryptResponse(ctx context.Context, enc *encryption.Encryptor, r *s3be.GetObjectResult, loc *core.ObjectLocation, rng *encryption.RangeResult, ptStart, ptEnd int64) error {
-	baseNonce, wrappedDEK, err := encryption.UnpackKeyData(loc.EncryptionKey)
-	if err != nil {
-		telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "unpack_failed").Inc()
-		return fmt.Errorf("unpack key data: %w", err)
+	op := "decrypt"
+	if rng != nil {
+		op = "decrypt_range"
 	}
 
+	plainReader, plainLen, err := enc.DecryptStored(ctx, r.Body, loc.EncryptionKey, loc.KeyID, loc.PlaintextSize, rng)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+
+	r.Body = ioutilx.ReadCloser(withStreamMetric(plainReader, op), r.Body)
+	r.Size = plainLen
 	if rng != nil {
-		plainReader, plainLen, decErr := enc.DecryptRange(ctx, r.Body, wrappedDEK, loc.KeyID, rng, baseNonce)
-		if decErr != nil {
-			telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt_range", "decrypt_failed").Inc()
-			return fmt.Errorf("decrypt range: %w", decErr)
-		}
-		telemetry.EncryptionOpsTotal.WithLabelValues("decrypt_range").Inc()
-		r.Body = ioutilx.ReadCloser(withStreamMetric(plainReader, "decrypt_range"), r.Body)
-		r.Size = plainLen
 		r.ContentRange = fmt.Sprintf("bytes %d-%d/%d", ptStart, ptEnd, loc.PlaintextSize)
-	} else {
-		decrypted, decErr := enc.Decrypt(ctx, r.Body, wrappedDEK, loc.KeyID)
-		if decErr != nil {
-			telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "decrypt_failed").Inc()
-			return fmt.Errorf("decrypt: %w", decErr)
-		}
-		telemetry.EncryptionOpsTotal.WithLabelValues("decrypt").Inc()
-		r.Body = ioutilx.ReadCloser(withStreamMetric(decrypted, "decrypt"), r.Body)
-		r.Size = loc.PlaintextSize
 	}
 	return nil
 }

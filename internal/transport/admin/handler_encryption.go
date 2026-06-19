@@ -14,7 +14,6 @@ package admin
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -285,18 +284,14 @@ func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) 
 			return out, nil
 		},
 		rewrite: func(ctx context.Context, src *backend.GetObjectResult, loc *decryptRow) (io.Reader, int64, func() error, error) {
-			_, wrappedDEK, unpackErr := encryption.UnpackKeyData(loc.EncryptionKey)
-			if unpackErr != nil {
-				return nil, 0, nil, fmt.Errorf("unpack key data: %w", unpackErr)
-			}
-			plainReader, err := h.encryptor.Decrypt(ctx, src.Body, wrappedDEK, loc.KeyID)
+			plainReader, plainLen, err := h.encryptor.DecryptStored(ctx, src.Body, loc.EncryptionKey, loc.KeyID, loc.PlaintextSize, nil)
 			if err != nil {
 				return nil, 0, nil, err
 			}
 			dbUpdate := func() error {
 				return h.encAdmin.MarkObjectDecrypted(ctx, loc.ObjectKey, loc.BackendName, loc.PlaintextSize)
 			}
-			return plainReader, loc.PlaintextSize, dbUpdate, nil
+			return plainReader, plainLen, dbUpdate, nil
 		},
 	})
 	if res.Status == "skipped" {
