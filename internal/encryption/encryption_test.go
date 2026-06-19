@@ -18,6 +18,10 @@ import (
 	"fmt"
 	"io"
 	"testing"
+
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
 // testKeyProvider is a simple ConfigKeyProvider for testing. Uses a fixed key.
@@ -285,6 +289,156 @@ func TestDecryptRange_FirstChunk(t *testing.T) {
 	want := original[10:31]
 	if !bytes.Equal(got, want) {
 		t.Errorf("range mismatch: got %v, want %v", got, want)
+	}
+}
+
+// TestDecryptStored_FullRoundTrip verifies DecryptStored decrypts a full object
+// from its packed key blob and echoes the supplied plaintext size.
+func TestDecryptStored_FullRoundTrip(t *testing.T) {
+	t.Parallel()
+	enc := testEncryptor(t, 64)
+	ctx := context.Background()
+	original := []byte("the stored key blob carries both the nonce and the wrapped DEK")
+
+	result, err := enc.Encrypt(ctx, bytes.NewReader(original), int64(len(original)))
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	ciphertext, err := io.ReadAll(result.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+
+	packed := PackKeyData(result.BaseNonce, result.WrappedDEK)
+	reader, n, err := enc.DecryptStored(ctx, bytes.NewReader(ciphertext), packed, result.KeyID, int64(len(original)), nil)
+	if err != nil {
+		t.Fatalf("DecryptStored: %v", err)
+	}
+	if n != int64(len(original)) {
+		t.Errorf("length = %d, want %d", n, len(original))
+	}
+	got, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll plaintext: %v", err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Errorf("decrypted = %q, want %q", got, original)
+	}
+}
+
+// TestDecryptStored_Range verifies DecryptStored routes to the range path and
+// returns the requested plaintext slice and its length when rng is non-nil.
+func TestDecryptStored_Range(t *testing.T) {
+	t.Parallel()
+	const chunkSize = 64
+	enc := testEncryptor(t, chunkSize)
+	ctx := context.Background()
+	original := make([]byte, chunkSize*4)
+	for i := range original {
+		original[i] = byte(i % 256)
+	}
+
+	result, err := enc.Encrypt(ctx, bytes.NewReader(original), int64(len(original)))
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	ciphertext, err := io.ReadAll(result.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+
+	rng, err := CiphertextRange(10, 30, chunkSize)
+	if err != nil {
+		t.Fatalf("CiphertextRange: %v", err)
+	}
+	ctBytes := ciphertext[rng.StartChunk*uint64(chunkSize+ChunkOverhead)+uint64(HeaderSize):]
+
+	packed := PackKeyData(result.BaseNonce, result.WrappedDEK)
+	reader, n, err := enc.DecryptStored(ctx, bytes.NewReader(ctBytes), packed, result.KeyID, int64(len(original)), rng)
+	if err != nil {
+		t.Fatalf("DecryptStored: %v", err)
+	}
+	if n != rng.SliceLen {
+		t.Errorf("length = %d, want SliceLen %d", n, rng.SliceLen)
+	}
+	got, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll plaintext: %v", err)
+	}
+	if want := original[10:31]; !bytes.Equal(got, want) {
+		t.Errorf("range mismatch: got %v, want %v", got, want)
+	}
+}
+
+// TestDecryptStored_InvalidKeyData verifies a malformed packed key blob is
+// reported as ErrInvalidKeyData before any decryption is attempted.
+func TestDecryptStored_InvalidKeyData(t *testing.T) {
+	t.Parallel()
+	enc := testEncryptor(t, 64)
+
+	reader, n, err := enc.DecryptStored(context.Background(), bytes.NewReader(nil), []byte("short"), "test-0", 0, nil)
+	if !errors.Is(err, ErrInvalidKeyData) {
+		t.Fatalf("err = %v, want ErrInvalidKeyData", err)
+	}
+	if reader != nil || n != 0 {
+		t.Errorf("got reader=%v n=%d, want nil/0 on error", reader, n)
+	}
+}
+
+// TestDecryptStored_Telemetry verifies DecryptStored owns the decrypt counters:
+// a full success bumps ops[decrypt], a range success bumps ops[decrypt_range],
+// and a malformed key blob bumps errors[decrypt,unpack_failed]. Not parallel so
+// the before/after deltas are not perturbed by the parallel DecryptStored tests
+// (which run in a later phase and are the only other callers of these counters).
+func TestDecryptStored_Telemetry(t *testing.T) {
+	const chunkSize = 64
+	enc := testEncryptor(t, chunkSize)
+	ctx := context.Background()
+	original := make([]byte, chunkSize*3)
+	for i := range original {
+		original[i] = byte(i)
+	}
+
+	result, err := enc.Encrypt(ctx, bytes.NewReader(original), int64(len(original)))
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	ciphertext, err := io.ReadAll(result.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	packed := PackKeyData(result.BaseNonce, result.WrappedDEK)
+
+	opsFull := telemetry.EncryptionOpsTotal.WithLabelValues("decrypt")
+	opsRange := telemetry.EncryptionOpsTotal.WithLabelValues("decrypt_range")
+	errUnpack := telemetry.EncryptionErrorsTotal.WithLabelValues("decrypt", "unpack_failed")
+	beforeFull := promtest.ToFloat64(opsFull)
+	beforeRange := promtest.ToFloat64(opsRange)
+	beforeErr := promtest.ToFloat64(errUnpack)
+
+	if _, _, err := enc.DecryptStored(ctx, bytes.NewReader(ciphertext), packed, result.KeyID, int64(len(original)), nil); err != nil {
+		t.Fatalf("DecryptStored full: %v", err)
+	}
+	rng, err := CiphertextRange(0, 10, chunkSize)
+	if err != nil {
+		t.Fatalf("CiphertextRange: %v", err)
+	}
+	ctBytes := ciphertext[uint64(HeaderSize):]
+	if _, _, err := enc.DecryptStored(ctx, bytes.NewReader(ctBytes), packed, result.KeyID, int64(len(original)), rng); err != nil {
+		t.Fatalf("DecryptStored range: %v", err)
+	}
+	if _, _, err := enc.DecryptStored(ctx, bytes.NewReader(nil), []byte("short"), result.KeyID, 0, nil); !errors.Is(err, ErrInvalidKeyData) {
+		t.Fatalf("DecryptStored bad key: err = %v, want ErrInvalidKeyData", err)
+	}
+
+	if got := promtest.ToFloat64(opsFull) - beforeFull; got != 1 {
+		t.Errorf("ops[decrypt] delta = %v, want 1", got)
+	}
+	if got := promtest.ToFloat64(opsRange) - beforeRange; got != 1 {
+		t.Errorf("ops[decrypt_range] delta = %v, want 1", got)
+	}
+	if got := promtest.ToFloat64(errUnpack) - beforeErr; got != 1 {
+		t.Errorf("errors[decrypt,unpack_failed] delta = %v, want 1", got)
 	}
 }
 
