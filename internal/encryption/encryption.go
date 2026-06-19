@@ -19,9 +19,12 @@ package encryption
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
 // -------------------------------------------------------------------------
@@ -240,6 +243,53 @@ func (e *Encryptor) DecryptRange(ctx context.Context, body io.Reader, wrappedDEK
 	return reader, rng.SliceLen, nil
 }
 
+// DecryptStored decrypts a stored object body from its packed key blob
+// (baseNonce||wrappedDEK, the form held in object_locations.encryption_key).
+// When rng is nil it returns a reader for the full plaintext and fullSize as the
+// length; otherwise it returns the requested plaintext range and that range's
+// length. It centralizes the "stored key blob -> decrypt call" mapping (only the
+// range path needs the base nonce) so callers do not repeat the unpack-and-branch.
+// A malformed key blob is reported as ErrInvalidKeyData.
+//
+// It is the single decrypt entry point: on successful reader construction it
+// increments EncryptionOpsTotal, and on a construction failure it increments
+// EncryptionErrorsTotal, so callers do not maintain their own decrypt telemetry.
+func (e *Encryptor) DecryptStored(ctx context.Context, body io.Reader, packedKey []byte, keyID string, fullSize int64, rng *RangeResult) (io.Reader, int64, error) {
+	op := "decrypt"
+	if rng != nil {
+		op = "decrypt_range"
+	}
+
+	reader, n, err := e.decryptStored(ctx, body, packedKey, keyID, fullSize, rng)
+	if err != nil {
+		reason := "decrypt_failed"
+		if errors.Is(err, ErrInvalidKeyData) {
+			reason = "unpack_failed"
+		}
+		telemetry.EncryptionErrorsTotal.WithLabelValues(op, reason).Inc()
+		return nil, 0, err
+	}
+	telemetry.EncryptionOpsTotal.WithLabelValues(op).Inc()
+	return reader, n, nil
+}
+
+// decryptStored performs the unpack-and-branch without telemetry; DecryptStored
+// wraps it to keep the op-label and counter bookkeeping in one place.
+func (e *Encryptor) decryptStored(ctx context.Context, body io.Reader, packedKey []byte, keyID string, fullSize int64, rng *RangeResult) (io.Reader, int64, error) {
+	baseNonce, wrappedDEK, err := UnpackKeyData(packedKey)
+	if err != nil {
+		return nil, 0, err
+	}
+	if rng != nil {
+		return e.DecryptRange(ctx, body, wrappedDEK, keyID, rng, baseNonce)
+	}
+	plain, err := e.Decrypt(ctx, body, wrappedDEK, keyID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return plain, fullSize, nil
+}
+
 // -------------------------------------------------------------------------
 // CIPHERTEXT SIZE
 // -------------------------------------------------------------------------
@@ -263,10 +313,14 @@ func PackKeyData(baseNonce, wrappedDEK []byte) []byte {
 	return buf
 }
 
+// ErrInvalidKeyData is returned when stored key data cannot be unpacked into a
+// base nonce and wrapped DEK (e.g. it is shorter than the nonce).
+var ErrInvalidKeyData = errors.New("encryption key data too short")
+
 // UnpackKeyData splits stored key data into the base nonce and wrapped DEK.
 func UnpackKeyData(data []byte) (baseNonce, wrappedDEK []byte, err error) {
 	if len(data) <= NonceSize {
-		return nil, nil, fmt.Errorf("encryption key data too short: %d bytes", len(data))
+		return nil, nil, fmt.Errorf("%w: %d bytes", ErrInvalidKeyData, len(data))
 	}
 	return data[:NonceSize], data[NonceSize:], nil
 }
