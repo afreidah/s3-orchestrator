@@ -106,15 +106,11 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 		return fail, fmt.Errorf("backend %s egress: %w", beName, readpath.ErrUsageLimitSkip)
 	}
 
-	if loc != nil && loc.Encrypted && o.encryptor != nil {
-		if err := decryptResponse(ctx, o.encryptor, r, loc, rng, ptStart, ptEnd); err != nil {
-			_ = r.Body.Close()
-			cancel()
-			return fail, err
-		}
+	if err := o.buildPlaintextReader(ctx, r, loc, key, beName, backend, rng, ptStart, ptEnd); err != nil {
+		_ = r.Body.Close()
+		cancel()
+		return fail, err
 	}
-
-	o.maybeWrapIntegrityReader(ctx, r, loc, key, beName, backend)
 
 	// The body owns the timeout cancel via Close. The winner's body streams to
 	// the client (cancel fires when the client closes it); a losing result is
@@ -143,6 +139,29 @@ func (o *Manager) resolveBackendRange(rangeHeader string, loc *core.ObjectLocati
 		return rangeHeader, nil, ptStart, ptEnd
 	}
 	return rng.BackendRange, rng, ptStart, ptEnd
+}
+
+// buildPlaintextReader turns a backend GetObject result into the client-facing
+// plaintext stream: it decrypts in place when the object is encrypted, then
+// wraps the body in a verifying reader when read-time integrity checking is
+// enabled. This is the single read-path pipeline for both layers. Mutates
+// r.Body/r.Size/r.ContentRange. The caller must close r.Body on error.
+func (o *Manager) buildPlaintextReader(
+	ctx context.Context,
+	r *s3be.GetObjectResult,
+	loc *core.ObjectLocation,
+	key, beName string,
+	backend s3be.ObjectBackend,
+	rng *encryption.RangeResult,
+	ptStart, ptEnd int64,
+) error {
+	if loc != nil && loc.Encrypted && o.encryptor != nil {
+		if err := decryptResponse(ctx, o.encryptor, r, loc, rng, ptStart, ptEnd); err != nil {
+			return err
+		}
+	}
+	o.maybeWrapIntegrityReader(ctx, r, loc, key, beName, backend)
+	return nil
 }
 
 // maybeWrapIntegrityReader replaces r.Body with a verifying reader when
