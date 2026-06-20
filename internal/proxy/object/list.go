@@ -112,11 +112,17 @@ func (o *Manager) ListObjects(ctx context.Context, prefix, delimiter, startAfter
 		if result.IsTruncated || !storeResult.IsTruncated {
 			break
 		}
-		cursor = storeResult.Objects[len(storeResult.Objects)-1].ObjectKey
+		// Advance past the whole group when the page ended inside an emitted
+		// CommonPrefix, so the next indexed seek skips the rest of that group
+		// instead of paging through every key under it. Falls back to the last
+		// key for leaf objects, keeping per-call cost proportional to the
+		// prefixes emitted rather than the keys scanned.
+		lastKey := storeResult.Objects[len(storeResult.Objects)-1].ObjectKey
+		cursor = AdvancePastEmittedCommonPrefix(prefix, delimiter, lastKey, seen)
 
 		if page == maxPages-1 && storeResult.IsTruncated && !result.IsTruncated {
 			result.IsTruncated = true
-			result.NextContinuationToken = AdvancePastEmittedCommonPrefix(prefix, delimiter, cursor, seen)
+			result.NextContinuationToken = cursor
 			telemetry.ListPagesCappedTotal.Inc()
 		}
 	}
