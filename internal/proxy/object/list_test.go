@@ -141,6 +141,30 @@ func TestListObjects_DelimiterSkipsLargeGroupBoundedPages(t *testing.T) {
 	}
 }
 
+// collectCommonPrefixes paginates a delimiter list to exhaustion, following the
+// continuation token, and returns how many times each CommonPrefix was emitted
+// across all pages. Fails the test if pagination does not terminate.
+func collectCommonPrefixes(t *testing.T, m *Manager, prefix, delimiter string, maxKeys int) map[string]int {
+	t.Helper()
+	seen := map[string]int{}
+	cursor := ""
+	for range 11 {
+		res, err := m.ListObjects(context.Background(), prefix, delimiter, cursor, maxKeys)
+		if err != nil {
+			t.Fatalf("ListObjects: %v", err)
+		}
+		for _, cp := range res.CommonPrefixes {
+			seen[cp]++
+		}
+		if !res.IsTruncated {
+			return seen
+		}
+		cursor = res.NextContinuationToken
+	}
+	t.Fatal("pagination did not terminate")
+	return nil
+}
+
 // TestListObjects_DelimiterPaginationNoDuplicate verifies that paginating a
 // delimiter list across calls emits every CommonPrefix exactly once with no
 // gaps, using the returned continuation token as the next startAfter.
@@ -152,27 +176,9 @@ func TestListObjects_DelimiterPaginationNoDuplicate(t *testing.T) {
 			keys = append(keys, fmt.Sprintf("p/g%d/k%d.txt", g, k))
 		}
 	}
-	store := newFakeListStore(keys)
-	m := newBenchListManager(store)
+	m := newBenchListManager(newFakeListStore(keys))
 
-	seen := map[string]int{}
-	cursor := ""
-	for calls := 0; ; calls++ {
-		if calls > 10 {
-			t.Fatal("pagination did not terminate")
-		}
-		res, err := m.ListObjects(context.Background(), "p/", "/", cursor, 2)
-		if err != nil {
-			t.Fatalf("ListObjects: %v", err)
-		}
-		for _, cp := range res.CommonPrefixes {
-			seen[cp]++
-		}
-		if !res.IsTruncated {
-			break
-		}
-		cursor = res.NextContinuationToken
-	}
+	seen := collectCommonPrefixes(t, m, "p/", "/", 2)
 
 	for g := range 4 {
 		cp := fmt.Sprintf("p/g%d/", g)
