@@ -51,37 +51,40 @@ type MockStore struct {
 	ListObjectsPages []core.ListObjectsResult
 	ListObjectsErr   error
 
+	ListObjectsDelimitedResp *core.ListDelimitedResult
+	ListObjectsDelimitedErr  error
+
 	// ListObjectsByBackendKeyAscFn is invoked by tests that drive the
 	// ReconcileBackend sorted-merge with a deterministic page sequence.
 	// Returning an empty slice signals end-of-stream.
 	ListObjectsByBackendKeyAscFn func(afterKey string, limit int) ([]core.ObjectLocation, error)
 
 	// Multipart
-	CreateMultipartErr        error
-	GetMultipartResp          *core.MultipartUpload
-	GetMultipartErr           error
-	GetPartsResp              []core.MultipartPart
-	GetPartsErr               error
-	DeleteMultipartErr        error
-	RecordPartErr             error
-	ListMultipartUploadsResp  []core.MultipartUpload
-	ListMultipartUploadsErr   error
-	CountActiveMultipartResp  int64
-	CountActiveMultipartErr   error
+	CreateMultipartErr       error
+	GetMultipartResp         *core.MultipartUpload
+	GetMultipartErr          error
+	GetPartsResp             []core.MultipartPart
+	GetPartsErr              error
+	DeleteMultipartErr       error
+	RecordPartErr            error
+	ListMultipartUploadsResp []core.MultipartUpload
+	ListMultipartUploadsErr  error
+	CountActiveMultipartResp int64
+	CountActiveMultipartErr  error
 
 	// Dashboard / background
-	GetQuotaStatsResp      map[string]core.QuotaStat
-	GetQuotaStatsErr       error
+	GetQuotaStatsResp             map[string]core.QuotaStat
+	GetQuotaStatsErr              error
 	GetObjectCountsResp           map[string]int64
 	GetObjectCountsErr            error
 	GetUnverifiedObjectCountsResp map[string]int64
 	GetUnverifiedObjectCountsErr  error
-	GetActiveMultipartResp map[string]int64
-	GetActiveMultipartErr  error
-	GetUsageForPeriodResp  map[string]core.UsageStat
-	GetUsageForPeriodErr   error
-	ListDirChildrenResp    *core.DirectoryListResult
-	ListDirChildrenErr     error
+	GetActiveMultipartResp        map[string]int64
+	GetActiveMultipartErr         error
+	GetUsageForPeriodResp         map[string]core.UsageStat
+	GetUsageForPeriodErr          error
+	ListDirChildrenResp           *core.DirectoryListResult
+	ListDirChildrenErr            error
 
 	// Usage tracking
 	FlushUsageErr   error
@@ -250,6 +253,19 @@ func (m *MockStore) ListObjects(_ context.Context, _, _ string, _ int) (*core.Li
 		return &page, nil
 	}
 	return m.ListObjectsResp, nil
+}
+
+// ListObjectsDelimited returns the configured delimiter-grouped response.
+func (m *MockStore) ListObjectsDelimited(_ context.Context, _, _, _ string, _ int) (*core.ListDelimitedResult, error) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	if m.ListObjectsDelimitedErr != nil {
+		return nil, m.ListObjectsDelimitedErr
+	}
+	if m.ListObjectsDelimitedResp != nil {
+		return m.ListObjectsDelimitedResp, nil
+	}
+	return &core.ListDelimitedResult{}, nil
 }
 
 // CreateMultipartUpload returns the pre-configured error.

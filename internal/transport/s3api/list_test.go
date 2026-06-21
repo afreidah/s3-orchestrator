@@ -71,11 +71,11 @@ func TestListObjectsV2_WithDelimiter(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
 
-	// Return objects with a common directory prefix
-	mockStore.ListObjectsResp = &core.ListObjectsResult{
+	// The store collapses photos/* into a CommonPrefix and returns readme.txt
+	// as a leaf for a delimiter listing.
+	mockStore.ListObjectsDelimitedResp = &core.ListDelimitedResult{
+		CommonPrefixes: []string{"mybucket/photos/"},
 		Objects: []core.ObjectLocation{
-			{ObjectKey: "mybucket/photos/a.jpg", BackendName: "b1", SizeBytes: 100, CreatedAt: now},
-			{ObjectKey: "mybucket/photos/b.jpg", BackendName: "b1", SizeBytes: 200, CreatedAt: now},
 			{ObjectKey: "mybucket/readme.txt", BackendName: "b1", SizeBytes: 50, CreatedAt: now},
 		},
 	}
@@ -107,14 +107,14 @@ func TestListObjectsV2_Pagination(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
 
-	// Return 3 objects when maxKeys=2. The manager will take the first 2 and
-	// set IsTruncated=true with a NextContinuationToken.
+	// The store truncates to maxKeys=2 and reports the continuation token.
 	mockStore.ListObjectsResp = &core.ListObjectsResult{
 		Objects: []core.ObjectLocation{
 			{ObjectKey: "mybucket/a.txt", BackendName: "b1", SizeBytes: 10, CreatedAt: now},
 			{ObjectKey: "mybucket/b.txt", BackendName: "b1", SizeBytes: 20, CreatedAt: now},
-			{ObjectKey: "mybucket/c.txt", BackendName: "b1", SizeBytes: 30, CreatedAt: now},
 		},
+		IsTruncated:           true,
+		NextContinuationToken: "mybucket/b.txt",
 	}
 
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?list-type=2&max-keys=2", nil)
@@ -288,14 +288,15 @@ func TestListObjectsV1_Pagination(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
 
-	// Return 3 objects when maxKeys=2. The manager will take the first 2 and
-	// set IsTruncated=true with a NextContinuationToken (mapped to NextMarker).
+	// The store truncates to maxKeys=2 and reports the continuation token,
+	// which the V1 handler maps to NextMarker.
 	mockStore.ListObjectsResp = &core.ListObjectsResult{
 		Objects: []core.ObjectLocation{
 			{ObjectKey: "mybucket/a.txt", BackendName: "b1", SizeBytes: 10, CreatedAt: now},
 			{ObjectKey: "mybucket/b.txt", BackendName: "b1", SizeBytes: 20, CreatedAt: now},
-			{ObjectKey: "mybucket/c.txt", BackendName: "b1", SizeBytes: 30, CreatedAt: now},
 		},
+		IsTruncated:           true,
+		NextContinuationToken: "mybucket/b.txt",
 	}
 
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?max-keys=2", nil)

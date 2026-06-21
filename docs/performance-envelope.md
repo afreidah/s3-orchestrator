@@ -134,15 +134,16 @@ machine model into each section so the numbers stay interpretable.
 
 **Environment:** _fill_
 
-| Namespace size | P50 ms | P95 ms | P99 ms | Pagination pages hit cap |
-|---:|---:|---:|---:|---:|
-| 10 K | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
-| 100 K | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
-| 1 M | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
+| Namespace size | P50 ms | P95 ms | P99 ms |
+|---:|---:|---:|---:|
+| 10 K | _TBD_ | _TBD_ | _TBD_ |
+| 100 K | _TBD_ | _TBD_ | _TBD_ |
+| 1 M | _TBD_ | _TBD_ | _TBD_ |
 
-The "pages hit cap" column reads the
-`s3o_list_pages_capped_total` counter delta over the run; non-zero
-values indicate `listObjectsMaxPages` is firing at this scale.
+Delimiter listings collapse keys into CommonPrefixes in the database via a
+loose index scan (recursive CTE skip-scan), so latency tracks the number of
+prefixes returned rather than the namespace size; it should stay roughly flat
+across these rows.
 
 ### Scenario 5 - Concurrent multipart
 

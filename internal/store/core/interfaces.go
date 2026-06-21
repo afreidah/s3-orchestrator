@@ -57,6 +57,7 @@ type ObjectStore interface {
 	DeleteObject(ctx context.Context, key string) ([]DeletedCopy, error)
 	DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]DeletedCopy, error)
 	ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error)
+	ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListDelimitedResult, error)
 	ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]ObjectLocation, error)
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]ObjectLocation, error)
 	MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error)

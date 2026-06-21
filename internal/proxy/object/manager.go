@@ -163,12 +163,6 @@ func (o *Manager) BackendCapacityStats(ctx context.Context) map[string]core.Quot
 	return stats
 }
 
-// ListObjectsMaxPages caps DB round trips per ListObjects request so a
-// single client call cannot drag the database through unbounded scans on
-// pathological prefix layouts. Exposed as a var (rather than const) so
-// tests can lower it without generating hundreds of mock pages.
-var ListObjectsMaxPages = 100
-
 // ObjectExists reports whether at least one location row exists for key.
 // Used by the conditional-write path (If-None-Match: *) to fail-fast
 // before the body upload. Best-effort: a concurrent racing PUT can land

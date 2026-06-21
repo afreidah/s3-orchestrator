@@ -164,18 +164,6 @@ var (
 		},
 	)
 
-	// ListPagesCappedTotal counts ListObjects calls that exit because the
-	// per-request DB round-trip cap (listObjectsMaxPages) was reached while
-	// the store still had more pages. A non-zero value means real workloads
-	// hit the cap and the bound may need tuning; persistent zero means the
-	// cap is over-provisioned and safe to leave alone.
-	ListPagesCappedTotal = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "s3o_list_pages_capped_total",
-			Help: "ListObjects calls that exited at the per-request page cap with more pages remaining",
-		},
-	)
-
 	// HTTPPanicRecoveredTotal counts panics caught by the HTTP panic-
 	// recovery middleware. A non-zero value means a request
 	// handler panicked and the recovery layer translated it into a 500
