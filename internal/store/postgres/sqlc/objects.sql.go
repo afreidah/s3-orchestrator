@@ -833,6 +833,113 @@ func (q *Queries) ListObjectsByPrefix(ctx context.Context, arg ListObjectsByPref
 	return items, nil
 }
 
+const listObjectsDelimited = `-- name: ListObjectsDelimited :many
+WITH RECURSIVE walk(k) AS (
+    (SELECT object_key
+       FROM object_locations
+      WHERE object_key LIKE $4::text || '%' ESCAPE '\'
+        AND object_key COLLATE "C" > $5::text
+      ORDER BY object_key COLLATE "C"
+      LIMIT 1)
+    UNION ALL
+    SELECT (
+        SELECT object_key
+          FROM object_locations
+         WHERE object_key LIKE $4::text || '%' ESCAPE '\'
+           AND object_key COLLATE "C" > CASE
+            WHEN position($2::text IN substr(walk.k, length($1::text) + 1)) > 0 THEN
+                substr(walk.k, 1, length($1::text) + position($2::text IN substr(walk.k, length($1::text) + 1)) + length($2::text) - 2)
+                || chr(ascii(substr(walk.k, length($1::text) + position($2::text IN substr(walk.k, length($1::text) + 1)) + length($2::text) - 1, 1)) + 1)
+            ELSE walk.k
+           END
+         ORDER BY object_key COLLATE "C"
+         LIMIT 1
+    )
+    FROM walk WHERE walk.k IS NOT NULL
+)
+SELECT
+    w.k::text AS object_key,
+    (position($2::text IN substr(w.k, length($1::text) + 1)) > 0)::boolean AS is_prefix,
+    (CASE WHEN position($2::text IN substr(w.k, length($1::text) + 1)) > 0
+        THEN substr(w.k, 1, length($1::text) + position($2::text IN substr(w.k, length($1::text) + 1)) + length($2::text) - 1)
+        ELSE '' END)::text AS common_prefix,
+    (CASE WHEN position($2::text IN substr(w.k, length($1::text) + 1)) > 0 THEN
+            substr(w.k, 1, length($1::text) + position($2::text IN substr(w.k, length($1::text) + 1)) + length($2::text) - 2)
+            || chr(ascii(substr(w.k, length($1::text) + position($2::text IN substr(w.k, length($1::text) + 1)) + length($2::text) - 1, 1)) + 1)
+        ELSE w.k END)::text AS skip_bound,
+    COALESCE(leaf.backend_name, '')::text AS backend_name,
+    COALESCE(leaf.size_bytes, 0)::bigint AS size_bytes,
+    COALESCE(leaf.created_at, to_timestamp(0)) AS created_at
+FROM walk w
+LEFT JOIN LATERAL (
+    SELECT backend_name, size_bytes, created_at
+      FROM object_locations o2
+     WHERE o2.object_key = w.k
+       AND position($2::text IN substr(w.k, length($1::text) + 1)) = 0
+     ORDER BY created_at ASC
+     LIMIT 1
+) leaf ON true
+WHERE w.k IS NOT NULL
+ORDER BY w.k COLLATE "C"
+LIMIT $3::int
+`
+
+type ListObjectsDelimitedParams struct {
+	Prefix     string
+	Delim      string
+	Lim        int32
+	Escprefix  string
+	StartAfter string
+}
+
+type ListObjectsDelimitedRow struct {
+	ObjectKey    string
+	IsPrefix     bool
+	CommonPrefix string
+	SkipBound    string
+	BackendName  string
+	SizeBytes    int64
+	CreatedAt    pgtype.Timestamptz
+}
+
+// Every projected column is forced non-null (empty string / 0 / epoch) because
+// the built-in sqlc analyzer cannot infer nullability for computed and
+// LATERAL-joined columns; the Go side uses is_prefix to pick the meaningful
+// fields per row, so the placeholder values for the other branch are ignored.
+func (q *Queries) ListObjectsDelimited(ctx context.Context, arg ListObjectsDelimitedParams) ([]ListObjectsDelimitedRow, error) {
+	rows, err := q.db.Query(ctx, listObjectsDelimited,
+		arg.Prefix,
+		arg.Delim,
+		arg.Lim,
+		arg.Escprefix,
+		arg.StartAfter,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListObjectsDelimitedRow{}
+	for rows.Next() {
+		var i ListObjectsDelimitedRow
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.IsPrefix,
+			&i.CommonPrefix,
+			&i.SkipBound,
+			&i.BackendName,
+			&i.SizeBytes,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnencryptedLocations = `-- name: ListUnencryptedLocations :many
 SELECT object_key, backend_name, size_bytes
 FROM object_locations

@@ -3,11 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// ListObjects + the cursor-advance and per-page consume helpers it depends
-// on. Folds raw keys into virtual-directory CommonPrefixes when a
-// delimiter is set, paginates underneath until maxKeys post-grouping
-// items are collected, and caps the per-call pagination so a pathological
-// prefix layout cannot drag the database through unbounded scans.
+// ListObjects routes to the store's delimiter-grouped query when a delimiter is
+// set and to the flat prefix listing otherwise. The store owns CommonPrefix
+// folding, group skip-seeking, and pagination tokens (a loose index scan), so
+// this layer only maps one returned page into the S3 response shape and records
+// the operation's telemetry and span.
 // -------------------------------------------------------------------------------
 
 package object
@@ -16,7 +16,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe"
@@ -29,44 +28,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// AdvancePastEmittedCommonPrefix rewrites a continuation cursor so the
-// next ListObjects call cannot re-emit a CommonPrefix the current call
-// already returned. The seen map is local to a single ListObjects
-// invocation, so without this rewrite a cursor that lands inside an
-// already-emitted CP (e.g., maxPages cap reached deep in a tenant's keys
-// or the page boundary aligned mid-group) would let the next call walk
-// the same group and emit its CP a second time.
-//
-// The rewrite increments the last byte of the CP, producing the smallest
-// string lex-greater than every key starting with that CP. The store's
-// next-page WHERE object_key > cursor then skips the rest of the group
-// cleanly. Returns the input unchanged when the delimiter is unset, the
-// cursor does not fall inside an emitted CP, or the last byte is 0xff
-// (no representable advance  -  accept potential re-emission rather than
-// corrupt the cursor).
-func AdvancePastEmittedCommonPrefix(prefix, delimiter, cursor string, seen map[string]bool) string {
-	if delimiter == "" || cursor == "" {
-		return cursor
-	}
-	if !strings.HasPrefix(cursor, prefix) {
-		return cursor
-	}
-	rest := cursor[len(prefix):]
-	idx := strings.Index(rest, delimiter)
-	if idx < 0 {
-		return cursor
-	}
-	cp := cursor[:len(prefix)+idx+len(delimiter)]
-	if !seen[cp] {
-		return cursor
-	}
-	last := cp[len(cp)-1]
-	if last == 0xff {
-		return cursor
-	}
-	return cp[:len(cp)-1] + string([]byte{last + 1})
-}
-
 // ListObjectsV2Result holds the processed result for the S3 ListObjectsV2 response.
 type ListObjectsV2Result struct {
 	Objects               []core.ObjectLocation `json:"objects,omitempty"`
@@ -76,11 +37,8 @@ type ListObjectsV2Result struct {
 	KeyCount              int                   `json:"key_count,omitempty"`
 }
 
-// ListObjects returns objects matching the given prefix with optional
-// delimiter support for virtual directory grouping. When a delimiter is
-// set, many raw objects may collapse into a single CommonPrefix, so the
-// loop fetches store pages until maxKeys post-grouping items are
-// collected or the store is exhausted.
+// ListObjects returns one page of objects under the given prefix, folding keys
+// into virtual-directory CommonPrefixes when a delimiter is set.
 func (o *Manager) ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListObjectsV2Result, error) {
 	const operation = "ListObjects"
 	start := time.Now()
@@ -92,44 +50,9 @@ func (o *Manager) ListObjects(ctx context.Context, prefix, delimiter, startAfter
 	)
 	defer span.End()
 
-	result := &ListObjectsV2Result{}
-	cursor := startAfter
-	seen := make(map[string]bool)
-	lastStoreTruncated := false
-
-	maxPages := ListObjectsMaxPages
-	for page := 0; page < maxPages && result.KeyCount < maxKeys; page++ {
-		storeResult, err := o.stores.ListObjects(ctx, prefix, cursor, maxKeys)
-		if err != nil {
-			return nil, listObjectsError(span, err)
-		}
-		if len(storeResult.Objects) == 0 {
-			break
-		}
-		lastStoreTruncated = storeResult.IsTruncated
-
-		o.consumeListPage(storeResult.Objects, prefix, delimiter, maxKeys, seen, result)
-		if result.IsTruncated || !storeResult.IsTruncated {
-			break
-		}
-		// Advance past the whole group when the page ended inside an emitted
-		// CommonPrefix, so the next indexed seek skips the rest of that group
-		// instead of paging through every key under it. Falls back to the last
-		// key for leaf objects, keeping per-call cost proportional to the
-		// prefixes emitted rather than the keys scanned.
-		lastKey := storeResult.Objects[len(storeResult.Objects)-1].ObjectKey
-		cursor = AdvancePastEmittedCommonPrefix(prefix, delimiter, lastKey, seen)
-
-		if page == maxPages-1 && storeResult.IsTruncated && !result.IsTruncated {
-			result.IsTruncated = true
-			result.NextContinuationToken = cursor
-			telemetry.ListPagesCappedTotal.Inc()
-		}
-	}
-
-	if !result.IsTruncated && lastStoreTruncated && result.KeyCount >= maxKeys {
-		result.IsTruncated = true
-		result.NextContinuationToken = AdvancePastEmittedCommonPrefix(prefix, delimiter, cursor, seen)
+	result, err := o.listPage(ctx, prefix, delimiter, startAfter, maxKeys)
+	if err != nil {
+		return nil, listObjectsError(span, err)
 	}
 
 	o.core.Acct().Operation(operation, "", start, nil)
@@ -138,6 +61,37 @@ func (o *Manager) ListObjects(ctx context.Context, prefix, delimiter, startAfter
 	span.SetStatus(codes.Ok, "")
 	span.SetAttributes(attribute.Int("s3o.key_count", result.KeyCount))
 	return result, nil
+}
+
+// listPage fetches one page from the store: the delimiter-grouped query when a
+// delimiter is set (CommonPrefixes plus interleaved leaf objects), otherwise the
+// flat prefix listing. The store does the grouping and skip-seeking; this maps
+// its result into the S3 response shape.
+func (o *Manager) listPage(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListObjectsV2Result, error) {
+	if delimiter != "" {
+		page, err := o.stores.ListObjectsDelimited(ctx, prefix, delimiter, startAfter, maxKeys)
+		if err != nil {
+			return nil, err
+		}
+		return &ListObjectsV2Result{
+			Objects:               page.Objects,
+			CommonPrefixes:        page.CommonPrefixes,
+			IsTruncated:           page.IsTruncated,
+			NextContinuationToken: page.NextContinuationToken,
+			KeyCount:              len(page.Objects) + len(page.CommonPrefixes),
+		}, nil
+	}
+
+	page, err := o.stores.ListObjects(ctx, prefix, startAfter, maxKeys)
+	if err != nil {
+		return nil, err
+	}
+	return &ListObjectsV2Result{
+		Objects:               page.Objects,
+		IsTruncated:           page.IsTruncated,
+		NextContinuationToken: page.NextContinuationToken,
+		KeyCount:              len(page.Objects),
+	}, nil
 }
 
 // listObjectsError translates a store-side ListObjects error into the
@@ -150,70 +104,4 @@ func listObjectsError(span trace.Span, err error) error {
 	}
 	observe.RecordSpanError(span, err)
 	return fmt.Errorf("failed to list objects: %w", err)
-}
-
-// consumeListPage walks one store page, folding raw objects into
-// CommonPrefixes when delimiter is set and appending plain objects
-// otherwise. Mutates result and seen, and sets result.IsTruncated when
-// maxKeys is hit mid-page.
-func (o *Manager) consumeListPage(
-	objects []core.ObjectLocation,
-	prefix, delimiter string,
-	maxKeys int,
-	seen map[string]bool,
-	result *ListObjectsV2Result,
-) {
-	var lastKey string
-	for oi := range objects {
-		key := objects[oi].ObjectKey
-		if delimiter != "" {
-			handled, truncated := tryEmitCommonPrefix(key, prefix, delimiter, maxKeys, seen, result, lastKey)
-			if handled {
-				lastKey = key
-				if truncated {
-					return
-				}
-				continue
-			}
-		}
-		if result.KeyCount >= maxKeys {
-			result.IsTruncated = true
-			result.NextContinuationToken = lastKey
-			return
-		}
-		result.Objects = append(result.Objects, objects[oi])
-		result.KeyCount++
-		lastKey = key
-	}
-}
-
-// tryEmitCommonPrefix folds key into a CommonPrefix when one applies.
-// handled=false signals the key should fall through to plain-object
-// handling. truncated=true signals the caller to stop iterating because
-// maxKeys was hit while emitting a new prefix.
-func tryEmitCommonPrefix(
-	key, prefix, delimiter string,
-	maxKeys int,
-	seen map[string]bool,
-	result *ListObjectsV2Result,
-	lastKey string,
-) (bool, bool) {
-	rest := key[len(prefix):]
-	idx := strings.Index(rest, delimiter)
-	if idx < 0 {
-		return false, false
-	}
-	cp := key[:len(prefix)+idx+len(delimiter)]
-	if seen[cp] {
-		return true, false
-	}
-	if result.KeyCount >= maxKeys {
-		result.IsTruncated = true
-		result.NextContinuationToken = lastKey
-		return true, true
-	}
-	seen[cp] = true
-	result.CommonPrefixes = append(result.CommonPrefixes, cp)
-	result.KeyCount++
-	return true, false
 }

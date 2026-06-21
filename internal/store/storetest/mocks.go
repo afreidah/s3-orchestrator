@@ -822,6 +822,21 @@ func (mr *MockMetadataStoreMockRecorder) ListObjectsByBackendKeyAsc(ctx, backend
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjectsByBackendKeyAsc", reflect.TypeOf((*MockMetadataStore)(nil).ListObjectsByBackendKeyAsc), ctx, backendName, afterKey, limit)
 }
 
+// ListObjectsDelimited mocks base method.
+func (m *MockMetadataStore) ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListDelimitedResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListObjectsDelimited", ctx, prefix, delimiter, startAfter, maxKeys)
+	ret0, _ := ret[0].(*core.ListDelimitedResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListObjectsDelimited indicates an expected call of ListObjectsDelimited.
+func (mr *MockMetadataStoreMockRecorder) ListObjectsDelimited(ctx, prefix, delimiter, startAfter, maxKeys any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjectsDelimited", reflect.TypeOf((*MockMetadataStore)(nil).ListObjectsDelimited), ctx, prefix, delimiter, startAfter, maxKeys)
+}
+
 // ListUnencryptedLocations mocks base method.
 func (m *MockMetadataStore) ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]core.UnencryptedLocation, error) {
 	m.ctrl.T.Helper()

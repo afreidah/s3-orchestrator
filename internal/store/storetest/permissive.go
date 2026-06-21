@@ -18,8 +18,9 @@ import (
 // incidental calls (orphan-bytes adjustments, sweep rows, advisory locks,
 // etc.).
 //
-//nolint:funlen // one stanza per interface method; expanding to per-method
 // helpers would be more boilerplate without meaningful structure.
+//
+//nolint:funlen // one stanza per interface method; expanding to per-method
 func Permissive(m *MockMetadataStore) {
 	r := m.EXPECT()
 	a := gomock.Any()
@@ -74,6 +75,7 @@ func Permissive(m *MockMetadataStore) {
 	r.ListExpiredObjects(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.ListMultipartUploads(a, a, a).Return(nil, nil).AnyTimes()
 	r.ListObjects(a, a, a, a).Return(nil, nil).AnyTimes()
+	r.ListObjectsDelimited(a, a, a, a, a).Return(&core.ListDelimitedResult{}, nil).AnyTimes()
 	r.ListObjectsByBackend(a, a, a).Return(nil, nil).AnyTimes()
 	r.ListObjectsByBackendKeyAsc(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.ListUnencryptedLocations(a, a, a).Return(nil, nil).AnyTimes()

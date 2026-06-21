@@ -137,17 +137,49 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 	}
 
 	objects := toSlimObjectLocations(rows)
+	return core.BuildListPage(objects, maxKeys), nil
+}
 
-	result := &core.ListObjectsResult{}
-	if len(objects) > maxKeys {
-		result.IsTruncated = true
-		result.NextContinuationToken = objects[maxKeys-1].ObjectKey
-		result.Objects = objects[:maxKeys]
-	} else {
-		result.Objects = objects
+// ListObjectsDelimited groups a delimiter listing in Postgres through the
+// sqlc-generated recursive-CTE query (see sqlc/queries/objects.sql). Every
+// object_key comparison and ORDER BY runs under COLLATE "C", backed by the
+// idx_object_locations_key_collate_c index, so the loose index scan seeks
+// group-to-group in byte order that matches SQLite and S3. The generated rows
+// arrive flattened (placeholder values on the branch is_prefix does not select);
+// this maps them back into CommonPrefix and leaf entries. The delimiter must be
+// non-empty; callers route empty-delimiter lists to ListObjects.
+func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListDelimitedResult, error) {
+	if maxKeys <= 0 {
+		maxKeys = 1000
+	}
+	escapedPrefix := likeEscaper.Replace(prefix)
+
+	rows, err := s.queries.ListObjectsDelimited(ctx, db.ListObjectsDelimitedParams{
+		Escprefix:  escapedPrefix,
+		Prefix:     prefix,
+		Delim:      delimiter,
+		StartAfter: startAfter,
+		Lim:        int32(maxKeys + 1),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list objects (delimited): %w", err)
 	}
 
-	return result, nil
+	entries := make([]core.DelimitedEntry, len(rows))
+	for i := range rows {
+		r := rows[i]
+		e := core.DelimitedEntry{IsPrefix: r.IsPrefix, CommonPrefix: r.CommonPrefix, SkipBound: r.SkipBound}
+		if !r.IsPrefix {
+			e.Leaf = core.ObjectLocation{
+				ObjectKey:   r.ObjectKey,
+				BackendName: r.BackendName,
+				SizeBytes:   r.SizeBytes,
+				CreatedAt:   r.CreatedAt.Time,
+			}
+		}
+		entries[i] = e
+	}
+	return core.BuildDelimitedPage(entries, maxKeys), nil
 }
 
 // ListExpiredObjects returns one row per unique key matching the given prefix

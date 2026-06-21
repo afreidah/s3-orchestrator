@@ -4117,27 +4117,6 @@
     },
     {
       "type": "timeseries",
-      "id": 102,
-      "title": "List page cap hits",
-      "gridPos": {
-        "x": 12,
-        "y": 245,
-        "w": 12,
-        "h": 8
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "sum(rate(s3o_list_pages_capped_total[5m]))",
-          "legendFormat": "capped"
-        }
-      ]
-    },
-    {
-      "type": "timeseries",
       "id": 103,
       "title": "Circuit breaker internal errors",
       "gridPos": {

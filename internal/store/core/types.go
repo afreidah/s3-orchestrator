@@ -265,6 +265,65 @@ type ListObjectsResult struct {
 	NextContinuationToken string
 }
 
+// ListDelimitedResult holds one page of a delimiter-grouped list. Keys whose
+// remainder after the prefix contains the delimiter are collapsed into
+// CommonPrefixes; the rest are returned as leaf Objects. Truncation and the
+// continuation token reflect the merged, key-ordered stream of both.
+type ListDelimitedResult struct {
+	Objects               []ObjectLocation
+	CommonPrefixes        []string
+	IsTruncated           bool
+	NextContinuationToken string
+}
+
+// BuildListPage caps a flat prefix listing at maxKeys and sets the continuation
+// token to the last kept key when more objects follow. Shared by both engines so
+// the flat ListObjects truncation contract stays identical.
+func BuildListPage(objects []ObjectLocation, maxKeys int) *ListObjectsResult {
+	result := &ListObjectsResult{}
+	if len(objects) > maxKeys {
+		result.IsTruncated = true
+		result.NextContinuationToken = objects[maxKeys-1].ObjectKey
+		result.Objects = objects[:maxKeys]
+	} else {
+		result.Objects = objects
+	}
+	return result
+}
+
+// DelimitedEntry is one key-ordered row of a delimiter-grouped scan: either a
+// CommonPrefix or a leaf object. SkipBound is the value a continuation token
+// takes when the page truncates on this entry (the CommonPrefix advanced past
+// its group, or the leaf key). Engine adapters scan their loose-index-scan rows
+// into these and call BuildDelimitedPage.
+type DelimitedEntry struct {
+	IsPrefix     bool
+	CommonPrefix string
+	SkipBound    string
+	Leaf         ObjectLocation
+}
+
+// BuildDelimitedPage splits the ordered entries into CommonPrefixes and leaf
+// objects, caps the page at maxKeys, and sets the continuation token to the last
+// kept entry's skip bound when more entries follow. Shared by both engines so
+// truncation and token semantics stay identical.
+func BuildDelimitedPage(entries []DelimitedEntry, maxKeys int) *ListDelimitedResult {
+	result := &ListDelimitedResult{}
+	if len(entries) > maxKeys {
+		result.IsTruncated = true
+		result.NextContinuationToken = entries[maxKeys-1].SkipBound
+		entries = entries[:maxKeys]
+	}
+	for i := range entries {
+		if entries[i].IsPrefix {
+			result.CommonPrefixes = append(result.CommonPrefixes, entries[i].CommonPrefix)
+		} else {
+			result.Objects = append(result.Objects, entries[i].Leaf)
+		}
+	}
+	return result
+}
+
 // DirEntry holds aggregate stats for one immediate child of a directory
 // prefix.
 type DirEntry struct {
