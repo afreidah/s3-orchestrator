@@ -1,228 +1,117 @@
 // -------------------------------------------------------------------------------
-// ListObjects Tests - Delimiter Grouping, Group Skipping, Pagination
+// ListObjects Tests - Store Routing and Response Mapping
 //
 // Author: Alex Freidah
 //
-// Unit coverage for Manager.ListObjects: virtual-directory CommonPrefix
-// grouping with interleaved leaf objects, the cursor-skip that keeps per-call
-// cost proportional to emitted prefixes rather than scanned keys, and
-// duplicate-free CommonPrefix emission across paginated calls. Cross-engine
-// behavior parity is covered by the integration suite; these pin the
-// proxy-side grouping and skip logic.
+// Verifies Manager.ListObjects routes to the right store query (the
+// delimiter-grouped query when a delimiter is set, the flat prefix listing
+// otherwise) and maps the returned page into the S3 response shape. The
+// grouping and pagination logic itself lives in and is tested at the store
+// layer (sqlite unit tests + the Postgres integration parity test).
 // -------------------------------------------------------------------------------
 
 package object
 
 import (
 	"context"
-	"fmt"
-	"sort"
-	"strings"
+	"log/slog"
 	"testing"
+	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// fakeListStore serves a sorted keyspace from memory, filtering by prefix and
-// startAfter and capping at maxKeys with a truncation flag, mirroring the real
-// store contract. It counts pages served so tests can assert the manager does
-// not walk a whole group page by page.
+// fakeListStore returns canned store responses and records which query the
+// manager called, so routing and mapping can be asserted without a database.
 type fakeListStore struct {
-	ObjectStores // embedded nil; only ListObjects is implemented
+	ObjectStores // embedded nil; only the list methods are implemented
 
-	keys  []string
-	pages int
+	flatResp  *core.ListObjectsResult
+	delimResp *core.ListDelimitedResult
+
+	flatCalls  int
+	delimCalls int
 }
 
-// newFakeListStore sorts keys once so ListObjects can serve ordered pages.
-func newFakeListStore(keys []string) *fakeListStore {
-	sorted := append([]string(nil), keys...)
-	sort.Strings(sorted)
-	return &fakeListStore{keys: sorted}
+func (s *fakeListStore) ListObjects(_ context.Context, _, _ string, _ int) (*core.ListObjectsResult, error) {
+	s.flatCalls++
+	return s.flatResp, nil
 }
 
-// ListObjects returns the keys under prefix that sort after startAfter, capped
-// at maxKeys, flagging truncation when more match.
-func (s *fakeListStore) ListObjects(_ context.Context, prefix, startAfter string, maxKeys int) (*core.ListObjectsResult, error) {
-	s.pages++
-
-	matched := make([]string, 0, maxKeys+1)
-	for _, k := range s.keys {
-		if strings.HasPrefix(k, prefix) && k > startAfter {
-			matched = append(matched, k)
-		}
-	}
-
-	truncated := len(matched) > maxKeys
-	if truncated {
-		matched = matched[:maxKeys]
-	}
-	objs := make([]core.ObjectLocation, len(matched))
-	for i, k := range matched {
-		objs[i] = core.ObjectLocation{ObjectKey: k}
-	}
-	return &core.ListObjectsResult{Objects: objs, IsTruncated: truncated}, nil
+func (s *fakeListStore) ListObjectsDelimited(_ context.Context, _, _, _ string, _ int) (*core.ListDelimitedResult, error) {
+	s.delimCalls++
+	return s.delimResp, nil
 }
 
-// objectKeys extracts the object keys from a result for comparison.
-func objectKeys(res *ListObjectsV2Result) []string {
-	out := make([]string, len(res.Objects))
-	for i := range res.Objects {
-		out[i] = res.Objects[i].ObjectKey
-	}
-	return out
+// newListTestManager wires a Manager with only what ListObjects touches: the
+// store and a no-op accounting recorder.
+func newListTestManager(store ObjectStores) *Manager {
+	rec := accounting.New(nil, func(_, _ string, _ time.Time, _ error) {})
+	return &Manager{stores: store, core: listTestRuntime{acct: rec}, log: slog.Default()}
 }
 
-// TestListObjects_DelimiterGroupsAndLeaves verifies a single-page delimiter
-// list folds keys with a delimiter after the prefix into CommonPrefixes while
-// returning keys without one as plain objects.
-func TestListObjects_DelimiterGroupsAndLeaves(t *testing.T) {
-	defer quietLogs()()
-	store := newFakeListStore([]string{
-		"p/a/1.txt", "p/a/2.txt", // -> CommonPrefix p/a/
-		"p/b/1.txt",      // -> CommonPrefix p/b/
-		"p/file1.txt",    // -> leaf object
-		"p/file2.txt",    // -> leaf object
-		"other/skip.txt", // outside the prefix
-	})
-	m := newBenchListManager(store)
+// listTestRuntime is a minimal ObjectRuntime: ListObjects only reaches the
+// runtime through Acct().Operation.
+type listTestRuntime struct {
+	ObjectRuntime // embedded nil; only Acct is implemented
+
+	acct *accounting.Recorder
+}
+
+func (r listTestRuntime) Acct() *accounting.Recorder { return r.acct }
+
+// TestListObjects_DelimiterRoutesToStore verifies a delimiter list calls the
+// store's grouped query and maps CommonPrefixes, leaf objects, truncation,
+// token, and KeyCount into the response.
+func TestListObjects_DelimiterRoutesToStore(t *testing.T) {
+	store := &fakeListStore{delimResp: &core.ListDelimitedResult{
+		CommonPrefixes:        []string{"p/a/", "p/b/"},
+		Objects:               []core.ObjectLocation{{ObjectKey: "p/file.txt", BackendName: "b1"}},
+		IsTruncated:           true,
+		NextContinuationToken: "p/b0",
+	}}
+	m := newListTestManager(store)
 
 	res, err := m.ListObjects(context.Background(), "p/", "/", "", 1000)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
-
-	wantCP := []string{"p/a/", "p/b/"}
-	if !equalStrings(res.CommonPrefixes, wantCP) {
-		t.Errorf("CommonPrefixes = %v, want %v", res.CommonPrefixes, wantCP)
+	if store.delimCalls != 1 || store.flatCalls != 0 {
+		t.Errorf("calls: delim=%d flat=%d, want delim=1 flat=0", store.delimCalls, store.flatCalls)
 	}
-	wantObjs := []string{"p/file1.txt", "p/file2.txt"}
-	if got := objectKeys(res); !equalStrings(got, wantObjs) {
-		t.Errorf("Objects = %v, want %v", got, wantObjs)
+	if len(res.CommonPrefixes) != 2 || len(res.Objects) != 1 {
+		t.Errorf("got %d prefixes / %d objects, want 2 / 1", len(res.CommonPrefixes), len(res.Objects))
 	}
-	if res.KeyCount != 4 {
-		t.Errorf("KeyCount = %d, want 4", res.KeyCount)
+	if res.KeyCount != 3 {
+		t.Errorf("KeyCount = %d, want 3", res.KeyCount)
 	}
-	if res.IsTruncated {
-		t.Error("IsTruncated = true, want false")
+	if !res.IsTruncated || res.NextContinuationToken != "p/b0" {
+		t.Errorf("truncation = %v token = %q, want true / p/b0", res.IsTruncated, res.NextContinuationToken)
 	}
 }
 
-// TestListObjects_DelimiterSkipsLargeGroupBoundedPages is the regression guard
-// for the cursor skip: a single large group spanning many store pages must be
-// collapsed without paging through every key. Before the fix this walked the
-// group page by page (group_size/maxKeys pages); after it, one page discovers
-// the group and the next seek skips past it.
-func TestListObjects_DelimiterSkipsLargeGroupBoundedPages(t *testing.T) {
-	defer quietLogs()()
-	keys := make([]string, 0, 51)
-	for i := range 50 {
-		keys = append(keys, fmt.Sprintf("p/big/k%04d.txt", i))
-	}
-	keys = append(keys, "p/zzz/1.txt")
-	store := newFakeListStore(keys)
-	m := newBenchListManager(store)
-
-	// maxKeys=5 means each store page holds at most 5 rows; the "big" group is
-	// 50 keys, so the unfixed loop would need ~10 pages just to clear it.
-	res, err := m.ListObjects(context.Background(), "p/", "/", "", 5)
-	if err != nil {
-		t.Fatalf("ListObjects: %v", err)
-	}
-
-	wantCP := []string{"p/big/", "p/zzz/"}
-	if !equalStrings(res.CommonPrefixes, wantCP) {
-		t.Errorf("CommonPrefixes = %v, want %v", res.CommonPrefixes, wantCP)
-	}
-	// Two groups: one page discovers each, plus a terminal empty page. Without
-	// the skip this would be ~11.
-	if store.pages > 3 {
-		t.Errorf("store pages = %d, want <= 3 (group should be skipped, not walked)", store.pages)
-	}
-}
-
-// collectCommonPrefixes paginates a delimiter list to exhaustion, following the
-// continuation token, and returns how many times each CommonPrefix was emitted
-// across all pages. Fails the test if pagination does not terminate.
-func collectCommonPrefixes(t *testing.T, m *Manager, prefix, delimiter string, maxKeys int) map[string]int {
-	t.Helper()
-	seen := map[string]int{}
-	cursor := ""
-	for range 11 {
-		res, err := m.ListObjects(context.Background(), prefix, delimiter, cursor, maxKeys)
-		if err != nil {
-			t.Fatalf("ListObjects: %v", err)
-		}
-		for _, cp := range res.CommonPrefixes {
-			seen[cp]++
-		}
-		if !res.IsTruncated {
-			return seen
-		}
-		cursor = res.NextContinuationToken
-	}
-	t.Fatal("pagination did not terminate")
-	return nil
-}
-
-// TestListObjects_DelimiterPaginationNoDuplicate verifies that paginating a
-// delimiter list across calls emits every CommonPrefix exactly once with no
-// gaps, using the returned continuation token as the next startAfter.
-func TestListObjects_DelimiterPaginationNoDuplicate(t *testing.T) {
-	defer quietLogs()()
-	var keys []string
-	for g := range 4 {
-		for k := range 3 {
-			keys = append(keys, fmt.Sprintf("p/g%d/k%d.txt", g, k))
-		}
-	}
-	m := newBenchListManager(newFakeListStore(keys))
-
-	seen := collectCommonPrefixes(t, m, "p/", "/", 2)
-
-	for g := range 4 {
-		cp := fmt.Sprintf("p/g%d/", g)
-		if seen[cp] != 1 {
-			t.Errorf("CommonPrefix %q emitted %d times, want exactly 1", cp, seen[cp])
-		}
-	}
-	if len(seen) != 4 {
-		t.Errorf("emitted %d distinct prefixes, want 4: %v", len(seen), seen)
-	}
-}
-
-// TestListObjects_NoDelimiterReturnsObjects is the control: without a
-// delimiter every key is returned as a plain object, capped at maxKeys.
-func TestListObjects_NoDelimiterReturnsObjects(t *testing.T) {
-	defer quietLogs()()
-	store := newFakeListStore([]string{
-		"p/a/1.txt", "p/a/2.txt", "p/b/1.txt", "p/file.txt",
-	})
-	m := newBenchListManager(store)
+// TestListObjects_NoDelimiterRoutesToFlatStore verifies a non-delimiter list
+// calls the flat store query and maps its objects, truncation, and token.
+func TestListObjects_NoDelimiterRoutesToFlatStore(t *testing.T) {
+	store := &fakeListStore{flatResp: &core.ListObjectsResult{
+		Objects:               []core.ObjectLocation{{ObjectKey: "p/1"}, {ObjectKey: "p/2"}},
+		IsTruncated:           true,
+		NextContinuationToken: "p/2",
+	}}
+	m := newListTestManager(store)
 
 	res, err := m.ListObjects(context.Background(), "p/", "", "", 1000)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
-
+	if store.flatCalls != 1 || store.delimCalls != 0 {
+		t.Errorf("calls: flat=%d delim=%d, want flat=1 delim=0", store.flatCalls, store.delimCalls)
+	}
 	if len(res.CommonPrefixes) != 0 {
 		t.Errorf("CommonPrefixes = %v, want none", res.CommonPrefixes)
 	}
-	want := []string{"p/a/1.txt", "p/a/2.txt", "p/b/1.txt", "p/file.txt"}
-	if got := objectKeys(res); !equalStrings(got, want) {
-		t.Errorf("Objects = %v, want %v", got, want)
+	if res.KeyCount != 2 || res.NextContinuationToken != "p/2" || !res.IsTruncated {
+		t.Errorf("got KeyCount=%d token=%q trunc=%v, want 2 / p/2 / true", res.KeyCount, res.NextContinuationToken, res.IsTruncated)
 	}
-}
-
-// equalStrings reports whether two string slices are element-wise equal.
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

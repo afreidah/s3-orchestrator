@@ -170,17 +170,125 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 	if err != nil {
 		return nil, err
 	}
+	return core.BuildListPage(objects, maxKeys), nil
+}
 
-	result := &core.ListObjectsResult{}
-	if len(objects) > maxKeys {
-		result.IsTruncated = true
-		result.NextContinuationToken = objects[maxKeys-1].ObjectKey
-		result.Objects = objects[:maxKeys]
-	} else {
-		result.Objects = objects
+// ListObjectsDelimited groups a delimiter listing inside SQLite with a recursive
+// CTE whose recursive term carries a scalar-subquery seek: each step jumps to
+// the next key past the current group instead of scanning through it. Collation
+// is SQLite's native BINARY (object_key byte order), and instr/substr/char
+// compute each group plus its skip bound (the CommonPrefix with its last byte
+// incremented, or the leaf key). Keys with a delimiter after the prefix fold
+// into CommonPrefixes; the rest come back as leaf objects. The delimiter must be
+// non-empty.
+func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListDelimitedResult, error) {
+	if maxKeys <= 0 {
+		maxKeys = 1000
 	}
+	escapedPrefix := likeEscaper.Replace(prefix)
 
-	return result, nil
+	// dpos    = position of the first delimiter after the prefix (0 = none -> leaf)
+	// cplen   = prefix length + delimiter offset = length of the CommonPrefix
+	// skip    = CommonPrefix with its last char incremented (skips the whole
+	//           group in one seek), or the key itself for a leaf
+	const query = `
+		WITH RECURSIVE walk(k) AS (
+			SELECT (
+				SELECT object_key FROM object_locations
+				WHERE object_key LIKE :escprefix || '%' ESCAPE '\'
+				  AND object_key > :startafter
+				ORDER BY object_key LIMIT 1
+			)
+			UNION ALL
+			SELECT (
+				SELECT object_key FROM object_locations
+				WHERE object_key LIKE :escprefix || '%' ESCAPE '\'
+				  AND object_key > CASE
+					WHEN instr(substr(walk.k, length(:prefix) + 1), :delim) > 0 THEN
+						substr(walk.k, 1, length(:prefix) + instr(substr(walk.k, length(:prefix) + 1), :delim) + length(:delim) - 2)
+						|| char(unicode(substr(walk.k, length(:prefix) + instr(substr(walk.k, length(:prefix) + 1), :delim) + length(:delim) - 1, 1)) + 1)
+					ELSE walk.k
+				  END
+				ORDER BY object_key LIMIT 1
+			)
+			FROM walk WHERE walk.k IS NOT NULL
+		)
+		SELECT
+			w.k,
+			CASE WHEN instr(substr(w.k, length(:prefix) + 1), :delim) > 0 THEN 1 ELSE 0 END AS is_prefix,
+			CASE WHEN instr(substr(w.k, length(:prefix) + 1), :delim) > 0
+				THEN substr(w.k, 1, length(:prefix) + instr(substr(w.k, length(:prefix) + 1), :delim) + length(:delim) - 1)
+				ELSE NULL END AS common_prefix,
+			CASE
+				WHEN instr(substr(w.k, length(:prefix) + 1), :delim) > 0 THEN
+					substr(w.k, 1, length(:prefix) + instr(substr(w.k, length(:prefix) + 1), :delim) + length(:delim) - 2)
+					|| char(unicode(substr(w.k, length(:prefix) + instr(substr(w.k, length(:prefix) + 1), :delim) + length(:delim) - 1, 1)) + 1)
+				ELSE w.k
+			END AS skip_bound,
+			ol.backend_name, ol.size_bytes, ol.created_at
+		FROM walk w
+		LEFT JOIN object_locations ol ON ol.rowid = (
+			SELECT MIN(rowid) FROM object_locations o2
+			WHERE o2.object_key = w.k
+			  AND instr(substr(w.k, length(:prefix) + 1), :delim) = 0
+		)
+		WHERE w.k IS NOT NULL
+		ORDER BY w.k
+		LIMIT :limit`
+
+	rows, err := s.db.QueryContext(ctx, query,
+		sql.Named("escprefix", escapedPrefix),
+		sql.Named("prefix", prefix),
+		sql.Named("delim", delimiter),
+		sql.Named("startafter", startAfter),
+		sql.Named("limit", maxKeys+1),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list objects (delimited): %w", err)
+	}
+	defer rows.Close()
+
+	entries, err := scanDelimitedEntries(rows)
+	if err != nil {
+		return nil, err
+	}
+	return core.BuildDelimitedPage(entries, maxKeys), nil
+}
+
+// scanDelimitedEntries reads the loose-index-scan rows. Leaf columns are NULL on
+// CommonPrefix rows (the LEFT JOIN only matches leaves).
+func scanDelimitedEntries(rows *sql.Rows) ([]core.DelimitedEntry, error) {
+	var entries []core.DelimitedEntry
+	for rows.Next() {
+		var (
+			key       string
+			isPrefix  int
+			commonPfx sql.NullString
+			skipBound string
+			backend   sql.NullString
+			sizeBytes sql.NullInt64
+			createdAt sql.NullString
+		)
+		if err := rows.Scan(&key, &isPrefix, &commonPfx, &skipBound, &backend, &sizeBytes, &createdAt); err != nil {
+			return nil, fmt.Errorf("failed to scan delimited entry: %w", err)
+		}
+		e := core.DelimitedEntry{IsPrefix: isPrefix != 0, CommonPrefix: commonPfx.String, SkipBound: skipBound}
+		if !e.IsPrefix {
+			e.Leaf.ObjectKey = key
+			e.Leaf.BackendName = backend.String
+			e.Leaf.SizeBytes = sizeBytes.Int64
+			t, parseErr := parseTime(createdAt.String)
+			if parseErr != nil {
+				return nil, fmt.Errorf(errInvalidTimestamp, createdAt.String, parseErr)
+			}
+			e.Leaf.CreatedAt = t
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate delimited entries: %w", err)
+	}
+	return entries, nil
 }
 
 // ListExpiredObjects returns one row per unique key matching the given prefix

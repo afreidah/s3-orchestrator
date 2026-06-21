@@ -248,22 +248,15 @@ func listObjectsStore(t *testing.T, resp *core.ListObjectsResult, err error) *st
 	return store
 }
 
-// listObjectsPaged hands out paginated ListObjects results in order.
-func listObjectsPaged(t *testing.T, pages []core.ListObjectsResult) *storetest.MockMetadataStore {
+// listObjectsDelimitedStore wires a single ListObjectsDelimited response for the
+// delimiter path, which the store now serves as one grouped page.
+func listObjectsDelimitedStore(t *testing.T, resp *core.ListDelimitedResult, err error) *storetest.MockMetadataStore {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	objectsStubs(store)
-	idx := 0
-	store.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _, _ string, _ int) (*core.ListObjectsResult, error) {
-			if idx >= len(pages) {
-				return &core.ListObjectsResult{}, nil
-			}
-			page := pages[idx]
-			idx++
-			return &page, nil
-		}).AnyTimes()
+	store.EXPECT().ListObjectsDelimited(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(resp, err).AnyTimes()
 	storetest.Permissive(store)
 	return store
 }
@@ -2154,16 +2147,14 @@ func TestListObjects_Success(t *testing.T) {
 	}
 }
 
-// TestListObjects_WithDelimiter pins the delimiter-based grouping.
+// TestListObjects_WithDelimiter pins that the delimiter path maps the store's
+// grouped page (CommonPrefixes + leaf objects) into the response. The grouping
+// itself is exercised at the store layer (see the sqlite/integration tests).
 func TestListObjects_WithDelimiter(t *testing.T) {
 	t.Parallel()
-	store := listObjectsStore(t, &core.ListObjectsResult{
-		Objects: []core.ObjectLocation{
-			{ObjectKey: "photos/2024/a.jpg", BackendName: "b1"},
-			{ObjectKey: "photos/2024/b.jpg", BackendName: "b1"},
-			{ObjectKey: "photos/2025/c.jpg", BackendName: "b1"},
-			{ObjectKey: "photos/top.jpg", BackendName: "b1"},
-		},
+	store := listObjectsDelimitedStore(t, &core.ListDelimitedResult{
+		CommonPrefixes: []string{"photos/2024/", "photos/2025/"},
+		Objects:        []core.ObjectLocation{{ObjectKey: "photos/top.jpg", BackendName: "b1"}},
 	}, nil)
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
@@ -2182,117 +2173,6 @@ func TestListObjects_WithDelimiter(t *testing.T) {
 	}
 }
 
-// TestListObjects_DelimiterPagination pins the multi-page delimiter
-// behaviour.
-func TestListObjects_DelimiterPagination(t *testing.T) {
-	t.Parallel()
-	store := listObjectsPaged(t, []core.ListObjectsResult{
-		{
-			Objects: []core.ObjectLocation{
-				{ObjectKey: "dir/a/1", BackendName: "b1"},
-				{ObjectKey: "dir/a/2", BackendName: "b1"},
-				{ObjectKey: "dir/a/3", BackendName: "b1"},
-			},
-			IsTruncated: true,
-		},
-		{
-			Objects: []core.ObjectLocation{
-				{ObjectKey: "dir/b/1", BackendName: "b1"},
-				{ObjectKey: "dir/b/2", BackendName: "b1"},
-			},
-			IsTruncated: true,
-		},
-		{
-			Objects: []core.ObjectLocation{
-				{ObjectKey: "dir/c/1", BackendName: "b1"},
-				{ObjectKey: "dir/top.txt", BackendName: "b1"},
-			},
-			IsTruncated: false,
-		},
-	})
-	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
-
-	result, err := mgr.objectManager.ListObjects(context.Background(), "dir/", "/", "", 3)
-	if err != nil {
-		t.Fatalf("ListObjects: %v", err)
-	}
-	if result.KeyCount != 3 {
-		t.Errorf("KeyCount = %d, want 3 (full page)", result.KeyCount)
-	}
-	if len(result.CommonPrefixes) != 3 {
-		t.Errorf("CommonPrefixes = %v, want 3 entries", result.CommonPrefixes)
-	}
-	if !result.IsTruncated {
-		t.Error("expected IsTruncated=true since dir/top.txt remains")
-	}
-}
-
-// TestListObjects_DelimiterDedup pins prefix dedup across pages.
-func TestListObjects_DelimiterDedup(t *testing.T) {
-	t.Parallel()
-	store := listObjectsPaged(t, []core.ListObjectsResult{
-		{
-			Objects: []core.ObjectLocation{
-				{ObjectKey: "p/a/1", BackendName: "b1"},
-				{ObjectKey: "p/a/2", BackendName: "b1"},
-			},
-			IsTruncated: true,
-		},
-		{
-			Objects: []core.ObjectLocation{
-				{ObjectKey: "p/a/3", BackendName: "b1"},
-				{ObjectKey: "p/b/1", BackendName: "b1"},
-			},
-			IsTruncated: false,
-		},
-	})
-	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
-
-	result, err := mgr.objectManager.ListObjects(context.Background(), "p/", "/", "", 1000)
-	if err != nil {
-		t.Fatalf("ListObjects: %v", err)
-	}
-	if len(result.CommonPrefixes) != 2 {
-		t.Errorf("CommonPrefixes = %v, want [p/a/ p/b/]", result.CommonPrefixes)
-	}
-	if result.KeyCount != 2 {
-		t.Errorf("KeyCount = %d, want 2", result.KeyCount)
-	}
-}
-
-// TestListObjects_DelimiterTruncationSkipsSeen pins the cross-call
-// dedup advance.
-func TestListObjects_DelimiterTruncationSkipsSeen(t *testing.T) {
-	t.Parallel()
-	store := listObjectsStore(t, &core.ListObjectsResult{
-		Objects: []core.ObjectLocation{
-			{ObjectKey: "a/1", BackendName: "b1"},
-			{ObjectKey: "a/2", BackendName: "b1"},
-			{ObjectKey: "a/3", BackendName: "b1"},
-			{ObjectKey: "b/1", BackendName: "b1"},
-		},
-		IsTruncated: false,
-	}, nil)
-	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
-
-	result, err := mgr.objectManager.ListObjects(context.Background(), "", "/", "", 1)
-	if err != nil {
-		t.Fatalf("ListObjects: %v", err)
-	}
-	if result.KeyCount != 1 {
-		t.Errorf("KeyCount = %d, want 1", result.KeyCount)
-	}
-	if len(result.CommonPrefixes) != 1 || result.CommonPrefixes[0] != "a/" {
-		t.Errorf("CommonPrefixes = %v, want [a/]", result.CommonPrefixes)
-	}
-	if !result.IsTruncated {
-		t.Fatal("expected IsTruncated=true")
-	}
-	if result.NextContinuationToken != "a/3" {
-		t.Errorf("NextContinuationToken = %q, want %q", result.NextContinuationToken, "a/3")
-	}
-}
-
 // TestListObjects_ExactPageTruncation pins the exact-page truncation.
 func TestListObjects_ExactPageTruncation(t *testing.T) {
 	t.Parallel()
@@ -2304,7 +2184,7 @@ func TestListObjects_ExactPageTruncation(t *testing.T) {
 			SizeBytes:   100,
 		}
 	}
-	store := listObjectsStore(t, &core.ListObjectsResult{Objects: objs, IsTruncated: true}, nil)
+	store := listObjectsStore(t, &core.ListObjectsResult{Objects: objs, IsTruncated: true, NextContinuationToken: "pfx/002"}, nil)
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
 	result, err := mgr.objectManager.ListObjects(context.Background(), "pfx/", "", "", 3)
@@ -2319,205 +2199,6 @@ func TestListObjects_ExactPageTruncation(t *testing.T) {
 	}
 	if result.NextContinuationToken != "pfx/002" {
 		t.Errorf("NextContinuationToken = %q, want %q", result.NextContinuationToken, "pfx/002")
-	}
-}
-
-// TestAdvancePastEmittedCommonPrefix_TableDriven covers the helper.
-func TestAdvancePastEmittedCommonPrefix_TableDriven(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name      string
-		prefix    string
-		delimiter string
-		cursor    string
-		seen      map[string]bool
-		want      string
-	}{
-		{name: "empty delimiter returns cursor unchanged", cursor: "tenant/a/k1", delimiter: "", want: "tenant/a/k1"},
-		{name: "empty cursor returns cursor unchanged", delimiter: "/", cursor: "", want: ""},
-		{name: "cursor not under prefix returns unchanged", prefix: "users/", delimiter: "/", cursor: "other/x", seen: map[string]bool{"users/0010/": true}, want: "other/x"},
-		{name: "no delimiter in cursor's tail returns unchanged", prefix: "users/", delimiter: "/", cursor: "users/standalone-key", seen: map[string]bool{}, want: "users/standalone-key"},
-		{name: "cursor inside un-emitted CP returns unchanged", prefix: "users/", delimiter: "/", cursor: "users/0010/k1", seen: map[string]bool{}, want: "users/0010/k1"},
-		{name: "cursor inside emitted CP advances past group", prefix: "users/", delimiter: "/", cursor: "users/0010/k99", seen: map[string]bool{"users/0010/": true}, want: "users/00100"},
-		{name: "multi-byte delimiter advances correctly", prefix: "u-", delimiter: "--", cursor: "u-0010--k1", seen: map[string]bool{"u-0010--": true}, want: "u-0010-."},
-		{name: "0xff last byte cannot advance, returns cursor unchanged", prefix: "p", delimiter: "\xff", cursor: "p\xffk", seen: map[string]bool{"p\xff": true}, want: "p\xffk"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := object.AdvancePastEmittedCommonPrefix(tc.prefix, tc.delimiter, tc.cursor, tc.seen)
-			if got != tc.want {
-				t.Errorf("got %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-// TestListObjects_PageBoundaryMidCommonPrefix is the regression test
-// for the mid-group cursor rewrite.
-func TestListObjects_PageBoundaryMidCommonPrefix(t *testing.T) {
-	t.Parallel()
-	store := listObjectsPaged(t, []core.ListObjectsResult{
-		{
-			Objects: []core.ObjectLocation{
-				{ObjectKey: "a/1", BackendName: "b1"},
-				{ObjectKey: "a/2", BackendName: "b1"},
-			},
-			IsTruncated: true,
-		},
-		{
-			Objects: []core.ObjectLocation{
-				{ObjectKey: "b/1", BackendName: "b1"},
-				{ObjectKey: "b/2", BackendName: "b1"},
-				{ObjectKey: "b/3", BackendName: "b1"},
-			},
-			IsTruncated: true,
-		},
-	})
-	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
-
-	result, err := mgr.objectManager.ListObjects(context.Background(), "", "/", "", 2)
-	if err != nil {
-		t.Fatalf("ListObjects: %v", err)
-	}
-	if len(result.CommonPrefixes) != 2 || result.CommonPrefixes[0] != "a/" || result.CommonPrefixes[1] != "b/" {
-		t.Errorf("CommonPrefixes = %v, want [a/ b/]", result.CommonPrefixes)
-	}
-	if !result.IsTruncated {
-		t.Error("IsTruncated = false, want true (b/ group still has data)")
-	}
-	if result.NextContinuationToken != "b0" {
-		t.Errorf("NextContinuationToken = %q, want %q (advanced past b/ group)", result.NextContinuationToken, "b0")
-	}
-}
-
-// TestListObjects_MaxPagesCapMidCommonPrefix exercises the maxPages
-// cap branch and asserts the cap-hit counter increments.
-func TestListObjects_MaxPagesCapMidCommonPrefix(t *testing.T) {
-	originalCap := object.ListObjectsMaxPages
-	object.ListObjectsMaxPages = 2
-	defer func() { object.ListObjectsMaxPages = originalCap }()
-
-	store := listObjectsPaged(t, []core.ListObjectsResult{
-		{
-			Objects: []core.ObjectLocation{
-				{ObjectKey: "users/0001/k01", BackendName: "b1"},
-				{ObjectKey: "users/0001/k02", BackendName: "b1"},
-			},
-			IsTruncated: true,
-		},
-		{
-			Objects: []core.ObjectLocation{
-				{ObjectKey: "users/0001/k03", BackendName: "b1"},
-				{ObjectKey: "users/0001/k04", BackendName: "b1"},
-			},
-			IsTruncated: true,
-		},
-	})
-	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
-
-	before := testutil.ToFloat64(telemetry.ListPagesCappedTotal)
-	result, err := mgr.objectManager.ListObjects(context.Background(), "users/", "/", "", 1000)
-	if err != nil {
-		t.Fatalf("ListObjects: %v", err)
-	}
-	if len(result.CommonPrefixes) != 1 || result.CommonPrefixes[0] != "users/0001/" {
-		t.Errorf("CommonPrefixes = %v, want [users/0001/]", result.CommonPrefixes)
-	}
-	if !result.IsTruncated {
-		t.Error("IsTruncated = false, want true (maxPages cap with more data)")
-	}
-	if result.NextContinuationToken != "users/00010" {
-		t.Errorf("NextContinuationToken = %q, want %q (advanced past users/0001/ group)", result.NextContinuationToken, "users/00010")
-	}
-	if got := testutil.ToFloat64(telemetry.ListPagesCappedTotal) - before; got != 1 {
-		t.Errorf("ListPagesCappedTotal delta = %v, want 1", got)
-	}
-}
-
-// TestListObjects_NoCapHit_NoCounterIncrement verifies the cap-hit
-// counter only fires when the cap actually triggers; a normal exit
-// (store exhausted before maxPages) must not increment it.
-func TestListObjects_NoCapHit_NoCounterIncrement(t *testing.T) {
-	originalCap := object.ListObjectsMaxPages
-	object.ListObjectsMaxPages = 5
-	defer func() { object.ListObjectsMaxPages = originalCap }()
-
-	store := listObjectsPaged(t, []core.ListObjectsResult{
-		{
-			Objects: []core.ObjectLocation{
-				{ObjectKey: "a/1", BackendName: "b1"},
-			},
-			IsTruncated: false,
-		},
-	})
-	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
-
-	before := testutil.ToFloat64(telemetry.ListPagesCappedTotal)
-	if _, err := mgr.objectManager.ListObjects(context.Background(), "", "/", "", 1000); err != nil {
-		t.Fatalf("ListObjects: %v", err)
-	}
-	if got := testutil.ToFloat64(telemetry.ListPagesCappedTotal) - before; got != 0 {
-		t.Errorf("ListPagesCappedTotal delta = %v, want 0 (cap not hit)", got)
-	}
-}
-
-// TestListObjects_CrossCallWalkDoesNotDuplicateCommonPrefix simulates
-// paginating across calls.
-func TestListObjects_CrossCallWalkDoesNotDuplicateCommonPrefix(t *testing.T) {
-	t.Parallel()
-	store := listObjectsPaged(t, []core.ListObjectsResult{
-		{
-			Objects: []core.ObjectLocation{
-				{ObjectKey: "a/1", BackendName: "b1"},
-				{ObjectKey: "a/2", BackendName: "b1"},
-			},
-			IsTruncated: true,
-		},
-		{
-			Objects: []core.ObjectLocation{
-				{ObjectKey: "b/1", BackendName: "b1"},
-				{ObjectKey: "b/2", BackendName: "b1"},
-				{ObjectKey: "b/3", BackendName: "b1"},
-			},
-			IsTruncated: true,
-		},
-		{
-			Objects: []core.ObjectLocation{
-				{ObjectKey: "c/1", BackendName: "b1"},
-				{ObjectKey: "d/1", BackendName: "b1"},
-			},
-			IsTruncated: false,
-		},
-	})
-	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
-
-	first, err := mgr.objectManager.ListObjects(context.Background(), "", "/", "", 2)
-	if err != nil {
-		t.Fatalf("first call: %v", err)
-	}
-	if first.NextContinuationToken == "" {
-		t.Fatal("first call returned empty token; cannot walk")
-	}
-
-	second, err := mgr.objectManager.ListObjects(context.Background(), "", "/", first.NextContinuationToken, 1000)
-	if err != nil {
-		t.Fatalf("second call: %v", err)
-	}
-
-	combined := append([]string{}, first.CommonPrefixes...)
-	combined = append(combined, second.CommonPrefixes...)
-	seen := map[string]bool{}
-	for _, cp := range combined {
-		if seen[cp] {
-			t.Errorf("CommonPrefix %q emitted twice across paginated calls", cp)
-		}
-		seen[cp] = true
-	}
-	for _, cp := range second.CommonPrefixes {
-		if cp == "b/" {
-			t.Error("second call re-emitted b/ - cross-call dedup broken")
-		}
 	}
 }
 

@@ -239,3 +239,57 @@ WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
 GROUP BY object_key
 ORDER BY object_key
 LIMIT @max_keys;
+
+-- name: ListObjectsDelimited :many
+WITH RECURSIVE walk(k) AS (
+    (SELECT object_key
+       FROM object_locations
+      WHERE object_key LIKE @escprefix::text || '%' ESCAPE '\'
+        AND object_key COLLATE "C" > @start_after::text
+      ORDER BY object_key COLLATE "C"
+      LIMIT 1)
+    UNION ALL
+    SELECT (
+        SELECT object_key
+          FROM object_locations
+         WHERE object_key LIKE @escprefix::text || '%' ESCAPE '\'
+           AND object_key COLLATE "C" > CASE
+            WHEN position(@delim::text IN substr(walk.k, length(@prefix::text) + 1)) > 0 THEN
+                substr(walk.k, 1, length(@prefix::text) + position(@delim::text IN substr(walk.k, length(@prefix::text) + 1)) + length(@delim::text) - 2)
+                || chr(ascii(substr(walk.k, length(@prefix::text) + position(@delim::text IN substr(walk.k, length(@prefix::text) + 1)) + length(@delim::text) - 1, 1)) + 1)
+            ELSE walk.k
+           END
+         ORDER BY object_key COLLATE "C"
+         LIMIT 1
+    )
+    FROM walk WHERE walk.k IS NOT NULL
+)
+-- Every projected column is forced non-null (empty string / 0 / epoch) because
+-- the built-in sqlc analyzer cannot infer nullability for computed and
+-- LATERAL-joined columns; the Go side uses is_prefix to pick the meaningful
+-- fields per row, so the placeholder values for the other branch are ignored.
+SELECT
+    w.k::text AS object_key,
+    (position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) > 0)::boolean AS is_prefix,
+    (CASE WHEN position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) > 0
+        THEN substr(w.k, 1, length(@prefix::text) + position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) + length(@delim::text) - 1)
+        ELSE '' END)::text AS common_prefix,
+    (CASE WHEN position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) > 0 THEN
+            substr(w.k, 1, length(@prefix::text) + position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) + length(@delim::text) - 2)
+            || chr(ascii(substr(w.k, length(@prefix::text) + position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) + length(@delim::text) - 1, 1)) + 1)
+        ELSE w.k END)::text AS skip_bound,
+    COALESCE(leaf.backend_name, '')::text AS backend_name,
+    COALESCE(leaf.size_bytes, 0)::bigint AS size_bytes,
+    COALESCE(leaf.created_at, to_timestamp(0)) AS created_at
+FROM walk w
+LEFT JOIN LATERAL (
+    SELECT backend_name, size_bytes, created_at
+      FROM object_locations o2
+     WHERE o2.object_key = w.k
+       AND position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) = 0
+     ORDER BY created_at ASC
+     LIMIT 1
+) leaf ON true
+WHERE w.k IS NOT NULL
+ORDER BY w.k COLLATE "C"
+LIMIT @lim::int;
