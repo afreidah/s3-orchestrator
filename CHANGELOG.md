@@ -3,6 +3,76 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.62.26] - 2026-06-21
+
+### Other
+- perf(list): push delimiter CommonPrefix collapse into SQL via loose index scan (closes #1065) (#1066)
+
+## [0.62.25] - 2026-06-20
+
+### Fixed
+- fix(readpath): bound degraded-broadcast loser-drain to stop goroutine leak (closes #971) (#1048)
+- fix(dashboard): list directory children under underscore-named prefixes (closes #1045) (#1047)
+- fix(replication): stop unreachable backends cascading breaker trips (closes #1029) (#1038)
+- fix(ci): treat cosign Rekor 409 as already-signed (#1032)
+- fix(reconcile): byte-order cursor to stop sorted-merge oscillation (#1031)
+
+### Refactored
+- refactor(encryption): centralize stored-object decrypt + read-path plaintext pipeline (refs #1050) (#1062)
+- refactor(backend): GetWithTimeout/HeadWithTimeout lifecycle helpers (refs #1050) (#1057)
+- refactor(worker): batch runner + uniform WorkSummary results (refs #1050) (#1056)
+- refactor(rebalancer): PlacementSet + candidate cache for planning (refs #1050) (#1055)
+- refactor(readpath): extract ProbeScheduler from the Broadcaster (refs #1050) (#1053)
+- refactor(readpath): return an explicit ProbeResult instead of smuggling the winner via sync.Once (refs #1050) (#1052)
+- refactor(readpath): extract degraded-mode broadcast into a Broadcaster (#1044)
+- refactor(proxy): rename per-package Stores interfaces to disambiguate (closes #1006) (#1041)
+- refactor(proxy): decouple BackendRuntime from BackendManager (#1004, #990) (#1040)
+- refactor(proxy): rename infra.Core to BackendRuntime (closes #988) (#1039)
+
+### Dependencies
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 from 1.103.3 to 1.104.0 in the aws-sdk group (#1060)
+- chore(deps): bump actions/checkout from 6 to 7 in the actions group (#1059)
+- chore(deps): bump github.com/aws/smithy-go in the minor-and-patch group (#1061)
+- chore(deps): bump the minor-and-patch group with 4 updates (#1037)
+- chore(deps): bump the aws-sdk group with 4 updates (#1036)
+- chore(deps): bump SonarSource/sonarqube-scan-action in the actions group (#1035)
+
+### Other
+- perf(list): skip past emitted CommonPrefix groups during delimiter listing (closes #1063) (#1064)
+- typed move-reason profiles and provideIf DI helper (refs #1050) (#1054)
+- test(perf): make get-cold measure cold reads and fail loudly on flush errors (closes #1049) (#1051)
+- take Deps/Config structs for constructors with >=4 params (#1042)
+- reach parity with the dashboard (refs #1033) (#1034)
+- GH_ISSUE_1009: move validate logic into internal/cli/validatecmd (#1028)
+
+## [0.62.1] - 2026-06-11
+
+### Fixed
+- fix(ci,deps): patch webpage base image CVEs + bump pgx to v5.10.0 (#1027)
+
+### Other
+- GH_ISSUE_1025: human-readable CLI output + per-item progress streaming (#1026)
+- GH_ISSUE_1023: bound + rate-limit backfill-checksums; add make install (#1024)
+
+## [0.61.1] - 2026-06-08
+
+### Other
+- GH_ISSUE_1021: target a remote instance via admin flags/env, no full config (#1022)
+
+## [0.61.0] - 2026-06-08
+
+### Improved
+- update CHANGELOG.md for v0.60.40 (#1001)
+
+### Dependencies
+- chore(deps): bump the aws-sdk group with 4 updates (#1016)
+
+### Other
+- docs(web): reflect usage reconciliation in godoc + background-services diagram (#1020)
+- GH_ISSUE_1018: add usage reconciliation to correct bytes_used drift (#1019)
+- GH_ISSUE_1011: ride out transient MinIO 502s in concurrent put/delete test (#1015)
+- GH_ISSUE_1002: route over-replication cleaner through the TxAdapter lock seam (#1010)
+
 ## [0.60.40] - 2026-06-02
 
 ### Added
