@@ -276,6 +276,21 @@ type ListDelimitedResult struct {
 	NextContinuationToken string
 }
 
+// BuildListPage caps a flat prefix listing at maxKeys and sets the continuation
+// token to the last kept key when more objects follow. Shared by both engines so
+// the flat ListObjects truncation contract stays identical.
+func BuildListPage(objects []ObjectLocation, maxKeys int) *ListObjectsResult {
+	result := &ListObjectsResult{}
+	if len(objects) > maxKeys {
+		result.IsTruncated = true
+		result.NextContinuationToken = objects[maxKeys-1].ObjectKey
+		result.Objects = objects[:maxKeys]
+	} else {
+		result.Objects = objects
+	}
+	return result
+}
+
 // DelimitedEntry is one key-ordered row of a delimiter-grouped scan: either a
 // CommonPrefix or a leaf object. SkipBound is the value a continuation token
 // takes when the page truncates on this entry (the CommonPrefix advanced past

@@ -170,28 +170,17 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 	if err != nil {
 		return nil, err
 	}
-
-	result := &core.ListObjectsResult{}
-	if len(objects) > maxKeys {
-		result.IsTruncated = true
-		result.NextContinuationToken = objects[maxKeys-1].ObjectKey
-		result.Objects = objects[:maxKeys]
-	} else {
-		result.Objects = objects
-	}
-
-	return result, nil
+	return core.BuildListPage(objects, maxKeys), nil
 }
 
-// ListObjectsDelimited returns one delimiter-grouped page: keys whose remainder
-// after the prefix contains the delimiter collapse into CommonPrefixes, the rest
-// are returned as leaf objects. Implemented as a loose index scan (recursive CTE
-// skip-scan) so the database seeks group-to-group instead of scanning every key
-// under the prefix - cost is proportional to the entries emitted, not the
-// keyspace. The skip bound (CommonPrefix with its last byte incremented, or the
-// leaf key) and the strict ">" cursor match the proxy's prior grouping exactly.
-// The delimiter must be non-empty; callers route empty-delimiter lists to
-// ListObjects.
+// ListObjectsDelimited groups a delimiter listing inside SQLite with a recursive
+// CTE whose recursive term carries a scalar-subquery seek: each step jumps to
+// the next key past the current group instead of scanning through it. Collation
+// is SQLite's native BINARY (object_key byte order), and instr/substr/char
+// compute each group plus its skip bound (the CommonPrefix with its last byte
+// incremented, or the leaf key). Keys with a delimiter after the prefix fold
+// into CommonPrefixes; the rest come back as leaf objects. The delimiter must be
+// non-empty.
 func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*core.ListDelimitedResult, error) {
 	if maxKeys <= 0 {
 		maxKeys = 1000

@@ -107,14 +107,15 @@ func TestListObjectsV2_Pagination(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
 
-	// The store truncates to maxKeys=2 and reports the continuation token.
+	// The store truncates to maxKeys=2 and reports the continuation marker.
+	marker := "mybucket/b.txt"
 	mockStore.ListObjectsResp = &core.ListObjectsResult{
 		Objects: []core.ObjectLocation{
 			{ObjectKey: "mybucket/a.txt", BackendName: "b1", SizeBytes: 10, CreatedAt: now},
 			{ObjectKey: "mybucket/b.txt", BackendName: "b1", SizeBytes: 20, CreatedAt: now},
 		},
 		IsTruncated:           true,
-		NextContinuationToken: "mybucket/b.txt",
+		NextContinuationToken: marker,
 	}
 
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?list-type=2&max-keys=2", nil)
@@ -288,15 +289,16 @@ func TestListObjectsV1_Pagination(t *testing.T) {
 	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
 
-	// The store truncates to maxKeys=2 and reports the continuation token,
+	// The store truncates to maxKeys=2 and reports the continuation marker,
 	// which the V1 handler maps to NextMarker.
+	marker := "mybucket/b.txt"
 	mockStore.ListObjectsResp = &core.ListObjectsResult{
 		Objects: []core.ObjectLocation{
 			{ObjectKey: "mybucket/a.txt", BackendName: "b1", SizeBytes: 10, CreatedAt: now},
 			{ObjectKey: "mybucket/b.txt", BackendName: "b1", SizeBytes: 20, CreatedAt: now},
 		},
 		IsTruncated:           true,
-		NextContinuationToken: "mybucket/b.txt",
+		NextContinuationToken: marker,
 	}
 
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?max-keys=2", nil)
