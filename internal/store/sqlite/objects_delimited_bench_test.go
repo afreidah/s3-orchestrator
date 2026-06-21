@@ -40,16 +40,11 @@ func newBenchStore(b *testing.B) *Store {
 // how many keys back them.
 func BenchmarkListObjectsDelimited(b *testing.B) {
 	const dirs = 8
+	ctx := context.Background()
 	for _, n := range []int{1_000, 10_000, 100_000} {
 		b.Run(fmt.Sprintf("keys=%d", n), func(b *testing.B) {
 			s := newBenchStore(b)
-			ctx := context.Background()
-			for i := range n {
-				key := fmt.Sprintf("logs/dir%02d/key%08d.txt", i%dirs, i)
-				if _, err := s.RecordObject(ctx, key, "backend-a", 1, nil); err != nil {
-					b.Fatalf("RecordObject: %v", err)
-				}
-			}
+			seedDelimitedKeys(b, s, n, dirs)
 
 			b.ResetTimer()
 			for b.Loop() {
@@ -62,5 +57,18 @@ func BenchmarkListObjectsDelimited(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// seedDelimitedKeys records n keys spread across dirs second-level directories
+// as "logs/dir<NN>/key<i>.txt".
+func seedDelimitedKeys(b *testing.B, s *Store, n, dirs int) {
+	b.Helper()
+	ctx := context.Background()
+	for i := range n {
+		key := fmt.Sprintf("logs/dir%02d/key%08d.txt", i%dirs, i)
+		if _, err := s.RecordObject(ctx, key, "backend-a", 1, nil); err != nil {
+			b.Fatalf("RecordObject: %v", err)
+		}
 	}
 }

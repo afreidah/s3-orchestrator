@@ -37,7 +37,7 @@ func TestStoreInt_ListObjectsDelimited_GroupsAndLeaves(t *testing.T) {
 		if _, err := s.RecordObject(ctx, k, "backend-a", 10, nil); err != nil {
 			t.Fatalf("RecordObject(%s): %v", k, err)
 		}
-		defer func(k string) { _, _ = s.DeleteObject(ctx, k) }(k)
+		t.Cleanup(func() { _, _ = s.DeleteObject(ctx, k) })
 	}
 
 	res, err := s.ListObjectsDelimited(ctx, prefix, "/", "", 1000)
@@ -64,34 +64,10 @@ func TestStoreInt_ListObjectsDelimited_GroupsAndLeaves(t *testing.T) {
 // across calls via the continuation token emits every CommonPrefix exactly once.
 func TestStoreInt_ListObjectsDelimited_PaginationNoDuplicate(t *testing.T) {
 	s := adapterPgStore(t)
-	ctx := context.Background()
 	prefix := uniqueKey(t, "")
+	seedPGDelimiterGroups(t, s, prefix, 4, 3)
 
-	for g := range 4 {
-		for k := range 3 {
-			key := fmt.Sprintf("%sg%d/k%d.txt", prefix, g, k)
-			if _, err := s.RecordObject(ctx, key, "backend-a", 1, nil); err != nil {
-				t.Fatalf("RecordObject(%s): %v", key, err)
-			}
-			defer func(k string) { _, _ = s.DeleteObject(ctx, k) }(key)
-		}
-	}
-
-	seen := map[string]int{}
-	after := ""
-	for range 11 {
-		res, err := s.ListObjectsDelimited(ctx, prefix, "/", after, 2)
-		if err != nil {
-			t.Fatalf("ListObjectsDelimited: %v", err)
-		}
-		for _, cp := range res.CommonPrefixes {
-			seen[cp]++
-		}
-		if !res.IsTruncated {
-			break
-		}
-		after = res.NextContinuationToken
-	}
+	seen := collectPGCommonPrefixes(t, s, prefix, "/", 2)
 
 	for g := range 4 {
 		cp := fmt.Sprintf("%sg%d/", prefix, g)
@@ -102,4 +78,44 @@ func TestStoreInt_ListObjectsDelimited_PaginationNoDuplicate(t *testing.T) {
 	if len(seen) != 4 {
 		t.Errorf("distinct prefixes = %d, want 4: %v", len(seen), seen)
 	}
+}
+
+// seedPGDelimiterGroups records groups x perGroup keys as
+// "<prefix>g<G>/k<K>.txt" and registers per-key cleanup that runs at test end.
+func seedPGDelimiterGroups(t *testing.T, s *Store, prefix string, groups, perGroup int) {
+	t.Helper()
+	ctx := context.Background()
+	for g := range groups {
+		for k := range perGroup {
+			key := fmt.Sprintf("%sg%d/k%d.txt", prefix, g, k)
+			if _, err := s.RecordObject(ctx, key, "backend-a", 1, nil); err != nil {
+				t.Fatalf("RecordObject(%s): %v", key, err)
+			}
+			t.Cleanup(func() { _, _ = s.DeleteObject(ctx, key) })
+		}
+	}
+}
+
+// collectPGCommonPrefixes paginates a delimiter list to exhaustion via the
+// continuation token and counts how many times each CommonPrefix was emitted.
+func collectPGCommonPrefixes(t *testing.T, s *Store, prefix, delim string, maxKeys int) map[string]int {
+	t.Helper()
+	ctx := context.Background()
+	seen := map[string]int{}
+	after := ""
+	for range 11 {
+		res, err := s.ListObjectsDelimited(ctx, prefix, delim, after, maxKeys)
+		if err != nil {
+			t.Fatalf("ListObjectsDelimited: %v", err)
+		}
+		for _, cp := range res.CommonPrefixes {
+			seen[cp]++
+		}
+		if !res.IsTruncated {
+			return seen
+		}
+		after = res.NextContinuationToken
+	}
+	t.Fatal("pagination did not terminate")
+	return nil
 }
