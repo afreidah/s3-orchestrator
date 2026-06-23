@@ -120,8 +120,16 @@ run_scenario "list" "$BINARY" \
   -output-json "$RESULTS_DIR/list.json"
 
 if command -v k6 >/dev/null; then
+  # Pin the demo creds explicitly: multipart.js reads AWS_* from __ENV, so
+  # without these it would inherit whatever AWS_ACCESS_KEY_ID/SECRET are exported
+  # in the caller's shell and sign with the wrong key (-> 403). The Go scenarios
+  # don't hit this because they default creds via flags, not the environment.
+  # k6 --env wins over inherited OS env, so these override any ambient AWS_*.
   run_scenario "multipart" k6 run loadtest/k6/multipart.js \
     --env "S3_ENDPOINT=$ENDPOINT" --env "S3_BUCKET=$BUCKET" \
+    --env "AWS_ACCESS_KEY_ID=photoskey" \
+    --env "AWS_SECRET_ACCESS_KEY=photossecret" \
+    --env "AWS_REGION=us-east-1" \
     --env "CONCURRENCY=$MPU_CONCURRENCY" \
     --env "PART_COUNT=$MPU_PART_COUNT" \
     --env "PART_SIZE=$MPU_PART_SIZE"
