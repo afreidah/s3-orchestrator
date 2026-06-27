@@ -184,8 +184,8 @@
       <button id="upload-btn" class="btn-upload">Upload</button>
       <span id="upload-status"></span>
     </div>
-    <input type="file" id="upload-files-input" multiple hidden>
-    <input type="file" id="upload-folder-input" webkitdirectory hidden>
+    <input type="file" id="upload-files-input" aria-label="Upload files" multiple hidden>
+    <input type="file" id="upload-folder-input" aria-label="Upload folder" webkitdirectory hidden>
     {{if .Data.TopLevelEntries.Entries}}
     <div class="object-tree" id="object-tree">
       {{range .Data.TopLevelEntries.Entries}}
@@ -282,7 +282,7 @@
     <h2>Logs
       <button id="logs-refresh" class="btn-action">Refresh</button>
       <label class="logs-auto-label"><input type="checkbox" id="logs-auto"> Auto</label>
-      <select id="logs-level" class="logs-level-select">
+      <select id="logs-level" class="logs-level-select" aria-label="Filter logs by level">
         <option value="">All</option>
         <option value="DEBUG">Debug</option>
         <option value="INFO" selected>Info</option>
@@ -290,7 +290,7 @@
         <option value="ERROR">Error</option>
       </select>
     </h2>
-    <input type="text" id="logs-search" class="logs-search" placeholder="Filter logs...">
+    <input type="text" id="logs-search" class="logs-search" aria-label="Filter logs" placeholder="Filter logs...">
     <div id="logs-container" class="logs-container">
       <div class="tree-loading">Loading&hellip;</div>
     </div>

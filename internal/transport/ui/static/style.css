@@ -676,7 +676,7 @@ dialog#sync-dialog select:focus {
   margin: 0;
   padding: 0.5rem 1rem 0.6rem 4.5rem;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: break-word;
   background: #0f172a;
   color: #cbd5e1;
   font-size: 0.85em;
