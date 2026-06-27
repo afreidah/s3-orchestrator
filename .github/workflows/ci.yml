@@ -146,7 +146,10 @@ jobs:
 
   test:
     needs: [changes]
-    if: needs.changes.outputs.go == 'true'
+    # Run on Go-touching PRs and on every push to main: a main push always
+    # needs fresh coverage so the SonarQube scan can re-analyse main without
+    # resetting stored coverage, even when only non-Go files changed.
+    if: needs.changes.outputs.go == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -184,7 +187,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [changes]
-    if: needs.changes.outputs.go == 'true'
+    # Same as the unit test job: also run on every push to main so the
+    # SonarQube scan has merged unit+integration coverage for main.
+    if: needs.changes.outputs.go == 'true' || github.event_name == 'push'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
 
@@ -208,10 +213,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [changes, test, integration]
-    # Skip non-Go pushes to main: with no coverage artifacts the scan
-    # reports 0% and clobbers main's stored new-code coverage. PRs still
-    # run (their gate has no coverage condition when no Go changed).
-    if: always() && github.actor != 'dependabot[bot]' && needs.test.result != 'failure' && needs.test.result != 'cancelled' && (needs.changes.outputs.go == 'true' || github.event_name == 'pull_request')
+    # Run on every push to main and on every PR. The test/integration jobs
+    # also run on main pushes, so coverage artifacts always exist here and the
+    # scan re-analyses main (clearing fixed issues) without zeroing coverage.
+    # PRs with no Go change still run (their gate has no coverage condition).
+    if: always() && github.actor != 'dependabot[bot]' && needs.test.result != 'failure' && needs.test.result != 'cancelled' && (github.event_name == 'pull_request' || github.event_name == 'push')
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
         with:

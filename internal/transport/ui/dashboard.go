@@ -8,6 +8,8 @@
 // returns, then folds in the configuration summary the template needs
 // to decide which admin-action buttons to render and ensures every
 // configured bucket shows up as a top-level directory even when empty.
+// Interactive form controls in the template carry aria-labels so the
+// rendered page passes accessibility checks.
 // -------------------------------------------------------------------------------
 
 package ui
