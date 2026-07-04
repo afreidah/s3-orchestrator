@@ -3,6 +3,24 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.62.28] - 2026-07-04
+
+### Fixed
+- fix(ui): clear SonarCloud dashboard reliability & maintainability issues (#1070)
+
+### Improved
+- update CHANGELOG.md for v0.62.27 (#1068)
+
+### Dependencies
+- chore(deps): bump github.com/pressly/goose/v3 (#1076)
+- chore(deps): bump the aws-sdk group with 4 updates (#1074)
+- chore(deps): bump the actions group with 6 updates (#1073)
+- chore(deps): bump golang.org/x/net (#1072)
+- chore(deps): bump the minor-and-patch group with 6 updates (#1069)
+
+### Other
+- ci(sonar): re-analyse main on every push, not just Go changes (#1071)
+
 ## [0.62.27] - 2026-06-25
 
 ### Fixed
