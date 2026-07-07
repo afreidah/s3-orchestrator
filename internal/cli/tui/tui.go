@@ -36,13 +36,21 @@ type entry struct {
 	size  int64
 }
 
+// objectLister is the admin API surface the browser depends on. The concrete
+// *apiClient satisfies it; tests inject a fake.
+type objectLister interface {
+	ListObjects(ctx context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error)
+}
+
 // model is the Bubble Tea state for the browser.
 type model struct {
-	client  *apiClient
+	client  objectLister
 	prefix  string        // the prefix currently listed ("" is the root)
 	entries []entry       // domain rows backing the table, indexed by table cursor
 	table   table.Model   // scrolling, selectable listing table
-	loading bool          // a load command is in flight
+	loading bool          // a fresh (page-replacing) load is in flight
+	next    string        // continuation token for the current prefix ("" = no more)
+	more    bool          // a load-more (append) request is in flight
 	err     error         // last load error, if any
 	spinner spinner.Model // animated indicator shown while loading
 	width   int           // terminal width from the last WindowSizeMsg
@@ -51,7 +59,7 @@ type model struct {
 
 // initialModel builds the starting state; loading is true because Init fires
 // the first load immediately.
-func initialModel(client *apiClient) model {
+func initialModel(client objectLister) model {
 	t := table.New(table.WithFocused(true))
 	st := table.DefaultStyles()
 	st.Header = st.Header.Bold(true).Foreground(lipgloss.Color("39"))
@@ -64,26 +72,29 @@ func initialModel(client *apiClient) model {
 // MESSAGES AND COMMANDS
 // -------------------------------------------------------------------------
 
-// objectsLoadedMsg carries a successfully loaded listing page and the prefix
-// it was fetched for.
+// objectsLoadedMsg carries a successfully loaded listing page. A non-empty
+// continuation means this page appends to the current listing rather than
+// replacing it.
 type objectsLoadedMsg struct {
-	prefix string
-	page   *adminapi.ObjectListResponse
+	prefix       string
+	continuation string
+	page         *adminapi.ObjectListResponse
 }
 
 // errMsg carries a failed load.
 type errMsg struct{ err error }
 
 // loadObjects returns a command that fetches one page under prefix off the main
-// loop, delivering the result back as an objectsLoadedMsg or errMsg.
-func (m model) loadObjects(prefix string) tea.Cmd {
+// loop, delivering the result back as an objectsLoadedMsg or errMsg. A
+// non-empty continuation resumes a truncated listing.
+func (m model) loadObjects(prefix, continuation string) tea.Cmd {
 	client := m.client
 	return func() tea.Msg {
-		page, err := client.ListObjects(context.Background(), prefix, "")
+		page, err := client.ListObjects(context.Background(), prefix, continuation)
 		if err != nil {
 			return errMsg{err}
 		}
-		return objectsLoadedMsg{prefix: prefix, page: page}
+		return objectsLoadedMsg{prefix: prefix, continuation: continuation, page: page}
 	}
 }
 
@@ -106,19 +117,14 @@ func entriesFromPage(prefix string, page *adminapi.ObjectListResponse) []entry {
 
 // Init fires the first load of the root prefix and starts the spinner ticking.
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.loadObjects(m.prefix), m.spinner.Tick)
+	return tea.Batch(m.loadObjects(m.prefix, ""), m.spinner.Tick)
 }
 
 // Update handles one message and returns the next state.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case objectsLoadedMsg:
-		m.prefix = msg.prefix
-		m.entries = entriesFromPage(msg.prefix, msg.page)
-		m.table.SetRows(rowsFromEntries(m.entries))
-		m.table.SetCursor(0)
-		m.loading = false
-		m.err = nil
+		m.applyPage(msg)
 		return m, nil
 	case errMsg:
 		m.loading = false
@@ -151,11 +157,39 @@ func (m model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.ascend()
 	case "r":
 		m.loading = true
-		return m, m.loadObjects(m.prefix)
+		return m, m.loadObjects(m.prefix, "")
 	}
+
 	var cmd tea.Cmd
 	m.table, cmd = m.table.Update(key)
+	if m.next != "" && !m.more && m.table.Cursor() >= len(m.entries)-1 {
+		m.more = true
+		return m, tea.Batch(cmd, m.loadObjects(m.prefix, m.next))
+	}
 	return m, cmd
+}
+
+// applyPage folds a loaded page into the model: a continuation appends to the
+// current listing, a fresh load replaces it. Either way it records the next
+// continuation token so the bottom of the list can page further.
+func (m *model) applyPage(msg objectsLoadedMsg) {
+	loaded := entriesFromPage(msg.prefix, msg.page)
+	if msg.continuation == "" {
+		m.prefix = msg.prefix
+		m.entries = loaded
+		m.table.SetRows(rowsFromEntries(m.entries))
+		m.table.SetCursor(0)
+	} else {
+		m.entries = append(m.entries, loaded...)
+		m.table.SetRows(rowsFromEntries(m.entries))
+	}
+	m.next = ""
+	if msg.page.Truncated {
+		m.next = msg.page.Next
+	}
+	m.loading = false
+	m.more = false
+	m.err = nil
 }
 
 // descend loads the highlighted directory, if the selected row is one.
@@ -163,7 +197,7 @@ func (m model) descend() (tea.Model, tea.Cmd) {
 	idx := m.table.Cursor()
 	if idx >= 0 && idx < len(m.entries) && m.entries[idx].isDir {
 		m.loading = true
-		return m, m.loadObjects(m.prefix + m.entries[idx].name)
+		return m, m.loadObjects(m.prefix+m.entries[idx].name, "")
 	}
 	return m, nil
 }
@@ -172,7 +206,7 @@ func (m model) descend() (tea.Model, tea.Cmd) {
 func (m model) ascend() (tea.Model, tea.Cmd) {
 	if m.prefix != "" {
 		m.loading = true
-		return m, m.loadObjects(parentPrefix(m.prefix))
+		return m, m.loadObjects(parentPrefix(m.prefix), "")
 	}
 	return m, nil
 }
@@ -237,9 +271,13 @@ func (m model) headerView() string {
 	return titleStyle.Width(m.width).Render("s3-orchestrator tui   " + loc)
 }
 
-// footerView renders the full-width key-hint bar.
+// footerView renders the full-width key-hint bar, noting when more pages remain.
 func (m model) footerView() string {
-	return helpStyle.Width(m.width).Render("up/down move - enter open - backspace up - r reload - q quit")
+	hints := "up/down move - enter open - backspace up - r reload - q quit"
+	if m.next != "" {
+		hints += " - (more below)"
+	}
+	return helpStyle.Width(m.width).Render(hints)
 }
 
 // bodyView renders the current content: an error, the loading indicator, an
