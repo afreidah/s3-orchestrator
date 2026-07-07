@@ -49,6 +49,10 @@ func main() { // codecov:ignore -- thin wrapper, logic tested via subcommands
 			os.Args = os.Args[1:]
 			runAdmin()
 			return
+		case "tui":
+			os.Args = os.Args[1:]
+			runTUI()
+			return
 		case "help", "--help", "-h":
 			printUsage()
 			return
