@@ -375,6 +375,32 @@ Returns all copies of an object across backends.
 }
 ```
 
+### GET /admin/api/objects
+
+Returns one delimiter-grouped page of the object namespace, mirroring S3
+ListObjectsV2 delimiter semantics. Backs the `s3-orchestrator tui` browser.
+
+**Query parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `prefix` | No | Prefix to list under (empty lists the root) |
+| `delimiter` | No | Grouping delimiter; defaults to `/` |
+| `continuation` | No | Continuation token from a previous truncated page |
+
+**Response:**
+
+```json
+{
+  "common_prefixes": ["my-bucket/photos/", "my-bucket/docs/"],
+  "objects": [
+    {"key": "my-bucket/readme.txt", "size": 42}
+  ],
+  "truncated": false,
+  "next": ""
+}
+```
+
 ### GET /admin/api/cleanup-queue
 
 Returns the cleanup queue depth and pending items (up to 50).
