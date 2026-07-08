@@ -56,7 +56,7 @@ func TestBrowser_LoadsAndDescends(t *testing.T) {
 	waitForText(t, tm, "sunset")
 
 	tm.Type("q")
-	fm, ok := tm.FinalModel(t).(model)
+	fm, ok := tm.FinalModel(t).(*model)
 	if !ok {
 		t.Fatal("final model is not a model")
 	}
@@ -79,7 +79,7 @@ func TestBrowser_LoadMoreAppends(t *testing.T) {
 	waitForText(t, tm, "gamma")
 
 	tm.Type("q")
-	fm, ok := tm.FinalModel(t).(model)
+	fm, ok := tm.FinalModel(t).(*model)
 	if !ok {
 		t.Fatal("final model is not a model")
 	}

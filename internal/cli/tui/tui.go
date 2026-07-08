@@ -13,6 +13,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -59,13 +60,13 @@ type model struct {
 
 // initialModel builds the starting state; loading is true because Init fires
 // the first load immediately.
-func initialModel(client objectLister) model {
+func initialModel(client objectLister) *model {
 	t := table.New(table.WithFocused(true))
 	st := table.DefaultStyles()
 	st.Header = st.Header.Bold(true).Foreground(lipgloss.Color("39"))
 	st.Selected = selectedStyle
 	t.SetStyles(st)
-	return model{client: client, loading: true, spinner: spinner.New(), table: t}
+	return &model{client: client, loading: true, spinner: spinner.New(), table: t}
 }
 
 // -------------------------------------------------------------------------
@@ -87,7 +88,7 @@ type errMsg struct{ err error }
 // loadObjects returns a command that fetches one page under prefix off the main
 // loop, delivering the result back as an objectsLoadedMsg or errMsg. A
 // non-empty continuation resumes a truncated listing.
-func (m model) loadObjects(prefix, continuation string) tea.Cmd {
+func (m *model) loadObjects(prefix, continuation string) tea.Cmd {
 	client := m.client
 	return func() tea.Msg {
 		page, err := client.ListObjects(context.Background(), prefix, continuation)
@@ -116,12 +117,12 @@ func entriesFromPage(prefix string, page *adminapi.ObjectListResponse) []entry {
 // -------------------------------------------------------------------------
 
 // Init fires the first load of the root prefix and starts the spinner ticking.
-func (m model) Init() tea.Cmd {
+func (m *model) Init() tea.Cmd {
 	return tea.Batch(m.loadObjects(m.prefix, ""), m.spinner.Tick)
 }
 
 // Update handles one message and returns the next state.
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case objectsLoadedMsg:
 		m.applyPage(msg)
@@ -147,7 +148,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey applies application-level keys (quit, navigate, reload) and
 // delegates everything else (cursor movement, paging) to the table.
-func (m model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
@@ -157,7 +158,8 @@ func (m model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.ascend()
 	case "r":
 		m.loading = true
-		return m, m.loadObjects(m.prefix, "")
+		cmd := m.loadObjects(m.prefix, "")
+		return m, cmd
 	}
 
 	var cmd tea.Cmd
@@ -193,20 +195,22 @@ func (m *model) applyPage(msg objectsLoadedMsg) {
 }
 
 // descend loads the highlighted directory, if the selected row is one.
-func (m model) descend() (tea.Model, tea.Cmd) {
+func (m *model) descend() (tea.Model, tea.Cmd) {
 	idx := m.table.Cursor()
 	if idx >= 0 && idx < len(m.entries) && m.entries[idx].isDir {
 		m.loading = true
-		return m, m.loadObjects(m.prefix+m.entries[idx].name, "")
+		cmd := m.loadObjects(m.prefix+m.entries[idx].name, "")
+		return m, cmd
 	}
 	return m, nil
 }
 
 // ascend loads the parent prefix unless already at the root.
-func (m model) ascend() (tea.Model, tea.Cmd) {
+func (m *model) ascend() (tea.Model, tea.Cmd) {
 	if m.prefix != "" {
 		m.loading = true
-		return m, m.loadObjects(parentPrefix(m.prefix), "")
+		cmd := m.loadObjects(parentPrefix(m.prefix), "")
+		return m, cmd
 	}
 	return m, nil
 }
@@ -249,7 +253,7 @@ func parentPrefix(prefix string) string {
 
 // View composes the full-screen layout: a title bar on top, the body filling
 // the available height, and a help bar pinned to the bottom.
-func (m model) View() string {
+func (m *model) View() string {
 	if m.width == 0 {
 		return "loading..."
 	}
@@ -263,7 +267,7 @@ func (m model) View() string {
 }
 
 // headerView renders the full-width title bar with the current prefix.
-func (m model) headerView() string {
+func (m *model) headerView() string {
 	loc := m.prefix
 	if loc == "" {
 		loc = "/"
@@ -272,7 +276,7 @@ func (m model) headerView() string {
 }
 
 // footerView renders the full-width key-hint bar, noting when more pages remain.
-func (m model) footerView() string {
+func (m *model) footerView() string {
 	hints := "up/down move - enter open - backspace up - r reload - q quit"
 	if m.next != "" {
 		hints += " - (more below)"
@@ -282,7 +286,7 @@ func (m model) footerView() string {
 
 // bodyView renders the current content: an error, the loading indicator, an
 // empty notice, or the row list.
-func (m model) bodyView() string {
+func (m *model) bodyView() string {
 	switch {
 	case m.err != nil:
 		return errStyle.Render("error: " + m.err.Error())
@@ -299,32 +303,42 @@ func (m model) bodyView() string {
 // ENTRY POINT
 // -------------------------------------------------------------------------
 
-// Run resolves the admin target, starts the TUI, and returns a process exit
-// code.
-func Run(args []string, _, stderr io.Writer) int { // codecov:ignore -- TUI entry point
-	fs := flag.NewFlagSet("tui", flag.ExitOnError)
+// resolveTarget parses the tui flags and resolves the admin base address and
+// token (flag -> env -> config), returning an http-prefixed base address or an
+// error describing what is missing.
+func resolveTarget(args []string) (baseAddr, token string, err error) {
+	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", "config.yaml", "Path to config file (only loaded when -addr/-token or their env vars are unset)")
 	addr := fs.String("addr", "", "Server address (overrides $S3O_ADMIN_ADDR and config)")
 	tokenFlag := fs.String("token", "", "Admin API token (overrides $S3O_ADMIN_TOKEN and config)")
 	if err := fs.Parse(args); err != nil {
-		return 1
+		return "", "", err
 	}
 
-	baseAddr, token, err := admintarget.Resolve(*addr, *tokenFlag, func() (*config.Config, error) {
+	baseAddr, token, err = admintarget.Resolve(*addr, *tokenFlag, func() (*config.Config, error) {
 		return config.LoadConfig(*configPath)
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
-		return 1
+		return "", "", err
 	}
 	if baseAddr == "" || token == "" {
-		fmt.Fprintln(stderr, "error: admin address and token required (set -addr/-token, $S3O_ADMIN_ADDR/$S3O_ADMIN_TOKEN, or config)")
-		return 1
+		return "", "", errors.New("admin address and token required (set -addr/-token, $S3O_ADMIN_ADDR/$S3O_ADMIN_TOKEN, or config)")
 	}
 	if !strings.HasPrefix(baseAddr, "http") {
 		baseAddr = "http://" + baseAddr
 	}
+	return baseAddr, token, nil
+}
 
+// Run resolves the admin target, starts the TUI, and returns a process exit
+// code.
+func Run(args []string, _, stderr io.Writer) int { // codecov:ignore -- TUI entry point
+	baseAddr, token, err := resolveTarget(args)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
 	if _, err := tea.NewProgram(initialModel(newAPIClient(baseAddr, token)), tea.WithAltScreen()).Run(); err != nil {
 		fmt.Fprintf(stderr, "tui error: %v\n", err)
 		return 1
