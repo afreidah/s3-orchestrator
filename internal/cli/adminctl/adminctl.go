@@ -21,9 +21,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
+	"github.com/afreidah/s3-orchestrator/internal/cli/admintarget"
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
@@ -32,11 +32,6 @@ import (
 const (
 	adminBackendsPath = "/admin/api/backends/"
 	adminTokenHeader  = "X-Admin-Token"
-
-	// envAdminAddr and envAdminToken let a local binary target a remote
-	// instance without a server config; flags take precedence over both.
-	envAdminAddr  = "S3O_ADMIN_ADDR"
-	envAdminToken = "S3O_ADMIN_TOKEN" //nolint:gosec // G101: env var name, not a credential
 
 	flagBatchSize = "batch-size"
 	fmtBatchSize  = "?batch_size=%d"
@@ -48,7 +43,7 @@ const (
 
 // Run is the CLI entry point for `s3-orchestrator admin`. It parses the
 // admin-level flags, resolves the target address and token (flag -> env ->
-// config via resolveTarget), then dispatches to a per-command handler.
+// config via admintarget.Resolve), then dispatches to a per-command handler.
 // Returns the process exit code so the caller in cmd/ can os.Exit cleanly.
 func Run(args []string, stdout, stderr io.Writer) int { // codecov:ignore -- CLI entry point
 	fs := flag.NewFlagSet("admin", flag.ExitOnError)
@@ -100,7 +95,7 @@ Flags:
 		return 0
 	}
 
-	baseAddr, token, err := resolveTarget(*addr, *tokenFlag, func() (*config.Config, error) {
+	baseAddr, token, err := admintarget.Resolve(*addr, *tokenFlag, func() (*config.Config, error) {
 		return config.LoadConfig(*configPath)
 	})
 	if err != nil {
@@ -120,41 +115,6 @@ Flags:
 	}
 
 	return CommandWithFormat(fs.Arg(0), fs.Args()[1:], baseAddr, token, output.FromJSON(*jsonOut), stdout, stderr)
-}
-
-// resolveTarget determines the admin API base address and token using the
-// precedence flag -> environment -> config. The config file is loaded (via
-// loadCfg) only when either value is still missing, so a local binary can
-// target a remote instance with just -addr/-token or $S3O_ADMIN_ADDR /
-// $S3O_ADMIN_TOKEN and no server config at all.
-func resolveTarget(addrFlag, tokenFlag string, loadCfg func() (*config.Config, error)) (string, string, error) {
-	addr := firstNonEmpty(addrFlag, os.Getenv(envAdminAddr))
-	token := firstNonEmpty(tokenFlag, os.Getenv(envAdminToken))
-	if addr != "" && token != "" {
-		return addr, token, nil
-	}
-
-	cfg, err := loadCfg()
-	if err != nil {
-		return "", "", err
-	}
-	if addr == "" {
-		addr = cfg.Server.ListenAddr
-	}
-	if token == "" {
-		token = firstNonEmpty(cfg.UI.AdminToken, cfg.UI.AdminKey)
-	}
-	return addr, token, nil
-}
-
-// firstNonEmpty returns the first non-empty string, or "" if all are empty.
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 // -------------------------------------------------------------------------
