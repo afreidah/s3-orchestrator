@@ -37,15 +37,18 @@ type entry struct {
 	size  int64
 }
 
-// objectLister is the admin API surface the browser depends on. The concrete
+// adminClient is the admin API surface the browser depends on. The concrete
 // *apiClient satisfies it; tests inject a fake.
-type objectLister interface {
+type adminClient interface {
 	ListObjects(ctx context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error)
+	GetObjectLocations(ctx context.Context, key string) (*adminapi.ObjectLocationsResponse, error)
 }
 
 // model is the Bubble Tea state for the browser.
 type model struct {
-	client  objectLister
+	client  adminClient
+	mode    viewMode      // whether the listing or the object inspector is showing
+	insp    inspector     // inspector pane state, populated when mode is modeInspect
 	prefix  string        // the prefix currently listed ("" is the root)
 	entries []entry       // domain rows backing the table, indexed by table cursor
 	table   table.Model   // scrolling, selectable listing table
@@ -60,13 +63,19 @@ type model struct {
 
 // initialModel builds the starting state; loading is true because Init fires
 // the first load immediately.
-func initialModel(client objectLister) *model {
+func initialModel(client adminClient) *model {
+	return &model{client: client, loading: true, spinner: spinner.New(), table: newTable()}
+}
+
+// newTable builds a focused table styled to match the browser: a bold accent
+// header and the shared selected-row highlight.
+func newTable() table.Model {
 	t := table.New(table.WithFocused(true))
 	st := table.DefaultStyles()
 	st.Header = st.Header.Bold(true).Foreground(lipgloss.Color("39"))
 	st.Selected = selectedStyle
 	t.SetStyles(st)
-	return &model{client: client, loading: true, spinner: spinner.New(), table: t}
+	return t
 }
 
 // -------------------------------------------------------------------------
@@ -131,6 +140,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.err = msg.err
 		return m, nil
+	case locationsLoadedMsg:
+		m.applyLocations(msg.resp)
+		return m, nil
+	case locationsErrMsg:
+		m.insp.loading = false
+		m.insp.err = msg.err
+		return m, nil
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -139,6 +155,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.resizeTable()
+		m.resizeInspector()
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -146,14 +163,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleKey applies application-level keys (quit, navigate, reload) and
-// delegates everything else (cursor movement, paging) to the table.
+// handleKey routes keys to the inspector when it is open, otherwise applies
+// browser-level keys (quit, navigate, reload) and delegates the rest (cursor
+// movement, paging) to the listing table.
 func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.mode == modeInspect {
+		return m.handleInspectKey(key)
+	}
+
 	switch key.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "enter", "right", "l":
-		return m.descend()
+		return m.open()
 	case "backspace", "left", "h":
 		return m.ascend()
 	case "r":
@@ -169,6 +191,16 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmd, m.loadObjects(m.prefix, m.next))
 	}
 	return m, cmd
+}
+
+// open acts on the highlighted row: a directory descends into its prefix, a
+// leaf object opens the inspector on its full key.
+func (m *model) open() (tea.Model, tea.Cmd) {
+	idx := m.table.Cursor()
+	if idx >= 0 && idx < len(m.entries) && !m.entries[idx].isDir {
+		return m.openInspector(m.prefix + m.entries[idx].name)
+	}
+	return m.descend()
 }
 
 // applyPage folds a loaded page into the model: a continuation appends to the
@@ -257,13 +289,18 @@ func (m *model) View() string {
 	if m.width == 0 {
 		return "loading..."
 	}
+	if m.mode == modeInspect {
+		return m.inspectView()
+	}
+	return m.frame(m.headerView(), m.footerView(), m.bodyView())
+}
 
-	header := m.headerView()
-	footer := m.footerView()
+// frame stacks a header, a body sized to fill the remaining height, and a
+// footer into the full-screen layout shared by the browser and the inspector.
+func (m *model) frame(header, footer, body string) string {
 	bodyHeight := max(m.height-lipgloss.Height(header)-lipgloss.Height(footer), 1)
-	body := lipgloss.NewStyle().Width(m.width).Height(bodyHeight).MaxHeight(bodyHeight).Render(m.bodyView())
-
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	rendered := lipgloss.NewStyle().Width(m.width).Height(bodyHeight).MaxHeight(bodyHeight).Render(body)
+	return lipgloss.JoinVertical(lipgloss.Left, header, rendered, footer)
 }
 
 // headerView renders the full-width title bar with the current prefix.

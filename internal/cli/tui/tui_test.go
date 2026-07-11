@@ -22,9 +22,11 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
-// fakeLister returns canned pages keyed by "prefix|continuation".
+// fakeLister returns canned listing pages keyed by "prefix|continuation" and
+// canned location ledgers keyed by object key.
 type fakeLister struct {
-	pages map[string]*adminapi.ObjectListResponse
+	pages     map[string]*adminapi.ObjectListResponse
+	locations map[string]*adminapi.ObjectLocationsResponse
 }
 
 func (f *fakeLister) ListObjects(_ context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error) {
@@ -32,6 +34,13 @@ func (f *fakeLister) ListObjects(_ context.Context, prefix, continuation string)
 		return p, nil
 	}
 	return &adminapi.ObjectListResponse{}, nil
+}
+
+func (f *fakeLister) GetObjectLocations(_ context.Context, key string) (*adminapi.ObjectLocationsResponse, error) {
+	if r, ok := f.locations[key]; ok {
+		return r, nil
+	}
+	return &adminapi.ObjectLocationsResponse{Key: key}, nil
 }
 
 // waitForText fails the test unless the given text appears in the output.
@@ -62,6 +71,38 @@ func TestBrowser_LoadsAndDescends(t *testing.T) {
 	}
 	if fm.prefix != "photos/" {
 		t.Errorf("prefix = %q, want photos/", fm.prefix)
+	}
+}
+
+// TestBrowser_InspectsObject covers opening the inspector on a leaf object: the
+// copy ledger loads, its backends render, and esc returns to the listing.
+func TestBrowser_InspectsObject(t *testing.T) {
+	f := &fakeLister{
+		pages: map[string]*adminapi.ObjectListResponse{
+			"|": {Objects: []adminapi.ObjectEntry{{Key: "readme", Size: 10}}},
+		},
+		locations: map[string]*adminapi.ObjectLocationsResponse{
+			"readme": {Key: "readme", Locations: []adminapi.ObjectLocation{
+				{Backend: "minio-a", SizeBytes: 10},
+				{Backend: "minio-c", SizeBytes: 10},
+			}},
+		},
+	}
+	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(80, 24))
+
+	waitForText(t, tm, "readme")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // open the inspector on readme
+	waitForText(t, tm, "minio-c")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // back to the listing
+	waitForText(t, tm, "readme")
+
+	tm.Type("q")
+	fm, ok := tm.FinalModel(t).(*model)
+	if !ok {
+		t.Fatal("final model is not a model")
+	}
+	if fm.mode != modeBrowse {
+		t.Errorf("mode = %v, want browse after esc", fm.mode)
 	}
 }
 
