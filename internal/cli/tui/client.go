@@ -54,8 +54,21 @@ func (c *apiClient) ListObjects(ctx context.Context, prefix, continuation string
 	if continuation != "" {
 		q.Set("continuation", continuation)
 	}
+	return getJSON[adminapi.ObjectListResponse](ctx, c, "/admin/api/objects", q)
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseAddr+"/admin/api/objects?"+q.Encode(), nil)
+// GetObjectLocations fetches every backend copy of a single object key.
+func (c *apiClient) GetObjectLocations(ctx context.Context, key string) (*adminapi.ObjectLocationsResponse, error) {
+	q := url.Values{}
+	q.Set("key", key)
+	return getJSON[adminapi.ObjectLocationsResponse](ctx, c, "/admin/api/object-locations", q)
+}
+
+// getJSON issues an authenticated GET against the admin API and decodes the
+// response body into T. A >=400 status becomes an error carrying the trimmed
+// response body.
+func getJSON[T any](ctx context.Context, c *apiClient, path string, q url.Values) (*T, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseAddr+path+"?"+q.Encode(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +85,7 @@ func (c *apiClient) ListObjects(ctx context.Context, prefix, continuation string
 		return nil, fmt.Errorf("admin API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	var out adminapi.ObjectListResponse
+	var out T
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}
