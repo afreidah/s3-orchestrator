@@ -79,4 +79,11 @@ weight: 30
       <p>Rotate encryption master keys with zero downtime and no data re-encryption.</p>
     </div>
   </a>
+  <a class="landing-card" href="tui-object-browser/">
+    <i class="fas fa-table-list landing-card-icon" style="color: #a5b4fc;"></i>
+    <div>
+      <strong>Browsing Objects with the TUI</strong>
+      <p>Explore the object namespace and inspect where every replica lives from the terminal.</p>
+    </div>
+  </a>
 </div>

@@ -58,7 +58,23 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.57.x (current)
+### v0.64.x (current)
+
+**Terminal object browser (`tui`) + object-locations response reshape ([#1085](https://github.com/afreidah/s3-orchestrator/pull/1085), v0.64.0)**
+
+A new read-only `s3-orchestrator tui` subcommand launches a full-screen terminal object browser with an inspector pane that shows every backend copy of an object. See [CLI subcommands](cli.md#tui).
+
+As part of the same change, the `GET /admin/api/object-locations` response was retyped. Each `locations[]` entry now uses snake_case fields (`backend`, `size_bytes`, `created_at`, `encrypted`, `key_id`, `plaintext_size`, `content_hash`) instead of the previous PascalCase shape (`BackendName`, `SizeBytes`, `CreatedAt`), and the per-copy `ObjectKey` field was dropped - the key is already the top-level `key`.
+
+**Security fix:** the response previously included each copy's wrapped envelope encryption key, serialized on every object-locations request and printed by `admin object-locations`. That field has been removed - the endpoint now exposes encryption metadata only (`encrypted`, `key_id`).
+
+**Operator action items after upgrade:**
+
+- Any tooling that parses `admin object-locations` output (or the raw endpoint) must read the new snake_case field names; `BackendName`/`SizeBytes`/`CreatedAt` and the per-copy `ObjectKey` are gone.
+- If object-locations responses were exposed to untrusted parties on a prior version, treat the affected copies' wrapped data-encryption keys as disclosed. They are only usable by someone who also holds the master key, but re-wrapping them via `admin rotate-encryption-key` restores confidentiality where that assumption may not hold.
+- No config change.
+
+### v0.57.x
 
 **Cleanup DELETE 404 treated as idempotent success ([#877](https://github.com/afreidah/s3-orchestrator/pull/877), v0.57.1)**
 

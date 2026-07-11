@@ -416,6 +416,8 @@ ui:
   admin_token: "separate-api-token"    # falls back to admin_key if not set
 ```
 
+The admin API returns operational metadata only. Object and backend responses never include secret material - the object-locations endpoint reports whether a copy is encrypted and the wrapping `key_id`, but never the wrapped or raw data-encryption key.
+
 ### Secure Cookies Behind TLS Proxies
 
 When the orchestrator sits behind a TLS-terminating reverse proxy (Traefik, nginx, ALB), the connection to the orchestrator itself is plaintext HTTP. The session and CSRF cookies still need the `Secure` flag so browsers only send them over HTTPS. There are two ways to get the `Secure` flag set in this layout.
