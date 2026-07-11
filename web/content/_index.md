@@ -161,6 +161,14 @@ flowchart TD
     <div class="feature-detail">Built-in web UI with storage summaries, per-backend quota bars, monthly usage charts, a lazy-loaded directory tree for browsing and deleting objects, and admin controls for rebalancing, syncing, and uploading.</div>
   </div>
   <div class="feature-item">
+    <i class="fas fa-terminal feature-icon" style="color: #a78bfa;"></i>
+    <div>
+      <strong>Terminal Object Browser</strong>
+      <p>Read-only TUI to browse objects and inspect replica placement.</p>
+    </div>
+    <div class="feature-detail">A full-screen terminal UI (<code>s3-orchestrator tui</code>) that browses the object namespace one prefix at a time and opens an inspector on any object showing every backend copy - backend, size, age, encryption status, key id, and content hash. Resolves its admin target exactly like the admin CLI.</div>
+  </div>
+  <div class="feature-item">
     <i class="fas fa-traffic-light feature-icon" style="color: #fca5a5;"></i>
     <div>
       <strong>Usage Limits</strong>

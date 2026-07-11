@@ -30,7 +30,7 @@ Add as many S3-compatible backends as you want — OCI Object Storage, Backblaze
 
 - **A metadata layer that knows.** Every object's backend placement, replica set, quota delta, and orphan bytes live in a real database. Failover reads, degraded-mode broadcast on DB outage, drain, rebalance, and integrity scrub all key off it — none require backend-side coordination.
 - **Per-backend quotas + multi-cloud replication, configured side-by-side.** Stack a 10 GB OCI free tier, a 5 GB B2 free tier, and a 20 GB AWS cap into one 35 GB logical bucket. Replicate every object across two of them. Both are operator-configurable and hot-reloadable.
-- **Operations-grade plumbing.** Circuit breakers (per-backend + per-DB), bounded degraded-read broadcast with parallelism caps, online drain with progress reporting, online rebalance, PUT-before-COMMIT pending intents, durable cleanup queue with DLQ, envelope encryption (AES-256-GCM, Vault Transit), integrity scrub + content-hash backfill, Prometheus + OpenTelemetry, admin API, web UI.
+- **Operations-grade plumbing.** Circuit breakers (per-backend + per-DB), bounded degraded-read broadcast with parallelism caps, online drain with progress reporting, online rebalance, PUT-before-COMMIT pending intents, durable cleanup queue with DLQ, envelope encryption (AES-256-GCM, Vault Transit), integrity scrub + content-hash backfill, Prometheus + OpenTelemetry, admin API, web UI, read-only terminal object browser (`tui`).
 
 ## What else is out there
 

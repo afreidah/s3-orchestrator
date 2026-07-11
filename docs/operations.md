@@ -105,6 +105,8 @@ Objects already moved are not rolled back. The backend becomes eligible for new 
 | `s3o_drain_objects_moved_total` | Objects successfully migrated |
 | `s3o_drain_bytes_moved_total` | Bytes migrated |
 
+> **Note:** To confirm where an object's copies live before or after a drain, open the inspector on it in `s3-orchestrator tui` or run `s3-orchestrator admin object-locations -key <key>`.
+
 ### Removing a backend
 
 Removing deletes all database records for a backend. This is destructive — objects on that backend become inaccessible. Use `drain` first if you want to preserve data.

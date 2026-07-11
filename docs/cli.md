@@ -146,6 +146,7 @@ status: reconciled
 s3-orchestrator admin status
 
 # List all copies of an object across backends
+# (s3-orchestrator tui browses the same data interactively)
 s3-orchestrator admin object-locations -key "my-bucket/path/to/file.txt"
 
 # Show cleanup queue depth and pending items
@@ -252,6 +253,45 @@ s3-orchestrator admin trace-snapshot -o trace.bin
 ```
 
 The admin API requires `ui.admin_token` (or `ui.admin_key` as fallback) to be set in the configuration. All requests are authenticated via the `X-Admin-Token` header.
+
+### tui
+
+Full-screen, read-only terminal object browser. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) UI that lists the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy. Resolves the server address and admin token with the same precedence as `admin` (**flag &rarr; environment &rarr; config file**), loading `config.yaml` only when a value is still missing:
+
+```bash
+export S3O_ADMIN_ADDR="https://s3.example.com"
+export S3O_ADMIN_TOKEN="$(your-secret-tool get admin-token)"
+s3-orchestrator tui
+```
+
+![The TUI browsing a prefix](/docs/images/tui-browser-prefixes.png)
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-config` | `config.yaml` | Path to config file; loaded only when `-addr`/`-token` (or their env vars) are unset |
+| `-addr` | `$S3O_ADMIN_ADDR`, else config `server.listen_addr` | Server address |
+| `-token` | `$S3O_ADMIN_TOKEN`, else config `ui.admin_token` / `ui.admin_key` | Admin API token |
+
+**Keys:**
+
+| Key | Action |
+|-----|--------|
+| `up` / `down` | Move the selection |
+| `enter` / `right` / `l` | Open: descend into a prefix, or open the inspector on an object |
+| `backspace` / `left` / `h` | Go up one prefix; from the inspector, return to the listing |
+| `esc` | Return to the listing from the inspector |
+| `r` | Reload the current view |
+| `q` / `ctrl+c` | Quit |
+
+The listing pages lazily: scrolling past the bottom of a truncated prefix pulls the next page. Objects show their stored size alongside child prefixes:
+
+![The TUI listing objects and their sizes under a prefix](/docs/images/tui-browser-objects.png)
+
+The inspector renders one row per backend copy - backend, size, age, whether the copy is encrypted, its key id, and a content-hash prefix - sourced from `GET /admin/api/object-locations`. It is the interactive equivalent of `admin object-locations`, and like the rest of the admin surface it never displays raw key material.
+
+![The TUI inspector showing an object's backend copies](/docs/images/tui-inspector.png)
 
 ## Importing Existing Data
 

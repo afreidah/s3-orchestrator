@@ -355,7 +355,7 @@ alerting can run without scraping this endpoint.
 
 ### GET /admin/api/object-locations
 
-Returns all copies of an object across backends.
+Returns all copies of an object across backends. Backs the `s3-orchestrator tui` inspector pane.
 
 **Query parameters:**
 
@@ -369,11 +369,23 @@ Returns all copies of an object across backends.
 {
   "key": "my-bucket/path/to/file.txt",
   "locations": [
-    {"ObjectKey": "my-bucket/path/to/file.txt", "BackendName": "oci", "SizeBytes": 51200, "CreatedAt": "2026-01-15T10:30:00Z"},
-    {"ObjectKey": "my-bucket/path/to/file.txt", "BackendName": "r2", "SizeBytes": 51200, "CreatedAt": "2026-01-15T10:35:00Z"}
+    {"backend": "oci", "size_bytes": 51200, "created_at": "2026-01-15T10:30:00Z", "encrypted": true, "key_id": "config-0", "plaintext_size": 51100, "content_hash": "9f3a...c1"},
+    {"backend": "r2", "size_bytes": 51200, "created_at": "2026-01-15T10:35:00Z", "encrypted": true, "key_id": "config-0", "plaintext_size": 51100, "content_hash": "9f3a...c1"}
   ]
 }
 ```
+
+Each `locations[]` entry describes one backend copy:
+
+- `backend` — the backend the copy lives on.
+- `size_bytes` — stored object size (ciphertext size when the copy is encrypted).
+- `created_at` — when the copy was recorded.
+- `encrypted` — whether the copy is envelope-encrypted.
+- `key_id` — id of the master key that wrapped the copy's data-encryption key (empty when not encrypted).
+- `plaintext_size` — original object size before encryption.
+- `content_hash` — SHA-256 of the plaintext, once a hash has been computed.
+
+The response carries encryption *metadata* only. The wrapped data-encryption key and any raw key material are never serialized; only `encrypted` and `key_id` are exposed.
 
 ### GET /admin/api/objects
 

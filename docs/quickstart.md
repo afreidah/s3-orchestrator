@@ -68,6 +68,16 @@ The dashboard is enabled at [http://localhost:9000/ui/](http://localhost:9000/ui
 
 Prometheus metrics are available at [http://localhost:9000/metrics](http://localhost:9000/metrics).
 
+## Browse objects
+
+Explore what you just stored with the terminal object browser:
+
+```bash
+go run ./cmd/s3-orchestrator tui
+```
+
+Navigate prefixes with the arrow keys and press `enter` on an object to open the inspector, which lists every backend copy. It reads the admin token from the local `config.yaml`. See [CLI subcommands](cli.md#tui).
+
 ## Validate the config
 
 Check the configuration file without starting the server:
