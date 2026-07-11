@@ -73,6 +73,38 @@ func TestAPIClient_ListObjects_OmitsEmptyContinuation(t *testing.T) {
 	}
 }
 
+// TestAPIClient_GetObjectLocations_Success asserts the request shape and the
+// decoded location ledger.
+func TestAPIClient_GetObjectLocations_Success(t *testing.T) {
+	t.Parallel()
+	var gotPath, gotToken, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotToken, gotQuery = r.URL.Path, r.Header.Get("X-Admin-Token"), r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"key":"photos/a","locations":[{"backend":"b1","size_bytes":9,"encrypted":true,"key_id":"kid"}]}`))
+	}))
+	defer srv.Close()
+
+	resp, err := newAPIClient(srv.URL, "tok").GetObjectLocations(context.Background(), "photos/a")
+	if err != nil {
+		t.Fatalf("GetObjectLocations: %v", err)
+	}
+	if gotPath != "/admin/api/object-locations" {
+		t.Errorf("path = %q, want /admin/api/object-locations", gotPath)
+	}
+	if gotToken != "tok" {
+		t.Errorf("token = %q, want tok", gotToken)
+	}
+	if !strings.Contains(gotQuery, "key=photos%2Fa") {
+		t.Errorf("query %q missing key", gotQuery)
+	}
+	if resp.Key != "photos/a" || len(resp.Locations) != 1 {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if l := resp.Locations[0]; l.Backend != "b1" || l.SizeBytes != 9 || !l.Encrypted || l.KeyID != "kid" {
+		t.Errorf("location = %+v", resp.Locations[0])
+	}
+}
+
 // TestAPIClient_ListObjects_ErrorStatus surfaces a >= 400 response as an error.
 func TestAPIClient_ListObjects_ErrorStatus(t *testing.T) {
 	t.Parallel()

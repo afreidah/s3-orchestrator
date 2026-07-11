@@ -23,15 +23,19 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
-// errLister always fails, for the load error path.
+// errLister always fails, for the load error paths.
 type errLister struct{}
 
 func (errLister) ListObjects(_ context.Context, _, _ string) (*adminapi.ObjectListResponse, error) {
 	return nil, errors.New("nope")
 }
 
+func (errLister) GetObjectLocations(_ context.Context, _ string) (*adminapi.ObjectLocationsResponse, error) {
+	return nil, errors.New("nope")
+}
+
 // modelWith builds a model seeded with entries and a table synced to them.
-func modelWith(entries []entry, prefix string, client objectLister) *model {
+func modelWith(entries []entry, prefix string, client adminClient) *model {
 	m := initialModel(client)
 	m.prefix = prefix
 	m.entries = entries

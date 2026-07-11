@@ -20,6 +20,8 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -97,7 +99,26 @@ func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, map[string]any{"key": key, "locations": locations})
+	httputil.WriteJSON(w, http.StatusOK, objectLocationsResponse(key, locations))
+}
+
+// objectLocationsResponse maps the store's location ledger onto the shared wire
+// type, dropping the raw envelope encryption key so the secret never leaves the
+// process.
+func objectLocationsResponse(key string, locations []core.ObjectLocation) adminapi.ObjectLocationsResponse {
+	resp := adminapi.ObjectLocationsResponse{Key: key}
+	for i := range locations {
+		resp.Locations = append(resp.Locations, adminapi.ObjectLocation{
+			Backend:       locations[i].BackendName,
+			SizeBytes:     locations[i].SizeBytes,
+			CreatedAt:     locations[i].CreatedAt,
+			Encrypted:     locations[i].Encrypted,
+			KeyID:         locations[i].KeyID,
+			PlaintextSize: locations[i].PlaintextSize,
+			ContentHash:   locations[i].ContentHash,
+		})
+	}
+	return resp
 }
 
 // handleCleanupQueue returns cleanup queue depth and pending items.

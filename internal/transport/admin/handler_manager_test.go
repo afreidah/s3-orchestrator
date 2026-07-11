@@ -31,6 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // newTestHandlerWithManager returns a Handler backed by a real BackendManager
@@ -141,7 +142,13 @@ func TestHandleCleanupQueue_ReturnsDepth(t *testing.T) {
 func TestHandleObjectLocations_Happy(t *testing.T) {
 	t.Parallel()
 	mock := testutil.NewMockStore(t)
-	mock.GetAllLocationsResp = []core.ObjectLocation{{ObjectKey: "foo", BackendName: "b1"}}
+	mock.GetAllLocationsResp = []core.ObjectLocation{{
+		ObjectKey:     "foo",
+		BackendName:   "b1",
+		Encrypted:     true,
+		KeyID:         "kid-1",
+		EncryptionKey: []byte("super-secret-raw-key"),
+	}}
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar
 	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: mock, cleanup: mock, token: "test-token", logLevel: &lv}
@@ -153,6 +160,22 @@ func TestHandleObjectLocations_Happy(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	var resp adminapi.ObjectLocationsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, w.Body.String())
+	}
+	if resp.Key != "foo" || len(resp.Locations) != 1 {
+		t.Fatalf("resp = %+v, want key=foo with 1 location", resp)
+	}
+	if resp.Locations[0].Backend != "b1" || resp.Locations[0].KeyID != "kid-1" {
+		t.Errorf("location = %+v, want backend=b1 key_id=kid-1", resp.Locations[0])
+	}
+
+	// The raw envelope key must never cross the wire.
+	if strings.Contains(w.Body.String(), "super-secret-raw-key") || strings.Contains(w.Body.String(), "encryption_key") {
+		t.Errorf("response leaked the encryption key: %s", w.Body.String())
 	}
 }
 
