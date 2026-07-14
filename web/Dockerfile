@@ -11,7 +11,7 @@
 # artifact and a deployable container.
 # -------------------------------------------------------------------------------
 
-FROM --platform=$BUILDPLATFORM golang:1.26.4 AS godoc
+FROM --platform=$BUILDPLATFORM golang:1.26.5 AS godoc
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
