@@ -44,7 +44,7 @@ func modelWith(entries []entry, prefix string, client adminClient) *model {
 		{Title: "TYPE", Width: 5},
 		{Title: "SIZE", Width: 12},
 	})
-	m.table.SetRows(rowsFromEntries(entries))
+	m.refreshVisible()
 	return m
 }
 
@@ -73,6 +73,10 @@ func TestBodyView(t *testing.T) {
 	}
 	if got := (&model{}).bodyView(); !strings.Contains(got, "empty") {
 		t.Errorf("empty body = %q", got)
+	}
+	// loaded rows all filtered out renders a distinct notice
+	if got := (&model{entries: []entry{{name: "a"}}}).bodyView(); !strings.Contains(got, "no matches") {
+		t.Errorf("no-matches body = %q", got)
 	}
 }
 

@@ -137,7 +137,7 @@ func rowsFromLocations(locations []adminapi.ObjectLocation) []table.Row {
 		l := locations[i]
 		rows = append(rows, table.Row{
 			l.Backend,
-			strconv.FormatInt(l.SizeBytes, 10),
+			humanSize(l.SizeBytes),
 			relativeAge(l.CreatedAt),
 			yesNo(l.Encrypted),
 			truncate(l.KeyID, 10),
