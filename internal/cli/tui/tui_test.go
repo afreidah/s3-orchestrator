@@ -74,6 +74,35 @@ func TestBrowser_LoadsAndDescends(t *testing.T) {
 	}
 }
 
+// TestBrowser_HumanSizesAndFilter covers the human-readable SIZE column and the
+// interactive filter: typing narrows the listing and the status line reports the
+// match count.
+func TestBrowser_HumanSizesAndFilter(t *testing.T) {
+	f := &fakeLister{pages: map[string]*adminapi.ObjectListResponse{
+		"|": {Objects: []adminapi.ObjectEntry{
+			{Key: "alpha", Size: 2048},
+			{Key: "beta", Size: 5},
+			{Key: "gamma", Size: 10},
+		}},
+	}}
+	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(80, 24))
+
+	waitForText(t, tm, "2.0 KiB") // alpha's size rendered in IEC units
+	tm.Type("/")                  // focus the filter
+	tm.Type("bet")                // narrow to beta
+	waitForText(t, tm, "1 of 3 shown")
+
+	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // abandon the filter
+	tm.Type("q")
+	fm, ok := tm.FinalModel(t).(*model)
+	if !ok {
+		t.Fatal("final model is not a model")
+	}
+	if fm.filter.Value() != "" || len(fm.visible) != 3 {
+		t.Errorf("after esc: filter=%q visible=%d", fm.filter.Value(), len(fm.visible))
+	}
+}
+
 // TestBrowser_InspectsObject covers opening the inspector on a leaf object: the
 // copy ledger loads, its backends render, and esc returns to the listing.
 func TestBrowser_InspectsObject(t *testing.T) {

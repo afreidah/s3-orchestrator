@@ -281,11 +281,13 @@ s3-orchestrator tui
 | `up` / `down` | Move the selection |
 | `enter` / `right` / `l` | Open: descend into a prefix, or open the inspector on an object |
 | `backspace` / `left` / `h` | Go up one prefix; from the inspector, return to the listing |
-| `esc` | Return to the listing from the inspector |
+| `/` | Filter the current listing by substring |
+| `s` | Cycle the sort order (name / size) |
+| `esc` | Clear the filter; from the inspector, return to the listing |
 | `r` | Reload the current view |
 | `q` / `ctrl+c` | Quit |
 
-The listing pages lazily: scrolling past the bottom of a truncated prefix pulls the next page. Objects show their stored size alongside child prefixes:
+The listing pages lazily: scrolling past the bottom of a truncated prefix pulls the next page. Press `/` to filter the loaded rows by substring, and `s` to sort by name or size. Objects show their stored size in human-readable units alongside child prefixes:
 
 ![The TUI listing objects and their sizes under a prefix](/docs/images/tui-browser-objects.png)
 

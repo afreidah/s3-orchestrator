@@ -53,13 +53,17 @@ The browser opens at the root prefix. Move the selection with the arrow keys; op
 | `up` / `down` | Move the selection |
 | `enter` / `right` / `l` | Open: descend into a prefix, or open the inspector on an object |
 | `backspace` / `left` / `h` | Go up one prefix; from the inspector, return to the listing |
-| `esc` | Return to the listing from the inspector |
+| `/` | Filter the current listing by substring |
+| `s` | Cycle the sort order (name / size) |
+| `esc` | Clear the filter; from the inspector, return to the listing |
 | `r` | Reload the current view |
 | `q` / `ctrl+c` | Quit |
 
 ![Navigating sub-directories under a prefix](/docs/images/tui-browser-prefixes.png?classes=lightbox)
 
 Long prefixes load lazily - scrolling past the bottom of a truncated page pulls the next batch, so you can walk a bucket with millions of keys without loading it all at once.
+
+To find something in a crowded prefix, press `/` and type - the listing narrows to matching names as you type (the status line shows how many of the loaded rows match), and `esc` clears the filter. Press `s` to cycle the sort order between name and size; directories always sort ahead of objects. Sizes render in binary units (`KiB`, `MiB`, `GiB`).
 
 ## Step 3: Inspect an object's copies
 

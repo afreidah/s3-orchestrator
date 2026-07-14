@@ -26,6 +26,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -46,25 +47,32 @@ type adminClient interface {
 
 // model is the Bubble Tea state for the browser.
 type model struct {
-	client  adminClient
-	mode    viewMode      // whether the listing or the object inspector is showing
-	insp    inspector     // inspector pane state, populated when mode is modeInspect
-	prefix  string        // the prefix currently listed ("" is the root)
-	entries []entry       // domain rows backing the table, indexed by table cursor
-	table   table.Model   // scrolling, selectable listing table
-	loading bool          // a fresh (page-replacing) load is in flight
-	next    string        // continuation token for the current prefix ("" = no more)
-	more    bool          // a load-more (append) request is in flight
-	err     error         // last load error, if any
-	spinner spinner.Model // animated indicator shown while loading
-	width   int           // terminal width from the last WindowSizeMsg
-	height  int           // terminal height from the last WindowSizeMsg
+	client    adminClient
+	mode      viewMode        // whether the listing or the object inspector is showing
+	insp      inspector       // inspector pane state, populated when mode is modeInspect
+	prefix    string          // the prefix currently listed ("" is the root)
+	entries   []entry         // every loaded row under the current prefix
+	visible   []entry         // entries after filter + sort, indexed by table cursor
+	table     table.Model     // scrolling, selectable listing table
+	filter    textinput.Model // substring filter over the current listing
+	filtering bool            // the filter input has focus and is capturing keys
+	sort      sortField       // ordering applied to visible
+	loading   bool            // a fresh (page-replacing) load is in flight
+	next      string          // continuation token for the current prefix ("" = no more)
+	more      bool            // a load-more (append) request is in flight
+	err       error           // last load error, if any
+	spinner   spinner.Model   // animated indicator shown while loading
+	width     int             // terminal width from the last WindowSizeMsg
+	height    int             // terminal height from the last WindowSizeMsg
 }
 
 // initialModel builds the starting state; loading is true because Init fires
 // the first load immediately.
 func initialModel(client adminClient) *model {
-	return &model{client: client, loading: true, spinner: spinner.New(), table: newTable()}
+	fi := textinput.New()
+	fi.Prompt = ""
+	fi.Placeholder = "type to filter"
+	return &model{client: client, loading: true, spinner: spinner.New(), table: newTable(), filter: fi}
 }
 
 // newTable builds a focused table styled to match the browser: a bold accent
@@ -170,10 +178,27 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeInspect {
 		return m.handleInspectKey(key)
 	}
+	if m.filtering {
+		return m.handleFilterKey(key)
+	}
 
 	switch key.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
+	case "/":
+		m.filtering = true
+		cmd := m.filter.Focus()
+		return m, cmd
+	case "s":
+		m.sort = (m.sort + 1) % 2
+		m.refreshVisible()
+		return m, nil
+	case "esc":
+		if m.filter.Value() != "" {
+			m.clearFilter()
+			m.refreshVisible()
+		}
+		return m, nil
 	case "enter", "right", "l":
 		return m.open()
 	case "backspace", "left", "h":
@@ -186,7 +211,7 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.table, cmd = m.table.Update(key)
-	if m.next != "" && !m.more && m.table.Cursor() >= len(m.entries)-1 {
+	if m.next != "" && !m.more && m.table.Cursor() >= len(m.visible)-1 {
 		m.more = true
 		return m, tea.Batch(cmd, m.loadObjects(m.prefix, m.next))
 	}
@@ -197,8 +222,8 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 // leaf object opens the inspector on its full key.
 func (m *model) open() (tea.Model, tea.Cmd) {
 	idx := m.table.Cursor()
-	if idx >= 0 && idx < len(m.entries) && !m.entries[idx].isDir {
-		return m.openInspector(m.prefix + m.entries[idx].name)
+	if idx >= 0 && idx < len(m.visible) && !m.visible[idx].isDir {
+		return m.openInspector(m.prefix + m.visible[idx].name)
 	}
 	return m.descend()
 }
@@ -211,11 +236,12 @@ func (m *model) applyPage(msg objectsLoadedMsg) {
 	if msg.continuation == "" {
 		m.prefix = msg.prefix
 		m.entries = loaded
-		m.table.SetRows(rowsFromEntries(m.entries))
+		m.clearFilter() // the filter is prefix-specific; a new prefix starts fresh
+		m.refreshVisible()
 		m.table.SetCursor(0)
 	} else {
 		m.entries = append(m.entries, loaded...)
-		m.table.SetRows(rowsFromEntries(m.entries))
+		m.refreshVisible()
 	}
 	m.next = ""
 	if msg.page.Truncated {
@@ -229,9 +255,9 @@ func (m *model) applyPage(msg objectsLoadedMsg) {
 // descend loads the highlighted directory, if the selected row is one.
 func (m *model) descend() (tea.Model, tea.Cmd) {
 	idx := m.table.Cursor()
-	if idx >= 0 && idx < len(m.entries) && m.entries[idx].isDir {
+	if idx >= 0 && idx < len(m.visible) && m.visible[idx].isDir {
 		m.loading = true
-		cmd := m.loadObjects(m.prefix+m.entries[idx].name, "")
+		cmd := m.loadObjects(m.prefix+m.visible[idx].name, "")
 		return m, cmd
 	}
 	return m, nil
@@ -247,7 +273,8 @@ func (m *model) ascend() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// resizeTable fits the table columns and viewport to the current window.
+// resizeTable fits the table columns and viewport to the current window. The
+// height reserves one title row plus the two-line footer (hints + status).
 func (m *model) resizeTable() {
 	nameWidth := max(m.width-24, 10)
 	m.table.SetColumns([]table.Column{
@@ -256,7 +283,7 @@ func (m *model) resizeTable() {
 		{Title: "SIZE", Width: 12},
 	})
 	m.table.SetWidth(m.width)
-	m.table.SetHeight(max(m.height-2, 3))
+	m.table.SetHeight(max(m.height-3, 3))
 }
 
 // rowsFromEntries builds table rows from the domain entries, in the same order
@@ -268,9 +295,24 @@ func rowsFromEntries(entries []entry) []table.Row {
 			rows = append(rows, table.Row{e.name, "dir", ""})
 			continue
 		}
-		rows = append(rows, table.Row{e.name, "obj", strconv.FormatInt(e.size, 10)})
+		rows = append(rows, table.Row{e.name, "obj", humanSize(e.size)})
 	}
 	return rows
+}
+
+// humanSize renders a byte count in IEC binary units (B, KiB, MiB, ...), with
+// one decimal place above bytes so sizes read at a glance.
+func humanSize(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return strconv.FormatInt(n, 10) + " B"
+	}
+	div, exp := int64(unit), 0
+	for x := n / unit; x >= unit; x /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 // parentPrefix returns the parent of a delimiter-terminated prefix, or "" when
@@ -312,17 +354,16 @@ func (m *model) headerView() string {
 	return titleStyle.Width(m.width).Render("s3-orchestrator tui   " + loc)
 }
 
-// footerView renders the full-width key-hint bar, noting when more pages remain.
+// footerView renders the status line (sort, filter, paging) above the key-hint
+// bar. Both lines are always present so the footer keeps a fixed height.
 func (m *model) footerView() string {
-	hints := "up/down move - enter open - backspace up - r reload - q quit"
-	if m.next != "" {
-		hints += " - (more below)"
-	}
-	return helpStyle.Width(m.width).Render(hints)
+	status := pathStyle.Width(m.width).Render(m.statusLine())
+	hints := helpStyle.Width(m.width).Render("up/down move - enter open - / filter - s sort - backspace up - r reload - q quit")
+	return lipgloss.JoinVertical(lipgloss.Left, status, hints)
 }
 
 // bodyView renders the current content: an error, the loading indicator, an
-// empty notice, or the row list.
+// empty or no-matches notice, or the row list.
 func (m *model) bodyView() string {
 	switch {
 	case m.err != nil:
@@ -331,6 +372,8 @@ func (m *model) bodyView() string {
 		return m.spinner.View() + " loading..."
 	case len(m.entries) == 0:
 		return pathStyle.Render("(empty)")
+	case len(m.visible) == 0:
+		return pathStyle.Render("(no matches)")
 	default:
 		return m.table.View()
 	}
