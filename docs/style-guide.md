@@ -7,6 +7,7 @@
 - [Core Principles](#core-principles)
 - [Comment Types and Spacing](#comment-types-and-spacing)
 - [File Headers](#file-headers)
+- [Package Docs (doc.go)](#package-docs-docgo)
 - [Go Conventions](#go-conventions)
 - [Project Structure and Layers](#project-structure-and-layers)
 - [Dependency Injection](#dependency-injection)
@@ -150,6 +151,26 @@ package proxy
 - Title line describes the file's scope, not the package
 - Description covers purpose, key behaviors, and dependencies
 - The `package` declaration follows immediately after the closing divider + blank line
+
+The blank line between the header and `package` is load-bearing: it keeps the box header a file comment rather than the package comment, so the package doc lives in one place (see below).
+
+---
+
+## Package Docs (doc.go)
+
+The package-level godoc lives in a dedicated `doc.go`, the idiomatic Go pattern (`net/http`, `encoding/json`). It is the one file exempt from the box header: it opens directly with a `// Package X ...` comment adjacent to the `package` clause, so it - and only it - is the package comment. This is what renders as the package overview on the godoc site.
+
+```go
+// Package backend defines the ObjectBackend abstraction over the S3-compatible
+// providers the orchestrator stores objects on, plus the wrappers that harden
+// it ...
+package backend
+```
+
+**Rules:**
+- One sentence is the floor; pin the package's invariants and link out to the implementation files for per-symbol detail
+- Only `doc.go` carries a package comment; every other file keeps its box header + blank line before `package`
+- New packages get a `doc.go`; convert existing packages opportunistically when you next touch them, never as a one-shot churn PR
 
 ---
 
