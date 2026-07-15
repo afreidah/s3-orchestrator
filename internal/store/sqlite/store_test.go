@@ -1986,6 +1986,10 @@ func TestDeleteObjectLocation(t *testing.T) {
 	mustRecordObject(t, s, "bucket/key1", "backend-a", 100)
 	mustRecordReplica(t, s, "bucket/key1", "backend-b", "backend-a", 100)
 
+	if stats, _ := s.GetQuotaStats(ctx); stats["backend-b"].BytesUsed != 100 {
+		t.Fatalf("backend-b bytes_used before delete = %d, want 100", stats["backend-b"].BytesUsed)
+	}
+
 	if err := s.DeleteObjectLocation(ctx, "bucket/key1", "backend-b"); err != nil {
 		t.Fatalf("DeleteObjectLocation: %v", err)
 	}
@@ -1993,6 +1997,30 @@ func TestDeleteObjectLocation(t *testing.T) {
 	locs, _ := s.GetAllObjectLocations(ctx, "bucket/key1")
 	if len(locs) != 1 || locs[0].BackendName != "backend-a" {
 		t.Errorf("expected only backend-a, got %+v", locs)
+	}
+
+	// The removed copy's bytes must be debited so bytes_used stays equal to
+	// SUM(object_locations.size_bytes) - the ledger invariant #1084 broke.
+	if stats, _ := s.GetQuotaStats(ctx); stats["backend-b"].BytesUsed != 0 {
+		t.Errorf("backend-b bytes_used after delete = %d, want 0", stats["backend-b"].BytesUsed)
+	}
+
+	// With the counter kept honest, usage-reconcile finds no drift to correct.
+	adjustments, err := s.ReconcileUsage(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileUsage: %v", err)
+	}
+	if len(adjustments) != 0 {
+		t.Errorf("reconcile should find no drift, got %v", adjustments)
+	}
+
+	// Deleting a copy that is already gone is a benign no-op: no error and no
+	// spurious debit against the backend that still holds the object.
+	if err := s.DeleteObjectLocation(ctx, "bucket/key1", "backend-b"); err != nil {
+		t.Fatalf("DeleteObjectLocation (already gone): %v", err)
+	}
+	if stats, _ := s.GetQuotaStats(ctx); stats["backend-a"].BytesUsed != 100 {
+		t.Errorf("backend-a bytes_used after no-op delete = %d, want 100", stats["backend-a"].BytesUsed)
 	}
 }
 
