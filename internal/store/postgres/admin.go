@@ -65,12 +65,10 @@ func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error
 }
 
 // DeleteObjectLocation removes a single object_locations row for the given key
-// and backend. Used by drain to remove source copies when a replica exists.
+// and backend, debiting the backend's bytes_used by the removed copy's size in
+// the same transaction. Delegates to core.DeleteObjectLocation.
 func (s *Store) DeleteObjectLocation(ctx context.Context, key, backendName string) error {
-	return s.queries.DeleteObjectFromBackend(ctx, db.DeleteObjectFromBackendParams{
-		ObjectKey:   key,
-		BackendName: backendName,
-	})
+	return core.DeleteObjectLocation(ctx, s, key, backendName)
 }
 
 // -------------------------------------------------------------------------

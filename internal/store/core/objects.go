@@ -156,6 +156,39 @@ func DeleteObjectsBatch(ctx context.Context, runner Runner, keys []string) (map[
 }
 
 // -------------------------------------------------------------------------
+// DELETE OBJECT LOCATION
+// -------------------------------------------------------------------------
+
+// DeleteObjectLocation removes a single (key, backend) copy from the
+// object ledger and debits the backend's bytes_used by that copy's size
+// in the same transaction, keeping bytes_used in agreement with
+// SUM(object_locations.size_bytes). Its callers are the paths that drop a
+// row because the backend no longer holds the object: reconcile's
+// stale-entry deleter, the replicator's stale-source prune, and drain's
+// replica-source removal and purge. A row that is already gone is a
+// benign no-op that leaves the quota untouched.
+//
+// The size comes from the same FOR-UPDATE re-read that guards the delete,
+// so a concurrent overwrite cannot make the debit disagree with the row
+// that was actually removed.
+func DeleteObjectLocation(ctx context.Context, runner Runner, key, backendName string) error {
+	return runner.WithTx(ctx, func(ctx context.Context, tx TxAdapter) error {
+		existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
+		if err != nil {
+			return err
+		}
+		size, found := copySizeForBackend(existing, backendName)
+		if !found {
+			return nil
+		}
+		if err := tx.DeleteObjectFromBackend(ctx, key, backendName); err != nil {
+			return err
+		}
+		return tx.DecrementBackendQuota(ctx, backendName, size)
+	})
+}
+
+// -------------------------------------------------------------------------
 // MOVE OBJECT LOCATION
 // -------------------------------------------------------------------------
 
