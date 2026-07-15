@@ -27,6 +27,7 @@ import (
 type fakeLister struct {
 	pages     map[string]*adminapi.ObjectListResponse
 	locations map[string]*adminapi.ObjectLocationsResponse
+	status    *adminapi.StatusResponse
 }
 
 func (f *fakeLister) ListObjects(_ context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error) {
@@ -41,6 +42,13 @@ func (f *fakeLister) GetObjectLocations(_ context.Context, key string) (*adminap
 		return r, nil
 	}
 	return &adminapi.ObjectLocationsResponse{Key: key}, nil
+}
+
+func (f *fakeLister) GetStatus(_ context.Context) (*adminapi.StatusResponse, error) {
+	if f.status != nil {
+		return f.status, nil
+	}
+	return &adminapi.StatusResponse{}, nil
 }
 
 // waitForText fails the test unless the given text appears in the output.
@@ -132,6 +140,39 @@ func TestBrowser_InspectsObject(t *testing.T) {
 	}
 	if fm.mode != modeBrowse {
 		t.Errorf("mode = %v, want browse after esc", fm.mode)
+	}
+}
+
+// TestBrowser_OpensBackendsView covers jumping to the backends section: the
+// status snapshot loads, a backend row renders with its health, and esc returns
+// focus to the sidebar without leaving the section.
+func TestBrowser_OpensBackendsView(t *testing.T) {
+	f := &fakeLister{
+		pages: map[string]*adminapi.ObjectListResponse{
+			"|": {Objects: []adminapi.ObjectEntry{{Key: "readme", Size: 10}}},
+		},
+		status: &adminapi.StatusResponse{
+			DBHealthy:   true,
+			UsagePeriod: "2026-07",
+			Backends: []adminapi.BackendStatus{
+				{Name: "minio-a", Healthy: true, BytesUsed: 2048, BytesLimit: 4096},
+			},
+		},
+	}
+	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(120, 24))
+
+	waitForText(t, tm, "readme")
+	tm.Type("b")                          // jump to the backends section
+	waitForText(t, tm, "minio-a")         // the loaded status snapshot rendered
+	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // back to the sidebar
+
+	tm.Type("q")
+	fm, ok := tm.FinalModel(t).(*model)
+	if !ok {
+		t.Fatal("final model is not a model")
+	}
+	if fm.section != sectionBackends || !fm.navFocus {
+		t.Errorf("section=%v navFocus=%v, want backends + focused sidebar", fm.section, fm.navFocus)
 	}
 }
 

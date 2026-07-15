@@ -256,7 +256,7 @@ The admin API requires `ui.admin_token` (or `ui.admin_key` as fallback) to be se
 
 ### tui
 
-Full-screen, read-only terminal object browser. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) UI that lists the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy. Resolves the server address and admin token with the same precedence as `admin` (**flag &rarr; environment &rarr; config file**), loading `config.yaml` only when a value is still missing:
+Full-screen, read-only terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status. Resolves the server address and admin token with the same precedence as `admin` (**flag &rarr; environment &rarr; config file**), loading `config.yaml` only when a value is still missing:
 
 ```bash
 export S3O_ADMIN_ADDR="https://s3.example.com"
@@ -264,7 +264,7 @@ export S3O_ADMIN_TOKEN="$(your-secret-tool get admin-token)"
 s3-orchestrator tui
 ```
 
-![The TUI browsing a prefix](/docs/images/tui-browser-prefixes.png)
+![The TUI Files section browsing a prefix](/docs/images/tui-files.png)
 
 **Flags:**
 
@@ -278,22 +278,27 @@ s3-orchestrator tui
 
 | Key | Action |
 |-----|--------|
-| `up` / `down` | Move the selection |
-| `enter` / `right` / `l` | Open: descend into a prefix, or open the inspector on an object |
-| `backspace` / `left` / `h` | Go up one prefix; from the inspector, return to the listing |
+| `tab` | Move focus between the sidebar and the content area |
+| `f` | Jump to the Files section |
+| `b` | Jump to the Backends section |
+| `up` / `down` | Move the selection (or the sidebar highlight when it has focus) |
+| `enter` / `right` / `l` | Open: a sidebar section, a prefix, or the inspector on an object |
+| `backspace` / `left` / `h` | Go up one prefix; from the inspector or Backends, return to where you were |
 | `/` | Filter the current listing by substring |
 | `s` | Cycle the sort order (name / size) |
-| `esc` | Clear the filter; from the inspector, return to the listing |
+| `esc` | Clear the filter; from the inspector or Backends, step back |
 | `r` | Reload the current view |
 | `q` / `ctrl+c` | Quit |
 
-The listing pages lazily: scrolling past the bottom of a truncated prefix pulls the next page. Press `/` to filter the loaded rows by substring, and `s` to sort by name or size. Objects show their stored size in human-readable units alongside child prefixes:
-
-![The TUI listing objects and their sizes under a prefix](/docs/images/tui-browser-objects.png)
+The listing pages lazily: scrolling past the bottom of a truncated prefix pulls the next page. Press `/` to filter the loaded rows by substring, and `s` to sort by name or size. Objects show their stored size in human-readable units alongside child prefixes.
 
 The inspector renders one row per backend copy - backend, size, age, whether the copy is encrypted, its key id, and a content-hash prefix - sourced from `GET /admin/api/object-locations`. It is the interactive equivalent of `admin object-locations`, and like the rest of the admin surface it never displays raw key material.
 
-![The TUI inspector showing an object's backend copies](/docs/images/tui-inspector.png)
+![The TUI inspector showing an object's backend copies](/docs/images/tui-file-details.png)
+
+The **Backends** section is the interactive equivalent of `admin status`, sourced from `GET /admin/api/status`. It renders one row per configured backend - circuit-breaker health, drain state, quota used and limit, object count, and the current period's API request, ingress, and egress counters - with the metadata database health and usage period in the title bar. Press `r` to refresh the snapshot.
+
+![The TUI Backends section showing per-backend status](/docs/images/tui-backends.png)
 
 ## Importing Existing Data
 
