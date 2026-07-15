@@ -392,12 +392,10 @@ func (s *Store) MoveObjectLocation(ctx context.Context, key, fromBackend, toBack
 }
 
 // DeleteObjectLocation removes a single object_locations row for the given key
-// and backend. Used by drain to remove source copies when a replica exists.
+// and backend, debiting the backend's bytes_used by the removed copy's size in
+// the same transaction. Delegates to core.DeleteObjectLocation.
 func (s *Store) DeleteObjectLocation(ctx context.Context, key, backendName string) error {
-	_, err := s.db.ExecContext(ctx, `
-		DELETE FROM object_locations
-		WHERE object_key = ? AND backend_name = ?`, key, backendName)
-	return err
+	return core.DeleteObjectLocation(ctx, s, key, backendName)
 }
 
 // ImportObject delegates to core.ImportObject.
