@@ -43,13 +43,18 @@ type entry struct {
 type adminClient interface {
 	ListObjects(ctx context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error)
 	GetObjectLocations(ctx context.Context, key string) (*adminapi.ObjectLocationsResponse, error)
+	GetStatus(ctx context.Context) (*adminapi.StatusResponse, error)
 }
 
 // model is the Bubble Tea state for the browser.
 type model struct {
 	client    adminClient
-	mode      viewMode        // whether the listing or the object inspector is showing
+	section   section         // active left-nav destination (Files, Backends)
+	navFocus  bool            // the left nav has focus and is capturing keys
+	navCursor int             // highlighted nav entry while the nav is focused
+	mode      viewMode        // Files sub-state: the listing (browse) or the inspector
 	insp      inspector       // inspector pane state, populated when mode is modeInspect
+	backends  backendsView    // backends pane state, populated when section is sectionBackends
 	prefix    string          // the prefix currently listed ("" is the root)
 	entries   []entry         // every loaded row under the current prefix
 	visible   []entry         // entries after filter + sort, indexed by table cursor
@@ -155,6 +160,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.insp.loading = false
 		m.insp.err = msg.err
 		return m, nil
+	case statusLoadedMsg:
+		m.applyStatus(msg.resp)
+		return m, nil
+	case statusErrMsg:
+		m.backends.loading = false
+		m.backends.err = msg.err
+		return m, nil
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -164,6 +176,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.resizeTable()
 		m.resizeInspector()
+		m.resizeBackends()
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -171,20 +184,45 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleKey routes keys to the inspector when it is open, otherwise applies
-// browser-level keys (quit, navigate, reload) and delegates the rest (cursor
-// movement, paging) to the listing table.
+// handleKey applies global keys (quit, nav focus, section jumps) then routes the
+// rest to the focused nav or the active section's view. While the filter input
+// is capturing, the browser gets every key so typing is never intercepted.
 func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.mode == modeInspect {
-		return m.handleInspectKey(key)
-	}
-	if m.filtering {
+	if m.section == sectionFiles && m.mode == modeBrowse && m.filtering {
 		return m.handleFilterKey(key)
 	}
 
 	switch key.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
+	case "tab":
+		m.navFocus = !m.navFocus
+		if m.navFocus {
+			m.navCursor = int(m.section)
+		}
+		return m, nil
+	case "f":
+		return m.selectSection(sectionFiles)
+	case "b":
+		return m.selectSection(sectionBackends)
+	}
+
+	if m.navFocus {
+		return m.handleNavKey(key)
+	}
+	if m.section == sectionBackends {
+		return m.handleBackendsKey(key)
+	}
+	if m.mode == modeInspect {
+		return m.handleInspectKey(key)
+	}
+	return m.handleBrowseKey(key)
+}
+
+// handleBrowseKey applies listing keys (filter, sort, navigate, reload) and
+// delegates the rest (cursor movement, paging) to the table.
+func (m *model) handleBrowseKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
 	case "/":
 		m.filtering = true
 		cmd := m.filter.Focus()
@@ -276,13 +314,14 @@ func (m *model) ascend() (tea.Model, tea.Cmd) {
 // resizeTable fits the table columns and viewport to the current window. The
 // height reserves one title row plus the two-line footer (hints + status).
 func (m *model) resizeTable() {
-	nameWidth := max(m.width-24, 10)
+	cw := m.contentWidth()
+	nameWidth := max(cw-24, 10)
 	m.table.SetColumns([]table.Column{
 		{Title: "NAME", Width: nameWidth},
 		{Title: "TYPE", Width: 5},
 		{Title: "SIZE", Width: 12},
 	})
-	m.table.SetWidth(m.width)
+	m.table.SetWidth(cw)
 	m.table.SetHeight(max(m.height-3, 3))
 }
 
@@ -331,6 +370,14 @@ func (m *model) View() string {
 	if m.width == 0 {
 		return "loading..."
 	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, m.sidebarView(), m.contentView())
+}
+
+// contentView renders the active section's pane for the area beside the nav.
+func (m *model) contentView() string {
+	if m.section == sectionBackends {
+		return m.backendsPaneView()
+	}
 	if m.mode == modeInspect {
 		return m.inspectView()
 	}
@@ -341,7 +388,7 @@ func (m *model) View() string {
 // footer into the full-screen layout shared by the browser and the inspector.
 func (m *model) frame(header, footer, body string) string {
 	bodyHeight := max(m.height-lipgloss.Height(header)-lipgloss.Height(footer), 1)
-	rendered := lipgloss.NewStyle().Width(m.width).Height(bodyHeight).MaxHeight(bodyHeight).Render(body)
+	rendered := lipgloss.NewStyle().Width(m.contentWidth()).Height(bodyHeight).MaxHeight(bodyHeight).Render(body)
 	return lipgloss.JoinVertical(lipgloss.Left, header, rendered, footer)
 }
 
@@ -351,14 +398,14 @@ func (m *model) headerView() string {
 	if loc == "" {
 		loc = "/"
 	}
-	return titleStyle.Width(m.width).Render("s3-orchestrator tui   " + loc)
+	return titleStyle.Width(m.contentWidth()).Render("s3-orchestrator tui   " + loc)
 }
 
 // footerView renders the status line (sort, filter, paging) above the key-hint
 // bar. Both lines are always present so the footer keeps a fixed height.
 func (m *model) footerView() string {
-	status := pathStyle.Width(m.width).Render(m.statusLine())
-	hints := helpStyle.Width(m.width).Render("up/down move - enter open - / filter - s sort - backspace up - r reload - q quit")
+	status := pathStyle.Width(m.contentWidth()).Render(m.statusLine())
+	hints := helpStyle.Width(m.contentWidth()).Render("up/down move - enter open - / filter - s sort - tab nav - q quit")
 	return lipgloss.JoinVertical(lipgloss.Left, status, hints)
 }
 

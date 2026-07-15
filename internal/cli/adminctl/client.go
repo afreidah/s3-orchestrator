@@ -137,32 +137,31 @@ func (c *client) renderError(data []byte) {
 	fmt.Fprintf(c.stderr, "error: %s\n", errorMessage(data))
 }
 
-// fetchJSON issues an authenticated request and decodes the JSON body into a
-// map. Returns (body, exitCode); a non-zero exitCode means the helper already
-// reported an error to stderr and the caller should propagate it. Shared by
-// the remove-backend preview and purge flows, which each carry only the
+// fetchJSON issues an authenticated request and decodes the JSON body into out.
+// Returns an exitCode; a non-zero exitCode means the helper already reported an
+// error to stderr and the caller should propagate it. Shared by the
+// remove-backend preview and purge flows, which each carry only the
 // response-shape handling unique to them.
-func (c *client) fetchJSON(method, path string) (map[string]any, int) {
+func (c *client) fetchJSON(method, path string, out any) int {
 	req, err := http.NewRequestWithContext(context.Background(), method, c.baseAddr+path, nil)
 	if err != nil {
 		fmt.Fprintf(c.stderr, fmtError, err)
-		return nil, 1
+		return 1
 	}
 	req.Header.Set(adminTokenHeader, c.token)
 
 	resp, err := (&http.Client{Timeout: requestTimeout}).Do(req) //nolint:gosec // G704: admin CLI target address is user-provided via --addr flag
 	if err != nil {
 		fmt.Fprintf(c.stderr, fmtError, err)
-		return nil, 1
+		return 1
 	}
 	defer resp.Body.Close()
 
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		fmt.Fprintf(c.stderr, "error: failed to parse response: %v\n", err)
-		return nil, 1
+		return 1
 	}
-	return result, 0
+	return 0
 }
 
 // errorMessage extracts the "error" field from a JSON error body, falling back

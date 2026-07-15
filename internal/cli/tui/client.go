@@ -64,6 +64,11 @@ func (c *apiClient) GetObjectLocations(ctx context.Context, key string) (*admina
 	return getJSON[adminapi.ObjectLocationsResponse](ctx, c, "/admin/api/object-locations", q)
 }
 
+// GetStatus fetches instance and per-backend operational status.
+func (c *apiClient) GetStatus(ctx context.Context) (*adminapi.StatusResponse, error) {
+	return getJSON[adminapi.StatusResponse](ctx, c, "/admin/api/status", nil)
+}
+
 // getJSON issues an authenticated GET against the admin API and decodes the
 // response body into T. A >=400 status becomes an error carrying the trimmed
 // response body.

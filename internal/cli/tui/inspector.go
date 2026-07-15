@@ -92,8 +92,6 @@ func (m *model) applyLocations(resp *adminapi.ObjectLocationsResponse) {
 // delegates cursor movement to the table.
 func (m *model) handleInspectKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
-	case "q", "ctrl+c":
-		return m, tea.Quit
 	case "esc", "backspace", "left", "h":
 		m.mode = modeBrowse
 		return m, nil
@@ -112,11 +110,15 @@ func (m *model) handleInspectKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 // RENDERING
 // -------------------------------------------------------------------------
 
-// resizeInspector fits the inspector columns and viewport to the window, giving
-// the backend column whatever width the fixed columns leave behind.
+// resizeInspector fits the inspector columns and viewport to the window, capping
+// the backend column so short names don't sprawl on a wide terminal.
 func (m *model) resizeInspector() {
-	const fixed = 12 + 14 + 5 + 12 + 18 // size + created + enc + key id + hash
-	backendWidth := max(m.width-fixed-2, 8)
+	const (
+		fixed   = 12 + 14 + 5 + 12 + 18 // size + created + enc + key id + hash
+		cols    = 6
+		nameCap = 24
+	)
+	backendWidth := fitFirstColumn(m.contentWidth(), fixed, cols, nameCap)
 	m.insp.table.SetColumns([]table.Column{
 		{Title: "BACKEND", Width: backendWidth},
 		{Title: "SIZE", Width: 12},
@@ -125,7 +127,7 @@ func (m *model) resizeInspector() {
 		{Title: "KEY ID", Width: 12},
 		{Title: "HASH", Width: 18},
 	})
-	m.insp.table.SetWidth(m.width)
+	m.insp.table.SetWidth(m.contentWidth())
 	m.insp.table.SetHeight(max(m.height-2, 3))
 }
 
@@ -155,12 +157,12 @@ func (m *model) inspectView() string {
 // inspectHeaderView renders the title bar with the key and copy count.
 func (m *model) inspectHeaderView() string {
 	title := fmt.Sprintf("inspect   %s   (%d copies)", m.insp.key, len(m.insp.locations))
-	return titleStyle.Width(m.width).Render(title)
+	return titleStyle.Width(m.contentWidth()).Render(title)
 }
 
 // inspectFooterView renders the inspector key hints.
 func (m *model) inspectFooterView() string {
-	return helpStyle.Width(m.width).Render("up/down move - esc back - r reload - q quit")
+	return helpStyle.Width(m.contentWidth()).Render("up/down move - esc back - r reload - q quit")
 }
 
 // inspectBodyView renders the current content: an error, the loading indicator,

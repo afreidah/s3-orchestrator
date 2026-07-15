@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -114,13 +115,13 @@ func (h *Handler) handleRemoveBackend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token := h.generateRemoveToken(name)
-	httputil.WriteJSON(w, http.StatusOK, map[string]any{
-		"status":        "confirmation required",
-		"backend":       name,
-		"object_count":  objectCount,
-		"total_bytes":   totalBytes,
-		"confirm_token": token,
-		"expires_in":    int(removeConfirmTTL.Seconds()),
+	httputil.WriteJSON(w, http.StatusOK, adminapi.RemoveBackendPreview{
+		Status:       "confirmation required",
+		Backend:      name,
+		ObjectCount:  objectCount,
+		TotalBytes:   totalBytes,
+		ConfirmToken: token,
+		ExpiresIn:    int(removeConfirmTTL.Seconds()),
 	})
 }
 

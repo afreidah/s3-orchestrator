@@ -20,6 +20,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -50,19 +51,25 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type backendStatus struct {
-		Name         string `json:"name"`
-		BytesUsed    int64  `json:"bytes_used"`
-		BytesLimit   int64  `json:"bytes_limit"`
-		ObjectCount  int64  `json:"object_count"`
-		APIRequests  int64  `json:"api_requests"`
-		EgressBytes  int64  `json:"egress_bytes"`
-		IngressBytes int64  `json:"ingress_bytes"`
-	}
+	httputil.WriteJSON(w, http.StatusOK, adminapi.StatusResponse{
+		DBHealthy:   h.dbHealthy(),
+		UsagePeriod: data.UsagePeriod,
+		Backends:    backendStatuses(data),
+	})
+}
 
-	backends := make([]backendStatus, 0, len(data.BackendOrder))
+// backendStatuses maps a dashboard snapshot onto the shared status wire type,
+// one entry per backend in display order. A backend absent from UnhealthyBackends
+// is healthy; presence in DrainingBackends marks it draining.
+func backendStatuses(data *dashboard.Data) []adminapi.BackendStatus {
+	backends := make([]adminapi.BackendStatus, 0, len(data.BackendOrder))
 	for _, name := range data.BackendOrder {
-		bs := backendStatus{Name: name}
+		_, draining := data.DrainingBackends[name]
+		bs := adminapi.BackendStatus{
+			Name:     name,
+			Healthy:  !data.UnhealthyBackends[name],
+			Draining: draining,
+		}
 		if qs, ok := data.QuotaStats[name]; ok {
 			bs.BytesUsed = qs.BytesUsed
 			bs.BytesLimit = qs.BytesLimit
@@ -77,12 +84,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		backends = append(backends, bs)
 	}
-
-	httputil.WriteJSON(w, http.StatusOK, map[string]any{
-		"db_healthy":   h.dbHealthy(),
-		"backends":     backends,
-		"usage_period": data.UsagePeriod,
-	})
+	return backends
 }
 
 // handleObjectLocations returns all copies of an object across backends.
