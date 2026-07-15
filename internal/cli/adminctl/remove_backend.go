@@ -15,6 +15,8 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // cmdRemoveBackend implements `s3-orchestrator admin remove-backend <name>
@@ -45,16 +47,13 @@ func cmdRemoveBackend(args []string, c *client) int {
 // would be destroyed.
 func (c *client) removePreview(name string) int {
 	path := adminBackendsPath + name + "?purge=true"
-	result, code := c.fetchJSON(http.MethodDelete, path)
-	if code != 0 {
+	var preview adminapi.RemoveBackendPreview
+	if code := c.fetchJSON(http.MethodDelete, path, &preview); code != 0 {
 		return code
 	}
 
-	objectCount, _ := result["object_count"].(float64)
-	totalBytes, _ := result["total_bytes"].(float64)
-
 	//nolint:gosec // G705: stdout print of admin-CLI response, not an HTML/HTTP write  -  no XSS surface
-	fmt.Fprintf(c.stdout, "Backend %q contains %.0f objects (%.0f bytes).\n", name, objectCount, totalBytes)
+	fmt.Fprintf(c.stdout, "Backend %q contains %d objects (%d bytes).\n", name, preview.ObjectCount, preview.TotalBytes)
 	fmt.Fprintf(c.stdout, "This will permanently delete all objects from the backend's S3 storage and remove all database records.\n")
 	fmt.Fprintf(c.stdout, "Re-run with --confirm to proceed.\n")
 	return 0
@@ -64,15 +63,14 @@ func (c *client) removePreview(name string) int {
 // preview endpoint, then executes with the token.
 func (c *client) removePurge(name string) int {
 	path := adminBackendsPath + name + "?purge=true"
-	result, code := c.fetchJSON(http.MethodDelete, path)
-	if code != 0 {
+	var preview adminapi.RemoveBackendPreview
+	if code := c.fetchJSON(http.MethodDelete, path, &preview); code != 0 {
 		return code
 	}
 
-	confirmToken, ok := result["confirm_token"].(string)
-	if !ok || confirmToken == "" {
+	if preview.ConfirmToken == "" {
 		fmt.Fprintf(c.stderr, "error: server did not return a confirmation token\n")
 		return 1
 	}
-	return c.stream(http.MethodDelete, path+"&confirm="+confirmToken, "")
+	return c.stream(http.MethodDelete, path+"&confirm="+preview.ConfirmToken, "")
 }

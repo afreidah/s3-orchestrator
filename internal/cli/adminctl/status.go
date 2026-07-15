@@ -17,23 +17,8 @@ import (
 	"strconv"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
-
-// statusResponse is the subset of the /admin/api/status payload the text
-// renderer reads. JSON mode bypasses this and prints the raw body.
-type statusResponse struct {
-	Backends []struct {
-		Name         string `json:"name"`
-		BytesUsed    int64  `json:"bytes_used"`
-		BytesLimit   int64  `json:"bytes_limit"`
-		ObjectCount  int64  `json:"object_count"`
-		APIRequests  int64  `json:"api_requests"`
-		IngressBytes int64  `json:"ingress_bytes"`
-		EgressBytes  int64  `json:"egress_bytes"`
-	} `json:"backends"`
-	DBHealthy   bool   `json:"db_healthy"`
-	UsagePeriod string `json:"usage_period"`
-}
 
 // cmdStatus implements `s3-orchestrator admin status`.
 func cmdStatus(_ []string, c *client) int {
@@ -44,16 +29,18 @@ func cmdStatus(_ []string, c *client) int {
 // backend name, followed by the DB health and usage period. Returning an error
 // (e.g. an unexpected shape) makes the client fall back to raw JSON.
 func renderStatus(w io.Writer, body []byte) error {
-	var s statusResponse
+	var s adminapi.StatusResponse
 	if err := json.Unmarshal(body, &s); err != nil {
 		return err
 	}
 
-	headers := []string{"Backend", "Used", "Limit", "Objects", "API reqs", "Ingress", "Egress"}
+	headers := []string{"Backend", "Health", "Drain", "Used", "Limit", "Objects", "API reqs", "Ingress", "Egress"}
 	rows := make([][]string, len(s.Backends))
 	for i, b := range s.Backends {
 		rows[i] = []string{
 			b.Name,
+			health(b.Healthy),
+			drainState(b.Draining),
 			output.FormatBytes(b.BytesUsed),
 			output.FormatBytes(b.BytesLimit),
 			strconv.FormatInt(b.ObjectCount, 10),
@@ -67,4 +54,20 @@ func renderStatus(w io.Writer, body []byte) error {
 	}
 	_, err := fmt.Fprintf(w, "\nDB healthy:    %t\nUsage period:  %s\n", s.DBHealthy, s.UsagePeriod)
 	return err
+}
+
+// health renders a backend's circuit-breaker state for the status table.
+func health(healthy bool) string {
+	if healthy {
+		return "healthy"
+	}
+	return "unhealthy"
+}
+
+// drainState renders whether a backend is draining for the status table.
+func drainState(draining bool) string {
+	if draining {
+		return "draining"
+	}
+	return "-"
 }

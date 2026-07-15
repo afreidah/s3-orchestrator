@@ -26,4 +26,19 @@ var (
 
 	// errStyle renders the error line.
 	errStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
+
+	// sidebarStyle frames the left nav with a right divider.
+	sidebarStyle = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder(), false, true, false, false).
+			BorderForeground(lipgloss.Color("240")).
+			Padding(0, 1)
+
+	// navTitleStyle renders the nav's app tag.
+	navTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("62")).Padding(0, 1)
+
+	// navItemStyle, navActiveStyle, and navDisabledStyle render nav entries by
+	// state: idle, current/highlighted, and not-yet-available.
+	navItemStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	navActiveStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
+	navDisabledStyle = lipgloss.NewStyle().Faint(true)
 )

@@ -34,6 +34,10 @@ func (errLister) GetObjectLocations(_ context.Context, _ string) (*adminapi.Obje
 	return nil, errors.New("nope")
 }
 
+func (errLister) GetStatus(_ context.Context) (*adminapi.StatusResponse, error) {
+	return nil, errors.New("nope")
+}
+
 // modelWith builds a model seeded with entries and a table synced to them.
 func modelWith(entries []entry, prefix string, client adminClient) *model {
 	m := initialModel(client)
