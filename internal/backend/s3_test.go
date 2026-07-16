@@ -9,11 +9,137 @@
 package backend
 
 import (
+	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
+
+// nonSeekableReader wraps a reader so it cannot be type-asserted to
+// io.ReadSeeker, forcing PutObject's signed-payload materialization path.
+type nonSeekableReader struct{ r io.Reader }
+
+func (n nonSeekableReader) Read(p []byte) (int, error) { return n.r.Read(p) }
+
+// TestPreparePutBody_UnsignedStreamsDirectly covers the unsigned-payload path:
+// the body is passed through untouched and tagged with the unsigned option.
+func TestPreparePutBody_UnsignedStreamsDirectly(t *testing.T) {
+	t.Parallel()
+	payload := []byte("prepare-put-body-payload")
+	b := &S3Backend{unsignedPayload: true}
+
+	got, opts, cleanup, err := b.preparePutBody(nonSeekableReader{r: bytes.NewReader(payload)}, int64(len(payload)))
+	if err != nil {
+		t.Fatalf("preparePutBody: %v", err)
+	}
+	defer cleanup()
+
+	if len(opts) != 1 {
+		t.Errorf("opts = %d, want 1 (withUnsignedPayload)", len(opts))
+	}
+	if data, _ := io.ReadAll(got); !bytes.Equal(data, payload) {
+		t.Errorf("body = %q, want the original payload passed through", data)
+	}
+}
+
+// TestPreparePutBody_SignedSeekablePassthrough covers signed-payload mode with
+// an already-seekable body: it is passed through unchanged, not re-materialized.
+func TestPreparePutBody_SignedSeekablePassthrough(t *testing.T) {
+	t.Parallel()
+	payload := []byte("prepare-put-body-payload")
+	b := &S3Backend{unsignedPayload: false}
+	seekable := bytes.NewReader(payload)
+
+	got, opts, cleanup, err := b.preparePutBody(seekable, int64(len(payload)))
+	if err != nil {
+		t.Fatalf("preparePutBody: %v", err)
+	}
+	defer cleanup()
+
+	if opts != nil {
+		t.Errorf("signed mode should add no API options, got %d", len(opts))
+	}
+	if got != io.Reader(seekable) {
+		t.Error("a seekable body should be passed through unchanged, not re-materialized")
+	}
+}
+
+// TestPreparePutBody_SignedNonSeekableMaterializes covers signed-payload mode
+// with a non-seekable body: it is materialized to a seekable form that replays
+// the original bytes.
+func TestPreparePutBody_SignedNonSeekableMaterializes(t *testing.T) {
+	t.Parallel()
+	payload := []byte("prepare-put-body-payload")
+	b := &S3Backend{unsignedPayload: false}
+
+	got, opts, cleanup, err := b.preparePutBody(nonSeekableReader{r: bytes.NewReader(payload)}, int64(len(payload)))
+	if err != nil {
+		t.Fatalf("preparePutBody: %v", err)
+	}
+	defer cleanup()
+
+	if opts != nil {
+		t.Errorf("signed mode should add no API options, got %d", len(opts))
+	}
+	rs, ok := got.(io.ReadSeeker)
+	if !ok {
+		t.Fatalf("materialized body is %T, want a seekable io.ReadSeeker", got)
+	}
+	if data, _ := io.ReadAll(rs); !bytes.Equal(data, payload) {
+		t.Errorf("materialized body = %q, want %q", data, payload)
+	}
+}
+
+// TestPutObject_SignedPayloadNonSeekableBodyMaterializes pins #972: with
+// unsigned_payload disabled and a non-seekable body, PutObject materializes the
+// stream to a seekable form instead of io.ReadAll-ing the whole object into
+// memory, and the backend still receives every byte.
+func TestPutObject_SignedPayloadNonSeekableBodyMaterializes(t *testing.T) {
+	t.Parallel()
+
+	var got []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ = io.ReadAll(r.Body)
+		w.Header().Set("ETag", `"abc123"`)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	be, err := NewS3Backend(t.Context(), &config.BackendConfig{
+		Name:            "test",
+		Endpoint:        srv.URL, // http:// forces signed payload
+		Region:          "us-east-1",
+		Bucket:          "test-bucket",
+		AccessKeyID:     "AKID",
+		SecretAccessKey: "secret",
+		ForcePathStyle:  true, // reach the httptest server at /bucket/key
+		DisableChecksum: true, // keep the wire body raw (no aws-chunked framing)
+	})
+	if err != nil {
+		t.Fatalf("NewS3Backend: %v", err)
+	}
+	if be.unsignedPayload {
+		t.Fatal("expected signed-payload mode for the http endpoint")
+	}
+
+	payload := bytes.Repeat([]byte("s3o-signed-payload-"), 4096) // ~76 KiB
+	body := nonSeekableReader{r: bytes.NewReader(payload)}
+
+	etag, err := be.PutObject(t.Context(), "dir/obj", body, int64(len(payload)), "text/plain", nil)
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	if etag == "" {
+		t.Error("expected an ETag back")
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("backend received %d bytes, want %d (body dropped or truncated)", len(got), len(payload))
+	}
+}
 
 // TestWithUnsignedPayload_AddsAPIOption verifies the with unsigned payload adds apioption contract.
 // Asserts that expected 1 API option, got.

@@ -66,7 +66,7 @@ func (o *Manager) headSourceForCopy(
 
 // CopyObject copies an object from sourceKey to destKey. Materializes
 // the source body into a seekable buffer  -  in-memory for small
-// objects, a self-unlinking tempfile above materializeMemThreshold
+// objects, a self-unlinking tempfile above materialize.MemThreshold
 // -  before handing it to the destination PutObject. A non-seekable
 // body would force the AWS SDK onto its streaming-unsigned-payload
 // signing path, which uses chunked transfer encoding and drops
