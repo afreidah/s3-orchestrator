@@ -130,6 +130,7 @@ var handlers = map[string]handler{
 	"status":                  cmdStatus,
 	"object-locations":        cmdObjectLocations,
 	"cleanup-queue":           cmdCleanupQueue,
+	"cleanup-dlq":             cmdCleanupDLQ,
 	"usage-flush":             cmdUsageFlush,
 	"replicate":               cmdReplicate,
 	"rebalance":               cmdRebalance,
