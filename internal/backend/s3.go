@@ -8,15 +8,11 @@
 // works for all providers since they all speak the S3 protocol.
 // -------------------------------------------------------------------------------
 
-// Package backend defines the ObjectBackend interface for S3-compatible
-// storage providers and provides the S3Backend implementation (AWS SDK v2)
-// with per-backend circuit breaker wrapping.
 package backend
 
 //go:generate mockgen -destination=mock_generated_test.go -package=backend github.com/afreidah/s3-orchestrator/internal/backend ObjectBackend
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -36,6 +32,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
 )
 
 // -------------------------------------------------------------------------
@@ -163,6 +160,39 @@ func NewS3Backend(ctx context.Context, cfg *config.BackendConfig) (*S3Backend, e
 // CRUD OPERATIONS
 // -------------------------------------------------------------------------
 
+// preparePutBody resolves the body and request options for a single PutObject
+// call, plus a cleanup the caller must defer (always safe to call). In
+// unsigned-payload mode (default) it tags the request so the SDK skips the
+// SigV4 payload hash and streams a non-seekable body directly; integrity is
+// protected by TLS. In signed-payload mode the SDK needs a seekable body to
+// hash, so a non-seekable stream is materialized (memory below
+// materialize.MemThreshold, self-unlinking tempfile above) rather than buffered
+// whole on the heap, which would OOM the proxy on a large upload.
+func (b *S3Backend) preparePutBody(body io.Reader, size int64) (io.Reader, []func(*s3.Options), func(), error) {
+	// noop is the cleanup for the paths that materialize nothing (unsigned
+	// mode and already-seekable bodies), returned so every caller can defer
+	// unconditionally; only the tempfile path has an fd to release.
+	noop := func() {
+		// Nothing to release on the non-materialized paths.
+	}
+	if b.unsignedPayload {
+		return body, []func(*s3.Options){withUnsignedPayload}, noop, nil
+	}
+	if _, ok := body.(io.ReadSeeker); ok {
+		return body, nil, noop, nil
+	}
+	mb, err := materialize.New(body, size, nil)
+	if err != nil {
+		return nil, nil, noop, fmt.Errorf("materialize signed-payload body: %w", err)
+	}
+	seekable, err := mb.Reader()
+	if err != nil {
+		mb.Cleanup()
+		return nil, nil, noop, fmt.Errorf("read materialized body: %w", err)
+	}
+	return seekable, nil, mb.Cleanup, nil
+}
+
 // PutObject uploads an object to the backend.
 func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
 	const operation = "PutObject"
@@ -171,23 +201,11 @@ func (b *S3Backend) PutObject(ctx context.Context, key string, body io.Reader, s
 			telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, key),
 			b.recordOperation),
 		func(ctx context.Context) (string, error) {
-			// When unsigned_payload is enabled (default), the SDK skips
-			// computing a SHA-256 payload hash and accepts a non-seekable
-			// io.Reader directly, avoiding buffering the entire body in
-			// memory. Body integrity is protected by TLS at the transport
-			// layer. When disabled, the body is buffered into memory so
-			// the SDK can compute the SigV4 payload hash.
-			putBody := body
-			var opts []func(*s3.Options)
-			if b.unsignedPayload {
-				opts = append(opts, withUnsignedPayload)
-			} else if _, ok := body.(io.ReadSeeker); !ok {
-				data, err := io.ReadAll(body)
-				if err != nil {
-					return "", fmt.Errorf("failed to read body: %w", err)
-				}
-				putBody = bytes.NewReader(data)
+			putBody, opts, cleanup, err := b.preparePutBody(body, size)
+			if err != nil {
+				return "", err
 			}
+			defer cleanup()
 
 			input := &s3.PutObjectInput{
 				Bucket:        aws.String(b.bucket),
