@@ -160,6 +160,18 @@ type CleanupStore interface {
 	// cleanup_dlq. Updates the cleanup_dlq_depth gauge so dashboards can
 	// surface the count of unrecoverable orphans needing attention.
 	CleanupDLQDepth(ctx context.Context) (int64, error)
+
+	// ListCleanupDLQ returns dead-lettered cleanup rows for operator
+	// inspection, newest graduation first. An empty backend lists every
+	// backend; a non-empty one scopes the listing. limit bounds the page.
+	ListCleanupDLQ(ctx context.Context, backend string, limit int) ([]CleanupDLQItem, error)
+
+	// RequeueCleanupDLQ atomically moves dead-lettered rows back into
+	// cleanup_queue (fresh attempts) so the cleanup worker retries them
+	// against a recovered backend; orphan_bytes then decrements naturally
+	// as those retries complete. An empty backend requeues every backend.
+	// Returns the number of rows requeued.
+	RequeueCleanupDLQ(ctx context.Context, backend string) (int64, error)
 }
 
 // PendingStore defines in-flight PutObject intent tracking. The write

@@ -260,3 +260,70 @@ func (s *Store) CleanupDLQDepth(ctx context.Context) (int64, error) {
 func (s *Store) MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error) {
 	return core.MoveCleanupToDLQ(ctx, s, id, lastError)
 }
+
+// ListCleanupDLQ returns dead-lettered cleanup rows for operator inspection,
+// newest graduation first. An empty backend lists every backend.
+func (s *Store) ListCleanupDLQ(ctx context.Context, backend string, limit int) ([]core.CleanupDLQItem, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT backend_name, object_key, reason, size_bytes, attempts,
+		       first_enqueued_at, moved_at, last_error
+		FROM cleanup_dlq
+		WHERE (? = '' OR backend_name = ?)
+		ORDER BY moved_at DESC
+		LIMIT ?`, backend, backend, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list cleanup dlq: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []core.CleanupDLQItem
+	for rows.Next() {
+		var (
+			it              core.CleanupDLQItem
+			firstEnq, moved string
+			lastErr         sql.NullString
+		)
+		if err := rows.Scan(&it.BackendName, &it.ObjectKey, &it.Reason, &it.SizeBytes,
+			&it.Attempts, &firstEnq, &moved, &lastErr); err != nil {
+			return nil, fmt.Errorf("scan cleanup dlq row: %w", err)
+		}
+		it.FirstEnqueued, _ = time.Parse(time.RFC3339Nano, firstEnq)
+		it.MovedAt, _ = time.Parse(time.RFC3339Nano, moved)
+		it.LastError = lastErr.String
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+// RequeueCleanupDLQ moves dead-lettered rows back into cleanup_queue inside a
+// single transaction (SQLite serialises writes, so the insert+delete pair is
+// atomic). cleanup_queue column defaults reset created_at/next_retry to now
+// and attempts to 0. Returns the number of rows requeued.
+func (s *Store) RequeueCleanupDLQ(ctx context.Context, backend string) (int64, error) {
+	// Set created_at/next_retry explicitly in RFC3339Nano to match
+	// EnqueueCleanup and GetPendingCleanups' comparison format; the column
+	// default's millisecond form sorts inconsistently (a trailing 'Z' outranks
+	// digits), which would delay eligibility of the requeued rows.
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	var n int64
+	err := cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `
+			INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes, created_at, next_retry)
+			SELECT backend_name, object_key, reason, size_bytes, ?, ?
+			FROM cleanup_dlq
+			WHERE (? = '' OR backend_name = ?)`, now, now, backend, backend)
+		if err != nil {
+			return fmt.Errorf("requeue insert: %w", err)
+		}
+		n, _ = res.RowsAffected()
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM cleanup_dlq WHERE (? = '' OR backend_name = ?)`, backend, backend); err != nil {
+			return fmt.Errorf("requeue delete: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}

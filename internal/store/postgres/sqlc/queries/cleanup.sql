@@ -140,3 +140,31 @@ INSERT INTO cleanup_dlq (
 -- Returns the current depth of the cleanup_dlq table for the dashboard
 -- and the cleanup_dlq_depth gauge.
 SELECT COUNT(*) FROM cleanup_dlq;
+
+-- name: ListCleanupDLQ :many
+-- Read-only listing of dead-lettered cleanups for the admin cleanup-dlq
+-- view. An empty backend argument returns every backend; otherwise the
+-- listing is scoped to one. Newest graduations first.
+SELECT backend_name, object_key, reason, size_bytes,
+       attempts, first_enqueued_at, moved_at, last_error
+FROM cleanup_dlq
+WHERE (sqlc.arg(backend)::text = '' OR backend_name = sqlc.arg(backend))
+ORDER BY moved_at DESC
+LIMIT sqlc.arg(row_limit);
+
+-- name: RequeueCleanupDLQ :execrows
+-- Atomically moves dead-lettered rows back into cleanup_queue so the
+-- cleanup worker retries them against a now-recovered backend. The
+-- writable CTE deletes the DLQ rows and re-inserts them in one
+-- statement; cleanup_queue defaults reset created_at/next_retry to NOW()
+-- and attempts to 0. orphan_bytes is untouched here - it was never
+-- decremented on the DLQ move, and the worker will debit it when the
+-- retried delete finally succeeds. An empty backend requeues every
+-- backend. Returns the number of rows requeued.
+WITH moved AS (
+    DELETE FROM cleanup_dlq
+    WHERE (sqlc.arg(backend)::text = '' OR backend_name = sqlc.arg(backend))
+    RETURNING backend_name, object_key, reason, size_bytes
+)
+INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes)
+SELECT backend_name, object_key, reason, size_bytes FROM moved;
