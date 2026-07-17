@@ -717,6 +717,21 @@ func (mr *MockMetadataStoreMockRecorder) ListAllEncryptedLocations(ctx, limit, o
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListAllEncryptedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListAllEncryptedLocations), ctx, limit, offset)
 }
 
+// ListCleanupDLQ mocks base method.
+func (m *MockMetadataStore) ListCleanupDLQ(ctx context.Context, backend string, limit int) ([]core.CleanupDLQItem, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListCleanupDLQ", ctx, backend, limit)
+	ret0, _ := ret[0].([]core.CleanupDLQItem)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListCleanupDLQ indicates an expected call of ListCleanupDLQ.
+func (mr *MockMetadataStoreMockRecorder) ListCleanupDLQ(ctx, backend, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCleanupDLQ", reflect.TypeOf((*MockMetadataStore)(nil).ListCleanupDLQ), ctx, backend, limit)
+}
+
 // ListDirectoryChildren mocks base method.
 func (m *MockMetadataStore) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
 	m.ctrl.T.Helper()
@@ -1029,6 +1044,21 @@ func (m *MockMetadataStore) RemoveExcessCopy(ctx context.Context, key, backendNa
 func (mr *MockMetadataStoreMockRecorder) RemoveExcessCopy(ctx, key, backendName, factor any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveExcessCopy", reflect.TypeOf((*MockMetadataStore)(nil).RemoveExcessCopy), ctx, key, backendName, factor)
+}
+
+// RequeueCleanupDLQ mocks base method.
+func (m *MockMetadataStore) RequeueCleanupDLQ(ctx context.Context, backend string) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RequeueCleanupDLQ", ctx, backend)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RequeueCleanupDLQ indicates an expected call of RequeueCleanupDLQ.
+func (mr *MockMetadataStoreMockRecorder) RequeueCleanupDLQ(ctx, backend any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RequeueCleanupDLQ", reflect.TypeOf((*MockMetadataStore)(nil).RequeueCleanupDLQ), ctx, backend)
 }
 
 // RetryCleanupItem mocks base method.

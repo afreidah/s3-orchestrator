@@ -338,6 +338,89 @@ func (q *Queries) InsertCleanupDLQ(ctx context.Context, arg InsertCleanupDLQPara
 	return err
 }
 
+const listCleanupDLQ = `-- name: ListCleanupDLQ :many
+SELECT backend_name, object_key, reason, size_bytes,
+       attempts, first_enqueued_at, moved_at, last_error
+FROM cleanup_dlq
+WHERE ($1::text = '' OR backend_name = $1)
+ORDER BY moved_at DESC
+LIMIT $2
+`
+
+type ListCleanupDLQParams struct {
+	Backend  string
+	RowLimit int32
+}
+
+type ListCleanupDLQRow struct {
+	BackendName     string
+	ObjectKey       string
+	Reason          string
+	SizeBytes       int64
+	Attempts        int32
+	FirstEnqueuedAt pgtype.Timestamptz
+	MovedAt         pgtype.Timestamptz
+	LastError       *string
+}
+
+// Read-only listing of dead-lettered cleanups for the admin cleanup-dlq
+// view. An empty backend argument returns every backend; otherwise the
+// listing is scoped to one. Newest graduations first.
+func (q *Queries) ListCleanupDLQ(ctx context.Context, arg ListCleanupDLQParams) ([]ListCleanupDLQRow, error) {
+	rows, err := q.db.Query(ctx, listCleanupDLQ, arg.Backend, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCleanupDLQRow{}
+	for rows.Next() {
+		var i ListCleanupDLQRow
+		if err := rows.Scan(
+			&i.BackendName,
+			&i.ObjectKey,
+			&i.Reason,
+			&i.SizeBytes,
+			&i.Attempts,
+			&i.FirstEnqueuedAt,
+			&i.MovedAt,
+			&i.LastError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const requeueCleanupDLQ = `-- name: RequeueCleanupDLQ :execrows
+WITH moved AS (
+    DELETE FROM cleanup_dlq
+    WHERE ($1::text = '' OR backend_name = $1)
+    RETURNING backend_name, object_key, reason, size_bytes
+)
+INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes)
+SELECT backend_name, object_key, reason, size_bytes FROM moved
+`
+
+// Atomically moves dead-lettered rows back into cleanup_queue so the
+// cleanup worker retries them against a now-recovered backend. The
+// writable CTE deletes the DLQ rows and re-inserts them in one
+// statement; cleanup_queue defaults reset created_at/next_retry to NOW()
+// and attempts to 0. orphan_bytes is untouched here - it was never
+// decremented on the DLQ move, and the worker will debit it when the
+// retried delete finally succeeds. An empty backend requeues every
+// backend. Returns the number of rows requeued.
+func (q *Queries) RequeueCleanupDLQ(ctx context.Context, backend string) (int64, error) {
+	result, err := q.db.Exec(ctx, requeueCleanupDLQ, backend)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const sumCleanupQueueSizeByKey = `-- name: SumCleanupQueueSizeByKey :one
 SELECT COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes,
        COUNT(*)::bigint AS row_count
