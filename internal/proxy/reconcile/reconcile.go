@@ -202,33 +202,43 @@ func NewS3KeyStream(
 		cancel: cancel,
 	}
 
-	go func() {
-		defer close(s.ch)
-		err := s3b.ListObjects(streamCtx, "", func(objects []backend.ListedObject) error {
-			if apiPages != nil {
-				atomic.AddInt64(apiPages, 1)
-			}
-			for i := range objects {
-				obj := &objects[i]
-				key, ok := namespaceKey(obj.Key, bucketPrefix, otherPrefixes)
-				if !ok {
-					continue
-				}
-				select {
-				case s.ch <- Entry{key: key, size: obj.SizeBytes}:
-				case <-streamCtx.Done():
-					return streamCtx.Err()
-				}
-			}
-			return nil
-		})
-		if err != nil && !errors.Is(err, context.Canceled) {
-			s.errCh <- err
-		}
-		close(s.errCh)
-	}()
+	go s.run(streamCtx, s3b, bucketPrefix, otherPrefixes, apiPages)
 
 	return s
+}
+
+// run drives the backing ListObjects walk on the stream goroutine, forwarding
+// each page through emitPage and surfacing any non-cancellation error on errCh.
+func (s *S3KeyStream) run(ctx context.Context, s3b ObjectLister, bucketPrefix string, otherPrefixes []string, apiPages *int64) {
+	defer close(s.ch)
+	err := s3b.ListObjects(ctx, "", func(objects []backend.ListedObject) error {
+		return s.emitPage(ctx, objects, bucketPrefix, otherPrefixes, apiPages)
+	})
+	if err != nil && !errors.Is(err, context.Canceled) {
+		s.errCh <- err
+	}
+	close(s.errCh)
+}
+
+// emitPage maps one ListObjects page into namespaced entries and sends them on
+// the channel, counting the page and bailing out when the stream is cancelled.
+func (s *S3KeyStream) emitPage(ctx context.Context, objects []backend.ListedObject, bucketPrefix string, otherPrefixes []string, apiPages *int64) error {
+	if apiPages != nil {
+		atomic.AddInt64(apiPages, 1)
+	}
+	for i := range objects {
+		obj := &objects[i]
+		key, ok := namespaceKey(obj.Key, bucketPrefix, otherPrefixes)
+		if !ok {
+			continue
+		}
+		select {
+		case s.ch <- Entry{key: key, size: obj.SizeBytes}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
 }
 
 // namespaceKey applies the bucket-routing rules used by the original

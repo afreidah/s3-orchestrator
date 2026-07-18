@@ -15,6 +15,7 @@ linters:
     - copyloopvar
     - depguard
     - errcheck
+    - gocognit
     - gocritic
     - gosec
     - intrange
@@ -23,6 +24,11 @@ linters:
     - sloglint
     - staticcheck
   settings:
+    gocognit:
+      # Matches the SonarCloud cognitive-complexity gate. gocognit and Sonar
+      # use different algorithms, so this catches most regressions locally but
+      # is not a 1:1 replacement for the Sonar check.
+      min-complexity: 15
     gocritic:
       disabled-checks:
         - exitAfterDefer

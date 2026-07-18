@@ -38,6 +38,10 @@ func (errLister) GetStatus(_ context.Context) (*adminapi.StatusResponse, error) 
 	return nil, errors.New("nope")
 }
 
+func (errLister) GetLogs(_ context.Context, _ string) (*adminapi.LogsResponse, error) {
+	return nil, errors.New("nope")
+}
+
 // modelWith builds a model seeded with entries and a table synced to them.
 func modelWith(entries []entry, prefix string, client adminClient) *model {
 	m := initialModel(client)
@@ -50,6 +54,20 @@ func modelWith(entries []entry, prefix string, client adminClient) *model {
 	})
 	m.refreshVisible()
 	return m
+}
+
+// TestApplyPage_BeforeResizeDoesNotPanic pins the fix for a race where the Init
+// object load is delivered before the first WindowSizeMsg: the table must
+// already have columns so SetRows does not panic in the row renderer.
+func TestApplyPage_BeforeResizeDoesNotPanic(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{}) // width 0, no WindowSizeMsg yet
+	m.applyPage(objectsLoadedMsg{prefix: "", page: &adminapi.ObjectListResponse{
+		Objects: []adminapi.ObjectEntry{{Key: "a"}, {Key: "b"}},
+	}})
+	if len(m.entries) != 2 {
+		t.Errorf("entries = %d, want 2", len(m.entries))
+	}
 }
 
 func TestParentPrefix(t *testing.T) {

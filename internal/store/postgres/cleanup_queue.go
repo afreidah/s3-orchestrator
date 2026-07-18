@@ -14,6 +14,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -216,4 +217,50 @@ func durationToInterval(d time.Duration) pgtype.Interval {
 		Microseconds: d.Microseconds(),
 		Valid:        true,
 	}
+}
+
+// ListCleanupDLQ returns dead-lettered cleanup rows for operator inspection,
+// newest graduation first. An empty backend lists every backend.
+func (s *Store) ListCleanupDLQ(ctx context.Context, backend string, limit int) ([]core.CleanupDLQItem, error) {
+	// Convert only inside an in-range guard so the int->int32 narrowing is
+	// provably overflow-free; the admin handler already caps limit, this is
+	// defence in depth.
+	rowLimit := int32(math.MaxInt32)
+	if limit >= 0 && limit <= math.MaxInt32 {
+		rowLimit = int32(limit)
+	}
+	rows, err := s.queries.ListCleanupDLQ(ctx, db.ListCleanupDLQParams{
+		Backend:  backend,
+		RowLimit: rowLimit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list cleanup dlq: %w", err)
+	}
+	return mapSlice(rows, cleanupDLQItemFromRow), nil
+}
+
+// cleanupDLQItemFromRow maps a sqlc DLQ row onto the core domain type,
+// unwrapping the nullable last_error and timestamptz columns.
+func cleanupDLQItemFromRow(r *db.ListCleanupDLQRow) core.CleanupDLQItem {
+	return core.CleanupDLQItem{
+		BackendName:   r.BackendName,
+		ObjectKey:     r.ObjectKey,
+		Reason:        r.Reason,
+		SizeBytes:     r.SizeBytes,
+		Attempts:      r.Attempts,
+		FirstEnqueued: r.FirstEnqueuedAt.Time,
+		MovedAt:       r.MovedAt.Time,
+		LastError:     derefStr(r.LastError),
+	}
+}
+
+// RequeueCleanupDLQ moves dead-lettered rows back into cleanup_queue via the
+// writable-CTE query so the move is atomic. Returns the number of rows
+// requeued.
+func (s *Store) RequeueCleanupDLQ(ctx context.Context, backend string) (int64, error) {
+	n, err := s.queries.RequeueCleanupDLQ(ctx, backend)
+	if err != nil {
+		return 0, fmt.Errorf("requeue cleanup dlq: %w", err)
+	}
+	return n, nil
 }

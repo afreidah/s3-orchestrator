@@ -243,7 +243,7 @@ flowchart TD
 
 A built-in web dashboard provides real-time storage summaries, per-backend quota and usage bars, monthly traffic charts, a lazy-loaded directory tree for browsing and managing objects, and admin controls for rebalancing, syncing, uploading, and deleting files and folders.
 
-![Admin Web Interface](/docs/images/multi-cloud-setup.png)
+![Admin Web Interface](/docs/images/admin-ui.png)
 
 <hr style="margin-top: 3rem;">
 

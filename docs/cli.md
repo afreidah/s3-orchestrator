@@ -256,7 +256,7 @@ The admin API requires `ui.admin_token` (or `ui.admin_key` as fallback) to be se
 
 ### tui
 
-Full-screen, read-only terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status. Resolves the server address and admin token with the same precedence as `admin` (**flag &rarr; environment &rarr; config file**), loading `config.yaml` only when a value is still missing:
+Full-screen, read-only terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status; **Logs** shows recent structured log entries. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the server address and admin token with the same precedence as `admin` (**flag &rarr; environment &rarr; config file**), loading `config.yaml` only when a value is still missing:
 
 ```bash
 export S3O_ADMIN_ADDR="https://s3.example.com"
@@ -281,6 +281,8 @@ s3-orchestrator tui
 | `tab` | Move focus between the sidebar and the content area |
 | `f` | Jump to the Files section |
 | `b` | Jump to the Backends section |
+| `l` | Jump to the Logs section |
+| `L` | Cycle the Logs level filter (all / INFO / WARN / ERROR) |
 | `up` / `down` | Move the selection (or the sidebar highlight when it has focus) |
 | `enter` / `right` / `l` | Open: a sidebar section, a prefix, or the inspector on an object |
 | `backspace` / `left` / `h` | Go up one prefix; from the inspector or Backends, return to where you were |
@@ -297,6 +299,10 @@ The inspector renders one row per backend copy - backend, size, age, whether the
 ![The TUI inspector showing an object's backend copies](/docs/images/tui-file-details.png)
 
 The **Backends** section is the interactive equivalent of `admin status`, sourced from `GET /admin/api/status`. It renders one row per configured backend - circuit-breaker health, drain state, quota used and limit, object count, and the current period's API request, ingress, and egress counters - with the metadata database health and usage period in the title bar. Press `r` to refresh the snapshot.
+
+The **Logs** section shows recent structured log entries from the instance's in-memory log buffer, sourced from `GET /admin/api/logs` - the same buffer the web dashboard's logs pane reads. Each row is time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs (not raw JSON). The level is colour-coded by severity (WARN and ERROR stand out; INFO stays neutral). Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh.
+
+![The TUI Logs section showing recent structured log entries](/docs/images/tui-logs.png)
 
 ![The TUI Backends section showing per-backend status](/docs/images/tui-backends.png)
 
