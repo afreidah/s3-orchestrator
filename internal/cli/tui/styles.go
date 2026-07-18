@@ -9,7 +9,11 @@
 
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 var (
 	// titleStyle renders the app title bar of the pane that has focus.
@@ -28,6 +32,9 @@ var (
 	// helpStyle renders the footer key hints.
 	helpStyle = lipgloss.NewStyle().Faint(true)
 
+	// colHeaderStyle renders a hand-rolled table's column header row.
+	colHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111"))
+
 	// errStyle renders the error line.
 	errStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
 
@@ -45,4 +52,27 @@ var (
 	navItemStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	navActiveStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
 	navDisabledStyle = lipgloss.NewStyle().Faint(true)
+
+	// logLevelStyles colours the logs pane's LEVEL column by severity. INFO
+	// (the bulk of entries) stays neutral so WARN and ERROR stand out rather
+	// than drowning in colour; DEBUG is dimmed. Unknown levels fall back to
+	// logLevelInfo.
+	logLevelDebug = lipgloss.NewStyle().Faint(true)
+	logLevelInfo  = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	logLevelWarn  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
+	logLevelError = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
 )
+
+// levelStyle normalizes a log-level string and returns its display style.
+func levelStyle(level string) lipgloss.Style {
+	switch strings.ToUpper(strings.TrimSpace(level)) {
+	case "DEBUG":
+		return logLevelDebug
+	case "WARN", "WARNING":
+		return logLevelWarn
+	case "ERROR":
+		return logLevelError
+	default:
+		return logLevelInfo
+	}
+}
