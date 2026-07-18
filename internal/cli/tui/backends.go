@@ -169,7 +169,7 @@ func (m *model) backendsHeaderView() string {
 	if m.backends.usagePeriod != "" {
 		title += "   usage period: " + m.backends.usagePeriod
 	}
-	return titleStyle.Width(m.contentWidth()).Render(title)
+	return m.contentTitleStyle().Width(m.contentWidth()).Render(title)
 }
 
 // backendsFooterView renders the backends key hints.
