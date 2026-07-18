@@ -157,7 +157,7 @@ func (m *model) inspectView() string {
 // inspectHeaderView renders the title bar with the key and copy count.
 func (m *model) inspectHeaderView() string {
 	title := fmt.Sprintf("inspect   %s   (%d copies)", m.insp.key, len(m.insp.locations))
-	return titleStyle.Width(m.contentWidth()).Render(title)
+	return m.contentTitleStyle().Width(m.contentWidth()).Render(title)
 }
 
 // inspectFooterView renders the inspector key hints.
