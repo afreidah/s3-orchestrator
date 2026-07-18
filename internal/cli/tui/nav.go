@@ -92,7 +92,7 @@ func (m *model) selectSection(s section) (tea.Model, tea.Cmd) {
 		cmd := m.loadStatus()
 		return m, cmd
 	case sectionLogs:
-		m.logs = logsView{loading: true, table: newTable()}
+		m.logs = logsView{loading: true}
 		m.resizeLogs()
 		cmd := m.loadLogs()
 		return m, cmd

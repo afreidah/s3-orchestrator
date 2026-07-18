@@ -21,29 +21,27 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
-func TestRowsFromLogs(t *testing.T) {
+func TestLogLine(t *testing.T) {
 	t.Parallel()
 	ts := time.Date(2026, 7, 18, 13, 5, 9, 0, time.UTC)
-	rows := rowsFromLogs([]adminapi.LogEntry{
-		{Time: ts, Level: "INFO", Component: "replicator", Message: "copied object",
-			Attrs: map[string]any{"to": "e2", "from": "r2"}},
-	})
-	if len(rows) != 1 {
-		t.Fatalf("rows = %d, want 1", len(rows))
-	}
-	// Message column carries the message plus its attributes as sorted,
-	// human-readable key=value pairs.
-	if r := rows[0]; r[0] != "13:05:09" || r[1] != "INFO" || r[2] != "replicator" ||
-		r[3] != "copied object from=r2 to=e2" {
-		t.Errorf("row = %v", rows[0])
+	line := logLine(&adminapi.LogEntry{
+		Time: ts, Level: "INFO", Component: "replicator", Message: "copied object",
+		Attrs: map[string]any{"to": "e2", "from": "r2"},
+	}, 80)
+	// The line carries time, level, component, and the message with its
+	// attributes rendered as sorted key=value pairs.
+	for _, want := range []string{"13:05:09", "INFO", "replicator", "copied object from=r2 to=e2"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("line %q missing %q", line, want)
+		}
 	}
 }
 
-func TestApplyLogs_CursorParksOnNewest(t *testing.T) {
+func TestApplyLogs_PopulatesViewport(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
-	m.logs = logsView{loading: true, table: newTable()}
+	m.logs = logsView{loading: true}
 	m.resizeLogs()
 
 	m.applyLogs(&adminapi.LogsResponse{Entries: []adminapi.LogEntry{
@@ -54,19 +52,25 @@ func TestApplyLogs_CursorParksOnNewest(t *testing.T) {
 	if m.logs.loading || m.logs.err != nil {
 		t.Errorf("state = %+v", m.logs)
 	}
-	if len(m.logs.table.Rows()) != 3 {
-		t.Fatalf("rows = %d, want 3", len(m.logs.table.Rows()))
+	if len(m.logs.entries) != 3 {
+		t.Fatalf("entries = %d, want 3", len(m.logs.entries))
 	}
-	if m.logs.table.Cursor() != 2 {
-		t.Errorf("cursor = %d, want 2 (newest)", m.logs.table.Cursor())
+	// The viewport shows the rendered lines.
+	view := m.logs.vp.View()
+	for _, want := range []string{"one", "two", "three", "WARN", "ERROR"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("viewport missing %q:\n%s", want, view)
+		}
 	}
 }
 
 func TestHandleLogsKey_BackAndReload(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
+	m.width, m.height = 120, 20
 	m.section = sectionLogs
-	m.logs = logsView{table: newTable()}
+	m.logs = logsView{}
+	m.resizeLogs()
 
 	// esc returns focus to the sidebar, cursor on the current section.
 	m.handleLogsKey(tea.KeyMsg{Type: tea.KeyEsc})
@@ -84,10 +88,24 @@ func TestHandleLogsKey_BackAndReload(t *testing.T) {
 		t.Errorf("reload result = %#v, want logsLoadedMsg", cmd())
 	}
 
-	// a movement key delegates to the table without leaving the pane.
+	// a movement key delegates to the viewport without leaving the pane.
 	m.handleLogsKey(tea.KeyMsg{Type: tea.KeyDown})
 	if m.navFocus {
 		t.Error("movement key should not drop focus to the nav")
+	}
+}
+
+func TestLogsHeaderView_ShowsLevelFilter(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.width, m.height = 120, 20
+
+	if got := m.logsHeaderView(); !strings.Contains(got, "level: all") {
+		t.Errorf("default header should show level: all, got %q", got)
+	}
+	m.logs.minLevel = "WARN"
+	if got := m.logsHeaderView(); !strings.Contains(got, "level: WARN+") {
+		t.Errorf("filtered header should show level: WARN+, got %q", got)
 	}
 }
 
@@ -105,6 +123,49 @@ func TestLogsBodyView_States(t *testing.T) {
 	m.logs = logsView{}
 	if got := m.logsBodyView(); !strings.Contains(got, "no log entries") {
 		t.Errorf("empty body = %q", got)
+	}
+}
+
+func TestNextLogLevel(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{"": "INFO", "INFO": "WARN", "WARN": "ERROR", "ERROR": "", "bogus": ""}
+	for in, want := range cases {
+		if got := nextLogLevel(in); got != want {
+			t.Errorf("nextLogLevel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestHandleLogsKey_CyclesLevel(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.section = sectionLogs
+	m.logs = logsView{}
+
+	// "L" advances the level floor and triggers a re-fetch.
+	_, cmd := m.handleLogsKey(key("L"))
+	if m.logs.minLevel != "INFO" {
+		t.Errorf("minLevel = %q, want INFO", m.logs.minLevel)
+	}
+	if !m.logs.loading || cmd == nil {
+		t.Errorf("cycle: loading=%v cmd=%v", m.logs.loading, cmd)
+	}
+	if _, ok := cmd().(logsLoadedMsg); !ok {
+		t.Errorf("cycle result = %#v, want logsLoadedMsg", cmd())
+	}
+}
+
+func TestLevelStyle_Normalizes(t *testing.T) {
+	t.Parallel()
+	// case-insensitive and WARNING alias map to the same style; unknown -> info.
+	if levelStyle("warn").GetForeground() != levelStyle("WARNING").GetForeground() {
+		t.Error("warn and WARNING should share a style")
+	}
+	if levelStyle("weird").GetForeground() != levelStyle("INFO").GetForeground() {
+		t.Error("unknown level should fall back to the info style")
+	}
+	if levelStyle("ERROR").GetForeground() == levelStyle("INFO").GetForeground() {
+		t.Error("error and info styles should differ")
 	}
 }
 

@@ -52,7 +52,7 @@ func (f *fakeLister) GetStatus(_ context.Context) (*adminapi.StatusResponse, err
 	return &adminapi.StatusResponse{}, nil
 }
 
-func (f *fakeLister) GetLogs(_ context.Context) (*adminapi.LogsResponse, error) {
+func (f *fakeLister) GetLogs(_ context.Context, _ string) (*adminapi.LogsResponse, error) {
 	if f.logs != nil {
 		return f.logs, nil
 	}

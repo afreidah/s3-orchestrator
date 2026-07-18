@@ -69,9 +69,14 @@ func (c *apiClient) GetStatus(ctx context.Context) (*adminapi.StatusResponse, er
 	return getJSON[adminapi.StatusResponse](ctx, c, "/admin/api/status", nil)
 }
 
-// GetLogs fetches recent structured log entries from the in-memory buffer.
-func (c *apiClient) GetLogs(ctx context.Context) (*adminapi.LogsResponse, error) {
-	return getJSON[adminapi.LogsResponse](ctx, c, "/admin/api/logs", nil)
+// GetLogs fetches recent structured log entries from the in-memory buffer,
+// filtered to the given minimum level (empty returns all levels).
+func (c *apiClient) GetLogs(ctx context.Context, level string) (*adminapi.LogsResponse, error) {
+	var q url.Values
+	if level != "" {
+		q = url.Values{"level": {level}}
+	}
+	return getJSON[adminapi.LogsResponse](ctx, c, "/admin/api/logs", q)
 }
 
 // getJSON issues an authenticated GET against the admin API and decodes the
