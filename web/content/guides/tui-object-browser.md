@@ -12,6 +12,9 @@ A persistent left navigation bar switches between sections; the content area to 
 
 - **Files** - a hierarchical listing of the object namespace, one prefix at a time (directories collapse into common prefixes, just like `aws s3 ls`). Large prefixes page in as you scroll. Opening an object swaps the content area for the **Inspector**, which lists every backend copy of that object with its size, age, encryption status, key id, and content-hash prefix - the replica-placement view that makes multi-backend storage legible.
 - **Backends** - one row per configured backend with its circuit-breaker health, drain state, quota usage, object count, and per-period request and transfer counters.
+- **Logs** - recent structured log entries from the instance's in-memory log buffer (the same source the web dashboard's logs pane reads): time, level, component, and a human-readable message with its attributes appended as `key=value` pairs.
+
+The pane that currently has keyboard focus renders with a bright title bar while the other is muted, so it is always clear whether keys drive the sidebar or the content.
 
 Everything is read-only. The TUI issues `GET` requests to the admin API (`/admin/api/objects` for the listing, `/admin/api/object-locations` for the inspector, `/admin/api/status` for backends) and never mutates state.
 
@@ -46,7 +49,7 @@ s3-orchestrator tui -addr https://s3.example.com -token "$ADMIN_TOKEN"
 
 ## Step 2: Navigate the object namespace
 
-The TUI opens on the Files section at the root prefix. Move the selection with the arrow keys; open the highlighted row with `enter`. `tab` moves focus to the sidebar (arrow keys then move the highlight, `enter` opens a section), and `f` / `b` jump straight to Files or Backends.
+The TUI opens on the Files section at the root prefix. Move the selection with the arrow keys; open the highlighted row with `enter`. `tab` moves focus to the sidebar (arrow keys then move the highlight, `enter` opens a section), and `f` / `b` / `l` jump straight to Files, Backends, or Logs.
 
 | Key | Action |
 |-----|--------|
@@ -117,6 +120,12 @@ Reading the columns:
 - **API** / **INGRESS** / **EGRESS** - request count and bytes transferred for the current usage period, shown in the title bar.
 
 The title bar also reports the metadata database health and the usage period the counters cover. Press `r` to refresh the snapshot. This is the interactive equivalent of `s3-orchestrator admin status`.
+
+## Step 5: Watch recent activity
+
+Press `l` (or select **Logs** in the sidebar) to switch to the logs view - recent structured log entries from the instance's in-memory buffer, the same source the web dashboard reads. Each row is the time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs, so you can follow what the instance is doing (PUTs, replication copies, drains, cleanup ticks) without tailing container logs. Press `r` to refresh.
+
+![The Logs section showing recent structured log entries](/docs/images/tui-logs.png?classes=lightbox)
 
 ## Where it fits
 

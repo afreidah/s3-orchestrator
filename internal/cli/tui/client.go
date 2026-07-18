@@ -69,6 +69,11 @@ func (c *apiClient) GetStatus(ctx context.Context) (*adminapi.StatusResponse, er
 	return getJSON[adminapi.StatusResponse](ctx, c, "/admin/api/status", nil)
 }
 
+// GetLogs fetches recent structured log entries from the in-memory buffer.
+func (c *apiClient) GetLogs(ctx context.Context) (*adminapi.LogsResponse, error) {
+	return getJSON[adminapi.LogsResponse](ctx, c, "/admin/api/logs", nil)
+}
+
 // getJSON issues an authenticated GET against the admin API and decodes the
 // response body into T. A >=400 status becomes an error carrying the trimmed
 // response body.

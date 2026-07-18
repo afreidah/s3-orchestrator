@@ -353,6 +353,43 @@ The same data is exposed via Prometheus as
 `s3o_worker_consecutive_failures`, and `s3o_worker_ticks_total` so
 alerting can run without scraping this endpoint.
 
+### GET /admin/api/logs
+
+Returns recent structured log entries from the instance's in-memory
+ring buffer - the same source the web dashboard's logs pane reads.
+Backs the TUI's Logs section, which authenticates with the admin token
+rather than a UI session. Returns `503` when the log buffer is not
+wired.
+
+**Query parameters:**
+
+- `level` - minimum severity to return (`DEBUG`, `INFO`, `WARN`,
+  `ERROR`); unset returns all levels.
+- `limit` - maximum entries to return, newest kept (default 200, max
+  1000).
+
+**Response:**
+
+```json
+{
+  "entries": [
+    {
+      "time": "2026-07-18T13:05:09Z",
+      "level": "INFO",
+      "message": "copied object",
+      "component": "replicator",
+      "attrs": {"key": "unified/a.gz", "from": "r2", "to": "e2"}
+    }
+  ]
+}
+```
+
+Entries are returned oldest-first among the newest `limit`. `component`
+is the emitting component (lifted from the entry's attributes for a
+dedicated column); `attrs` carries the remaining structured fields so a
+client can render a full human-readable line rather than a bare message.
+Both are omitted when absent.
+
 ### GET /admin/api/object-locations
 
 Returns all copies of an object across backends. Backs the `s3-orchestrator tui` inspector pane.

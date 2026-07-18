@@ -246,7 +246,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	// handler ends up holding a nil *trace.FlightRecorder and the
 	// snapshot endpoint responds 503.
 	frRes := Optional[*debug.FlightRecorderService](i)
-	return admin.New(&admin.Deps{
+	deps := &admin.Deps{
 		BackendOps:   d.manager,
 		RuntimeOps:   d.manager.Runtime(),
 		Replicator:   d.replicator,
@@ -266,7 +266,14 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		Reconciler:   recRes.Value,
 		Token:        adminToken,
 		LogLevel:     d.logLevel,
-	}), nil
+	}
+	// Set the log buffer only when a real one resolves; assigning a nil
+	// *telemetry.LogBuffer to the interface field would make the /logs
+	// endpoint's nil-guard miss (non-nil interface holding a nil pointer).
+	if lb, err := do.Invoke[*telemetry.LogBuffer](i); err == nil && lb != nil {
+		deps.LogBuffer = lb
+	}
+	return admin.New(deps), nil
 }
 
 // ProvideNotifier creates the webhook notification system.

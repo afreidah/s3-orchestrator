@@ -60,13 +60,16 @@ func TestHandleNavKey_CursorBoundsAndOpen(t *testing.T) {
 	if m.navCursor != 0 {
 		t.Errorf("cursor after up-at-top = %d, want 0", m.navCursor)
 	}
-	// down advances to Backends and stops at the last selectable row.
-	m.handleNavKey(tea.KeyMsg{Type: tea.KeyDown})
-	m.handleNavKey(tea.KeyMsg{Type: tea.KeyDown}) // clamped: Logs is disabled
-	if m.navCursor != selectableSections-1 {
-		t.Errorf("cursor after two downs = %d, want %d", m.navCursor, selectableSections-1)
+	// down moves one row; extra downs clamp at the last selectable row.
+	for range selectableSections + 2 {
+		m.handleNavKey(tea.KeyMsg{Type: tea.KeyDown})
 	}
+	if m.navCursor != selectableSections-1 {
+		t.Errorf("cursor after many downs = %d, want %d (clamped)", m.navCursor, selectableSections-1)
+	}
+
 	// enter on Backends selects the section, drops focus, and loads status.
+	m.navCursor = int(sectionBackends)
 	_, cmd := m.handleNavKey(tea.KeyMsg{Type: tea.KeyEnter})
 	if m.section != sectionBackends || m.navFocus {
 		t.Errorf("after enter: section=%v navFocus=%v", m.section, m.navFocus)
@@ -106,13 +109,15 @@ func TestSidebarView_MarkersAndStates(t *testing.T) {
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 80, 20
 
-	// Idle on Files: the active marker leads Files, Logs shows the placeholder.
+	// Idle on Files: the active marker leads Files; every section renders.
 	out := m.sidebarView()
 	if !strings.Contains(out, "> Files") {
 		t.Errorf("Files should carry the active marker:\n%s", out)
 	}
-	if !strings.Contains(out, "soon") {
-		t.Errorf("disabled Logs should render its placeholder:\n%s", out)
+	for _, label := range []string{"Files", "Backends", "Logs"} {
+		if !strings.Contains(out, label) {
+			t.Errorf("sidebar missing %q:\n%s", label, out)
+		}
 	}
 
 	// While focused, the marker tracks the cursor, not the active section.

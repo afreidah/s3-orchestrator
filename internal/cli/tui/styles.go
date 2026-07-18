@@ -12,8 +12,12 @@ package tui
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	// titleStyle renders the app title bar.
+	// titleStyle renders the app title bar of the pane that has focus.
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("62")).Padding(0, 1)
+
+	// titleMutedStyle renders the title bar of the pane that does not have
+	// focus, so the focused pane is obvious at a glance.
+	titleMutedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Background(lipgloss.Color("238")).Padding(0, 1)
 
 	// pathStyle renders the current prefix and the empty-listing notice.
 	pathStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))

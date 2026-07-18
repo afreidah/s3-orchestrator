@@ -28,6 +28,7 @@ type fakeLister struct {
 	pages     map[string]*adminapi.ObjectListResponse
 	locations map[string]*adminapi.ObjectLocationsResponse
 	status    *adminapi.StatusResponse
+	logs      *adminapi.LogsResponse
 }
 
 func (f *fakeLister) ListObjects(_ context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error) {
@@ -49,6 +50,13 @@ func (f *fakeLister) GetStatus(_ context.Context) (*adminapi.StatusResponse, err
 		return f.status, nil
 	}
 	return &adminapi.StatusResponse{}, nil
+}
+
+func (f *fakeLister) GetLogs(_ context.Context) (*adminapi.LogsResponse, error) {
+	if f.logs != nil {
+		return f.logs, nil
+	}
+	return &adminapi.LogsResponse{}, nil
 }
 
 // waitForText fails the test unless the given text appears in the output.
@@ -173,6 +181,34 @@ func TestBrowser_OpensBackendsView(t *testing.T) {
 	}
 	if fm.section != sectionBackends || !fm.navFocus {
 		t.Errorf("section=%v navFocus=%v, want backends + focused sidebar", fm.section, fm.navFocus)
+	}
+}
+
+// TestBrowser_OpensLogsView covers jumping to the logs section: the log page
+// loads and an entry's message renders, and esc returns focus to the sidebar.
+func TestBrowser_OpensLogsView(t *testing.T) {
+	f := &fakeLister{
+		pages: map[string]*adminapi.ObjectListResponse{
+			"|": {Objects: []adminapi.ObjectEntry{{Key: "readme", Size: 10}}},
+		},
+		logs: &adminapi.LogsResponse{Entries: []adminapi.LogEntry{
+			{Level: "INFO", Component: "replicator", Message: "copied-marker-xyz"},
+		}},
+	}
+	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(120, 24))
+
+	waitForText(t, tm, "readme")
+	tm.Type("l")                          // jump to the logs section
+	waitForText(t, tm, "copied-marker-xyz")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // back to the sidebar
+
+	tm.Type("q")
+	fm, ok := tm.FinalModel(t).(*model)
+	if !ok {
+		t.Fatal("final model is not a model")
+	}
+	if fm.section != sectionLogs || !fm.navFocus {
+		t.Errorf("section=%v navFocus=%v, want logs + focused sidebar", fm.section, fm.navFocus)
 	}
 }
 
