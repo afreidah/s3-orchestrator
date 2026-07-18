@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
 
 	"go.opentelemetry.io/otel/trace"
 )
@@ -93,7 +94,7 @@ type putAttemptResult struct {
 }
 
 // bufferPutBody materializes the request body into a seekable form
-// (memory for small payloads, tempfile above materializeMemThreshold)
+// (memory for small payloads, tempfile above materialize.MemThreshold)
 // so failover retries can replay the plaintext without holding the
 // full body on the heap. When integrity verification is enabled, the
 // SHA-256 is computed during the same single buffering pass via
@@ -102,13 +103,13 @@ type putAttemptResult struct {
 // Returns the materialized body, the content hash (empty when
 // integrity verification is disabled), and a cleanup the caller must
 // invoke once the upload settles (safe to defer in every code path).
-func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*materializedBody, string, error) {
+func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*materialize.Body, string, error) {
 	var hasher hash.Hash
 	icfg := o.integrityCfg.Load()
 	if icfg != nil && icfg.Enabled {
 		hasher = newSHA256()
 	}
-	mb, err := newMaterializedBody(body, size, hasher)
+	mb, err := materialize.New(body, size, hasher)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return nil, "", fmt.Errorf("buffer request body: %w", err)
@@ -119,7 +120,7 @@ func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*m
 // attemptPutOnBackend performs one backend PUT attempt: select a
 // destination, prepare the payload (encrypt/hash), insert a pending
 // intent, upload, then promote the intent on success.
-func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, operation, key string, body *materializedBody, size int64, contentType string, metadata map[string]string, contentHash string, dekState *putEncryptState, eligible []string) putAttemptResult {
+func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, operation, key string, body *materialize.Body, size int64, contentType string, metadata map[string]string, contentHash string, dekState *putEncryptState, eligible []string) putAttemptResult {
 	backendName, err := o.coord.SelectBackendForWrite(ctx, size, eligible)
 	if err != nil {
 		return putAttemptResult{fatalErr: o.core.ClassifyWriteError(span, operation, err)}
@@ -195,7 +196,7 @@ var errDrainRaceAborted = errors.New("aborted: drain started mid-write")
 // through encryptForPut so the wrapped DEK is reused across retries.
 func (o *Manager) buildPutPayload(
 	ctx context.Context,
-	body *materializedBody,
+	body *materialize.Body,
 	size int64,
 	contentHash string,
 	dekState *putEncryptState,

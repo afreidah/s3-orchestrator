@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // sidebarWidth is the fixed content width of the left nav (excluding its border).
@@ -26,6 +27,7 @@ type section int
 const (
 	sectionFiles section = iota
 	sectionBackends
+	sectionLogs
 )
 
 // navEntry is one row in the left nav.
@@ -41,13 +43,13 @@ func navEntries() []navEntry {
 	return []navEntry{
 		{"Files", sectionFiles, true},
 		{"Backends", sectionBackends, true},
-		{"Logs", sectionFiles, false},
+		{"Logs", sectionLogs, true},
 	}
 }
 
 // selectableSections is the number of enabled nav destinations; it bounds the
 // nav cursor.
-const selectableSections = 2
+const selectableSections = 3
 
 // contentWidth is the width available to the content area beside the nav.
 func (m *model) contentWidth() int {
@@ -83,10 +85,16 @@ func (m *model) selectSection(s section) (tea.Model, tea.Cmd) {
 	m.section = s
 	m.navFocus = false
 	m.navCursor = int(s)
-	if s == sectionBackends {
+	switch s {
+	case sectionBackends:
 		m.backends = backendsView{loading: true, table: newTable()}
 		m.resizeBackends()
 		cmd := m.loadStatus()
+		return m, cmd
+	case sectionLogs:
+		m.logs = logsView{loading: true}
+		m.resizeLogs()
+		cmd := m.loadLogs()
 		return m, cmd
 	}
 	return m, nil
@@ -116,7 +124,11 @@ func (m *model) handleNavKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 // ">" marker on the active entry (or, while the nav is focused, the highlight).
 func (m *model) sidebarView() string {
 	var b strings.Builder
-	b.WriteString(navTitleStyle.Render("s3o"))
+	title := navTitleStyle
+	if !m.navFocus {
+		title = titleMutedStyle
+	}
+	b.WriteString(title.Render("s3o"))
 	b.WriteString("\n\n")
 	for i, e := range navEntries() {
 		active := (!m.navFocus && e.enabled && e.sec == m.section) || (m.navFocus && i == m.navCursor)
@@ -138,5 +150,9 @@ func (m *model) sidebarView() string {
 		b.WriteString(style.Render(marker + label))
 		b.WriteString("\n")
 	}
-	return sidebarStyle.Width(sidebarWidth).Height(m.height).Render(b.String())
+	divider := lipgloss.Color("240")
+	if m.navFocus {
+		divider = lipgloss.Color("39")
+	}
+	return sidebarStyle.BorderForeground(divider).Width(sidebarWidth).Height(m.height).Render(b.String())
 }

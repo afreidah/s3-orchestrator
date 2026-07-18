@@ -211,6 +211,21 @@ type CleanupQueueRow struct {
 	LastError   string
 }
 
+// CleanupDLQItem is a dead-lettered cleanup row surfaced for operator
+// inspection: an object whose backend delete never succeeded within the
+// retry budget. FirstEnqueued records when the cleanup was first queued,
+// MovedAt when it graduated to the DLQ.
+type CleanupDLQItem struct {
+	BackendName   string
+	ObjectKey     string
+	Reason        string
+	SizeBytes     int64
+	Attempts      int32
+	FirstEnqueued time.Time
+	MovedAt       time.Time
+	LastError     string
+}
+
 // -------------------------------------------------------------------------
 // NOTIFICATIONS
 // -------------------------------------------------------------------------

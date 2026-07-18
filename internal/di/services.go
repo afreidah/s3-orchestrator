@@ -79,23 +79,31 @@ func (s *usageFlushService) Run(ctx context.Context) error {
 		case <-ticker.C:
 			tickCtx := audit.WithRequestID(ctx, audit.NewID())
 			s.flushTick(tickCtx)
-
-			cfg = s.manager.UsageFlushConfig()
-			if cfg != nil {
-				targetInterval := cfg.Interval
-				if cfg.AdaptiveEnabled && s.manager.NearUsageLimit(cfg.AdaptiveThreshold) {
-					targetInterval = cfg.FastInterval
-				}
-				if targetInterval != currentInterval {
-					ticker.Reset(targetInterval)
-					currentInterval = targetInterval
-					s.log.InfoContext(ctx, "interval adjusted", "interval", targetInterval)
-				}
-			}
+			currentInterval = s.adjustInterval(ctx, ticker, currentInterval)
 		case <-ctx.Done():
 			return nil
 		}
 	}
+}
+
+// adjustInterval reconfigures the flush ticker when the reloaded config or the
+// adaptive fast-path changes the target interval, and returns the interval now
+// in effect (unchanged when nothing moved).
+func (s *usageFlushService) adjustInterval(ctx context.Context, ticker *time.Ticker, current time.Duration) time.Duration {
+	cfg := s.manager.UsageFlushConfig()
+	if cfg == nil {
+		return current
+	}
+	target := cfg.Interval
+	if cfg.AdaptiveEnabled && s.manager.NearUsageLimit(cfg.AdaptiveThreshold) {
+		target = cfg.FastInterval
+	}
+	if target == current {
+		return current
+	}
+	ticker.Reset(target)
+	s.log.InfoContext(ctx, "interval adjusted", "interval", target)
+	return target
 }
 
 // flushTick runs a single flush+metrics cycle. When Redis counters are

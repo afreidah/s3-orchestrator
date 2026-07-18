@@ -44,6 +44,7 @@ type adminClient interface {
 	ListObjects(ctx context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error)
 	GetObjectLocations(ctx context.Context, key string) (*adminapi.ObjectLocationsResponse, error)
 	GetStatus(ctx context.Context) (*adminapi.StatusResponse, error)
+	GetLogs(ctx context.Context, level string) (*adminapi.LogsResponse, error)
 }
 
 // model is the Bubble Tea state for the browser.
@@ -55,6 +56,7 @@ type model struct {
 	mode      viewMode        // Files sub-state: the listing (browse) or the inspector
 	insp      inspector       // inspector pane state, populated when mode is modeInspect
 	backends  backendsView    // backends pane state, populated when section is sectionBackends
+	logs      logsView        // logs pane state, populated when section is sectionLogs
 	prefix    string          // the prefix currently listed ("" is the root)
 	entries   []entry         // every loaded row under the current prefix
 	visible   []entry         // entries after filter + sort, indexed by table cursor
@@ -77,7 +79,12 @@ func initialModel(client adminClient) *model {
 	fi := textinput.New()
 	fi.Prompt = ""
 	fi.Placeholder = "type to filter"
-	return &model{client: client, loading: true, spinner: spinner.New(), table: newTable(), filter: fi}
+	m := &model{client: client, loading: true, spinner: spinner.New(), table: newTable(), filter: fi}
+	// Seed the browser columns up front. The initial object load can be
+	// delivered before the first WindowSizeMsg, and SetRows on a column-less
+	// table panics in the table's row renderer.
+	m.resizeTable()
+	return m
 }
 
 // newTable builds a focused table styled to match the browser: a bold accent
@@ -167,6 +174,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.backends.loading = false
 		m.backends.err = msg.err
 		return m, nil
+	case logsLoadedMsg:
+		m.applyLogs(msg.resp)
+		return m, nil
+	case logsErrMsg:
+		m.logs.loading = false
+		m.logs.err = msg.err
+		return m, nil
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -177,6 +191,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resizeTable()
 		m.resizeInspector()
 		m.resizeBackends()
+		m.resizeLogs()
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -205,10 +220,15 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.selectSection(sectionFiles)
 	case "b":
 		return m.selectSection(sectionBackends)
+	case "l":
+		return m.selectSection(sectionLogs)
 	}
 
 	if m.navFocus {
 		return m.handleNavKey(key)
+	}
+	if m.section == sectionLogs {
+		return m.handleLogsKey(key)
 	}
 	if m.section == sectionBackends {
 		return m.handleBackendsKey(key)
@@ -375,6 +395,9 @@ func (m *model) View() string {
 
 // contentView renders the active section's pane for the area beside the nav.
 func (m *model) contentView() string {
+	if m.section == sectionLogs {
+		return m.logsPaneView()
+	}
 	if m.section == sectionBackends {
 		return m.backendsPaneView()
 	}
@@ -393,12 +416,22 @@ func (m *model) frame(header, footer, body string) string {
 }
 
 // headerView renders the full-width title bar with the current prefix.
+// contentTitleStyle returns the title-bar style for the content pane: bright
+// when the content has focus, muted while the nav has focus, so the focused
+// pane reads at a glance.
+func (m *model) contentTitleStyle() lipgloss.Style {
+	if m.navFocus {
+		return titleMutedStyle
+	}
+	return titleStyle
+}
+
 func (m *model) headerView() string {
 	loc := m.prefix
 	if loc == "" {
 		loc = "/"
 	}
-	return titleStyle.Width(m.contentWidth()).Render("s3-orchestrator tui   " + loc)
+	return m.contentTitleStyle().Width(m.contentWidth()).Render("s3-orchestrator tui   " + loc)
 }
 
 // footerView renders the status line (sort, filter, paging) above the key-hint
