@@ -123,7 +123,7 @@ The title bar also reports the metadata database health and the usage period the
 
 ## Step 5: Watch recent activity
 
-Press `l` (or select **Logs** in the sidebar) to switch to the logs view - recent structured log entries from the instance's in-memory buffer, the same source the web dashboard reads. Each row is the time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs, so you can follow what the instance is doing (PUTs, replication copies, drains, cleanup ticks) without tailing container logs. Press `r` to refresh.
+Press `l` (or select **Logs** in the sidebar) to switch to the logs view - recent structured log entries from the instance's in-memory buffer, the same source the web dashboard reads. Each row is the time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs, so you can follow what the instance is doing (PUTs, replication copies, drains, cleanup ticks) without tailing container logs. The level is colour-coded by severity so warnings and errors stand out. Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh.
 
 ![The Logs section showing recent structured log entries](/docs/images/tui-logs.png?classes=lightbox)
 

@@ -44,7 +44,7 @@ type adminClient interface {
 	ListObjects(ctx context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error)
 	GetObjectLocations(ctx context.Context, key string) (*adminapi.ObjectLocationsResponse, error)
 	GetStatus(ctx context.Context) (*adminapi.StatusResponse, error)
-	GetLogs(ctx context.Context) (*adminapi.LogsResponse, error)
+	GetLogs(ctx context.Context, level string) (*adminapi.LogsResponse, error)
 }
 
 // model is the Bubble Tea state for the browser.
@@ -79,7 +79,12 @@ func initialModel(client adminClient) *model {
 	fi := textinput.New()
 	fi.Prompt = ""
 	fi.Placeholder = "type to filter"
-	return &model{client: client, loading: true, spinner: spinner.New(), table: newTable(), filter: fi}
+	m := &model{client: client, loading: true, spinner: spinner.New(), table: newTable(), filter: fi}
+	// Seed the browser columns up front. The initial object load can be
+	// delivered before the first WindowSizeMsg, and SetRows on a column-less
+	// table panics in the table's row renderer.
+	m.resizeTable()
+	return m
 }
 
 // newTable builds a focused table styled to match the browser: a bold accent
