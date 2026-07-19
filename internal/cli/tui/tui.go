@@ -45,6 +45,8 @@ type adminClient interface {
 	GetObjectLocations(ctx context.Context, key string) (*adminapi.ObjectLocationsResponse, error)
 	GetStatus(ctx context.Context) (*adminapi.StatusResponse, error)
 	GetLogs(ctx context.Context, level string) (*adminapi.LogsResponse, error)
+	ReconcileUsage(ctx context.Context) error
+	FlushCache(ctx context.Context) error
 }
 
 // model is the Bubble Tea state for the browser.
@@ -69,6 +71,8 @@ type model struct {
 	more      bool            // a load-more (append) request is in flight
 	err       error           // last load error, if any
 	spinner   spinner.Model   // animated indicator shown while loading
+	confirm   *confirmPrompt  // armed confirmation for a pending write action, if any
+	status    *actionStatus   // result of the last action, shown until the next keypress
 	width     int             // terminal width from the last WindowSizeMsg
 	height    int             // terminal height from the last WindowSizeMsg
 }
@@ -181,6 +185,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logs.loading = false
 		m.logs.err = msg.err
 		return m, nil
+	case actionResultMsg:
+		return m.applyActionResult(msg)
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -203,6 +209,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // rest to the focused nav or the active section's view. While the filter input
 // is capturing, the browser gets every key so typing is never intercepted.
 func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// A pending confirmation captures the next key before anything else.
+	if m.confirm != nil {
+		return m.handleConfirmKey(key)
+	}
+	// Any keypress dismisses a lingering action-result line.
+	m.status = nil
+
 	if m.section == sectionFiles && m.mode == modeBrowse && m.filtering {
 		return m.handleFilterKey(key)
 	}
@@ -222,6 +235,16 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.selectSection(sectionBackends)
 	case "l":
 		return m.selectSection(sectionLogs)
+	case "R":
+		return m.startAction(adminAction{
+			confirm: "Reconcile usage counters across all backends?",
+			run:     m.runAction("usage-reconcile", m.client.ReconcileUsage),
+		})
+	case "F":
+		return m.startAction(adminAction{
+			confirm: "Flush the in-memory object cache?",
+			run:     m.runAction("cache-flush", m.client.FlushCache),
+		})
 	}
 
 	if m.navFocus {
@@ -437,9 +460,9 @@ func (m *model) headerView() string {
 // footerView renders the status line (sort, filter, paging) above the key-hint
 // bar. Both lines are always present so the footer keeps a fixed height.
 func (m *model) footerView() string {
-	status := pathStyle.Width(m.contentWidth()).Render(m.statusLine())
-	hints := helpStyle.Width(m.contentWidth()).Render("up/down move - enter open - / filter - s sort - tab nav - q quit")
-	return lipgloss.JoinVertical(lipgloss.Left, status, hints)
+	matches := pathStyle.Width(m.contentWidth()).Render(m.statusLine())
+	hints := m.footer("up/down move - enter open - / filter - s sort - tab nav - q quit")
+	return lipgloss.JoinVertical(lipgloss.Left, matches, hints)
 }
 
 // bodyView renders the current content: an error, the loading indicator, an

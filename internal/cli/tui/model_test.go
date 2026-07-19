@@ -42,6 +42,9 @@ func (errLister) GetLogs(_ context.Context, _ string) (*adminapi.LogsResponse, e
 	return nil, errors.New("nope")
 }
 
+func (errLister) ReconcileUsage(_ context.Context) error { return errors.New("nope") }
+func (errLister) FlushCache(_ context.Context) error      { return errors.New("nope") }
+
 // modelWith builds a model seeded with entries and a table synced to them.
 func modelWith(entries []entry, prefix string, client adminClient) *model {
 	m := initialModel(client)

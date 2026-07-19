@@ -206,7 +206,7 @@ func (m *model) logsHeaderView() string {
 
 // logsFooterView renders the logs key hints.
 func (m *model) logsFooterView() string {
-	return helpStyle.Width(m.contentWidth()).Render("up/down move - L level - r reload - tab nav - q quit")
+	return m.footer("up/down move - L level - r reload - tab nav - q quit")
 }
 
 // logsBodyView renders the current content: an error, the loading indicator, an
