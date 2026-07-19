@@ -174,7 +174,7 @@ func (m *model) backendsHeaderView() string {
 
 // backendsFooterView renders the backends key hints.
 func (m *model) backendsFooterView() string {
-	return helpStyle.Width(m.contentWidth()).Render("up/down move - tab nav - r reload - q quit")
+	return m.footer("up/down move - tab nav - r reload - q quit")
 }
 
 // backendsBodyView renders the current content: an error, the loading

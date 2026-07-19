@@ -59,6 +59,9 @@ func (f *fakeLister) GetLogs(_ context.Context, _ string) (*adminapi.LogsRespons
 	return &adminapi.LogsResponse{}, nil
 }
 
+func (f *fakeLister) ReconcileUsage(_ context.Context) error { return nil }
+func (f *fakeLister) FlushCache(_ context.Context) error      { return nil }
+
 // waitForText fails the test unless the given text appears in the output.
 func waitForText(t *testing.T, tm *teatest.TestModel, text string) {
 	t.Helper()

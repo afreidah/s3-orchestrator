@@ -79,6 +79,40 @@ func (c *apiClient) GetLogs(ctx context.Context, level string) (*adminapi.LogsRe
 	return getJSON[adminapi.LogsResponse](ctx, c, "/admin/api/logs", q)
 }
 
+// ReconcileUsage recomputes every backend's bytes_used from the object ledger.
+func (c *apiClient) ReconcileUsage(ctx context.Context) error {
+	return c.doAdmin(ctx, http.MethodPost, "/admin/api/usage-reconcile")
+}
+
+// FlushCache clears the in-memory object cache.
+func (c *apiClient) FlushCache(ctx context.Context) error {
+	return c.doAdmin(ctx, http.MethodPost, "/admin/api/cache/flush")
+}
+
+// doAdmin issues an authenticated write (POST/DELETE) against the admin API,
+// returning an error carrying the trimmed body on a >=400 status. The response
+// body is otherwise discarded - action callers only need success or failure.
+func (c *apiClient) doAdmin(ctx context.Context, method, path string) error {
+	req, err := http.NewRequestWithContext(ctx, method, c.baseAddr+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set(adminTokenHeader, c.token)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("admin API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
 // getJSON issues an authenticated GET against the admin API and decodes the
 // response body into T. A >=400 status becomes an error carrying the trimmed
 // response body.

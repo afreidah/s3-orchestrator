@@ -162,7 +162,7 @@ func (m *model) inspectHeaderView() string {
 
 // inspectFooterView renders the inspector key hints.
 func (m *model) inspectFooterView() string {
-	return helpStyle.Width(m.contentWidth()).Render("up/down move - esc back - r reload - q quit")
+	return m.footer("up/down move - esc back - r reload - q quit")
 }
 
 // inspectBodyView renders the current content: an error, the loading indicator,
