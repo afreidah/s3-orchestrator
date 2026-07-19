@@ -283,6 +283,9 @@ s3-orchestrator tui
 | `b` | Jump to the Backends section |
 | `l` | Jump to the Logs section |
 | `L` | Cycle the Logs level filter (all / INFO / WARN / ERROR) |
+| `R` | Reconcile usage counters across all backends (asks to confirm) |
+| `F` | Flush the in-memory object cache (asks to confirm) |
+| `y` / `n` | Accept / cancel a pending action confirmation |
 | `up` / `down` | Move the selection (or the sidebar highlight when it has focus) |
 | `enter` / `right` / `l` | Open: a sidebar section, a prefix, or the inspector on an object |
 | `backspace` / `left` / `h` | Go up one prefix; from the inspector or Backends, return to where you were |
@@ -301,6 +304,8 @@ The inspector renders one row per backend copy - backend, size, age, whether the
 The **Backends** section is the interactive equivalent of `admin status`, sourced from `GET /admin/api/status`. It renders one row per configured backend - circuit-breaker health, drain state, quota used and limit, object count, and the current period's API request, ingress, and egress counters - with the metadata database health and usage period in the title bar. Press `r` to refresh the snapshot.
 
 The **Logs** section shows recent structured log entries from the instance's in-memory log buffer, sourced from `GET /admin/api/logs` - the same buffer the web dashboard's logs pane reads. Each row is time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs (not raw JSON). The level is colour-coded by severity (WARN and ERROR stand out; INFO stays neutral). Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh.
+
+Beyond browsing, the TUI can trigger a growing set of **admin actions**. Every write action shows a `y/N` confirmation in the footer before it runs, and its result (or error) is reported there afterwards. The instance-wide actions available from any section are `R` (reconcile usage counters) and `F` (flush the object cache); more will land over time.
 
 ![The TUI Logs section showing recent structured log entries](/docs/images/tui-logs.png)
 

@@ -38,6 +38,12 @@ var (
 	// errStyle renders the error line.
 	errStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
 
+	// confirmStyle renders an armed action's y/N confirmation prompt in the
+	// footer; statusOKStyle and statusErrStyle render the action result.
+	confirmStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("232")).Background(lipgloss.Color("214")).Padding(0, 1)
+	statusOKStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("71"))
+	statusErrStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
+
 	// sidebarStyle frames the left nav with a right divider.
 	sidebarStyle = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder(), false, true, false, false).

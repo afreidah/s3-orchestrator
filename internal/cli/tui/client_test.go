@@ -132,3 +132,55 @@ func TestAPIClient_ListObjects_BadJSON(t *testing.T) {
 		t.Error("expected a decode error")
 	}
 }
+
+// TestAPIClient_WriteActions asserts the instance-action writes POST to the
+// right path with the token.
+func TestAPIClient_WriteActions(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, wantPath string
+		call           func(*apiClient) error
+	}{
+		{"reconcile-usage", "/admin/api/usage-reconcile", func(c *apiClient) error { return c.ReconcileUsage(context.Background()) }},
+		{"cache-flush", "/admin/api/cache/flush", func(c *apiClient) error { return c.FlushCache(context.Background()) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var gotMethod, gotPath, gotToken string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod, gotPath, gotToken = r.Method, r.URL.Path, r.Header.Get("X-Admin-Token")
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+
+			if err := tc.call(newAPIClient(srv.URL, "tok")); err != nil {
+				t.Fatalf("call: %v", err)
+			}
+			if gotMethod != http.MethodPost {
+				t.Errorf("method = %s, want POST", gotMethod)
+			}
+			if gotPath != tc.wantPath {
+				t.Errorf("path = %q, want %q", gotPath, tc.wantPath)
+			}
+			if gotToken != "tok" {
+				t.Errorf("token = %q, want tok", gotToken)
+			}
+		})
+	}
+}
+
+// TestAPIClient_DoAdmin_ErrorStatus surfaces a >= 400 write response as an error.
+func TestAPIClient_DoAdmin_ErrorStatus(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("denied"))
+	}))
+	defer srv.Close()
+
+	err := newAPIClient(srv.URL, "tok").ReconcileUsage(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Errorf("err = %v, want to mention 403", err)
+	}
+}
