@@ -34,7 +34,9 @@
   --CODE-INLINE-color: #2a9d73;
   --CODE-INLINE-BORDER-color: #334155;
   --MENU-WIDTH-L: 21rem;
-  --MAIN-font: 'Playfair Display', serif;
+  /* Body and secondary headings use a readable system sans; Playfair is a
+     display face kept for the h1 accent only (see --MAIN-TITLES-H1-font). */
+  --MAIN-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --MAIN-font-weight: 400;
   --MAIN-TITLES-H1-font: 'Playfair Display', serif;
   --MAIN-TITLES-H1-font-weight: 800;
@@ -90,7 +92,7 @@ article img.lightbox {
 }
 
 .feature-item p {
-  margin: 0.25rem 0 0 0;
+  margin: 0.25rem 0 0;
   color: #e2e8f0;
   font-size: 0.9rem;
 }
@@ -176,8 +178,13 @@ article.home .feature-grid {
   text-align: left;
 }
 
-#R-topbar {
-  display: none;
+/* Hide the redundant topbar only where the sidebar is permanently visible
+   (>= 48rem). Below that the topbar carries the hamburger menu toggle, which
+   is the only way to open navigation on mobile. */
+@media screen and (min-width: 48rem) {
+  #R-topbar {
+    display: none;
+  }
 }
 
 
@@ -225,7 +232,7 @@ a.landing-card strong {
 }
 
 a.landing-card p {
-  margin: 0.25rem 0 0 0;
+  margin: 0.25rem 0 0;
   color: #94a3b8;
   font-size: 0.85rem;
   line-height: 1.5;
@@ -244,7 +251,7 @@ a.landing-card:hover p {
   display: none;
 }
 
-/* Hide sidebar header text — logo already contains the project name */
+/* Hide sidebar header text - logo already contains the project name */
 #R-sidebar > .nav-title {
   display: none;
 }
@@ -309,7 +316,7 @@ a.landing-card:hover p {
   gap: 0.4rem;
 }
 
-/* Hugo wraps shortcodes in <p> — collapse the wrapper */
+/* Hugo wraps shortcodes in <p> - collapse the wrapper */
 .badge-grid p {
   display: contents;
 }
@@ -395,4 +402,30 @@ a.landing-card:hover p {
 .btn.cstyle.button.primary a:hover {
   background-color: #1a4a3a !important;
   color: #a7f3d0 !important;
+}
+
+/* Mobile (< 48rem): stack the two-column card grids into one column and pin
+   the feature-card detail inline, since touch devices have no :hover and the
+   flyout would otherwise be unreachable. */
+@media screen and (max-width: 47.999rem) {
+  .feature-grid,
+  .landing-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .feature-item {
+    flex-direction: column;
+  }
+
+  .feature-detail {
+    display: block;
+    position: static;
+    padding: 0.75rem 0 0;
+    border: none;
+    border-top: 1px solid #334155;
+    border-radius: 0;
+    box-shadow: none;
+    font-size: 0.95rem;
+    pointer-events: auto;
+  }
 }
