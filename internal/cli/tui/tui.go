@@ -45,37 +45,39 @@ type adminClient interface {
 	GetObjectLocations(ctx context.Context, key string) (*adminapi.ObjectLocationsResponse, error)
 	GetStatus(ctx context.Context) (*adminapi.StatusResponse, error)
 	GetLogs(ctx context.Context, level string) (*adminapi.LogsResponse, error)
+	GetReplicationStatus(ctx context.Context) (*adminapi.ReplicationStatusResponse, error)
 	ReconcileUsage(ctx context.Context) error
 	FlushCache(ctx context.Context) error
 }
 
 // model is the Bubble Tea state for the browser.
 type model struct {
-	client    adminClient
-	section   section         // active left-nav destination (Files, Backends)
-	navFocus  bool            // the left nav has focus and is capturing keys
-	navCursor int             // highlighted nav entry while the nav is focused
-	mode      viewMode        // Files sub-state: the listing (browse) or the inspector
-	insp      inspector       // inspector pane state, populated when mode is modeInspect
-	backends  backendsView    // backends pane state, populated when section is sectionBackends
-	logs      logsView        // logs pane state, populated when section is sectionLogs
-	prefix    string          // the prefix currently listed ("" is the root)
-	entries   []entry         // every loaded row under the current prefix
-	visible   []entry         // entries after filter + sort, indexed by table cursor
-	table     table.Model     // scrolling, selectable listing table
-	filter    textinput.Model // substring filter over the current listing
-	filtering bool            // the filter input has focus and is capturing keys
-	sort      sortField       // ordering applied to visible
-	loading   bool            // a fresh (page-replacing) load is in flight
-	next      string          // continuation token for the current prefix ("" = no more)
-	more      bool            // a load-more (append) request is in flight
-	err       error           // last load error, if any
-	spinner   spinner.Model   // animated indicator shown while loading
-	confirm   *confirmPrompt  // armed confirmation for a pending write action, if any
-	status    *actionStatus   // result of the last action, shown until the next keypress
-	dbHealthy *bool           // metadata DB health from the last status fetch (nil = unknown)
-	width     int             // terminal width from the last WindowSizeMsg
-	height    int             // terminal height from the last WindowSizeMsg
+	client      adminClient
+	section     section         // active left-nav destination (Files, Backends)
+	navFocus    bool            // the left nav has focus and is capturing keys
+	navCursor   int             // highlighted nav entry while the nav is focused
+	mode        viewMode        // Files sub-state: the listing (browse) or the inspector
+	insp        inspector       // inspector pane state, populated when mode is modeInspect
+	backends    backendsView    // backends pane state, populated when section is sectionBackends
+	logs        logsView        // logs pane state, populated when section is sectionLogs
+	replication replicationView // replication pane state, populated when section is sectionReplication
+	prefix      string          // the prefix currently listed ("" is the root)
+	entries     []entry         // every loaded row under the current prefix
+	visible     []entry         // entries after filter + sort, indexed by table cursor
+	table       table.Model     // scrolling, selectable listing table
+	filter      textinput.Model // substring filter over the current listing
+	filtering   bool            // the filter input has focus and is capturing keys
+	sort        sortField       // ordering applied to visible
+	loading     bool            // a fresh (page-replacing) load is in flight
+	next        string          // continuation token for the current prefix ("" = no more)
+	more        bool            // a load-more (append) request is in flight
+	err         error           // last load error, if any
+	spinner     spinner.Model   // animated indicator shown while loading
+	confirm     *confirmPrompt  // armed confirmation for a pending write action, if any
+	status      *actionStatus   // result of the last action, shown until the next keypress
+	dbHealthy   *bool           // metadata DB health from the last status fetch (nil = unknown)
+	width       int             // terminal width from the last WindowSizeMsg
+	height      int             // terminal height from the last WindowSizeMsg
 }
 
 // initialModel builds the starting state; loading is true because Init fires
@@ -190,6 +192,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logs.loading = false
 		m.logs.err = msg.err
 		return m, nil
+	case replicationLoadedMsg:
+		m.applyReplication(msg.resp)
+		return m, nil
+	case replicationErrMsg:
+		m.applyReplicationErr(msg.err)
+		return m, nil
+	case replicationTickMsg:
+		return m.onReplicationTick()
 	case actionResultMsg:
 		return m.applyActionResult(msg)
 	case spinner.TickMsg:
@@ -238,6 +248,8 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.selectSection(sectionFiles)
 	case "b":
 		return m.selectSection(sectionBackends)
+	case "p":
+		return m.selectSection(sectionReplication)
 	case "l":
 		return m.selectSection(sectionLogs)
 	case "R":
@@ -257,6 +269,9 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.section == sectionLogs {
 		return m.handleLogsKey(key)
+	}
+	if m.section == sectionReplication {
+		return m.handleReplicationKey(key)
 	}
 	if m.section == sectionBackends {
 		return m.handleBackendsKey(key)
@@ -425,6 +440,9 @@ func (m *model) View() string {
 func (m *model) contentView() string {
 	if m.section == sectionLogs {
 		return m.logsPaneView()
+	}
+	if m.section == sectionReplication {
+		return m.replicationPaneView()
 	}
 	if m.section == sectionBackends {
 		return m.backendsPaneView()

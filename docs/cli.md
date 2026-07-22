@@ -256,7 +256,7 @@ The admin API requires `ui.admin_token` (or `ui.admin_key` as fallback) to be se
 
 ### tui
 
-Full-screen, read-only terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status; **Logs** shows recent structured log entries. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the server address and admin token with the same precedence as `admin` (**flag &rarr; environment &rarr; config file**), loading `config.yaml` only when a value is still missing:
+Full-screen, read-only terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status; **Replication** shows a self-refreshing view of replication health; **Logs** shows recent structured log entries. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the server address and admin token with the same precedence as `admin` (**flag &rarr; environment &rarr; config file**), loading `config.yaml` only when a value is still missing:
 
 ```bash
 export S3O_ADMIN_ADDR="https://s3.example.com"
@@ -281,6 +281,7 @@ s3-orchestrator tui
 | `tab` | Move focus between the sidebar and the content area |
 | `f` | Jump to the Files section |
 | `b` | Jump to the Backends section |
+| `p` | Jump to the Replication section |
 | `l` | Jump to the Logs section |
 | `L` | Cycle the Logs level filter (all / INFO / WARN / ERROR) |
 | `R` | Reconcile usage counters across all backends (asks to confirm) |
@@ -304,6 +305,8 @@ The inspector renders one row per backend copy - backend, size, age, whether the
 The **Backends** section is the interactive equivalent of `admin status`, sourced from `GET /admin/api/status`. It renders one row per configured backend - circuit-breaker health, drain state, quota used and limit, a `USE%` column (used / limit), object count, and the current period's API request, ingress, and egress counters. A stats line under the title shows the metadata database health (green when healthy, red when not) and the total usage across backends (`used / limit (pct%)`, coloured by fill). Press `r` to refresh the snapshot.
 
 The metadata database health is also shown persistently at the bottom of the sidebar (`db ok` green / `db DOWN` red), fetched at startup so it is visible from every section.
+
+The **Replication** section shows cluster-wide replication health, sourced from `GET /admin/api/replication` - the configured replication factor and the current under-replicated and over-replicated object counts, with the age of the underlying snapshot. It auto-refreshes every few seconds while it is the active section (the counts drift constantly as workers reconcile), so the view stays live without a keypress; the ticker stops once you leave. The pending counts are coloured amber when there is a backlog and green at zero. Press `r` to force an immediate refresh. Because the endpoint reads a snapshot the metrics collector already computes on its own interval, polling it is cheap.
 
 The **Logs** section shows recent structured log entries from the instance's in-memory log buffer, sourced from `GET /admin/api/logs` - the same buffer the web dashboard's logs pane reads. Each row is time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs (not raw JSON). The level is colour-coded by severity (WARN and ERROR stand out; INFO stays neutral). Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh.
 

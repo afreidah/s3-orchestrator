@@ -79,6 +79,13 @@ func (c *apiClient) GetLogs(ctx context.Context, level string) (*adminapi.LogsRe
 	return getJSON[adminapi.LogsResponse](ctx, c, "/admin/api/logs", q)
 }
 
+// GetReplicationStatus fetches the latest replication snapshot (factor and the
+// current under- and over-replicated object counts) computed by the metrics
+// collector. Returns an error until the first snapshot is available.
+func (c *apiClient) GetReplicationStatus(ctx context.Context) (*adminapi.ReplicationStatusResponse, error) {
+	return getJSON[adminapi.ReplicationStatusResponse](ctx, c, "/admin/api/replication", nil)
+}
+
 // ReconcileUsage recomputes every backend's bytes_used from the object ledger.
 func (c *apiClient) ReconcileUsage(ctx context.Context) error {
 	return c.doAdmin(ctx, http.MethodPost, "/admin/api/usage-reconcile")

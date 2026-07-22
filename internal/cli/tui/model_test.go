@@ -42,6 +42,10 @@ func (errLister) GetLogs(_ context.Context, _ string) (*adminapi.LogsResponse, e
 	return nil, errors.New("nope")
 }
 
+func (errLister) GetReplicationStatus(_ context.Context) (*adminapi.ReplicationStatusResponse, error) {
+	return nil, errors.New("nope")
+}
+
 func (errLister) ReconcileUsage(_ context.Context) error { return errors.New("nope") }
 func (errLister) FlushCache(_ context.Context) error      { return errors.New("nope") }
 
