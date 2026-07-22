@@ -13,6 +13,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +30,7 @@ type fakeLister struct {
 	locations map[string]*adminapi.ObjectLocationsResponse
 	status    *adminapi.StatusResponse
 	logs      *adminapi.LogsResponse
+	replic    *adminapi.ReplicationStatusResponse
 }
 
 func (f *fakeLister) ListObjects(_ context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error) {
@@ -59,8 +61,15 @@ func (f *fakeLister) GetLogs(_ context.Context, _ string) (*adminapi.LogsRespons
 	return &adminapi.LogsResponse{}, nil
 }
 
+func (f *fakeLister) GetReplicationStatus(_ context.Context) (*adminapi.ReplicationStatusResponse, error) {
+	if f.replic != nil {
+		return f.replic, nil
+	}
+	return &adminapi.ReplicationStatusResponse{}, nil
+}
+
 func (f *fakeLister) ReconcileUsage(_ context.Context) error { return nil }
-func (f *fakeLister) FlushCache(_ context.Context) error      { return nil }
+func (f *fakeLister) FlushCache(_ context.Context) error     { return nil }
 
 // waitForText fails the test unless the given text appears in the output.
 func waitForText(t *testing.T, tm *teatest.TestModel, text string) {
@@ -201,7 +210,7 @@ func TestBrowser_OpensLogsView(t *testing.T) {
 	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(120, 24))
 
 	waitForText(t, tm, "readme")
-	tm.Type("l")                          // jump to the logs section
+	tm.Type("l") // jump to the logs section
 	waitForText(t, tm, "copied-marker-xyz")
 	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // back to the sidebar
 
@@ -212,6 +221,44 @@ func TestBrowser_OpensLogsView(t *testing.T) {
 	}
 	if fm.section != sectionLogs || !fm.navFocus {
 		t.Errorf("section=%v navFocus=%v, want logs + focused sidebar", fm.section, fm.navFocus)
+	}
+}
+
+// TestBrowser_OpensReplicationView covers jumping to the replication section:
+// the snapshot loads, the pending counts render, and esc returns focus to the
+// sidebar without leaving the section.
+func TestBrowser_OpensReplicationView(t *testing.T) {
+	f := &fakeLister{
+		pages: map[string]*adminapi.ObjectListResponse{
+			"|": {Objects: []adminapi.ObjectEntry{{Key: "readme", Size: 10}}},
+		},
+		replic: &adminapi.ReplicationStatusResponse{
+			Factor: 3, UnderReplicated: 77, OverReplicated: 4, ComputedAt: time.Now(),
+		},
+	}
+	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(120, 24))
+
+	waitForText(t, tm, "readme")
+	tm.Type("p") // jump to the replication section
+	// The snapshot-age line re-renders every auto-refresh tick, so it is the
+	// reliable proof the stats (not the spinner) are on screen; the static
+	// lines render once and get diffed away on later frames.
+	waitForText(t, tm, "snapshot age")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEsc}) // back to the sidebar
+
+	tm.Type("q")
+	fm, ok := tm.FinalModel(t).(*model)
+	if !ok {
+		t.Fatal("final model is not a model")
+	}
+	if fm.section != sectionReplication || !fm.navFocus {
+		t.Errorf("section=%v navFocus=%v, want replication + focused sidebar", fm.section, fm.navFocus)
+	}
+	if fm.replication.snap == nil || fm.replication.snap.UnderReplicated != 77 {
+		t.Errorf("snapshot = %+v, want loaded with 77 under-replicated", fm.replication.snap)
+	}
+	if stats := fm.replicationStats(); !strings.Contains(stats, "under-replicated") || !strings.Contains(stats, "77") {
+		t.Errorf("stats = %q, want under-replicated + 77", stats)
 	}
 }
 
