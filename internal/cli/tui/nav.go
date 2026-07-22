@@ -27,6 +27,7 @@ type section int
 const (
 	sectionFiles section = iota
 	sectionBackends
+	sectionReplication
 	sectionLogs
 )
 
@@ -43,13 +44,14 @@ func navEntries() []navEntry {
 	return []navEntry{
 		{"Files", sectionFiles, true},
 		{"Backends", sectionBackends, true},
+		{"Replication", sectionReplication, true},
 		{"Logs", sectionLogs, true},
 	}
 }
 
 // selectableSections is the number of enabled nav destinations; it bounds the
 // nav cursor.
-const selectableSections = 3
+const selectableSections = 4
 
 // contentWidth is the width available to the content area beside the nav.
 func (m *model) contentWidth() int {
@@ -91,6 +93,8 @@ func (m *model) selectSection(s section) (tea.Model, tea.Cmd) {
 		m.resizeBackends()
 		cmd := m.loadStatus()
 		return m, cmd
+	case sectionReplication:
+		return m.enterReplication()
 	case sectionLogs:
 		m.logs = logsView{loading: true}
 		m.resizeLogs()

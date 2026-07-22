@@ -105,6 +105,32 @@ func TestAPIClient_GetObjectLocations_Success(t *testing.T) {
 	}
 }
 
+// TestAPIClient_GetReplicationStatus_Success asserts the request shape and the
+// decoded replication snapshot.
+func TestAPIClient_GetReplicationStatus_Success(t *testing.T) {
+	t.Parallel()
+	var gotPath, gotToken string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotToken = r.URL.Path, r.Header.Get("X-Admin-Token")
+		_, _ = w.Write([]byte(`{"factor":2,"under_replicated":143,"over_replicated":12,"computed_at":"2026-07-21T14:03:22Z"}`))
+	}))
+	defer srv.Close()
+
+	resp, err := newAPIClient(srv.URL, "tok").GetReplicationStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetReplicationStatus: %v", err)
+	}
+	if gotPath != "/admin/api/replication" {
+		t.Errorf("path = %q, want /admin/api/replication", gotPath)
+	}
+	if gotToken != "tok" {
+		t.Errorf("token = %q, want tok", gotToken)
+	}
+	if resp.Factor != 2 || resp.UnderReplicated != 143 || resp.OverReplicated != 12 {
+		t.Errorf("resp = %+v", resp)
+	}
+}
+
 // TestAPIClient_ListObjects_ErrorStatus surfaces a >= 400 response as an error.
 func TestAPIClient_ListObjects_ErrorStatus(t *testing.T) {
 	t.Parallel()
