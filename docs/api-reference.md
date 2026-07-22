@@ -507,6 +507,22 @@ Or if replication is not configured:
 {"status": "skipped", "copies_created": 0, "reason": "replication not configured or factor <= 1"}
 ```
 
+### GET /admin/api/replication
+
+Returns the latest replication snapshot computed by the metrics collector:
+the configured replication factor and the current under- and over-replicated
+object counts. The snapshot is refreshed on the collector's periodic cycle, so
+`computed_at` records when the counts were last measured.
+
+Returns 503 until the first snapshot has been computed, or if the collector is
+not wired into the deployment.
+
+**Response:**
+
+```json
+{"factor": 2, "under_replicated": 143, "over_replicated": 12, "computed_at": "2026-07-21T14:03:22Z"}
+```
+
 ### GET /admin/api/over-replication
 
 Returns the current replication factor and count of over-replicated objects.

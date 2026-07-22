@@ -350,12 +350,16 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 		AdmissionSem:    admissionSemFor(&cfg.Server),
 		Log:             slog.Default().With(logfmt.Component("backend_manager")),
 	})
-	rt.SetMetricsCollector(metrics.New(metrics.CollectorDeps{
+	collector := metrics.New(metrics.CollectorDeps{
 		Store:             metricsDeps,
 		Usage:             usage,
 		BackendNames:      backendNames,
 		ReplicationFactor: replicationFactorFromInjector(i),
-	}))
+	})
+	rt.SetMetricsCollector(collector)
+	// Register the collector so the admin handler can serve its replication
+	// snapshot from a cheap /admin/api/replication read.
+	do.ProvideValue(i, collector)
 	return rt, nil
 }
 
