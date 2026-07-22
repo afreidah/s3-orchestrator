@@ -301,7 +301,9 @@ The inspector renders one row per backend copy - backend, size, age, whether the
 
 ![The TUI inspector showing an object's backend copies](/docs/images/tui-file-details.png)
 
-The **Backends** section is the interactive equivalent of `admin status`, sourced from `GET /admin/api/status`. It renders one row per configured backend - circuit-breaker health, drain state, quota used and limit, object count, and the current period's API request, ingress, and egress counters - with the metadata database health and usage period in the title bar. Press `r` to refresh the snapshot.
+The **Backends** section is the interactive equivalent of `admin status`, sourced from `GET /admin/api/status`. It renders one row per configured backend - circuit-breaker health, drain state, quota used and limit, a `USE%` column (used / limit), object count, and the current period's API request, ingress, and egress counters. A stats line under the title shows the metadata database health (green when healthy, red when not) and the total usage across backends (`used / limit (pct%)`, coloured by fill). Press `r` to refresh the snapshot.
+
+The metadata database health is also shown persistently at the bottom of the sidebar (`db ok` green / `db DOWN` red), fetched at startup so it is visible from every section.
 
 The **Logs** section shows recent structured log entries from the instance's in-memory log buffer, sourced from `GET /admin/api/logs` - the same buffer the web dashboard's logs pane reads. Each row is time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs (not raw JSON). The level is colour-coded by severity (WARN and ERROR stand out; INFO stays neutral). Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh.
 

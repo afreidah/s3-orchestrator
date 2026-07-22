@@ -15,6 +15,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 func key(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
@@ -126,6 +128,39 @@ func TestSidebarView_MarkersAndStates(t *testing.T) {
 	out = m.sidebarView()
 	if !strings.Contains(out, "> Backends") {
 		t.Errorf("focused cursor should mark Backends:\n%s", out)
+	}
+}
+
+func TestDBIndicator(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+
+	// unknown until a status fetch lands.
+	if got := m.dbIndicator(); !strings.Contains(got, "?") {
+		t.Errorf("unknown db indicator = %q", got)
+	}
+	healthy := true
+	m.dbHealthy = &healthy
+	if got := m.dbIndicator(); !strings.Contains(got, "db ok") {
+		t.Errorf("healthy db indicator = %q", got)
+	}
+	down := false
+	m.dbHealthy = &down
+	if got := m.dbIndicator(); !strings.Contains(got, "DOWN") {
+		t.Errorf("down db indicator = %q", got)
+	}
+}
+
+func TestApplyStatus_SetsGlobalDBHealth(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.applyStatus(&adminapi.StatusResponse{DBHealthy: true})
+	if m.dbHealthy == nil || !*m.dbHealthy {
+		t.Errorf("dbHealthy = %v, want true", m.dbHealthy)
+	}
+	m.applyStatus(&adminapi.StatusResponse{DBHealthy: false})
+	if m.dbHealthy == nil || *m.dbHealthy {
+		t.Errorf("dbHealthy = %v, want false", m.dbHealthy)
 	}
 }
 

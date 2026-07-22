@@ -150,9 +150,28 @@ func (m *model) sidebarView() string {
 		b.WriteString(style.Render(marker + label))
 		b.WriteString("\n")
 	}
+
+	// Persistent DB-health indicator, below a divider, visible from any section.
+	b.WriteString(navDisabledStyle.Render(strings.Repeat("-", sidebarWidth-2)))
+	b.WriteString("\n")
+	b.WriteString(m.dbIndicator())
+
 	divider := lipgloss.Color("240")
 	if m.navFocus {
 		divider = lipgloss.Color("39")
 	}
 	return sidebarStyle.BorderForeground(divider).Width(sidebarWidth).Height(m.height).Render(b.String())
+}
+
+// dbIndicator renders the metadata DB health for the sidebar: green when
+// healthy, red when down, faint when not yet known.
+func (m *model) dbIndicator() string {
+	switch {
+	case m.dbHealthy == nil:
+		return navDisabledStyle.Render("db ?")
+	case *m.dbHealthy:
+		return statusOKStyle.Render("db ok")
+	default:
+		return statusErrStyle.Render("db DOWN")
+	}
 }

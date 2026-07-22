@@ -69,6 +69,19 @@ var (
 	logLevelError = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
 )
 
+// usageStyle colours a usage percentage: green under 70, yellow through 90,
+// red at or above 90, so a near-full backend stands out.
+func usageStyle(pct int) lipgloss.Style {
+	switch {
+	case pct >= 90:
+		return statusErrStyle
+	case pct >= 70:
+		return logLevelWarn
+	default:
+		return statusOKStyle
+	}
+}
+
 // levelStyle normalizes a log-level string and returns its display style.
 func levelStyle(level string) lipgloss.Style {
 	switch strings.ToUpper(strings.TrimSpace(level)) {

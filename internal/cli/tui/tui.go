@@ -73,6 +73,7 @@ type model struct {
 	spinner   spinner.Model   // animated indicator shown while loading
 	confirm   *confirmPrompt  // armed confirmation for a pending write action, if any
 	status    *actionStatus   // result of the last action, shown until the next keypress
+	dbHealthy *bool           // metadata DB health from the last status fetch (nil = unknown)
 	width     int             // terminal width from the last WindowSizeMsg
 	height    int             // terminal height from the last WindowSizeMsg
 }
@@ -84,10 +85,12 @@ func initialModel(client adminClient) *model {
 	fi.Prompt = ""
 	fi.Placeholder = "type to filter"
 	m := &model{client: client, loading: true, spinner: spinner.New(), table: newTable(), filter: fi}
-	// Seed the browser columns up front. The initial object load can be
+	m.backends = backendsView{table: newTable()}
+	// Seed the browser and backends columns up front. The initial loads can be
 	// delivered before the first WindowSizeMsg, and SetRows on a column-less
 	// table panics in the table's row renderer.
 	m.resizeTable()
+	m.resizeBackends()
 	return m
 }
 
@@ -151,7 +154,9 @@ func entriesFromPage(prefix string, page *adminapi.ObjectListResponse) []entry {
 
 // Init fires the first load of the root prefix and starts the spinner ticking.
 func (m *model) Init() tea.Cmd {
-	return tea.Batch(m.loadObjects(m.prefix, ""), m.spinner.Tick)
+	// Fetch status alongside the first listing so the sidebar's DB-health
+	// indicator is populated from startup, on any section.
+	return tea.Batch(m.loadObjects(m.prefix, ""), m.loadStatus(), m.spinner.Tick)
 }
 
 // Update handles one message and returns the next state.

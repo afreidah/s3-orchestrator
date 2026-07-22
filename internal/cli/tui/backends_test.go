@@ -39,13 +39,64 @@ func TestRowsFromBackends(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
-	// b1: healthy, human sizes, real limit.
-	if r := rows[0]; r[0] != "b1" || r[1] != "healthy" || r[2] != "-" || r[3] != "2.0 KiB" || r[4] != "4.0 KiB" {
+	// b1: healthy, human sizes, real limit, use% = 2048/4096 = 50%.
+	if r := rows[0]; r[0] != "b1" || r[1] != "healthy" || r[2] != "-" || r[3] != "2.0 KiB" || r[4] != "4.0 KiB" || r[5] != "50%" {
 		t.Errorf("b1 row = %v", r)
 	}
-	// b2: unhealthy, draining, and a zero limit renders as a dash, not "0 B".
-	if r := rows[1]; r[1] != "unhealthy" || r[2] != "draining" || r[4] != "-" {
+	// b2: unhealthy, draining, and a zero limit renders limit and use% as a dash.
+	if r := rows[1]; r[1] != "unhealthy" || r[2] != "draining" || r[4] != "-" || r[5] != "-" {
 		t.Errorf("b2 row = %v", r)
+	}
+}
+
+func TestUsagePercent(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		used, limit int64
+		want        int
+	}{
+		{0, 4096, 0}, {2048, 4096, 50}, {4096, 4096, 100}, {5, 0, 0}, {5, -1, 0},
+	}
+	for _, c := range cases {
+		if got := usagePercent(c.used, c.limit); got != c.want {
+			t.Errorf("usagePercent(%d,%d) = %d, want %d", c.used, c.limit, got, c.want)
+		}
+	}
+}
+
+func TestUsageStyle_Thresholds(t *testing.T) {
+	t.Parallel()
+	// green under 70, yellow 70-89, red 90+.
+	if usageStyle(20).GetForeground() != usageStyle(69).GetForeground() {
+		t.Error("20 and 69 should share the low (green) style")
+	}
+	if usageStyle(75).GetForeground() == usageStyle(20).GetForeground() {
+		t.Error("75 (warn) should differ from 20 (ok)")
+	}
+	if usageStyle(95).GetForeground() == usageStyle(75).GetForeground() {
+		t.Error("95 (error) should differ from 75 (warn)")
+	}
+}
+
+func TestBackendsStatsLine(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.backends.dbHealthy = true
+	m.backends.rows = []adminapi.BackendStatus{
+		{Name: "a", BytesUsed: 2048, BytesLimit: 4096},
+		{Name: "b", BytesUsed: 1024, BytesLimit: 4096},
+	}
+	// total 3 KiB / 8 KiB = 37%, db healthy.
+	got := m.backendsStatsLine()
+	for _, want := range []string{"db:", "healthy", "total:", "37%"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stats line missing %q: %q", want, got)
+		}
+	}
+
+	m.backends.dbHealthy = false
+	if got := m.backendsStatsLine(); !strings.Contains(got, "UNAVAILABLE") {
+		t.Errorf("unhealthy stats line = %q", got)
 	}
 }
 
