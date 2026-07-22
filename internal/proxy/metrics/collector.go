@@ -16,6 +16,7 @@ package metrics
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
@@ -39,6 +40,18 @@ type Deps interface {
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
 	GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error)
 	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error)
+	CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error)
+}
+
+// ReplicationSnapshot is the last-computed replication state, retained so a
+// cheap admin endpoint can serve it without a fresh ledger scan. Ready is false
+// until the first computation has run.
+type ReplicationSnapshot struct {
+	Factor          int
+	UnderReplicated int64
+	OverReplicated  int64
+	ComputedAt      time.Time
+	Ready           bool
 }
 
 // Collector records Prometheus metrics for manager-level operations and
@@ -49,6 +62,9 @@ type Collector struct {
 	backendNames      []string
 	replicationFactor func() int // returns 0 when replication is disabled
 	log               *slog.Logger
+
+	repMu   sync.RWMutex        // guards repSnap
+	repSnap ReplicationSnapshot // last-computed replication state, served to admin
 }
 
 // CollectorDeps groups the metrics collector's constructor parameters.
@@ -223,12 +239,47 @@ func (mc *Collector) updateReplicationPending(ctx context.Context) {
 	}
 	factor := mc.replicationFactor()
 	if factor <= 1 {
+		// Replication disabled: record a ready, zeroed snapshot so the admin
+		// endpoint reports "not replicating" rather than "not yet computed".
+		mc.setReplicationSnapshot(ReplicationSnapshot{Factor: factor, Ready: true, ComputedAt: time.Now()})
 		return
 	}
+
 	locations, err := mc.store.GetUnderReplicatedObjects(ctx, factor, 10000)
 	if err != nil {
 		mc.log.ErrorContext(ctx, "failed to get under-replicated objects", "error", err)
 		return
 	}
-	telemetry.ReplicationPending.Set(float64(len(core.GroupByKey(locations))))
+	under := int64(len(core.GroupByKey(locations)))
+	telemetry.ReplicationPending.Set(float64(under))
+
+	over, err := mc.store.CountOverReplicatedObjects(ctx, factor)
+	if err != nil {
+		mc.log.ErrorContext(ctx, "failed to count over-replicated objects", "error", err)
+		return
+	}
+	telemetry.OverReplicationPending.Set(float64(over))
+
+	mc.setReplicationSnapshot(ReplicationSnapshot{
+		Factor:          factor,
+		UnderReplicated: under,
+		OverReplicated:  over,
+		ComputedAt:      time.Now(),
+		Ready:           true,
+	})
+}
+
+// setReplicationSnapshot stores the latest computed replication state.
+func (mc *Collector) setReplicationSnapshot(s ReplicationSnapshot) {
+	mc.repMu.Lock()
+	defer mc.repMu.Unlock()
+	mc.repSnap = s
+}
+
+// ReplicationSnapshot returns the last-computed replication state. Ready is
+// false until the first collector cycle has run.
+func (mc *Collector) ReplicationSnapshot() ReplicationSnapshot {
+	mc.repMu.RLock()
+	defer mc.repMu.RUnlock()
+	return mc.repSnap
 }

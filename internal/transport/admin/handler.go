@@ -77,6 +77,7 @@ type Handler struct {
 	dbHealthy    func() bool
 	workerHealth func() []WorkerHealth // nil when lifecycle manager is not wired
 	logs         logReader             // nil when the log buffer is not wired
+	replication  replicationSnapshotter // nil when the metrics collector is not wired
 	objects      core.ObjectStore
 	cleanup      core.CleanupStore
 	encAdmin     core.EncryptionAdmin
@@ -108,6 +109,7 @@ type Deps struct {
 	DBHealthy    func() bool           // typically *breaker.CircuitBreaker.IsHealthy
 	WorkerHealth func() []WorkerHealth // typically lifecycle.Manager.Health adapted
 	LogBuffer    logReader             // nil when the log buffer is not wired
+	Replication  replicationSnapshotter // nil when the metrics collector is not wired
 	Encryption   core.EncryptionAdmin
 	Objects      core.ObjectStore
 	Cleanup      core.CleanupStore
@@ -144,6 +146,7 @@ func New(d *Deps) *Handler {
 		dbHealthy:    d.DBHealthy,
 		workerHealth: d.WorkerHealth,
 		logs:         d.LogBuffer,
+		replication:  d.Replication,
 		objects:      d.Objects,
 		cleanup:      d.Cleanup,
 		encAdmin:     d.Encryption,

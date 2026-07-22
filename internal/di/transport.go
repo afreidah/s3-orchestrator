@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
@@ -272,6 +273,10 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	// endpoint's nil-guard miss (non-nil interface holding a nil pointer).
 	if lb, err := do.Invoke[*telemetry.LogBuffer](i); err == nil && lb != nil {
 		deps.LogBuffer = lb
+	}
+	// Same guard for the metrics collector behind /admin/api/replication.
+	if mc, err := do.Invoke[*metrics.Collector](i); err == nil && mc != nil {
+		deps.Replication = mc
 	}
 	return admin.New(deps), nil
 }
