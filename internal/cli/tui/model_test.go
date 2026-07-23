@@ -46,8 +46,9 @@ func (errLister) GetReplicationStatus(_ context.Context) (*adminapi.ReplicationS
 	return nil, errors.New("nope")
 }
 
-func (errLister) ReconcileUsage(_ context.Context) error { return errors.New("nope") }
-func (errLister) FlushCache(_ context.Context) error      { return errors.New("nope") }
+func (errLister) RunOp(_ context.Context, _, _ string, _ bool) (eventStream, error) {
+	return nil, errors.New("nope")
+}
 
 // modelWith builds a model seeded with entries and a table synced to them.
 func modelWith(entries []entry, prefix string, client adminClient) *model {

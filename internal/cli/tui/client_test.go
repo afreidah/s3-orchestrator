@@ -12,10 +12,14 @@ package tui
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
 // TestAPIClient_ListObjects_Success asserts the request shape and decoded page.
@@ -159,45 +163,71 @@ func TestAPIClient_ListObjects_BadJSON(t *testing.T) {
 	}
 }
 
-// TestAPIClient_WriteActions asserts the instance-action writes POST to the
-// right path with the token.
-func TestAPIClient_WriteActions(t *testing.T) {
+// TestAPIClient_RunOp_Streaming asserts a streaming action opts into NDJSON and
+// yields the server's events in order.
+func TestAPIClient_RunOp_Streaming(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name, wantPath string
-		call           func(*apiClient) error
-	}{
-		{"reconcile-usage", "/admin/api/usage-reconcile", func(c *apiClient) error { return c.ReconcileUsage(context.Background()) }},
-		{"cache-flush", "/admin/api/cache/flush", func(c *apiClient) error { return c.FlushCache(context.Background()) }},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			var gotMethod, gotPath, gotToken string
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				gotMethod, gotPath, gotToken = r.Method, r.URL.Path, r.Header.Get("X-Admin-Token")
-				w.WriteHeader(http.StatusOK)
-			}))
-			defer srv.Close()
+	var gotMethod, gotPath, gotAccept string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotAccept = r.Method, r.URL.Path, r.Header.Get("Accept")
+		_, _ = w.Write([]byte(`{"event":"start","op":"scrub"}` + "\n" + `{"event":"result","outcome":"ok","message":"12 checked"}` + "\n"))
+	}))
+	defer srv.Close()
 
-			if err := tc.call(newAPIClient(srv.URL, "tok")); err != nil {
-				t.Fatalf("call: %v", err)
-			}
-			if gotMethod != http.MethodPost {
-				t.Errorf("method = %s, want POST", gotMethod)
-			}
-			if gotPath != tc.wantPath {
-				t.Errorf("path = %q, want %q", gotPath, tc.wantPath)
-			}
-			if gotToken != "tok" {
-				t.Errorf("token = %q, want tok", gotToken)
-			}
-		})
+	s, err := newAPIClient(srv.URL, "tok").RunOp(context.Background(), http.MethodPost, "/admin/api/scrub", true)
+	if err != nil {
+		t.Fatalf("RunOp: %v", err)
+	}
+	defer s.Close()
+	if gotMethod != http.MethodPost || gotPath != "/admin/api/scrub" {
+		t.Errorf("method=%s path=%q", gotMethod, gotPath)
+	}
+	if gotAccept != adminstream.ContentType {
+		t.Errorf("Accept = %q, want %q", gotAccept, adminstream.ContentType)
+	}
+	first, _ := s.Next()
+	if first.Kind != adminstream.KindStart || first.Op != "scrub" {
+		t.Errorf("first event = %+v", first)
+	}
+	second, _ := s.Next()
+	if second.Kind != adminstream.KindResult || second.Message != "12 checked" {
+		t.Errorf("second event = %+v", second)
+	}
+	if _, err := s.Next(); !errors.Is(err, io.EOF) {
+		t.Errorf("end err = %v, want EOF", err)
 	}
 }
 
-// TestAPIClient_DoAdmin_ErrorStatus surfaces a >= 400 write response as an error.
-func TestAPIClient_DoAdmin_ErrorStatus(t *testing.T) {
+// TestAPIClient_RunOp_OneShot asserts a non-streaming action POSTs without the
+// NDJSON opt-in and synthesizes a single terminal result from the JSON summary.
+func TestAPIClient_RunOp_OneShot(t *testing.T) {
+	t.Parallel()
+	var gotAccept string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAccept = r.Header.Get("Accept")
+		_, _ = w.Write([]byte(`{"status":"ok","moved":12}`))
+	}))
+	defer srv.Close()
+
+	s, err := newAPIClient(srv.URL, "tok").RunOp(context.Background(), http.MethodPost, "/admin/api/rebalance", false)
+	if err != nil {
+		t.Fatalf("RunOp: %v", err)
+	}
+	defer s.Close()
+	if strings.Contains(gotAccept, adminstream.ContentType) {
+		t.Errorf("one-shot should not opt into streaming; Accept=%q", gotAccept)
+	}
+	e, _ := s.Next()
+	if e.Kind != adminstream.KindResult || e.Outcome != adminstream.OutcomeOK || !strings.Contains(e.Message, "moved=12") {
+		t.Errorf("result event = %+v", e)
+	}
+	if _, err := s.Next(); !errors.Is(err, io.EOF) {
+		t.Errorf("end err = %v, want EOF", err)
+	}
+}
+
+// TestAPIClient_RunOp_ErrorStatus surfaces a >= 400 response as an error.
+func TestAPIClient_RunOp_ErrorStatus(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
@@ -205,8 +235,7 @@ func TestAPIClient_DoAdmin_ErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := newAPIClient(srv.URL, "tok").ReconcileUsage(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "403") {
+	if _, err := newAPIClient(srv.URL, "tok").RunOp(context.Background(), http.MethodPost, "/admin/api/scrub", true); err == nil || !strings.Contains(err.Error(), "403") {
 		t.Errorf("err = %v, want to mention 403", err)
 	}
 }

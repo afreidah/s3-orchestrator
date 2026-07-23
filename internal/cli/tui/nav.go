@@ -29,6 +29,7 @@ const (
 	sectionBackends
 	sectionReplication
 	sectionLogs
+	sectionOps
 )
 
 // navEntry is one row in the left nav.
@@ -46,12 +47,13 @@ func navEntries() []navEntry {
 		{"Backends", sectionBackends, true},
 		{"Replication", sectionReplication, true},
 		{"Logs", sectionLogs, true},
+		{"Ops", sectionOps, true},
 	}
 }
 
 // selectableSections is the number of enabled nav destinations; it bounds the
 // nav cursor.
-const selectableSections = 4
+const selectableSections = 5
 
 // contentWidth is the width available to the content area beside the nav.
 func (m *model) contentWidth() int {
@@ -95,6 +97,10 @@ func (m *model) selectSection(s section) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case sectionReplication:
 		return m.enterReplication()
+	case sectionOps:
+		m.ops.showOut = false
+		m.resizeOps()
+		return m, nil
 	case sectionLogs:
 		m.logs = logsView{loading: true}
 		m.resizeLogs()
