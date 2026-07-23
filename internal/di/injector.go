@@ -26,6 +26,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // InjectorDeps groups the values NewInjector seeds the container with.
@@ -70,12 +72,16 @@ func registerValues(inj do.Injector, cfg *config.Config, mode config.Mode, logLe
 // outbox, database circuit breaker, instance id, metric deps).
 func registerInfrastructure(inj do.Injector) {
 	do.Provide(inj, ProvideMetadataStore)
-	do.Provide(inj, ProvideLifecycleAdmin)
-	do.Provide(inj, ProvideEncryptionAdmin)
-	do.Provide(inj, ProvideNotificationOutbox)
 	do.Provide(inj, ProvideDatabaseBreaker)
 	do.Provide(inj, ProvideInstanceID)
-	do.Provide(inj, ProvideMetricsDeps)
+
+	// Narrow role views of the wide metadata store: do.MustAs aliases the
+	// concrete under each consumer interface, and verifies the cast at
+	// registration instead of at first resolve.
+	do.MustAs[core.MetadataStore, core.LifecycleAdmin](inj)
+	do.MustAs[core.MetadataStore, core.EncryptionAdmin](inj)
+	do.MustAs[core.MetadataStore, core.NotificationOutbox](inj)
+	do.MustAs[core.MetadataStore, metrics.Deps](inj)
 }
 
 // registerBackendStack wires the storage-fleet root composition

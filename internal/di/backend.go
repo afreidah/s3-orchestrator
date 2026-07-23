@@ -364,47 +364,24 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 }
 
 func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
-	cfg, err := do.Invoke[*config.Config](i)
-	if err != nil {
-		return nil, err
+	r := newResolver(i)
+	cfg := resolve[*config.Config](r)
+	runtime := resolve[*infra.BackendRuntime](r)
+	br := resolve[*BackendsResult](r)
+	stores := resolve[core.MetadataStore](r)
+	metricsDeps := resolve[metrics.Deps](r)
+	dbBreaker := resolve[*breaker.CircuitBreaker](r)
+	coord := resolve[*writepath.Coordinator](r)
+	multipartManager := resolve[*multipart.Manager](r)
+	integrityCfg := resolve[*syncutil.AtomicConfig[config.IntegrityConfig]](r)
+	drainManager := resolve[*drain.Manager](r)
+	if r.err != nil {
+		return nil, r.err
 	}
-	runtime, err := do.Invoke[*infra.BackendRuntime](i)
-	if err != nil {
-		return nil, err
-	}
-	br, err := do.Invoke[*BackendsResult](i)
-	if err != nil {
-		return nil, err
-	}
-	stores, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
-	}
-	metricsDeps, err := do.Invoke[metrics.Deps](i)
-	if err != nil {
-		return nil, err
-	}
+
+	// Encryptor has its own error path and needs the resolved cfg, so it stays
+	// outside the batch.
 	enc, err := resolveOptionalEncryptor(i, cfg.Encryption.Enabled)
-	if err != nil {
-		return nil, err
-	}
-	dbBreaker, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
-	}
-	coord, err := do.Invoke[*writepath.Coordinator](i)
-	if err != nil {
-		return nil, err
-	}
-	multipartManager, err := do.Invoke[*multipart.Manager](i)
-	if err != nil {
-		return nil, err
-	}
-	integrityCfg, err := do.Invoke[*syncutil.AtomicConfig[config.IntegrityConfig]](i)
-	if err != nil {
-		return nil, err
-	}
-	drainManager, err := do.Invoke[*drain.Manager](i)
 	if err != nil {
 		return nil, err
 	}

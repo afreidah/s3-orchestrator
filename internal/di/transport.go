@@ -51,17 +51,12 @@ func ProvideBucketAuth(i do.Injector) (*auth.BucketRegistry, error) {
 
 // ProvideS3Server creates the S3-compatible HTTP handler.
 func ProvideS3Server(i do.Injector) (*s3api.Server, error) {
-	cfg, err := do.Invoke[*config.Config](i)
-	if err != nil {
-		return nil, err
-	}
-	manager, err := do.Invoke[*proxy.BackendManager](i)
-	if err != nil {
-		return nil, err
-	}
-	bucketAuth, err := do.Invoke[*auth.BucketRegistry](i)
-	if err != nil {
-		return nil, err
+	r := newResolver(i)
+	cfg := resolve[*config.Config](r)
+	manager := resolve[*proxy.BackendManager](r)
+	bucketAuth := resolve[*auth.BucketRegistry](r)
+	if r.err != nil {
+		return nil, r.err
 	}
 	srv := s3api.NewServer(manager, cfg.Server.MaxObjectSize)
 	srv.SetBucketAuth(bucketAuth)
@@ -90,37 +85,17 @@ func ProvideLoginThrottle(_ do.Injector) (*httputil.LoginThrottle, error) {
 
 // ProvideUIHandler creates the web dashboard handler.
 func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
-	cfg, err := do.Invoke[*config.Config](i)
-	if err != nil {
-		return nil, err
-	}
-	manager, err := do.Invoke[*proxy.BackendManager](i)
-	if err != nil {
-		return nil, err
-	}
-	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
-	}
-	logBuffer, err := do.Invoke[*telemetry.LogBuffer](i)
-	if err != nil {
-		return nil, err
-	}
-	loginThrottle, err := do.Invoke[*httputil.LoginThrottle](i)
-	if err != nil {
-		return nil, err
-	}
-	adminHandler, err := do.Invoke[*admin.Handler](i)
-	if err != nil {
-		return nil, err
-	}
-	rebalancer, err := do.Invoke[*worker.Rebalancer](i)
-	if err != nil {
-		return nil, err
-	}
-	overRep, err := do.Invoke[*worker.OverReplicationCleaner](i)
-	if err != nil {
-		return nil, err
+	r := newResolver(i)
+	cfg := resolve[*config.Config](r)
+	manager := resolve[*proxy.BackendManager](r)
+	cb := resolve[*breaker.CircuitBreaker](r)
+	logBuffer := resolve[*telemetry.LogBuffer](r)
+	loginThrottle := resolve[*httputil.LoginThrottle](r)
+	adminHandler := resolve[*admin.Handler](r)
+	rebalancer := resolve[*worker.Rebalancer](r)
+	overRep := resolve[*worker.OverReplicationCleaner](r)
+	if r.err != nil {
+		return nil, r.err
 	}
 
 	return ui.New(&ui.Deps{
@@ -157,44 +132,30 @@ type adminHandlerRequiredDeps struct {
 // resolveAdminHandlerRequiredDeps invokes every required dependency the
 // admin handler needs and bails on the first error.
 func resolveAdminHandlerRequiredDeps(i do.Injector) (adminHandlerRequiredDeps, error) {
-	var d adminHandlerRequiredDeps
-	var err error
-	if d.cfg, err = do.Invoke[*config.Config](i); err != nil {
+	r := newResolver(i)
+	d := adminHandlerRequiredDeps{
+		cfg:        resolve[*config.Config](r),
+		manager:    resolve[*proxy.BackendManager](r),
+		cb:         resolve[*breaker.CircuitBreaker](r),
+		encAdmin:   resolve[core.EncryptionAdmin](r),
+		logLevel:   resolve[*slog.LevelVar](r),
+		stores:     resolve[core.MetadataStore](r),
+		replicator: resolve[*worker.Replicator](r),
+		rebalancer: resolve[*worker.Rebalancer](r),
+		overRep:    resolve[*worker.OverReplicationCleaner](r),
+		scrubber:   resolve[*worker.Scrubber](r),
+		drain:      resolve[*drain.Manager](r),
+	}
+	if r.err != nil {
+		return d, r.err
+	}
+	// enc needs the resolved cfg and has its own error path, so it stays
+	// outside the batch.
+	enc, err := resolveOptionalEncryptor(i, d.cfg.Encryption.Enabled)
+	if err != nil {
 		return d, err
 	}
-	if d.manager, err = do.Invoke[*proxy.BackendManager](i); err != nil {
-		return d, err
-	}
-	if d.cb, err = do.Invoke[*breaker.CircuitBreaker](i); err != nil {
-		return d, err
-	}
-	if d.encAdmin, err = do.Invoke[core.EncryptionAdmin](i); err != nil {
-		return d, err
-	}
-	if d.logLevel, err = do.Invoke[*slog.LevelVar](i); err != nil {
-		return d, err
-	}
-	if d.enc, err = resolveOptionalEncryptor(i, d.cfg.Encryption.Enabled); err != nil {
-		return d, err
-	}
-	if d.stores, err = do.Invoke[core.MetadataStore](i); err != nil {
-		return d, err
-	}
-	if d.replicator, err = do.Invoke[*worker.Replicator](i); err != nil {
-		return d, err
-	}
-	if d.rebalancer, err = do.Invoke[*worker.Rebalancer](i); err != nil {
-		return d, err
-	}
-	if d.overRep, err = do.Invoke[*worker.OverReplicationCleaner](i); err != nil {
-		return d, err
-	}
-	if d.scrubber, err = do.Invoke[*worker.Scrubber](i); err != nil {
-		return d, err
-	}
-	if d.drain, err = do.Invoke[*drain.Manager](i); err != nil {
-		return d, err
-	}
+	d.enc = enc
 	return d, nil
 }
 

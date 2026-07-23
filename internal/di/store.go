@@ -23,7 +23,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/instanceid"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
@@ -66,24 +65,6 @@ func ProvideMetadataStore(i do.Injector) (core.MetadataStore, error) {
 	return cs, nil
 }
 
-// ProvideLifecycleAdmin aliases the wide MetadataStore as its LifecycleAdmin
-// role for boot/shutdown migrations, schema checks, and Close.
-func ProvideLifecycleAdmin(i do.Injector) (core.LifecycleAdmin, error) {
-	return do.Invoke[core.MetadataStore](i)
-}
-
-// ProvideEncryptionAdmin aliases the wide MetadataStore as its EncryptionAdmin
-// role for the admin HTTP handler's key rotation and encrypt/decrypt batch ops.
-func ProvideEncryptionAdmin(i do.Injector) (core.EncryptionAdmin, error) {
-	return do.Invoke[core.MetadataStore](i)
-}
-
-// ProvideNotificationOutbox aliases the wide MetadataStore as its
-// NotificationOutbox role for the notifier worker.
-func ProvideNotificationOutbox(i do.Injector) (core.NotificationOutbox, error) {
-	return do.Invoke[core.MetadataStore](i)
-}
-
 // ProvideDatabaseBreaker constructs the shared *breaker.CircuitBreaker every
 // driver-level SQL statement forwards calls through.
 func ProvideDatabaseBreaker(i do.Injector) (*breaker.CircuitBreaker, error) {
@@ -114,10 +95,4 @@ func openStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.Ci
 // at first invoke and reused everywhere the value is needed.
 func ProvideInstanceID(_ do.Injector) (instanceid.ID, error) {
 	return instanceid.New()
-}
-
-// ProvideMetricsDeps aliases the wide MetadataStore as the metrics.Deps
-// subset metrics.Collector uses to refresh Prometheus gauges.
-func ProvideMetricsDeps(i do.Injector) (metrics.Deps, error) {
-	return do.Invoke[core.MetadataStore](i)
 }
