@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -53,12 +54,8 @@ func TestProviders_MissingConfigReturnsCleanError(t *testing.T) {
 		name string
 		call func(do.Injector) error
 	}{
-		{"LifecycleAdmin", func(i do.Injector) error { _, err := ProvideLifecycleAdmin(i); return err }},
-		{"EncryptionAdmin", func(i do.Injector) error { _, err := ProvideEncryptionAdmin(i); return err }},
-		{"NotificationOutbox", func(i do.Injector) error { _, err := ProvideNotificationOutbox(i); return err }},
 		{"DatabaseBreaker", func(i do.Injector) error { _, err := ProvideDatabaseBreaker(i); return err }},
 		{"MetadataStore", func(i do.Injector) error { _, err := ProvideMetadataStore(i); return err }},
-		{"MetricsDeps", func(i do.Injector) error { _, err := ProvideMetricsDeps(i); return err }},
 		{"Backends", func(i do.Injector) error { _, err := ProvideBackends(i); return err }},
 		{"Encryptor", func(i do.Injector) error { _, err := ProvideEncryptor(i); return err }},
 		{"EncryptionProvider", func(i do.Injector) error { _, err := ProvideEncryptionProvider(i); return err }},
@@ -243,19 +240,27 @@ func TestOpenStore_PostgresInvalidConfig(t *testing.T) {
 	}
 }
 
-// TestProvideMetricsDeps_HappyPath verifies the metrics.Deps provider
-// resolves to the wide MetadataStore registered in the injector.
-func TestProvideMetricsDeps_HappyPath(t *testing.T) {
+// TestRegisterInfrastructure_StoreAliases verifies registerInfrastructure
+// exposes the wide metadata store under each narrow role interface, so a
+// deleted or mistyped do.MustAs is caught here rather than at boot. The real
+// store provider is overridden with a mock so no database is opened.
+func TestRegisterInfrastructure_StoreAliases(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
-	do.ProvideValue[core.MetadataStore](inj, storetest.NewMockMetadataStore(gomock.NewController(t)))
+	registerInfrastructure(inj)
+	do.OverrideValue[core.MetadataStore](inj, storetest.NewMockMetadataStore(gomock.NewController(t)))
 
-	deps, err := ProvideMetricsDeps(inj)
-	if err != nil {
-		t.Fatalf("ProvideMetricsDeps: %v", err)
+	if _, err := do.Invoke[core.LifecycleAdmin](inj); err != nil {
+		t.Errorf("LifecycleAdmin alias: %v", err)
 	}
-	if deps == nil {
-		t.Fatal("ProvideMetricsDeps returned nil")
+	if _, err := do.Invoke[core.EncryptionAdmin](inj); err != nil {
+		t.Errorf("EncryptionAdmin alias: %v", err)
+	}
+	if _, err := do.Invoke[core.NotificationOutbox](inj); err != nil {
+		t.Errorf("NotificationOutbox alias: %v", err)
+	}
+	if _, err := do.Invoke[metrics.Deps](inj); err != nil {
+		t.Errorf("metrics.Deps alias: %v", err)
 	}
 }
 
