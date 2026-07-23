@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/x/exp/teatest"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
 // fakeLister returns canned listing pages keyed by "prefix|continuation" and
@@ -31,6 +32,8 @@ type fakeLister struct {
 	status    *adminapi.StatusResponse
 	logs      *adminapi.LogsResponse
 	replic    *adminapi.ReplicationStatusResponse
+	opEvents  []adminstream.Event // canned RunOp stream (nil = single ok result)
+	opErr     error               // when set, RunOp fails to open
 }
 
 func (f *fakeLister) ListObjects(_ context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error) {
@@ -68,8 +71,18 @@ func (f *fakeLister) GetReplicationStatus(_ context.Context) (*adminapi.Replicat
 	return &adminapi.ReplicationStatusResponse{}, nil
 }
 
-func (f *fakeLister) ReconcileUsage(_ context.Context) error { return nil }
-func (f *fakeLister) FlushCache(_ context.Context) error     { return nil }
+// RunOp returns a stream over the canned events (or a single ok result when
+// none are set), or f.opErr when configured to fail.
+func (f *fakeLister) RunOp(_ context.Context, _, _ string, _ bool) (eventStream, error) {
+	if f.opErr != nil {
+		return nil, f.opErr
+	}
+	events := f.opEvents
+	if events == nil {
+		events = []adminstream.Event{{Kind: adminstream.KindResult, Outcome: adminstream.OutcomeOK, Message: "ok"}}
+	}
+	return &sliceStream{events: events}, nil
+}
 
 // waitForText fails the test unless the given text appears in the output.
 func waitForText(t *testing.T, tm *teatest.TestModel, text string) {
@@ -259,6 +272,44 @@ func TestBrowser_OpensReplicationView(t *testing.T) {
 	}
 	if stats := fm.replicationStats(); !strings.Contains(stats, "under-replicated") || !strings.Contains(stats, "77") {
 		t.Errorf("stats = %q, want under-replicated + 77", stats)
+	}
+}
+
+// TestBrowser_RunsOpsAction covers the ops section end to end: jump to it,
+// select an action, confirm it, and watch the streamed result render.
+func TestBrowser_RunsOpsAction(t *testing.T) {
+	f := &fakeLister{
+		pages: map[string]*adminapi.ObjectListResponse{
+			"|": {Objects: []adminapi.ObjectEntry{{Key: "readme", Size: 10}}},
+		},
+		opEvents: []adminstream.Event{
+			{Kind: adminstream.KindStart, Op: "rebalance"},
+			{Kind: adminstream.KindResult, Outcome: adminstream.OutcomeOK, Message: "moved 7 objects"},
+		},
+	}
+	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(120, 24))
+
+	waitForText(t, tm, "readme")
+	tm.Type("o")                            // jump to the ops section
+	waitForText(t, tm, "Rebalance backends")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // arm the first action's confirm
+	waitForText(t, tm, "y/N")
+	tm.Type("y") // accept and run
+	waitForText(t, tm, "moved 7 objects")
+
+	tm.Type("q")
+	fm, ok := tm.FinalModel(t).(*model)
+	if !ok {
+		t.Fatal("final model is not a model")
+	}
+	if fm.section != sectionOps {
+		t.Errorf("section = %v, want ops", fm.section)
+	}
+	if fm.ops.running {
+		t.Error("ops still running after result, want finished")
+	}
+	if !strings.Contains(strings.Join(fm.ops.lines, "\n"), "moved 7 objects") {
+		t.Errorf("ops output = %q, want the result line", fm.ops.lines)
 	}
 }
 

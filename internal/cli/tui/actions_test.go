@@ -47,7 +47,7 @@ func TestHandleConfirmKey_AcceptCancel(t *testing.T) {
 	t.Parallel()
 	arm := func() *model {
 		m := initialModel(&fakeLister{})
-		m.confirm = &confirmPrompt{text: "?", run: func() tea.Msg { return actionResultMsg{ok: true} }}
+		m.confirm = &confirmPrompt{text: "?", run: func() tea.Msg { return nil }}
 		return m
 	}
 
@@ -66,43 +66,14 @@ func TestHandleConfirmKey_AcceptCancel(t *testing.T) {
 	}
 }
 
-func TestRunAction_Result(t *testing.T) {
-	t.Parallel()
-	// success path
-	ok := initialModel(&fakeLister{}).runAction("job", (&fakeLister{}).ReconcileUsage)()
-	if msg, is := ok.(actionResultMsg); !is || !msg.ok || !strings.Contains(msg.text, "job done") {
-		t.Errorf("success result = %#v", ok)
-	}
-	// failure path
-	bad := initialModel(&fakeLister{}).runAction("job", errLister{}.ReconcileUsage)()
-	if msg, is := bad.(actionResultMsg); !is || msg.ok || !strings.Contains(msg.text, "job failed") {
-		t.Errorf("failure result = %#v", bad)
-	}
-}
-
-func TestApplyActionResult_SetsStatusAndReloads(t *testing.T) {
-	t.Parallel()
-	m := modelWith(nil, "p/", &fakeLister{})
-	_, cmd := m.applyActionResult(actionResultMsg{ok: true, text: "done"})
-	if m.status == nil || !m.status.ok || m.status.text != "done" {
-		t.Errorf("status = %+v", m.status)
-	}
-	if cmd == nil || !m.loading {
-		t.Errorf("expected a reload cmd and loading; cmd=%v loading=%v", cmd, m.loading)
-	}
-}
-
 func TestFooter_ConfirmStatusHints(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 120, 20
 
-	// default: pane hints plus the instance-action hints.
-	base := m.footer("move")
-	for _, want := range []string{"move", "R reconcile-usage", "F flush-cache"} {
-		if !strings.Contains(base, want) {
-			t.Errorf("hints footer missing %q: %q", want, base)
-		}
+	// default: the pane hints are shown verbatim.
+	if base := m.footer("move"); !strings.Contains(base, "move") {
+		t.Errorf("hints footer missing %q: %q", "move", base)
 	}
 	// status takes priority over hints (both ok and error variants).
 	m.status = &actionStatus{ok: true, text: "job done"}
@@ -120,40 +91,6 @@ func TestFooter_ConfirmStatusHints(t *testing.T) {
 	}
 }
 
-func TestReloadCurrent_PerSection(t *testing.T) {
-	t.Parallel()
-	// Backends section reloads status.
-	mb := initialModel(&fakeLister{})
-	mb.section = sectionBackends
-	if cmd := mb.reloadCurrent(); cmd == nil || !mb.backends.loading {
-		t.Errorf("backends: cmd=%v loading=%v", cmd, mb.backends.loading)
-	}
-	// Logs section reloads logs.
-	ml := initialModel(&fakeLister{})
-	ml.section = sectionLogs
-	if cmd := ml.reloadCurrent(); cmd == nil || !ml.logs.loading {
-		t.Errorf("logs: cmd=%v loading=%v", cmd, ml.logs.loading)
-	}
-	// Files (default) reloads the listing.
-	mf := initialModel(&fakeLister{})
-	if cmd := mf.reloadCurrent(); cmd == nil || !mf.loading {
-		t.Errorf("files: cmd=%v loading=%v", cmd, mf.loading)
-	}
-}
-
-func TestHandleKey_InstanceActionsArmConfirm(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct{ key, want string }{
-		{"R", "Reconcile usage"},
-		{"F", "Flush the in-memory object cache"},
-	} {
-		m := modelWith(nil, "", &fakeLister{})
-		m.handleKey(key(tc.key))
-		if m.confirm == nil || !strings.Contains(m.confirm.text, tc.want) {
-			t.Errorf("%q should arm confirm %q, got %+v", tc.key, tc.want, m.confirm)
-		}
-	}
-}
 
 func TestHandleKey_DismissesStatusOnNextKey(t *testing.T) {
 	t.Parallel()

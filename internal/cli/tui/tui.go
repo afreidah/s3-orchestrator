@@ -46,8 +46,7 @@ type adminClient interface {
 	GetStatus(ctx context.Context) (*adminapi.StatusResponse, error)
 	GetLogs(ctx context.Context, level string) (*adminapi.LogsResponse, error)
 	GetReplicationStatus(ctx context.Context) (*adminapi.ReplicationStatusResponse, error)
-	ReconcileUsage(ctx context.Context) error
-	FlushCache(ctx context.Context) error
+	RunOp(ctx context.Context, method, path string, stream bool) (eventStream, error)
 }
 
 // model is the Bubble Tea state for the browser.
@@ -61,6 +60,7 @@ type model struct {
 	backends    backendsView    // backends pane state, populated when section is sectionBackends
 	logs        logsView        // logs pane state, populated when section is sectionLogs
 	replication replicationView // replication pane state, populated when section is sectionReplication
+	ops         opsView         // ops pane state, populated when section is sectionOps
 	prefix      string          // the prefix currently listed ("" is the root)
 	entries     []entry         // every loaded row under the current prefix
 	visible     []entry         // entries after filter + sort, indexed by table cursor
@@ -200,8 +200,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case replicationTickMsg:
 		return m.onReplicationTick()
-	case actionResultMsg:
-		return m.applyActionResult(msg)
+	case opsStreamMsg:
+		return m.applyOpsStream(msg)
+	case opsEventMsg:
+		return m.applyOpsEvent(&msg.event)
+	case opsDoneMsg:
+		return m.applyOpsDone(msg)
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -213,6 +217,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resizeInspector()
 		m.resizeBackends()
 		m.resizeLogs()
+		m.resizeOps()
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -252,16 +257,8 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.selectSection(sectionReplication)
 	case "l":
 		return m.selectSection(sectionLogs)
-	case "R":
-		return m.startAction(adminAction{
-			confirm: "Reconcile usage counters across all backends?",
-			run:     m.runAction("usage-reconcile", m.client.ReconcileUsage),
-		})
-	case "F":
-		return m.startAction(adminAction{
-			confirm: "Flush the in-memory object cache?",
-			run:     m.runAction("cache-flush", m.client.FlushCache),
-		})
+	case "o":
+		return m.selectSection(sectionOps)
 	}
 
 	if m.navFocus {
@@ -272,6 +269,9 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.section == sectionReplication {
 		return m.handleReplicationKey(key)
+	}
+	if m.section == sectionOps {
+		return m.handleOpsKey(key)
 	}
 	if m.section == sectionBackends {
 		return m.handleBackendsKey(key)
@@ -443,6 +443,9 @@ func (m *model) contentView() string {
 	}
 	if m.section == sectionReplication {
 		return m.replicationPaneView()
+	}
+	if m.section == sectionOps {
+		return m.opsPaneView()
 	}
 	if m.section == sectionBackends {
 		return m.backendsPaneView()
