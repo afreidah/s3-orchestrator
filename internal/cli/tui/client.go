@@ -17,10 +17,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
 const (
@@ -86,38 +88,123 @@ func (c *apiClient) GetReplicationStatus(ctx context.Context) (*adminapi.Replica
 	return getJSON[adminapi.ReplicationStatusResponse](ctx, c, "/admin/api/replication", nil)
 }
 
-// ReconcileUsage recomputes every backend's bytes_used from the object ledger.
-func (c *apiClient) ReconcileUsage(ctx context.Context) error {
-	return c.doAdmin(ctx, http.MethodPost, "/admin/api/usage-reconcile")
+// eventStream yields an admin operation's events in order, returning io.EOF when
+// the operation is exhausted. Both the server's live NDJSON progress stream and
+// the single synthesized result of a one-shot action satisfy it, so the Ops pane
+// consumes every action the same way.
+type eventStream interface {
+	Next() (adminstream.Event, error)
+	Close() error
 }
 
-// FlushCache clears the in-memory object cache.
-func (c *apiClient) FlushCache(ctx context.Context) error {
-	return c.doAdmin(ctx, http.MethodPost, "/admin/api/cache/flush")
-}
-
-// doAdmin issues an authenticated write (POST/DELETE) against the admin API,
-// returning an error carrying the trimmed body on a >=400 status. The response
-// body is otherwise discarded - action callers only need success or failure.
-func (c *apiClient) doAdmin(ctx context.Context, method, path string) error {
+// RunOp starts an admin instance action and returns its event stream. A
+// streaming action opts into the server's NDJSON progress stream; a one-shot
+// action POSTs and returns a single synthesized result event so the two render
+// identically. A >=400 status becomes an error carrying the trimmed body.
+func (c *apiClient) RunOp(ctx context.Context, method, path string, stream bool) (eventStream, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.baseAddr+path, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set(adminTokenHeader, c.token)
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
+	if stream {
+		req.Header.Set("Accept", adminstream.ContentType)
 	}
-	defer resp.Body.Close()
 
+	// A stream outlives any fixed deadline (the server keeps it active with
+	// progress events), so it runs on a client with no timeout; one-shot
+	// actions use the shared timeout client.
+	httpClient := c.http
+	if stream {
+		httpClient = &http.Client{}
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("admin API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("admin API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	_, _ = io.Copy(io.Discard, resp.Body)
-	return nil
+	if stream {
+		return &decoderStream{dec: json.NewDecoder(resp.Body), body: resp.Body}, nil
+	}
+	defer resp.Body.Close()
+	var summary map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&summary); err != nil {
+		return nil, err
+	}
+	return &sliceStream{events: []adminstream.Event{oneShotResult(summary)}}, nil
+}
+
+// decoderStream adapts the live NDJSON body to eventStream.
+type decoderStream struct {
+	dec  *json.Decoder
+	body io.Closer
+}
+
+func (s *decoderStream) Next() (adminstream.Event, error) {
+	var e adminstream.Event
+	err := s.dec.Decode(&e)
+	return e, err
+}
+
+func (s *decoderStream) Close() error { return s.body.Close() }
+
+// sliceStream replays a fixed set of events (a one-shot action's single result).
+type sliceStream struct {
+	events []adminstream.Event
+	i      int
+}
+
+func (s *sliceStream) Next() (adminstream.Event, error) {
+	if s.i >= len(s.events) {
+		return adminstream.Event{}, io.EOF
+	}
+	e := s.events[s.i]
+	s.i++
+	return e, nil
+}
+
+func (s *sliceStream) Close() error { return nil }
+
+// oneShotResult turns a non-streaming action's JSON summary into a single
+// terminal result event so one-shot and streaming actions render alike.
+func oneShotResult(summary map[string]any) adminstream.Event {
+	status, _ := summary["status"].(string)
+	outcome := adminstream.OutcomeOK
+	if status == "skipped" || status == "disabled" {
+		outcome = adminstream.OutcomeSkipped
+	}
+	msg := summarizeFields(summary)
+	if outcome == adminstream.OutcomeSkipped {
+		if reason, ok := summary["reason"].(string); ok && reason != "" {
+			msg = reason
+		}
+	}
+	if msg == "" {
+		msg = status
+	}
+	return adminstream.Event{Kind: adminstream.KindResult, Outcome: outcome, Message: msg}
+}
+
+// summarizeFields renders a one-shot summary's detail fields as sorted
+// key=value pairs, skipping the status and reason keys handled separately.
+func summarizeFields(summary map[string]any) string {
+	keys := make([]string, 0, len(summary))
+	for k := range summary {
+		if k == "status" || k == "reason" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, summary[k]))
+	}
+	return strings.Join(parts, " ")
 }
 
 // getJSON issues an authenticated GET against the admin API and decodes the
