@@ -4,9 +4,9 @@
 // Author: Alex Freidah
 //
 // The persistent left nav bar and the top-level section model. Sections are the
-// nav destinations (Files, Backends, and a Logs placeholder); the active
-// section drives what the content area to the right renders. The nav can take
-// focus (tab) for arrow-key selection, and letter shortcuts jump directly.
+// nav destinations (Files, Backends, Replication, Logs, Ops); the active section
+// drives what the content area to the right renders. The nav can take focus
+// (tab) for arrow-key selection, and letter shortcuts jump directly.
 // -------------------------------------------------------------------------------
 
 package tui
@@ -19,7 +19,9 @@ import (
 )
 
 // sidebarWidth is the fixed content width of the left nav (excluding its border).
-const sidebarWidth = 14
+// It must fit the widest row: a two-column marker plus the longest label
+// ("Replication"), else lipgloss soft-wraps the row and mangles the layout.
+const sidebarWidth = 16
 
 // section is a top-level nav destination.
 type section int
