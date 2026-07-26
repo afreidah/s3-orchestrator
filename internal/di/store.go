@@ -34,13 +34,11 @@ import (
 // consumer depends on. CB protection lives inside each driver's DBTX/DB
 // chokepoint, so this provider does no wrapping of its own.
 func ProvideMetadataStore(i do.Injector) (core.MetadataStore, error) {
-	cfg, err := do.Invoke[*config.Config](i)
-	if err != nil {
-		return nil, err
-	}
-	cb, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
+	r := newResolver(i)
+	cfg := resolve[*config.Config](r)
+	cb := resolve[*breaker.CircuitBreaker](r)
+	if r.err != nil {
+		return nil, r.err
 	}
 	ctx := context.Background()
 

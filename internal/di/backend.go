@@ -121,13 +121,11 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 // backend initialization. Centralizing membership here keeps the watchdog
 // itself free of type-assertions and keeps DI as the single wiring point.
 func ProvideBreakerRegistry(i do.Injector) (*breaker.Registry, error) {
-	dbCB, err := do.Invoke[*breaker.CircuitBreaker](i)
-	if err != nil {
-		return nil, err
-	}
-	br, err := do.Invoke[*BackendsResult](i)
-	if err != nil {
-		return nil, err
+	r := newResolver(i)
+	dbCB := resolve[*breaker.CircuitBreaker](r)
+	br := resolve[*BackendsResult](r)
+	if r.err != nil {
+		return nil, r.err
 	}
 	reg := breaker.NewRegistry(dbCB)
 	for _, b := range br.Breakers {
@@ -175,13 +173,11 @@ func ProvideEncryptionProvider(i do.Injector) (encryption.KeyProvider, error) {
 
 // ProvideRedisCounterBackend creates the shared Redis counter backend.
 func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, error) {
-	cfg, err := do.Invoke[*config.Config](i)
-	if err != nil {
-		return nil, err
-	}
-	br, err := do.Invoke[*BackendsResult](i)
-	if err != nil {
-		return nil, err
+	r := newResolver(i)
+	cfg := resolve[*config.Config](r)
+	br := resolve[*BackendsResult](r)
+	if r.err != nil {
+		return nil, r.err
 	}
 
 	redisOpts := &redis.Options{
@@ -244,17 +240,12 @@ func ProvideIntegrityConfig(_ do.Injector) (*syncutil.AtomicConfig[config.Integr
 // delete/move/orphan-cleanup primitive the manager, multipart manager,
 // object manager, and drain manager all route writes through.
 func ProvideWriteCoordinator(i do.Injector) (*writepath.Coordinator, error) {
-	cfg, err := do.Invoke[*config.Config](i)
-	if err != nil {
-		return nil, err
-	}
-	rt, err := do.Invoke[*infra.BackendRuntime](i)
-	if err != nil {
-		return nil, err
-	}
-	stores, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
+	r := newResolver(i)
+	cfg := resolve[*config.Config](r)
+	rt := resolve[*infra.BackendRuntime](r)
+	stores := resolve[core.MetadataStore](r)
+	if r.err != nil {
+		return nil, r.err
 	}
 	return writepath.New(rt, stores, cfg.WritePath.PendingPattern.IsEnabled()), nil
 }
@@ -263,26 +254,18 @@ func ProvideWriteCoordinator(i do.Injector) (*writepath.Coordinator, error) {
 // Built outside the BackendManager so the drain manager can take its
 // AbortMultipartUploadsOnBackend hook directly.
 func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
-	cfg, err := do.Invoke[*config.Config](i)
-	if err != nil {
-		return nil, err
+	r := newResolver(i)
+	cfg := resolve[*config.Config](r)
+	rt := resolve[*infra.BackendRuntime](r)
+	coord := resolve[*writepath.Coordinator](r)
+	stores := resolve[core.MetadataStore](r)
+	integrityCfg := resolve[*syncutil.AtomicConfig[config.IntegrityConfig]](r)
+	if r.err != nil {
+		return nil, r.err
 	}
-	rt, err := do.Invoke[*infra.BackendRuntime](i)
-	if err != nil {
-		return nil, err
-	}
-	coord, err := do.Invoke[*writepath.Coordinator](i)
-	if err != nil {
-		return nil, err
-	}
-	stores, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
-	}
-	integrityCfg, err := do.Invoke[*syncutil.AtomicConfig[config.IntegrityConfig]](i)
-	if err != nil {
-		return nil, err
-	}
+
+	// Encryptor has its own error path and needs the resolved cfg, so it stays
+	// outside the batch.
 	enc, err := resolveOptionalEncryptor(i, cfg.Encryption.Enabled)
 	if err != nil {
 		return nil, err
@@ -316,17 +299,12 @@ func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
 // dependency that workers, drain, and the manager all share, instead of a
 // promoted embed only reachable through the manager.
 func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
-	cfg, err := do.Invoke[*config.Config](i)
-	if err != nil {
-		return nil, err
-	}
-	br, err := do.Invoke[*BackendsResult](i)
-	if err != nil {
-		return nil, err
-	}
-	metricsDeps, err := do.Invoke[metrics.Deps](i)
-	if err != nil {
-		return nil, err
+	r := newResolver(i)
+	cfg := resolve[*config.Config](r)
+	br := resolve[*BackendsResult](r)
+	metricsDeps := resolve[metrics.Deps](r)
+	if r.err != nil {
+		return nil, r.err
 	}
 
 	backendNames := make([]string, 0, len(br.Backends))
