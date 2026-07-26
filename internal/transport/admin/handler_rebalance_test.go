@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -64,15 +65,16 @@ func TestHandleRebalance_HappyPath(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	var resp struct {
-		Status string `json:"status"`
-		Moved  int    `json:"moved"`
-	}
+	var resp adminapi.RebalanceResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if resp.Status != "ok" || resp.Moved != 3 {
 		t.Errorf("got {status=%q moved=%d}, want {ok 3}", resp.Status, resp.Moved)
+	}
+	// Reason is omitted on the ok path so the two outcomes stay distinguishable.
+	if resp.Reason != "" {
+		t.Errorf("reason = %q, want empty on the ok path", resp.Reason)
 	}
 	// Defaults applied when the worker config is nil, mirroring the dashboard.
 	if g := fake.gotcfg; g.Strategy != defaultRebalanceStrategy || g.BatchSize != defaultRebalanceBatchSize ||
@@ -123,10 +125,7 @@ func TestHandleRebalance_QuotaMetricsErrorStillOK(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	var resp struct {
-		Status string `json:"status"`
-		Moved  int    `json:"moved"`
-	}
+	var resp adminapi.RebalanceResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -152,15 +151,16 @@ func TestHandleRebalance_NotWired(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	var resp struct {
-		Status string `json:"status"`
-		Moved  int    `json:"moved"`
-	}
+	var resp adminapi.RebalanceResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if resp.Status != "skipped" || resp.Moved != 0 {
 		t.Errorf("got {status=%q moved=%d}, want {skipped 0}", resp.Status, resp.Moved)
+	}
+	// Reason is the skipped path's only explanation of why nothing moved.
+	if resp.Reason == "" {
+		t.Error("reason is empty, want an explanation on the skipped path")
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"net/http"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -31,21 +32,14 @@ const (
 	defaultRebalanceConcurrency = 5
 )
 
-// RebalanceResult is the outcome of a one-shot rebalance cycle.
-type RebalanceResult struct {
-	Status string // "ok" or "skipped"
-	Reason string // populated when Status is "skipped"
-	Moved  int
-}
-
 // Rebalance runs one rebalance cycle synchronously and returns the number of
 // objects moved. Skips when the rebalancer worker is not wired. Applies the
 // same defaults the dashboard does so a manual run works even when rebalance
-// was never configured. Exposed for callers (UI, tests) that need the count
-// back as a Go value rather than JSON.
-func (h *Handler) Rebalance(ctx context.Context) (RebalanceResult, error) {
+// was never configured. Exposed for callers that need the outcome as a Go
+// value rather than JSON.
+func (h *Handler) Rebalance(ctx context.Context) (adminapi.RebalanceResponse, error) {
 	if h.rebalancer == nil {
-		return RebalanceResult{Status: "skipped", Reason: "rebalancer not available"}, nil
+		return adminapi.RebalanceResponse{Status: "skipped", Reason: "rebalancer not available"}, nil
 	}
 
 	var runCfg config.RebalanceConfig
@@ -67,13 +61,13 @@ func (h *Handler) Rebalance(ctx context.Context) (RebalanceResult, error) {
 
 	sum, err := h.rebalancer.Rebalance(ctx, runCfg)
 	if err != nil {
-		return RebalanceResult{}, err
+		return adminapi.RebalanceResponse{}, err
 	}
 
 	if mErr := h.runtimeOps.UpdateQuotaMetrics(ctx); mErr != nil {
 		h.log.WarnContext(ctx, "failed to update quota metrics after rebalance", "error", mErr)
 	}
-	return RebalanceResult{Status: "ok", Moved: sum.Succeeded}, nil
+	return adminapi.RebalanceResponse{Status: "ok", Moved: sum.Succeeded}, nil
 }
 
 // handleRebalance triggers one rebalance cycle and returns the move count.
@@ -83,13 +77,5 @@ func (h *Handler) handleRebalance(w http.ResponseWriter, r *http.Request) {
 		h.internalError(r.Context(), w, "rebalance failed", err)
 		return
 	}
-	if res.Status == "skipped" {
-		httputil.WriteJSON(w, http.StatusOK, map[string]any{
-			"status": "skipped",
-			"moved":  0,
-			"reason": res.Reason,
-		})
-		return
-	}
-	httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "moved": res.Moved})
+	httputil.WriteJSON(w, http.StatusOK, res)
 }
