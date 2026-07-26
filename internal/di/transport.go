@@ -244,13 +244,11 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 
 // ProvideNotifier creates the webhook notification system.
 func ProvideNotifier(i do.Injector) (*notify.Notifier, error) {
-	cfg, err := do.Invoke[*config.Config](i)
-	if err != nil {
-		return nil, err
-	}
-	stores, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
+	r := newResolver(i)
+	cfg := resolve[*config.Config](r)
+	stores := resolve[core.MetadataStore](r)
+	if r.err != nil {
+		return nil, r.err
 	}
 	return notify.NewNotifier(&cfg.Notifications, stores), nil
 }
