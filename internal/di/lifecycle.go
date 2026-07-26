@@ -45,22 +45,16 @@ type lifecycleWorkerSet struct {
 // the drain manager is already installed on BackendManager by the
 // time the lifecycle manager assembles its service list.
 func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
-	var ws lifecycleWorkerSet
-	var err error
-	if ws.cleanup, err = do.Invoke[*worker.CleanupWorker](i); err != nil {
-		return ws, err
+	r := newResolver(i)
+	ws := lifecycleWorkerSet{
+		cleanup:    resolve[*worker.CleanupWorker](r),
+		rebalancer: resolve[*worker.Rebalancer](r),
+		replicator: resolve[*worker.Replicator](r),
+		overRep:    resolve[*worker.OverReplicationCleaner](r),
+		scrubber:   resolve[*worker.Scrubber](r),
 	}
-	if ws.rebalancer, err = do.Invoke[*worker.Rebalancer](i); err != nil {
-		return ws, err
-	}
-	if ws.replicator, err = do.Invoke[*worker.Replicator](i); err != nil {
-		return ws, err
-	}
-	if ws.overRep, err = do.Invoke[*worker.OverReplicationCleaner](i); err != nil {
-		return ws, err
-	}
-	if ws.scrubber, err = do.Invoke[*worker.Scrubber](i); err != nil {
-		return ws, err
+	if r.err != nil {
+		return ws, r.err
 	}
 	// PendingReaper is conditionally registered: the provider is
 	// only present when cfg.WritePath.PendingPattern.IsEnabled() is
@@ -90,22 +84,16 @@ func registerWorkerServices(sm *lifecycle.Manager, mgr *proxy.BackendManager, ws
 
 // ProvideLifecycleManager creates and registers all background services.
 func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
-	cfg, err := do.Invoke[*config.Config](i)
-	if err != nil {
-		return nil, err
+	r := newResolver(i)
+	cfg := resolve[*config.Config](r)
+	manager := resolve[*proxy.BackendManager](r)
+	registry := resolve[*breaker.Registry](r)
+	locker := resolve[core.MetadataStore](r)
+	if r.err != nil {
+		return nil, r.err
 	}
-	manager, err := do.Invoke[*proxy.BackendManager](i)
-	if err != nil {
-		return nil, err
-	}
-	registry, err := do.Invoke[*breaker.Registry](i)
-	if err != nil {
-		return nil, err
-	}
-	locker, err := do.Invoke[core.MetadataStore](i)
-	if err != nil {
-		return nil, err
-	}
+	// mode is keyed by service name rather than type, so it stays outside
+	// the batch.
 	mode, err := do.InvokeNamed[config.Mode](i, "mode")
 	if err != nil {
 		return nil, err
