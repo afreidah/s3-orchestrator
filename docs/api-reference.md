@@ -557,6 +557,24 @@ Or if replication is not configured:
 {"status": "skipped", "copies_removed": 0, "reason": "replication not configured or factor <= 1"}
 ```
 
+### POST /admin/api/rebalance
+
+Runs one rebalance cycle synchronously and returns the number of objects moved. Applies spread-with-defaults when rebalance was never configured.
+
+**Request:** No body required.
+
+**Response:**
+
+```json
+{"status": "ok", "moved": 12}
+```
+
+Or if the rebalancer is not wired:
+
+```json
+{"status": "skipped", "moved": 0, "reason": "rebalancer not available"}
+```
+
 ### GET /admin/api/log-level
 
 Returns the current runtime log level.
