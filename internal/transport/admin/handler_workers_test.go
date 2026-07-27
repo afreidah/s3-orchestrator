@@ -23,6 +23,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // TestHandleWorkers_HappyPath drives the success branch. The handler
@@ -33,8 +35,8 @@ func TestHandleWorkers_HappyPath(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(1715000000, 0)
 	h := newTestHandler()
-	h.workerHealth = func() []WorkerHealth {
-		return []WorkerHealth{
+	h.workerHealth = func() []adminapi.WorkerHealth {
+		return []adminapi.WorkerHealth{
 			{Name: "cleanup_queue", LastSuccess: now, ConsecutiveFailures: 0},
 			{Name: "replicator", LastFailure: now, LastError: "boom", ConsecutiveFailures: 3},
 		}
@@ -51,7 +53,7 @@ func TestHandleWorkers_HappyPath(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
 	var resp struct {
-		Workers []WorkerHealth `json:"workers"`
+		Workers []adminapi.WorkerHealth `json:"workers"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -95,7 +97,7 @@ func TestHandleWorkers_NotWired(t *testing.T) {
 func TestHandleWorkers_RequiresToken(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
-	h.workerHealth = func() []WorkerHealth { return nil }
+	h.workerHealth = func() []adminapi.WorkerHealth { return nil }
 	mux := http.NewServeMux()
 	h.Register(mux)
 

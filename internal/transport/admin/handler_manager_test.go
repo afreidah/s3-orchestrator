@@ -137,6 +137,53 @@ func TestHandleCleanupQueue_ReturnsDepth(t *testing.T) {
 	}
 }
 
+// TestHandleCleanupQueue_ItemShape pins the wire shape of a pending cleanup:
+// snake_case names shared with the dead-letter listing, and claim fields
+// omitted while no worker holds the row.
+func TestHandleCleanupQueue_ItemShape(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithManager(t)
+	cleanupMock := testutil.NewMockStore(t)
+	cleanupMock.CleanupQueueDepthResp = 2
+	cleanupMock.PendingCleanupsResp = []core.CleanupItem{{
+		ID:          7,
+		BackendName: "minio-1",
+		ObjectKey:   "photos/cat.jpg",
+		Reason:      "delete_failed",
+		SizeBytes:   4096,
+		Attempts:    2,
+	}}
+	h.cleanup = cleanupMock
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/cleanup-queue", ""))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp adminapi.CleanupQueueResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Depth != 2 || len(resp.Items) != 1 {
+		t.Fatalf("got depth=%d items=%d, want 2/1", resp.Depth, len(resp.Items))
+	}
+	got := resp.Items[0]
+	want := adminapi.CleanupQueueItem{
+		ID: 7, Backend: "minio-1", ObjectKey: "photos/cat.jpg",
+		Reason: "delete_failed", SizeBytes: 4096, Attempts: 2,
+	}
+	if got != want {
+		t.Errorf("item = %+v, want %+v", got, want)
+	}
+	// An unclaimed row must not emit null claim fields.
+	if body := w.Body.String(); strings.Contains(body, "claimed_at") || strings.Contains(body, "claimed_by") {
+		t.Errorf("unclaimed item emitted claim fields: %s", body)
+	}
+}
+
 // TestHandleObjectLocations_Happy covers the key-resolution path. The mock
 // is pre-seeded so GetAllObjectLocations returns a non-empty slice.
 func TestHandleObjectLocations_Happy(t *testing.T) {

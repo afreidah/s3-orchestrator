@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -272,10 +273,7 @@ func TestHandleReconcileUsage_Success(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	var resp struct {
-		Status      string           `json:"status"`
-		Adjustments map[string]int64 `json:"adjustments"`
-	}
+	var resp adminapi.UsageReconcileResponse
 	_ = json.NewDecoder(w.Body).Decode(&resp)
 	if resp.Status != "reconciled" {
 		t.Errorf("status = %q, want reconciled", resp.Status)
