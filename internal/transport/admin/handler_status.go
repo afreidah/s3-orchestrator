@@ -16,7 +16,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -137,7 +136,32 @@ func (h *Handler) handleCleanupQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, map[string]any{"depth": depth, "items": items})
+	httputil.WriteJSON(w, http.StatusOK, adminapi.CleanupQueueResponse{
+		Depth: depth,
+		Items: cleanupQueueItems(items),
+	})
+}
+
+// cleanupQueueItems maps the store rows onto the shared wire type. The claim
+// pointers flatten to omitted fields so an unclaimed row does not emit nulls.
+func cleanupQueueItems(items []core.CleanupItem) []adminapi.CleanupQueueItem {
+	out := make([]adminapi.CleanupQueueItem, 0, len(items))
+	for i := range items {
+		item := adminapi.CleanupQueueItem{
+			ID:        items[i].ID,
+			Backend:   items[i].BackendName,
+			ObjectKey: items[i].ObjectKey,
+			Reason:    items[i].Reason,
+			SizeBytes: items[i].SizeBytes,
+			Attempts:  items[i].Attempts,
+			ClaimedAt: items[i].ClaimedAt,
+		}
+		if items[i].ClaimedBy != nil {
+			item.ClaimedBy = *items[i].ClaimedBy
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 // handleUsageFlush forces a flush of usage counters to the database.
@@ -161,9 +185,9 @@ func (h *Handler) handleReconcileUsage(w http.ResponseWriter, r *http.Request) {
 
 	audit.Log(r.Context(), "usage.reconcile",
 		slog.Int("backends_corrected", len(adjustments)))
-	httputil.WriteJSON(w, http.StatusOK, map[string]any{
-		"status":      "reconciled",
-		"adjustments": adjustments,
+	httputil.WriteJSON(w, http.StatusOK, adminapi.UsageReconcileResponse{
+		Status:      "reconciled",
+		Adjustments: adjustments,
 	})
 }
 
@@ -186,19 +210,6 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, map[string]string{"level": strings.ToLower(parsed.String())})
 }
 
-// WorkerHealth is the JSON shape returned by /admin/api/workers. Mirrors
-// lifecycle.WorkerHealth but lives here so the admin transport package
-// owns its own response contract and does not import the lifecycle
-// package directly. Field tags must stay in lockstep with the source
-// type or the wire format silently diverges.
-type WorkerHealth struct {
-	Name                string    `json:"name"`
-	LastSuccess         time.Time `json:"last_success"`
-	LastFailure         time.Time `json:"last_failure"`
-	LastError           string    `json:"last_error,omitempty"`
-	ConsecutiveFailures int       `json:"consecutive_failures"`
-}
-
 // handleWorkers returns a snapshot of every registered background
 // service's last-tick health. The supervisor records a tick outcome
 // after every fire, so operators can identify stalled or repeatedly
@@ -210,7 +221,5 @@ func (h *Handler) handleWorkers(w http.ResponseWriter, _ *http.Request) {
 		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "worker health not available")
 		return
 	}
-	httputil.WriteJSON(w, http.StatusOK, map[string]any{
-		"workers": h.workerHealth(),
-	})
+	httputil.WriteJSON(w, http.StatusOK, adminapi.WorkersResponse{Workers: h.workerHealth()})
 }

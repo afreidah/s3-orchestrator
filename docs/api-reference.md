@@ -460,10 +460,12 @@ Returns the cleanup queue depth and pending items (up to 50).
 {
   "depth": 3,
   "items": [
-    {"ID": 1, "BackendName": "oci", "ObjectKey": "my-bucket/old-file.txt", "Reason": "delete_failed", "Attempts": 2, "SizeBytes": 51200}
+    {"id": 1, "backend": "oci", "object_key": "my-bucket/old-file.txt", "reason": "delete_failed", "size_bytes": 51200, "attempts": 2}
   ]
 }
 ```
+
+Items share their field vocabulary with `GET /admin/api/cleanup-dlq`, so a row that graduates to the dead-letter queue keeps the same names. `claimed_at` and `claimed_by` appear only while a worker holds the row.
 
 ### POST /admin/api/usage-flush
 
