@@ -88,10 +88,11 @@ type Handler struct {
 	token        string
 	logLevel     *slog.LevelVar
 	// reloadStatus is the per-process snapshot of the last reload
-	// result. Set post-construction by the runtime so the admin handler
-	// does not import the reload package (which would cycle via UI).
-	// Returns nil before any reload has happened.
-	reloadStatus func() any
+	// result, already converted to the wire type. Set post-construction
+	// by the runtime so the admin handler does not import the reload
+	// package (which would cycle via UI). Returns nil before any reload
+	// has happened.
+	reloadStatus func() *adminapi.ReloadStatusResponse
 }
 
 // Deps groups the narrow role interfaces and infrastructure the admin
@@ -164,7 +165,7 @@ func New(d *Deps) *Handler {
 // built. Routing through a setter rather than constructor injection
 // avoids the import cycle that would result from admin importing the
 // reload package directly.
-func (h *Handler) SetReloadStatusProvider(fn func() any) {
+func (h *Handler) SetReloadStatusProvider(fn func() *adminapi.ReloadStatusResponse) {
 	h.reloadStatus = fn
 }
 

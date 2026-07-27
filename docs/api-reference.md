@@ -306,6 +306,34 @@ Returns backend health, quota usage, object counts, and monthly usage stats.
 }
 ```
 
+### GET /admin/api/reload-status
+
+Returns the outcome of the most recent config reload (SIGHUP). `outcomes` lists every hook the coordinator considered, including skipped ones, so an operator can see which subsystems the reload did not touch. `requires_restart` lists non-reloadable fields whose value changed and therefore need a process restart to take effect.
+
+**Response:**
+
+```json
+{
+  "status": "full_success",
+  "generation": 3,
+  "outcomes": [
+    {"name": "log-level", "status": "applied"},
+    {"name": "backends", "status": "skipped"}
+  ],
+  "requires_restart": ["server.listen_addr"],
+  "started_at": "2026-07-27T04:02:11Z",
+  "ended_at": "2026-07-27T04:02:11Z"
+}
+```
+
+Status is one of `full_success`, `partial_applied`, `validation_failed`, or `load_failed`. A `load_failed` pass also carries `load_error`.
+
+**Response (before the first reload):**
+
+```json
+{"status": "no_reload_yet"}
+```
+
 ### GET /admin/api/workers
 
 Returns a snapshot of every registered background service's last-tick

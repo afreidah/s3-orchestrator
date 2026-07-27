@@ -508,7 +508,7 @@ func TestBulkRewriteAdapters(t *testing.T) {
 func TestHandleReloadStatus_ProviderReturnsNil(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler()
-	h.SetReloadStatusProvider(func() any { return nil })
+	h.SetReloadStatusProvider(func() *adminapi.ReloadStatusResponse { return nil })
 
 	w := httptest.NewRecorder()
 	h.handleReloadStatus(w, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/reload-status", nil))
