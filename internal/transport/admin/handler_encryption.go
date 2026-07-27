@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -76,11 +77,13 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 	}
 
 	h.log.InfoContext(ctx, "key rotation complete", "rotated", rotated, "failed", failed, "total", total)
-	httputil.WriteJSON(w, http.StatusOK, map[string]any{
-		"status":  "complete",
-		"rotated": rotated,
-		"failed":  failed,
-		"total":   total,
+	httputil.WriteJSON(w, http.StatusOK, adminapi.RotateEncryptionKeyResponse{
+		BulkEncryptionOutcome: adminapi.BulkEncryptionOutcome{
+			Status: "complete",
+			Failed: failed,
+			Total:  total,
+		},
+		Rotated: rotated,
 	})
 }
 
@@ -253,11 +256,13 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 		httputil.WriteJSONError(w, http.StatusBadRequest, res.Reason)
 		return
 	}
-	httputil.WriteJSON(w, http.StatusOK, map[string]any{
-		"status":    "complete",
-		"encrypted": res.Success,
-		"failed":    res.Failed,
-		"total":     res.Total,
+	httputil.WriteJSON(w, http.StatusOK, adminapi.EncryptExistingResponse{
+		BulkEncryptionOutcome: adminapi.BulkEncryptionOutcome{
+			Status: "complete",
+			Failed: res.Failed,
+			Total:  res.Total,
+		},
+		Encrypted: res.Success,
 	})
 }
 
@@ -298,11 +303,13 @@ func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) 
 		httputil.WriteJSONError(w, http.StatusBadRequest, res.Reason)
 		return
 	}
-	httputil.WriteJSON(w, http.StatusOK, map[string]any{
-		"status":    "complete",
-		"decrypted": res.Success,
-		"failed":    res.Failed,
-		"total":     res.Total,
+	httputil.WriteJSON(w, http.StatusOK, adminapi.DecryptExistingResponse{
+		BulkEncryptionOutcome: adminapi.BulkEncryptionOutcome{
+			Status: "complete",
+			Failed: res.Failed,
+			Total:  res.Total,
+		},
+		Decrypted: res.Success,
 	})
 }
 
