@@ -532,7 +532,13 @@ Returns the current replication factor and count of over-replicated objects.
 **Response:**
 
 ```json
-{"factor": 2, "pending": 15}
+{"status": "ok", "factor": 2, "pending": 15}
+```
+
+Or if replication is not configured:
+
+```json
+{"status": "skipped", "factor": 0, "pending": 0, "reason": "replication not configured or factor <= 1"}
 ```
 
 ### POST /admin/api/over-replication

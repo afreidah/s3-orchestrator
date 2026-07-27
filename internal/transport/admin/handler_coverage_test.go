@@ -214,10 +214,39 @@ func TestHandleOverReplicationStatus_Configured(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
+	var resp adminapi.OverReplicationStatusResponse
 	_ = json.NewDecoder(w.Body).Decode(&resp)
-	if resp["pending"].(float64) != 7 {
-		t.Errorf("pending = %v, want 7", resp["pending"])
+	if resp.Pending != 7 || resp.Factor != 2 {
+		t.Errorf("got factor=%d pending=%d, want 2/7", resp.Factor, resp.Pending)
+	}
+	// Status reports "ok" on the configured branch so the field means the same
+	// thing here as on the endpoints that act.
+	if resp.Status != "ok" || resp.Reason != "" {
+		t.Errorf("got status=%q reason=%q, want ok with no reason", resp.Status, resp.Reason)
+	}
+}
+
+// TestHandleOverReplicationStatus_Unconfigured pins the skipped branch: zeroed
+// counts carrying the same status vocabulary as the replicate and clean
+// endpoints rather than a sentence in the status field.
+func TestHandleOverReplicationStatus_Unconfigured(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler()
+	h.overRep = &fakeOverRep{cfg: &config.ReplicationConfig{Factor: 1}}
+
+	w := httptest.NewRecorder()
+	h.handleOverReplicationStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/over-replication", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp adminapi.OverReplicationStatusResponse
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Status != "skipped" || resp.Reason == "" {
+		t.Errorf("got status=%q reason=%q, want skipped with a reason", resp.Status, resp.Reason)
+	}
+	if resp.Factor != 0 || resp.Pending != 0 {
+		t.Errorf("got factor=%d pending=%d, want both zero", resp.Factor, resp.Pending)
 	}
 }
 
