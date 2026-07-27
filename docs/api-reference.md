@@ -754,17 +754,53 @@ Triggers an on-demand integrity scrub cycle. Verifies stored content hashes agai
 **Response:**
 
 ```json
-{"status": "complete", "checked": 500, "mismatches": 0, "errors": 2}
+{"status": "ok", "checked": 500, "failed": 2}
 ```
 
-### POST /admin/api/hash-existing
+Or if integrity verification is disabled in the config:
 
-Computes and stores content hashes for all objects that don't have one yet.
+```json
+{"status": "skipped", "checked": 0, "failed": 0, "reason": "integrity verification is not enabled"}
+```
+
+### POST /admin/api/backfill-checksums
+
+Computes and stores content hashes for objects that do not have one yet. Runs in batches; `done` reports whether any unhashed objects remained after this pass, so a caller draining the backlog knows when to stop.
+
+**Query parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `batch_size` | No | Objects hashed per pass |
+| `max` | No | Cap the objects processed by this request. `0` drains the whole backlog |
+| `delay_ms` | No | Pause between passes to rate-limit backend reads |
 
 **Response:**
 
 ```json
-{"status": "complete", "hashed": 423, "failed": 0, "total": 423}
+{"status": "ok", "processed": 423, "done": true}
+```
+
+Or if integrity verification is disabled in the config:
+
+```json
+{"status": "skipped", "processed": 0, "done": false, "reason": "integrity verification is not enabled"}
+```
+
+### POST /admin/api/reconcile
+
+Walks backend storage against the object ledger, adopting objects present on a backend but missing from the ledger and dropping ledger rows for objects no longer on any backend.
+
+**Query parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `backend` | No | Restrict the pass to one backend. Omit to scan every backend |
+
+**Response:**
+
+```json
+{"status": "ok", "imported": 12, "removed": 3, "backends_scanned": 2}
 ```
 
 ### GET /admin/api/cache

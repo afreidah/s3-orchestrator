@@ -371,10 +371,13 @@ func TestHandleScrub_IntegrityEnabled(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
+	var resp adminapi.ScrubResponse
 	_ = json.NewDecoder(w.Body).Decode(&resp)
-	if resp["checked"].(float64) != 12 || resp["failed"].(float64) != 1 {
-		t.Errorf("counts wrong: %v", resp)
+	if resp.Checked != 12 || resp.Failed != 1 {
+		t.Errorf("got checked=%d failed=%d, want 12/1", resp.Checked, resp.Failed)
+	}
+	if resp.Status != "ok" || resp.Reason != "" {
+		t.Errorf("got status=%q reason=%q, want ok with no reason", resp.Status, resp.Reason)
 	}
 }
 
