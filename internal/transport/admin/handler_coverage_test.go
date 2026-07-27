@@ -578,12 +578,27 @@ func TestHandleRotateEncryptionKey_DrivesListLoop(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
-	_ = json.NewDecoder(w.Body).Decode(&resp)
-	if resp["total"].(float64) != 1 {
-		t.Errorf("total = %v, want 1", resp["total"])
+	body2 := w.Body.Bytes()
+	var resp adminapi.RotateEncryptionKeyResponse
+	_ = json.Unmarshal(body2, &resp)
+	if resp.Total != 1 {
+		t.Errorf("total = %d, want 1", resp.Total)
 	}
-	if resp["failed"].(float64) != 1 {
-		t.Errorf("failed = %v, want 1 (malformed key trips UnpackKeyData)", resp["failed"])
+	if resp.Failed != 1 {
+		t.Errorf("failed = %d, want 1 (malformed key trips UnpackKeyData)", resp.Failed)
+	}
+
+	// BulkEncryptionOutcome is embedded, so its fields must flatten into the
+	// same top-level keys the endpoint has always emitted rather than nesting
+	// under an object.
+	var raw map[string]any
+	_ = json.Unmarshal(body2, &raw)
+	for _, k := range []string{"status", "rotated", "failed", "total"} {
+		if _, ok := raw[k]; !ok {
+			t.Errorf("response is missing top-level %q: %s", k, body2)
+		}
+	}
+	if len(raw) != 4 {
+		t.Errorf("response has %d keys, want exactly 4: %s", len(raw), body2)
 	}
 }
