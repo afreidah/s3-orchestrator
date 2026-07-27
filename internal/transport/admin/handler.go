@@ -31,6 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
@@ -75,7 +76,7 @@ type Handler struct {
 	lifecycle    core.BackendLifecycleStore
 	reconciler   Reconciler
 	dbHealthy    func() bool
-	workerHealth func() []WorkerHealth // nil when lifecycle manager is not wired
+	workerHealth func() []adminapi.WorkerHealth // nil when lifecycle manager is not wired
 	logs         logReader             // nil when the log buffer is not wired
 	replication  replicationSnapshotter // nil when the metrics collector is not wired
 	objects      core.ObjectStore
@@ -107,7 +108,7 @@ type Deps struct {
 	Scrubber     ScrubberOps
 	Lifecycle    core.BackendLifecycleStore
 	DBHealthy    func() bool           // typically *breaker.CircuitBreaker.IsHealthy
-	WorkerHealth func() []WorkerHealth // typically lifecycle.Manager.Health adapted
+	WorkerHealth func() []adminapi.WorkerHealth // typically lifecycle.Manager.Health adapted
 	LogBuffer    logReader             // nil when the log buffer is not wired
 	Replication  replicationSnapshotter // nil when the metrics collector is not wired
 	Encryption   core.EncryptionAdmin

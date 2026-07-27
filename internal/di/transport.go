@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -160,14 +161,14 @@ func resolveAdminHandlerRequiredDeps(i do.Injector) (adminHandlerRequiredDeps, e
 }
 
 // toAdminWorkerHealth copies a lifecycle.WorkerHealth slice into the
-// admin transport's matching type. The two shapes are intentionally
-// kept separate (admin owns its wire contract; lifecycle owns its
-// internal type) so this conversion is the single place where field
-// drift would surface.
-func toAdminWorkerHealth(snaps []lifecycle.WorkerHealth) []admin.WorkerHealth {
-	out := make([]admin.WorkerHealth, len(snaps))
+// matching adminapi wire type. The two shapes are intentionally kept
+// separate (adminapi owns the wire contract; lifecycle owns its internal
+// type) so this conversion is the single place where field drift would
+// surface.
+func toAdminWorkerHealth(snaps []lifecycle.WorkerHealth) []adminapi.WorkerHealth {
+	out := make([]adminapi.WorkerHealth, len(snaps))
 	for i, s := range snaps {
-		out[i] = admin.WorkerHealth{
+		out[i] = adminapi.WorkerHealth{
 			Name:                s.Name,
 			LastSuccess:         s.LastSuccess,
 			LastFailure:         s.LastFailure,
@@ -199,9 +200,9 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	// that has no worker pool still resolves the admin handler. The
 	// closure surfaces a nil snapshot to the admin transport, which
 	// then returns 503 to /admin/api/workers.
-	var workerHealth func() []admin.WorkerHealth
+	var workerHealth func() []adminapi.WorkerHealth
 	if lm, err := do.Invoke[*lifecycle.Manager](i); err == nil {
-		workerHealth = func() []admin.WorkerHealth { return toAdminWorkerHealth(lm.Health()) }
+		workerHealth = func() []adminapi.WorkerHealth { return toAdminWorkerHealth(lm.Health()) }
 	}
 	// FlightRecorder is optional — Optional[*debug.FlightRecorderService]
 	// returns a nil Value when the feature is disabled, so the admin

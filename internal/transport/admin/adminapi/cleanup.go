@@ -1,17 +1,40 @@
 // -------------------------------------------------------------------------------
-// Admin API - Shared Cleanup DLQ DTOs
+// Admin API - Shared Cleanup DTOs
 //
 // Author: Alex Freidah
 //
-// Wire types for the cleanup dead-letter-queue endpoints shared by the handler
-// and adminctl. Kept in the leaf adminapi package so the server and its
-// out-of-process client depend on one definition and the JSON shape cannot
-// drift.
+// Wire types for the cleanup queue and its dead-letter-queue endpoints, shared
+// by the handler and adminctl. Kept in the leaf adminapi package so the server
+// and its out-of-process client depend on one definition and the JSON shape
+// cannot drift. The queue and dead-letter listings deliberately share an
+// envelope and field vocabulary: a row that graduates from one to the other
+// keeps the same names.
 // -------------------------------------------------------------------------------
 
 package adminapi
 
 import "time"
+
+// CleanupQueueResponse is the pending-cleanup listing: the total queue depth
+// plus a page of rows still awaiting a successful backend delete.
+type CleanupQueueResponse struct {
+	Depth int64              `json:"depth"`
+	Items []CleanupQueueItem `json:"items"`
+}
+
+// CleanupQueueItem is one pending cleanup: an object whose backend delete has
+// not yet succeeded. The claim fields are set only while a worker holds the
+// row, so an unclaimed item omits both.
+type CleanupQueueItem struct {
+	ID        int64      `json:"id"`
+	Backend   string     `json:"backend"`
+	ObjectKey string     `json:"object_key"`
+	Reason    string     `json:"reason"`
+	SizeBytes int64      `json:"size_bytes"`
+	Attempts  int32      `json:"attempts"`
+	ClaimedAt *time.Time `json:"claimed_at,omitempty"`
+	ClaimedBy string     `json:"claimed_by,omitempty"`
+}
 
 // CleanupDLQResponse is the dead-letter listing: the total depth plus a page of
 // rows, newest graduation first.
