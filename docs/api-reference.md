@@ -761,6 +761,60 @@ Computes and stores content hashes for all objects that don't have one yet.
 {"status": "complete", "hashed": 423, "failed": 0, "total": 423}
 ```
 
+### GET /admin/api/cache
+
+Returns the object data cache's current utilization, mirroring the `s3o_cache_*` gauges for operators without Prometheus access.
+
+**Response:**
+
+```json
+{"entries": 1204, "size_bytes": 52428800, "max_bytes": 134217728}
+```
+
+### POST /admin/api/cache/flush
+
+Drops every entry from the object data cache. `entries_dropped` reports how many entries were present at flush time.
+
+**Request:** No body required.
+
+**Response:**
+
+```json
+{"status": "flushed", "entries_dropped": 1204}
+```
+
+### DELETE /admin/api/cache/keys/{key...}
+
+Drops a single key from the cache. The path wildcard accepts embedded slashes, so the full internal key can be passed as-is. Always returns `200`: the cache treats an unknown key as a no-op, so no count is reported.
+
+**Response:**
+
+```json
+{"status": "invalidated", "key": "photos/2026/cat.jpg"}
+```
+
+### DELETE /admin/api/cache/prefix
+
+Drops every entry whose key starts with the `prefix` query parameter.
+
+**Query parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `prefix` | Yes | Key prefix to invalidate. An empty value is rejected with `400` so a full flush stays a deliberate call to `POST /admin/api/cache/flush` |
+
+**Response:**
+
+```json
+{"status": "invalidated", "prefix": "photos/2026/", "entries_dropped": 37}
+```
+
+**Response (503):** Every `/admin/api/cache` endpoint returns this when the orchestrator was started without the object data cache configured, so callers can distinguish "no cache" from "cache empty".
+
+```json
+{"status": "disabled", "reason": "object data cache is not enabled"}
+```
+
 ## Error Responses
 
 All endpoints return errors as JSON:
