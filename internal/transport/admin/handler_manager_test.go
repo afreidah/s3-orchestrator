@@ -323,10 +323,15 @@ func TestHandleScrub_IntegrityDisabled(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
+	var resp adminapi.ScrubResponse
 	_ = json.NewDecoder(w.Body).Decode(&resp)
-	if resp["status"] != "skipped" {
-		t.Errorf("status = %v, want %q", resp["status"], "skipped")
+	if resp.Status != "skipped" || resp.Reason == "" {
+		t.Errorf("got status=%q reason=%q, want skipped with a reason", resp.Status, resp.Reason)
+	}
+	// The skipped branch reports the counters as zero rather than omitting
+	// them, so both branches of the endpoint carry one shape.
+	if resp.Checked != 0 || resp.Failed != 0 {
+		t.Errorf("got checked=%d failed=%d, want both zero", resp.Checked, resp.Failed)
 	}
 }
 
