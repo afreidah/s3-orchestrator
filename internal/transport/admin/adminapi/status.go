@@ -60,3 +60,41 @@ type WorkerHealth struct {
 	LastError           string    `json:"last_error,omitempty"`
 	ConsecutiveFailures int       `json:"consecutive_failures"`
 }
+
+// UsageFlushResponse acknowledges a forced flush of the usage counters.
+type UsageFlushResponse struct {
+	Status string `json:"status"`
+}
+
+// LogLevelResponse is the runtime log level, returned by both the read and the
+// write form of the endpoint so a caller sees the level actually in effect.
+type LogLevelResponse struct {
+	Level string `json:"level"`
+}
+
+// ReloadStatusResponse reports the most recent config reload. Status is
+// "no_reload_yet" until SIGHUP fires for the first time, and every other field
+// is absent in that state; afterwards it carries the coordinator's outcome for
+// the pass. Converted at the wiring layer so no internal reload type reaches
+// the wire.
+type ReloadStatusResponse struct {
+	Status string `json:"status"`
+	// Generation is a pointer so a genuine generation-0 result still reports
+	// the field, while the not-yet placeholder omits it. A plain int64 with
+	// omitempty would silently drop the zero.
+	Generation      *int64              `json:"generation,omitempty"`
+	Outcomes        []ReloadHookOutcome `json:"outcomes,omitempty"`
+	RequiresRestart []string            `json:"requires_restart,omitempty"`
+	LoadError       string              `json:"load_error,omitempty"`
+	StartedAt       *time.Time          `json:"started_at,omitempty"`
+	EndedAt         *time.Time          `json:"ended_at,omitempty"`
+}
+
+// ReloadHookOutcome is one subsystem's contribution to a reload pass. Skipped
+// hooks are reported too, so an operator can see which subsystems the reload
+// did not touch.
+type ReloadHookOutcome struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}

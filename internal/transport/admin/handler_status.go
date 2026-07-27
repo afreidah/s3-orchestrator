@@ -25,18 +25,22 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
+// reloadNotYetStatus is the reload-status placeholder reported before the
+// first SIGHUP of the process.
+const reloadNotYetStatus = "no_reload_yet"
+
 // handleReloadStatus returns the most recent reload result captured by
 // the reload coordinator. Returns a "no_reload_yet" placeholder when
 // SIGHUP has not fired since startup or when the runtime has not
 // wired the provider.
 func (h *Handler) handleReloadStatus(w http.ResponseWriter, _ *http.Request) {
 	if h.reloadStatus == nil {
-		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "no_reload_yet"})
+		httputil.WriteJSON(w, http.StatusOK, adminapi.ReloadStatusResponse{Status: reloadNotYetStatus})
 		return
 	}
 	result := h.reloadStatus()
 	if result == nil {
-		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "no_reload_yet"})
+		httputil.WriteJSON(w, http.StatusOK, adminapi.ReloadStatusResponse{Status: reloadNotYetStatus})
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, result)
@@ -171,7 +175,7 @@ func (h *Handler) handleUsageFlush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "flushed"})
+	httputil.WriteJSON(w, http.StatusOK, adminapi.UsageFlushResponse{Status: "flushed"})
 }
 
 // handleReconcileUsage recomputes each backend's bytes_used from the object
@@ -194,7 +198,9 @@ func (h *Handler) handleReconcileUsage(w http.ResponseWriter, r *http.Request) {
 // handleLogLevel gets or sets the runtime log level.
 func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		httputil.WriteJSON(w, http.StatusOK, map[string]string{"level": strings.ToLower(h.logLevel.Level().String())})
+		httputil.WriteJSON(w, http.StatusOK, adminapi.LogLevelResponse{
+			Level: strings.ToLower(h.logLevel.Level().String()),
+		})
 		return
 	}
 
@@ -207,7 +213,7 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 	parsed := config.ParseLogLevel(req.Level)
 	h.logLevel.Set(parsed)
 	h.log.InfoContext(r.Context(), "log level changed via admin API", "level", req.Level)
-	httputil.WriteJSON(w, http.StatusOK, map[string]string{"level": strings.ToLower(parsed.String())})
+	httputil.WriteJSON(w, http.StatusOK, adminapi.LogLevelResponse{Level: strings.ToLower(parsed.String())})
 }
 
 // handleWorkers returns a snapshot of every registered background

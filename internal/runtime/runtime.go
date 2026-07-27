@@ -39,6 +39,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/reload"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httpserver"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -128,7 +129,9 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 	// the coordinator exists. Routing through a post-construction
 	// setter avoids the admin -> reload -> ui -> admin import cycle.
 	if adminHandler, _ := do.Invoke[*admin.Handler](r.inj); adminHandler != nil {
-		adminHandler.SetReloadStatusProvider(func() any { return r.reload.LastResult() })
+		adminHandler.SetReloadStatusProvider(func() *adminapi.ReloadStatusResponse {
+			return toAdminReloadStatus(r.reload.LastResult())
+		})
 	}
 
 	lifecyc, err := do.Invoke[*lifecycle.Manager](r.inj)
@@ -304,4 +307,29 @@ func (r *Runtime) logStartup() {
 		"backends", len(r.cfg.Backends),
 		"routing_strategy", r.cfg.RoutingStrategy,
 	)
+}
+
+// toAdminReloadStatus copies a reload result into the admin wire type so no
+// internal/reload type reaches the API surface. Returns nil before the first
+// reload, which the handler reports as its not-yet placeholder.
+func toAdminReloadStatus(res *reload.ReloadResult) *adminapi.ReloadStatusResponse {
+	if res == nil {
+		return nil
+	}
+	out := &adminapi.ReloadStatusResponse{
+		Status:          string(res.Status),
+		Generation:      &res.Generation,
+		RequiresRestart: res.RequiresRestart,
+		LoadError:       res.LoadError,
+		StartedAt:       &res.StartedAt,
+		EndedAt:         &res.EndedAt,
+	}
+	for _, o := range res.Outcomes {
+		out.Outcomes = append(out.Outcomes, adminapi.ReloadHookOutcome{
+			Name:   o.Name,
+			Status: string(o.Status),
+			Error:  o.Error,
+		})
+	}
+	return out
 }

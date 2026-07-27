@@ -15,6 +15,7 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +29,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/reload"
 )
 
 const validTestConfigYAML = `
@@ -244,5 +246,86 @@ func TestRunFullLifecycle(t *testing.T) {
 	// New shutdown-cause log line (Go 1.26 signal.NotifyContext compatibility).
 	if !strings.Contains(stdout.String(), `"msg":"shutdown initiated"`) || !strings.Contains(stdout.String(), cause.Error()) {
 		t.Errorf("expected shutdown log line with cause %q, got logs:\n%s", cause.Error(), stdout.String())
+	}
+}
+
+// TestToAdminReloadStatus_NilBeforeFirstReload asserts the converter reports
+// nil before any reload has run, which is the signal the admin handler turns
+// into its not-yet placeholder.
+func TestToAdminReloadStatus_NilBeforeFirstReload(t *testing.T) {
+	t.Parallel()
+	if got := toAdminReloadStatus(nil); got != nil {
+		t.Errorf("toAdminReloadStatus(nil) = %+v, want nil", got)
+	}
+}
+
+// TestToAdminReloadStatus_CopiesResult pins the conversion that keeps
+// internal/reload types off the admin API: every field maps across, hook
+// outcomes included, with generation carried as a pointer so a zero survives.
+func TestToAdminReloadStatus_CopiesResult(t *testing.T) {
+	t.Parallel()
+	started := time.Unix(1700000000, 0).UTC()
+	ended := started.Add(2 * time.Second)
+	res := &reload.ReloadResult{
+		Generation: 4,
+		Status:     reload.ReloadPartialApplied,
+		Outcomes: []reload.HookOutcome{
+			{Name: "log-level", Status: reload.HookApplied},
+			{Name: "backends", Status: reload.HookFailed, Error: "boom"},
+		},
+		RequiresRestart: []string{"server.listen_addr"},
+		LoadError:       "",
+		StartedAt:       started,
+		EndedAt:         ended,
+	}
+
+	got := toAdminReloadStatus(res)
+	if got == nil {
+		t.Fatal("toAdminReloadStatus returned nil for a populated result")
+	}
+	if got.Status != string(reload.ReloadPartialApplied) {
+		t.Errorf("status = %q, want %q", got.Status, reload.ReloadPartialApplied)
+	}
+	if got.Generation == nil || *got.Generation != 4 {
+		t.Errorf("generation = %v, want 4", got.Generation)
+	}
+	if len(got.Outcomes) != 2 {
+		t.Fatalf("outcomes = %d, want 2", len(got.Outcomes))
+	}
+	if got.Outcomes[1].Name != "backends" || got.Outcomes[1].Status != string(reload.HookFailed) ||
+		got.Outcomes[1].Error != "boom" {
+		t.Errorf("failed outcome = %+v, want backends/failed/boom", got.Outcomes[1])
+	}
+	if len(got.RequiresRestart) != 1 || got.RequiresRestart[0] != "server.listen_addr" {
+		t.Errorf("requires_restart = %v, want [server.listen_addr]", got.RequiresRestart)
+	}
+	if got.StartedAt == nil || !got.StartedAt.Equal(started) || got.EndedAt == nil || !got.EndedAt.Equal(ended) {
+		t.Errorf("timestamps = %v/%v, want %v/%v", got.StartedAt, got.EndedAt, started, ended)
+	}
+}
+
+// TestToAdminReloadStatus_ZeroGenerationSurvives guards the pointer field: a
+// validation-failed pass before any successful apply legitimately has
+// generation 0, and must still report the field rather than looking like the
+// not-yet placeholder.
+func TestToAdminReloadStatus_ZeroGenerationSurvives(t *testing.T) {
+	t.Parallel()
+	got := toAdminReloadStatus(&reload.ReloadResult{
+		Generation: 0,
+		Status:     reload.ReloadValidationFailed,
+	})
+	if got == nil || got.Generation == nil {
+		t.Fatalf("generation dropped for a zero-generation result: %+v", got)
+	}
+	if *got.Generation != 0 {
+		t.Errorf("generation = %d, want 0", *got.Generation)
+	}
+
+	body, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(body), `"generation":0`) {
+		t.Errorf("body = %s, want an explicit generation:0", body)
 	}
 }

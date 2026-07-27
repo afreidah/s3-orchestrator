@@ -749,3 +749,146 @@ func TestHandleLogLevel_PutInvalidBody(t *testing.T) {
 		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
 	}
 }
+
+// TestHandleDrainProgress_InactiveShape pins the drain-progress wire shape for
+// a backend that is not draining. The handler converts drain.Progress at its
+// boundary, so this is what keeps an internal field rename from reaching the
+// API.
+func TestHandleDrainProgress_InactiveShape(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithManager(t)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/backends/b1/drain", ""))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp adminapi.DrainProgressResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Active {
+		t.Errorf("active = true, want false for a backend with no drain")
+	}
+	if resp.ObjectsRemaining != 0 || resp.BytesRemaining != 0 || resp.ObjectsMoved != 0 {
+		t.Errorf("counters = %+v, want all zero", resp)
+	}
+	// Error is omitempty, so a clean snapshot must not carry the key at all.
+	if body := w.Body.String(); strings.Contains(body, "error") {
+		t.Errorf("clean progress emitted an error field: %s", body)
+	}
+}
+
+// TestHandleRemoveBackend_AcknowledgementShape pins the acknowledgement the
+// backend mutation endpoints share: the prose status plus the backend acted on.
+func TestHandleRemoveBackend_AcknowledgementShape(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithManager(t)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(http.MethodDelete, "/admin/api/backends/b1", ""))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp adminapi.BackendOperationResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "backend removed" || resp.Backend != "b1" {
+		t.Errorf("got status=%q backend=%q, want {backend removed b1}", resp.Status, resp.Backend)
+	}
+}
+
+// TestHandleRemoveBackend_PurgeTwoPhaseShapes walks the destructive purge flow
+// end to end: the preview returns a confirmation token, and replaying it
+// executes the purge. Both responses are typed, and the second reuses the same
+// acknowledgement DTO as every other backend mutation.
+func TestHandleRemoveBackend_PurgeTwoPhaseShapes(t *testing.T) {
+	t.Parallel()
+	h := newTestHandlerWithManager(t)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(http.MethodDelete, "/admin/api/backends/b1?purge=true", ""))
+	if w.Code != http.StatusOK {
+		t.Fatalf("preview status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var preview adminapi.RemoveBackendPreview
+	if err := json.NewDecoder(w.Body).Decode(&preview); err != nil {
+		t.Fatalf("decode preview: %v", err)
+	}
+	if preview.Status != "confirmation required" || preview.Backend != "b1" {
+		t.Errorf("got status=%q backend=%q, want {confirmation required b1}", preview.Status, preview.Backend)
+	}
+	if preview.ConfirmToken == "" || preview.ExpiresIn <= 0 {
+		t.Fatalf("preview must carry a token and a TTL: %+v", preview)
+	}
+
+	w2 := httptest.NewRecorder()
+	mux.ServeHTTP(w2, doAuth(http.MethodDelete,
+		"/admin/api/backends/b1?purge=true&confirm="+preview.ConfirmToken, ""))
+	if w2.Code != http.StatusOK {
+		t.Fatalf("purge status = %d, want 200; body=%s", w2.Code, w2.Body.String())
+	}
+	var resp adminapi.BackendOperationResponse
+	if err := json.NewDecoder(w2.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode purge: %v", err)
+	}
+	if resp.Status != "backend purged" || resp.Backend != "b1" {
+		t.Errorf("got status=%q backend=%q, want {backend purged b1}", resp.Status, resp.Backend)
+	}
+}
+
+// TestHandleStartDrain_AcknowledgementShape covers the accepted branch, which
+// needs a manager that actually knows the backend -- the shared fixture
+// registers none, so StartDrain there always rejects. Cancels the drain on the
+// way out so the background pass does not outlive the test.
+func TestHandleStartDrain_AcknowledgementShape(t *testing.T) {
+	t.Parallel()
+	mock := testutil.NewMockStore(t)
+	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+		Storage: proxy.StorageDeps{
+			Backends: map[string]backend.ObjectBackend{"b1": &fakeBackend{}},
+			Order:    []string{"b1"},
+		},
+		Stores:     proxy.StoreDeps{Metadata: mock, Dashboard: mock},
+		Policies:   proxy.PolicyConfig{RoutingStrategy: config.RoutingPack},
+		Operations: proxy.OperationalDeps{Metrics: mock},
+	})
+	var lv slog.LevelVar
+	lv.Set(slog.LevelInfo)
+	h := &Handler{
+		log:        slog.Default().With(logfmt.Component("admin")),
+		backendOps: mgr,
+		runtimeOps: mgr.Runtime(),
+		drain:      mgr.Drain(),
+		lifecycle:  mock,
+		token:      "test-token",
+		logLevel:   &lv,
+	}
+	t.Cleanup(func() { _ = h.drain.CancelDrain("b1") })
+
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/backends/b1/drain", ""))
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", w.Code, w.Body.String())
+	}
+	var resp adminapi.BackendOperationResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "drain started" || resp.Backend != "b1" {
+		t.Errorf("got status=%q backend=%q, want {drain started b1}", resp.Status, resp.Backend)
+	}
+}

@@ -97,12 +97,12 @@ func TestLogLevel_Get(t *testing.T) {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 
-	var resp map[string]string
+	var resp adminapi.LogLevelResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp["level"] != "info" {
-		t.Errorf("level = %q, want %q", resp["level"], "info")
+	if resp.Level != "info" {
+		t.Errorf("level = %q, want %q", resp.Level, "info")
 	}
 }
 
@@ -124,12 +124,12 @@ func TestLogLevel_Put(t *testing.T) {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 
-	var resp map[string]string
+	var resp adminapi.LogLevelResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp["level"] != "debug" {
-		t.Errorf("level = %q, want %q", resp["level"], "debug")
+	if resp.Level != "debug" {
+		t.Errorf("level = %q, want %q", resp.Level, "debug")
 	}
 
 	// Verify the level actually changed
@@ -201,8 +201,9 @@ func TestReloadStatus_NoReloadYet(t *testing.T) {
 func TestReloadStatus_ReturnsProvidedResult(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler()
-	h.SetReloadStatusProvider(func() any {
-		return map[string]any{"generation": 7, "status": "full_success"}
+	h.SetReloadStatusProvider(func() *adminapi.ReloadStatusResponse {
+		gen := int64(7)
+		return &adminapi.ReloadStatusResponse{Generation: &gen, Status: "full_success"}
 	})
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -215,11 +216,12 @@ func TestReloadStatus_ReturnsProvidedResult(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), `"generation":7`) {
-		t.Errorf("body = %q, want generation field", w.Body.String())
+	var resp adminapi.ReloadStatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(w.Body.String(), "full_success") {
-		t.Errorf("body = %q, want status field", w.Body.String())
+	if resp.Generation == nil || *resp.Generation != 7 || resp.Status != "full_success" {
+		t.Errorf("got generation=%v status=%q, want 7/full_success", resp.Generation, resp.Status)
 	}
 }
 
@@ -316,12 +318,12 @@ func TestCacheFlush_Disabled(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
 	}
-	var resp map[string]string
+	var resp adminapi.CacheDisabledResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp["status"] != "disabled" {
-		t.Errorf("status field = %q, want %q", resp["status"], "disabled")
+	if resp.Status != "disabled" || resp.Reason == "" {
+		t.Errorf("got status=%q reason=%q, want disabled with a reason", resp.Status, resp.Reason)
 	}
 }
 

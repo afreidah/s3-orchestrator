@@ -21,3 +21,25 @@ type RemoveBackendPreview struct {
 	ConfirmToken string `json:"confirm_token"`
 	ExpiresIn    int    `json:"expires_in"`
 }
+
+// BackendOperationResponse acknowledges a backend-management mutation: which
+// backend was acted on, and what happened to it. Status is a human-readable
+// outcome ("drain started", "drain cancelled", "backend removed", "backend
+// purged"), matching the vocabulary RemoveBackendPreview already publishes for
+// this endpoint family rather than the ok/skipped tokens the worker-trigger
+// endpoints use.
+type BackendOperationResponse struct {
+	Status  string `json:"status"`
+	Backend string `json:"backend"`
+}
+
+// DrainProgressResponse is a snapshot of an in-flight drain. Active is false
+// when no drain is running for the backend, in which case the counters are
+// zero. Error carries the failure that stopped a drain, when one did.
+type DrainProgressResponse struct {
+	Active           bool   `json:"active"`
+	ObjectsRemaining int64  `json:"objects_remaining"`
+	BytesRemaining   int64  `json:"bytes_remaining"`
+	ObjectsMoved     int64  `json:"objects_moved"`
+	Error            string `json:"error,omitempty"`
+}
