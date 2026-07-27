@@ -24,6 +24,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
 // TestRequireToken_Missing verifies the require token missing contract.
@@ -340,15 +341,19 @@ func TestCacheFlush_Empty(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
-	var resp map[string]any
+	var resp adminapi.CacheInvalidateResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp["status"] != "flushed" {
-		t.Errorf("status = %v, want flushed", resp["status"])
+	if resp.Status != "flushed" {
+		t.Errorf("status = %v, want flushed", resp.Status)
 	}
-	if got := resp["entries_cleared"]; got != float64(0) {
-		t.Errorf("entries_cleared = %v, want 0", got)
+	if resp.EntriesDropped != 0 {
+		t.Errorf("entries_dropped = %d, want 0", resp.EntriesDropped)
+	}
+	// A full flush targets no prefix, so the field stays out of the body.
+	if resp.Prefix != "" {
+		t.Errorf("prefix = %q, want empty on a full flush", resp.Prefix)
 	}
 }
 
@@ -373,12 +378,12 @@ func TestCacheFlush_Cleared(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
-	var resp map[string]any
+	var resp adminapi.CacheInvalidateResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if got := resp["entries_cleared"]; got != float64(3) {
-		t.Errorf("entries_cleared = %v, want 3", got)
+	if resp.EntriesDropped != 3 {
+		t.Errorf("entries_dropped = %d, want 3", resp.EntriesDropped)
 	}
 	if mc.Stats().Entries != 0 {
 		t.Errorf("cache still has entries after flush: %d", mc.Stats().Entries)
@@ -514,12 +519,15 @@ func TestCacheInvalidatePrefix_DropsMatching(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}
-	var resp map[string]any
+	var resp adminapi.CacheInvalidateResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if got := resp["entries_dropped"]; got != float64(2) {
-		t.Errorf("entries_dropped = %v, want 2", got)
+	if resp.EntriesDropped != 2 {
+		t.Errorf("entries_dropped = %d, want 2", resp.EntriesDropped)
+	}
+	if resp.Prefix != "users/1/" {
+		t.Errorf("prefix = %q, want users/1/", resp.Prefix)
 	}
 	if _, ok := mc.Get("users/2/c"); !ok {
 		t.Error("expected hit for users/2/c (outside invalidated prefix)")

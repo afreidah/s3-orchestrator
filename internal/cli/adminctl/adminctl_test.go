@@ -668,7 +668,7 @@ func TestCommand_CacheFlush_SendsPost(t *testing.T) {
 		gotMethod = r.Method
 		gotPath = r.URL.Path
 		gotToken = r.Header.Get("X-Admin-Token")
-		_ = json.NewEncoder(w).Encode(map[string]any{"entries_cleared": 0})
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "flushed", "entries_dropped": 0})
 	}))
 	defer srv.Close()
 
