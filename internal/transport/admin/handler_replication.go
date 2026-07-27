@@ -26,34 +26,37 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
-// ReplicateResult is the outcome of a one-shot replication cycle.
-type ReplicateResult struct {
-	Status        string // "ok" or "skipped"
-	Reason        string // populated when Status is "skipped"
-	CopiesCreated int
-}
+// replicationDisabledReason is the skip reason every replication endpoint
+// reports when replication is unconfigured or the factor is 1.
+const replicationDisabledReason = "replication not configured or factor <= 1"
 
 // Replicate runs one replication cycle synchronously and returns the
 // resulting counts. Skips when replication is unconfigured or factor <= 1.
 // Refreshes quota metrics on success. observer, when non-nil, receives a start
 // and end step per object replicated. Exposed for callers (UI, tests) that
 // need the counts back as Go values rather than JSON.
-func (h *Handler) Replicate(ctx context.Context, observer progress.Observer) (ReplicateResult, error) {
+func (h *Handler) Replicate(ctx context.Context, observer progress.Observer) (adminapi.ReplicateResponse, error) {
 	rcfg := h.replicator.Config()
 	if rcfg == nil || rcfg.Factor <= 1 {
-		return ReplicateResult{Status: "skipped", Reason: "replication not configured or factor <= 1"}, nil
+		return adminapi.ReplicateResponse{ReplicationOutcome: adminapi.ReplicationOutcome{
+			Status: "skipped",
+			Reason: replicationDisabledReason,
+		}}, nil
 	}
 
 	created, err := h.replicator.Replicate(ctx, *rcfg, observer)
 	if err != nil {
-		return ReplicateResult{}, err
+		return adminapi.ReplicateResponse{}, err
 	}
 
 	if mErr := h.runtimeOps.UpdateQuotaMetrics(ctx); mErr != nil {
 		h.log.WarnContext(ctx, "failed to update quota metrics after replicate", "error", mErr)
 	}
 
-	return ReplicateResult{Status: "ok", CopiesCreated: created}, nil
+	return adminapi.ReplicateResponse{
+		ReplicationOutcome: adminapi.ReplicationOutcome{Status: "ok"},
+		CopiesCreated:      created,
+	}, nil
 }
 
 // handleReplicate triggers one replication cycle. Streams per-object NDJSON
@@ -71,16 +74,7 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if res.Status == "skipped" {
-		httputil.WriteJSON(w, http.StatusOK, map[string]any{
-			"status":         "skipped",
-			"copies_created": 0,
-			"reason":         res.Reason,
-		})
-		return
-	}
-
-	httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_created": res.CopiesCreated})
+	httputil.WriteJSON(w, http.StatusOK, res)
 }
 
 // streamReplicate runs a replication cycle as an NDJSON step stream, one
@@ -108,10 +102,11 @@ func (h *Handler) streamReplicate(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Request) {
 	rcfg := h.overRep.Config()
 	if rcfg == nil || rcfg.Factor <= 1 {
-		httputil.WriteJSON(w, http.StatusOK, map[string]any{
-			"factor":  0,
-			"pending": 0,
-			"status":  "replication not configured",
+		httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationStatusResponse{
+			ReplicationOutcome: adminapi.ReplicationOutcome{
+				Status: "skipped",
+				Reason: replicationDisabledReason,
+			},
 		})
 		return
 	}
@@ -123,9 +118,10 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 	}
 
 	telemetry.OverReplicationPending.Set(float64(count))
-	httputil.WriteJSON(w, http.StatusOK, map[string]any{
-		"factor":  rcfg.Factor,
-		"pending": count,
+	httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationStatusResponse{
+		ReplicationOutcome: adminapi.ReplicationOutcome{Status: "ok"},
+		Factor:             rcfg.Factor,
+		Pending:            count,
 	})
 }
 
@@ -133,10 +129,11 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Request) {
 	rcfg := h.overRep.Config()
 	if rcfg == nil || rcfg.Factor <= 1 {
-		httputil.WriteJSON(w, http.StatusOK, map[string]any{
-			"status":         "skipped",
-			"copies_removed": 0,
-			"reason":         "replication not configured or factor <= 1",
+		httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationCleanResponse{
+			ReplicationOutcome: adminapi.ReplicationOutcome{
+				Status: "skipped",
+				Reason: replicationDisabledReason,
+			},
 		})
 		return
 	}
@@ -167,7 +164,10 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 		h.log.WarnContext(r.Context(), "failed to update quota metrics after admin over-replication cleanup", "error", err)
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "copies_removed": removed})
+	httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationCleanResponse{
+		ReplicationOutcome: adminapi.ReplicationOutcome{Status: "ok"},
+		CopiesRemoved:      removed,
+	})
 }
 
 // streamOverReplication runs an over-replication cleanup as an NDJSON step
