@@ -31,6 +31,35 @@ const (
 	pathLogLevel        = "/admin/api/log-level"
 )
 
+// param is one query or path parameter a handler reads. Declaring them on the
+// entry keeps the generated description complete: a caller cannot discover
+// ?batch_size= by reading handler source.
+type param struct {
+	Name        string
+	In          string
+	Description string
+	Required    bool
+	Type        string
+}
+
+// Parameter names and descriptions shared by more than one entry, named so
+// the same parameter cannot be described two ways on two routes.
+const (
+	paramName       = "name"
+	paramBackend    = "backend"
+	paramBatchSize  = "batch_size"
+	descBackendName = "Backend name"
+)
+
+// Parameter locations and types, mirrored by the generator.
+const (
+	inQuery     = "query"
+	inPath      = "path"
+	typeString  = "string"
+	typeInteger = "integer"
+	typeBoolean = "boolean"
+)
+
 // route is one admin endpoint. Request, Stream, Alt and ResponseType are zero
 // for the routes that do not need them, which is most of them.
 type route struct {
@@ -53,6 +82,8 @@ type route struct {
 	// status code. Only two-phase backend removal needs one: the
 	// confirmation preview and the executed acknowledgement share a route.
 	Alt any
+	// Params are the query and path parameters the handler reads.
+	Params []param
 	// ResponseType overrides the success media type. Empty means JSON; the
 	// trace snapshot serves a binary trace file and has no Response schema.
 	ResponseType string
@@ -81,16 +112,28 @@ func (h *Handler) routes() []route {
 			Method: http.MethodGet, Pattern: "/admin/api/logs", Handler: h.handleLogs,
 			Summary:  "Recent records from the in-memory log buffer",
 			Response: adminapi.LogsResponse{},
+			Params: []param{
+				{Name: "level", In: inQuery, Type: typeString, Description: "Minimum level to return: debug, info, warn or error"},
+				{Name: "limit", In: inQuery, Type: typeInteger, Description: "Maximum records to return"},
+			},
 		},
 		{
 			Method: http.MethodGet, Pattern: "/admin/api/object-locations", Handler: h.handleObjectLocations,
 			Summary:  "Backend placement for one object key",
 			Response: adminapi.ObjectLocationsResponse{},
+			Params: []param{
+				{Name: "key", In: inQuery, Required: true, Type: typeString, Description: "Object key to resolve"},
+			},
 		},
 		{
 			Method: http.MethodGet, Pattern: "/admin/api/objects", Handler: h.handleListObjects,
 			Summary:  "Page of stored objects",
 			Response: adminapi.ObjectListResponse{},
+			Params: []param{
+				{Name: "prefix", In: inQuery, Type: typeString, Description: "Restrict the listing to keys under this prefix"},
+				{Name: "delimiter", In: inQuery, Type: typeString, Description: "Grouping delimiter; defaults to /"},
+				{Name: "continuation", In: inQuery, Type: typeString, Description: "Continuation token from a previous page"},
+			},
 		},
 		{
 			Method: http.MethodGet, Pattern: "/admin/api/cleanup-queue", Handler: h.handleCleanupQueue,
@@ -101,11 +144,18 @@ func (h *Handler) routes() []route {
 			Method: http.MethodGet, Pattern: "/admin/api/cleanup-dlq", Handler: h.handleCleanupDLQ,
 			Summary:  "Dead-lettered cleanup depth and a page of rows",
 			Response: adminapi.CleanupDLQResponse{},
+			Params: []param{
+				{Name: paramBackend, In: inQuery, Type: typeString, Description: "Restrict the listing to one backend"},
+				{Name: "limit", In: inQuery, Type: typeInteger, Description: "Maximum rows to return"},
+			},
 		},
 		{
 			Method: http.MethodPost, Pattern: "/admin/api/cleanup-dlq/requeue", Handler: h.handleCleanupDLQRequeue,
 			Summary:  "Move dead-lettered cleanups back into the queue",
 			Response: adminapi.CleanupDLQRequeueResponse{},
+			Params: []param{
+				{Name: paramBackend, In: inQuery, Type: typeString, Description: "Restrict the requeue to one backend"},
+			},
 		},
 		{
 			Method: http.MethodPost, Pattern: "/admin/api/usage-flush", Handler: h.handleUsageFlush,
@@ -142,7 +192,10 @@ func (h *Handler) routes() []route {
 			Method: http.MethodPost, Pattern: pathOverReplication, Handler: h.handleOverReplicationClean,
 			Summary:  "Run one over-replication cleanup pass",
 			Response: adminapi.OverReplicationCleanResponse{},
-			Stream:   adminstream.Event{},
+			Params: []param{
+				{Name: paramBatchSize, In: inQuery, Type: typeInteger, Description: "Override the configured batch size for this run"},
+			},
+			Stream: adminstream.Event{},
 		},
 		{
 			Method: http.MethodGet, Pattern: pathLogLevel, Handler: h.handleLogLevel,
@@ -159,23 +212,37 @@ func (h *Handler) routes() []route {
 			Method: http.MethodPost, Pattern: pathBackendDrain, Handler: h.handleStartDrain,
 			Summary:  "Start draining a backend",
 			Response: adminapi.BackendOperationResponse{},
+			Params: []param{
+				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
+			},
 		},
 		{
 			Method: http.MethodGet, Pattern: pathBackendDrain, Handler: h.handleDrainProgress,
 			Summary:  "Progress of an in-flight drain",
 			Response: adminapi.DrainProgressResponse{},
+			Params: []param{
+				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
+			},
 		},
 		{
 			Method: http.MethodDelete, Pattern: pathBackendDrain, Handler: h.handleCancelDrain,
 			Summary:  "Cancel an active drain",
 			Response: adminapi.BackendOperationResponse{},
+			Params: []param{
+				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
+			},
 		},
 		{
 			Method: http.MethodDelete, Pattern: "/admin/api/backends/{name}", Handler: h.handleRemoveBackend,
 			Summary:  "Remove a backend, optionally purging its objects",
 			Response: adminapi.BackendOperationResponse{},
-			Alt:      adminapi.RemoveBackendPreview{},
-			Stream:   adminstream.Event{},
+			Params: []param{
+				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBackendName},
+				{Name: "purge", In: inQuery, Type: typeBoolean, Description: "Also delete the backend's objects from its storage"},
+				{Name: "confirm", In: inQuery, Type: typeString, Description: "Confirmation token from the preview call; required to execute a purge"},
+			},
+			Alt:    adminapi.RemoveBackendPreview{},
+			Stream: adminstream.Event{},
 		},
 		{
 			Method: http.MethodPost, Pattern: "/admin/api/rotate-encryption-key", Handler: h.handleRotateEncryptionKey,
@@ -197,19 +264,30 @@ func (h *Handler) routes() []route {
 			Method: http.MethodPost, Pattern: "/admin/api/scrub", Handler: h.handleScrub,
 			Summary:  "Verify stored content hashes against backend data",
 			Response: adminapi.ScrubResponse{},
-			Stream:   adminstream.Event{},
+			Params: []param{
+				{Name: paramBatchSize, In: inQuery, Type: typeInteger, Description: "Objects verified in this pass"},
+			},
+			Stream: adminstream.Event{},
 		},
 		{
 			Method: http.MethodPost, Pattern: "/admin/api/backfill-checksums", Handler: h.handleBackfillChecksums,
 			Summary:  "Compute content hashes for objects missing one",
 			Response: adminapi.BackfillChecksumsResponse{},
-			Stream:   adminstream.Event{},
+			Params: []param{
+				{Name: paramBatchSize, In: inQuery, Type: typeInteger, Description: "Objects hashed per pass"},
+				{Name: "max", In: inQuery, Type: typeInteger, Description: "Cap the objects processed by this request; 0 drains the backlog"},
+				{Name: "delay_ms", In: inQuery, Type: typeInteger, Description: "Pause between passes to rate-limit backend reads"},
+			},
+			Stream: adminstream.Event{},
 		},
 		{
 			Method: http.MethodPost, Pattern: "/admin/api/reconcile", Handler: h.handleReconcile,
 			Summary:  "Reconcile backend storage against the object ledger",
 			Response: adminapi.ReconcileResponse{},
-			Stream:   adminstream.Event{},
+			Params: []param{
+				{Name: paramBackend, In: inQuery, Type: typeString, Description: "Restrict the pass to one backend"},
+			},
+			Stream: adminstream.Event{},
 		},
 		{
 			Method: http.MethodGet, Pattern: "/admin/api/cache", Handler: h.handleCacheStats,
@@ -225,11 +303,17 @@ func (h *Handler) routes() []route {
 			Method: http.MethodDelete, Pattern: "/admin/api/cache/keys/{key...}", Handler: h.handleCacheInvalidateKey,
 			Summary:  "Drop one key from the object data cache",
 			Response: adminapi.CacheInvalidateKeyResponse{},
+			Params: []param{
+				{Name: "key", In: inPath, Required: true, Type: typeString, Description: "Full internal object key, slashes included"},
+			},
 		},
 		{
 			Method: http.MethodDelete, Pattern: "/admin/api/cache/prefix", Handler: h.handleCacheInvalidatePrefix,
 			Summary:  "Drop every cache entry under a key prefix",
 			Response: adminapi.CacheInvalidateResponse{},
+			Params: []param{
+				{Name: "prefix", In: inQuery, Required: true, Type: typeString, Description: "Key prefix to invalidate"},
+			},
 		},
 		{
 			Method: http.MethodPost, Pattern: "/admin/api/trace/snapshot", Handler: h.handleTraceSnapshot,
