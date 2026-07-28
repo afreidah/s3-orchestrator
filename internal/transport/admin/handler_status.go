@@ -204,9 +204,7 @@ func (h *Handler) handleLogLevel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Level string `json:"level"`
-	}
+	var req adminapi.SetLogLevelRequest
 	if !httputil.DecodeJSONBody(w, r, &req, 1<<20) {
 		return
 	}
