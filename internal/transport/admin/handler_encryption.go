@@ -42,9 +42,7 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var req struct {
-		OldKeyID string `json:"old_key_id"`
-	}
+	var req adminapi.RotateEncryptionKeyRequest
 	if !httputil.DecodeJSONBody(w, r, &req, 1<<20) {
 		return
 	}
