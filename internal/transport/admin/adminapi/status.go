@@ -98,3 +98,9 @@ type ReloadHookOutcome struct {
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
 }
+
+// SetLogLevelRequest is the body of the log-level write: the level to apply.
+// Valid values are debug, info, warn and error.
+type SetLogLevelRequest struct {
+	Level string `json:"level"`
+}

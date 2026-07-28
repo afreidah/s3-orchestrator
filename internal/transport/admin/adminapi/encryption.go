@@ -45,3 +45,9 @@ type DecryptExistingResponse struct {
 	BulkEncryptionOutcome
 	Decrypted int `json:"decrypted"`
 }
+
+// RotateEncryptionKeyRequest is the body of a key-rotation call: the key ID
+// whose sealed DEKs should be re-wrapped under the current primary key.
+type RotateEncryptionKeyRequest struct {
+	OldKeyID string `json:"old_key_id"`
+}
