@@ -49,3 +49,9 @@ theme = "hugo-theme-relearn"
   [[module.mounts]]
     source = "../CHANGELOG.md"
     target = "assets/repo/CHANGELOG.md"
+  # Mounted as an asset rather than content so the openapi shortcode can
+  # resolve it through resources.Get. The file is generated from the admin
+  # route table; see internal/transport/admin/openapi_spec_test.go.
+  [[module.mounts]]
+    source = "../docs/openapi.yaml"
+    target = "assets/repo/openapi.yaml"

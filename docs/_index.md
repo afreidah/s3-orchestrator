@@ -30,38 +30,43 @@ cascade:
     weight: 5
     _target:
       path: "/docs/api-reference"
+  - title: "Admin API"
+    linkTitle: "Admin API"
+    weight: 6
+    _target:
+      path: "/docs/admin-api"
   - title: "Security Hardening"
     linkTitle: "Security Hardening"
-    weight: 6
+    weight: 7
     _target:
       path: "/docs/security-hardening"
   - title: "Performance Tuning"
     linkTitle: "Performance Tuning"
-    weight: 7
+    weight: 8
     _target:
       path: "/docs/performance-tuning"
   - title: "Disaster Recovery"
     linkTitle: "Disaster Recovery"
-    weight: 8
+    weight: 9
     _target:
       path: "/docs/disaster-recovery"
   - title: "Version Migration"
     linkTitle: "Version Migration"
-    weight: 9
+    weight: 10
     _target:
       path: "/docs/version-migration"
   - title: "Benchmarking"
     linkTitle: "Benchmarking"
-    weight: 10
+    weight: 11
     _target:
       path: "/docs/benchmarking"
   - title: "Changelog"
     linkTitle: "Changelog"
-    weight: 11
+    weight: 12
     _target:
       path: "/docs/changelog"
   - title: "Style Guide"
-    weight: 12
+    weight: 13
     hidden: true
     _target:
       path: "/docs/style-guide"
@@ -103,7 +108,14 @@ cascade:
     <i class="fas fa-plug landing-card-icon" style="color: #c4b5fd;"></i>
     <div>
       <strong>API Reference</strong>
-      <p>JSON APIs for programmatic access.</p>
+      <p>UI JSON API for the built-in dashboard.</p>
+    </div>
+  </a>
+  <a class="landing-card" href="admin-api/">
+    <i class="fas fa-sliders-h landing-card-icon" style="color: #c4b5fd;"></i>
+    <div>
+      <strong>Admin API</strong>
+      <p>Operational control plane, generated from the route table.</p>
     </div>
   </a>
   <a class="landing-card" href="security-hardening/">
