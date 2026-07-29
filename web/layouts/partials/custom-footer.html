@@ -1,0 +1,55 @@
+{{- /*
+  Hides Swagger UI's "Try it out" controls on the generated Admin API page.
+
+  The button issues a live request from the browser. This is a static docs
+  site, so the request would go to the docs host rather than an orchestrator,
+  and the admin API sends no CORS headers, so it could not succeed against a
+  real instance either. Leaving a control that always fails is worse than not
+  offering it; the page documents curl instead.
+
+  The theme renders Swagger UI inside a generated same-origin iframe, so the
+  rule has to be injected into that document. A stylesheet is used rather than
+  removing nodes so operations rendered later are covered without re-running.
+*/ -}}
+<script>
+  (function () {
+    var HIDE_TRY_IT = '.try-out, .auth-wrapper { display: none !important; }';
+
+    function injectInto(frame) {
+      var doc = frame.contentDocument;
+      if (!doc || !doc.head || doc.getElementById('s3o-hide-try-it')) {
+        return;
+      }
+      var style = doc.createElement('style');
+      style.id = 's3o-hide-try-it';
+      style.textContent = HIDE_TRY_IT;
+      doc.head.appendChild(style);
+    }
+
+    function watch(frame) {
+      injectInto(frame);
+      frame.addEventListener('load', function () {
+        injectInto(frame);
+      });
+    }
+
+    function scan() {
+      var frames = document.getElementsByClassName('sc-openapi-iframe');
+      for (var i = 0; i < frames.length; i++) {
+        watch(frames[i]);
+      }
+      return frames.length > 0;
+    }
+
+    // The iframe is created by the theme after this script runs, so watch for
+    // it rather than assuming it already exists.
+    if (!scan()) {
+      var observer = new MutationObserver(function () {
+        if (scan()) {
+          observer.disconnect();
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+  })();
+</script>
