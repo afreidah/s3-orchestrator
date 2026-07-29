@@ -207,6 +207,53 @@ jobs:
           path: integration-coverage.out
 
   # ---------------------------------------------------------------------------
+  # ADMIN API CONTRACT
+  # ---------------------------------------------------------------------------
+  # docs/openapi.yaml is generated from the admin route table, and the
+  # generator's own test already fails when the committed copy is stale. What
+  # that check cannot say is whether a change breaks callers: adding a field
+  # and renaming one both just make the file different. oasdiff classifies the
+  # two, and annotates the PR when a change would break an existing client.
+  #
+  # Annotations only, deliberately. Pre-1.0 the admin API is still allowed to
+  # change shape; the point is that a breaking change is visible in review
+  # rather than discovered by an operator. oasdiff exits 0 either way, so the
+  # job stays green and the annotation carries the signal.
+  openapi-breaking:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Check whether the description changed
+        id: changed
+        run: |
+          if git diff --quiet origin/${{ github.base_ref }}...HEAD -- docs/openapi.yaml; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::docs/openapi.yaml is unchanged; no contract comparison needed."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6
+        if: steps.changed.outputs.changed == 'true'
+        with:
+          go-version-file: go.mod
+
+      # Runs the same target a maintainer runs locally, so the oasdiff pin
+      # lives in the Makefile alone. The base copy is read from the base
+      # branch, so the comparison is against what it publishes today.
+      - name: Compare the admin API contract against the base branch
+        if: steps.changed.outputs.changed == 'true'
+        run: |
+          make openapi-breaking \
+            OASDIFF_BASE=origin/${{ github.base_ref }} \
+            OASDIFF_FORMAT=githubactions
+
+  # ---------------------------------------------------------------------------
   # SONARQUBE ANALYSIS
   # ---------------------------------------------------------------------------
   sonarqube:
