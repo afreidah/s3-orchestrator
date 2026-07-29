@@ -1,10 +1,7 @@
 ---
 title: "Admin API"
 linkTitle: "Admin API"
-weight: 26
 ---
-
-# Admin API
 
 The admin API is the operational control plane for a running instance: backend health, worker state, replication and cleanup queues, integrity passes, cache control, and destructive backend removal.
 
