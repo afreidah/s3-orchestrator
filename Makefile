@@ -121,6 +121,17 @@ modernize: ## Report gopls modernization/hygiene hints (skips generated files)
 openapi: ## Regenerate docs/openapi.yaml from the admin route table
 	go test ./internal/transport/admin/ -run TestOpenAPISpec_MatchesRouteTable -update
 
+# The oasdiff pin lives here alone; CI invokes this target rather than
+# repeating the version, so the two cannot drift apart.
+OASDIFF_VERSION ?= v1.26.1
+OASDIFF_BASE    ?= origin/main
+OASDIFF_FORMAT  ?= text
+
+openapi-breaking: ## Report admin API contract breaks against OASDIFF_BASE
+	@git show $(OASDIFF_BASE):docs/openapi.yaml > /tmp/openapi-base.yaml
+	@go run github.com/oasdiff/oasdiff@$(OASDIFF_VERSION) breaking \
+		/tmp/openapi-base.yaml docs/openapi.yaml -f $(OASDIFF_FORMAT)
+
 doc-stub-check: ## Fail if tautological '// Foo foo.' doc-comment stubs reappear
 	bash scripts/check-doc-stubs.sh
 
@@ -600,5 +611,5 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: openapi help builder build install uninstall docker push generate test vet lint govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push clean
+.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint deb-all publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push clean
 .DEFAULT_GOAL := help
