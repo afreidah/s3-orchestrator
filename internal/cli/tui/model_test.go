@@ -46,7 +46,7 @@ func (errLister) GetReplicationStatus(_ context.Context) (*adminapi.ReplicationS
 	return nil, errors.New("nope")
 }
 
-func (errLister) RunOp(_ context.Context, _, _ string, _ bool) (eventStream, error) {
+func (errLister) RunOp(_ context.Context, _ opsAction) (eventStream, error) {
 	return nil, errors.New("nope")
 }
 

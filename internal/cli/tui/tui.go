@@ -46,7 +46,7 @@ type adminClient interface {
 	GetStatus(ctx context.Context) (*adminapi.StatusResponse, error)
 	GetLogs(ctx context.Context, level string) (*adminapi.LogsResponse, error)
 	GetReplicationStatus(ctx context.Context) (*adminapi.ReplicationStatusResponse, error)
-	RunOp(ctx context.Context, method, path string, stream bool) (eventStream, error)
+	RunOp(ctx context.Context, act opsAction) (eventStream, error)
 }
 
 // model is the Bubble Tea state for the browser.

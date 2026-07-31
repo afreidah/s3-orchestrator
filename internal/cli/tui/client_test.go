@@ -163,6 +163,17 @@ func TestAPIClient_ListObjects_BadJSON(t *testing.T) {
 	}
 }
 
+// The two action shapes RunOp branches on: a long-running one that streams, and
+// a short one that decodes a summary.
+var (
+	streamingTestAction = opsAction{method: http.MethodPost, path: "/admin/api/scrub"}
+	oneShotTestAction   = opsAction{
+		method: http.MethodPost,
+		path:   "/admin/api/rebalance",
+		result: decodeOneShot[rebalanceResult],
+	}
+)
+
 // TestAPIClient_RunOp_Streaming asserts a streaming action opts into NDJSON and
 // yields the server's events in order.
 func TestAPIClient_RunOp_Streaming(t *testing.T) {
@@ -174,7 +185,7 @@ func TestAPIClient_RunOp_Streaming(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s, err := newAPIClient(srv.URL, "tok").RunOp(context.Background(), http.MethodPost, "/admin/api/scrub", true)
+	s, err := newAPIClient(srv.URL, "tok").RunOp(context.Background(), streamingTestAction)
 	if err != nil {
 		t.Fatalf("RunOp: %v", err)
 	}
@@ -209,7 +220,7 @@ func TestAPIClient_RunOp_OneShot(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s, err := newAPIClient(srv.URL, "tok").RunOp(context.Background(), http.MethodPost, "/admin/api/rebalance", false)
+	s, err := newAPIClient(srv.URL, "tok").RunOp(context.Background(), oneShotTestAction)
 	if err != nil {
 		t.Fatalf("RunOp: %v", err)
 	}
@@ -218,7 +229,7 @@ func TestAPIClient_RunOp_OneShot(t *testing.T) {
 		t.Errorf("one-shot should not opt into streaming; Accept=%q", gotAccept)
 	}
 	e, _ := s.Next()
-	if e.Kind != adminstream.KindResult || e.Outcome != adminstream.OutcomeOK || !strings.Contains(e.Message, "moved=12") {
+	if e.Kind != adminstream.KindResult || e.Outcome != adminstream.OutcomeOK || e.Message != "moved 12 objects" {
 		t.Errorf("result event = %+v", e)
 	}
 	if _, err := s.Next(); !errors.Is(err, io.EOF) {
@@ -235,7 +246,7 @@ func TestAPIClient_RunOp_ErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := newAPIClient(srv.URL, "tok").RunOp(context.Background(), http.MethodPost, "/admin/api/scrub", true); err == nil || !strings.Contains(err.Error(), "403") {
+	if _, err := newAPIClient(srv.URL, "tok").RunOp(context.Background(), streamingTestAction); err == nil || !strings.Contains(err.Error(), "403") {
 		t.Errorf("err = %v, want to mention 403", err)
 	}
 }

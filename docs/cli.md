@@ -310,7 +310,9 @@ The **Replication** section shows cluster-wide replication health, sourced from 
 
 The **Logs** section shows recent structured log entries from the instance's in-memory log buffer, sourced from `GET /admin/api/logs` - the same buffer the web dashboard's logs pane reads. Each row is time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs (not raw JSON). The level is colour-coded by severity (WARN and ERROR stand out; INFO stays neutral). Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh.
 
-Beyond browsing, the TUI can trigger a growing set of **admin actions**. Every write action shows a `y/N` confirmation in the footer before it runs, and its result (or error) is reported there afterwards. The instance-wide actions available from any section are `R` (reconcile usage counters) and `F` (flush the object cache); more will land over time.
+Beyond browsing, the TUI can trigger a growing set of **admin actions**. Every write action shows a `y/N` confirmation before it runs, and its result (or error) is reported afterwards. Two are available as shortcuts from any section: `R` (reconcile usage counters) and `F` (flush the object cache).
+
+The **Ops** section, reached with `o`, is the full menu: rebalance, clean over-replicated copies, scrub, backfill checksums, reconcile metadata, reconcile usage counters, and flush the object cache. Selecting one confirms, then opens a scrolling output pane. The long-running operations render the same live progress stream `admin` shows on the command line, one line per item. The rest finish in a single round trip and report what changed in the operation's own terms - `moved 12 objects`, `dropped 1,204 cache entries`, `corrected 2 backends: e2 -162.1 MiB, oci +4.1 MiB`. An operation that did not run because its feature is not configured says so instead of reporting a false zero. Press `esc` to step back to the menu, then to the nav.
 
 ![The TUI Logs section showing recent structured log entries](/docs/images/tui-logs.png)
 
