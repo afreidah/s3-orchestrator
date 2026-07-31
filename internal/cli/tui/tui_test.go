@@ -73,7 +73,7 @@ func (f *fakeLister) GetReplicationStatus(_ context.Context) (*adminapi.Replicat
 
 // RunOp returns a stream over the canned events (or a single ok result when
 // none are set), or f.opErr when configured to fail.
-func (f *fakeLister) RunOp(_ context.Context, _, _ string, _ bool) (eventStream, error) {
+func (f *fakeLister) RunOp(_ context.Context, _ opsAction) (eventStream, error) {
 	if f.opErr != nil {
 		return nil, f.opErr
 	}

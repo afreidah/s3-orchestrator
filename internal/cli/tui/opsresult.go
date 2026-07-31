@@ -1,0 +1,159 @@
+// -------------------------------------------------------------------------------
+// TUI - One-Shot Action Results
+//
+// Author: Alex Freidah
+//
+// The admin actions that finish in a single round trip answer with one JSON
+// summary. Each is decoded into the adminapi type its endpoint declares and
+// reported in the operation's own words, so the ops pane shows "moved 12
+// objects" rather than the response fields spelled back as key=value pairs.
+// The long-running actions stream their own progress and do not come through
+// here.
+// -------------------------------------------------------------------------------
+
+package tui
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
+)
+
+// The two status values a worker reports when the pass did not run.
+const (
+	statusSkipped  = "skipped"
+	statusDisabled = "disabled"
+)
+
+// opsResult is a decoded one-shot response that can account for itself.
+type opsResult interface {
+	// skipReason is why the pass did not run, or "" when it did.
+	skipReason() string
+	// describe states what the pass changed.
+	describe() string
+}
+
+// oneShotDecoder turns a non-streaming action's response body into the single
+// terminal event the ops pane renders.
+type oneShotDecoder func(io.Reader) (adminstream.Event, error)
+
+// decodeOneShot decodes a response into T and renders it as one result event,
+// so a one-shot action displays exactly as a streamed one's final event does.
+func decodeOneShot[T opsResult](r io.Reader) (adminstream.Event, error) {
+	var res T
+	if err := json.NewDecoder(r).Decode(&res); err != nil {
+		return adminstream.Event{}, err
+	}
+	if reason := res.skipReason(); reason != "" {
+		return adminstream.Event{
+			Kind:    adminstream.KindResult,
+			Outcome: adminstream.OutcomeSkipped,
+			Message: reason,
+		}, nil
+	}
+	return adminstream.Event{
+		Kind:    adminstream.KindResult,
+		Outcome: adminstream.OutcomeOK,
+		Message: res.describe(),
+	}, nil
+}
+
+// rebalanceResult reports one rebalance cycle.
+type rebalanceResult struct{ adminapi.RebalanceResponse }
+
+func (r rebalanceResult) skipReason() string { return skippedBecause(r.Status, r.Reason) }
+
+func (r rebalanceResult) describe() string {
+	if r.Moved == 0 {
+		return "already balanced, nothing moved"
+	}
+	return "moved " + countOf(r.Moved, "object", "objects")
+}
+
+// usageReconcileResult reports the corrections applied to the per-backend usage
+// counters.
+type usageReconcileResult struct{ adminapi.UsageReconcileResponse }
+
+// The endpoint carries no reason field, so an unset status is all there is to
+// report when it skips.
+func (r usageReconcileResult) skipReason() string { return skippedBecause(r.Status, "") }
+
+func (r usageReconcileResult) describe() string {
+	if len(r.Adjustments) == 0 {
+		return "counters already accurate"
+	}
+	names := make([]string, 0, len(r.Adjustments))
+	for name := range r.Adjustments {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	deltas := make([]string, 0, len(names))
+	for _, name := range names {
+		deltas = append(deltas, name+" "+signedSize(r.Adjustments[name]))
+	}
+	return fmt.Sprintf("corrected %s: %s",
+		countOf(len(names), "backend", "backends"), strings.Join(deltas, ", "))
+}
+
+// cacheFlushResult reports how much of the object data cache a flush dropped.
+type cacheFlushResult struct{ adminapi.CacheInvalidateResponse }
+
+func (r cacheFlushResult) skipReason() string { return skippedBecause(r.Status, "") }
+
+func (r cacheFlushResult) describe() string {
+	if r.EntriesDropped == 0 {
+		return "cache was already empty"
+	}
+	return "dropped " + countOf(r.EntriesDropped, "cache entry", "cache entries")
+}
+
+// skippedBecause reports why a pass did not run, or "" when it did. A skip
+// without a stated reason still has to say something, so the status stands in.
+func skippedBecause(status, reason string) string {
+	if status != statusSkipped && status != statusDisabled {
+		return ""
+	}
+	if reason == "" {
+		return status
+	}
+	return reason
+}
+
+// countOf renders a count with its noun, grouped for readability.
+func countOf(n int, singular, plural string) string {
+	noun := plural
+	if n == 1 {
+		noun = singular
+	}
+	return grouped(n) + " " + noun
+}
+
+// grouped renders an integer with thousands separators so large counts read at
+// a glance.
+func grouped(n int) string {
+	s := strconv.Itoa(n)
+	sign := ""
+	if strings.HasPrefix(s, "-") {
+		sign, s = "-", s[1:]
+	}
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return sign + s
+}
+
+// signedSize renders a byte delta with an explicit sign, so a correction reads
+// as a direction and not just a magnitude.
+func signedSize(delta int64) string {
+	if delta < 0 {
+		return "-" + humanSize(-delta)
+	}
+	return "+" + humanSize(delta)
+}
