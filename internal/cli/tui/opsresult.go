@@ -64,25 +64,11 @@ func decodeOneShot[T opsResult](r io.Reader) (adminstream.Event, error) {
 	}, nil
 }
 
-// rebalanceResult reports one rebalance cycle.
-type rebalanceResult struct{ adminapi.RebalanceResponse }
-
-func (r rebalanceResult) skipReason() string { return skippedBecause(r.Status, r.Reason) }
-
-func (r rebalanceResult) describe() string {
-	if r.Moved == 0 {
-		return "already balanced, nothing moved"
-	}
-	return "moved " + countOf(r.Moved, "object", "objects")
-}
-
 // usageReconcileResult reports the corrections applied to the per-backend usage
 // counters.
 type usageReconcileResult struct{ adminapi.UsageReconcileResponse }
 
-// The endpoint carries no reason field, so an unset status is all there is to
-// report when it skips.
-func (r usageReconcileResult) skipReason() string { return skippedBecause(r.Status, "") }
+func (r usageReconcileResult) skipReason() string { return skippedBecause(r.Status) }
 
 func (r usageReconcileResult) describe() string {
 	if len(r.Adjustments) == 0 {
@@ -105,7 +91,7 @@ func (r usageReconcileResult) describe() string {
 // cacheFlushResult reports how much of the object data cache a flush dropped.
 type cacheFlushResult struct{ adminapi.CacheInvalidateResponse }
 
-func (r cacheFlushResult) skipReason() string { return skippedBecause(r.Status, "") }
+func (r cacheFlushResult) skipReason() string { return skippedBecause(r.Status) }
 
 func (r cacheFlushResult) describe() string {
 	if r.EntriesDropped == 0 {
@@ -114,16 +100,14 @@ func (r cacheFlushResult) describe() string {
 	return "dropped " + countOf(r.EntriesDropped, "cache entry", "cache entries")
 }
 
-// skippedBecause reports why a pass did not run, or "" when it did. A skip
-// without a stated reason still has to say something, so the status stands in.
-func skippedBecause(status, reason string) string {
-	if status != statusSkipped && status != statusDisabled {
-		return ""
-	}
-	if reason == "" {
+// skippedBecause reports why a pass did not run, or "" when it did. Neither
+// one-shot response carries a reason field, so the status is the whole of the
+// explanation the endpoint offers.
+func skippedBecause(status string) string {
+	if status == statusSkipped || status == statusDisabled {
 		return status
 	}
-	return reason
+	return ""
 }
 
 // countOf renders a count with its noun, grouped for readability.

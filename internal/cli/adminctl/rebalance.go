@@ -11,8 +11,10 @@
 
 package adminctl
 
-// cmdRebalance implements `s3-orchestrator admin rebalance`. Reports the
-// number of objects moved.
+import "net/http"
+
+// cmdRebalance implements `s3-orchestrator admin rebalance`. Streams a line per
+// move, then the total.
 func cmdRebalance(_ []string, c *client) int {
-	return c.post("/admin/api/rebalance", "", nil)
+	return c.stream(http.MethodPost, "/admin/api/rebalance", "")
 }

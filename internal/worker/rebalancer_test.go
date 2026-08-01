@@ -361,8 +361,45 @@ func TestRebalance_UnknownStrategy(t *testing.T) {
 	r := NewRebalancer(ops, pl, ms)
 	_, err := r.Rebalance(context.Background(), config.RebalanceConfig{
 		Strategy: "bogus", Threshold: 0.01, BatchSize: 10,
-	})
+	}, nil)
 	if err == nil {
 		t.Error("expected error for unknown strategy")
+	}
+}
+
+// TestRebalanceMove_ProgressLabel pins the streamed line's shape: a move is
+// only meaningful as the object plus where it travelled between.
+func TestRebalanceMove_ProgressLabel(t *testing.T) {
+	t.Parallel()
+	mv := RebalanceMove{ObjectKey: "photos/a.jpg", FromBackend: "oci", ToBackend: "e2", SizeBytes: 4096}
+	if got, want := mv.progressLabel(), "photos/a.jpg  oci -> e2"; got != want {
+		t.Errorf("progressLabel() = %q, want %q", got, want)
+	}
+}
+
+// TestRebalance_SkipsWithinThreshold asserts a balanced fleet reports why it
+// did nothing rather than a zero move count, which reads as a completed pass.
+func TestRebalance_SkipsWithinThreshold(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockOps(ctrl)
+	ms := &mockMetadataStore{quotaStats: map[string]core.QuotaStat{
+		"b1": {BytesUsed: 500, BytesLimit: 1000},
+		"b2": {BytesUsed: 500, BytesLimit: 1000},
+	}}
+	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+
+	r := NewRebalancer(ops, NewMockPlacement(ctrl), ms)
+	sum, err := r.Rebalance(context.Background(), config.RebalanceConfig{
+		Strategy: "spread", Threshold: 0.1, BatchSize: 10,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Rebalance: %v", err)
+	}
+	if sum.SkipReason != SkipReasonWithinThreshold {
+		t.Errorf("SkipReason = %q, want the threshold reason", sum.SkipReason)
+	}
+	if sum.Succeeded != 0 {
+		t.Errorf("Succeeded = %d, want 0 on a skip", sum.Succeeded)
 	}
 }
