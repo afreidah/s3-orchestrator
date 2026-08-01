@@ -297,6 +297,6 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 // ImportObject records a pre-existing object in the database without
 // overwriting. Returns true if the object was imported, false if it
 // already existed for this backend. Delegates to core.ImportObject.
-func (s *Store) ImportObject(ctx context.Context, key, backend string, size int64) (bool, error) {
-	return core.ImportObject(ctx, s, key, backend, size)
+func (s *Store) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool) (bool, error) {
+	return core.ImportObject(ctx, s, key, backend, size, unmanaged)
 }

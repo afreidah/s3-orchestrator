@@ -348,7 +348,7 @@ func TestImportObject(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	imported, err := s.ImportObject(ctx, "bucket/new", "backend-a", 500)
+	imported, err := s.ImportObject(ctx, "bucket/new", "backend-a", 500, false)
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestImportObject(t *testing.T) {
 	}
 
 	// Import again should be a no-op
-	imported, err = s.ImportObject(ctx, "bucket/new", "backend-a", 500)
+	imported, err = s.ImportObject(ctx, "bucket/new", "backend-a", 500, false)
 	if err != nil {
 		t.Fatalf("ImportObject duplicate: %v", err)
 	}
@@ -2454,5 +2454,65 @@ func TestStore_CleanupDLQDepth_CountsRows(t *testing.T) {
 	}
 	if depth != 2 {
 		t.Errorf("depth=%d, want 2", depth)
+	}
+}
+
+// TestImportObject_UnmanagedCountsForQuotaButNotForWork pins the two halves of
+// the managed flag. A stray object sitting outside every configured bucket
+// prefix occupies real backend capacity, so placement has to see it in the
+// quota totals; but the orchestrator did not put it there, so no worker may
+// pick it up and start copying or moving it.
+func TestImportObject_UnmanagedCountsForQuotaButNotForWork(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := s.ImportObject(ctx, "bucket/owned", "backend-a", 100, false); err != nil {
+		t.Fatalf("ImportObject(managed): %v", err)
+	}
+	if _, err := s.ImportObject(ctx, "stray.txt", "backend-a", 400, true); err != nil {
+		t.Fatalf("ImportObject(unmanaged): %v", err)
+	}
+
+	// Quota counts both: the bytes are on the backend either way.
+	count, bytes, err := s.BackendObjectStats(ctx, "backend-a")
+	if err != nil {
+		t.Fatalf("BackendObjectStats: %v", err)
+	}
+	if count != 2 || bytes != 500 {
+		t.Errorf("stats = %d objects / %d bytes, want 2 / 500", count, bytes)
+	}
+
+	// The rebalance, placement and drain candidate scan sees only the owned one.
+	movable, err := s.ListObjectsByBackend(ctx, "backend-a", 10)
+	if err != nil {
+		t.Fatalf("ListObjectsByBackend: %v", err)
+	}
+	if len(movable) != 1 || movable[0].ObjectKey != "bucket/owned" {
+		t.Errorf("movable = %+v, want only bucket/owned", movable)
+	}
+
+	// Neither does the replicator (a stray with one copy is not a job), nor
+	// checksum backfill, which would spend egress reading the body.
+	under, err := s.GetUnderReplicatedObjects(ctx, 2, 10)
+	if err != nil {
+		t.Fatalf("GetUnderReplicatedObjects: %v", err)
+	}
+	assertNoStray(t, "replication", under)
+
+	unhashed, err := s.GetObjectsWithoutHash(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("GetObjectsWithoutHash: %v", err)
+	}
+	assertNoStray(t, "checksum backfill", unhashed)
+}
+
+// assertNoStray fails when a worker candidate scan surfaced the unmanaged row.
+func assertNoStray(t *testing.T, scan string, locs []core.ObjectLocation) {
+	t.Helper()
+	for i := range locs {
+		if locs[i].ObjectKey == "stray.txt" {
+			t.Errorf("unmanaged object queued for %s", scan)
+		}
 	}
 }

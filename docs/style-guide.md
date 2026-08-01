@@ -761,8 +761,16 @@ they truly belong to a new bounded concern - into a new role.
 6. Add a `Provide<Role>` provider in `internal/di/di.go` if it is a new
    role; otherwise the existing provider already covers it.
 7. Schema changes go in a new `internal/store/postgres/migrations/000NN_*.sql`
-   AND `internal/store/sqlite/schema.sql`. Bump
-   `postgres.ExpectedSchemaVersion`.
+   AND `internal/store/sqlite/schema.sql`. Each engine pins the version it
+   expects, and both have to move together with the schema:
+   - bump `postgres.ExpectedSchemaVersion` to the new migration number
+   - bump `sqlite.expectedSchemaVersion` and the `INSERT INTO schema_version`
+     value at the bottom of `schema.sql` to match
+
+   Missing either one leaves the binary refusing to start against a database
+   it just migrated, and only the integration suite catches it: those tests
+   are behind `//go:build integration`, so `go test ./...` compiles and passes
+   without them. Verify schema work with `make integration-test`.
 
 ### Adding a New Worker
 

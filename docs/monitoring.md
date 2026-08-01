@@ -32,11 +32,11 @@ The dashboard also provides management actions:
 - **Delete** — delete individual objects by clicking the delete icon on any file in the tree
 - **Rebalance** — trigger an on-demand rebalance using the configured strategy and settings
 - **Clean Excess** — remove over-replicated copies that exceed the replication factor
-- **Sync** — import pre-existing objects from a backend's S3 bucket into the proxy database. Select a backend and a virtual bucket — objects already in the database are skipped, and objects belonging to other virtual buckets are excluded.
+- **Sync** - import pre-existing objects from a backend's S3 bucket into the proxy database. Select a backend and a virtual bucket - objects already in the database are skipped, and objects outside every configured virtual bucket prefix are imported as unmanaged so they count toward quota without the workers acting on them.
 
 ### On-demand reconciliation
 
-When a backend loses data (expired credentials, provider outage, accidental deletion), the metadata database retains stale entries that cause log noise in the rebalancer, replicator, and scrubber. The reconcile endpoint walks both the backend (paginated `ListObjects`) and the metadata DB (paginated cursor over `object_locations` ordered by key) as ascending key streams, then merges them in lockstep. Memory is bounded by a 1000-entry page size on each side regardless of total object count, so a backend holding millions of objects reconciles without OOM. Keys belonging to sibling virtual buckets stored on the same backend are skipped — each virtual bucket reconciles in its own pass.
+When a backend loses data (expired credentials, provider outage, accidental deletion), the metadata database retains stale entries that cause log noise in the rebalancer, replicator, and scrubber. The reconcile endpoint walks both the backend (paginated `ListObjects`) and the metadata DB (paginated cursor over `object_locations` ordered by key) as ascending key streams, then merges them in lockstep. Memory is bounded by a 1000-entry page size on each side regardless of total object count, so a backend holding millions of objects reconciles without OOM. Every key found on the backend is imported at its literal key, including keys outside every configured virtual bucket prefix - those bytes occupy the backend's quota either way, so leaving them off the ledger makes space accounting wrong. Rows for such keys are marked unmanaged: they count toward quota, but replication, rebalance, integrity and drain ignore them.
 
 ```bash
 # Reconcile all backends

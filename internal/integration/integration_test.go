@@ -832,7 +832,7 @@ func TestReconcile_StaleRowSweepsCleanupQueue(t *testing.T) {
 
 	// Run reconcile. Backend has no objects, DB has one stale row, so
 	// the delete path fires for our seeded key.
-	res, err := testManager.ReconcileBackend(ctx, backend, virtualBucket, []string{virtualBucket})
+	res, err := testManager.ReconcileBackend(ctx, backend, []string{virtualBucket})
 	if err != nil {
 		t.Fatalf("ReconcileBackend: %v", err)
 	}
@@ -2840,7 +2840,7 @@ func assertProxy404ForAll(t *testing.T, ctx context.Context, proxyClient *s3.Cli
 func importAllToMinio1(t *testing.T, ctx context.Context, keys []string, sizeBytes int64) {
 	t.Helper()
 	for _, key := range keys {
-		imported, err := testStore.ImportObject(ctx, internalKey(key), "minio-1", sizeBytes)
+		imported, err := testStore.ImportObject(ctx, internalKey(key), "minio-1", sizeBytes, false)
 		if err != nil {
 			t.Fatalf("ImportObject(%q): %v", key, err)
 		}
@@ -2892,7 +2892,7 @@ func TestImportPreExistingObjects_ImportIdempotent(t *testing.T) {
 
 	store := testStore
 
-	imported, err := store.ImportObject(ctx, internalKey(key), "minio-1", 200)
+	imported, err := store.ImportObject(ctx, internalKey(key), "minio-1", 200, false)
 	if err != nil {
 		t.Fatalf("ImportObject first: %v", err)
 	}
@@ -2900,7 +2900,7 @@ func TestImportPreExistingObjects_ImportIdempotent(t *testing.T) {
 		t.Error("first ImportObject = false, want true")
 	}
 
-	imported, err = store.ImportObject(ctx, internalKey(key), "minio-1", 200)
+	imported, err = store.ImportObject(ctx, internalKey(key), "minio-1", 200, false)
 	if err != nil {
 		t.Fatalf("ImportObject second: %v", err)
 	}
@@ -2941,7 +2941,7 @@ func TestImportPreExistingObjects_ImportDoesNotOverwriteProxyObject(t *testing.T
 	backend := queryObjectBackend(t, key)
 
 	store := testStore
-	imported, err := store.ImportObject(ctx, internalKey(key), backend, 150)
+	imported, err := store.ImportObject(ctx, internalKey(key), backend, 150, false)
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
@@ -3449,7 +3449,7 @@ func runSyncPipeline(ctx context.Context, backend *s3be.S3Backend, prefix string
 	var imported, skipped int
 	err := backend.ListObjects(ctx, prefix, func(objects []s3be.ListedObject) error {
 		for _, obj := range objects {
-			ok, err := testStore.ImportObject(ctx, obj.Key, "minio-1", obj.SizeBytes)
+			ok, err := testStore.ImportObject(ctx, obj.Key, "minio-1", obj.SizeBytes, false)
 			if err != nil {
 				return fmt.Errorf("ImportObject(%s): %w", obj.Key, err)
 			}

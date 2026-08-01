@@ -19,7 +19,7 @@ The orchestrator runs a set of long-running background workers that keep the met
 | **Replicator** | configurable (default 5m) | Yes | Creates copies of under-replicated objects. Only runs when factor > 1. Runs once at startup. |
 | **Over-replication cleaner** | configurable (default 5m) | Yes | Removes excess copies of objects that exceed the replication factor. Only runs when factor > 1. |
 | **Lifecycle** | 1h | Yes | Deletes objects matching lifecycle rules whose `created_at` exceeds `expiration_days`. Only runs when rules are configured. |
-| **Reconciler** | configurable (default 24h) | Yes | Scans each backend for untracked objects and imports them into the metadata database via `SyncBackend`. Only runs when `reconcile.enabled: true`. |
+| **Reconciler** | configurable (default 24h) | Yes | Diffs each backend's key listing against the object ledger, importing objects the ledger is missing and removing rows for objects the backend no longer holds. One pass covers every virtual bucket sharing the backend. Only runs when `reconcile.enabled: true`. |
 | **Pending reaper** | configurable (default 1m) | Yes | Resolves PUT-before-COMMIT intents that survived a failed metadata commit. HEADs the destination backend and either promotes the row into `object_locations` (object present) or drops the intent (object absent). Skips intents younger than `min_age` so in-flight PUTs are not interrupted. |
 | **Scrubber** | configurable (default 6h) | Yes | Random-samples objects, fetches and re-hashes them, and enqueues a cleanup if the stored `content_hash` does not match. Only runs when `integrity.enabled: true` and `scrubber_interval > 0`. |
 | **Notification drainer** | 5s | No | Drains `notification_outbox` rows by POSTing CloudEvents JSON to configured webhook endpoints. Optional HMAC signing per endpoint. |
@@ -31,6 +31,6 @@ Background services (rebalancer, replicator, over-replication cleaner, cleanup q
 
 ## Multi-instance behavior
 
-The advisory locks are PostgreSQL session-scoped — if one instance holds the lock for a task, other instances skip that tick silently. Each task runs on exactly one instance at any moment. The Notification drainer and CB watchdog are not locked because they're idempotent and per-instance state is acceptable for them.
+The advisory locks are PostgreSQL session-scoped - if one instance holds the lock for a task, other instances skip that tick silently. Each task runs on exactly one instance at any moment. The Notification drainer and CB watchdog are not locked because they're idempotent and per-instance state is acceptable for them.
 
 See [docs/deployment.md](deployment.md) for the multi-instance deployment model.

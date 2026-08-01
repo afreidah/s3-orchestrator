@@ -320,12 +320,13 @@ func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff ti
 }
 
 // ListObjectsByBackend returns objects stored on a specific backend, ordered by
-// size ascending (smallest first). Used by the rebalancer to find movable objects.
+// size ascending (smallest first). Backs the rebalance, placement and drain
+// candidate scans, so it returns managed rows only.
 func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes, created_at
 		FROM object_locations
-		WHERE backend_name = ?
+		WHERE backend_name = ? AND managed
 		ORDER BY size_bytes ASC
 		LIMIT ?`, backendName, limit)
 	if err != nil {
@@ -399,8 +400,8 @@ func (s *Store) DeleteObjectLocation(ctx context.Context, key, backendName strin
 }
 
 // ImportObject delegates to core.ImportObject.
-func (s *Store) ImportObject(ctx context.Context, key, backend string, size int64) (bool, error) {
-	return core.ImportObject(ctx, s, key, backend, size)
+func (s *Store) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool) (bool, error) {
+	return core.ImportObject(ctx, s, key, backend, size, unmanaged)
 }
 
 // BackendObjectStats returns the object count and total bytes stored on a backend.
@@ -449,7 +450,7 @@ func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]core.O
 		SELECT object_key, backend_name, size_bytes, encrypted, encryption_key,
 		       key_id, plaintext_size, content_hash, created_at
 		FROM object_locations
-		WHERE content_hash IS NOT NULL
+		WHERE content_hash IS NOT NULL AND managed
 		ORDER BY RANDOM()
 		LIMIT ?`, limit)
 	if err != nil {
@@ -478,7 +479,7 @@ func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([
 		SELECT object_key, backend_name, size_bytes, encrypted, encryption_key,
 		       key_id, plaintext_size, content_hash, created_at
 		FROM object_locations
-		WHERE content_hash IS NULL
+		WHERE content_hash IS NULL AND managed
 		ORDER BY created_at ASC
 		LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {

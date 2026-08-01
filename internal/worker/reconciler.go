@@ -35,7 +35,7 @@ type ReconcileResult struct {
 // Defined here to avoid a worker->proxy import cycle.
 type BackendSyncer interface {
 	SyncBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (imported, skipped int, err error)
-	ReconcileBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (*ReconcileResult, error)
+	ReconcileBackend(ctx context.Context, backendName string, knownBuckets []string) (*ReconcileResult, error)
 	UpdateQuotaMetrics(ctx context.Context) error
 	ReconcileUsage(ctx context.Context) (map[string]int64, error)
 	BackendOrder() []string
@@ -156,7 +156,7 @@ func (r *Reconciler) ReconcileStreaming(ctx context.Context, backendName string,
 	total := &ReconcileResult{}
 	for _, name := range backends {
 		progress.Track(observer, name, func() string {
-			result, err := r.syncer.ReconcileBackend(ctx, name, r.bucketNames[0], r.bucketNames)
+			result, err := r.syncer.ReconcileBackend(ctx, name, r.bucketNames)
 			if err != nil {
 				r.log.ErrorContext(ctx, "backend failed", "backend", name, "error", err)
 				return progress.StatusFailed

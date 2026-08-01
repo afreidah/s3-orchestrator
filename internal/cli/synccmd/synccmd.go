@@ -23,7 +23,9 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 )
@@ -71,7 +73,7 @@ func Run(args []string, stderr io.Writer) int { // codecov:ignore -- CLI entry p
 		return 1
 	}
 
-	if err := runImport(ctx, s3b, metaDB, backendCfg, opts); err != nil {
+	if err := runImport(ctx, s3b, metaDB, backendCfg, bucketNames(cfg), opts); err != nil {
 		synccmdLogger().ErrorContext(ctx, "sync failed", "error", err)
 		return 1
 	}
@@ -85,7 +87,7 @@ func parseFlags(args []string, stderr io.Writer) (*Options, bool) {
 	opts := &Options{}
 	fs.StringVar(&opts.ConfigPath, "config", "config.yaml", "Path to configuration file")
 	fs.StringVar(&opts.BackendName, "backend", "", "Backend name to sync (required)")
-	fs.StringVar(&opts.BucketName, "bucket", "", "Virtual bucket name to prefix imported keys with (required)")
+	fs.StringVar(&opts.BucketName, "bucket", "", "Virtual bucket the import is being run for; recorded in the log, not used to build keys")
 	fs.StringVar(&opts.Prefix, "prefix", "", "Only sync objects with this key prefix")
 	fs.BoolVar(&opts.DryRun, "dry-run", false, "Preview what would be imported without writing")
 	_ = fs.Parse(args)
@@ -95,12 +97,25 @@ func parseFlags(args []string, stderr io.Writer) (*Options, bool) {
 		fs.Usage()
 		return nil, false
 	}
-	if opts.BucketName == "" {
-		fmt.Fprintln(stderr, "error: --bucket is required")
-		fs.Usage()
-		return nil, false
-	}
 	return opts, true
+}
+
+// bucketNames lists the configured virtual bucket names.
+func bucketNames(cfg *config.Config) []string {
+	out := make([]string, 0, len(cfg.Buckets))
+	for i := range cfg.Buckets {
+		out = append(out, cfg.Buckets[i].Name)
+	}
+	return out
+}
+
+// bucketPrefixes maps virtual bucket names to the key prefixes they own.
+func bucketPrefixes(buckets []string) []string {
+	out := make([]string, 0, len(buckets))
+	for _, b := range buckets {
+		out = append(out, internalkey.Prefix(b))
+	}
+	return out
 }
 
 // loadConfig reads config.yaml and resolves the target backend by name.
@@ -124,7 +139,7 @@ func loadConfig(path, backendName string) (*config.Config, *config.BackendConfig
 // to: a single ImportObject per backend row. Declared locally so the
 // command owns its own dependency contract.
 type importer interface {
-	ImportObject(ctx context.Context, key, backend string, size int64) (bool, error)
+	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool) (bool, error)
 }
 
 // adminStore is the boot-time slice of the store sync needs to apply
@@ -179,7 +194,7 @@ func initStore(ctx context.Context, cfg *config.Config) (importer, adminStore, i
 
 // runImport walks the backend, importing each page into the metadata store.
 // Accumulates and logs totals per page.
-func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB importer, backendCfg *config.BackendConfig, opts *Options) error {
+func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB importer, backendCfg *config.BackendConfig, buckets []string, opts *Options) error {
 	mode := "sync"
 	if opts.DryRun {
 		mode = "dry-run"
@@ -198,7 +213,7 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB importer, bac
 
 	err := s3b.ListObjects(ctx, opts.Prefix, func(objects []backend.ListedObject) error {
 		pageNum++
-		imported, skipped, bytes, err := importPage(ctx, metaDB, objects, backendCfg.Name, opts)
+		imported, skipped, bytes, err := importPage(ctx, metaDB, objects, backendCfg.Name, buckets, opts)
 		if err != nil {
 			return err
 		}
@@ -226,17 +241,22 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB importer, bac
 }
 
 // importPage imports one page of backend objects into the metadata store
-// (or logs them under dry-run), returning per-page counters.
-func importPage(ctx context.Context, metaDB importer, objects []backend.ListedObject, backendName string, opts *Options) (imported, skipped int, bytes int64, err error) {
+// (or logs them under dry-run), returning per-page counters. Keys are imported
+// exactly as the backend holds them; an object outside every configured bucket
+// prefix is recorded as unmanaged so it counts toward quota without any worker
+// acting on it.
+func importPage(ctx context.Context, metaDB importer, objects []backend.ListedObject, backendName string, buckets []string, opts *Options) (imported, skipped int, bytes int64, err error) {
+	prefixes := bucketPrefixes(buckets)
 	for _, obj := range objects {
-		prefixedKey := opts.BucketName + "/" + obj.Key
+		unmanaged := reconcile.Unmanaged(obj.Key, prefixes)
 		if opts.DryRun {
-			synccmdLogger().InfoContext(ctx, "would import", "key", prefixedKey, "size", obj.SizeBytes)
+			synccmdLogger().InfoContext(ctx, "would import",
+				"key", obj.Key, "size", obj.SizeBytes, "unmanaged", unmanaged)
 			imported++
 			bytes += obj.SizeBytes
 			continue
 		}
-		ok, err := metaDB.ImportObject(ctx, prefixedKey, backendName, obj.SizeBytes)
+		ok, err := metaDB.ImportObject(ctx, obj.Key, backendName, obj.SizeBytes, unmanaged)
 		if err != nil {
 			return imported, skipped, bytes, fmt.Errorf("failed to import %s: %w", obj.Key, err)
 		}

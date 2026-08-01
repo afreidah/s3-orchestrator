@@ -27,10 +27,14 @@ WHERE object_key = $1;
 INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW());
 
+-- ListObjectsByBackend backs the rebalance, placement and drain candidate
+-- scans, so it returns managed rows only. Objects outside every configured
+-- bucket prefix are tracked for accounting but are not the orchestrator's to
+-- move.
 -- name: ListObjectsByBackend :many
 SELECT object_key, backend_name, size_bytes, created_at
 FROM object_locations
-WHERE backend_name = $1
+WHERE backend_name = $1 AND managed
 ORDER BY size_bytes ASC
 LIMIT $2;
 
@@ -82,8 +86,8 @@ WHERE object_key = $1
 ORDER BY created_at ASC;
 
 -- name: InsertObjectLocationIfNotExists :one
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, managed, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING true AS inserted;
 
@@ -180,14 +184,16 @@ WHERE object_key = $1 AND backend_name = $2;
 -- pass the WHERE filter; the LIMIT caps the final result.
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
 FROM object_locations TABLESAMPLE BERNOULLI (10)
-WHERE content_hash IS NOT NULL
+WHERE content_hash IS NOT NULL AND managed
 LIMIT $1;
 
 -- name: GetObjectsWithoutHash :many
--- Return object locations that have no content hash, for backfill.
+-- Return object locations that have no content hash, for backfill. Hashing
+-- reads the whole body, so unmanaged rows are left alone rather than spending
+-- egress on data the orchestrator does not manage.
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
 FROM object_locations
-WHERE content_hash IS NULL
+WHERE content_hash IS NULL AND managed
 ORDER BY created_at ASC
 LIMIT $1 OFFSET $2;
 

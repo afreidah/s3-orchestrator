@@ -14,6 +14,7 @@
 WITH under_replicated AS (
     SELECT object_key
     FROM object_locations
+    WHERE managed
     GROUP BY object_key
     HAVING COUNT(*) < @factor::bigint
     LIMIT @max_keys
@@ -27,7 +28,7 @@ ORDER BY ol.object_key ASC, ol.created_at ASC;
 WITH under_replicated AS (
     SELECT object_key
     FROM object_locations
-    WHERE backend_name != ALL(@excluded::text[])
+    WHERE backend_name != ALL(@excluded::text[]) AND managed
     GROUP BY object_key
     HAVING COUNT(*) < @factor::bigint
     LIMIT @max_keys
@@ -41,6 +42,7 @@ ORDER BY ol.object_key ASC, ol.created_at ASC;
 WITH over_replicated AS (
     SELECT object_key
     FROM object_locations
+    WHERE managed
     GROUP BY object_key
     HAVING COUNT(*) > @factor::bigint
     LIMIT @max_keys
@@ -55,6 +57,7 @@ SELECT COUNT(*)::bigint AS count
 FROM (
     SELECT object_key
     FROM object_locations
+    WHERE managed
     GROUP BY object_key
     HAVING COUNT(*) > @factor::bigint
 ) over_replicated;

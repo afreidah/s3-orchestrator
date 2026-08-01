@@ -30,6 +30,7 @@ func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int
 		 JOIN (
 		     SELECT object_key
 		     FROM object_locations
+		     WHERE managed
 		     GROUP BY object_key
 		     HAVING COUNT(*) < ?
 		     LIMIT ?
@@ -68,7 +69,7 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 		JOIN (
 		    SELECT object_key
 		    FROM object_locations
-		    WHERE backend_name NOT IN (SELECT value FROM json_each(?))
+		    WHERE backend_name NOT IN (SELECT value FROM json_each(?)) AND managed
 		    GROUP BY object_key
 		    HAVING COUNT(*) < ?
 		    LIMIT ?
@@ -100,6 +101,7 @@ func (s *Store) GetOverReplicatedObjects(ctx context.Context, factor, limit int)
 		 JOIN (
 		     SELECT object_key
 		     FROM object_locations
+		     WHERE managed
 		     GROUP BY object_key
 		     HAVING COUNT(*) > ?
 		     LIMIT ?
@@ -123,6 +125,7 @@ func (s *Store) CountOverReplicatedObjects(ctx context.Context, factor int) (int
 		`SELECT COUNT(*) FROM (
 		     SELECT object_key
 		     FROM object_locations
+		     WHERE managed
 		     GROUP BY object_key
 		     HAVING COUNT(*) > ?
 		 )`,

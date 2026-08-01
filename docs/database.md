@@ -46,7 +46,9 @@ SQLite is the default for single-instance use; PostgreSQL is required for multi-
 The orchestrator supports two metadata-store engines:
 
 - **SQLite** (default) — embedded, zero-dependency, single-instance. Schema is
-  applied at startup from a single consolidated `schema.sql`.
+  applied at startup from a single consolidated `schema.sql` and pinned by a
+  `schema_version` table, so a database written by a newer binary is refused
+  rather than silently mis-read.
 - **PostgreSQL** — required for multi-instance deployments. Connects via
   pgx/v5 pools and auto-applies versioned migrations on startup using
   [goose](https://github.com/pressly/goose); migration files are embedded
@@ -63,7 +65,7 @@ The schema currently provisions:
 | Table | Purpose |
 |-------|---------|
 | `backend_quotas` | Per-backend byte limits, usage counters, and orphan bytes tracking |
-| `object_locations` | Maps object keys to backends with size tracking |
+| `object_locations` | Maps object keys to backends with size tracking. The `managed` flag is false for objects reconcile found outside every configured virtual bucket prefix: they count toward quota, but replication, rebalance, integrity and drain skip them |
 | `multipart_uploads` | In-progress multipart upload metadata |
 | `multipart_parts` | Individual parts for active multipart uploads |
 | `backend_usage` | Monthly per-backend API request and data transfer counters |

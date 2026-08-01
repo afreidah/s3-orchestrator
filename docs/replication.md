@@ -69,7 +69,7 @@ Cleanup can also be triggered on demand via the admin API (`POST /admin/api/over
 ## Orphan reconciliation
 
 
-Optional background service that periodically scans each backend's S3 bucket and reconciles it against the metadata database. For each backend, it walks both sides as ascending key streams — S3 paginated by `ListObjects` and the DB paginated by `ListObjectsByBackendKeyAsc` — and merges them in lockstep. Keys present only on the backend are imported; keys present only in the DB are removed. Memory is bounded by the page size on each side (1000 entries) regardless of object count, so backends holding millions of objects reconcile without OOM. Rows owned by sibling virtual buckets stored on the same backend are skipped so a per-bucket pass does not affect other buckets.
+Optional background service that periodically scans each backend's S3 bucket and reconciles it against the metadata database. For each backend, it walks both sides as ascending key streams — S3 paginated by `ListObjects` and the DB paginated by `ListObjectsByBackendKeyAsc` — and merges them in lockstep. Keys present only on the backend are imported; keys present only in the DB are removed. Memory is bounded by the page size on each side (1000 entries) regardless of object count, so backends holding millions of objects reconcile without OOM. Objects are imported at their literal backend key, including keys outside every configured virtual bucket prefix; those rows are marked unmanaged, so they count toward the backend's quota without replication, rebalance, integrity or drain acting on them.
 
 ```yaml
 reconcile:
