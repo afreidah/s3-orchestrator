@@ -605,10 +605,10 @@ func TestPgAdapter_InsertObjectLocationIfNotExists_BothBranches(t *testing.T) {
 	key := uniqueKey(t, "k")
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
-	if got, err := s.ImportObject(ctx, key, "backend-a", 50); err != nil || !got {
+	if got, err := s.ImportObject(ctx, key, "backend-a", 50, false); err != nil || !got {
 		t.Fatalf("ImportObject(insert): got=%v err=%v, want (true, nil)", got, err)
 	}
-	if got, err := s.ImportObject(ctx, key, "backend-a", 50); err != nil || got {
+	if got, err := s.ImportObject(ctx, key, "backend-a", 50, false); err != nil || got {
 		t.Errorf("ImportObject(idempotent): got=%v err=%v, want (false, nil)", got, err)
 	}
 }

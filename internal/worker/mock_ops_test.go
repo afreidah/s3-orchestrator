@@ -656,18 +656,18 @@ func (mr *MockBackendSyncerMockRecorder) BackendOrder() *gomock.Call {
 }
 
 // ReconcileBackend mocks base method.
-func (m *MockBackendSyncer) ReconcileBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (*ReconcileResult, error) {
+func (m *MockBackendSyncer) ReconcileBackend(ctx context.Context, backendName string, knownBuckets []string) (*ReconcileResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ReconcileBackend", ctx, backendName, bucket, knownBuckets)
+	ret := m.ctrl.Call(m, "ReconcileBackend", ctx, backendName, knownBuckets)
 	ret0, _ := ret[0].(*ReconcileResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ReconcileBackend indicates an expected call of ReconcileBackend.
-func (mr *MockBackendSyncerMockRecorder) ReconcileBackend(ctx, backendName, bucket, knownBuckets any) *gomock.Call {
+func (mr *MockBackendSyncerMockRecorder) ReconcileBackend(ctx, backendName, knownBuckets any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReconcileBackend", reflect.TypeOf((*MockBackendSyncer)(nil).ReconcileBackend), ctx, backendName, bucket, knownBuckets)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReconcileBackend", reflect.TypeOf((*MockBackendSyncer)(nil).ReconcileBackend), ctx, backendName, knownBuckets)
 }
 
 // ReconcileUsage mocks base method.

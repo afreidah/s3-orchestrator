@@ -102,9 +102,9 @@ func TestReconcile_AllBackends(t *testing.T) {
 	syncer := NewMockBackendSyncer(ctrl)
 
 	syncer.EXPECT().BackendOrder().Return([]string{"b1", "b2"})
-	syncer.EXPECT().ReconcileBackend(gomock.Any(), "b1", "unified", []string{"unified"}).
+	syncer.EXPECT().ReconcileBackend(gomock.Any(), "b1", []string{"unified"}).
 		Return(&ReconcileResult{Imported: 1, Removed: 3, BackendsScanned: 1}, nil)
-	syncer.EXPECT().ReconcileBackend(gomock.Any(), "b2", "unified", []string{"unified"}).
+	syncer.EXPECT().ReconcileBackend(gomock.Any(), "b2", []string{"unified"}).
 		Return(&ReconcileResult{Imported: 0, Removed: 2, BackendsScanned: 1}, nil)
 	syncer.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
 	syncer.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
@@ -132,7 +132,7 @@ func TestReconcile_SingleBackend(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
 
-	syncer.EXPECT().ReconcileBackend(gomock.Any(), "b1", "unified", []string{"unified"}).
+	syncer.EXPECT().ReconcileBackend(gomock.Any(), "b1", []string{"unified"}).
 		Return(&ReconcileResult{Imported: 0, Removed: 10, BackendsScanned: 1}, nil)
 	syncer.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
 	syncer.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()

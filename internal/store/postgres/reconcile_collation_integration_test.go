@@ -165,12 +165,12 @@ func runReconcile(t *testing.T, s *Store, backendName string, keys []string) rec
 
 	fake := &fakeObjectLister{keys: keys}
 	db := reconcile.NewDBCursorStream(reconcile.DBCursorStreamDeps{Store: s, BackendName: backendName})
-	s3 := reconcile.NewS3KeyStream(ctx, fake, "", nil, nil)
+	s3 := reconcile.NewS3KeyStream(ctx, fake, nil, nil)
 	defer s3.Stop()
 	defer db.Stop()
 
 	var res reconcile.Result
-	importer := func(_ context.Context, _, _ string, _ int64) (bool, error) { return true, nil }
+	importer := func(_ context.Context, _, _ string, _ int64, _ bool) (bool, error) { return true, nil }
 	deleter := func(_ context.Context, _, _ string) error { return nil }
 	onImp := reconcile.ImportHandler(slog.Default(), backendName, importer, &res)
 	onDel := reconcile.DeleteHandler(slog.Default(), backendName, deleter, &res)

@@ -25,7 +25,7 @@ var schemaSQL string
 
 // expectedSchemaVersion is the SQLite schema version this binary expects.
 // Bump this when the embedded schema.sql is updated.
-const expectedSchemaVersion = 2
+const expectedSchemaVersion = 3
 
 // RunMigrations applies the embedded SQLite schema if the database has not
 // been initialised yet. If schema_version already exists and the version

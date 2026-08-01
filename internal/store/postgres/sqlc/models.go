@@ -96,6 +96,7 @@ type ObjectLocation struct {
 	KeyID         *string
 	PlaintextSize *int64
 	ContentHash   *string
+	Managed       bool
 }
 
 type PendingObject struct {

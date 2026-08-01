@@ -72,3 +72,11 @@ func nullInt64Value(n sql.NullInt64) int64 {
 	}
 	return n.Int64
 }
+
+// boolToInt renders a Go bool as the 0/1 integer SQLite stores booleans as.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}

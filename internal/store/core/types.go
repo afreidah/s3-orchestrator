@@ -25,6 +25,13 @@ type EncryptionMeta struct {
 	KeyID         string
 	PlaintextSize int64
 	ContentHash   string
+
+	// Unmanaged marks an object that exists on the backend but outside every
+	// configured virtual bucket prefix: real bytes the orchestrator did not
+	// write and does not act on. It is stored as the negated `managed` column,
+	// so the zero value means managed and a construction site that omits it
+	// cannot accidentally produce a row the workers ignore.
+	Unmanaged bool
 }
 
 // ObjectLocation records that a backend currently holds a copy of a key,
@@ -39,6 +46,13 @@ type ObjectLocation struct {
 	KeyID         string
 	PlaintextSize int64
 	ContentHash   string
+
+	// Unmanaged marks an object that exists on the backend but outside every
+	// configured virtual bucket prefix: real bytes the orchestrator did not
+	// write and does not act on. It is stored as the negated `managed` column,
+	// so the zero value means managed and a construction site that omits it
+	// cannot accidentally produce a row the workers ignore.
+	Unmanaged bool
 }
 
 // ExistingCopy is the projection of an object_locations row that promotion

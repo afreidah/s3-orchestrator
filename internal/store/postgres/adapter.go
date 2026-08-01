@@ -176,6 +176,7 @@ func (a *pgTxAdapter) InsertObjectLocationIfNotExists(ctx context.Context, loc *
 		ObjectKey:   loc.ObjectKey,
 		BackendName: loc.BackendName,
 		SizeBytes:   loc.SizeBytes,
+		Managed:     !loc.Unmanaged,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
