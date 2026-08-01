@@ -49,7 +49,7 @@ type errorObjectStore struct {
 // ImportObject records the import call so the test can assert it
 // happened. The first return value mirrors the real store's
 // inserted=true semantics for a fresh row.
-func (e errorObjectStore) ImportObject(context.Context, string, string, int64) (bool, error) {
+func (e errorObjectStore) ImportObject(context.Context, string, string, int64, bool) (bool, error) {
 	return false, e.err
 }
 
@@ -88,6 +88,20 @@ backends:
     secret_access_key: sk
 `
 
+// TestParseFlags_BucketOptional pins that --bucket is no longer required.
+// Keys are imported exactly as the backend holds them, so there is nothing for
+// a virtual bucket name to contribute to the import.
+func TestParseFlags_BucketOptional(t *testing.T) {
+	var stderr bytes.Buffer
+	opts, ok := parseFlags([]string{"--backend", "b1"}, &stderr)
+	if !ok {
+		t.Fatalf("expected --bucket to be optional, stderr=%q", stderr.String())
+	}
+	if opts.BackendName != "b1" {
+		t.Errorf("backend = %q, want b1", opts.BackendName)
+	}
+}
+
 // TestParseFlags_RequiredMissing covers both required-flag branches in
 // parseFlags. The flag set is constructed with ContinueOnError-equivalent
 // behaviour by exiting before fs.Usage prints to a real terminal.
@@ -98,7 +112,6 @@ func TestParseFlags_RequiredMissing(t *testing.T) {
 		want string
 	}{
 		{"no-backend", []string{"--bucket", "vb"}, "--backend is required"},
-		{"no-bucket", []string{"--backend", "b1"}, "--bucket is required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -198,7 +211,7 @@ func TestImportPage_DryRun(t *testing.T) {
 		{Key: "b.txt", SizeBytes: 20},
 	}
 	imp, skip, bytesIn, err := importPage(
-		context.Background(), objects, page, "b1",
+		context.Background(), objects, page, "b1", []string{"vb"},
 		&Options{BucketName: "vb", DryRun: true},
 	)
 	if err != nil {
@@ -220,7 +233,7 @@ func TestImportPage_RealImportSkipsExisting(t *testing.T) {
 
 	// First pass: both rows are created.
 	imp, skip, bytesIn, err := importPage(
-		context.Background(), objects, page, "b1",
+		context.Background(), objects, page, "b1", []string{"vb"},
 		&Options{BucketName: "vb"},
 	)
 	if err != nil {
@@ -232,7 +245,7 @@ func TestImportPage_RealImportSkipsExisting(t *testing.T) {
 
 	// Second pass: both already exist, so ImportObject returns (false, nil).
 	imp, skip, bytesIn, err = importPage(
-		context.Background(), objects, page, "b1",
+		context.Background(), objects, page, "b1", []string{"vb"},
 		&Options{BucketName: "vb"},
 	)
 	if err != nil {
@@ -251,7 +264,7 @@ func TestImportPage_PropagatesError(t *testing.T) {
 	_, _, _, err := importPage(
 		context.Background(), wrapped,
 		[]backend.ListedObject{{Key: "x", SizeBytes: 1}},
-		"b1", &Options{BucketName: "vb"},
+		"b1", []string{"vb"}, &Options{BucketName: "vb"},
 	)
 	if err == nil {
 		t.Fatal("expected error to propagate")

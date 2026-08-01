@@ -196,19 +196,16 @@ func (a *sqliteTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string
 // InsertObjectLocation writes a new object_locations row carrying the
 // encryption and integrity metadata on loc.
 func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.ObjectLocation) error {
-	encrypted := 0
-	if loc.Encrypted {
-		encrypted = 1
-	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := a.tx.ExecContext(ctx,
 		`INSERT INTO object_locations
 		   (object_key, backend_name, size_bytes, encrypted, encryption_key,
-		    key_id, plaintext_size, content_hash, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		loc.ObjectKey, loc.BackendName, loc.SizeBytes, encrypted,
+		    key_id, plaintext_size, content_hash, managed, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		loc.ObjectKey, loc.BackendName, loc.SizeBytes, boolToInt(loc.Encrypted),
 		loc.EncryptionKey,
 		nullableString(loc.KeyID), nullableInt64(loc.PlaintextSize), nullableString(loc.ContentHash),
+		boolToInt(!loc.Unmanaged),
 		now,
 	); err != nil {
 		return fmt.Errorf("insert object location: %w", err)

@@ -65,6 +65,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        TEXT key_id',
     '        BIGINT plaintext_size',
     '        TEXT content_hash',
+    '        BOOLEAN managed',
     '        TIMESTAMPTZ created_at',
     '    }',
     '',
@@ -199,8 +200,9 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>key_id</td><td>TEXT</td><td>KMS/Vault key version identifier</td></tr>' +
         '<tr><td>plaintext_size</td><td>BIGINT</td><td>Original size before encryption</td></tr>' +
         '<tr><td>content_hash</td><td>TEXT</td><td>SHA-256 hex digest of plaintext (nullable)</td></tr>' +
+        '<tr><td>managed</td><td>BOOLEAN</td><td>False for objects reconcile found outside every virtual bucket prefix &mdash; they count toward quota but replication, rebalance, integrity and drain ignore them (default true)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Insert timestamp</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_backend (backend_name) &bull; idx_object_locations_key_pattern (object_key text_pattern_ops) &bull; idx_object_locations_created (created_at) &bull; idx_object_locations_key_created (object_key, created_at) &bull; idx_object_locations_backend_key_collate_c (backend_name, object_key COLLATE "C")</p>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_backend (backend_name) &bull; idx_object_locations_key_pattern (object_key text_pattern_ops) &bull; idx_object_locations_created (created_at) &bull; idx_object_locations_key_created (object_key, created_at) &bull; idx_object_locations_backend_key_collate_c (backend_name, object_key COLLATE "C") &bull; idx_object_locations_key_collate_c (object_key COLLATE "C") &bull; idx_object_locations_managed (backend_name) WHERE managed</p>' +
         '<p>Used by: <a href="../write-path/">write path</a> (RecordObject), <a href="../read-path/">read path</a> (GetAllObjectLocations), <a href="../background-services/">replicator</a> (GetUnderReplicatedObjects), directory tree listing, <a href="../encryption/">key rotation</a>.</p>' +
         '<p class="ac-metric">Key queries: InsertObjectLocation, ListObjectsByPrefix, GetDirectoryStats, GetUnderReplicatedObjects, BackendObjectStats</p>'
     },
@@ -442,3 +444,5 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | `00010_multipart_upload_encryption` | Add `encryption_key` and `key_id` columns to `multipart_uploads` so every part of an encrypted upload shares one wrapped DEK |
 | `00011_cleanup_queue_claim` | Add `claimed_at` and `claimed_by` to `cleanup_queue`; replace the partial index with `idx_cleanup_queue_claim (next_retry, created_at) WHERE attempts < 10`; supports the `ClaimPendingCleanups` `FOR UPDATE SKIP LOCKED` worker pattern that prevents cross-instance double-processing |
 | `00012_reconcile_cursor_collation_index` | Add `idx_object_locations_backend_key_collate_c (backend_name, object_key COLLATE "C")` so the reconcile sorted-merge cursor's byte-ordered scan is index-backed |
+| `00013_delimiter_prefix_collation_index` | Add `idx_object_locations_key_collate_c (object_key COLLATE "C")` so `ListObjectsDelimited` folds keys into `CommonPrefixes` with a loose index scan instead of a per-step sort |
+| `00014_object_managed_flag` | Add `managed` to `object_locations` (default true) plus `idx_object_locations_managed (backend_name) WHERE managed`, so reconcile can import objects that sit outside every virtual bucket prefix for quota accounting without the workers acting on them |

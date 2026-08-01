@@ -12,6 +12,8 @@ package proxy
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 	"testing"
 
 	"go.uber.org/mock/gomock"
@@ -145,7 +147,7 @@ func TestReconciler_RunDoesNotPanicOnBackendError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().ImportObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().ImportObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(false, errors.New("db error")).
 		AnyTimes()
 	storetest.Permissive(store)
@@ -163,7 +165,7 @@ func TestReconcileBackend_UnknownBackend(t *testing.T) {
 	store := newPermissiveMock(t)
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	if _, err := mgr.ReconcileBackend(context.Background(), "nonexistent", "unified", []string{"unified"}); err == nil {
+	if _, err := mgr.ReconcileBackend(context.Background(), "nonexistent", []string{"unified"}); err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }
@@ -175,7 +177,7 @@ func TestReconcileBackend_ListingNotSupported(t *testing.T) {
 	store := newPermissiveMock(t)
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": newMockBackend()})
 
-	if _, err := mgr.ReconcileBackend(context.Background(), "b1", "unified", []string{"unified"}); err == nil {
+	if _, err := mgr.ReconcileBackend(context.Background(), "b1", []string{"unified"}); err == nil {
 		t.Fatal("expected error for backend that doesn't support listing")
 	}
 }
@@ -257,7 +259,7 @@ func TestReconcileBackend_HappyPathImportsAndDeletes(t *testing.T) {
 			return nil, nil
 		}).
 		AnyTimes()
-	store.EXPECT().ImportObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().ImportObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(true, nil).
 		AnyTimes()
 	var deletedKeys []string
@@ -279,7 +281,7 @@ func TestReconcileBackend_HappyPathImportsAndDeletes(t *testing.T) {
 	// Replace the registered backend with our listing-capable variant.
 	mgr.Runtime().Backends()["b1"] = listing
 
-	res, err := mgr.ReconcileBackend(context.Background(), "b1", "vb", []string{"vb"})
+	res, err := mgr.ReconcileBackend(context.Background(), "b1", []string{"vb"})
 	if err != nil {
 		t.Fatalf("ReconcileBackend: %v", err)
 	}
@@ -325,7 +327,7 @@ func TestReconcileBackend_NoMutationsWhenInSync(t *testing.T) {
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": listing.mockBackend})
 	mgr.Runtime().Backends()["b1"] = listing
 
-	res, err := mgr.ReconcileBackend(context.Background(), "b1", "vb", []string{"vb"})
+	res, err := mgr.ReconcileBackend(context.Background(), "b1", []string{"vb"})
 	if err != nil {
 		t.Fatalf("ReconcileBackend: %v", err)
 	}
@@ -350,8 +352,142 @@ func TestReconcileBackend_PropagatesS3ListingError(t *testing.T) {
 	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": listing.mockBackend})
 	mgr.Runtime().Backends()["b1"] = listing
 
-	_, err := mgr.ReconcileBackend(context.Background(), "b1", "vb", []string{"vb"})
+	_, err := mgr.ReconcileBackend(context.Background(), "b1", []string{"vb"})
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
+	}
+}
+
+// TestReconcileBackend_StrayObjectDoesNotChurn is the regression test for the
+// oscillation. A single object at the backend root used to be rewritten under
+// the first virtual bucket's prefix, which put it ahead of every key that
+// sorted before it and made the merge delete-then-reimport all of them on
+// every pass. The stray is now imported at its own key, so a ledger already
+// matching the backend produces no mutations at all.
+func TestReconcileBackend_StrayObjectDoesNotChurn(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+
+	// The ledger is already in step with the backend, stray included.
+	store.EXPECT().ListObjectsByBackendKeyAsc(gomock.Any(), "b1", gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, afterKey string, _ int) ([]core.ObjectLocation, error) {
+			if afterKey == "" {
+				return []core.ObjectLocation{
+					{ObjectKey: "test.txt", BackendName: "b1"},
+					{ObjectKey: "unified/a", BackendName: "b1"},
+					{ObjectKey: "unified/b", BackendName: "b1"},
+				}, nil
+			}
+			return nil, nil
+		}).AnyTimes()
+
+	var imported, deleted []string
+	store.EXPECT().ImportObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, key, _ string, _ int64, _ bool) (bool, error) {
+			imported = append(imported, key)
+			return true, nil
+		}).AnyTimes()
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, key, _ string) error {
+			deleted = append(deleted, key)
+			return nil
+		}).AnyTimes()
+	storetest.Permissive(store)
+
+	// Byte order puts the stray between the two owned keys' prefix and itself:
+	// "test.txt" < "unified/...", which is exactly the ordering the old
+	// rewrite destroyed.
+	listing := &listingMockBackend{
+		mockBackend: newMockBackend(),
+		pages: [][]backend.ListedObject{
+			{{Key: "test.txt", SizeBytes: 1}, {Key: "unified/a", SizeBytes: 2}, {Key: "unified/b", SizeBytes: 3}},
+		},
+	}
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": listing.mockBackend})
+	mgr.Runtime().Backends()["b1"] = listing
+
+	res, err := mgr.ReconcileBackend(context.Background(), "b1", []string{"unified"})
+	if err != nil {
+		t.Fatalf("ReconcileBackend: %v", err)
+	}
+	if res.Imported != 0 || res.Removed != 0 {
+		t.Errorf("imported=%d removed=%d, want a no-op pass", res.Imported, res.Removed)
+	}
+	if len(imported) != 0 || len(deleted) != 0 {
+		t.Errorf("imported=%v deleted=%v, want no mutations", imported, deleted)
+	}
+}
+
+// TestReconcileBackend_StrayImportedAsUnmanaged asserts a newly discovered
+// stray lands on the ledger at its own key and flagged unmanaged, so it counts
+// toward the backend's quota without any worker acting on it.
+func TestReconcileBackend_StrayImportedAsUnmanaged(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackendKeyAsc(gomock.Any(), "b1", gomock.Any(), gomock.Any()).
+		Return(nil, nil).AnyTimes()
+
+	got := map[string]bool{} // key -> unmanaged
+	store.EXPECT().ImportObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, key, _ string, _ int64, unmanaged bool) (bool, error) {
+			got[key] = unmanaged
+			return true, nil
+		}).AnyTimes()
+	storetest.Permissive(store)
+
+	listing := &listingMockBackend{
+		mockBackend: newMockBackend(),
+		pages: [][]backend.ListedObject{
+			{{Key: "test.txt", SizeBytes: 1}, {Key: "unified/a", SizeBytes: 2}},
+		},
+	}
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": listing.mockBackend})
+	mgr.Runtime().Backends()["b1"] = listing
+
+	if _, err := mgr.ReconcileBackend(context.Background(), "b1", []string{"unified"}); err != nil {
+		t.Fatalf("ReconcileBackend: %v", err)
+	}
+	want := map[string]bool{"test.txt": true, "unified/a": false}
+	if !maps.Equal(got, want) {
+		t.Errorf("imports = %v, want %v", got, want)
+	}
+}
+
+// TestReconcileBackend_CoversEveryVirtualBucket asserts one pass reconciles
+// every virtual bucket sharing the backend. Reconcile used to run against
+// bucketNames[0] only, so a second bucket's keys were excluded as siblings and
+// never reconciled at all.
+func TestReconcileBackend_CoversEveryVirtualBucket(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().ListObjectsByBackendKeyAsc(gomock.Any(), "b1", gomock.Any(), gomock.Any()).
+		Return(nil, nil).AnyTimes()
+
+	var imported []string
+	store.EXPECT().ImportObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, key, _ string, _ int64, _ bool) (bool, error) {
+			imported = append(imported, key)
+			return true, nil
+		}).AnyTimes()
+	storetest.Permissive(store)
+
+	listing := &listingMockBackend{
+		mockBackend: newMockBackend(),
+		pages: [][]backend.ListedObject{
+			{{Key: "aptly/deb", SizeBytes: 1}, {Key: "unified/a", SizeBytes: 2}},
+		},
+	}
+	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": listing.mockBackend})
+	mgr.Runtime().Backends()["b1"] = listing
+
+	if _, err := mgr.ReconcileBackend(context.Background(), "b1", []string{"unified", "aptly"}); err != nil {
+		t.Fatalf("ReconcileBackend: %v", err)
+	}
+	want := []string{"aptly/deb", "unified/a"}
+	if !slices.Equal(imported, want) {
+		t.Errorf("imported = %v, want both buckets covered: %v", imported, want)
 	}
 }

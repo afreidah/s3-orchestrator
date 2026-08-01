@@ -323,7 +323,11 @@ The long-running operations render the same live progress stream `admin` shows o
 
 ## Importing Existing Data
 
-The `sync` subcommand imports objects from an existing backend bucket into the orchestrator's metadata database. Use this when bringing a bucket that already has data under orchestrator management.
+The `sync` subcommand imports objects from an existing backend bucket into the orchestrator's metadata database, on demand, without waiting for the reconcile cycle to reach that backend.
+
+Objects are recorded at the key the backend actually holds them under. An object already under a virtual bucket's prefix (`my-files/photos/cat.jpg`) is imported as a managed object and behaves like any other. An object outside every configured prefix (`cat.jpg` at the bucket root) is recorded as **unmanaged**: it counts toward the backend's quota, because the bytes are really there and placement decisions depend on accurate totals, but replication, rebalance, drain and integrity passes leave it alone. It is also not reachable through the S3 API, since no virtual bucket claims it.
+
+Importing raw data at the bucket root therefore makes the orchestrator *aware* of it, not responsible for it. To bring such objects under management, move them under a virtual bucket's prefix on the backend first, then sync.
 
 ### Dry run first
 
@@ -346,7 +350,7 @@ s3-orchestrator sync \
   --bucket my-files
 ```
 
-The `--bucket` flag specifies which virtual bucket the imported objects belong to. Keys are stored internally as `{bucket}/{key}`, so this determines the namespace.
+`--bucket` records which virtual bucket the import was run for and appears in the log. It does not affect the keys written: those come from the backend listing verbatim, and whether an object is managed is decided by the prefixes of every configured bucket.
 
 ### Partial import with --prefix
 
@@ -368,7 +372,7 @@ Objects already tracked in the database for that backend are automatically skipp
 |------|---------|-------------|
 | `--config` | `config.yaml` | Path to configuration file |
 | `--backend` | (required) | Backend name to sync from |
-| `--bucket` | (required) | Virtual bucket name to assign to imported objects |
+| `--bucket` | `""` | Virtual bucket the import is being run for; recorded in the log, not used to build keys |
 | `--prefix` | `""` | Only sync objects with this key prefix |
 | `--dry-run` | `false` | Preview without writing to the database |
 

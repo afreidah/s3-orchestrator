@@ -52,6 +52,14 @@ curl -X DELETE -H "X-Admin-Token: $TOKEN" \
 
 The confirmation token is signed and scoped to the backend it was issued for; it cannot be reused for a different one.
 
+## Objects the orchestrator does not own
+
+A backend's bucket can hold objects the orchestrator never wrote: data that predates it, or files placed there by something else. Reconcile records them at the key the backend holds them under and marks them **unmanaged**.
+
+An unmanaged object counts toward the backend's `bytes_used`, because the bytes really are occupying the quota and placement decisions read those totals. Nothing else touches it: replication will not copy it, rebalance will not move it, drain will not relocate it, and scrub and checksum backfill skip it rather than spending egress reading a body the orchestrator does not manage. It is also unreachable through the S3 API, since no virtual bucket claims its key.
+
+To bring such an object under management, move it under a virtual bucket's prefix on the backend; the next reconcile will pick it up as a normal object.
+
 ## Skipped operations
 
 Endpoints that trigger a worker report whether the pass actually ran. A response with `"status": "ok"` did the work; `"status": "skipped"` did not, and carries a `reason` explaining why -- usually that the feature is not configured. Replication endpoints skip when the factor is 1 or replication is unset; integrity endpoints skip when verification is disabled. Rebalance skips when backend utilization is already within the configured threshold, or when the strategy plans no moves.

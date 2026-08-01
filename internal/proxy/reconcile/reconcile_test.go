@@ -10,7 +10,7 @@
 //     interleaved, error propagation, empty inputs).
 //   - dbCursorStream: paginated DB iterator. Covers cursor advancement,
 //     end-of-stream, sibling-bucket filter, store-error propagation.
-//   - helper functions: namespaceKey, siblingPrefixes, ImportHandler,
+//   - helper functions: Unmanaged, ImportHandler,
 //     DeleteHandler.
 //
 // The full end-to-end path (real *backend.S3Backend, real PostgreSQL) is
@@ -25,6 +25,7 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -347,7 +348,7 @@ func TestDBCursorStream_DrainsAcrossPages(t *testing.T) {
 			{{ObjectKey: "vb/c"}, {ObjectKey: "vb/d"}},
 		},
 	}
-	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1", BucketPrefix: "vb/"})
+	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1"})
 	got := drainStream(t, it)
 	want := []string{"vb/a", "vb/b", "vb/c", "vb/d"}
 	if !slices.Equal(got, want) {
@@ -355,22 +356,24 @@ func TestDBCursorStream_DrainsAcrossPages(t *testing.T) {
 	}
 }
 
-// TestDBCursorStream_FiltersSiblingBucket verifies sibling-bucket rows are
-// dropped  -  they belong to another bucket's reconcile pass.
-func TestDBCursorStream_FiltersSiblingBucket(t *testing.T) {
+// TestDBCursorStream_YieldsEveryBucket verifies the cursor emits rows for every
+// virtual bucket on the backend. Reconcile is backend-scoped, and a row the
+// cursor skipped would look backend-only to the merge and be re-imported on
+// every pass.
+func TestDBCursorStream_YieldsEveryBucket(t *testing.T) {
 	lister := &fakeLister{
 		pages: [][]core.ObjectLocation{
 			{
+				{ObjectKey: "other/x"},
 				{ObjectKey: "vb/a"},
-				{ObjectKey: "other/x"}, // sibling bucket; must be skipped
 				{ObjectKey: "vb/b"},
 			},
 		},
 	}
-	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1", BucketPrefix: "vb/", OtherPrefixes: []string{"other/"}})
+	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1"})
 	got := drainStream(t, it)
-	if !slices.Equal(got, []string{"vb/a", "vb/b"}) {
-		t.Errorf("sibling-bucket row not filtered: %v", got)
+	if !slices.Equal(got, []string{"other/x", "vb/a", "vb/b"}) {
+		t.Errorf("got %v, want every row for the backend", got)
 	}
 }
 
@@ -386,7 +389,7 @@ func TestDBCursorStream_PropagatesError(t *testing.T) {
 		err:   want,
 		errAt: 1, // fail on the second page fetch
 	}
-	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1", BucketPrefix: "vb/"})
+	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1"})
 	ctx := context.Background()
 
 	// Page 1  -  should succeed.
@@ -405,12 +408,13 @@ func TestDBCursorStream_PropagatesError(t *testing.T) {
 }
 
 // TestDBCursorStream_StopIsNoop confirms stop is callable and idempotent
-//  -  it has no goroutine to halt, so the contract is "does not panic and
+//   - it has no goroutine to halt, so the contract is "does not panic and
+//
 // has no side effect on subsequent next calls."
 func TestDBCursorStream_StopIsNoop(t *testing.T) {
 	t.Parallel()
 	lister := &fakeLister{pages: [][]core.ObjectLocation{{{ObjectKey: "vb/a"}}}}
-	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1", BucketPrefix: "vb/"})
+	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1"})
 	it.Stop()
 	it.Stop() // idempotent
 	got := drainStream(t, it)
@@ -427,7 +431,7 @@ func TestDBCursorStream_ContextCancellation(t *testing.T) {
 	}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1", BucketPrefix: "vb/"})
+	it := NewDBCursorStream(DBCursorStreamDeps{Store: lister, BackendName: "be1"})
 	_, ok, err := it.Next(ctx)
 	if ok || err == nil {
 		t.Errorf("cancelled ctx should abort: ok=%v err=%v", ok, err)
@@ -454,53 +458,34 @@ func drainStream(t *testing.T, it keySource) []string {
 }
 
 // -------------------------------------------------------------------------
-// namespaceKey + siblingPrefixes
+// Unmanaged
 // -------------------------------------------------------------------------
 
-// TestNamespaceKey_OwnBucket covers a key already namespaced to the
-// current bucket  -  left untouched.
-func TestNamespaceKey_OwnBucket(t *testing.T) {
-	got, ok := namespaceKey("vb/foo", "vb/", []string{"other/"})
-	if !ok || got != "vb/foo" {
-		t.Errorf("got (%q,%v), want (vb/foo,true)", got, ok)
+// TestUnmanaged covers the classification that replaces the old prefix
+// rewriting: a key is managed when it sits under some configured virtual
+// bucket, and unmanaged otherwise. Nothing is dropped and nothing is renamed.
+func TestUnmanaged(t *testing.T) {
+	prefixes := []string{"vb/", "other/"}
+	cases := map[string]bool{
+		"vb/foo":    false,
+		"other/foo": false,
+		"test.txt":  true,
+		"foo/bar":   true,
+		"vb":        true, // the bare bucket name is not under its own prefix
+		"vbx/thing": true,
+	}
+	for key, want := range cases {
+		if got := Unmanaged(key, prefixes); got != want {
+			t.Errorf("Unmanaged(%q) = %v, want %v", key, got, want)
+		}
 	}
 }
 
-// TestNamespaceKey_SiblingBucket covers a key that belongs to another
-// configured virtual bucket  -  dropped.
-func TestNamespaceKey_SiblingBucket(t *testing.T) {
-	_, ok := namespaceKey("other/foo", "vb/", []string{"other/"})
-	if ok {
-		t.Error("sibling-bucket key should be dropped")
-	}
-}
-
-// TestNamespaceKey_LegacyKey covers a key with no recognised prefix
-// (legacy data not yet bucket-namespaced)  -  adopted under bucketPrefix.
-func TestNamespaceKey_LegacyKey(t *testing.T) {
-	got, ok := namespaceKey("foo/bar", "vb/", []string{"other/"})
-	if !ok || got != "vb/foo/bar" {
-		t.Errorf("got (%q,%v), want (vb/foo/bar,true)", got, ok)
-	}
-}
-
-// TestSiblingPrefixes_DropsCurrent confirms the helper returns every other
-// known bucket as a "/-suffixed prefix.
-func TestSiblingPrefixes_DropsCurrent(t *testing.T) {
-	got := SiblingPrefixes([]string{"a", "b", "c"}, "b")
-	want := []string{"a/", "c/"}
-	if !slices.Equal(got, want) {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
-// TestSiblingPrefixes_NoMatch confirms a current-bucket value missing from
-// the list does not corrupt the output.
-func TestSiblingPrefixes_NoMatch(t *testing.T) {
-	got := SiblingPrefixes([]string{"a", "b"}, "z")
-	want := []string{"a/", "b/"}
-	if !slices.Equal(got, want) {
-		t.Errorf("got %v, want %v", got, want)
+// TestUnmanaged_NoBuckets treats every key as unmanaged when nothing is
+// configured, rather than silently adopting the whole backend.
+func TestUnmanaged_NoBuckets(t *testing.T) {
+	if !Unmanaged("anything", nil) {
+		t.Error("with no configured buckets every key should be unmanaged")
 	}
 }
 
@@ -525,26 +510,44 @@ func (f *fakeLister2) ListObjects(_ context.Context, _ string, fn func([]backend
 	return f.err
 }
 
-// TestS3KeyStream_StreamsAcrossPagesAndNamespaces drives a multi-page
-// walk and verifies that bucket-routing rules are applied while the
-// stream is consumed.
-func TestS3KeyStream_StreamsAcrossPagesAndNamespaces(t *testing.T) {
+// TestS3KeyStream_EmitsEveryKeyUntouched drives a multi-page walk and pins the
+// property the merge depends on: keys come out exactly as the backend listed
+// them, in the same order, with nothing dropped or rewritten. Rewriting only
+// some keys is what broke the merge's ordering invariant.
+func TestS3KeyStream_EmitsEveryKeyUntouched(t *testing.T) {
 	pages := [][]backend.ListedObject{
-		{{Key: "vb/a", SizeBytes: 1}, {Key: "other/skipme", SizeBytes: 9}},
-		{{Key: "legacy", SizeBytes: 2}, {Key: "vb/z", SizeBytes: 3}},
+		{{Key: "other/x", SizeBytes: 9}, {Key: "test.txt", SizeBytes: 2}},
+		{{Key: "vb/a", SizeBytes: 1}, {Key: "vb/z", SizeBytes: 3}},
 	}
 	var apiPages int64
 	s3 := NewS3KeyStream(context.Background(),
-		&fakeLister2{pages: pages}, "vb/", []string{"other/"}, &apiPages)
+		&fakeLister2{pages: pages}, []string{"vb/", "other/"}, &apiPages)
 	defer s3.Stop()
 
 	got := drainStream(t, s3)
-	want := []string{"vb/a", "vb/legacy", "vb/z"}
+	want := []string{"other/x", "test.txt", "vb/a", "vb/z"}
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	if apiPages != 2 {
 		t.Errorf("apiPages = %d, want 2", apiPages)
+	}
+}
+
+// TestS3KeyStream_TagsUnmanagedKeys confirms the stream carries the
+// classification the importer needs, rather than encoding it in the key.
+func TestS3KeyStream_TagsUnmanagedKeys(t *testing.T) {
+	pages := [][]backend.ListedObject{{{Key: "test.txt"}, {Key: "vb/a"}}}
+	s3 := NewS3KeyStream(context.Background(), &fakeLister2{pages: pages}, []string{"vb/"}, nil)
+	defer s3.Stop()
+
+	stray, _, _ := s3.Next(context.Background())
+	if stray.key != "test.txt" || !stray.unmanaged {
+		t.Errorf("stray = %+v, want test.txt tagged unmanaged", stray)
+	}
+	owned, _, _ := s3.Next(context.Background())
+	if owned.key != "vb/a" || owned.unmanaged {
+		t.Errorf("owned = %+v, want vb/a tagged managed", owned)
 	}
 }
 
@@ -556,7 +559,7 @@ func TestS3KeyStream_PropagatesListerError(t *testing.T) {
 		&fakeLister2{
 			pages: [][]backend.ListedObject{{{Key: "vb/a", SizeBytes: 1}}},
 			err:   want,
-		}, "vb/", nil, nil)
+		}, []string{"vb/"}, nil)
 	defer s3.Stop()
 
 	// First entry comes through cleanly.
@@ -577,7 +580,7 @@ func TestS3KeyStream_StopUnblocksGoroutine(t *testing.T) {
 		{{Key: "vb/a", SizeBytes: 1}, {Key: "vb/b", SizeBytes: 2}},
 	}
 	s3 := NewS3KeyStream(context.Background(),
-		&fakeLister2{pages: pages}, "vb/", nil, nil)
+		&fakeLister2{pages: pages}, []string{"vb/"}, nil)
 
 	// Pull one entry, then stop without draining.
 	if _, ok, err := s3.Next(context.Background()); err != nil || !ok {
@@ -597,7 +600,7 @@ func TestS3KeyStream_ContextCancelTerminates(t *testing.T) {
 	cancel()
 	s3 := NewS3KeyStream(ctx, &fakeLister2{
 		pages: [][]backend.ListedObject{{{Key: "vb/a", SizeBytes: 1}}},
-	}, "vb/", nil, nil)
+	}, []string{"vb/"}, nil)
 	defer s3.Stop()
 
 	if _, _, err := s3.Next(ctx); err == nil {
@@ -613,7 +616,7 @@ func TestS3KeyStream_ContextCancelTerminates(t *testing.T) {
 // the counter when ImportObject reports the row was created (true).
 func TestImportHandler_CountsCreatedNotSkipped(t *testing.T) {
 	res := &Result{}
-	importer := func(_ context.Context, _, _ string, _ int64) (bool, error) {
+	importer := func(_ context.Context, _, _ string, _ int64, _ bool) (bool, error) {
 		return false, nil // already exists; should NOT be counted
 	}
 	h := ImportHandler(slog.Default(), "b1", importer, res)
@@ -630,7 +633,7 @@ func TestImportHandler_CountsCreatedNotSkipped(t *testing.T) {
 // on the first transient row failure.
 func TestImportHandler_SwallowsErrorButContinues(t *testing.T) {
 	res := &Result{}
-	importer := func(_ context.Context, _, _ string, _ int64) (bool, error) {
+	importer := func(_ context.Context, _, _ string, _ int64, _ bool) (bool, error) {
 		return false, errors.New("transient")
 	}
 	h := ImportHandler(slog.Default(), "b1", importer, res)
@@ -669,7 +672,6 @@ func TestDeleteHandler_CountsAndContinues(t *testing.T) {
 	}
 }
 
-
 // -------------------------------------------------------------------------
 // String-slice equality helpers
 // -------------------------------------------------------------------------
@@ -685,3 +687,53 @@ func keysOf(es []Entry) []string {
 	return out
 }
 
+// -------------------------------------------------------------------------
+// Ascending-order guard
+// -------------------------------------------------------------------------
+
+// TestSorted_RejectsDescendingS3Stream pins the guard that would have caught
+// the prefix-rewrite bug on its first pass. A backend stream that goes
+// backwards used to make the merge delete every key in between and re-import
+// them next pass, which looks like ordinary churn in the counts.
+func TestSorted_RejectsDescendingS3Stream(t *testing.T) {
+	s3 := &sliceKeySource{entries: []Entry{e("unified/test.txt", 1), e("unified/a", 1)}}
+	db := &sliceKeySource{}
+
+	err := Sorted(context.Background(), s3, db, noopImport, noopDelete)
+	if !errors.Is(err, ErrNotAscending) {
+		t.Fatalf("err = %v, want ErrNotAscending", err)
+	}
+	if !strings.Contains(err.Error(), "backend") {
+		t.Errorf("err = %v, want it to name the offending stream", err)
+	}
+}
+
+// TestSorted_RejectsDescendingDBStream covers the same guard on the ledger
+// side, which enforces the COLLATE "C" cursor ordering the merge assumes.
+func TestSorted_RejectsDescendingDBStream(t *testing.T) {
+	s3 := &sliceKeySource{}
+	db := &sliceKeySource{entries: []Entry{e("b", 1), e("a", 1)}}
+
+	err := Sorted(context.Background(), s3, db, noopImport, noopDelete)
+	if !errors.Is(err, ErrNotAscending) {
+		t.Fatalf("err = %v, want ErrNotAscending", err)
+	}
+	if !strings.Contains(err.Error(), "ledger") {
+		t.Errorf("err = %v, want it to name the offending stream", err)
+	}
+}
+
+// TestSorted_RejectsRepeatedKey treats a repeated key as non-ascending too: a
+// duplicate would make the merge act on the same key twice.
+func TestSorted_RejectsRepeatedKey(t *testing.T) {
+	s3 := &sliceKeySource{entries: []Entry{e("a", 1), e("a", 1)}}
+	err := Sorted(context.Background(), s3, &sliceKeySource{}, noopImport, noopDelete)
+	if !errors.Is(err, ErrNotAscending) {
+		t.Fatalf("err = %v, want ErrNotAscending", err)
+	}
+}
+
+// noopImport and noopDelete let the order guard be exercised without asserting
+// on the callbacks.
+func noopImport(context.Context, Entry) error  { return nil }
+func noopDelete(context.Context, string) error { return nil }

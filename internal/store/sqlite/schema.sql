@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS object_locations (
     key_id         TEXT,
     plaintext_size INTEGER,
     content_hash   TEXT,
+    managed        INTEGER NOT NULL DEFAULT 1,
     created_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (object_key, backend_name)
 );
@@ -53,6 +54,9 @@ CREATE INDEX IF NOT EXISTS idx_object_locations_created
 
 CREATE INDEX IF NOT EXISTS idx_object_locations_key_created
     ON object_locations(object_key, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_object_locations_managed
+    ON object_locations(backend_name) WHERE managed;
 
 -- Track in-progress multipart uploads.
 CREATE TABLE IF NOT EXISTS multipart_uploads (
@@ -180,4 +184,4 @@ CREATE INDEX IF NOT EXISTS idx_pending_objects_backend
     ON pending_objects(backend_name);
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (2);
+INSERT INTO schema_version (version) VALUES (3);

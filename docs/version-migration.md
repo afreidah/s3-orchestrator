@@ -58,7 +58,23 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.64.x (current)
+### v0.76.x (current)
+
+**Reconcile imports objects at their literal key ([#1161](https://github.com/afreidah/s3-orchestrator/pull/1161), v0.76.0)**
+
+Reconcile previously rewrote every backend key that matched no configured virtual bucket prefix, prepending the pass's bucket prefix before comparing it against the ledger. Backends list in byte order, so rewriting only some keys made the stream non-monotonic and broke the sorted-merge: on each pass the merge deleted a block of `object_locations` rows and then re-imported them, reporting a large import and removal count every 24 hours against a backend that had not changed. Because `ImportObject` writes no `content_hash`, the integrity backfill also never stayed done.
+
+Objects are now imported at their literal backend key. Keys outside every configured virtual bucket prefix are still imported - they are real bytes against the backend's quota, and omitting them makes space accounting wrong - but their `object_locations` row is marked unmanaged via the new `managed` column (migration `00014_object_managed_flag`, default true). Quota sums every row; replication, rebalance, integrity and drain consider only managed ones.
+
+The reconcile stream now also rejects a non-ascending backend listing or ledger cursor outright rather than silently mis-merging.
+
+**Operator action items after upgrade:**
+
+- Expect one larger-than-usual reconcile pass on backends that hold objects outside the configured virtual bucket prefixes: those objects are imported once, and `backend_quotas.bytes_used` rises to include them. That new total is the correct one - the earlier figure undercounted real consumption.
+- Repeating import/remove counts on an otherwise idle backend should stop. A backend still reporting them after this upgrade is a genuine drift signal.
+- No config change.
+
+### v0.64.x
 
 **Terminal object browser (`tui`) + object-locations response reshape ([#1085](https://github.com/afreidah/s3-orchestrator/pull/1085), v0.64.0)**
 

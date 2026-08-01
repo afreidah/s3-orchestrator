@@ -16,6 +16,7 @@ SELECT COUNT(*)::bigint AS count
 FROM (
     SELECT object_key
     FROM object_locations
+    WHERE managed
     GROUP BY object_key
     HAVING COUNT(*) > $1::bigint
 ) over_replicated
@@ -32,6 +33,7 @@ const getOverReplicatedObjects = `-- name: GetOverReplicatedObjects :many
 WITH over_replicated AS (
     SELECT object_key
     FROM object_locations
+    WHERE managed
     GROUP BY object_key
     HAVING COUNT(*) > $1::bigint
     LIMIT $2
@@ -94,6 +96,7 @@ const getUnderReplicatedObjects = `-- name: GetUnderReplicatedObjects :many
 WITH under_replicated AS (
     SELECT object_key
     FROM object_locations
+    WHERE managed
     GROUP BY object_key
     HAVING COUNT(*) < $1::bigint
     LIMIT $2
@@ -166,7 +169,7 @@ const getUnderReplicatedObjectsExcluding = `-- name: GetUnderReplicatedObjectsEx
 WITH under_replicated AS (
     SELECT object_key
     FROM object_locations
-    WHERE backend_name != ALL($1::text[])
+    WHERE backend_name != ALL($1::text[]) AND managed
     GROUP BY object_key
     HAVING COUNT(*) < $2::bigint
     LIMIT $3

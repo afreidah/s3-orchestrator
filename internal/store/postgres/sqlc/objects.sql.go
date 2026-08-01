@@ -316,7 +316,7 @@ func (q *Queries) GetObjectBackendsForKeys(ctx context.Context, objectKeys []str
 const getObjectsWithoutHash = `-- name: GetObjectsWithoutHash :many
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
 FROM object_locations
-WHERE content_hash IS NULL
+WHERE content_hash IS NULL AND managed
 ORDER BY created_at ASC
 LIMIT $1 OFFSET $2
 `
@@ -338,7 +338,9 @@ type GetObjectsWithoutHashRow struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
-// Return object locations that have no content hash, for backfill.
+// Return object locations that have no content hash, for backfill. Hashing
+// reads the whole body, so unmanaged rows are left alone rather than spending
+// egress on data the orchestrator does not manage.
 func (q *Queries) GetObjectsWithoutHash(ctx context.Context, arg GetObjectsWithoutHashParams) ([]GetObjectsWithoutHashRow, error) {
 	rows, err := q.db.Query(ctx, getObjectsWithoutHash, arg.Limit, arg.Offset)
 	if err != nil {
@@ -372,7 +374,7 @@ func (q *Queries) GetObjectsWithoutHash(ctx context.Context, arg GetObjectsWitho
 const getRandomHashedObjects = `-- name: GetRandomHashedObjects :many
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
 FROM object_locations TABLESAMPLE BERNOULLI (10)
-WHERE content_hash IS NOT NULL
+WHERE content_hash IS NOT NULL AND managed
 LIMIT $1
 `
 
@@ -453,8 +455,8 @@ func (q *Queries) InsertObjectLocation(ctx context.Context, arg InsertObjectLoca
 }
 
 const insertObjectLocationIfNotExists = `-- name: InsertObjectLocationIfNotExists :one
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, managed, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING true AS inserted
 `
@@ -468,6 +470,7 @@ type InsertObjectLocationIfNotExistsParams struct {
 	KeyID         *string
 	PlaintextSize *int64
 	ContentHash   *string
+	Managed       bool
 }
 
 func (q *Queries) InsertObjectLocationIfNotExists(ctx context.Context, arg InsertObjectLocationIfNotExistsParams) (bool, error) {
@@ -480,6 +483,7 @@ func (q *Queries) InsertObjectLocationIfNotExists(ctx context.Context, arg Inser
 		arg.KeyID,
 		arg.PlaintextSize,
 		arg.ContentHash,
+		arg.Managed,
 	)
 	var inserted bool
 	err := row.Scan(&inserted)
@@ -688,7 +692,7 @@ func (q *Queries) ListExpiredObjects(ctx context.Context, arg ListExpiredObjects
 const listObjectsByBackend = `-- name: ListObjectsByBackend :many
 SELECT object_key, backend_name, size_bytes, created_at
 FROM object_locations
-WHERE backend_name = $1
+WHERE backend_name = $1 AND managed
 ORDER BY size_bytes ASC
 LIMIT $2
 `
@@ -705,6 +709,10 @@ type ListObjectsByBackendRow struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+// ListObjectsByBackend backs the rebalance, placement and drain candidate
+// scans, so it returns managed rows only. Objects outside every configured
+// bucket prefix are tracked for accounting but are not the orchestrator's to
+// move.
 func (q *Queries) ListObjectsByBackend(ctx context.Context, arg ListObjectsByBackendParams) ([]ListObjectsByBackendRow, error) {
 	rows, err := q.db.Query(ctx, listObjectsByBackend, arg.BackendName, arg.Limit)
 	if err != nil {

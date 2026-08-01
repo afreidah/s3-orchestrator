@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -377,12 +376,12 @@ func (m *BackendManager) NearUsageLimit(threshold float64) bool {
 // HELPERS
 // -------------------------------------------------------------------------
 
-// SyncBackend scans a backend's S3 bucket and imports pre-existing
-// objects into the proxy database. Objects already tracked for the
-// backend are skipped. knownBuckets is the full list of configured
-// virtual bucket names, used to distinguish objects belonging to other
-// buckets from externally-uploaded objects that need the bucket prefix
-// prepended. Returns counts of imported vs skipped objects.
+// SyncBackend scans a backend's S3 bucket and imports pre-existing objects
+// into the proxy database. Objects already tracked for the backend are
+// skipped. knownBuckets is the full list of configured virtual bucket names;
+// an object outside every one of their prefixes is imported at its own key and
+// flagged unmanaged, so it counts toward the backend's quota without any
+// worker acting on it. Returns counts of imported vs skipped objects.
 func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (imported, skipped int, err error) {
 	s3b, err := m.resolveS3Backend(backendName)
 	if err != nil {
@@ -391,13 +390,12 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 
 	m.runtime.Log().InfoContext(ctx, "starting backend sync", "backend", backendName, "bucket", bucket)
 
-	bucketPrefix := internalkey.Prefix(bucket)
-	otherPrefixes := reconcile.SiblingPrefixes(knownBuckets, bucket)
+	bucketPrefixes := bucketPrefixes(knownBuckets)
 	var apiPages int64
 
 	err = s3b.ListObjects(ctx, "", func(objects []backend.ListedObject) error {
 		apiPages++
-		pImported, pSkipped, err := m.importSyncPage(ctx, backendName, bucketPrefix, otherPrefixes, objects)
+		pImported, pSkipped, err := m.importSyncPage(ctx, backendName, bucketPrefixes, objects)
 		imported += pImported
 		skipped += pSkipped
 		return err
@@ -417,21 +415,18 @@ func (m *BackendManager) SyncBackend(ctx context.Context, backendName, bucket st
 	return imported, skipped, nil
 }
 
-// importSyncPage processes one page of backend ListObjects results,
-// importing objects that belong to bucket and skipping those that fall
-// inside sibling virtual buckets sharing the same backend.
+// importSyncPage processes one page of backend ListObjects results, importing
+// every object at the key the backend actually holds it under. Objects outside
+// every configured bucket prefix are imported as unmanaged.
 func (m *BackendManager) importSyncPage(
 	ctx context.Context,
-	backendName, bucketPrefix string,
-	otherPrefixes []string,
+	backendName string,
+	bucketPrefixes []string,
 	objects []backend.ListedObject,
 ) (imported, skipped int, err error) {
 	for _, obj := range objects {
-		key, ok := normalizeSyncKey(obj.Key, bucketPrefix, otherPrefixes)
-		if !ok {
-			continue
-		}
-		inserted, importErr := m.stores.ImportObject(ctx, key, backendName, obj.SizeBytes)
+		unmanaged := reconcile.Unmanaged(obj.Key, bucketPrefixes)
+		inserted, importErr := m.stores.ImportObject(ctx, obj.Key, backendName, obj.SizeBytes, unmanaged)
 		if importErr != nil {
 			return imported, skipped, fmt.Errorf("failed to import %s: %w", obj.Key, importErr)
 		}
@@ -444,20 +439,15 @@ func (m *BackendManager) importSyncPage(
 	return imported, skipped, nil
 }
 
-// normalizeSyncKey returns the storage key to import, plus ok=false when
-// the object belongs to a sibling bucket and should be skipped. Keys
-// without any known prefix are treated as externally-uploaded objects
-// and get the target bucket's prefix prepended.
-func normalizeSyncKey(rawKey, bucketPrefix string, otherPrefixes []string) (string, bool) {
-	if strings.HasPrefix(rawKey, bucketPrefix) {
-		return rawKey, true
+// bucketPrefixes maps configured virtual bucket names to the key prefixes they
+// own on a backend. A key matching none of them was not written by the
+// orchestrator.
+func bucketPrefixes(buckets []string) []string {
+	out := make([]string, 0, len(buckets))
+	for _, b := range buckets {
+		out = append(out, internalkey.Prefix(b))
 	}
-	for _, p := range otherPrefixes {
-		if strings.HasPrefix(rawKey, p) {
-			return "", false
-		}
-	}
-	return bucketPrefix + rawKey, true
+	return out
 }
 
 // makeReconcileDeleter composes the object_locations row delete with a
@@ -489,33 +479,34 @@ func (m *BackendManager) ReconcileUsage(ctx context.Context) (map[string]int64, 
 	return m.stores.ReconcileUsage(ctx)
 }
 
-// ReconcileBackend reconciles a single backend against the metadata store
-// using a bounded-memory sorted-merge: both sides are walked in lex key
-// order and diffed in lockstep. The S3 walk and DB cursor each cap their
-// in-flight buffer, so memory is independent of object count.
+// ReconcileBackend reconciles a backend against the metadata store using a
+// bounded-memory sorted-merge: both sides are walked in byte key order and
+// diffed in lockstep. The S3 walk and DB cursor each cap their in-flight
+// buffer, so memory is independent of object count.
 //
-// Behaviour: imports keys present on the backend but not in the DB, and
-// deletes DB rows whose keys are no longer on the backend. Keys owned by
-// sibling virtual buckets stored on the same backend are left alone in
-// both directions  -  sibling buckets are reconciled by their own pass.
-func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (*worker.ReconcileResult, error) {
+// The pass is scoped to the backend, not to one virtual bucket: the backend
+// client is already pinned to its configured real bucket, and every virtual
+// bucket stored there is covered in a single walk. Keys are compared exactly
+// as the backend holds them, which is what keeps both streams in the byte
+// order the merge requires.
+//
+// Behaviour: imports keys present on the backend but not in the ledger, and
+// deletes ledger rows whose keys are no longer on the backend. A key outside
+// every configured bucket prefix is imported as unmanaged, so it counts
+// toward the backend's quota without any worker acting on it.
+func (m *BackendManager) ReconcileBackend(ctx context.Context, backendName string, knownBuckets []string) (*worker.ReconcileResult, error) {
 	s3b, err := m.resolveS3Backend(backendName)
 	if err != nil {
 		return nil, err
 	}
 
-	bucketPrefix := internalkey.Prefix(bucket)
-	otherPrefixes := reconcile.SiblingPrefixes(knownBuckets, bucket)
-
 	var apiPages int64
-	s3 := reconcile.NewS3KeyStream(ctx, s3b, bucketPrefix, otherPrefixes, &apiPages)
+	s3 := reconcile.NewS3KeyStream(ctx, s3b, bucketPrefixes(knownBuckets), &apiPages)
 	defer s3.Stop()
 
 	dbIter := reconcile.NewDBCursorStream(reconcile.DBCursorStreamDeps{
-		Store:         m.stores,
-		BackendName:   backendName,
-		BucketPrefix:  bucketPrefix,
-		OtherPrefixes: otherPrefixes,
+		Store:       m.stores,
+		BackendName: backendName,
 	})
 	defer dbIter.Stop()
 

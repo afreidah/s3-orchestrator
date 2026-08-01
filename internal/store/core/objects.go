@@ -244,14 +244,20 @@ func MoveObjectLocation(ctx context.Context, runner Runner, key, fromBackend, to
 
 // ImportObject records a pre-existing object in the database without
 // overwriting. Returns true if the object was newly imported, false if
-// it already existed for this backend. Used by the sync subcommand to
-// bring existing bucket objects under proxy management.
-func ImportObject(ctx context.Context, runner Runner, key, backend string, size int64) (bool, error) {
+// it already existed for this backend. Used by reconcile and the sync
+// subcommand to bring existing bucket objects under proxy management.
+//
+// unmanaged marks an object that lives outside every configured virtual
+// bucket prefix. It is still recorded, because it occupies backend quota
+// that placement decisions have to account for, but the workers leave it
+// alone.
+func ImportObject(ctx context.Context, runner Runner, key, backend string, size int64, unmanaged bool) (bool, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (bool, error) {
 		loc := &ObjectLocation{
 			ObjectKey:   key,
 			BackendName: backend,
 			SizeBytes:   size,
+			Unmanaged:   unmanaged,
 		}
 		inserted, err := tx.InsertObjectLocationIfNotExists(ctx, loc)
 		if err != nil {
