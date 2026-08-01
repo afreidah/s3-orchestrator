@@ -30,32 +30,11 @@ func TestDecodeOneShot(t *testing.T) {
 		message string
 	}{
 		{
-			name:    "rebalance moved objects",
-			decode:  decodeOneShot[rebalanceResult],
-			body:    `{"status":"ok","moved":1204}`,
-			outcome: adminstream.OutcomeOK,
-			message: "moved 1,204 objects",
-		},
-		{
-			name:    "rebalance moved one object",
-			decode:  decodeOneShot[rebalanceResult],
-			body:    `{"status":"ok","moved":1}`,
-			outcome: adminstream.OutcomeOK,
-			message: "moved 1 object",
-		},
-		{
-			name:    "rebalance had nothing to move",
-			decode:  decodeOneShot[rebalanceResult],
-			body:    `{"status":"ok","moved":0}`,
-			outcome: adminstream.OutcomeOK,
-			message: "already balanced, nothing moved",
-		},
-		{
-			name:    "rebalance skipped with a reason",
-			decode:  decodeOneShot[rebalanceResult],
-			body:    `{"status":"skipped","moved":0,"reason":"only one backend configured"}`,
+			name:    "usage reconcile skipped",
+			decode:  decodeOneShot[usageReconcileResult],
+			body:    `{"status":"skipped"}`,
 			outcome: adminstream.OutcomeSkipped,
-			message: "only one backend configured",
+			message: "skipped",
 		},
 		{
 			name:    "usage reconcile corrected counters",
@@ -70,6 +49,20 @@ func TestDecodeOneShot(t *testing.T) {
 			body:    `{"status":"ok","adjustments":{}}`,
 			outcome: adminstream.OutcomeOK,
 			message: "counters already accurate",
+		},
+		{
+			name:    "cache flush dropped one entry",
+			decode:  decodeOneShot[cacheFlushResult],
+			body:    `{"status":"flushed","entries_dropped":1}`,
+			outcome: adminstream.OutcomeOK,
+			message: "dropped 1 cache entry",
+		},
+		{
+			name:    "usage reconcile corrected one backend",
+			decode:  decodeOneShot[usageReconcileResult],
+			body:    `{"status":"ok","adjustments":{"oci":-1024}}`,
+			outcome: adminstream.OutcomeOK,
+			message: "corrected 1 backend: oci -1.0 KiB",
 		},
 		{
 			name:    "cache flush dropped entries",
@@ -119,7 +112,7 @@ func TestDecodeOneShot(t *testing.T) {
 // an empty result line.
 func TestDecodeOneShot_BadJSON(t *testing.T) {
 	t.Parallel()
-	if _, err := decodeOneShot[rebalanceResult](strings.NewReader("{")); err == nil {
+	if _, err := decodeOneShot[cacheFlushResult](strings.NewReader("{")); err == nil {
 		t.Error("expected a decode error")
 	}
 }

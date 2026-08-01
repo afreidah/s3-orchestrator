@@ -20,29 +20,40 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // fakeRebalancer is a minimal RebalancerOps for the handler tests. It records
-// the config it was asked to run with so the default-fallback can be asserted.
+// the config it was asked to run with so the default-fallback can be asserted,
+// and replays moves through the observer so the streaming path has progress to
+// render.
 type fakeRebalancer struct {
 	cfg    *config.RebalanceConfig
 	moved  int
+	skip   string
 	err    error
 	gotcfg config.RebalanceConfig
 }
 
 func (f *fakeRebalancer) Config() *config.RebalanceConfig { return f.cfg }
 
-func (f *fakeRebalancer) Rebalance(_ context.Context, cfg config.RebalanceConfig) (worker.WorkSummary, error) {
+func (f *fakeRebalancer) Rebalance(_ context.Context, cfg config.RebalanceConfig, obs progress.Observer) (worker.RebalanceSummary, error) {
 	f.gotcfg = cfg
-	return worker.WorkSummary{Succeeded: f.moved}, f.err
+	if f.skip != "" {
+		return worker.RebalanceSummary{SkipReason: f.skip}, f.err
+	}
+	for i := range f.moved {
+		progress.Track(obs, fmt.Sprintf("obj-%d  src -> dst", i), func() string { return progress.StatusOK })
+	}
+	return worker.RebalanceSummary{WorkSummary: worker.WorkSummary{Succeeded: f.moved}}, f.err
 }
 
 // TestHandleRebalance_HappyPath drives the success branch: the handler runs
@@ -161,6 +172,31 @@ func TestHandleRebalance_NotWired(t *testing.T) {
 	// Reason is the skipped path's only explanation of why nothing moved.
 	if resp.Reason == "" {
 		t.Error("reason is empty, want an explanation on the skipped path")
+	}
+}
+
+// TestHandleRebalance_SkippedCycle covers a cycle that planned no moves. It
+// must report the reason rather than a zero move count, which reads as a run
+// that found nothing to do.
+func TestHandleRebalance_SkippedCycle(t *testing.T) {
+	t.Parallel()
+	h := newTestHandler()
+	h.rebalancer = &fakeRebalancer{skip: worker.SkipReasonWithinThreshold}
+	h.backendOps = &fakeBackendOps{}
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/rebalance", nil)
+	req.Header.Set("X-Admin-Token", "test-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	var resp adminapi.RebalanceResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "skipped" || resp.Reason != worker.SkipReasonWithinThreshold {
+		t.Errorf("got {status=%q reason=%q}, want the threshold skip", resp.Status, resp.Reason)
 	}
 }
 

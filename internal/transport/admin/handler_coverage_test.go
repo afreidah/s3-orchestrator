@@ -53,7 +53,7 @@ func (f *fakeBackendOps) FlushUsage(_ context.Context) error { return f.flushErr
 func (f *fakeBackendOps) ReconcileUsage(_ context.Context) (map[string]int64, error) {
 	return f.reconcileMap, f.reconcileErr
 }
-func (f *fakeBackendOps) RecordUsage(_ string, _, _, _ int64) {}
+func (f *fakeBackendOps) RecordUsage(_ string, _, _, _ int64)      {}
 func (f *fakeBackendOps) IntegrityConfig() *config.IntegrityConfig { return f.intCfg }
 
 // fakeRuntimeOps is the RuntimeOps double: the runtime surface the handler

@@ -139,7 +139,7 @@ func BenchmarkRebalance(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		_, err := testWorkers.Rebalancer.Rebalance(ctx, cfg)
+		_, err := testWorkers.Rebalancer.Rebalance(ctx, cfg, nil)
 		if err != nil {
 			b.Fatalf("Rebalance: %v", err)
 		}

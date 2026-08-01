@@ -18,16 +18,20 @@ import (
 
 // adminAction is a write operation the user can invoke. An empty confirm runs
 // immediately; otherwise confirm is shown as a y/N prompt before run fires.
+// before, when set, updates the pane the moment the action is accepted, so the
+// user sees it start rather than waiting on the request that run dispatches.
 type adminAction struct {
 	confirm string
+	before  func(*model)
 	run     tea.Cmd
 }
 
-// confirmPrompt is the pending confirmation: the question and the command to
-// run when the user accepts.
+// confirmPrompt is the pending confirmation: the question, what to show on
+// acceptance, and the command to run.
 type confirmPrompt struct {
-	text string
-	run  tea.Cmd
+	text   string
+	before func(*model)
+	run    tea.Cmd
 }
 
 // actionStatus is the transient result of the last action, shown in the footer
@@ -41,9 +45,10 @@ type actionStatus struct {
 // action requires one.
 func (m *model) startAction(a adminAction) (tea.Model, tea.Cmd) {
 	if a.confirm != "" {
-		m.confirm = &confirmPrompt{text: a.confirm, run: a.run}
+		m.confirm = &confirmPrompt{text: a.confirm, before: a.before, run: a.run}
 		return m, nil
 	}
+	m.begin(a.before)
 	return m, a.run
 }
 
@@ -52,12 +57,23 @@ func (m *model) startAction(a adminAction) (tea.Model, tea.Cmd) {
 func (m *model) handleConfirmKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "y", "Y", "enter":
-		run := m.confirm.run
+		before, run := m.confirm.before, m.confirm.run
 		m.confirm = nil
+		m.begin(before)
 		return m, run
 	default:
 		m.confirm = nil
 		return m, nil
+	}
+}
+
+// begin applies an action's pane update on the main loop, before the command
+// that does the work is dispatched. Running it here rather than inside the
+// command is what makes the transition immediate: a command runs off the loop
+// and cannot report anything until it returns.
+func (m *model) begin(before func(*model)) {
+	if before != nil {
+		before(m)
 	}
 }
 

@@ -169,8 +169,8 @@ var (
 	streamingTestAction = opsAction{method: http.MethodPost, path: "/admin/api/scrub"}
 	oneShotTestAction   = opsAction{
 		method: http.MethodPost,
-		path:   "/admin/api/rebalance",
-		result: decodeOneShot[rebalanceResult],
+		path:   "/admin/api/cache/flush",
+		result: decodeOneShot[cacheFlushResult],
 	}
 )
 
@@ -216,7 +216,7 @@ func TestAPIClient_RunOp_OneShot(t *testing.T) {
 	var gotAccept string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAccept = r.Header.Get("Accept")
-		_, _ = w.Write([]byte(`{"status":"ok","moved":12}`))
+		_, _ = w.Write([]byte(`{"status":"flushed","entries_dropped":12}`))
 	}))
 	defer srv.Close()
 
@@ -229,7 +229,7 @@ func TestAPIClient_RunOp_OneShot(t *testing.T) {
 		t.Errorf("one-shot should not opt into streaming; Accept=%q", gotAccept)
 	}
 	e, _ := s.Next()
-	if e.Kind != adminstream.KindResult || e.Outcome != adminstream.OutcomeOK || e.Message != "moved 12 objects" {
+	if e.Kind != adminstream.KindResult || e.Outcome != adminstream.OutcomeOK || e.Message != "dropped 12 cache entries" {
 		t.Errorf("result event = %+v", e)
 	}
 	if _, err := s.Next(); !errors.Is(err, io.EOF) {

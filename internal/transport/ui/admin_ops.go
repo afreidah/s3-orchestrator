@@ -56,7 +56,7 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		ctx := context.Background()
-		sum, err := h.rebalancer.Rebalance(ctx, runCfg)
+		sum, err := h.rebalancer.Rebalance(ctx, runCfg, nil)
 		if err != nil {
 			h.log.ErrorContext(ctx, "rebalance failed", "error", err)
 			h.asyncOps.Complete("rebalance", &asyncResult{Error: "rebalance failed"})

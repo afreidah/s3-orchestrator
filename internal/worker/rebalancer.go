@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
@@ -78,14 +79,35 @@ type RebalanceMove struct {
 	SizeBytes   int64
 }
 
+// progressLabel names the move for a streaming caller: the object and the
+// backends it travels between, which is the whole of what a rebalance does.
+func (m RebalanceMove) progressLabel() string {
+	return fmt.Sprintf("%s  %s -> %s", m.ObjectKey, m.FromBackend, m.ToBackend)
+}
+
+// Why a cycle declined to move anything. Reported instead of a zero move count,
+// which a caller cannot tell apart from a cycle that ran and found nothing.
+const (
+	SkipReasonWithinThreshold = "backend utilization is already within the rebalance threshold"
+	SkipReasonEmptyPlan       = "the rebalance strategy planned no moves"
+)
+
+// RebalanceSummary is one cycle's outcome. SkipReason is set when the cycle
+// never planned any moves; the embedded WorkSummary is zero in that case.
+type RebalanceSummary struct {
+	WorkSummary
+	SkipReason string
+}
+
 // -------------------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------------------
 
 // Rebalance moves objects between backends to optimize space distribution.
-// Returns the number of objects successfully moved.
-func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) (WorkSummary, error) {
-	return runOpsCycle(ctx, "Rebalance", "rebalance", func(ctx context.Context) (WorkSummary, error) {
+// observer, when non-nil, receives a step per planned move so a streaming
+// caller can report progress as the cycle runs.
+func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, observer progress.Observer) (RebalanceSummary, error) {
+	return runOpsCycle(ctx, "Rebalance", "rebalance", func(ctx context.Context) (RebalanceSummary, error) {
 		start := time.Now()
 		audit.Log(ctx, "rebalance.start",
 			slog.String("strategy", cfg.Strategy),
@@ -96,14 +118,14 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) 
 		stats, err := r.store.GetQuotaStats(ctx)
 		if err != nil {
 			telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "error").Inc()
-			return WorkSummary{}, fmt.Errorf("failed to get quota stats: %w", err)
+			return RebalanceSummary{}, fmt.Errorf("failed to get quota stats: %w", err)
 		}
 
 		if !ExceedsThreshold(stats, r.ops.BackendOrder(), cfg.Threshold) {
 			r.log.InfoContext(ctx, "rebalance skipping, within threshold",
 				"threshold", cfg.Threshold, "strategy", cfg.Strategy)
 			telemetry.RebalanceSkipped.WithLabelValues("threshold").Inc()
-			return WorkSummary{}, nil
+			return RebalanceSummary{SkipReason: SkipReasonWithinThreshold}, nil
 		}
 
 		var plan []RebalanceMove
@@ -113,11 +135,11 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) 
 		case "spread":
 			plan, err = r.PlanSpreadEven(ctx, stats, cfg.BatchSize)
 		default:
-			return WorkSummary{}, fmt.Errorf("unknown rebalance strategy: %s", cfg.Strategy)
+			return RebalanceSummary{}, fmt.Errorf("unknown rebalance strategy: %s", cfg.Strategy)
 		}
 		if err != nil {
 			telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "error").Inc()
-			return WorkSummary{}, fmt.Errorf("failed to plan rebalance: %w", err)
+			return RebalanceSummary{}, fmt.Errorf("failed to plan rebalance: %w", err)
 		}
 
 		telemetry.RebalancePending.Set(float64(len(plan)))
@@ -125,10 +147,10 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) 
 		if len(plan) == 0 {
 			r.log.InfoContext(ctx, "rebalance skipping, empty plan", "strategy", cfg.Strategy)
 			telemetry.RebalanceSkipped.WithLabelValues("empty_plan").Inc()
-			return WorkSummary{}, nil
+			return RebalanceSummary{SkipReason: SkipReasonEmptyPlan}, nil
 		}
 
-		sum := r.ExecuteMoves(ctx, plan, cfg.Strategy, cfg.Concurrency)
+		sum := r.ExecuteMoves(ctx, plan, cfg.Strategy, cfg.Concurrency, observer)
 
 		telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "success").Inc()
 		telemetry.RebalanceDuration.WithLabelValues(cfg.Strategy).Observe(time.Since(start).Seconds())
@@ -139,7 +161,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig) 
 			slog.Int("planned", len(plan)),
 			slog.Duration("duration", time.Since(start)),
 		)
-		return sum, nil
+		return RebalanceSummary{WorkSummary: sum}, nil
 	})
 }
 
@@ -505,9 +527,16 @@ func findSpreadDestination(
 
 // ExecuteMoves runs the planned object moves with bounded concurrency.
 // Skips individual moves that fail and continues with the rest, returning
-// the count of successful moves.
-func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, strategy string, concurrency int) WorkSummary {
-	runner := BatchRunner[RebalanceMove]{Name: "rebalance", Log: r.log, Concurrency: concurrency}
+// the count of successful moves. observer, when non-nil, receives a step per
+// move labelled with the object and the backends it travels between.
+func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, strategy string, concurrency int, observer progress.Observer) WorkSummary {
+	runner := BatchRunner[RebalanceMove]{
+		Name:        "rebalance",
+		Log:         r.log,
+		Concurrency: concurrency,
+		Observer:    observer,
+		Key:         RebalanceMove.progressLabel,
+	}
 	return runner.Run(ctx, plan, func(ctx context.Context, mv RebalanceMove) ItemResult {
 		defer telemetry.RebalancePending.Dec()
 		var res ItemResult // zero value (ItemSkipped) when admission blocks the move
