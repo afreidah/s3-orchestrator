@@ -22,7 +22,7 @@ Requests without a valid token get `401` with a JSON body. Request bodies are ca
 
 ## Streaming progress
 
-Six endpoints run long enough that a single response is unhelpful: `replicate`, `over-replication`, `scrub`, `backfill-checksums`, `reconcile`, and a backend purge. They return their JSON result by default, but stream newline-delimited progress when the caller asks for it:
+Seven endpoints run long enough that a single response is unhelpful: `rebalance`, `replicate`, `over-replication`, `scrub`, `backfill-checksums`, `reconcile`, and a backend purge. They return their JSON result by default, but stream newline-delimited progress when the caller asks for it:
 
 ```bash
 curl -H "X-Admin-Token: $TOKEN" \
@@ -54,7 +54,7 @@ The confirmation token is signed and scoped to the backend it was issued for; it
 
 ## Skipped operations
 
-Endpoints that trigger a worker report whether the pass actually ran. A response with `"status": "ok"` did the work; `"status": "skipped"` did not, and carries a `reason` explaining why -- usually that the feature is not configured. Replication endpoints skip when the factor is 1 or replication is unset; integrity endpoints skip when verification is disabled.
+Endpoints that trigger a worker report whether the pass actually ran. A response with `"status": "ok"` did the work; `"status": "skipped"` did not, and carries a `reason` explaining why -- usually that the feature is not configured. Replication endpoints skip when the factor is 1 or replication is unset; integrity endpoints skip when verification is disabled. Rebalance skips when backend utilization is already within the configured threshold, or when the strategy plans no moves.
 
 This is not an error, so the status code is still `200`. Check `status` rather than the HTTP code when driving these from a script.
 

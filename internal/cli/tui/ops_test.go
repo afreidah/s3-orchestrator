@@ -53,12 +53,14 @@ func TestOps_RunStreamsToCompletion(t *testing.T) {
 	m.section = sectionOps
 	m.resizeOps()
 
-	// open: switches to the output view and starts reading.
+	// accepting the action switches to the output view before any request runs.
+	m.enterOpsOutput("Scrub")
+	if !m.ops.showOut || !m.ops.running {
+		t.Fatalf("after accept: showOut=%v running=%v", m.ops.showOut, m.ops.running)
+	}
+	// open: the stream arrives and reading starts.
 	if _, cmd := m.applyOpsStream(opsStreamMsg{stream: &sliceStream{events: events}, label: "Scrub"}); cmd == nil {
 		t.Fatal("open should return a read command")
-	}
-	if !m.ops.showOut || !m.ops.running {
-		t.Fatalf("after open: showOut=%v running=%v", m.ops.showOut, m.ops.running)
 	}
 	// feed each event.
 	for _, e := range events {
@@ -77,6 +79,50 @@ func TestOps_RunStreamsToCompletion(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("output %q missing %q", joined, want)
 		}
+	}
+}
+
+// TestOps_AcceptEntersOutputImmediately asserts the pane leaves the menu the
+// moment the confirmation is accepted, rather than when the request returns.
+// Without this the menu stays live for the whole operation and then jumps.
+func TestOps_AcceptEntersOutputImmediately(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.width, m.height = 100, 20
+	m.section = sectionOps
+	m.resizeOps()
+
+	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter}) // arms the confirm
+	if m.confirm == nil {
+		t.Fatal("expected a confirmation to be armed")
+	}
+	m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+
+	if !m.ops.showOut || !m.ops.running {
+		t.Fatalf("after accept: showOut=%v running=%v, want the output pane", m.ops.showOut, m.ops.running)
+	}
+	if want := opsActions()[0].label; m.ops.label != want {
+		t.Errorf("label = %q, want %q", m.ops.label, want)
+	}
+	if !strings.Contains(strings.Join(m.ops.lines, "\n"), "running") {
+		t.Errorf("output %v, want a running notice", m.ops.lines)
+	}
+}
+
+// TestOps_CancelStaysOnMenu asserts declining the confirmation leaves the menu
+// alone; only acceptance enters the output pane.
+func TestOps_CancelStaysOnMenu(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.width, m.height = 100, 20
+	m.section = sectionOps
+	m.resizeOps()
+
+	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+
+	if m.ops.showOut || m.ops.running {
+		t.Errorf("after cancel: showOut=%v running=%v, want the menu", m.ops.showOut, m.ops.running)
 	}
 }
 

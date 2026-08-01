@@ -18,6 +18,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -245,6 +246,75 @@ func TestHandleOverReplicationClean_StreamsProgressAndResult(t *testing.T) {
 	stepStarts, steps := countStepEvents(events)
 	if steps != 2 || stepStarts != 0 {
 		t.Errorf("step events = %d step_end / %d step_start, want 2 / 0", steps, stepStarts)
+	}
+}
+
+// TestHandleRebalance_StreamsMoves asserts each move renders as its own line
+// naming the object and the backends it travelled between, then a terminal
+// result carrying the move count.
+func TestHandleRebalance_StreamsMoves(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler()
+	h.backendOps = &fakeBackendOps{}
+	h.rebalancer = &fakeRebalancer{moved: 2}
+
+	w := httptest.NewRecorder()
+	h.handleRebalance(w, streamReq("/admin/api/rebalance"))
+
+	events := decodeEvents(t, w.Body.Bytes())
+	if events[0].Kind != adminstream.KindStart || events[0].Op != "rebalance" {
+		t.Errorf("first event = %+v, want start/rebalance", events[0])
+	}
+	if !strings.Contains(events[1].Message, "moving obj-0  src -> dst") {
+		t.Errorf("move line = %q, want the object and both backends", events[1].Message)
+	}
+	last := events[len(events)-1]
+	if last.Kind != adminstream.KindResult || last.Outcome != adminstream.OutcomeOK || last.Processed != 2 {
+		t.Errorf("last event = %+v, want result/ok with 2 processed", last)
+	}
+	// Moves run concurrently, so each is one completed line rather than a pair.
+	stepStarts, steps := countStepEvents(events)
+	if steps != 2 || stepStarts != 0 {
+		t.Errorf("step events = %d step_end / %d step_start, want 2 / 0", steps, stepStarts)
+	}
+}
+
+// TestHandleRebalance_StreamsSkip asserts a cycle that planned nothing ends the
+// stream with the reason rather than an empty run of zero moves.
+func TestHandleRebalance_StreamsSkip(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler()
+	h.backendOps = &fakeBackendOps{}
+	h.rebalancer = &fakeRebalancer{skip: worker.SkipReasonEmptyPlan}
+
+	w := httptest.NewRecorder()
+	h.handleRebalance(w, streamReq("/admin/api/rebalance"))
+
+	events := decodeEvents(t, w.Body.Bytes())
+	last := events[len(events)-1]
+	if last.Outcome != adminstream.OutcomeSkipped || last.Message != worker.SkipReasonEmptyPlan {
+		t.Errorf("last event = %+v, want a skip carrying the empty-plan reason", last)
+	}
+}
+
+// TestHandleRebalance_StreamsFailure asserts a failed cycle terminates the
+// stream with the error rather than a partial run the caller cannot classify.
+func TestHandleRebalance_StreamsFailure(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler()
+	h.backendOps = &fakeBackendOps{}
+	h.rebalancer = &fakeRebalancer{err: errors.New("planning failed")}
+
+	w := httptest.NewRecorder()
+	h.handleRebalance(w, streamReq("/admin/api/rebalance"))
+
+	events := decodeEvents(t, w.Body.Bytes())
+	last := events[len(events)-1]
+	if last.Kind != adminstream.KindResult || last.Outcome != adminstream.OutcomeFailed {
+		t.Errorf("last event = %+v, want result/failed", last)
+	}
+	if last.Error != "planning failed" {
+		t.Errorf("result error = %q, want 'planning failed'", last.Error)
 	}
 }
 
