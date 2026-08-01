@@ -128,6 +128,7 @@ func TestRegister_AppliesAuthToEveryEntry(t *testing.T) {
 func TestRoutes_StreamingEntriesDeclareTheEventType(t *testing.T) {
 	t.Parallel()
 	want := map[string]bool{
+		"POST /admin/api/rebalance":          true,
 		"POST /admin/api/replicate":          true,
 		"POST /admin/api/over-replication":   true,
 		"POST /admin/api/scrub":              true,

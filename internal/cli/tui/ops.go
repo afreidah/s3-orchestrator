@@ -4,11 +4,11 @@
 // Author: Alex Freidah
 //
 // The admin instance-action pane: a menu of write operations, each armed with a
-// y/N confirm and then run against the admin API. Output renders into a scrolling
-// viewport exactly as the adminctl CLI shows it, including the live NDJSON
-// progress stream for the long-running actions (scrub, backfill, reconcile,
-// over-replication clean). One-shot actions surface a single result line. Every
-// action flows through one eventStream so streaming and one-shot render alike.
+// y/N confirm and then run against the admin API. Accepting one switches to a
+// scrolling output viewport that renders exactly as the adminctl CLI does,
+// including the live NDJSON progress stream the long-running actions emit. The
+// short actions surface a single result line instead. Every action flows through
+// one eventStream so both render alike.
 // Reached with "o"; "esc" steps back to the menu, then to the nav.
 // -------------------------------------------------------------------------------
 
@@ -43,7 +43,7 @@ type opsAction struct {
 // excluded; it is a per-backend flow handled elsewhere.
 func opsActions() []opsAction {
 	return []opsAction{
-		{"Rebalance backends", http.MethodPost, "/admin/api/rebalance", decodeOneShot[rebalanceResult], "Rebalance objects across backends?"},
+		{"Rebalance backends", http.MethodPost, "/admin/api/rebalance", nil, "Rebalance objects across backends?"},
 		{"Clean over-replicated copies", http.MethodPost, "/admin/api/over-replication", nil, "Remove over-replicated object copies?"},
 		{"Scrub (verify integrity)", http.MethodPost, "/admin/api/scrub", nil, "Scrub every object to verify integrity?"},
 		{"Backfill checksums", http.MethodPost, "/admin/api/backfill-checksums", nil, "Backfill missing object checksums?"},
@@ -111,14 +111,24 @@ func readOps(s eventStream) tea.Cmd {
 // TRANSITIONS
 // -------------------------------------------------------------------------
 
-// applyOpsStream switches to the output pane and begins reading, or records the
-// failure to open the action.
-func (m *model) applyOpsStream(msg opsStreamMsg) (tea.Model, tea.Cmd) {
+// enterOpsOutput clears the output pane and shows the action as running. Called
+// the moment the action is accepted, so a long operation reports that it
+// started instead of leaving the menu live until the request returns.
+func (m *model) enterOpsOutput(label string) {
 	m.ops.showOut = true
-	m.ops.label = msg.label
+	m.ops.running = true
+	m.ops.label = label
 	m.ops.lines = nil
 	m.ops.pending = ""
+	m.ops.stream = nil
 	m.ops.vp.SetContent("")
+	m.appendOpsLine(pathStyle.Render("running " + label + "..."))
+}
+
+// applyOpsStream begins reading the opened stream, or records the failure to
+// start the action. The pane already switched to output when the action was
+// accepted.
+func (m *model) applyOpsStream(msg opsStreamMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		m.ops.running = false
 		m.ops.stream = nil
@@ -126,7 +136,6 @@ func (m *model) applyOpsStream(msg opsStreamMsg) (tea.Model, tea.Cmd) {
 		m.status = &actionStatus{ok: false, text: msg.label + " failed"}
 		return m, nil
 	}
-	m.ops.running = true
 	m.ops.stream = msg.stream
 	return m, readOps(msg.stream)
 }
@@ -179,7 +188,11 @@ func (m *model) handleOpsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter", "right", "l":
 		a := opsActions()[m.ops.cursor]
-		return m.startAction(adminAction{confirm: a.confirm, run: openOps(m.client, a)})
+		return m.startAction(adminAction{
+			confirm: a.confirm,
+			before:  func(m *model) { m.enterOpsOutput(a.label) },
+			run:     openOps(m.client, a),
+		})
 	}
 	return m, nil
 }

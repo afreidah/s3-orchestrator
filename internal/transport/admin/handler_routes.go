@@ -177,6 +177,7 @@ func (h *Handler) routes() []route {
 			Method: http.MethodPost, Pattern: "/admin/api/rebalance", Handler: h.handleRebalance,
 			Summary:  "Run one rebalance cycle",
 			Response: adminapi.RebalanceResponse{},
+			Stream:   adminstream.Event{},
 		},
 		{
 			Method: http.MethodGet, Pattern: "/admin/api/replication", Handler: h.handleReplicationStatus,
