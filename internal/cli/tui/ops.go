@@ -28,13 +28,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// opsAction is one selectable admin operation. streams marks the long-running
-// actions that emit an NDJSON progress stream; the rest return a single result.
+// opsAction is one selectable admin operation. result decodes the single JSON
+// summary a short action answers with; the long-running actions leave it nil
+// and stream NDJSON progress instead.
 type opsAction struct {
 	label   string
 	method  string
 	path    string
-	streams bool
+	result  oneShotDecoder
 	confirm string
 }
 
@@ -42,13 +43,13 @@ type opsAction struct {
 // excluded; it is a per-backend flow handled elsewhere.
 func opsActions() []opsAction {
 	return []opsAction{
-		{"Rebalance backends", http.MethodPost, "/admin/api/rebalance", false, "Rebalance objects across backends?"},
-		{"Clean over-replicated copies", http.MethodPost, "/admin/api/over-replication", true, "Remove over-replicated object copies?"},
-		{"Scrub (verify integrity)", http.MethodPost, "/admin/api/scrub", true, "Scrub every object to verify integrity?"},
-		{"Backfill checksums", http.MethodPost, "/admin/api/backfill-checksums", true, "Backfill missing object checksums?"},
-		{"Reconcile metadata", http.MethodPost, "/admin/api/reconcile", true, "Reconcile metadata against backends?"},
-		{"Reconcile usage counters", http.MethodPost, "/admin/api/usage-reconcile", false, "Reconcile usage counters across all backends?"},
-		{"Flush object cache", http.MethodPost, "/admin/api/cache/flush", false, "Flush the in-memory object cache?"},
+		{"Rebalance backends", http.MethodPost, "/admin/api/rebalance", decodeOneShot[rebalanceResult], "Rebalance objects across backends?"},
+		{"Clean over-replicated copies", http.MethodPost, "/admin/api/over-replication", nil, "Remove over-replicated object copies?"},
+		{"Scrub (verify integrity)", http.MethodPost, "/admin/api/scrub", nil, "Scrub every object to verify integrity?"},
+		{"Backfill checksums", http.MethodPost, "/admin/api/backfill-checksums", nil, "Backfill missing object checksums?"},
+		{"Reconcile metadata", http.MethodPost, "/admin/api/reconcile", nil, "Reconcile metadata against backends?"},
+		{"Reconcile usage counters", http.MethodPost, "/admin/api/usage-reconcile", decodeOneShot[usageReconcileResult], "Reconcile usage counters across all backends?"},
+		{"Flush object cache", http.MethodPost, "/admin/api/cache/flush", decodeOneShot[cacheFlushResult], "Flush the in-memory object cache?"},
 	}
 }
 
@@ -86,7 +87,7 @@ type opsDoneMsg struct{ err error }
 // the opened stream as an opsStreamMsg.
 func openOps(client adminClient, a opsAction) tea.Cmd {
 	return func() tea.Msg {
-		s, err := client.RunOp(context.Background(), a.method, a.path, a.streams)
+		s, err := client.RunOp(context.Background(), a)
 		return opsStreamMsg{stream: s, err: err, label: a.label}
 	}
 }

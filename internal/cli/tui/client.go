@@ -17,7 +17,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
@@ -98,11 +97,13 @@ type eventStream interface {
 }
 
 // RunOp starts an admin instance action and returns its event stream. A
-// streaming action opts into the server's NDJSON progress stream; a one-shot
-// action POSTs and returns a single synthesized result event so the two render
-// identically. A >=400 status becomes an error carrying the trimmed body.
-func (c *apiClient) RunOp(ctx context.Context, method, path string, stream bool) (eventStream, error) {
-	req, err := http.NewRequestWithContext(ctx, method, c.baseAddr+path, nil)
+// long-running action opts into the server's NDJSON progress stream; a short
+// one POSTs and has its summary decoded into a single result event, so the two
+// render identically. A >=400 status becomes an error carrying the trimmed body.
+func (c *apiClient) RunOp(ctx context.Context, act opsAction) (eventStream, error) {
+	stream := act.result == nil
+
+	req, err := http.NewRequestWithContext(ctx, act.method, c.baseAddr+act.path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -131,11 +132,11 @@ func (c *apiClient) RunOp(ctx context.Context, method, path string, stream bool)
 		return &decoderStream{dec: json.NewDecoder(resp.Body), body: resp.Body}, nil
 	}
 	defer resp.Body.Close()
-	var summary map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&summary); err != nil {
+	event, err := act.result(resp.Body)
+	if err != nil {
 		return nil, err
 	}
-	return &sliceStream{events: []adminstream.Event{oneShotResult(summary)}}, nil
+	return &sliceStream{events: []adminstream.Event{event}}, nil
 }
 
 // decoderStream adapts the live NDJSON body to eventStream.
@@ -168,44 +169,6 @@ func (s *sliceStream) Next() (adminstream.Event, error) {
 }
 
 func (s *sliceStream) Close() error { return nil }
-
-// oneShotResult turns a non-streaming action's JSON summary into a single
-// terminal result event so one-shot and streaming actions render alike.
-func oneShotResult(summary map[string]any) adminstream.Event {
-	status, _ := summary["status"].(string)
-	outcome := adminstream.OutcomeOK
-	if status == "skipped" || status == "disabled" {
-		outcome = adminstream.OutcomeSkipped
-	}
-	msg := summarizeFields(summary)
-	if outcome == adminstream.OutcomeSkipped {
-		if reason, ok := summary["reason"].(string); ok && reason != "" {
-			msg = reason
-		}
-	}
-	if msg == "" {
-		msg = status
-	}
-	return adminstream.Event{Kind: adminstream.KindResult, Outcome: outcome, Message: msg}
-}
-
-// summarizeFields renders a one-shot summary's detail fields as sorted
-// key=value pairs, skipping the status and reason keys handled separately.
-func summarizeFields(summary map[string]any) string {
-	keys := make([]string, 0, len(summary))
-	for k := range summary {
-		if k == "status" || k == "reason" {
-			continue
-		}
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%v", k, summary[k]))
-	}
-	return strings.Join(parts, " ")
-}
 
 // getJSON issues an authenticated GET against the admin API and decodes the
 // response body into T. A >=400 status becomes an error carrying the trimmed
