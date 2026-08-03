@@ -46,6 +46,11 @@ type adminClient interface {
 	GetStatus(ctx context.Context) (*adminapi.StatusResponse, error)
 	GetLogs(ctx context.Context, level string) (*adminapi.LogsResponse, error)
 	GetReplicationStatus(ctx context.Context) (*adminapi.ReplicationStatusResponse, error)
+	GetWorkers(ctx context.Context) (*adminapi.WorkersResponse, error)
+	GetCleanupQueue(ctx context.Context) (*adminapi.CleanupQueueResponse, error)
+	GetCleanupDLQ(ctx context.Context) (*adminapi.CleanupDLQResponse, error)
+	GetCacheStats(ctx context.Context) (*adminapi.CacheStatsResponse, error)
+	RequeueCleanupDLQ(ctx context.Context, backend string) (*adminapi.CleanupDLQRequeueResponse, error)
 	RunOp(ctx context.Context, act opsAction) (eventStream, error)
 }
 
@@ -60,6 +65,9 @@ type model struct {
 	backends    backendsView    // backends pane state, populated when section is sectionBackends
 	logs        logsView        // logs pane state, populated when section is sectionLogs
 	replication replicationView // replication pane state, populated when section is sectionReplication
+	workers     workersView     // workers pane state, populated when section is sectionWorkers
+	cleanup     cleanupView     // cleanup pane state, populated when section is sectionCleanup
+	cache       cacheView       // cache pane state, populated when section is sectionCache
 	ops         opsView         // ops pane state, populated when section is sectionOps
 	prefix      string          // the prefix currently listed ("" is the root)
 	entries     []entry         // every loaded row under the current prefix
@@ -88,11 +96,15 @@ func initialModel(client adminClient) *model {
 	fi.Placeholder = "type to filter"
 	m := &model{client: client, loading: true, spinner: spinner.New(), table: newTable(), filter: fi}
 	m.backends = backendsView{table: newTable()}
+	m.workers = workersView{table: newTable()}
+	m.cleanup = cleanupView{queue: newTable(), dlq: newTable()}
 	// Seed the browser and backends columns up front. The initial loads can be
 	// delivered before the first WindowSizeMsg, and SetRows on a column-less
 	// table panics in the table's row renderer.
 	m.resizeTable()
 	m.resizeBackends()
+	m.resizeWorkers()
+	m.resizeCleanup()
 	return m
 }
 
@@ -200,6 +212,27 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case replicationTickMsg:
 		return m.onReplicationTick()
+	case workersLoadedMsg:
+		m.applyWorkers(msg.resp)
+		return m, nil
+	case workersErrMsg:
+		m.applyWorkersErr(msg.err)
+		return m, nil
+	case cleanupLoadedMsg:
+		m.applyCleanup(msg)
+		return m, nil
+	case cleanupErrMsg:
+		m.cleanup.loading = false
+		m.cleanup.err = msg.err
+		return m, nil
+	case cleanupRequeuedMsg:
+		return m.applyCleanupRequeued(msg)
+	case cacheLoadedMsg:
+		m.applyCache(msg.resp)
+		return m, nil
+	case cacheErrMsg:
+		m.applyCacheErr(msg.err)
+		return m, nil
 	case opsStreamMsg:
 		return m.applyOpsStream(msg)
 	case opsEventMsg:
@@ -216,6 +249,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resizeTable()
 		m.resizeInspector()
 		m.resizeBackends()
+		m.resizeWorkers()
+		m.resizeCleanup()
 		m.resizeLogs()
 		m.resizeOps()
 		return m, nil
@@ -255,6 +290,12 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.selectSection(sectionBackends)
 	case "p":
 		return m.selectSection(sectionReplication)
+	case "w":
+		return m.selectSection(sectionWorkers)
+	case "u":
+		return m.selectSection(sectionCleanup)
+	case "c":
+		return m.selectSection(sectionCache)
 	case "l":
 		return m.selectSection(sectionLogs)
 	case "o":
@@ -275,6 +316,15 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.section == sectionBackends {
 		return m.handleBackendsKey(key)
+	}
+	if m.section == sectionWorkers {
+		return m.handleWorkersKey(key)
+	}
+	if m.section == sectionCleanup {
+		return m.handleCleanupKey(key)
+	}
+	if m.section == sectionCache {
+		return m.handleCacheKey(key)
 	}
 	if m.mode == modeInspect {
 		return m.handleInspectKey(key)
@@ -449,6 +499,15 @@ func (m *model) contentView() string {
 	}
 	if m.section == sectionBackends {
 		return m.backendsPaneView()
+	}
+	if m.section == sectionWorkers {
+		return m.workersPaneView()
+	}
+	if m.section == sectionCleanup {
+		return m.cleanupPaneView()
+	}
+	if m.section == sectionCache {
+		return m.cachePaneView()
 	}
 	if m.mode == modeInspect {
 		return m.inspectView()

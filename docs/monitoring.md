@@ -199,7 +199,7 @@ Key metrics to alert on:
 | `s3o_redis_operations_total{operation,status}` | Track Redis operation success/error rates |
 | `s3o_cache_hits_total` / `s3o_cache_misses_total` | Cache hit ratio — low hit rate may indicate the cache is undersized or the workload is not read-heavy |
 | `s3o_cache_evictions_total` | High eviction rate suggests `max_size` is too small for the working set |
-| `s3o_cache_size_bytes` / `s3o_cache_entries` | Current cache utilization — watch for the cache staying near `max_size` |
+| `s3o_cache_size_bytes` / `s3o_cache_entries` | Current cache utilization - watch for the cache staying near `max_size`. Also served, alongside the lifetime hit and miss counts, by `GET /admin/api/cache` for operators without Prometheus |
 
 ### Full metric reference
 

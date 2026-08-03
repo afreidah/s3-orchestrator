@@ -720,7 +720,13 @@ components:
                 entries:
                     format: int64
                     type: integer
+                hits:
+                    format: int64
+                    type: integer
                 max_bytes:
+                    format: int64
+                    type: integer
+                misses:
                     format: int64
                     type: integer
                 size_bytes:
@@ -730,6 +736,8 @@ components:
                 - entries
                 - size_bytes
                 - max_bytes
+                - hits
+                - misses
             type: object
         CleanupDLQItem:
             properties:

@@ -250,3 +250,109 @@ func TestAPIClient_RunOp_ErrorStatus(t *testing.T) {
 		t.Errorf("err = %v, want to mention 403", err)
 	}
 }
+
+// TestAPIClient_GetCacheStats_Success asserts the hit/miss counters decode, so
+// the pane can compute a rate without scraping Prometheus.
+func TestAPIClient_GetCacheStats_Success(t *testing.T) {
+	t.Parallel()
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"entries":3,"size_bytes":2048,"max_bytes":4096,"hits":30,"misses":10}`))
+	}))
+	defer srv.Close()
+
+	stats, err := newAPIClient(srv.URL, "tok").GetCacheStats(context.Background())
+	if err != nil {
+		t.Fatalf("GetCacheStats: %v", err)
+	}
+	if gotPath != "/admin/api/cache" {
+		t.Errorf("path = %q, want /admin/api/cache", gotPath)
+	}
+	if stats.Entries != 3 || stats.SizeBytes != 2048 || stats.MaxBytes != 4096 || stats.Hits != 30 || stats.Misses != 10 {
+		t.Errorf("stats = %+v", stats)
+	}
+}
+
+// TestAPIClient_RequeueCleanupDLQ asserts the requeue POSTs with the backend
+// scope in the query string.
+func TestAPIClient_RequeueCleanupDLQ(t *testing.T) {
+	t.Parallel()
+	var gotMethod, gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"backend":"b1","requeued":4}`))
+	}))
+	defer srv.Close()
+
+	resp, err := newAPIClient(srv.URL, "tok").RequeueCleanupDLQ(context.Background(), "b1")
+	if err != nil {
+		t.Fatalf("RequeueCleanupDLQ: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/admin/api/cleanup-dlq/requeue" {
+		t.Errorf("request = %s %s", gotMethod, gotPath)
+	}
+	if gotQuery != "backend=b1" {
+		t.Errorf("query = %q, want backend=b1", gotQuery)
+	}
+	if resp.Backend != "b1" || resp.Requeued != 4 {
+		t.Errorf("resp = %+v", resp)
+	}
+}
+
+// TestAPIClient_RequeueCleanupDLQ_OmitsEmptyBackend asserts an unscoped requeue
+// sends no backend parameter rather than an empty one.
+func TestAPIClient_RequeueCleanupDLQ_OmitsEmptyBackend(t *testing.T) {
+	t.Parallel()
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"requeued":0}`))
+	}))
+	defer srv.Close()
+
+	if _, err := newAPIClient(srv.URL, "tok").RequeueCleanupDLQ(context.Background(), ""); err != nil {
+		t.Fatalf("RequeueCleanupDLQ: %v", err)
+	}
+	if gotQuery != "" {
+		t.Errorf("query = %q, want empty", gotQuery)
+	}
+}
+
+// TestAPIError_UnavailableReason covers the two error-body shapes the admin API
+// emits, and asserts only a 503 is treated as a configuration fact: any other
+// status is a genuine failure the pane must surface as an error.
+func TestAPIError_UnavailableReason(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"disabled subsystem", &apiError{status: http.StatusServiceUnavailable, body: `{"status":"disabled","reason":"caching is off"}`}, "caching is off"},
+		{"error body", &apiError{status: http.StatusServiceUnavailable, body: `{"error":"not wired"}`}, "not wired"},
+		{"empty body", &apiError{status: http.StatusServiceUnavailable}, "not available on this instance"},
+		{"unparseable body", &apiError{status: http.StatusServiceUnavailable, body: "plain text"}, "plain text"},
+		{"other status", &apiError{status: http.StatusInternalServerError, body: `{"error":"boom"}`}, ""},
+		{"not an apiError", errors.New("boom"), ""},
+	}
+	for _, c := range cases {
+		if got := unavailableReason(c.err); got != c.want {
+			t.Errorf("%s: unavailableReason = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestAPIError_Error asserts the message carries the status and the body's
+// human-readable part rather than raw JSON.
+func TestAPIError_Error(t *testing.T) {
+	t.Parallel()
+	err := &apiError{status: http.StatusForbidden, body: `{"error":"denied"}`}
+	if got := err.Error(); !strings.Contains(got, "403") || !strings.Contains(got, "denied") {
+		t.Errorf("Error() = %q", got)
+	}
+	bare := &apiError{status: http.StatusBadGateway}
+	if got := bare.Error(); !strings.Contains(got, "502") {
+		t.Errorf("bare Error() = %q", got)
+	}
+}

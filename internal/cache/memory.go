@@ -55,6 +55,8 @@ type MemoryCache struct {
 	maxSize       int64
 	maxObjectSize int64
 	ttl           time.Duration
+	hits          int64 // lifetime Get hits, guarded by mu alongside the LRU
+	misses        int64 // lifetime Get misses (absent or expired)
 }
 
 // NewMemoryCache creates a new in-memory LRU cache with the given configuration.
@@ -88,6 +90,7 @@ func (c *MemoryCache) Get(key string) (*Entry, bool) {
 
 	elem, ok := c.items[key]
 	if !ok {
+		c.misses++
 		telemetry.CacheMissesTotal.Inc()
 		return nil, false
 	}
@@ -95,11 +98,13 @@ func (c *MemoryCache) Get(key string) (*Entry, bool) {
 	me := elem.Value.(*memoryEntry)
 	if time.Now().After(me.expiresAt) {
 		c.removeLocked(elem)
+		c.misses++
 		telemetry.CacheMissesTotal.Inc()
 		return nil, false
 	}
 
 	c.order.MoveToFront(elem)
+	c.hits++
 	telemetry.CacheHitsTotal.Inc()
 	return me.entry, true
 }
@@ -213,6 +218,8 @@ func (c *MemoryCache) Stats() Stats {
 		Entries:   len(c.items),
 		SizeBytes: c.sizeBytes,
 		MaxBytes:  c.maxSize,
+		Hits:      c.hits,
+		Misses:    c.misses,
 	}
 }
 
