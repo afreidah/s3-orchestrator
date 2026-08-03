@@ -32,6 +32,11 @@ type fakeLister struct {
 	status    *adminapi.StatusResponse
 	logs      *adminapi.LogsResponse
 	replic    *adminapi.ReplicationStatusResponse
+	workers   *adminapi.WorkersResponse
+	cleanupQ  *adminapi.CleanupQueueResponse
+	cleanupD  *adminapi.CleanupDLQResponse
+	cacheStat *adminapi.CacheStatsResponse
+	requeued  *adminapi.CleanupDLQRequeueResponse
 	opEvents  []adminstream.Event // canned RunOp stream (nil = single ok result)
 	opErr     error               // when set, RunOp fails to open
 }
@@ -69,6 +74,41 @@ func (f *fakeLister) GetReplicationStatus(_ context.Context) (*adminapi.Replicat
 		return f.replic, nil
 	}
 	return &adminapi.ReplicationStatusResponse{}, nil
+}
+
+func (f *fakeLister) GetWorkers(_ context.Context) (*adminapi.WorkersResponse, error) {
+	if f.workers != nil {
+		return f.workers, nil
+	}
+	return &adminapi.WorkersResponse{}, nil
+}
+
+func (f *fakeLister) GetCleanupQueue(_ context.Context) (*adminapi.CleanupQueueResponse, error) {
+	if f.cleanupQ != nil {
+		return f.cleanupQ, nil
+	}
+	return &adminapi.CleanupQueueResponse{}, nil
+}
+
+func (f *fakeLister) GetCleanupDLQ(_ context.Context) (*adminapi.CleanupDLQResponse, error) {
+	if f.cleanupD != nil {
+		return f.cleanupD, nil
+	}
+	return &adminapi.CleanupDLQResponse{}, nil
+}
+
+func (f *fakeLister) GetCacheStats(_ context.Context) (*adminapi.CacheStatsResponse, error) {
+	if f.cacheStat != nil {
+		return f.cacheStat, nil
+	}
+	return &adminapi.CacheStatsResponse{}, nil
+}
+
+func (f *fakeLister) RequeueCleanupDLQ(_ context.Context, backend string) (*adminapi.CleanupDLQRequeueResponse, error) {
+	if f.requeued != nil {
+		return f.requeued, nil
+	}
+	return &adminapi.CleanupDLQRequeueResponse{Backend: backend}, nil
 }
 
 // RunOp returns a stream over the canned events (or a single ok result when
@@ -290,7 +330,7 @@ func TestBrowser_RunsOpsAction(t *testing.T) {
 	tm := teatest.NewTestModel(t, initialModel(f), teatest.WithInitialTermSize(120, 24))
 
 	waitForText(t, tm, "readme")
-	tm.Type("o")                            // jump to the ops section
+	tm.Type("o") // jump to the ops section
 	waitForText(t, tm, "Rebalance backends")
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // arm the first action's confirm
 	waitForText(t, tm, "y/N")

@@ -189,3 +189,76 @@ func TestHandleKey_TabTogglesNavAndLetterJumps(t *testing.T) {
 		t.Errorf("f jump: section=%v", m.section)
 	}
 }
+
+// TestNavEntries_MatchSelectableSections guards the nav cursor bound against
+// the entry list: a section added to one and not the other silently becomes
+// unreachable, or lets the cursor run past the last row.
+func TestNavEntries_MatchSelectableSections(t *testing.T) {
+	t.Parallel()
+	entries := navEntries()
+	if len(entries) != selectableSections {
+		t.Fatalf("navEntries = %d, selectableSections = %d", len(entries), selectableSections)
+	}
+	for i, e := range entries {
+		if int(e.sec) != i {
+			t.Errorf("entry %d (%s) has section %d; display order must match the section constants", i, e.label, e.sec)
+		}
+	}
+}
+
+// TestNavEntries_FitSidebar asserts every label fits the fixed sidebar width.
+// A label that overflows soft-wraps and mangles the whole layout.
+func TestNavEntries_FitSidebar(t *testing.T) {
+	t.Parallel()
+	const markerWidth = 2
+	for _, e := range navEntries() {
+		if got := len(e.label) + markerWidth; got > sidebarWidth {
+			t.Errorf("label %q needs %d columns, sidebar is %d", e.label, got, sidebarWidth)
+		}
+	}
+}
+
+// TestSelectSection_LoadsEachPane asserts every section that renders remote
+// data dispatches a fetch when entered, so no pane opens permanently empty.
+func TestSelectSection_LoadsEachPane(t *testing.T) {
+	t.Parallel()
+	for _, sec := range []section{sectionBackends, sectionReplication, sectionWorkers, sectionCleanup, sectionCache, sectionLogs} {
+		m := initialModel(&fakeLister{})
+		m.width, m.height = 120, 20
+		_, cmd := m.selectSection(sec)
+		if m.section != sec || m.navFocus {
+			t.Errorf("section %d: section=%v navFocus=%v", sec, m.section, m.navFocus)
+		}
+		if cmd == nil {
+			t.Errorf("section %d entered without a load", sec)
+		}
+	}
+}
+
+// TestHandleKey_LetterJumpsAreUnique guards the global shortcuts: a duplicate
+// letter would make one section unreachable, and the switch would silently
+// prefer whichever case came first.
+func TestHandleKey_LetterJumpsAreUnique(t *testing.T) {
+	t.Parallel()
+	jumps := map[string]section{
+		"f": sectionFiles,
+		"b": sectionBackends,
+		"p": sectionReplication,
+		"w": sectionWorkers,
+		"u": sectionCleanup,
+		"c": sectionCache,
+		"l": sectionLogs,
+		"o": sectionOps,
+	}
+	if len(jumps) != selectableSections {
+		t.Fatalf("%d shortcuts for %d sections", len(jumps), selectableSections)
+	}
+	for letter, want := range jumps {
+		m := initialModel(&fakeLister{})
+		m.width, m.height = 120, 20
+		m.handleKey(key(letter))
+		if m.section != want {
+			t.Errorf("%q jumped to section %d, want %d", letter, m.section, want)
+		}
+	}
+}

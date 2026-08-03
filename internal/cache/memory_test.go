@@ -380,3 +380,30 @@ func TestMemoryCache_EntrySize(t *testing.T) {
 		t.Errorf("entry.Size() = %d, want 26", size)
 	}
 }
+
+// TestMemoryCache_StatsHitsAndMisses verifies lookups are counted, and that an
+// expired entry counts as a miss rather than a hit: the entry existed, but the
+// caller still had to go to the backend for it.
+func TestMemoryCache_StatsHitsAndMisses(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		c := newTestCache(t, 1024, 512, time.Minute)
+		admitAndPut(t, c, "key1", []byte("data"), EntryMeta{})
+
+		c.Get("key1")   // hit
+		c.Get("key1")   // hit
+		c.Get("absent") // miss
+
+		if s := c.Stats(); s.Hits != 2 || s.Misses != 1 {
+			t.Errorf("stats = %+v, want 2 hits / 1 miss", s)
+		}
+
+		time.Sleep(2 * time.Minute)
+		synctest.Wait()
+		c.Get("key1") // expired, so a miss
+
+		if s := c.Stats(); s.Hits != 2 || s.Misses != 2 {
+			t.Errorf("after expiry stats = %+v, want 2 hits / 2 misses", s)
+		}
+	})
+}

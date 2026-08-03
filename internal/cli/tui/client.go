@@ -13,6 +13,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -87,6 +88,41 @@ func (c *apiClient) GetReplicationStatus(ctx context.Context) (*adminapi.Replica
 	return getJSON[adminapi.ReplicationStatusResponse](ctx, c, "/admin/api/replication", nil)
 }
 
+// GetWorkers fetches every registered background service's last-tick health.
+// Returns an unavailable apiError on a proxy-only deployment, which registers
+// no worker pool.
+func (c *apiClient) GetWorkers(ctx context.Context) (*adminapi.WorkersResponse, error) {
+	return getJSON[adminapi.WorkersResponse](ctx, c, "/admin/api/workers", nil)
+}
+
+// GetCleanupQueue fetches the pending-cleanup depth and a page of rows awaiting
+// a successful backend delete.
+func (c *apiClient) GetCleanupQueue(ctx context.Context) (*adminapi.CleanupQueueResponse, error) {
+	return getJSON[adminapi.CleanupQueueResponse](ctx, c, "/admin/api/cleanup-queue", nil)
+}
+
+// GetCleanupDLQ fetches the dead-letter depth and a page of rows that exhausted
+// their retry budget.
+func (c *apiClient) GetCleanupDLQ(ctx context.Context) (*adminapi.CleanupDLQResponse, error) {
+	return getJSON[adminapi.CleanupDLQResponse](ctx, c, "/admin/api/cleanup-dlq", nil)
+}
+
+// GetCacheStats fetches the object data cache's utilization. Returns an
+// unavailable apiError when object caching is disabled.
+func (c *apiClient) GetCacheStats(ctx context.Context) (*adminapi.CacheStatsResponse, error) {
+	return getJSON[adminapi.CacheStatsResponse](ctx, c, "/admin/api/cache", nil)
+}
+
+// RequeueCleanupDLQ moves dead-lettered rows back into the cleanup queue,
+// scoped to one backend when backend is non-empty.
+func (c *apiClient) RequeueCleanupDLQ(ctx context.Context, backend string) (*adminapi.CleanupDLQRequeueResponse, error) {
+	var q url.Values
+	if backend != "" {
+		q = url.Values{"backend": {backend}}
+	}
+	return postJSON[adminapi.CleanupDLQRequeueResponse](ctx, c, "/admin/api/cleanup-dlq/requeue", q)
+}
+
 // eventStream yields an admin operation's events in order, returning io.EOF when
 // the operation is exhausted. Both the server's live NDJSON progress stream and
 // the single synthesized result of a one-shot action satisfy it, so the Ops pane
@@ -124,9 +160,9 @@ func (c *apiClient) RunOp(ctx context.Context, act opsAction) (eventStream, erro
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
+		err := readAPIError(resp)
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("admin API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, err
 	}
 	if stream {
 		return &decoderStream{dec: json.NewDecoder(resp.Body), body: resp.Body}, nil
@@ -170,11 +206,77 @@ func (s *sliceStream) Next() (adminstream.Event, error) {
 
 func (s *sliceStream) Close() error { return nil }
 
+// apiError is a non-2xx admin API response. It keeps the status code so a
+// caller can tell a genuine failure apart from an endpoint the deployment
+// simply does not offer: /admin/api/workers answers 503 on a proxy-only
+// instance, and every /admin/api/cache route answers 503 when caching is off.
+type apiError struct {
+	status int
+	body   string
+}
+
+func (e *apiError) Error() string {
+	if d := e.detail(); d != "" {
+		return fmt.Sprintf("admin API returned %d: %s", e.status, d)
+	}
+	return fmt.Sprintf("admin API returned %d", e.status)
+}
+
+// unavailable reports whether the endpoint is absent by configuration rather
+// than broken.
+func (e *apiError) unavailable() bool { return e.status == http.StatusServiceUnavailable }
+
+// detail extracts the human-readable part of an error body, which the admin
+// API writes as either {"error":...} or, for a disabled subsystem,
+// {"status":"disabled","reason":...}. Falls back to the raw body so an
+// unrecognised shape is still legible.
+func (e *apiError) detail() string {
+	var parsed struct {
+		Error  string `json:"error"`
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal([]byte(e.body), &parsed) == nil {
+		if parsed.Error != "" {
+			return parsed.Error
+		}
+		if parsed.Reason != "" {
+			return parsed.Reason
+		}
+	}
+	return e.body
+}
+
+// unavailableReason returns the explanation for an endpoint the deployment does
+// not offer, or "" when err is any other kind of failure. Panes use it to
+// render a configuration notice instead of an error.
+func unavailableReason(err error) string {
+	var apiErr *apiError
+	if !errors.As(err, &apiErr) || !apiErr.unavailable() {
+		return ""
+	}
+	if d := apiErr.detail(); d != "" {
+		return d
+	}
+	return "not available on this instance"
+}
+
 // getJSON issues an authenticated GET against the admin API and decodes the
-// response body into T. A >=400 status becomes an error carrying the trimmed
-// response body.
+// response body into T.
 func getJSON[T any](ctx context.Context, c *apiClient, path string, q url.Values) (*T, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseAddr+path+"?"+q.Encode(), nil)
+	return doJSON[T](ctx, c, http.MethodGet, path, q)
+}
+
+// postJSON issues an authenticated POST against the admin API and decodes the
+// response body into T. Every admin action the browser posts takes its
+// arguments in the query string, so there is no request body.
+func postJSON[T any](ctx context.Context, c *apiClient, path string, q url.Values) (*T, error) {
+	return doJSON[T](ctx, c, http.MethodPost, path, q)
+}
+
+// doJSON issues an authenticated request and decodes the response into T. A
+// >=400 status becomes an *apiError carrying the status and trimmed body.
+func doJSON[T any](ctx context.Context, c *apiClient, method, path string, q url.Values) (*T, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.baseAddr+path+"?"+q.Encode(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -187,8 +289,7 @@ func getJSON[T any](ctx context.Context, c *apiClient, path string, q url.Values
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("admin API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, readAPIError(resp)
 	}
 
 	var out T
@@ -196,4 +297,10 @@ func getJSON[T any](ctx context.Context, c *apiClient, path string, q url.Values
 		return nil, err
 	}
 	return &out, nil
+}
+
+// readAPIError drains an error response into an *apiError.
+func readAPIError(resp *http.Response) error {
+	body, _ := io.ReadAll(resp.Body)
+	return &apiError{status: resp.StatusCode, body: strings.TrimSpace(string(body))}
 }
