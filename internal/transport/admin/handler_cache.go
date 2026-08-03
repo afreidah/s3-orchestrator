@@ -68,6 +68,8 @@ func (h *Handler) handleCacheStats(w http.ResponseWriter, _ *http.Request) {
 		Entries:   stats.Entries,
 		SizeBytes: stats.SizeBytes,
 		MaxBytes:  stats.MaxBytes,
+		Hits:      stats.Hits,
+		Misses:    stats.Misses,
 	})
 }
 

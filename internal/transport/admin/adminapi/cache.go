@@ -18,6 +18,8 @@ type CacheStatsResponse struct {
 	Entries   int   `json:"entries"`
 	SizeBytes int64 `json:"size_bytes"`
 	MaxBytes  int64 `json:"max_bytes"`
+	Hits      int64 `json:"hits"`
+	Misses    int64 `json:"misses"`
 }
 
 // CacheInvalidateResponse is the outcome of dropping cache entries in bulk:

@@ -12,11 +12,16 @@ A persistent left navigation bar switches between sections; the content area to 
 
 - **Files** - a hierarchical listing of the object namespace, one prefix at a time (directories collapse into common prefixes, just like `aws s3 ls`). Large prefixes page in as you scroll. Opening an object swaps the content area for the **Inspector**, which lists every backend copy of that object with its size, age, encryption status, key id, and content-hash prefix - the replica-placement view that makes multi-backend storage legible.
 - **Backends** - one row per configured backend with its circuit-breaker health, drain state, quota usage, object count, and per-period request and transfer counters.
+- **Replication** - the configured replication factor and the current under- and over-replicated object counts, refreshing on its own while the section is active.
+- **Workers** - each background service's last-tick health: last success, last failure, consecutive failure count, and last error. A service that runs but fails every tick is invisible in `/health`; this is where it shows up.
+- **Cleanup** - the cleanup queue and its dead-letter table, with the depth of each. The one write action here is requeueing a backend's dead-lettered rows.
+- **Cache** - the object data cache's entry count, bytes held against its maximum, and lifetime hit rate.
 - **Logs** - recent structured log entries from the instance's in-memory log buffer (the same source the web dashboard's logs pane reads): time, level, component, and a human-readable message with its attributes appended as `key=value` pairs.
+- **Ops** - the menu of instance-wide admin actions (rebalance, scrub, backfill, reconcile, cache flush), each behind a `y/N` confirmation.
 
 The pane that currently has keyboard focus renders with a bright title bar while the other is muted, so it is always clear whether keys drive the sidebar or the content.
 
-Everything is read-only. The TUI issues `GET` requests to the admin API (`/admin/api/objects` for the listing, `/admin/api/object-locations` for the inspector, `/admin/api/status` for backends) and never mutates state.
+Browsing is read-only: the listing, inspector, and every status pane issue `GET` requests to the admin API and never mutate state. The Ops menu and the Cleanup pane's requeue are the exceptions, and both ask before they act.
 
 ![The Files section listing a prefix of objects and sub-directories, with the navigation sidebar](/docs/images/tui-files.png?classes=lightbox)
 
@@ -49,13 +54,19 @@ s3-orchestrator tui -addr https://s3.example.com -token "$ADMIN_TOKEN"
 
 ## Step 2: Navigate the object namespace
 
-The TUI opens on the Files section at the root prefix. Move the selection with the arrow keys; open the highlighted row with `enter`. `tab` moves focus to the sidebar (arrow keys then move the highlight, `enter` opens a section), and `f` / `b` / `l` jump straight to Files, Backends, or Logs.
+The TUI opens on the Files section at the root prefix. Move the selection with the arrow keys; open the highlighted row with `enter`. `tab` moves focus to the sidebar (arrow keys then move the highlight, `enter` opens a section), and a letter jumps straight to a section.
 
 | Key | Action |
 |-----|--------|
 | `tab` | Move focus between the sidebar and the content area |
 | `f` | Jump to the Files section |
 | `b` | Jump to the Backends section |
+| `p` | Jump to the Replication section |
+| `w` | Jump to the Workers section |
+| `u` | Jump to the Cleanup section |
+| `c` | Jump to the Cache section |
+| `l` | Jump to the Logs section |
+| `o` | Jump to the Ops section |
 | `up` / `down` | Move the selection (or the sidebar highlight when it has focus) |
 | `enter` / `right` / `l` | Open: a sidebar section, a prefix, or the inspector on an object |
 | `backspace` / `left` / `h` | Go up one prefix; from the inspector or Backends, return to where you were |

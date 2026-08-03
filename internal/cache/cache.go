@@ -87,9 +87,13 @@ type EntryMeta struct {
 	Metadata    map[string]string
 }
 
-// Stats reports current cache utilization.
+// Stats reports current cache utilization. Hits and Misses are lifetime
+// process totals, mirroring the s3o_cache_hits_total / s3o_cache_misses_total
+// counters so a caller without Prometheus can still derive a hit rate.
 type Stats struct {
-	Entries  int
+	Entries   int
 	SizeBytes int64
-	MaxBytes int64
+	MaxBytes  int64
+	Hits      int64
+	Misses    int64
 }

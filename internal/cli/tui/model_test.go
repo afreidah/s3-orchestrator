@@ -46,6 +46,26 @@ func (errLister) GetReplicationStatus(_ context.Context) (*adminapi.ReplicationS
 	return nil, errors.New("nope")
 }
 
+func (errLister) GetWorkers(_ context.Context) (*adminapi.WorkersResponse, error) {
+	return nil, errors.New("nope")
+}
+
+func (errLister) GetCleanupQueue(_ context.Context) (*adminapi.CleanupQueueResponse, error) {
+	return nil, errors.New("nope")
+}
+
+func (errLister) GetCleanupDLQ(_ context.Context) (*adminapi.CleanupDLQResponse, error) {
+	return nil, errors.New("nope")
+}
+
+func (errLister) GetCacheStats(_ context.Context) (*adminapi.CacheStatsResponse, error) {
+	return nil, errors.New("nope")
+}
+
+func (errLister) RequeueCleanupDLQ(_ context.Context, _ string) (*adminapi.CleanupDLQRequeueResponse, error) {
+	return nil, errors.New("nope")
+}
+
 func (errLister) RunOp(_ context.Context, _ opsAction) (eventStream, error) {
 	return nil, errors.New("nope")
 }
