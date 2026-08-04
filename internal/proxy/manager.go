@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -576,12 +577,9 @@ func (m *BackendManager) CountActiveMultipartUploads(ctx context.Context, bucket
 // already hold a copy of the object.
 func (m *BackendManager) SelectReplicaTarget(ctx context.Context, size int64, exclusion map[string]bool) (string, error) {
 	eligible := m.runtime.EligibleForWrite(1, 0, size)
-	filtered := make([]string, 0, len(eligible))
-	for _, name := range eligible {
-		if !exclusion[name] {
-			filtered = append(filtered, name)
-		}
-	}
+	filtered := slices.DeleteFunc(slices.Clone(eligible), func(name string) bool {
+		return exclusion[name]
+	})
 	if len(filtered) == 0 {
 		return "", nil
 	}

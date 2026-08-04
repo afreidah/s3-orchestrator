@@ -14,7 +14,10 @@
 
 package config
 
-import "time"
+import (
+	"cmp"
+	"time"
+)
 
 // RedisConfig holds optional Redis connection settings for shared usage
 // counters in multi-instance deployments. When omitted, counters are stored
@@ -36,15 +39,9 @@ func (r *RedisConfig) setDefaultsAndValidate() []error {
 	if r.Address == "" {
 		errs = append(errs, ErrRedisAddressRequired)
 	}
-	if r.KeyPrefix == "" {
-		r.KeyPrefix = "s3orch"
-	}
-	if r.FailureThreshold == 0 {
-		r.FailureThreshold = 3
-	}
-	if r.OpenTimeout == 0 {
-		r.OpenTimeout = 15 * time.Second
-	}
+	r.KeyPrefix = cmp.Or(r.KeyPrefix, "s3orch")
+	r.FailureThreshold = cmp.Or(r.FailureThreshold, 3)
+	r.OpenTimeout = cmp.Or(r.OpenTimeout, 15*time.Second)
 
 	if r.FailureThreshold < 0 {
 		errs = append(errs, ErrRedisFailureThresholdNotPos)

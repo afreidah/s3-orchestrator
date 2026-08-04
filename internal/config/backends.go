@@ -12,7 +12,10 @@
 
 package config
 
-import "fmt"
+import (
+	"cmp"
+	"fmt"
+)
 
 // CredentialSourceStatic and friends enumerate the supported credential_source values.
 const (
@@ -71,9 +74,7 @@ func validateBackend(idx int, b *BackendConfig, seenNames map[string]bool) []err
 	if b.Name == "" {
 		b.Name = fmt.Sprintf("backend-%d", idx)
 	}
-	if b.CredentialSource == "" {
-		b.CredentialSource = CredentialSourceStatic
-	}
+	b.CredentialSource = cmp.Or(b.CredentialSource, CredentialSourceStatic)
 
 	var errs []error
 	if seenNames[b.Name] {

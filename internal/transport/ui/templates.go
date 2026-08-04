@@ -10,6 +10,7 @@
 package ui
 
 import (
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 	"embed"
 	"fmt"
 	"html/template"
@@ -33,7 +34,7 @@ var staticFS, _ = fs.Sub(embeddedFS, "static")
 // parse step.
 func loadTemplates() *template.Template {
 	funcMap := template.FuncMap{
-		"formatBytes":  formatBytes,
+		"formatBytes":  humanize.Bytes,
 		"formatNumber": formatNumber,
 		"pct":          pct,
 		"pctFloat":     pctFloat,
@@ -43,23 +44,6 @@ func loadTemplates() *template.Template {
 	return template.Must(
 		template.New("").Funcs(funcMap).ParseFS(embeddedFS, "templates/*.html"),
 	)
-}
-
-// formatBytes converts a byte count to a human-readable string.
-func formatBytes(b int64) string {
-	if b == 0 {
-		return "0 B"
-	}
-	const unit = 1024
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
 // formatNumber formats an integer with comma separators.

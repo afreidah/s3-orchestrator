@@ -13,6 +13,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"strings"
 	"testing"
 
@@ -66,7 +67,7 @@ func (errLister) RequeueCleanupDLQ(_ context.Context, _ string) (*adminapi.Clean
 	return nil, errors.New("nope")
 }
 
-func (errLister) RunOp(_ context.Context, _ opsAction) (eventStream, error) {
+func (errLister) RunOp(_ context.Context, _ opsAction) (adminclient.EventStream, error) {
 	return nil, errors.New("nope")
 }
 

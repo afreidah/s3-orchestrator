@@ -17,8 +17,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -31,46 +31,28 @@ import (
 // server flushes a progress event per batch, so the connection stays active for
 // the life of the operation and Ctrl-C cancels it.
 func (c *client) stream(method, path, body string) int {
-	var bodyReader io.Reader
-	if body != "" {
-		bodyReader = strings.NewReader(body)
-	}
-
-	req, err := http.NewRequestWithContext(context.Background(), method, c.baseAddr+path, bodyReader)
+	events, err := c.api.Stream(context.Background(), method, path, nil, bodyReader(body))
 	if err != nil {
-		fmt.Fprintf(c.stderr, fmtError, err)
+		var apiErr *adminclient.Error
+		if errors.As(err, &apiErr) {
+			c.renderError([]byte(apiErr.Body))
+		} else {
+			fmt.Fprintf(c.stderr, fmtError, err)
+		}
 		return 1
 	}
-	req.Header.Set(adminTokenHeader, c.token)
-	req.Header.Set("Accept", adminstream.ContentType)
-	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
+	defer events.Close()
 
-	resp, err := (&http.Client{}).Do(req) //nolint:gosec // G704: admin CLI target address is user-provided via --addr flag
-	if err != nil {
-		fmt.Fprintf(c.stderr, fmtError, err)
-		return 1
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(resp.Body)
-		c.renderError(data)
-		return 1
-	}
-
-	return c.consumeStream(resp.Body)
+	return c.consumeStream(events)
 }
 
 // consumeStream decodes the response body one Event per line, rendering each
 // and returning a non-zero exit code if any result reported failure.
-func (c *client) consumeStream(body io.Reader) int {
-	dec := json.NewDecoder(body)
+func (c *client) consumeStream(events adminclient.EventStream) int {
 	exit := 0
 	for {
-		var e adminstream.Event
-		if err := dec.Decode(&e); err != nil {
+		e, err := events.Next()
+		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}

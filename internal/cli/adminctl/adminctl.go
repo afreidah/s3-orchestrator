@@ -20,6 +20,7 @@ package adminctl
 import (
 	"flag"
 	"fmt"
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"io"
 	"strings"
 
@@ -173,10 +174,9 @@ func CommandWithFormat(cmd string, args []string, baseAddr, token string, format
 		return 1
 	}
 	return h(args, &client{
-		baseAddr: baseAddr,
-		token:    token,
-		format:   format,
-		stdout:   stdout,
-		stderr:   stderr,
+		api:    adminclient.New(baseAddr, token),
+		format: format,
+		stdout: stdout,
+		stderr: stderr,
 	})
 }

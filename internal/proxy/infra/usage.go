@@ -15,6 +15,7 @@ package infra
 
 import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"slices"
 )
 
 // usagePolicy owns the runtime usage tracker and the static per-backend
@@ -63,11 +64,7 @@ func (p *usagePolicy) WithinLimits(name string, apiCalls, egress, ingress int64)
 // for the proposed operation dimensions. Order is preserved so the
 // caller's routing-strategy iteration order is respected.
 func (p *usagePolicy) FilterEligible(names []string, apiCalls, egress, ingress int64) []string {
-	filtered := make([]string, 0, len(names))
-	for _, name := range names {
-		if p.WithinLimits(name, apiCalls, egress, ingress) {
-			filtered = append(filtered, name)
-		}
-	}
-	return filtered
+	return slices.DeleteFunc(slices.Clone(names), func(name string) bool {
+		return !p.WithinLimits(name, apiCalls, egress, ingress)
+	})
 }

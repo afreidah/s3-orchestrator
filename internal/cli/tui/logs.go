@@ -17,7 +17,8 @@ package tui
 import (
 	"context"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -171,11 +172,7 @@ func logMessage(e *adminapi.LogEntry) string {
 	if len(e.Attrs) == 0 {
 		return e.Message
 	}
-	keys := make([]string, 0, len(e.Attrs))
-	for k := range e.Attrs {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	keys := slices.Sorted(maps.Keys(e.Attrs))
 
 	var b strings.Builder
 	b.WriteString(e.Message)

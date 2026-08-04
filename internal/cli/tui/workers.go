@@ -15,6 +15,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"strconv"
 	"time"
 
@@ -73,7 +74,7 @@ func (m *model) applyWorkers(resp *adminapi.WorkersResponse) {
 // (which registers no worker pool) from a real failure.
 func (m *model) applyWorkersErr(err error) {
 	m.workers.loading = false
-	m.workers.unavailable = unavailableReason(err)
+	m.workers.unavailable = adminclient.UnavailableReason(err)
 	m.workers.err = nil
 	if m.workers.unavailable == "" {
 		m.workers.err = err
