@@ -283,29 +283,6 @@ func TestFormatCapacityHint_RendersSortedSummary(t *testing.T) {
 	}
 }
 
-// TestHumanBytes_FormatsCommonScales pins the byte formatter on the
-// 0/B/KiB/MiB/GiB transitions so the InsufficientStorage error body
-// renders consistently.
-func TestHumanBytes_FormatsCommonScales(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		in   int64
-		want string
-	}{
-		{0, "0 B"},
-		{1023, "1023 B"},
-		{1024, "1.0 KiB"},
-		{1_572_864, "1.5 MiB"},
-		{10 * 1024 * 1024 * 1024, "10.0 GiB"},
-		{-1, "0 B"},
-	}
-	for _, tc := range cases {
-		if got := humanBytes(tc.in); got != tc.want {
-			t.Errorf("humanBytes(%d) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
 // TestValidateUserMetadata_RejectsCRLFInKey verifies the validate user metadata rejects crlfin key behaviour described by the test name.
 // Also asserts the error message names the offending key, the bad byte
 // in hex, and the position so operators can fix the request without
@@ -405,5 +382,19 @@ func TestWriteS3Error_EscapesXML(t *testing.T) {
 	body := w.Body.String()
 	if strings.Contains(body, "<script>") {
 		t.Error("XML special characters not escaped in error body")
+	}
+}
+
+// TestFormatCapacityHint_ClampsNegativeCounters verifies a drifted counter
+// renders as "0 B" rather than a negative size. Available space cannot be
+// negative in the error message an operator reads, so the clamp lives here
+// rather than in the shared byte formatter, which reports negatives faithfully.
+func TestFormatCapacityHint_ClampsNegativeCounters(t *testing.T) {
+	t.Parallel()
+	stats := map[string]core.QuotaStat{
+		"drifted": {BackendName: "drifted", BytesUsed: -1, BytesLimit: -1},
+	}
+	if got, want := formatCapacityHint(stats), "drifted=0 B/0 B"; got != want {
+		t.Errorf("formatCapacityHint = %q, want %q", got, want)
 	}
 }

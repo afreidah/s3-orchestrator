@@ -13,7 +13,7 @@ package sqlite
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -204,7 +204,7 @@ func splitAndSort(s string) []string {
 		return nil
 	}
 	parts := strings.Split(s, ",")
-	sort.Strings(parts)
+	slices.Sort(parts)
 	return parts
 }
 

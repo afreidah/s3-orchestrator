@@ -27,7 +27,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -169,7 +168,6 @@ func (br *BucketRegistry) authenticateProxyToken(proxyToken string) (string, err
 	}
 	return "", fmt.Errorf("invalid authentication token")
 }
-
 
 // -------------------------------------------------------------------------
 // SIGV4 VERIFICATION
@@ -548,7 +546,7 @@ func buildCanonicalQueryString(b *strings.Builder, values url.Values) {
 			params = append(params, sigV4Encode(k)+"="+sigV4Encode(v))
 		}
 	}
-	sort.Strings(params)
+	slices.Sort(params)
 	for i, p := range params {
 		if i > 0 {
 			b.WriteByte('&')
@@ -588,6 +586,9 @@ func encodePath(b *strings.Builder, wirePath string) {
 		b.WriteByte('/')
 		return
 	}
+	// Index-controlled rather than range: the already-encoded-triplet case
+	// advances i past the two hex digits it consumed, which range-over-int
+	// would ignore.
 	for i := 0; i < len(wirePath); i++ {
 		c := wirePath[i]
 		switch {

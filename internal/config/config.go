@@ -14,6 +14,7 @@
 package config
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -162,9 +163,7 @@ func (c *Config) applyDefaultsOnlyTypes() {
 
 // validateRoutingStrategy applies the default and enforces the enum.
 func (c *Config) validateRoutingStrategy() []error {
-	if c.RoutingStrategy == "" {
-		c.RoutingStrategy = RoutingPack
-	}
+	c.RoutingStrategy = cmp.Or(c.RoutingStrategy, RoutingPack)
 	if c.RoutingStrategy != RoutingPack && c.RoutingStrategy != RoutingSpread {
 		return []error{ErrInvalidRoutingStrategy}
 	}

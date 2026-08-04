@@ -14,10 +14,12 @@
 package tui
 
 import (
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -66,7 +68,9 @@ func decodeOneShot[T opsResult](r io.Reader) (adminstream.Event, error) {
 
 // usageReconcileResult reports the corrections applied to the per-backend usage
 // counters.
-type usageReconcileResult struct{ adminapi.UsageReconcileResponse }
+type usageReconcileResult struct {
+	adminapi.UsageReconcileResponse
+}
 
 func (r usageReconcileResult) skipReason() string { return skippedBecause(r.Status) }
 
@@ -74,11 +78,7 @@ func (r usageReconcileResult) describe() string {
 	if len(r.Adjustments) == 0 {
 		return "counters already accurate"
 	}
-	names := make([]string, 0, len(r.Adjustments))
-	for name := range r.Adjustments {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(r.Adjustments))
 
 	deltas := make([]string, 0, len(names))
 	for _, name := range names {
@@ -89,7 +89,9 @@ func (r usageReconcileResult) describe() string {
 }
 
 // cacheFlushResult reports how much of the object data cache a flush dropped.
-type cacheFlushResult struct{ adminapi.CacheInvalidateResponse }
+type cacheFlushResult struct {
+	adminapi.CacheInvalidateResponse
+}
 
 func (r cacheFlushResult) skipReason() string { return skippedBecause(r.Status) }
 
@@ -137,7 +139,7 @@ func grouped(n int) string {
 // as a direction and not just a magnitude.
 func signedSize(delta int64) string {
 	if delta < 0 {
-		return "-" + humanSize(-delta)
+		return humanize.Bytes(delta) // the formatter carries the minus sign
 	}
-	return "+" + humanSize(delta)
+	return "+" + humanize.Bytes(delta)
 }

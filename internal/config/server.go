@@ -15,6 +15,7 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
 	"time"
 )
@@ -74,17 +75,13 @@ func (s *ServerConfig) validateBasics() []error {
 	if s.ListenAddr == "" {
 		errs = append(errs, fmt.Errorf("server.listen_addr is required"))
 	}
-	if s.LogLevel == "" {
-		s.LogLevel = "info"
-	}
+	s.LogLevel = cmp.Or(s.LogLevel, "info")
 	switch s.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:
 		errs = append(errs, fmt.Errorf("%w: %q (want one of debug, info, warn, error)", ErrInvalidLogLevel, s.LogLevel))
 	}
-	if s.MaxObjectSize == 0 {
-		s.MaxObjectSize = 5 * 1024 * 1024 * 1024 // 5 GB
-	}
+	s.MaxObjectSize = cmp.Or(s.MaxObjectSize, 5*1024*1024*1024) // 5 GB
 	return errs
 }
 
@@ -116,21 +113,11 @@ func (s *ServerConfig) validateConcurrency() []error {
 // applyTimeoutDefaults fills zero-valued timeout fields with production
 // defaults.
 func (s *ServerConfig) applyTimeoutDefaults() {
-	if s.BackendTimeout == 0 {
-		s.BackendTimeout = 30 * time.Second
-	}
-	if s.ReadHeaderTimeout == 0 {
-		s.ReadHeaderTimeout = 10 * time.Second
-	}
-	if s.ReadTimeout == 0 {
-		s.ReadTimeout = 5 * time.Minute
-	}
-	if s.WriteTimeout == 0 {
-		s.WriteTimeout = 5 * time.Minute
-	}
-	if s.IdleTimeout == 0 {
-		s.IdleTimeout = 120 * time.Second
-	}
+	s.BackendTimeout = cmp.Or(s.BackendTimeout, 30*time.Second)
+	s.ReadHeaderTimeout = cmp.Or(s.ReadHeaderTimeout, 10*time.Second)
+	s.ReadTimeout = cmp.Or(s.ReadTimeout, 5*time.Minute)
+	s.WriteTimeout = cmp.Or(s.WriteTimeout, 5*time.Minute)
+	s.IdleTimeout = cmp.Or(s.IdleTimeout, 120*time.Second)
 }
 
 // validateTimeouts enforces the ordering invariants between the various
@@ -156,9 +143,7 @@ func (s *ServerConfig) validateTLS() []error {
 		errs = append(errs, ErrInvalidTLSConfig)
 	}
 	if hasCert && hasKey {
-		if s.TLS.MinVersion == "" {
-			s.TLS.MinVersion = "1.2"
-		}
+		s.TLS.MinVersion = cmp.Or(s.TLS.MinVersion, "1.2")
 		if s.TLS.MinVersion != "1.2" && s.TLS.MinVersion != "1.3" {
 			errs = append(errs, fmt.Errorf("%w: got %q (want %q or %q)", ErrInvalidTLSVersion, s.TLS.MinVersion, "1.2", "1.3"))
 		}

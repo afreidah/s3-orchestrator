@@ -91,7 +91,6 @@ func TestFooter_ConfirmStatusHints(t *testing.T) {
 	}
 }
 
-
 func TestHandleKey_DismissesStatusOnNextKey(t *testing.T) {
 	t.Parallel()
 	m := modelWith([]entry{{name: "a"}}, "", &fakeLister{})

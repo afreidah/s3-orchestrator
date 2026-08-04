@@ -12,6 +12,8 @@
 
 package config
 
+import "cmp"
+
 // TelemetryConfig holds observability settings.
 type TelemetryConfig struct {
 	Metrics MetricsConfig `yaml:"metrics"`
@@ -45,9 +47,7 @@ type TracingConfig struct {
 func (t *TelemetryConfig) setDefaultsAndValidate() []error {
 	var errs []error
 
-	if t.Metrics.Path == "" {
-		t.Metrics.Path = "/metrics"
-	}
+	t.Metrics.Path = cmp.Or(t.Metrics.Path, "/metrics")
 	if t.Tracing.SampleRate == 0 && t.Tracing.Enabled {
 		t.Tracing.SampleRate = 1.0
 	}

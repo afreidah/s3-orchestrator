@@ -15,6 +15,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 
@@ -68,7 +70,7 @@ func (m *model) applyCache(resp *adminapi.CacheStatsResponse) {
 // switched off from a real failure.
 func (m *model) applyCacheErr(err error) {
 	m.cache.loading = false
-	m.cache.unavailable = unavailableReason(err)
+	m.cache.unavailable = adminclient.UnavailableReason(err)
 	m.cache.err = nil
 	if m.cache.unavailable == "" {
 		m.cache.err = err
@@ -138,11 +140,11 @@ func (m *model) cacheStats() string {
 	}
 
 	used := line("entries", fmt.Sprintf("%d", s.Entries))
-	size := line("size", humanSize(s.SizeBytes))
+	size := line("size", humanize.Bytes(s.SizeBytes))
 	if s.MaxBytes > 0 {
 		pct := usagePercent(s.SizeBytes, s.MaxBytes)
 		size = line("size", fmt.Sprintf("%s / %s (%s)",
-			humanSize(s.SizeBytes), humanSize(s.MaxBytes), usageStyle(pct).Render(fmt.Sprintf("%d%%", pct))))
+			humanize.Bytes(s.SizeBytes), humanize.Bytes(s.MaxBytes), usageStyle(pct).Render(fmt.Sprintf("%d%%", pct))))
 	}
 
 	lookups := s.Hits + s.Misses

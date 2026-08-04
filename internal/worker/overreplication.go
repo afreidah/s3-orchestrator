@@ -14,10 +14,11 @@
 package worker
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -247,8 +248,8 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 	}
 
 	// Sort ascending: lowest score = first to remove
-	sort.Slice(scored, func(i, j int) bool {
-		return scored[i].score < scored[j].score
+	slices.SortFunc(scored, func(a, b scoredCopy) int {
+		return cmp.Compare(a.score, b.score)
 	})
 
 	removed := 0

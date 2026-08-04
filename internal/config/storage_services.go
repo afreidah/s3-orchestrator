@@ -16,6 +16,7 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
 	"time"
 )
@@ -170,9 +171,7 @@ func (r *RebalanceConfig) setDefaultsAndValidate() []error {
 // setDefaultsAndValidate sets defaults and validate.
 func (r *ReplicationConfig) setDefaultsAndValidate(backendCount int) []error {
 	var errs []error
-	if r.Factor == 0 {
-		r.Factor = 1
-	}
+	r.Factor = cmp.Or(r.Factor, 1)
 	if r.Factor < 1 {
 		errs = append(errs, ErrReplicationFactorMin)
 	}
@@ -188,15 +187,9 @@ func (r *ReplicationConfig) setDefaultsAndValidate(backendCount int) []error {
 // (Factor > 1); leaves everything at zero otherwise so operators don't
 // see "configured" values when they never turned replication on.
 func (r *ReplicationConfig) applyReplicationDefaults() {
-	if r.WorkerInterval == 0 {
-		r.WorkerInterval = 5 * time.Minute
-	}
-	if r.BatchSize == 0 {
-		r.BatchSize = 50
-	}
-	if r.UnhealthyThreshold == 0 {
-		r.UnhealthyThreshold = 10 * time.Minute
-	}
+	r.WorkerInterval = cmp.Or(r.WorkerInterval, 5*time.Minute)
+	r.BatchSize = cmp.Or(r.BatchSize, 50)
+	r.UnhealthyThreshold = cmp.Or(r.UnhealthyThreshold, 10*time.Minute)
 	if r.Concurrency <= 0 {
 		r.Concurrency = 5
 	}
