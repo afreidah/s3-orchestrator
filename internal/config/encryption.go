@@ -14,6 +14,7 @@
 package config
 
 import (
+	"cmp"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -72,9 +73,7 @@ func (e *EncryptionConfig) setDefaultsAndValidate() []error {
 // validateChunkSize applies the ChunkSize default and enforces the
 // 4KB-1MB-power-of-two constraints.
 func (e *EncryptionConfig) validateChunkSize() []error {
-	if e.ChunkSize == 0 {
-		e.ChunkSize = 65536
-	}
+	e.ChunkSize = cmp.Or(e.ChunkSize, 65536)
 	cs := e.ChunkSize
 	if cs < 4096 || cs > 1048576 {
 		return []error{ErrInvalidChunkSize}
@@ -174,12 +173,8 @@ func (v *VaultTransitConfig) setDefaultsAndValidate() []error {
 	if v.KeyName == "" {
 		errs = append(errs, ErrVaultKeyNameRequired)
 	}
-	if v.MountPath == "" {
-		v.MountPath = "transit"
-	}
-	if v.RenewInterval == 0 {
-		v.RenewInterval = 5 * time.Minute
-	}
+	v.MountPath = cmp.Or(v.MountPath, "transit")
+	v.RenewInterval = cmp.Or(v.RenewInterval, 5*time.Minute)
 
 	return errs
 }

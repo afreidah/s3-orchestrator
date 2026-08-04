@@ -9,19 +9,10 @@
 
 package output
 
-import "fmt"
+import "github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 // FormatBytes renders a byte count in IEC units (KiB, MiB, GiB, ...) with one
 // decimal place. Values under 1024 render as plain bytes, e.g. "512 B".
-func FormatBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for v := n / unit; v >= unit; v /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
-}
+// Retained as the output package's own name so command renderers read
+// consistently; the formatting itself is shared with every other surface.
+func FormatBytes(n int64) string { return humanize.Bytes(n) }

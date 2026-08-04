@@ -12,6 +12,7 @@
 package tui
 
 import (
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 	"context"
 	"fmt"
 	"strconv"
@@ -139,7 +140,7 @@ func rowsFromLocations(locations []adminapi.ObjectLocation) []table.Row {
 		l := locations[i]
 		rows = append(rows, table.Row{
 			l.Backend,
-			humanSize(l.SizeBytes),
+			humanize.Bytes(l.SizeBytes),
 			relativeAge(l.CreatedAt),
 			yesNo(l.Encrypted),
 			truncate(l.KeyID, 10),

@@ -12,6 +12,7 @@
 package tui
 
 import (
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 	"context"
 	"fmt"
 	"strconv"
@@ -128,20 +129,20 @@ func rowsFromBackends(backends []adminapi.BackendStatus) []table.Row {
 		b := backends[i]
 		limit, usePct := "-", "-"
 		if b.BytesLimit > 0 {
-			limit = humanSize(b.BytesLimit)
+			limit = humanize.Bytes(b.BytesLimit)
 			usePct = fmt.Sprintf("%d%%", usagePercent(b.BytesUsed, b.BytesLimit))
 		}
 		rows = append(rows, table.Row{
 			b.Name,
 			backendHealth(b.Healthy),
 			backendDrain(b.Draining),
-			humanSize(b.BytesUsed),
+			humanize.Bytes(b.BytesUsed),
 			limit,
 			usePct,
 			strconv.FormatInt(b.ObjectCount, 10),
 			strconv.FormatInt(b.APIRequests, 10),
-			humanSize(b.IngressBytes),
-			humanSize(b.EgressBytes),
+			humanize.Bytes(b.IngressBytes),
+			humanize.Bytes(b.EgressBytes),
 		})
 	}
 	return rows
@@ -194,11 +195,11 @@ func (m *model) backendsStatsLine() string {
 			limit += m.backends.rows[i].BytesLimit
 		}
 	}
-	total := "total: " + humanSize(used)
+	total := "total: " + humanize.Bytes(used)
 	if limit > 0 {
 		pct := usagePercent(used, limit)
 		total = fmt.Sprintf("total: %s / %s (%s)",
-			humanSize(used), humanSize(limit), usageStyle(pct).Render(fmt.Sprintf("%d%%", pct)))
+			humanize.Bytes(used), humanize.Bytes(limit), usageStyle(pct).Render(fmt.Sprintf("%d%%", pct)))
 	}
 	return fmt.Sprintf("db: %s   %s", db, total)
 }

@@ -15,6 +15,7 @@ package infra
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
@@ -74,29 +75,19 @@ func (r *backendRegistry) IsDraining(name string) bool {
 
 // ExcludeDraining filters out backends that are currently draining.
 func (r *backendRegistry) ExcludeDraining(eligible []string) []string {
-	filtered := make([]string, 0, len(eligible))
-	for _, name := range eligible {
-		if !r.IsDraining(name) {
-			filtered = append(filtered, name)
-		}
-	}
-	return filtered
+	return slices.DeleteFunc(slices.Clone(eligible), r.IsDraining)
 }
 
 // ExcludeUnhealthy filters out backends whose circuit breaker is open
 // and not probe-eligible. Backends that are not breaker-wrapped pass
 // through unconditionally.
 func (r *backendRegistry) ExcludeUnhealthy(eligible []string) []string {
-	filtered := make([]string, 0, len(eligible))
-	for _, name := range eligible {
+	return slices.DeleteFunc(slices.Clone(eligible), func(name string) bool {
 		b, ok := r.backends[name]
 		if !ok {
-			continue
+			return true
 		}
-		if cb, ok := b.(*backend.CircuitBreakerBackend); ok && cb.State() == breaker.StateOpen && !cb.ProbeEligible() {
-			continue
-		}
-		filtered = append(filtered, name)
-	}
-	return filtered
+		cb, ok := b.(*backend.CircuitBreakerBackend)
+		return ok && cb.State() == breaker.StateOpen && !cb.ProbeEligible()
+	})
 }

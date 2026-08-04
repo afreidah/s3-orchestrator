@@ -14,6 +14,7 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
 	"time"
 )
@@ -32,15 +33,9 @@ type UsageFlushConfig struct {
 func (u *UsageFlushConfig) setDefaultsAndValidate() []error {
 	var errs []error
 
-	if u.Interval == 0 {
-		u.Interval = 30 * time.Second
-	}
-	if u.AdaptiveThreshold == 0 {
-		u.AdaptiveThreshold = 0.8
-	}
-	if u.FastInterval == 0 {
-		u.FastInterval = 5 * time.Second
-	}
+	u.Interval = cmp.Or(u.Interval, 30*time.Second)
+	u.AdaptiveThreshold = cmp.Or(u.AdaptiveThreshold, 0.8)
+	u.FastInterval = cmp.Or(u.FastInterval, 5*time.Second)
 
 	if u.Interval <= 0 {
 		errs = append(errs, fmt.Errorf("usage_flush.interval must be positive"))

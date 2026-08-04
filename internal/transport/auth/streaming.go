@@ -27,6 +27,7 @@ package auth
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -34,7 +35,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -235,7 +236,7 @@ func parseTrailerNames(value string) []string {
 			out = append(out, p)
 		}
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -565,7 +566,7 @@ func declaredTrailersPresent(declared []string, headers []trailerKV) bool {
 // canonicalizeTrailers sorts headers by name and renders them as
 // "name:value\n" lines, the form used in the trailer string-to-sign.
 func canonicalizeTrailers(headers []trailerKV) string {
-	sort.Slice(headers, func(i, j int) bool { return headers[i].name < headers[j].name })
+	slices.SortFunc(headers, func(a, b trailerKV) int { return cmp.Compare(a.name, b.name) })
 	var canonical strings.Builder
 	for _, h := range headers {
 		canonical.WriteString(h.name)

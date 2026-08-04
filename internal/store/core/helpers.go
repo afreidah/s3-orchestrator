@@ -12,7 +12,7 @@ package core
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"time"
 )
 
@@ -93,7 +93,7 @@ func applyQuotaDeltas(ctx context.Context, tx TxAdapter, deltas map[string]int64
 	for b := range deltas {
 		backends = append(backends, b)
 	}
-	sort.Strings(backends)
+	slices.Sort(backends)
 	for _, b := range backends {
 		d := deltas[b]
 		switch {

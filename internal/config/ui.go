@@ -13,6 +13,8 @@
 
 package config
 
+import "cmp"
+
 // UIConfig holds settings for the built-in web dashboard. Disabled by default.
 type UIConfig struct {
 	Enabled            bool   `yaml:"enabled"`
@@ -28,9 +30,7 @@ type UIConfig struct {
 func (u *UIConfig) setDefaultsAndValidate() []error {
 	var errs []error
 
-	if u.Path == "" {
-		u.Path = "/ui"
-	}
+	u.Path = cmp.Or(u.Path, "/ui")
 	if u.Enabled {
 		if u.AdminKey == "" || u.AdminSecret == "" {
 			errs = append(errs, ErrAdminAuthIncomplete)

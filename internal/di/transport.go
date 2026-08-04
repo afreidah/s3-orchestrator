@@ -14,6 +14,7 @@
 package di
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 	"time"
@@ -185,10 +186,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	adminToken := d.cfg.UI.AdminToken
-	if adminToken == "" {
-		adminToken = d.cfg.UI.AdminKey
-	}
+	adminToken := cmp.Or(d.cfg.UI.AdminToken, d.cfg.UI.AdminKey)
 	recRes := Optional[*worker.Reconciler](i)
 	if recRes.Failed() {
 		slog.WarnContext(context.Background(),

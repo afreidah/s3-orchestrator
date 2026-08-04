@@ -13,6 +13,7 @@ package tui
 
 import (
 	"errors"
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"net/http"
 	"strings"
 	"testing"
@@ -86,7 +87,7 @@ func TestApplyWorkersErr_SeparatesUnavailable(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 
-	m.applyWorkersErr(&apiError{status: http.StatusServiceUnavailable, body: `{"error":"worker health not available"}`})
+	m.applyWorkersErr(&adminclient.Error{Status: http.StatusServiceUnavailable, Body: `{"error":"worker health not available"}`})
 	if m.workers.err != nil || m.workers.unavailable != "worker health not available" {
 		t.Errorf("503: err=%v unavailable=%q", m.workers.err, m.workers.unavailable)
 	}

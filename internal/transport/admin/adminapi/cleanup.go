@@ -32,7 +32,7 @@ type CleanupQueueItem struct {
 	Reason    string     `json:"reason"`
 	SizeBytes int64      `json:"size_bytes"`
 	Attempts  int32      `json:"attempts"`
-	ClaimedAt *time.Time `json:"claimed_at,omitempty"`
+	ClaimedAt *time.Time `json:"claimed_at,omitzero"`
 	ClaimedBy string     `json:"claimed_by,omitempty"`
 }
 

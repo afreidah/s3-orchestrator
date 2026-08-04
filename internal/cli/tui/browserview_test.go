@@ -16,28 +16,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func TestHumanSize(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		in   int64
-		want string
-	}{
-		{0, "0 B"},
-		{512, "512 B"},
-		{1023, "1023 B"},
-		{1024, "1.0 KiB"},
-		{1536, "1.5 KiB"},
-		{1048576, "1.0 MiB"},
-		{2516582, "2.4 MiB"},
-		{1073741824, "1.0 GiB"},
-	}
-	for _, c := range cases {
-		if got := humanSize(c.in); got != c.want {
-			t.Errorf("humanSize(%d) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
-
 func TestSortEntries(t *testing.T) {
 	t.Parallel()
 	// directories always sort ahead of objects, by name

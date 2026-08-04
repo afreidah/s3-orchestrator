@@ -17,7 +17,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -115,12 +116,7 @@ func scalar(v any) string {
 
 // sortedKeys returns the map keys in sorted order for deterministic output.
 func sortedKeys(m map[string]any) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
+	return slices.Sorted(maps.Keys(m))
 }
 
 // indentOf returns the leading whitespace for the given nesting level.

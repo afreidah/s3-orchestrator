@@ -11,6 +11,7 @@
 package tui
 
 import (
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"strings"
 	"testing"
 
@@ -59,7 +60,7 @@ func TestOps_RunStreamsToCompletion(t *testing.T) {
 		t.Fatalf("after accept: showOut=%v running=%v", m.ops.showOut, m.ops.running)
 	}
 	// open: the stream arrives and reading starts.
-	if _, cmd := m.applyOpsStream(opsStreamMsg{stream: &sliceStream{events: events}, label: "Scrub"}); cmd == nil {
+	if _, cmd := m.applyOpsStream(opsStreamMsg{stream: adminclient.NewSliceStream(events...), label: "Scrub"}); cmd == nil {
 		t.Fatal("open should return a read command")
 	}
 	// feed each event.

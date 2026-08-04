@@ -8,7 +8,7 @@
 // scrolling output viewport that renders exactly as the adminctl CLI does,
 // including the live NDJSON progress stream the long-running actions emit. The
 // short actions surface a single result line instead. Every action flows through
-// one eventStream so both render alike.
+// one adminclient.EventStream so both render alike.
 // Reached with "o"; "esc" steps back to the menu, then to the nav.
 // -------------------------------------------------------------------------------
 
@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"io"
 	"net/http"
 	"strings"
@@ -56,14 +57,14 @@ func opsActions() []opsAction {
 // opsView holds the state of the ops pane: the menu cursor and, once an action
 // runs, the streamed output and its live stream.
 type opsView struct {
-	cursor  int            // highlighted menu row
-	showOut bool           // showing the output pane instead of the menu
-	running bool           // an action is in flight
-	label   string         // label of the action currently shown
-	lines   []string       // rendered output lines
-	pending string         // step label awaiting its step_end (sequential ops)
-	vp      viewport.Model // scrolling viewport over the output lines
-	stream  eventStream    // live stream while running, nil when idle
+	cursor  int                     // highlighted menu row
+	showOut bool                    // showing the output pane instead of the menu
+	running bool                    // an action is in flight
+	label   string                  // label of the action currently shown
+	lines   []string                // rendered output lines
+	pending string                  // step label awaiting its step_end (sequential ops)
+	vp      viewport.Model          // scrolling viewport over the output lines
+	stream  adminclient.EventStream // live stream while running, nil when idle
 }
 
 // -------------------------------------------------------------------------
@@ -72,7 +73,7 @@ type opsView struct {
 
 // opsStreamMsg carries the opened action stream (or the error opening it).
 type opsStreamMsg struct {
-	stream eventStream
+	stream adminclient.EventStream
 	err    error
 	label  string
 }
@@ -94,7 +95,7 @@ func openOps(client adminClient, a opsAction) tea.Cmd {
 
 // readOps returns a command that pulls the next event off the stream, reporting
 // an opsEventMsg or, at the end, an opsDoneMsg.
-func readOps(s eventStream) tea.Cmd {
+func readOps(s adminclient.EventStream) tea.Cmd {
 	return func() tea.Msg {
 		e, err := s.Next()
 		if err != nil {

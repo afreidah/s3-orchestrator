@@ -13,6 +13,7 @@
 package tui
 
 import (
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 	"context"
 	"fmt"
 	"strconv"
@@ -236,7 +237,7 @@ func rowsFromCleanupQueue(items []adminapi.CleanupQueueItem) []table.Row {
 		rows = append(rows, table.Row{
 			items[i].ObjectKey,
 			items[i].Backend,
-			humanSize(items[i].SizeBytes),
+			humanize.Bytes(items[i].SizeBytes),
 			strconv.FormatInt(int64(items[i].Attempts), 10),
 			claimed,
 		})
@@ -252,7 +253,7 @@ func rowsFromCleanupDLQ(items []adminapi.CleanupDLQItem) []table.Row {
 		rows = append(rows, table.Row{
 			items[i].ObjectKey,
 			items[i].Backend,
-			humanSize(items[i].SizeBytes),
+			humanize.Bytes(items[i].SizeBytes),
 			strconv.FormatInt(int64(items[i].Attempts), 10),
 			tickAge(items[i].MovedAt),
 		})

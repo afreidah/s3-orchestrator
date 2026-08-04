@@ -12,6 +12,7 @@ package tui
 
 import (
 	"errors"
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"net/http"
 	"strings"
 	"testing"
@@ -86,9 +87,9 @@ func TestApplyCacheErr_SeparatesDisabled(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 
-	m.applyCacheErr(&apiError{
-		status: http.StatusServiceUnavailable,
-		body:   `{"status":"disabled","reason":"object data caching is disabled"}`,
+	m.applyCacheErr(&adminclient.Error{
+		Status: http.StatusServiceUnavailable,
+		Body:   `{"status":"disabled","reason":"object data caching is disabled"}`,
 	})
 	if m.cache.err != nil || m.cache.unavailable != "object data caching is disabled" {
 		t.Errorf("503: err=%v unavailable=%q", m.cache.err, m.cache.unavailable)

@@ -10,13 +10,14 @@
 package s3api
 
 import (
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 	"bytes"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -140,26 +141,6 @@ func validateUserMetadata(meta map[string]string) error {
 // CAPACITY HINT FORMATTING
 // -------------------------------------------------------------------------
 
-// humanBytes formats a byte count as a base-1024 string with one
-// decimal of precision (e.g. 1.5 GiB). Mirrors the formatBytes helper
-// used by the dashboard template; kept locally here to avoid pulling
-// the ui package into the s3api dependency graph for one tiny helper.
-func humanBytes(b int64) string {
-	if b < 0 {
-		return "0 B"
-	}
-	const unit = 1024
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
-}
-
 // formatCapacityHint renders a quota-stats snapshot as a comma-separated
 // "name=used/limit" summary suitable for inclusion in the
 // InsufficientStorage error body. Returns the empty string when stats
@@ -170,9 +151,10 @@ func formatCapacityHint(stats map[string]core.QuotaStat) string {
 	}
 	parts := make([]string, 0, len(stats))
 	for name, s := range stats {
-		parts = append(parts, fmt.Sprintf("%s=%s/%s", name, humanBytes(s.BytesUsed), humanBytes(s.BytesLimit)))
+		parts = append(parts, fmt.Sprintf("%s=%s/%s", name,
+			humanize.Bytes(max(0, s.BytesUsed)), humanize.Bytes(max(0, s.BytesLimit))))
 	}
-	sort.Strings(parts)
+	slices.Sort(parts)
 	return strings.Join(parts, ", ")
 }
 

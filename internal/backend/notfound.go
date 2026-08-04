@@ -14,6 +14,14 @@ package backend
 
 import "errors"
 
+// httpStatusError is the shape every backend SDK's response error shares:
+// an error that also reports the HTTP status it was built from. Named so
+// errors.AsType has an error-satisfying type to match against.
+type httpStatusError interface {
+	error
+	HTTPStatusCode() int
+}
+
 // IsNotFound returns true if the error chain contains a typed response
 // whose HTTPStatusCode() reports 404. A 404 from DELETE means the object
 // is already absent on the backend, which is the desired end state -
@@ -23,6 +31,6 @@ func IsNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	var respErr interface{ HTTPStatusCode() int }
-	return errors.As(err, &respErr) && respErr.HTTPStatusCode() == 404
+	respErr, ok := errors.AsType[httpStatusError](err)
+	return ok && respErr.HTTPStatusCode() == 404
 }

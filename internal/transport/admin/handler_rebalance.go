@@ -15,6 +15,7 @@
 package admin
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
@@ -51,18 +52,10 @@ func (h *Handler) Rebalance(ctx context.Context, observer progress.Observer) (ad
 	if cfg := h.rebalancer.Config(); cfg != nil {
 		runCfg = *cfg
 	}
-	if runCfg.Strategy == "" {
-		runCfg.Strategy = defaultRebalanceStrategy
-	}
-	if runCfg.BatchSize == 0 {
-		runCfg.BatchSize = defaultRebalanceBatchSize
-	}
-	if runCfg.Threshold == 0 {
-		runCfg.Threshold = defaultRebalanceThreshold
-	}
-	if runCfg.Concurrency == 0 {
-		runCfg.Concurrency = defaultRebalanceConcurrency
-	}
+	runCfg.Strategy = cmp.Or(runCfg.Strategy, defaultRebalanceStrategy)
+	runCfg.BatchSize = cmp.Or(runCfg.BatchSize, defaultRebalanceBatchSize)
+	runCfg.Threshold = cmp.Or(runCfg.Threshold, defaultRebalanceThreshold)
+	runCfg.Concurrency = cmp.Or(runCfg.Concurrency, defaultRebalanceConcurrency)
 
 	sum, err := h.rebalancer.Rebalance(ctx, runCfg, observer)
 	if err != nil {

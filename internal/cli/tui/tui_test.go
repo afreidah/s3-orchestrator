@@ -13,6 +13,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"strings"
 	"testing"
 	"time"
@@ -113,7 +114,7 @@ func (f *fakeLister) RequeueCleanupDLQ(_ context.Context, backend string) (*admi
 
 // RunOp returns a stream over the canned events (or a single ok result when
 // none are set), or f.opErr when configured to fail.
-func (f *fakeLister) RunOp(_ context.Context, _ opsAction) (eventStream, error) {
+func (f *fakeLister) RunOp(_ context.Context, _ opsAction) (adminclient.EventStream, error) {
 	if f.opErr != nil {
 		return nil, f.opErr
 	}
@@ -121,7 +122,7 @@ func (f *fakeLister) RunOp(_ context.Context, _ opsAction) (eventStream, error) 
 	if events == nil {
 		events = []adminstream.Event{{Kind: adminstream.KindResult, Outcome: adminstream.OutcomeOK, Message: "ok"}}
 	}
-	return &sliceStream{events: events}, nil
+	return adminclient.NewSliceStream(events...), nil
 }
 
 // waitForText fails the test unless the given text appears in the output.

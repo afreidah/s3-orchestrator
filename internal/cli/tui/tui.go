@@ -16,8 +16,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/admintarget"
@@ -51,7 +52,7 @@ type adminClient interface {
 	GetCleanupDLQ(ctx context.Context) (*adminapi.CleanupDLQResponse, error)
 	GetCacheStats(ctx context.Context) (*adminapi.CacheStatsResponse, error)
 	RequeueCleanupDLQ(ctx context.Context, backend string) (*adminapi.CleanupDLQRequeueResponse, error)
-	RunOp(ctx context.Context, act opsAction) (eventStream, error)
+	RunOp(ctx context.Context, act opsAction) (adminclient.EventStream, error)
 }
 
 // model is the Bubble Tea state for the browser.
@@ -447,24 +448,9 @@ func rowsFromEntries(entries []entry) []table.Row {
 			rows = append(rows, table.Row{e.name, "dir", ""})
 			continue
 		}
-		rows = append(rows, table.Row{e.name, "obj", humanSize(e.size)})
+		rows = append(rows, table.Row{e.name, "obj", humanize.Bytes(e.size)})
 	}
 	return rows
-}
-
-// humanSize renders a byte count in IEC binary units (B, KiB, MiB, ...), with
-// one decimal place above bytes so sizes read at a glance.
-func humanSize(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return strconv.FormatInt(n, 10) + " B"
-	}
-	div, exp := int64(unit), 0
-	for x := n / unit; x >= unit; x /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 // parentPrefix returns the parent of a delimiter-terminated prefix, or "" when

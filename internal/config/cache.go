@@ -10,6 +10,7 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"strconv"
@@ -42,9 +43,7 @@ func (cc *CacheConfig) setDefaultsAndValidate() []error {
 	}
 
 	// Parse max_size
-	if cc.MaxSize == "" {
-		cc.MaxSize = "256MB"
-	}
+	cc.MaxSize = cmp.Or(cc.MaxSize, "256MB")
 	maxSize, err := parseByteSize(cc.MaxSize)
 	switch {
 	case err != nil:
@@ -56,9 +55,7 @@ func (cc *CacheConfig) setDefaultsAndValidate() []error {
 	}
 
 	// Parse max_object_size
-	if cc.MaxObjectSize == "" {
-		cc.MaxObjectSize = "10MB"
-	}
+	cc.MaxObjectSize = cmp.Or(cc.MaxObjectSize, "10MB")
 	maxObj, err := parseByteSize(cc.MaxObjectSize)
 	switch {
 	case err != nil:

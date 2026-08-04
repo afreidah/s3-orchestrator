@@ -47,33 +47,6 @@ func TestCounterVecTotal(t *testing.T) {
 	}
 }
 
-// TestFormatBytes verifies the format bytes contract.
-// Asserts that formatBytes() = , want.
-func TestFormatBytes(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		input int64
-		want  string
-	}{
-		{0, "0 B"},
-		{1, "1 B"},
-		{512, "512 B"},
-		{1023, "1023 B"},
-		{1024, "1.0 KiB"},
-		{1536, "1.5 KiB"},
-		{1048576, "1.0 MiB"},
-		{1073741824, "1.0 GiB"},
-		{1099511627776, "1.0 TiB"},
-	}
-
-	for _, tt := range tests {
-		got := formatBytes(tt.input)
-		if got != tt.want {
-			t.Errorf("formatBytes(%d) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
-
 // TestFormatNumber verifies the format number contract.
 // Asserts that formatNumber() = , want.
 func TestFormatNumber(t *testing.T) {
