@@ -303,13 +303,14 @@ func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
 	// need not re-unwrap the upload-level DEK on every part.
 	const dekCacheTTL = time.Hour
 	return multipart.New(&multipart.Deps{
-		Core:         d.rt,
-		Coord:        d.coord,
-		Stores:       d.stores,
-		Encryptor:    d.enc,
-		ObjectCache:  resolveOptionalCache(i),
-		DEKCacheTTL:  dekCacheTTL,
-		IntegrityCfg: d.integrityCfg,
+		Core:               d.rt,
+		Coord:              d.coord,
+		Stores:             d.stores,
+		Encryptor:          d.enc,
+		ObjectCache:        resolveOptionalCache(i),
+		DEKCacheTTL:        dekCacheTTL,
+		IntegrityCfg:       d.integrityCfg,
+		EnforceMinPartSize: d.cfg.WritePath.Multipart.IsMinPartSizeEnforced(),
 	}), nil
 }
 

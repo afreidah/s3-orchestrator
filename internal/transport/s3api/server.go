@@ -75,7 +75,7 @@ type ObjectOps interface {
 type MultipartOps interface {
 	CreateMultipartUpload(ctx context.Context, key, contentType string, metadata map[string]string) (string, string, error)
 	UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, body io.Reader, size int64) (string, error)
-	CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, partNumbers []int) (string, error)
+	CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, manifest []core.CompletePart) (string, error)
 	AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error
 	ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]core.MultipartUpload, error)
 	GetParts(ctx context.Context, bucket, key, uploadID string) ([]core.MultipartPart, error)

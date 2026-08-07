@@ -186,6 +186,16 @@ type MultipartPart struct {
 	PlaintextSize int64
 }
 
+// CompletePart is one entry of a client's CompleteMultipartUpload manifest:
+// the part it wants assembled and the ETag it believes that part carries.
+// Carrying the ETag alongside the number is what lets completion reject a
+// stale manifest instead of assembling whatever happens to be stored under
+// that number now.
+type CompletePart struct {
+	PartNumber int
+	ETag       string
+}
+
 // -------------------------------------------------------------------------
 // CLEANUP QUEUE
 // -------------------------------------------------------------------------

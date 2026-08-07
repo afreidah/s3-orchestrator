@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -136,7 +138,7 @@ func (s *Server) handleUploadPart(ctx context.Context, w http.ResponseWriter, r 
 	partNumberStr := r.URL.Query().Get("partNumber")
 
 	partNumber, err := strconv.Atoi(partNumberStr)
-	if err != nil || partNumber < 1 {
+	if err != nil || partNumber < multipart.MinPartNumber || partNumber > multipart.MaxPartNumber {
 		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "Invalid part number")
 		return http.StatusBadRequest, fmt.Errorf("invalid part number: %s", partNumberStr)
 	}
@@ -167,9 +169,13 @@ func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.Respo
 		return http.StatusBadRequest, fmt.Errorf("failed to decode complete request: %w", err)
 	}
 
-	var partNumbers []int
-	for _, p := range req.Parts {
-		partNumbers = append(partNumbers, p.PartNumber)
+	// Carry the client's ETags through: the manager compares each one to the
+	// stored part so a stale manifest is rejected rather than assembled.
+	manifest := make([]core.CompletePart, len(req.Parts))
+	partNumbers := make([]int, len(req.Parts))
+	for i, p := range req.Parts {
+		manifest[i] = core.CompletePart{PartNumber: p.PartNumber, ETag: p.ETag}
+		partNumbers[i] = p.PartNumber
 	}
 
 	if status, err := s.checkMultipartTotalSize(ctx, w, bucket, key, uploadID, partNumbers); err != nil {
@@ -185,7 +191,7 @@ func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.Respo
 		return status, err
 	}
 
-	etag, err := s.Multipart.CompleteMultipartUpload(ctx, bucket, key, uploadID, partNumbers)
+	etag, err := s.Multipart.CompleteMultipartUpload(ctx, bucket, key, uploadID, manifest)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to complete multipart upload"), err
 	}
