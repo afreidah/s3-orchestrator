@@ -302,7 +302,7 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	etag, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", []int{1, 2})
+	etag, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", partsOf(1, 2))
 	if err != nil {
 		t.Fatalf("CompleteMultipartUpload: %v", err)
 	}
@@ -348,7 +348,7 @@ func TestCompleteMultipartUpload_PopulatesContentHash(t *testing.T) {
 
 	mgr.SetIntegrityConfig(&config.IntegrityConfig{Enabled: true})
 
-	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "hashed", "upload-h", []int{1, 2}); err != nil {
+	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "hashed", "upload-h", partsOf(1, 2)); err != nil {
 		t.Fatalf("CompleteMultipartUpload: %v", err)
 	}
 	if len(c.recordObject) != 1 {
@@ -386,7 +386,7 @@ func TestCompleteMultipartUpload_IntegrityDisabled_LeavesEncNil(t *testing.T) {
 
 	// Integrity intentionally left unset.
 
-	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "disabled", "upload-d", []int{1}); err != nil {
+	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "disabled", "upload-d", partsOf(1)); err != nil {
 		t.Fatalf("CompleteMultipartUpload: %v", err)
 	}
 	if got := c.recordObject[0]; got.Enc != nil {
@@ -405,7 +405,7 @@ func TestCompleteMultipartUpload_DBUnavailable(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 
-	if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", []int{1}); !errors.Is(err, core.ErrServiceUnavailable) {
+	if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", partsOf(1)); !errors.Is(err, core.ErrServiceUnavailable) {
 		t.Fatalf("expected st.ErrServiceUnavailable, got %v", err)
 	}
 }
@@ -512,7 +512,7 @@ func TestCompleteMultipartUpload_PartSubset(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	etag, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", []int{1, 3})
+	etag, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", partsOf(1, 3))
 	if err != nil {
 		t.Fatalf("CompleteMultipartUpload: %v", err)
 	}
@@ -540,7 +540,7 @@ func TestCompleteMultipartUpload_InvalidPart(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 
-	_, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", []int{1, 2})
+	_, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", partsOf(1, 2))
 	if err == nil {
 		t.Fatal("expected error for missing part")
 	}
@@ -567,7 +567,7 @@ func TestCompleteMultipartUpload_LockContended(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 
-	_, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", []int{1})
+	_, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", partsOf(1))
 	if err == nil {
 		t.Fatal("expected OperationAborted error from contended lock")
 	}
@@ -583,9 +583,11 @@ func TestCompleteMultipartUpload_LockContended(t *testing.T) {
 	}
 }
 
-// TestCompleteMultipartUpload_AssemblyFails_CleansUpParts pins the
-// deferred cleanup that fires on assembly PUT failure.
-func TestCompleteMultipartUpload_AssemblyFails_CleansUpParts(t *testing.T) {
+// TestCompleteMultipartUpload_AssemblyFails_PreservesParts pins the retry
+// contract: a failed assembly PUT leaves every part and the upload row in
+// place so the client can call Complete again. Destroying them here is what
+// turned a transient backend fault into permanent data loss.
+func TestCompleteMultipartUpload_AssemblyFails_PreservesParts(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
 	ctx := context.Background()
@@ -603,15 +605,15 @@ func TestCompleteMultipartUpload_AssemblyFails_CleansUpParts(t *testing.T) {
 
 	be.PutErr = errors.New("be write failed")
 
-	_, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", []int{1, 2})
+	_, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", partsOf(1, 2))
 	if err == nil {
 		t.Fatal("expected CompleteMultipartUpload to fail")
 	}
-	if be.Has("__multipart/upload-1/1") || be.Has("__multipart/upload-1/2") {
-		t.Error("parts should have been deleted by deferred cleanup")
+	if !be.Has("__multipart/upload-1/1") || !be.Has("__multipart/upload-1/2") {
+		t.Error("parts must survive a failed assembly so the completion can be retried")
 	}
-	if !c.deleteMultipartHit {
-		t.Error("expected DeleteMultipartUpload to be called by deferred cleanup")
+	if c.deleteMultipartHit {
+		t.Error("the upload row must survive a failed assembly")
 	}
 	if be.Has("multi/key") {
 		t.Error("assembled key should not exist when assembly PUT failed")
@@ -628,7 +630,7 @@ func TestCompleteMultipartUpload_GetPartsError(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 
-	if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", []int{1}); err == nil {
+	if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", partsOf(1)); err == nil {
 		t.Fatal("expected error from GetParts failure")
 	}
 }
@@ -649,7 +651,7 @@ func TestCompleteMultipartUpload_PartDeleteFails_EnqueuesCleanup(t *testing.T) {
 
 	be.SetDeleteErr(errors.New("be timeout"))
 
-	etag, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", []int{1})
+	etag, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", partsOf(1))
 	if err != nil {
 		t.Fatalf("CompleteMultipartUpload: %v", err)
 	}
@@ -679,7 +681,7 @@ func TestCompleteMultipartUpload_FinalPutFails(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", []int{1}); err == nil {
+	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", partsOf(1)); err == nil {
 		t.Fatal("expected error when final PutObject fails")
 	}
 }
@@ -699,7 +701,7 @@ func TestCompleteMultipartUpload_PartReadFails(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", []int{1}); err == nil {
+	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", partsOf(1)); err == nil {
 		t.Fatal("expected error when part body read fails")
 	}
 }
@@ -901,7 +903,7 @@ func TestCompleteMultipartUpload_UsageRecords2NPlus1APICalls(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", []int{1, 2, 3}); err != nil {
+	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", partsOf(1, 2, 3)); err != nil {
 		t.Fatalf("CompleteMultipartUpload: %v", err)
 	}
 
@@ -1237,7 +1239,7 @@ func TestCompleteMultipartUpload_Encrypted_RoundTrips(t *testing.T) {
 			t.Fatalf("UploadPart %d: %v", i+1, err)
 		}
 	}
-	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "k", uploadID, []int{1, 2}); err != nil {
+	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "k", uploadID, partsOf(1, 2)); err != nil {
 		t.Fatalf("CompleteMultipartUpload: %v", err)
 	}
 }
@@ -1341,7 +1343,7 @@ func TestCompleteMultipartUpload_UnwrapDEKError(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newEncryptedTestManager(t, store, map[string]*backendtest.InMemory{"b1": backendtest.NewInMemory()})
-	if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "k", "u1", []int{1}); err == nil {
+	if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "k", "u1", partsOf(1)); err == nil {
 		t.Fatal("expected unwrap error from Complete, got nil")
 	}
 }
@@ -1412,7 +1414,7 @@ func TestCompleteMultipartUpload_PartGetPanics(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "panic", "upload-panic", []int{1}); err == nil {
+	if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "panic", "upload-panic", partsOf(1)); err == nil {
 		t.Fatal("expected error from panicking part reader, got nil")
 	}
 }
@@ -1439,11 +1441,201 @@ func TestCompleteMultipartUpload_BackendTimeout(t *testing.T) {
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": slow},
 		&fleetOpts{Order: []string{"b1"}, BackendTimeout: 50 * time.Millisecond})
 
-	_, err := mgr.CompleteMultipartUpload(ctx, "multi", "slow", "upload-slow", []int{1, 2})
+	_, err := mgr.CompleteMultipartUpload(ctx, "multi", "slow", "upload-slow", partsOf(1, 2))
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
 	}
+}
+
+// -------------------------------------------------------------------------
+// COMPLETION RETRY SAFETY
+// -------------------------------------------------------------------------
+
+// twoPartUpload seeds a backend with two part objects and returns it with the
+// matching stored rows, which is the fixture every retry-safety case needs.
+func twoPartUpload(t *testing.T) (*backendtest.InMemory, []core.MultipartPart) {
+	t.Helper()
+	be := backendtest.NewInMemory()
+	ctx := context.Background()
+	_, _ = be.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
+	_, _ = be.PutObject(ctx, "__multipart/upload-1/2", bytes.NewReader([]byte("BBB")), 3, "application/octet-stream", nil)
+	return be, []core.MultipartPart{
+		{PartNumber: 1, ETag: "e1", SizeBytes: 3},
+		{PartNumber: 2, ETag: "e2", SizeBytes: 3},
+	}
+}
+
+// assertUploadRetryable fails the test unless both part objects and the
+// upload row survived, which is the precondition for a client retry.
+func assertUploadRetryable(t *testing.T, be *backendtest.InMemory, c *multipartCalls) {
+	t.Helper()
+	if !be.Has("__multipart/upload-1/1") || !be.Has("__multipart/upload-1/2") {
+		t.Error("parts were destroyed; the completion is no longer retryable")
+	}
+	if c.deleteMultipartHit {
+		t.Error("upload row was deleted; the completion is no longer retryable")
+	}
+}
+
+// TestCompleteMultipartUpload_StreamFailure_PreservesParts covers a part that
+// disappears mid-assembly: the stream fails, and the remaining parts and the
+// upload row must survive for the retry.
+func TestCompleteMultipartUpload_StreamFailure_PreservesParts(t *testing.T) {
+	t.Parallel()
+	be, parts := twoPartUpload(t)
+	store, c := completeStoreSetup(t,
+		&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"},
+		parts, nil)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
+
+	be.SetGetErr(errors.New("part read failed"))
+
+	if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", partsOf(1, 2)); err == nil {
+		t.Fatal("expected the completion to fail when a part cannot be read")
+	}
+	assertUploadRetryable(t, be, c)
+}
+
+// TestCompleteMultipartUpload_CommitFailure_PreservesParts covers the
+// metadata commit failing after the bytes land. The assembled object is
+// cleaned up by the write coordinator, and the parts stay for the retry.
+func TestCompleteMultipartUpload_CommitFailure_PreservesParts(t *testing.T) {
+	t.Parallel()
+	be, parts := twoPartUpload(t)
+
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
+		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).AnyTimes()
+	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).Return(parts, nil).AnyTimes()
+	// The commit is what fails here, after the assembly PUT has succeeded.
+	// Registered before multipartStubs so it wins: gomock matches in
+	// declaration order and multipartStubs stubs RecordObject as succeeding.
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db down")).AnyTimes()
+	store.EXPECT().RecordObjectAndClearPending(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db down")).AnyTimes()
+	c := multipartStubs(t, store)
+	storetest.Permissive(store)
+
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
+
+	if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", partsOf(1, 2)); err == nil {
+		t.Fatal("expected the completion to fail when the metadata commit fails")
+	}
+	assertUploadRetryable(t, be, c)
+}
+
+// TestCompleteMultipartUpload_RetryAfterTransientFailure is the contract
+// #1164 exists for: a completion that failed on a transient backend error
+// succeeds when the client retries it.
+func TestCompleteMultipartUpload_RetryAfterTransientFailure(t *testing.T) {
+	t.Parallel()
+	be, parts := twoPartUpload(t)
+	store, c := completeStoreSetup(t,
+		&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"},
+		parts, nil)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
+
+	be.SetPutErr(errors.New("transient backend timeout"))
+	if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", partsOf(1, 2)); err == nil {
+		t.Fatal("expected the first completion to fail")
+	}
+	assertUploadRetryable(t, be, c)
+
+	be.SetPutErr(nil)
+	if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", partsOf(1, 2)); err != nil {
+		t.Fatalf("retry after a transient failure should succeed: %v", err)
+	}
+	if !be.Has("multi/key") {
+		t.Error("assembled object missing after a successful retry")
+	}
+	if len(c.recordObject) != 1 {
+		t.Errorf("RecordObject calls = %d, want 1", len(c.recordObject))
+	}
+	// Only the successful attempt retires the parts.
+	if be.Has("__multipart/upload-1/1") || be.Has("__multipart/upload-1/2") {
+		t.Error("parts should be dropped once the object is durably committed")
+	}
+	if !c.deleteMultipartHit {
+		t.Error("upload row should be dropped once the object is durably committed")
+	}
+}
+
+// TestCompleteMultipartUpload_InvalidManifest_PreservesParts asserts a
+// rejected manifest starts no assembly and leaves the upload retryable, so a
+// client can correct the request and try again.
+func TestCompleteMultipartUpload_InvalidManifest_PreservesParts(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name     string
+		manifest []core.CompletePart
+	}{
+		{"descending", []core.CompletePart{{PartNumber: 2}, {PartNumber: 1}}},
+		{"duplicate", []core.CompletePart{{PartNumber: 1}, {PartNumber: 1}}},
+		{"out of range", []core.CompletePart{{PartNumber: MaxPartNumber + 1}}},
+		{"stale etag", []core.CompletePart{{PartNumber: 1, ETag: "wrong"}, {PartNumber: 2, ETag: "e2"}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			be, parts := twoPartUpload(t)
+			store, calls := completeStoreSetup(t,
+				&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"},
+				parts, nil)
+			mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
+
+			if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", c.manifest); err == nil {
+				t.Fatal("expected the completion to be rejected")
+			}
+			if be.Has("multi/key") {
+				t.Error("no assembly should start for a rejected manifest")
+			}
+			if len(calls.recordObject) != 0 {
+				t.Error("no commit should happen for a rejected manifest")
+			}
+			assertUploadRetryable(t, be, calls)
+		})
+	}
+}
+
+// TestCompleteMultipartUpload_EnforcesMinPartSize pins the 5 MiB floor and
+// the operator switch that turns it off.
+func TestCompleteMultipartUpload_EnforcesMinPartSize(t *testing.T) {
+	t.Parallel()
+	// Both parts are small, so the first one violates the floor.
+	small := []core.MultipartPart{
+		{PartNumber: 1, ETag: "e1", SizeBytes: 3},
+		{PartNumber: 2, ETag: "e2", SizeBytes: 3},
+	}
+
+	t.Run("rejected when enforced", func(t *testing.T) {
+		t.Parallel()
+		be, _ := twoPartUpload(t)
+		store, _ := completeStoreSetup(t,
+			&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"},
+			small, nil)
+		mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be},
+			&fleetOpts{EnforceMinPartSize: true})
+
+		_, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", partsOf(1, 2))
+		if got := s3CodeOf(t, err); got != "EntityTooSmall" {
+			t.Errorf("code = %s, want EntityTooSmall", got)
+		}
+	})
+
+	t.Run("accepted when the floor is off", func(t *testing.T) {
+		t.Parallel()
+		be, _ := twoPartUpload(t)
+		store, _ := completeStoreSetup(t,
+			&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"},
+			small, nil)
+		mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
+
+		if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", partsOf(1, 2)); err != nil {
+			t.Fatalf("small parts should be accepted when the floor is off: %v", err)
+		}
+	})
 }
