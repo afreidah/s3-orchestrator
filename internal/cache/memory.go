@@ -127,10 +127,11 @@ func (c *MemoryCache) Admit(size int64) bool {
 // entry cannot fit (e.g. metadata pushed it over MaxSize).
 func (c *MemoryCache) PutBytes(key string, data []byte, meta EntryMeta) {
 	entry := &Entry{
-		Data:        data,
-		ContentType: meta.ContentType,
-		ETag:        meta.ETag,
-		Metadata:    meta.Metadata,
+		Data:         data,
+		ContentType:  meta.ContentType,
+		ETag:         meta.ETag,
+		LastModified: meta.LastModified,
+		Metadata:     meta.Metadata,
 	}
 	entrySize := entry.Size()
 

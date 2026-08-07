@@ -12,6 +12,8 @@
 // repeated reads from local storage.
 package cache
 
+import "time"
+
 // -------------------------------------------------------------------------
 // INTERFACE
 // -------------------------------------------------------------------------
@@ -63,10 +65,11 @@ type ObjectCache interface {
 
 // Entry holds a cached object's data and metadata.
 type Entry struct {
-	Data        []byte
-	ContentType string
-	ETag        string
-	Metadata    map[string]string
+	Data         []byte
+	ContentType  string
+	ETag         string
+	LastModified time.Time
+	Metadata     map[string]string
 }
 
 // Size returns the approximate memory footprint of this entry in bytes.
@@ -82,9 +85,10 @@ func (e *Entry) Size() int64 {
 
 // EntryMeta holds the metadata to store alongside cached object data.
 type EntryMeta struct {
-	ContentType string
-	ETag        string
-	Metadata    map[string]string
+	ContentType  string
+	ETag         string
+	LastModified time.Time
+	Metadata     map[string]string
 }
 
 // Stats reports current cache utilization. Hits and Misses are lifetime
