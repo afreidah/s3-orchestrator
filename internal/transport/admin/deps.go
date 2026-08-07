@@ -13,6 +13,8 @@
 
 package admin
 
+//go:generate mockgen -destination=mock_deps_test.go -package=admin github.com/afreidah/s3-orchestrator/internal/transport/admin BackendOps,DashboardReader,RuntimeOps,ReplicatorOps,RebalancerOps,OverReplicationOps,ScrubberOps,Reconciler
+
 import (
 	"context"
 

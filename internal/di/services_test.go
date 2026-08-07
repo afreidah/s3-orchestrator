@@ -26,10 +26,15 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"go.uber.org/mock/gomock"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -56,6 +61,8 @@ func (acquiringLocker) WithAdvisoryLock(ctx context.Context, _ int64, fn func(ct
 // BackendManager (#676 B); each one is a separate dependency.
 type servicesFixture struct {
 	mgr           *proxy.BackendManager
+	expirer       *expiry.Manager
+	reconciler    *reconcile.Manager
 	rebalancer    *worker.Rebalancer
 	replicator    *worker.Replicator
 	overRep       *worker.OverReplicationCleaner
@@ -68,15 +75,12 @@ type servicesFixture struct {
 // runtime, just inline so the test stays free of the do.Injector.
 func newServicesFixture(t *testing.T) *servicesFixture {
 	t.Helper()
-	mock := testutil.NewMockStore(t)
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
+	storetest.Permissive(mock)
+	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]backend.ObjectBackend{},
 			Order:    []string{},
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  mock,
-			Dashboard: mock,
 		},
 		Policies: proxy.PolicyConfig{
 			RoutingStrategy: config.RoutingPack,
@@ -91,25 +95,30 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 	// workers with test-specific configs below.
 	_ = proxytest.BuildWorkers(mgr, mock)
 
-	rb := worker.NewRebalancer(mgr.Runtime(), mgr, mock)
+	coord := writepath.New(mgr.Runtime(), mock, false)
+	rb := worker.NewRebalancer(mgr.Runtime(), coord, mock)
 	rb.SetConfig(&config.RebalanceConfig{})
 
-	rp := worker.NewReplicator(mgr.Runtime(), mgr, mock)
+	rp := worker.NewReplicator(mgr.Runtime(), coord, mock)
 	rp.SetConfig(&config.ReplicationConfig{Factor: 1})
 
-	or := worker.NewOverReplicationCleaner(mgr.Runtime(), mgr, mock)
+	or := worker.NewOverReplicationCleaner(mgr.Runtime(), coord, mock)
 	or.SetConfig(&config.ReplicationConfig{Factor: 1})
 
 	cw := worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: mgr.Runtime(), Store: mock, Concurrency: 10, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 
-	sc := worker.NewScrubber(worker.ScrubberDeps{Ops: mgr.Runtime(), Placement: mgr, Store: mock})
+	sc := worker.NewScrubber(worker.ScrubberDeps{Ops: mgr.Runtime(), Placement: coord, Store: mock})
 	sc.SetConfig(&config.IntegrityConfig{})
 
-	mgr.SetLifecycleConfig(&config.LifecycleConfig{})
+	rec := reconcile.NewManager(mgr.Runtime(), mock, mgr.Runtime().Acct(), nil)
+	exp := expiry.New(mock, mgr.Objects(), nil)
+	exp.SetConfig(&config.LifecycleConfig{})
 	mgr.SetIntegrityConfig(&config.IntegrityConfig{})
 	t.Cleanup(mgr.Close)
 	return &servicesFixture{
 		mgr:           mgr,
+		expirer:       exp,
+		reconciler:    rec,
 		rebalancer:    rb,
 		replicator:    rp,
 		overRep:       or,
@@ -125,18 +134,15 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 // info log fires when processed > 0.
 func TestCleanupQueueService_ProcessedLogFires(t *testing.T) {
 	t.Parallel()
-	mock := testutil.NewMockStore(t)
-	mock.PendingCleanupsResp = []core.CleanupItem{
-		{ID: 1, BackendName: "missing-backend", ObjectKey: "k", Attempts: 0},
-	}
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
+	mock.EXPECT().ClaimPendingCleanups(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.CleanupItem{{ID: 1, BackendName: "missing-backend", ObjectKey: "k", Attempts: 0}}, nil).AnyTimes()
+	mock.EXPECT().CompleteCleanupItem(gomock.Any(), int64(1)).Return(nil).AnyTimes()
+	storetest.Permissive(mock)
+	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]backend.ObjectBackend{},
 			Order:    []string{},
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  mock,
-			Dashboard: mock,
 		},
 		Policies: proxy.PolicyConfig{
 			RoutingStrategy: config.RoutingPack,
@@ -170,10 +176,10 @@ func TestServiceWorkClosures_RunOnceCovers(t *testing.T) {
 		multipart.NewCleanupService(f.mgr.Multipart(), locker, 0),
 		worker.NewCleanupQueueService(f.cleanupWorker, locker),
 		worker.NewRebalancerService(f.mgr, f.rebalancer, locker),
-		NewLifecycleService(f.mgr, locker),
+		NewLifecycleService(f.expirer, locker),
 		worker.NewOverReplicationService(f.mgr, f.overRep, locker),
 		worker.NewReplicatorService(f.mgr, f.replicator, locker),
-		worker.NewReconcileService(worker.NewReconciler(f.mgr, nil), locker, time.Hour),
+		worker.NewReconcileService(worker.NewReconciler(f.reconciler, f.mgr, nil), locker, time.Hour),
 		worker.NewScrubberService(f.scrubber, locker),
 	}
 	for _, svc := range services {
@@ -224,10 +230,10 @@ func TestServiceConstructors_AllReturnNonNil(t *testing.T) {
 		{"MultipartCleanup", multipart.NewCleanupService(f.mgr.Multipart(), locker, 0)},
 		{"CleanupQueue", worker.NewCleanupQueueService(f.cleanupWorker, locker)},
 		{"Rebalancer", worker.NewRebalancerService(f.mgr, f.rebalancer, locker)},
-		{"Lifecycle", NewLifecycleService(f.mgr, locker)},
+		{"Lifecycle", NewLifecycleService(f.expirer, locker)},
 		{"OverReplication", worker.NewOverReplicationService(f.mgr, f.overRep, locker)},
 		{"Replicator", worker.NewReplicatorService(f.mgr, f.replicator, locker)},
-		{"Reconcile", worker.NewReconcileService(worker.NewReconciler(f.mgr, nil), locker, time.Hour)},
+		{"Reconcile", worker.NewReconcileService(worker.NewReconciler(f.reconciler, f.mgr, nil), locker, time.Hour)},
 		{"Scrubber", worker.NewScrubberService(f.scrubber, locker)},
 		{"Watchdog", breaker.NewWatchdog(breaker.NewRegistry(breaker.NewCircuitBreaker(breaker.Config{Name: "t", Threshold: 3, Timeout: time.Second, IsError: func(error) bool { return false }, Sentinel: core.ErrDBUnavailable})))},
 	}
@@ -432,10 +438,10 @@ func TestServiceClosures_ExerciseWorkAndShouldRun(t *testing.T) {
 	asTicker(t, multipart.NewCleanupService(mgr.Multipart(), locker, 100*time.Millisecond)).Tick(ctx)
 	asTicker(t, worker.NewCleanupQueueService(f.cleanupWorker, locker)).Tick(ctx)
 	asTicker(t, worker.NewRebalancerService(mgr, f.rebalancer, locker)).Tick(ctx)
-	asTicker(t, NewLifecycleService(mgr, locker)).Tick(ctx)
+	asTicker(t, NewLifecycleService(f.expirer, locker)).Tick(ctx)
 	asTicker(t, worker.NewOverReplicationService(mgr, f.overRep, locker)).Tick(ctx)
 	asTicker(t, worker.NewReplicatorService(mgr, f.replicator, locker)).Tick(ctx)
-	asTicker(t, worker.NewReconcileService(worker.NewReconciler(mgr, nil), locker, 100*time.Millisecond)).Tick(ctx)
+	asTicker(t, worker.NewReconcileService(worker.NewReconciler(f.reconciler, f.mgr, nil), locker, 100*time.Millisecond)).Tick(ctx)
 	asTicker(t, worker.NewScrubberService(f.scrubber, locker)).Tick(ctx)
 }
 

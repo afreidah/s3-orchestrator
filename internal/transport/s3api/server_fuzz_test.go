@@ -21,7 +21,7 @@ func FuzzIsValidRequestID(f *testing.F) {
 	f.Add("ABCDEF")
 	f.Add("not-hex!")
 	f.Add("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") // 65 chars
-	f.Add("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")     // 64 chars
+	f.Add("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")    // 64 chars
 
 	f.Fuzz(func(t *testing.T, id string) {
 		if !isValidRequestID(id) {

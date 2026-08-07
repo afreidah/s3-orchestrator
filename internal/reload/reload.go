@@ -272,4 +272,3 @@ func firstFailedHookName(r *ReloadResult) string {
 	}
 	return ""
 }
-

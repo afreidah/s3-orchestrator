@@ -19,16 +19,21 @@ package dashboard
 import (
 	"context"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// maxDirectoryChildren bounds one page of the lazy-loaded file browser, both
+// for the top-level listing and for a caller-supplied page size.
+const maxDirectoryChildren = 200
+
 // Data holds a snapshot of all operational data for the dashboard.
 type Data struct {
-	BackendOrder          []string
-	QuotaStats            map[string]core.QuotaStat
-	ObjectCounts          map[string]int64
+	BackendOrder []string
+	QuotaStats   map[string]core.QuotaStat
+	ObjectCounts map[string]int64
 	// UnverifiedObjectCounts is per-backend count of objects with a
 	// NULL content_hash (objects that predate integrity verification or
 	// otherwise have not been checksummed). Drives the dashboard's
@@ -45,18 +50,75 @@ type Data struct {
 
 // Aggregator queries the metadata store and usage tracker to build
 // snapshots for the web UI.
+//go:generate mockgen -destination=mock_test.go -package=dashboard github.com/afreidah/s3-orchestrator/internal/proxy/dashboard FleetView,DrainProgressReader,UsageReader
+
+// FleetView is the backend-fleet surface the aggregator reads to decorate
+// stored stats with live state. *infra.BackendRuntime satisfies it.
+type FleetView interface {
+	BackendOrder() []string
+	IsDraining(name string) bool
+	Backends() map[string]backend.ObjectBackend
+}
+
+// UsageReader is the usage surface the aggregator reads: the configured
+// per-backend limits it renders alongside consumption.
+// *counter.UsageTracker satisfies it.
+type UsageReader interface {
+	GetLimits() map[string]core.UsageLimits
+}
+
+// DrainProgressReader reports per-backend drain progress.
+// *drain.Manager satisfies it. Nil when the deployment runs no drain manager.
+type DrainProgressReader interface {
+	GetDrainProgress(ctx context.Context, name string) (*drain.Progress, error)
+}
+
 type Aggregator struct {
 	store core.DashboardStore
-	usage *counter.UsageTracker
+	usage UsageReader
 	order []string
+	fleet FleetView
+	drain DrainProgressReader
 }
 
 // New creates an Aggregator.
-func New(store core.DashboardStore, usage *counter.UsageTracker, order []string) *Aggregator {
+func New(store core.DashboardStore, usage UsageReader, order []string, fleet FleetView, drainReader DrainProgressReader) *Aggregator {
 	return &Aggregator{
 		store: store,
 		usage: usage,
 		order: order,
+		fleet: fleet,
+		drain: drainReader,
+	}
+}
+
+// decorateLiveState fills in the fields that come from the running fleet
+// rather than the store: which backends are draining and how far along, and
+// which are failing their circuit breaker. Both are best-effort - a backend
+// whose drain progress cannot be read is simply omitted rather than failing
+// the whole dashboard.
+func (da *Aggregator) decorateLiveState(ctx context.Context, data *Data) {
+	data.DrainingBackends = make(map[string]drain.Progress)
+	data.UnhealthyBackends = make(map[string]bool)
+	if da.fleet == nil {
+		return
+	}
+
+	if da.drain != nil {
+		for _, name := range da.fleet.BackendOrder() {
+			if !da.fleet.IsDraining(name) {
+				continue
+			}
+			if progress, err := da.drain.GetDrainProgress(ctx, name); err == nil {
+				data.DrainingBackends[name] = *progress
+			}
+		}
+	}
+
+	for name, be := range da.fleet.Backends() {
+		if cb, ok := be.(*backend.CircuitBreakerBackend); ok && !cb.IsHealthy() {
+			data.UnhealthyBackends[name] = true
+		}
 	}
 }
 
@@ -98,19 +160,20 @@ func (da *Aggregator) GetData(ctx context.Context) (*Data, error) {
 	}
 
 	// Fetch top-level directory entries for the lazy-loaded file browser.
-	data.TopLevelEntries, err = da.store.ListDirectoryChildren(ctx, "", "", 200)
+	data.TopLevelEntries, err = da.store.ListDirectoryChildren(ctx, "", "", maxDirectoryChildren)
 	if err != nil {
 		return nil, err
 	}
 
+	da.decorateLiveState(ctx, data)
 	return data, nil
 }
 
 // GetDirectoryChildren returns the immediate children of a directory path
 // for the lazy-loaded file browser.
 func (da *Aggregator) GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
-	if maxKeys <= 0 || maxKeys > 200 {
-		maxKeys = 200
+	if maxKeys <= 0 || maxKeys > maxDirectoryChildren {
+		maxKeys = maxDirectoryChildren
 	}
 	return da.store.ListDirectoryChildren(ctx, prefix, startAfter, maxKeys)
 }

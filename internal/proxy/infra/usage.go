@@ -14,8 +14,9 @@
 package infra
 
 import (
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"slices"
+
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 )
 
 // usagePolicy owns the runtime usage tracker and the static per-backend

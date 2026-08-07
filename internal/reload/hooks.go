@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -67,8 +68,8 @@ type tlsCertHook struct {
 	reloader *httputil.CertReloader
 }
 
-func (*tlsCertHook) Name() string                                  { return "tls_certificate" }
-func (*tlsCertHook) Check(_, _ *config.Config) error               { return nil }
+func (*tlsCertHook) Name() string                    { return "tls_certificate" }
+func (*tlsCertHook) Check(_, _ *config.Config) error { return nil }
 func (h *tlsCertHook) Apply(_ context.Context, _, _ *config.Config) (HookStatus, error) {
 	if h.reloader == nil {
 		return HookSkipped, nil
@@ -88,8 +89,8 @@ type bucketAuthHook struct {
 	inj do.Injector
 }
 
-func (*bucketAuthHook) Name() string                                  { return "bucket_credentials" }
-func (*bucketAuthHook) Check(_, _ *config.Config) error               { return nil }
+func (*bucketAuthHook) Name() string                    { return "bucket_credentials" }
+func (*bucketAuthHook) Check(_, _ *config.Config) error { return nil }
 func (h *bucketAuthHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
 	res := di.Optional[*s3api.Server](h.inj)
 	if res.Failed() {
@@ -113,8 +114,8 @@ type rateLimitHook struct {
 	inj do.Injector
 }
 
-func (*rateLimitHook) Name() string                                  { return "rate_limit" }
-func (*rateLimitHook) Check(_, _ *config.Config) error               { return nil }
+func (*rateLimitHook) Name() string                    { return "rate_limit" }
+func (*rateLimitHook) Check(_, _ *config.Config) error { return nil }
 func (h *rateLimitHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
 	if !newCfg.RateLimit.Enabled {
 		return HookSkipped, nil
@@ -139,8 +140,8 @@ type quotaSyncHook struct {
 	inj do.Injector
 }
 
-func (*quotaSyncHook) Name() string                                  { return "quota_sync" }
-func (*quotaSyncHook) Check(_, _ *config.Config) error               { return nil }
+func (*quotaSyncHook) Name() string                    { return "quota_sync" }
+func (*quotaSyncHook) Check(_, _ *config.Config) error { return nil }
 func (h *quotaSyncHook) Apply(ctx context.Context, _, newCfg *config.Config) (HookStatus, error) {
 	res := di.Optional[core.LifecycleAdmin](h.inj)
 	if res.Failed() {
@@ -165,8 +166,8 @@ type usageLimitsHook struct {
 	inj do.Injector
 }
 
-func (*usageLimitsHook) Name() string                                  { return "usage_limits" }
-func (*usageLimitsHook) Check(_, _ *config.Config) error               { return nil }
+func (*usageLimitsHook) Name() string                    { return "usage_limits" }
+func (*usageLimitsHook) Check(_, _ *config.Config) error { return nil }
 func (h *usageLimitsHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
 	res := di.Optional[*proxy.BackendManager](h.inj)
 	if res.Failed() {
@@ -198,8 +199,8 @@ type logLevelHook struct {
 	level *slog.LevelVar
 }
 
-func (*logLevelHook) Name() string                                  { return "log_level" }
-func (*logLevelHook) Check(_, _ *config.Config) error               { return nil }
+func (*logLevelHook) Name() string                    { return "log_level" }
+func (*logLevelHook) Check(_, _ *config.Config) error { return nil }
 func (h *logLevelHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
 	if h.level == nil {
 		return HookSkipped, nil
@@ -220,8 +221,8 @@ type workerConfigsHook struct {
 	inj do.Injector
 }
 
-func (*workerConfigsHook) Name() string                                  { return "worker_configs" }
-func (*workerConfigsHook) Check(_, _ *config.Config) error               { return nil }
+func (*workerConfigsHook) Name() string                    { return "worker_configs" }
+func (*workerConfigsHook) Check(_, _ *config.Config) error { return nil }
 func (h *workerConfigsHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
 	rbRes := di.Optional[*worker.Rebalancer](h.inj)
 	if rbRes.Failed() {
@@ -275,8 +276,8 @@ type managerConfigHook struct {
 	inj do.Injector
 }
 
-func (*managerConfigHook) Name() string                                  { return "manager_config" }
-func (*managerConfigHook) Check(_, _ *config.Config) error               { return nil }
+func (*managerConfigHook) Name() string                    { return "manager_config" }
+func (*managerConfigHook) Check(_, _ *config.Config) error { return nil }
 func (h *managerConfigHook) Apply(ctx context.Context, _, newCfg *config.Config) (HookStatus, error) {
 	res := di.Optional[*proxy.BackendManager](h.inj)
 	if res.Failed() {
@@ -287,8 +288,15 @@ func (h *managerConfigHook) Apply(ctx context.Context, _, newCfg *config.Config)
 	}
 	var applier managerConfigApplier = res.Value
 	applier.SetUsageFlushConfig(&newCfg.UsageFlush)
-	applier.SetLifecycleConfig(&newCfg.Lifecycle)
 	applier.SetIntegrityConfig(&newCfg.Integrity)
+
+	// Lifecycle rules live with the code that applies them.
+	if exp := di.Optional[*expiry.Manager](h.inj); exp.Failed() {
+		return HookFailed, resolutionError("expiry manager", exp.Err)
+	} else if exp.Value != nil {
+		var lifecycleApplier lifecycleConfigApplier = exp.Value
+		lifecycleApplier.SetConfig(&newCfg.Lifecycle)
+	}
 	if err := applier.UpdateQuotaMetrics(ctx); err != nil {
 		return HookFailed, err
 	}
@@ -304,8 +312,8 @@ type uiHandlerHook struct {
 	inj do.Injector
 }
 
-func (*uiHandlerHook) Name() string                                  { return "ui_handler" }
-func (*uiHandlerHook) Check(_, _ *config.Config) error               { return nil }
+func (*uiHandlerHook) Name() string                    { return "ui_handler" }
+func (*uiHandlerHook) Check(_, _ *config.Config) error { return nil }
 func (h *uiHandlerHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
 	res := di.Optional[*ui.Handler](h.inj)
 	if res.Failed() {

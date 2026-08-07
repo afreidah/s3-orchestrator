@@ -89,7 +89,7 @@ type integrityStats struct {
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	data, err := h.backendOps.GetDashboardData(r.Context())
+	data, err := h.dashboardOps.GetData(r.Context())
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "failed to get dashboard data", "error", err)
 		http.Error(w, "Failed to load dashboard data", http.StatusInternalServerError)
@@ -171,7 +171,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleAPIDashboard(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	data, err := h.backendOps.GetDashboardData(r.Context())
+	data, err := h.dashboardOps.GetData(r.Context())
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "failed to get dashboard data", "error", err)
 		httputil.WriteJSONError(w, http.StatusInternalServerError, "failed to load data")

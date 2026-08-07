@@ -28,7 +28,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // httpError is a writepath-package test helper that satisfies the
@@ -46,7 +45,7 @@ func (e *httpError) HTTPStatusCode() int { return e.code }
 // the backend's DeleteObject can be controlled directly through the
 // gomock recorder. A real (in-memory) UsageTracker is supplied so the
 // Acct().APICall path on DeleteOrEnqueue does not nil-deref.
-func newCoordinatorWithBackend(name string, be s3be.ObjectBackend, store core.MetadataStore) *Coordinator {
+func newCoordinatorWithBackend(name string, be s3be.ObjectBackend, store CoordinatorStores) *Coordinator {
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{name}), nil)
 	c := infra.New(&infra.Config{
 		Backends: map[string]s3be.ObjectBackend{name: be},
@@ -59,7 +58,7 @@ func newCoordinatorWithBackend(name string, be s3be.ObjectBackend, store core.Me
 // supplied store. Avoids the BackendManager constructor so coordinator
 // branches can be exercised in isolation without dragging the full
 // manager assembly into every test.
-func newCoordinatorWithStore(store core.MetadataStore, pendingEnabled bool) *Coordinator {
+func newCoordinatorWithStore(store CoordinatorStores, pendingEnabled bool) *Coordinator {
 	c := infra.New(&infra.Config{
 		Backends: map[string]s3be.ObjectBackend{},
 	})
@@ -69,7 +68,7 @@ func newCoordinatorWithStore(store core.MetadataStore, pendingEnabled bool) *Coo
 // newCoordinatorWith2Backends builds a Coordinator that knows a source and a
 // destination backend, so MoveObject's StreamCopy (GetObject src -> PutObject
 // dest) and its cleanup paths can be driven through the gomock recorders.
-func newCoordinatorWith2Backends(srcName string, src s3be.ObjectBackend, destName string, dest s3be.ObjectBackend, store core.MetadataStore) *Coordinator {
+func newCoordinatorWith2Backends(srcName string, src s3be.ObjectBackend, destName string, dest s3be.ObjectBackend, store CoordinatorStores) *Coordinator {
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{srcName, destName}), nil)
 	c := infra.New(&infra.Config{
 		Backends:       map[string]s3be.ObjectBackend{srcName: src, destName: dest},
@@ -100,10 +99,10 @@ func TestMoveObject_CASError_OrphansDestWithProfileReason(t *testing.T) {
 	// CAS errors -> orphan cleanup on dest; force the enqueue by failing the delete.
 	dest.EXPECT().DeleteObject(gomock.Any(), "k").Return(errors.New("delete failed"))
 
-	store := storetest.NewMockMetadataStore(ctrl)
+	store := NewMockCoordinatorStores(ctrl)
 	store.EXPECT().MoveObjectLocation(gomock.Any(), "k", "src", "dest").Return(int64(0), errors.New("cas failed"))
 	store.EXPECT().EnqueueCleanup(gomock.Any(), "dest", "k", RebalanceMoveReasons.Orphan, int64(4)).Return(nil).Times(1)
-	storetest.Permissive(store)
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "dest", int64(4)).Return(nil).Times(1)
 
 	coord := newCoordinatorWith2Backends("src", src, "dest", dest, store)
 	if _, err := coord.MoveObject(context.Background(), moveReq(src, dest)); err == nil {
@@ -122,10 +121,10 @@ func TestMoveObject_Stale_StaleOrphansDestWithProfileReason(t *testing.T) {
 	expectStreamCopyOK(src, dest)
 	dest.EXPECT().DeleteObject(gomock.Any(), "k").Return(errors.New("delete failed"))
 
-	store := storetest.NewMockMetadataStore(ctrl)
+	store := NewMockCoordinatorStores(ctrl)
 	store.EXPECT().MoveObjectLocation(gomock.Any(), "k", "src", "dest").Return(int64(0), nil)
 	store.EXPECT().EnqueueCleanup(gomock.Any(), "dest", "k", RebalanceMoveReasons.StaleOrphan, int64(4)).Return(nil).Times(1)
-	storetest.Permissive(store)
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "dest", int64(4)).Return(nil).Times(1)
 
 	coord := newCoordinatorWith2Backends("src", src, "dest", dest, store)
 	if _, err := coord.MoveObject(context.Background(), moveReq(src, dest)); !errors.Is(err, ErrMoveStale) {
@@ -146,10 +145,10 @@ func TestMoveObject_Success_SourceDeleteWithProfileReason(t *testing.T) {
 	// SourceDelete reason is observable on EnqueueCleanup.
 	src.EXPECT().DeleteObject(gomock.Any(), "k").Return(errors.New("delete failed"))
 
-	store := storetest.NewMockMetadataStore(ctrl)
+	store := NewMockCoordinatorStores(ctrl)
 	store.EXPECT().MoveObjectLocation(gomock.Any(), "k", "src", "dest").Return(int64(4), nil)
 	store.EXPECT().EnqueueCleanup(gomock.Any(), "src", "k", RebalanceMoveReasons.SourceDelete, int64(4)).Return(nil).Times(1)
-	storetest.Permissive(store)
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "src", int64(4)).Return(nil).Times(1)
 
 	coord := newCoordinatorWith2Backends("src", src, "dest", dest, store)
 	movedSize, err := coord.MoveObject(context.Background(), moveReq(src, dest))
@@ -180,7 +179,7 @@ func moveReq(src, dest s3be.ObjectBackend) *MoveRequest {
 func TestInsertPendingIntent_CopiesEncryptionMeta(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
+	store := NewMockCoordinatorStores(ctrl)
 
 	var got core.PendingObject
 	store.EXPECT().InsertPending(gomock.Any(), gomock.Any()).
@@ -188,7 +187,6 @@ func TestInsertPendingIntent_CopiesEncryptionMeta(t *testing.T) {
 			got = *p
 			return nil
 		}).Times(1)
-	storetest.Permissive(store)
 
 	coord := newCoordinatorWithStore(store, true)
 	enc := &core.EncryptionMeta{
@@ -219,10 +217,9 @@ func TestInsertPendingIntent_CopiesEncryptionMeta(t *testing.T) {
 func TestInsertPendingIntent_StoreError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
+	store := NewMockCoordinatorStores(ctrl)
 	store.EXPECT().InsertPending(gomock.Any(), gomock.Any()).
 		Return(errors.New("db down")).Times(1)
-	storetest.Permissive(store)
 
 	coord := newCoordinatorWithStore(store, true)
 
@@ -246,10 +243,9 @@ func TestDeleteOrEnqueue_NotFound_SkipsEnqueue(t *testing.T) {
 	be.EXPECT().DeleteObject(gomock.Any(), "phantom.txt").
 		Return(&httpError{code: 404, msg: "NoSuchKey"})
 
-	store := storetest.NewMockMetadataStore(ctrl)
+	store := NewMockCoordinatorStores(ctrl)
 	// The whole point of the fix: EnqueueCleanup must NOT be called.
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-	storetest.Permissive(store)
 
 	coord := newCoordinatorWithBackend("b1", be, store)
 	coord.DeleteOrEnqueue(context.Background(), be, "b1", "phantom.txt", "overwrite_displaced", 128)
@@ -264,10 +260,10 @@ func TestDeleteOrEnqueue_GenericError_Enqueues(t *testing.T) {
 	be := backendtest.NewMockObjectBackend(ctrl)
 	be.EXPECT().DeleteObject(gomock.Any(), "real.txt").Return(errors.New("connection refused"))
 
-	store := storetest.NewMockMetadataStore(ctrl)
+	store := NewMockCoordinatorStores(ctrl)
 	store.EXPECT().EnqueueCleanup(gomock.Any(), "b1", "real.txt", "overwrite_displaced", int64(256)).
 		Return(nil).Times(1)
-	storetest.Permissive(store)
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "b1", int64(256)).Return(nil).Times(1)
 
 	coord := newCoordinatorWithBackend("b1", be, store)
 	coord.DeleteOrEnqueue(context.Background(), be, "b1", "real.txt", "overwrite_displaced", 256)
@@ -285,10 +281,9 @@ func TestRecoverFromRecordFailure_DeleteReturns404_SkipsEnqueue(t *testing.T) {
 	be.EXPECT().DeleteObject(gomock.Any(), "phantom.txt").
 		Return(&httpError{code: 404, msg: "NoSuchKey"})
 
-	store := storetest.NewMockMetadataStore(ctrl)
+	store := NewMockCoordinatorStores(ctrl)
 	// The whole point of the fix: EnqueueCleanup must NOT be called.
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-	storetest.Permissive(store)
 
 	coord := newCoordinatorWithBackend("b1", be, store)
 	coord.RecoverFromRecordFailure(context.Background(), be, "b1", "phantom.txt", "record_failure", 128)
@@ -303,10 +298,10 @@ func TestRecoverFromRecordFailure_GenericError_Enqueues(t *testing.T) {
 	be := backendtest.NewMockObjectBackend(ctrl)
 	be.EXPECT().DeleteObject(gomock.Any(), "real.txt").Return(errors.New("connection refused"))
 
-	store := storetest.NewMockMetadataStore(ctrl)
+	store := NewMockCoordinatorStores(ctrl)
 	store.EXPECT().EnqueueCleanup(gomock.Any(), "b1", "real.txt", "record_failure", int64(256)).
 		Return(nil).Times(1)
-	storetest.Permissive(store)
+	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "b1", int64(256)).Return(nil).Times(1)
 
 	coord := newCoordinatorWithBackend("b1", be, store)
 	coord.RecoverFromRecordFailure(context.Background(), be, "b1", "real.txt", "record_failure", 256)
@@ -319,8 +314,7 @@ func TestRecoverFromRecordFailure_GenericError_Enqueues(t *testing.T) {
 func TestRecordObjectAndPromoteIntent_UnknownBackend(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	storetest.Permissive(store)
+	store := NewMockCoordinatorStores(ctrl)
 
 	coord := newCoordinatorWithStore(store, false)
 

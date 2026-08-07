@@ -32,6 +32,8 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/mock/gomock"
+
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -40,7 +42,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -174,35 +176,18 @@ func TestTlsCertHook_FailedOnReloadError(t *testing.T) {
 	}
 }
 
-// fakeLifecycleAdmin implements core.LifecycleAdmin for tests that need
-// to drive the SyncQuotaLimits success and failure branches without
-// standing up a real metadata store.
-type fakeLifecycleAdmin struct {
-	syncErr error
-	calls   int
-}
-
-func (f *fakeLifecycleAdmin) RunMigrations(context.Context) error       { return nil }
-func (f *fakeLifecycleAdmin) VerifySchemaVersion(context.Context) error { return nil }
-func (f *fakeLifecycleAdmin) SyncQuotaLimits(_ context.Context, _ []config.BackendConfig) error {
-	f.calls++
-	return f.syncErr
-}
-func (f *fakeLifecycleAdmin) Close() {}
-
 // TestQuotaSyncHook_AppliedOnSuccess wires a fake LifecycleAdmin whose
 // SyncQuotaLimits returns nil and asserts the hook reports Applied.
 func TestQuotaSyncHook_AppliedOnSuccess(t *testing.T) {
-	fake := &fakeLifecycleAdmin{}
+	fake := storetest.NewMockLifecycleAdmin(gomock.NewController(t))
+	// Exactly one sync is the assertion: the hook must not retry or skip.
+	fake.EXPECT().SyncQuotaLimits(gomock.Any(), gomock.Any()).Return(nil).Times(1)
 	inj := do.New()
 	do.ProvideValue[core.LifecycleAdmin](inj, fake)
 	h := &quotaSyncHook{inj: inj}
 	status, err := h.Apply(context.Background(), nil, &config.Config{})
 	if status != HookApplied || err != nil {
 		t.Fatalf("Apply = (%s, %v), want (applied, nil)", status, err)
-	}
-	if fake.calls != 1 {
-		t.Errorf("SyncQuotaLimits calls = %d, want 1", fake.calls)
 	}
 }
 
@@ -212,7 +197,9 @@ func TestQuotaSyncHook_AppliedOnSuccess(t *testing.T) {
 func TestQuotaSyncHook_FailedOnSyncError(t *testing.T) {
 	syncBoom := errors.New("quota sync failed")
 	inj := do.New()
-	do.ProvideValue[core.LifecycleAdmin](inj, &fakeLifecycleAdmin{syncErr: syncBoom})
+	failing := storetest.NewMockLifecycleAdmin(gomock.NewController(t))
+	failing.EXPECT().SyncQuotaLimits(gomock.Any(), gomock.Any()).Return(syncBoom).AnyTimes()
+	do.ProvideValue[core.LifecycleAdmin](inj, failing)
 	h := &quotaSyncHook{inj: inj}
 	status, err := h.Apply(context.Background(), nil, &config.Config{})
 	if status != HookFailed {
@@ -532,16 +519,12 @@ func TestHookNamesStable(t *testing.T) {
 // but the constructor still panics via must.NotNil on missing deps.
 func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 	t.Helper()
-	mock := testutil.NewMockStore(t)
+	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]backend.ObjectBackend{},
 			Order:    []string{},
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  mock,
-			Dashboard: mock,
 		},
 		Policies: proxy.PolicyConfig{
 			RoutingStrategy: config.RoutingPack,
@@ -569,7 +552,6 @@ func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 		LogLevel:   &lv,
 	})
 	return &ui.Deps{
-		BackendOps:   mgr,
 		Objects:      mgr.Objects(),
 		AdminHandler: adminHandler,
 		Cfg:          &config.Config{},

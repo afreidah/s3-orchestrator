@@ -34,7 +34,7 @@ import (
 func TestHandleWorkers_HappyPath(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(1715000000, 0)
-	h := newTestHandler()
+	h := newTestHandler(t)
 	h.workerHealth = func() []adminapi.WorkerHealth {
 		return []adminapi.WorkerHealth{
 			{Name: "cleanup_queue", LastSuccess: now, ConsecutiveFailures: 0},
@@ -78,7 +78,7 @@ func TestHandleWorkers_HappyPath(t *testing.T) {
 // "worker pool is healthy but reporting nothing".
 func TestHandleWorkers_NotWired(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler() // workerHealth deliberately nil
+	h := newTestHandler(t) // workerHealth deliberately nil
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -96,7 +96,7 @@ func TestHandleWorkers_NotWired(t *testing.T) {
 // is gated by the admin token like every other admin route.
 func TestHandleWorkers_RequiresToken(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	h.workerHealth = func() []adminapi.WorkerHealth { return nil }
 	mux := http.NewServeMux()
 	h.Register(mux)

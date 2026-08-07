@@ -14,9 +14,9 @@
 package auth
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
-	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -106,7 +106,6 @@ func BenchmarkAuthenticateAndResolveBucket(b *testing.B) {
 		_, _, _ = br.AuthenticateAndResolveBucket(r)
 	}
 }
-
 
 // BenchmarkVerifySigV4_WithQueryParams measures the verify sig v4 with query params path by exercising q.Set, fmt.Sprintf, q.Encode.
 func BenchmarkVerifySigV4_WithQueryParams(b *testing.B) {

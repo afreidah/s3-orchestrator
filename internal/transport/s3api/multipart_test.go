@@ -23,12 +23,15 @@ import (
 	"time"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
+	"go.uber.org/mock/gomock"
 )
 
 // -------------------------------------------------------------------------
@@ -39,14 +42,16 @@ import (
 // Asserts that status = , want 200. body:.
 func TestCreateMultipartUpload_Success(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
-
-	mockStore.GetMultipartResp = &core.MultipartUpload{
-		UploadID:    "test-upload-id",
-		ObjectKey:   "mybucket/testkey",
-		BackendName: "b1",
-		ContentType: "text/plain",
-	}
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		m.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
+			Return(&core.MultipartUpload{
+				UploadID:    "test-upload-id",
+				ObjectKey:   "mybucket/testkey",
+				BackendName: "b1",
+				ContentType: "text/plain",
+			}, nil).AnyTimes()
+	})
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploads", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
@@ -81,12 +86,14 @@ func TestCreateMultipartUpload_Success(t *testing.T) {
 // Asserts that status = , want 500.
 func TestCreateMultipartUpload_StoreError(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
-	mockStore.CreateMultipartErr = &core.S3Error{
-		StatusCode: 500,
-		Code:       "InternalError",
-		Message:    "db error",
-	}
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).
+			Return(&core.S3Error{
+				StatusCode: 500,
+				Code:       "InternalError",
+				Message:    "db error",
+			}).AnyTimes()
+	})
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploads", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
@@ -105,14 +112,16 @@ func TestCreateMultipartUpload_StoreError(t *testing.T) {
 // Asserts that status = , want 200.
 func TestCreateMultipartUpload_DefaultContentType(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
-
-	mockStore.GetMultipartResp = &core.MultipartUpload{
-		UploadID:    "test-upload-id",
-		ObjectKey:   "mybucket/testkey",
-		BackendName: "b1",
-		ContentType: "application/octet-stream",
-	}
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		m.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
+			Return(&core.MultipartUpload{
+				UploadID:    "test-upload-id",
+				ObjectKey:   "mybucket/testkey",
+				BackendName: "b1",
+				ContentType: "application/octet-stream",
+			}, nil).AnyTimes()
+	})
 
 	// No Content-Type header  -  should default to application/octet-stream
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploads", nil)
@@ -156,14 +165,15 @@ func TestCreateMultipartUpload_MetadataTooLarge(t *testing.T) {
 // Asserts that status = , want 200. body:.
 func TestUploadPart_Success(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
-
-	mockStore.GetMultipartResp = &core.MultipartUpload{
-		UploadID:    "upload-1",
-		ObjectKey:   "mybucket/testkey",
-		BackendName: "b1",
-		ContentType: "application/octet-stream",
-	}
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
+			Return(&core.MultipartUpload{
+				UploadID:    "upload-1",
+				ObjectKey:   "mybucket/testkey",
+				BackendName: "b1",
+				ContentType: "application/octet-stream",
+			}, nil).AnyTimes()
+	})
 
 	body := strings.NewReader("part-data")
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey?uploadId=upload-1&partNumber=1", body)
@@ -273,24 +283,27 @@ func TestUploadPart_EntityTooLarge(t *testing.T) {
 // Asserts that status = , want 200. body:.
 func TestCompleteMultipartUpload_Success(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, backend := newTestServer(t)
+	ts, _, backend := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
+			Return(&core.MultipartUpload{
+				UploadID:    "upload-1",
+				ObjectKey:   "mybucket/testkey",
+				BackendName: "b1",
+				ContentType: "text/plain",
+			}, nil).AnyTimes()
+		m.EXPECT().GetParts(gomock.Any(), gomock.Any()).
+			Return([]core.MultipartPart{
+				{PartNumber: 1, ETag: `"part1"`, SizeBytes: 4},
+			}, nil).AnyTimes()
+		m.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return("b1", nil).AnyTimes()
+	})
 
 	// Store has a multipart upload with one part
-	mockStore.GetMultipartResp = &core.MultipartUpload{
-		UploadID:    "upload-1",
-		ObjectKey:   "mybucket/testkey",
-		BackendName: "b1",
-		ContentType: "text/plain",
-	}
-	mockStore.GetPartsResp = []core.MultipartPart{
-		{PartNumber: 1, ETag: `"part1"`, SizeBytes: 4},
-	}
 	// Pre-store the part object on the backend at the internal part key
-	backend.objects["__multipart/upload-1/1"] = serverMockObj{
-		data: []byte("data"), contentType: "application/octet-stream", etag: `"part1"`,
+	backend.Objects["__multipart/upload-1/1"] = backendtest.Object{
+		Data: []byte("data"), ContentType: "application/octet-stream", ETag: `"part1"`,
 	}
-	mockStore.GetBackendResp = "b1"
-
 	xmlBody := `<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"part1"</ETag></Part></CompleteMultipartUpload>`
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploadId=upload-1", strings.NewReader(xmlBody))
 	req.Header.Set("X-Proxy-Token", "test-token")
@@ -345,15 +358,17 @@ func TestCompleteMultipartUpload_MalformedXML(t *testing.T) {
 // Asserts that status = , want 204. body:.
 func TestAbortMultipartUpload_Success(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
-
-	mockStore.GetMultipartResp = &core.MultipartUpload{
-		UploadID:    "upload-1",
-		ObjectKey:   "mybucket/testkey",
-		BackendName: "b1",
-		ContentType: "text/plain",
-	}
-	mockStore.GetPartsResp = nil // no parts to clean up
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
+			Return(&core.MultipartUpload{
+				UploadID:    "upload-1",
+				ObjectKey:   "mybucket/testkey",
+				BackendName: "b1",
+				ContentType: "text/plain",
+			}, nil).AnyTimes()
+		m.EXPECT().GetParts(gomock.Any(), gomock.Any()).
+			Return(nil, nil).AnyTimes() // no parts to clean up
+	})
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, ts.URL+"/mybucket/testkey?uploadId=upload-1", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
@@ -373,8 +388,10 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 // Asserts that status = , want 404.
 func TestAbortMultipartUpload_NotFound(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
-	mockStore.GetMultipartErr = core.ErrObjectNotFound
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
+			Return(nil, core.ErrObjectNotFound).AnyTimes()
+	})
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, ts.URL+"/mybucket/testkey?uploadId=nonexistent", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
@@ -397,18 +414,20 @@ func TestAbortMultipartUpload_NotFound(t *testing.T) {
 // Asserts that status = , want 200. body:.
 func TestListParts_Success(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
-
 	now := time.Now().UTC()
-	mockStore.GetMultipartResp = &core.MultipartUpload{
-		UploadID:    "upload-1",
-		ObjectKey:   "mybucket/testkey",
-		BackendName: "b1",
-	}
-	mockStore.GetPartsResp = []core.MultipartPart{
-		{PartNumber: 1, ETag: `"aaa"`, SizeBytes: 100, CreatedAt: now},
-		{PartNumber: 2, ETag: `"bbb"`, SizeBytes: 200, CreatedAt: now},
-	}
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
+			Return(&core.MultipartUpload{
+				UploadID:    "upload-1",
+				ObjectKey:   "mybucket/testkey",
+				BackendName: "b1",
+			}, nil).AnyTimes()
+		m.EXPECT().GetParts(gomock.Any(), gomock.Any()).
+			Return([]core.MultipartPart{
+				{PartNumber: 1, ETag: `"aaa"`, SizeBytes: 100, CreatedAt: now},
+				{PartNumber: 2, ETag: `"bbb"`, SizeBytes: 200, CreatedAt: now},
+			}, nil).AnyTimes()
+	})
 
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/testkey?uploadId=upload-1", nil)
 	defer resp.Body.Close()
@@ -446,17 +465,20 @@ func TestListParts_Success(t *testing.T) {
 // Asserts that status = , want 500.
 func TestListParts_StoreError(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
-	mockStore.GetMultipartResp = &core.MultipartUpload{
-		UploadID:    "upload-1",
-		ObjectKey:   "mybucket/testkey",
-		BackendName: "b1",
-	}
-	mockStore.GetPartsErr = &core.S3Error{
-		StatusCode: 500,
-		Code:       "InternalError",
-		Message:    "db error",
-	}
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
+			Return(&core.MultipartUpload{
+				UploadID:    "upload-1",
+				ObjectKey:   "mybucket/testkey",
+				BackendName: "b1",
+			}, nil).AnyTimes()
+		m.EXPECT().GetParts(gomock.Any(), gomock.Any()).
+			Return(nil, &core.S3Error{
+				StatusCode: 500,
+				Code:       "InternalError",
+				Message:    "db error",
+			}).AnyTimes()
+	})
 
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/testkey?uploadId=upload-1", nil)
 	defer resp.Body.Close()
@@ -470,13 +492,16 @@ func TestListParts_StoreError(t *testing.T) {
 // Asserts that status = , want 200.
 func TestListParts_EmptyParts(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
-	mockStore.GetMultipartResp = &core.MultipartUpload{
-		UploadID:    "upload-1",
-		ObjectKey:   "mybucket/testkey",
-		BackendName: "b1",
-	}
-	mockStore.GetPartsResp = nil // no parts
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
+			Return(&core.MultipartUpload{
+				UploadID:    "upload-1",
+				ObjectKey:   "mybucket/testkey",
+				BackendName: "b1",
+			}, nil).AnyTimes()
+		m.EXPECT().GetParts(gomock.Any(), gomock.Any()).
+			Return(nil, nil).AnyTimes() // no parts
+	})
 
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/testkey?uploadId=upload-1", nil)
 	defer resp.Body.Close()
@@ -502,14 +527,14 @@ func TestListParts_EmptyParts(t *testing.T) {
 // Asserts that status = , want 200. body:.
 func TestListMultipartUploads_Success(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
 	now := time.Now().UTC()
-
-	mockStore.ListMultipartUploadsResp = []core.MultipartUpload{
-		{UploadID: "upload-1", ObjectKey: "mybucket/file1.txt", ContentType: "text/plain", CreatedAt: now},
-		{UploadID: "upload-2", ObjectKey: "mybucket/file2.txt", ContentType: "text/plain", CreatedAt: now},
-	}
-
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListMultipartUploads(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return([]core.MultipartUpload{
+				{UploadID: "upload-1", ObjectKey: "mybucket/file1.txt", ContentType: "text/plain", CreatedAt: now},
+				{UploadID: "upload-2", ObjectKey: "mybucket/file2.txt", ContentType: "text/plain", CreatedAt: now},
+			}, nil).AnyTimes()
+	})
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?uploads", nil)
 	defer resp.Body.Close()
 
@@ -543,8 +568,10 @@ func TestListMultipartUploads_Success(t *testing.T) {
 // Asserts that status = , want 200.
 func TestListMultipartUploads_Empty(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
-	mockStore.ListMultipartUploadsResp = nil
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListMultipartUploads(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(nil, nil).AnyTimes()
+	})
 
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?uploads", nil)
 	defer resp.Body.Close()
@@ -566,17 +593,17 @@ func TestListMultipartUploads_Empty(t *testing.T) {
 // Asserts that status = , want 200.
 func TestListMultipartUploads_Truncated(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
 	now := time.Now().UTC()
-
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListMultipartUploads(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return([]core.MultipartUpload{
+				{UploadID: "u1", ObjectKey: "mybucket/a.txt", ContentType: "text/plain", CreatedAt: now},
+				{UploadID: "u2", ObjectKey: "mybucket/b.txt", ContentType: "text/plain", CreatedAt: now},
+				{UploadID: "u3", ObjectKey: "mybucket/c.txt", ContentType: "text/plain", CreatedAt: now},
+			}, nil).AnyTimes()
+	})
 	// Return 3 uploads when max-uploads=2; handler fetches maxUploads+1 to
 	// detect truncation, so the mock needs to return 3.
-	mockStore.ListMultipartUploadsResp = []core.MultipartUpload{
-		{UploadID: "u1", ObjectKey: "mybucket/a.txt", ContentType: "text/plain", CreatedAt: now},
-		{UploadID: "u2", ObjectKey: "mybucket/b.txt", ContentType: "text/plain", CreatedAt: now},
-		{UploadID: "u3", ObjectKey: "mybucket/c.txt", ContentType: "text/plain", CreatedAt: now},
-	}
-
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?uploads&max-uploads=2", nil)
 	defer resp.Body.Close()
 
@@ -603,12 +630,14 @@ func TestListMultipartUploads_Truncated(t *testing.T) {
 // Asserts that status = , want 500.
 func TestListMultipartUploads_StoreError(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
-	mockStore.ListMultipartUploadsErr = &core.S3Error{
-		StatusCode: 500,
-		Code:       "InternalError",
-		Message:    "db error",
-	}
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListMultipartUploads(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(nil, &core.S3Error{
+				StatusCode: 500,
+				Code:       "InternalError",
+				Message:    "db error",
+			}).AnyTimes()
+	})
 
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?uploads", nil)
 	defer resp.Body.Close()
@@ -646,21 +675,22 @@ func TestListMultipartUploads_NoAuth(t *testing.T) {
 // handleCreateMultipartUpload is exercised end-to-end (the default
 // newTestServer leaves the cap at 0 == unlimited and never enters that
 // branch).
-func newTestServerWithMultipartLimit(t *testing.T, maxUploads int) (*httptest.Server, *testutil.MockStore) {
+func newTestServerWithMultipartLimit(t *testing.T, maxUploads int, opts ...func(*storetest.MockMetadataStore)) (*httptest.Server, *storetest.MockMetadataStore) {
 	t.Helper()
 
-	backend := newServerMockBackend()
-	mockStore := testutil.NewMockStore(t)
-	mockStore.GetBackendResp = "b1"
+	backend := backendtest.NewInMemory()
+	mockStore := storetest.NewMockMetadataStore(gomock.NewController(t))
+	for _, opt := range opts {
+		opt(mockStore)
+	}
+	mockStore.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("b1", nil).AnyTimes()
+	storetest.Permissive(mockStore)
 
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, mockStore, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]s3be.ObjectBackend{"b1": backend},
 			Order:    []string{"b1"},
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  mockStore,
-			Dashboard: mockStore,
 		},
 		Policies: proxy.PolicyConfig{
 			RoutingStrategy: config.RoutingPack,
@@ -672,7 +702,8 @@ func newTestServerWithMultipartLimit(t *testing.T, maxUploads int) (*httptest.Se
 	_ = proxytest.BuildWorkers(mgr, mockStore)
 	t.Cleanup(mgr.Close)
 
-	srv := &Server{Manager: mgr, MaxObjectSize: 10 * 1024 * 1024}
+	srv := &Server{Objects: mgr.Objects(),
+		Multipart: mgr.Multipart(), MaxObjectSize: 10 * 1024 * 1024}
 	buckets := []config.BucketConfig{{
 		Name:                "mybucket",
 		MaxMultipartUploads: maxUploads,
@@ -689,8 +720,10 @@ func newTestServerWithMultipartLimit(t *testing.T, maxUploads int) (*httptest.Se
 // when the active-upload count is at or above the per-bucket cap.
 func TestCreateMultipartUpload_PerBucketLimit_Exceeded(t *testing.T) {
 	t.Parallel()
-	ts, mockStore := newTestServerWithMultipartLimit(t, 2)
-	mockStore.CountActiveMultipartResp = 2 // already at limit
+	ts, _ := newTestServerWithMultipartLimit(t, 2, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().CountActiveMultipartUploads(gomock.Any(), gomock.Any()).
+			Return(int64(2), nil).AnyTimes() // already at limit
+	})
 
 	resp := doReq(t, ts, http.MethodPost, ts.URL+"/mybucket/k?uploads", nil)
 	defer resp.Body.Close()
@@ -706,8 +739,10 @@ func TestCreateMultipartUpload_PerBucketLimit_Exceeded(t *testing.T) {
 // instead of letting the create proceed unguarded.
 func TestCreateMultipartUpload_PerBucketLimit_StoreError(t *testing.T) {
 	t.Parallel()
-	ts, mockStore := newTestServerWithMultipartLimit(t, 1)
-	mockStore.CountActiveMultipartErr = errors.New("count failed")
+	ts, _ := newTestServerWithMultipartLimit(t, 1, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().CountActiveMultipartUploads(gomock.Any(), gomock.Any()).
+			Return(int64(0), errors.New("count failed")).AnyTimes()
+	})
 
 	resp := doReq(t, ts, http.MethodPost, ts.URL+"/mybucket/k?uploads", nil)
 	defer resp.Body.Close()
@@ -721,14 +756,18 @@ func TestCreateMultipartUpload_PerBucketLimit_StoreError(t *testing.T) {
 // path: when active count is below the cap, the create proceeds.
 func TestCreateMultipartUpload_PerBucketLimit_BelowAllows(t *testing.T) {
 	t.Parallel()
-	ts, mockStore := newTestServerWithMultipartLimit(t, 5)
-	mockStore.CountActiveMultipartResp = 1
-	mockStore.GetMultipartResp = &core.MultipartUpload{
-		UploadID:    "upl-1",
-		ObjectKey:   "mybucket/k",
-		BackendName: "b1",
-		ContentType: "application/octet-stream",
-	}
+	ts, _ := newTestServerWithMultipartLimit(t, 5, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().CountActiveMultipartUploads(gomock.Any(), gomock.Any()).
+			Return(int64(1), nil).AnyTimes()
+		m.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		m.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
+			Return(&core.MultipartUpload{
+				UploadID:    "upl-1",
+				ObjectKey:   "mybucket/k",
+				BackendName: "b1",
+				ContentType: "application/octet-stream",
+			}, nil).AnyTimes()
+	})
 
 	resp := doReq(t, ts, http.MethodPost, ts.URL+"/mybucket/k?uploads", nil)
 	defer resp.Body.Close()

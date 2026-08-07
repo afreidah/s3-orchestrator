@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"go.uber.org/mock/gomock"
+
+	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 )
 
 // TestReconciler_NoBuckets verifies the reconciler no buckets path by exercising gomock.NewController, r.Run, context.Background.
@@ -26,7 +28,8 @@ func TestReconciler_NoBuckets(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
-	r := NewReconciler(syncer, nil)
+	fleet := NewMockFleetOps(ctrl)
+	r := NewReconciler(syncer, fleet, nil)
 	r.Run(context.Background()) // should not panic
 }
 
@@ -35,14 +38,15 @@ func TestReconciler_SyncsAllBackends(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
+	fleet := NewMockFleetOps(ctrl)
 
-	syncer.EXPECT().BackendOrder().Return([]string{"b1", "b2"})
+	fleet.EXPECT().BackendOrder().Return([]string{"b1", "b2"})
 	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", "unified", []string{"unified"}).Return(2, 5, nil)
 	syncer.EXPECT().SyncBackend(gomock.Any(), "b2", "unified", []string{"unified"}).Return(0, 10, nil)
-	syncer.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
-	syncer.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
+	fleet.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
+	fleet.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
-	r := NewReconciler(syncer, []string{"unified"})
+	r := NewReconciler(syncer, fleet, []string{"unified"})
 	r.Run(context.Background())
 }
 
@@ -51,14 +55,15 @@ func TestReconciler_ContinuesOnBackendError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
+	fleet := NewMockFleetOps(ctrl)
 
-	syncer.EXPECT().BackendOrder().Return([]string{"b1", "b2"})
+	fleet.EXPECT().BackendOrder().Return([]string{"b1", "b2"})
 	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", "unified", gomock.Any()).Return(0, 0, context.DeadlineExceeded)
 	syncer.EXPECT().SyncBackend(gomock.Any(), "b2", "unified", gomock.Any()).Return(1, 0, nil)
-	syncer.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
-	syncer.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
+	fleet.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
+	fleet.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
-	r := NewReconciler(syncer, []string{"unified"})
+	r := NewReconciler(syncer, fleet, []string{"unified"})
 	r.Run(context.Background()) // should not panic
 }
 
@@ -69,13 +74,14 @@ func TestReconciler_ReconcilesUsageEachPass(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
+	fleet := NewMockFleetOps(ctrl)
 
-	syncer.EXPECT().BackendOrder().Return([]string{"b1"})
+	fleet.EXPECT().BackendOrder().Return([]string{"b1"})
 	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", "unified", []string{"unified"}).Return(0, 0, nil)
 	// Zero imports: UpdateQuotaMetrics is skipped, but ReconcileUsage still runs.
-	syncer.EXPECT().ReconcileUsage(gomock.Any()).Return(map[string]int64{"b1": -100}, nil).Times(1)
+	fleet.EXPECT().ReconcileUsage(gomock.Any()).Return(map[string]int64{"b1": -100}, nil).Times(1)
 
-	r := NewReconciler(syncer, []string{"unified"})
+	r := NewReconciler(syncer, fleet, []string{"unified"})
 	r.Run(context.Background())
 }
 
@@ -85,12 +91,13 @@ func TestReconciler_ReconcileUsageError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
+	fleet := NewMockFleetOps(ctrl)
 
-	syncer.EXPECT().BackendOrder().Return([]string{"b1"})
+	fleet.EXPECT().BackendOrder().Return([]string{"b1"})
 	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", "unified", []string{"unified"}).Return(0, 0, nil)
-	syncer.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, errors.New("db down")).Times(1)
+	fleet.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, errors.New("db down")).Times(1)
 
-	r := NewReconciler(syncer, []string{"unified"})
+	r := NewReconciler(syncer, fleet, []string{"unified"})
 	r.Run(context.Background()) // must not panic
 }
 
@@ -100,16 +107,17 @@ func TestReconcile_AllBackends(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
+	fleet := NewMockFleetOps(ctrl)
 
-	syncer.EXPECT().BackendOrder().Return([]string{"b1", "b2"})
+	fleet.EXPECT().BackendOrder().Return([]string{"b1", "b2"})
 	syncer.EXPECT().ReconcileBackend(gomock.Any(), "b1", []string{"unified"}).
-		Return(&ReconcileResult{Imported: 1, Removed: 3, BackendsScanned: 1}, nil)
+		Return(&reconcile.Result{Imported: 1, Removed: 3}, nil)
 	syncer.EXPECT().ReconcileBackend(gomock.Any(), "b2", []string{"unified"}).
-		Return(&ReconcileResult{Imported: 0, Removed: 2, BackendsScanned: 1}, nil)
-	syncer.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
-	syncer.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
+		Return(&reconcile.Result{Imported: 0, Removed: 2}, nil)
+	fleet.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
+	fleet.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
-	r := NewReconciler(syncer, []string{"unified"})
+	r := NewReconciler(syncer, fleet, []string{"unified"})
 	result, err := r.Reconcile(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -131,13 +139,14 @@ func TestReconcile_SingleBackend(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
+	fleet := NewMockFleetOps(ctrl)
 
 	syncer.EXPECT().ReconcileBackend(gomock.Any(), "b1", []string{"unified"}).
-		Return(&ReconcileResult{Imported: 0, Removed: 10, BackendsScanned: 1}, nil)
-	syncer.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
-	syncer.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
+		Return(&reconcile.Result{Imported: 0, Removed: 10}, nil)
+	fleet.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
+	fleet.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
-	r := NewReconciler(syncer, []string{"unified"})
+	r := NewReconciler(syncer, fleet, []string{"unified"})
 	result, err := r.Reconcile(context.Background(), "b1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -155,8 +164,9 @@ func TestReconcile_NoBuckets(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	syncer := NewMockBackendSyncer(ctrl)
+	fleet := NewMockFleetOps(ctrl)
 
-	r := NewReconciler(syncer, nil)
+	r := NewReconciler(syncer, fleet, nil)
 	_, err := r.Reconcile(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for no buckets")

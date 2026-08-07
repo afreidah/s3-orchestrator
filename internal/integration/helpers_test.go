@@ -44,6 +44,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
@@ -60,6 +62,8 @@ var (
 	proxyAddr         string
 	testDB            *sql.DB
 	testManager       *proxy.BackendManager
+	testReconciler    *reconcile.Manager
+	testCoord         *writepath.Coordinator
 	testWorkers       *proxytest.Workers
 	testStore         *postgres.Store
 	testFailableStore *FailableStore
@@ -322,14 +326,10 @@ func TestMain(m *testing.M) {
 
 	stores := newStores(failableStore)
 
-	manager := proxytest.BuildManager(&proxy.BackendManagerConfig{
+	manager := proxytest.BuildManager(stores, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: testBackends,
 			Order:    testBackendOrder,
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  stores,
-			Dashboard: failableStore,
 		},
 		Policies: proxy.PolicyConfig{
 			PendingEnabled:  true,
@@ -343,10 +343,13 @@ func TestMain(m *testing.M) {
 	})
 	workers := proxytest.BuildWorkers(manager, stores)
 	testManager = manager
+	testCoord = writepath.New(manager.Runtime(), db, false)
+	testReconciler = reconcile.NewManager(manager.Runtime(), db, manager.Runtime().Acct(), nil)
 	testWorkers = workers
 
 	srv := &s3api.Server{
-		Manager: manager,
+		Objects:   manager.Objects(),
+		Multipart: manager.Multipart(),
 	}
 	srv.SetBucketAuth(auth.NewBucketRegistry(cfg.Buckets))
 
@@ -480,7 +483,7 @@ func resetState(t *testing.T) {
 	if _, err := testDB.Exec("UPDATE backend_quotas SET bytes_used = 0, orphan_bytes = 0, updated_at = NOW()"); err != nil {
 		t.Fatalf("resetState: %v", err)
 	}
-	testManager.ClearCache()
+	testManager.Objects().LocationCache().Clear()
 	testManager.ClearDrainState()
 }
 
@@ -579,14 +582,10 @@ func setOrphanBytes(t *testing.T, backendName string, amount int64) {
 func newThreeBackendManager(t *testing.T) (*proxy.BackendManager, *proxytest.Workers) {
 	t.Helper()
 	stores := newStores(testFailableStore)
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, stores, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: allBackends,
 			Order:    allBackendOrder,
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  stores,
-			Dashboard: testFailableStore,
 		},
 		Policies: proxy.PolicyConfig{
 			CacheTTL:        60 * time.Second,
