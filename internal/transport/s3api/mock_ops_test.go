@@ -229,18 +229,18 @@ func (mr *MockMultipartOpsMockRecorder) AbortMultipartUpload(ctx, bucket, key, u
 }
 
 // CompleteMultipartUpload mocks base method.
-func (m *MockMultipartOps) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, partNumbers []int) (string, error) {
+func (m *MockMultipartOps) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, manifest []core.CompletePart) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CompleteMultipartUpload", ctx, bucket, key, uploadID, partNumbers)
+	ret := m.ctrl.Call(m, "CompleteMultipartUpload", ctx, bucket, key, uploadID, manifest)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // CompleteMultipartUpload indicates an expected call of CompleteMultipartUpload.
-func (mr *MockMultipartOpsMockRecorder) CompleteMultipartUpload(ctx, bucket, key, uploadID, partNumbers any) *gomock.Call {
+func (mr *MockMultipartOpsMockRecorder) CompleteMultipartUpload(ctx, bucket, key, uploadID, manifest any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteMultipartUpload", reflect.TypeOf((*MockMultipartOps)(nil).CompleteMultipartUpload), ctx, bucket, key, uploadID, partNumbers)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteMultipartUpload", reflect.TypeOf((*MockMultipartOps)(nil).CompleteMultipartUpload), ctx, bucket, key, uploadID, manifest)
 }
 
 // CountActiveMultipartUploads mocks base method.

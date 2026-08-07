@@ -59,6 +59,9 @@ type fleetOpts struct {
 	// BackendTimeout overrides the per-call bound. Defaults to fleetTimeout,
 	// which no test trips by accident; timeout tests set their own.
 	BackendTimeout time.Duration
+	// EnforceMinPartSize turns on the S3 5 MiB non-final part floor. Off by
+	// default because most fixtures here upload 3-byte parts.
+	EnforceMinPartSize bool
 }
 
 // fleet is a multipart Manager plus the collaborators a test asserts against:
@@ -106,13 +109,14 @@ func newFleet(
 
 	integrity := &syncutil.AtomicConfig[config.IntegrityConfig]{}
 	mp := New(&Deps{
-		Core:         rt,
-		Coord:        writepath.New(rt, store, opts.PendingEnabled),
-		Stores:       store,
-		Encryptor:    opts.Encryptor,
-		ObjectCache:  opts.ObjectCache,
-		DEKCacheTTL:  fleetDEKTTL,
-		IntegrityCfg: integrity,
+		Core:               rt,
+		Coord:              writepath.New(rt, store, opts.PendingEnabled),
+		Stores:             store,
+		Encryptor:          opts.Encryptor,
+		ObjectCache:        opts.ObjectCache,
+		DEKCacheTTL:        fleetDEKTTL,
+		IntegrityCfg:       integrity,
+		EnforceMinPartSize: opts.EnforceMinPartSize,
 	})
 	t.Cleanup(mp.Close)
 	return &fleet{Manager: mp, Runtime: rt, Integrity: integrity}
@@ -125,4 +129,16 @@ func newPermissiveStore(t *testing.T) *storetest.MockMetadataStore {
 	m := storetest.NewMockMetadataStore(gomock.NewController(t))
 	storetest.Permissive(m)
 	return m
+}
+
+// partsOf builds a completion manifest from bare part numbers, for the tests
+// whose subject is assembly rather than manifest validation. An empty ETag
+// skips the stored-ETag comparison, so these keep exercising the path they
+// always did.
+func partsOf(numbers ...int) []core.CompletePart {
+	manifest := make([]core.CompletePart, len(numbers))
+	for i, n := range numbers {
+		manifest[i] = core.CompletePart{PartNumber: n}
+	}
+	return manifest
 }
