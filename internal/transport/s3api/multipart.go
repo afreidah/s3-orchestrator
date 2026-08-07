@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -99,7 +101,7 @@ func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.Respons
 
 	// Check per-bucket multipart upload limit
 	if limit := s.GetBucketAuth().MaxMultipartUploads(bucket); limit > 0 {
-		count, err := s.Manager.CountActiveMultipartUploads(ctx, internalkey.Prefix(bucket))
+		count, err := s.Multipart.CountActiveMultipartUploads(ctx, internalkey.Prefix(bucket))
 		if err != nil {
 			return writeStorageError(w, err, "Failed to check multipart upload count"), err
 		}
@@ -109,7 +111,7 @@ func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.Respons
 		}
 	}
 
-	uploadID, _, err := s.Manager.Multipart().CreateMultipartUpload(ctx, internalKey, contentType, metadata)
+	uploadID, _, err := s.Multipart.CreateMultipartUpload(ctx, internalKey, contentType, metadata)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to create multipart upload"), err
 	}
@@ -136,7 +138,7 @@ func (s *Server) handleUploadPart(ctx context.Context, w http.ResponseWriter, r 
 	partNumberStr := r.URL.Query().Get("partNumber")
 
 	partNumber, err := strconv.Atoi(partNumberStr)
-	if err != nil || partNumber < 1 {
+	if err != nil || partNumber < multipart.MinPartNumber || partNumber > multipart.MaxPartNumber {
 		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "Invalid part number")
 		return http.StatusBadRequest, fmt.Errorf("invalid part number: %s", partNumberStr)
 	}
@@ -145,7 +147,7 @@ func (s *Server) handleUploadPart(ctx context.Context, w http.ResponseWriter, r 
 		return status, err
 	}
 
-	etag, err := s.Manager.Multipart().UploadPart(ctx, bucket, key, uploadID, partNumber, r.Body, r.ContentLength)
+	etag, err := s.Multipart.UploadPart(ctx, bucket, key, uploadID, partNumber, r.Body, r.ContentLength)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to upload part"), err
 	}
@@ -167,9 +169,13 @@ func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.Respo
 		return http.StatusBadRequest, fmt.Errorf("failed to decode complete request: %w", err)
 	}
 
-	var partNumbers []int
-	for _, p := range req.Parts {
-		partNumbers = append(partNumbers, p.PartNumber)
+	// Carry the client's ETags through: the manager compares each one to the
+	// stored part so a stale manifest is rejected rather than assembled.
+	manifest := make([]core.CompletePart, len(req.Parts))
+	partNumbers := make([]int, len(req.Parts))
+	for i, p := range req.Parts {
+		manifest[i] = core.CompletePart{PartNumber: p.PartNumber, ETag: p.ETag}
+		partNumbers[i] = p.PartNumber
 	}
 
 	if status, err := s.checkMultipartTotalSize(ctx, w, bucket, key, uploadID, partNumbers); err != nil {
@@ -185,7 +191,7 @@ func (s *Server) handleCompleteMultipartUpload(ctx context.Context, w http.Respo
 		return status, err
 	}
 
-	etag, err := s.Manager.Multipart().CompleteMultipartUpload(ctx, bucket, key, uploadID, partNumbers)
+	etag, err := s.Multipart.CompleteMultipartUpload(ctx, bucket, key, uploadID, manifest)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to complete multipart upload"), err
 	}
@@ -212,7 +218,7 @@ func (s *Server) checkMultipartTotalSize(ctx context.Context, w http.ResponseWri
 	if s.MaxObjectSize <= 0 {
 		return 0, nil
 	}
-	parts, err := s.Manager.Multipart().GetParts(ctx, bucket, key, uploadID)
+	parts, err := s.Multipart.GetParts(ctx, bucket, key, uploadID)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to get parts"), err
 	}
@@ -237,7 +243,7 @@ func (s *Server) checkMultipartTotalSize(ctx context.Context, w http.ResponseWri
 // bucket and key scope the abort to the request URL so a caller for one
 // bucket cannot wipe an in-flight upload that belongs to another.
 func (s *Server) handleAbortMultipartUpload(ctx context.Context, w http.ResponseWriter, bucket, key, uploadID string) (int, error) {
-	err := s.Manager.Multipart().AbortMultipartUpload(ctx, bucket, key, uploadID)
+	err := s.Multipart.AbortMultipartUpload(ctx, bucket, key, uploadID)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to abort multipart upload"), err
 	}
@@ -272,7 +278,7 @@ func (s *Server) handleListMultipartUploads(ctx context.Context, w http.Response
 	maxUploads := parseQueryInt(r, "max-uploads", 1000, 1000)
 
 	// Fetch one extra to detect truncation
-	uploads, err := s.Manager.Multipart().ListMultipartUploads(ctx, bucketPrefix, maxUploads+1)
+	uploads, err := s.Multipart.ListMultipartUploads(ctx, bucketPrefix, maxUploads+1)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to list multipart uploads"), err
 	}
@@ -310,7 +316,7 @@ func (s *Server) handleListMultipartUploads(ctx context.Context, w http.Response
 func (s *Server) handleListParts(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key, _ string) (int, error) {
 	uploadID := r.URL.Query().Get("uploadId")
 
-	parts, err := s.Manager.Multipart().GetParts(ctx, bucket, key, uploadID)
+	parts, err := s.Multipart.GetParts(ctx, bucket, key, uploadID)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to list parts"), err
 	}

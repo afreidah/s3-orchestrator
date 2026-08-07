@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -35,9 +36,9 @@ func newTestMultipartManager(enc *encryption.Encryptor) *Manager {
 
 // preloadPart stores body bytes at the multipart part key for the given
 // upload + part number, returning the key for assertions.
-func preloadPart(be *mockBackend, uploadID string, partNum int, body []byte) string {
+func preloadPart(be *backendtest.InMemory, uploadID string, partNum int, body []byte) string {
 	key := multipartPartKey(uploadID, partNum)
-	be.objects[key] = mockObject{data: body, contentType: "application/octet-stream", etag: "x"}
+	be.Objects[key] = backendtest.Object{Data: body, ContentType: "application/octet-stream", ETag: "x"}
 	return key
 }
 
@@ -50,7 +51,7 @@ func preloadPart(be *mockBackend, uploadID string, partNum int, body []byte) str
 func TestStreamOnePart_PlaintextCopiesBytes(t *testing.T) {
 	t.Parallel()
 	mp := newTestMultipartManager(nil)
-	be := newMockBackend()
+	be := backendtest.NewInMemory()
 	const uploadID = "upload-1"
 	preloadPart(be, uploadID, 1, []byte("plaintext part 1 contents"))
 
@@ -69,8 +70,8 @@ func TestStreamOnePart_PlaintextCopiesBytes(t *testing.T) {
 func TestStreamOnePart_GetObjectErrorWrapsPartNumber(t *testing.T) {
 	t.Parallel()
 	mp := newTestMultipartManager(nil)
-	be := newMockBackend()
-	be.getErr = errors.New("backend down")
+	be := backendtest.NewInMemory()
+	be.GetErr = errors.New("backend down")
 
 	var buf bytes.Buffer
 	part := &core.MultipartPart{PartNumber: 7}
@@ -81,7 +82,7 @@ func TestStreamOnePart_GetObjectErrorWrapsPartNumber(t *testing.T) {
 	if !strings.Contains(err.Error(), "failed to read part 7") {
 		t.Errorf("error missing part number: %v", err)
 	}
-	if !errors.Is(err, be.getErr) {
+	if !errors.Is(err, be.GetErr) {
 		t.Errorf("error chain missing backend error: %v", err)
 	}
 }
@@ -91,10 +92,10 @@ func TestStreamOnePart_GetObjectErrorWrapsPartNumber(t *testing.T) {
 func TestStreamOnePart_BodyReadErrorWrapsPartNumber(t *testing.T) {
 	t.Parallel()
 	mp := newTestMultipartManager(nil)
-	be := newMockBackend()
+	be := backendtest.NewInMemory()
 	const uploadID = "upload-2"
 	preloadPart(be, uploadID, 3, []byte("ignored"))
-	be.getReadErr = errors.New("connection reset")
+	be.GetReadErr = errors.New("connection reset")
 
 	var buf bytes.Buffer
 	part := &core.MultipartPart{PartNumber: 3}
@@ -113,7 +114,7 @@ func TestStreamOnePart_EncryptedPartDecrypts(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)
 	mp := newTestMultipartManager(enc)
-	be := newMockBackend()
+	be := backendtest.NewInMemory()
 
 	// Encrypt some plaintext to populate a fake stored part.
 	plain := []byte("encrypted part plaintext payload")
@@ -152,7 +153,7 @@ func TestStreamOnePart_EncryptedPartWithoutEncryptorPassesCiphertext(t *testing.
 	// Existing behavior: when part.Encrypted is true but mp.encryptor is nil
 	// (encryption disabled mid-upload), the helper writes ciphertext as-is.
 	mp := newTestMultipartManager(nil)
-	be := newMockBackend()
+	be := backendtest.NewInMemory()
 	const uploadID = "upload-noenc"
 	ciphertext := []byte("opaque ciphertext bytes")
 	preloadPart(be, uploadID, 2, ciphertext)
@@ -174,7 +175,7 @@ func TestStreamOnePart_BadEncryptionKeyWrapsPartNumber(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)
 	mp := newTestMultipartManager(enc)
-	be := newMockBackend()
+	be := backendtest.NewInMemory()
 	const uploadID = "upload-badkey"
 	preloadPart(be, uploadID, 4, []byte("anything"))
 
@@ -197,7 +198,7 @@ func TestStreamOnePart_DecryptErrorWrapsPartNumber(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)
 	mp := newTestMultipartManager(enc)
-	be := newMockBackend()
+	be := backendtest.NewInMemory()
 
 	// Encrypt one payload to mint valid key data, but store garbage as the
 	// "ciphertext" so Decrypt fails on parse/verify.
@@ -235,7 +236,7 @@ func TestStreamOnePart_DecryptErrorWrapsPartNumber(t *testing.T) {
 func TestStreamPartsThroughPipe_ConcatenatesInOrder(t *testing.T) {
 	t.Parallel()
 	mp := newTestMultipartManager(nil)
-	be := newMockBackend()
+	be := backendtest.NewInMemory()
 	const uploadID = "upload-concat"
 	preloadPart(be, uploadID, 1, []byte("alpha-"))
 	preloadPart(be, uploadID, 2, []byte("beta-"))
@@ -264,7 +265,7 @@ func TestStreamPartsThroughPipe_ConcatenatesInOrder(t *testing.T) {
 func TestStreamPartsThroughPipe_PropagatesPartFailure(t *testing.T) {
 	t.Parallel()
 	mp := newTestMultipartManager(nil)
-	be := newMockBackend()
+	be := backendtest.NewInMemory()
 	const uploadID = "upload-partfail"
 	preloadPart(be, uploadID, 1, []byte("ok-1"))
 	// Part 2 deliberately not preloaded  -  backend returns NotFound.
@@ -294,7 +295,7 @@ func TestStreamPartsThroughPipe_MixedEncryptedAndPlain(t *testing.T) {
 	t.Parallel()
 	enc := newTestEncryptor(t)
 	mp := newTestMultipartManager(enc)
-	be := newMockBackend()
+	be := backendtest.NewInMemory()
 	const uploadID = "upload-mixed"
 
 	// Part 1: plaintext

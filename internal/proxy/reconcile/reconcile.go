@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -276,6 +277,16 @@ func (s *S3KeyStream) emitPage(ctx context.Context, objects []backend.ListedObje
 		}
 	}
 	return nil
+}
+
+// BucketPrefixes converts configured virtual bucket names into the key
+// prefixes their objects are stored under.
+func BucketPrefixes(buckets []string) []string {
+	out := make([]string, 0, len(buckets))
+	for _, b := range buckets {
+		out = append(out, internalkey.Prefix(b))
+	}
+	return out
 }
 
 // Unmanaged reports whether a backend key falls outside every configured

@@ -35,7 +35,7 @@ func (f *fakeWriterTo) WriteTo(w io.Writer) (int64, error) {
 // TestTraceSnapshot_Disabled pins the 503 response when no FlightRecorder is wired.
 func TestTraceSnapshot_Disabled(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -52,7 +52,7 @@ func TestTraceSnapshot_Disabled(t *testing.T) {
 // TestTraceSnapshot_Success pins the happy path: headers + payload bytes pass through.
 func TestTraceSnapshot_Success(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	h.flightRec = &fakeWriterTo{payload: []byte("trace-bytes")}
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -80,7 +80,7 @@ func TestTraceSnapshot_Success(t *testing.T) {
 // double-write a JSON error onto the binary stream.
 func TestTraceSnapshot_WriteToError(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	h.flightRec = &fakeWriterTo{err: errors.New("simulated WriteTo failure")}
 	mux := http.NewServeMux()
 	h.Register(mux)

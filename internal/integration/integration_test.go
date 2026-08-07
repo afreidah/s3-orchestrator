@@ -832,7 +832,7 @@ func TestReconcile_StaleRowSweepsCleanupQueue(t *testing.T) {
 
 	// Run reconcile. Backend has no objects, DB has one stale row, so
 	// the delete path fires for our seeded key.
-	res, err := testManager.ReconcileBackend(ctx, backend, []string{virtualBucket})
+	res, err := testReconciler.ReconcileBackend(ctx, backend, []string{virtualBucket})
 	if err != nil {
 		t.Fatalf("ReconcileBackend: %v", err)
 	}
@@ -950,14 +950,10 @@ func TestSpreadWriteRouting_DistributesAcrossBackends(t *testing.T) {
 	ctx := context.Background()
 	_ = ctx
 	stores := newStores(testStore)
-	spreadManager := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	spreadManager := proxytest.NewManager(t, stores, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: testBackends,
 			Order:    testBackendOrder,
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  stores,
-			Dashboard: testStore,
 		},
 		Policies: proxy.PolicyConfig{
 			CacheTTL:        60 * time.Second,
@@ -971,7 +967,8 @@ func TestSpreadWriteRouting_DistributesAcrossBackends(t *testing.T) {
 	_ = spreadManager
 	_ = proxytest.BuildWorkers(spreadManager, stores)
 	spreadSrv := &s3api.Server{
-		Manager: spreadManager,
+		Objects:   spreadManager.Objects(),
+		Multipart: spreadManager.Multipart(),
 	}
 	_ = spreadSrv
 	spreadSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
@@ -1002,7 +999,7 @@ func TestSpreadWriteRouting_DistributesAcrossBackends(t *testing.T) {
 	_ = spreadClient
 
 	resetState(t)
-	spreadManager.ClearCache()
+	spreadManager.Objects().LocationCache().Clear()
 
 	keys := make([]string, 4)
 	for i := range keys {
@@ -1051,14 +1048,10 @@ func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
 	ctx := context.Background()
 	_ = ctx
 	stores := newStores(testStore)
-	spreadManager := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	spreadManager := proxytest.NewManager(t, stores, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: testBackends,
 			Order:    testBackendOrder,
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  stores,
-			Dashboard: testStore,
 		},
 		Policies: proxy.PolicyConfig{
 			CacheTTL:        60 * time.Second,
@@ -1072,7 +1065,8 @@ func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
 	_ = spreadManager
 	_ = proxytest.BuildWorkers(spreadManager, stores)
 	spreadSrv := &s3api.Server{
-		Manager: spreadManager,
+		Objects:   spreadManager.Objects(),
+		Multipart: spreadManager.Multipart(),
 	}
 	_ = spreadSrv
 	spreadSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
@@ -1103,7 +1097,7 @@ func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
 	_ = spreadClient
 
 	resetState(t)
-	spreadManager.ClearCache()
+	spreadManager.Objects().LocationCache().Clear()
 
 	if _, err := testStore.RecordObject(ctx, uniqueKey(t, "prefill"), "minio-1", 512, nil); err != nil {
 		t.Fatalf("RecordObject prefill: %v", err)
@@ -1137,14 +1131,10 @@ func TestSpreadWriteRouting_ContrastWithPackBehavior(t *testing.T) {
 	ctx := context.Background()
 	_ = ctx
 	stores := newStores(testStore)
-	spreadManager := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	spreadManager := proxytest.NewManager(t, stores, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: testBackends,
 			Order:    testBackendOrder,
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  stores,
-			Dashboard: testStore,
 		},
 		Policies: proxy.PolicyConfig{
 			CacheTTL:        60 * time.Second,
@@ -1158,7 +1148,8 @@ func TestSpreadWriteRouting_ContrastWithPackBehavior(t *testing.T) {
 	_ = spreadManager
 	_ = proxytest.BuildWorkers(spreadManager, stores)
 	spreadSrv := &s3api.Server{
-		Manager: spreadManager,
+		Objects:   spreadManager.Objects(),
+		Multipart: spreadManager.Multipart(),
 	}
 	_ = spreadSrv
 	spreadSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
@@ -1189,8 +1180,8 @@ func TestSpreadWriteRouting_ContrastWithPackBehavior(t *testing.T) {
 	_ = spreadClient
 
 	resetState(t)
-	spreadManager.ClearCache()
-	testManager.ClearCache()
+	spreadManager.Objects().LocationCache().Clear()
+	testManager.Objects().LocationCache().Clear()
 
 	packClient := newS3Client(t)
 	packKeys := make([]string, 4)
@@ -1218,7 +1209,7 @@ func TestSpreadWriteRouting_ContrastWithPackBehavior(t *testing.T) {
 	}
 
 	resetState(t)
-	spreadManager.ClearCache()
+	spreadManager.Objects().LocationCache().Clear()
 
 	spreadKeys := make([]string, 4)
 	for i := range spreadKeys {
@@ -3510,7 +3501,8 @@ func TestAuthSigV4_ValidCredentials(t *testing.T) {
 		authSecret = "TESTSECRET0123456789abcdefghijklm"
 	)
 	authSrv := &s3api.Server{
-		Manager: testManager,
+		Objects:   testManager.Objects(),
+		Multipart: testManager.Multipart(),
 	}
 	_ = authSrv
 	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
@@ -3587,7 +3579,8 @@ func TestAuthSigV4_WrongCredentials403(t *testing.T) {
 		authSecret = "TESTSECRET0123456789abcdefghijklm"
 	)
 	authSrv := &s3api.Server{
-		Manager: testManager,
+		Objects:   testManager.Objects(),
+		Multipart: testManager.Multipart(),
 	}
 	_ = authSrv
 	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
@@ -3646,7 +3639,8 @@ func TestAuthSigV4_UnsignedRequest403(t *testing.T) {
 		authSecret = "TESTSECRET0123456789abcdefghijklm"
 	)
 	authSrv := &s3api.Server{
-		Manager: testManager,
+		Objects:   testManager.Objects(),
+		Multipart: testManager.Multipart(),
 	}
 	_ = authSrv
 	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
@@ -3708,7 +3702,8 @@ func TestAuthSigV4_SpecialCharKeysSigV4(t *testing.T) {
 		authSecret = "TESTSECRET0123456789abcdefghijklm"
 	)
 	authSrv := &s3api.Server{
-		Manager: testManager,
+		Objects:   testManager.Objects(),
+		Multipart: testManager.Multipart(),
 	}
 	_ = authSrv
 	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
@@ -3792,7 +3787,8 @@ func TestAuthSigV4_AccessDeniedDoesNotLeakBucketName(t *testing.T) {
 		authSecret = "TESTSECRET0123456789abcdefghijklm"
 	)
 	authSrv := &s3api.Server{
-		Manager: testManager,
+		Objects:   testManager.Objects(),
+		Multipart: testManager.Multipart(),
 	}
 	_ = authSrv
 	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{

@@ -30,10 +30,14 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -250,23 +254,48 @@ func ProvideWriteCoordinator(i do.Injector) (*writepath.Coordinator, error) {
 	return writepath.New(rt, stores, cfg.WritePath.PendingPattern.IsEnabled()), nil
 }
 
-// ProvideMultipartManager builds the multipart upload lifecycle manager.
-// Built outside the BackendManager so the drain manager can take its
-// AbortMultipartUploadsOnBackend hook directly.
-func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
+// writePathDeps is the collaborator set the object and multipart managers
+// share: both write through the same coordinator, over the same runtime and
+// store, under the same integrity config, with encryption optional.
+type writePathDeps struct {
+	cfg          *config.Config
+	rt           *infra.BackendRuntime
+	coord        *writepath.Coordinator
+	stores       core.MetadataStore
+	integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]
+	enc          *encryption.Encryptor
+}
+
+// resolveWritePathDeps resolves the collaborators both write-side managers
+// take. The encryptor is resolved after the batch rather than inside it: it
+// has its own error path and needs the already-resolved config to decide
+// whether to build at all.
+func resolveWritePathDeps(i do.Injector) (*writePathDeps, error) {
 	r := newResolver(i)
-	cfg := resolve[*config.Config](r)
-	rt := resolve[*infra.BackendRuntime](r)
-	coord := resolve[*writepath.Coordinator](r)
-	stores := resolve[core.MetadataStore](r)
-	integrityCfg := resolve[*syncutil.AtomicConfig[config.IntegrityConfig]](r)
+	d := &writePathDeps{
+		cfg:          resolve[*config.Config](r),
+		rt:           resolve[*infra.BackendRuntime](r),
+		coord:        resolve[*writepath.Coordinator](r),
+		stores:       resolve[core.MetadataStore](r),
+		integrityCfg: resolve[*syncutil.AtomicConfig[config.IntegrityConfig]](r),
+	}
 	if r.err != nil {
 		return nil, r.err
 	}
 
-	// Encryptor has its own error path and needs the resolved cfg, so it stays
-	// outside the batch.
-	enc, err := resolveOptionalEncryptor(i, cfg.Encryption.Enabled)
+	enc, err := resolveOptionalEncryptor(i, d.cfg.Encryption.Enabled)
+	if err != nil {
+		return nil, err
+	}
+	d.enc = enc
+	return d, nil
+}
+
+// ProvideMultipartManager builds the multipart upload lifecycle manager.
+// Built outside the BackendManager so the drain manager can take its
+// AbortMultipartUploadsOnBackend hook directly.
+func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
+	d, err := resolveWritePathDeps(i)
 	if err != nil {
 		return nil, err
 	}
@@ -274,13 +303,14 @@ func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
 	// need not re-unwrap the upload-level DEK on every part.
 	const dekCacheTTL = time.Hour
 	return multipart.New(&multipart.Deps{
-		Core:         rt,
-		Coord:        coord,
-		Stores:       stores,
-		Encryptor:    enc,
-		ObjectCache:  resolveOptionalCache(i),
-		DEKCacheTTL:  dekCacheTTL,
-		IntegrityCfg: integrityCfg,
+		Core:               d.rt,
+		Coord:              d.coord,
+		Stores:             d.stores,
+		Encryptor:          d.enc,
+		ObjectCache:        resolveOptionalCache(i),
+		DEKCacheTTL:        dekCacheTTL,
+		IntegrityCfg:       d.integrityCfg,
+		EnforceMinPartSize: d.cfg.WritePath.Multipart.IsMinPartSizeEnforced(),
 	}), nil
 }
 
@@ -341,6 +371,81 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 	return rt, nil
 }
 
+// ProvideObjectManager builds the object CRUD / read-failover manager. It is a
+// first-class provider rather than a field built inside BackendManager so the
+// S3 transport can receive it directly instead of reaching through a facade.
+func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
+	d, err := resolveWritePathDeps(i)
+	if err != nil {
+		return nil, err
+	}
+	cb := &d.cfg.CircuitBreaker
+	return object.New(&object.Deps{
+		Core:                         d.rt,
+		BroadcastCore:                d.rt,
+		Coord:                        d.coord,
+		Stores:                       d.stores,
+		Encryptor:                    d.enc,
+		LocationCache:                object.NewLocationCache(cb.CacheTTL),
+		ObjectCache:                  resolveOptionalCache(i),
+		ParallelBroadcast:            cb.ParallelBroadcast,
+		DegradedBroadcastParallelism: cb.DegradedBroadcastParallelism,
+		DisableDegradedReads:         cb.DegradedReadsEnabled != nil && !*cb.DegradedReadsEnabled,
+		IntegrityCfg:                 d.integrityCfg,
+		BackendTimeout:               d.cfg.Server.BackendTimeout,
+	}), nil
+}
+
+// ProvideDashboardAggregator builds the web-UI data aggregator. A provider
+// rather than a BackendManager field so the admin and UI transports can read
+// dashboard data without depending on the backend manager.
+func ProvideDashboardAggregator(i do.Injector) (*dashboard.Aggregator, error) {
+	r := newResolver(i)
+	rt := resolve[*infra.BackendRuntime](r)
+	br := resolve[*BackendsResult](r)
+	stores := resolve[core.MetadataStore](r)
+	if r.err != nil {
+		return nil, r.err
+	}
+
+	// A nil *drain.Manager must stay a nil interface, not a non-nil interface
+	// holding a nil pointer.
+	var drainReader dashboard.DrainProgressReader
+	if dm, err := do.Invoke[*drain.Manager](i); err == nil && dm != nil {
+		drainReader = dm
+	}
+	return dashboard.New(stores, rt.Usage(), br.Order, rt, drainReader), nil
+}
+
+// ProvideExpiryManager builds the lifecycle-expiration manager. It owns the
+// reloadable lifecycle config, so the reload hook and the tick service both
+// talk to it rather than to the backend manager.
+func ProvideExpiryManager(i do.Injector) (*expiry.Manager, error) {
+	r := newResolver(i)
+	cfg := resolve[*config.Config](r)
+	objects := resolve[*object.Manager](r)
+	stores := resolve[core.MetadataStore](r)
+	if r.err != nil {
+		return nil, r.err
+	}
+	m := expiry.New(stores, objects, slog.Default().With(logfmt.Component("lifecycle")))
+	m.SetConfig(&cfg.Lifecycle)
+	return m, nil
+}
+
+// ProvideReconcileManager builds the sync/reconcile orchestrator. Its store
+// view is four methods wide, which is why it is not carved out of the backend
+// manager's union.
+func ProvideReconcileManager(i do.Injector) (*reconcile.Manager, error) {
+	r := newResolver(i)
+	rt := resolve[*infra.BackendRuntime](r)
+	stores := resolve[core.MetadataStore](r)
+	if r.err != nil {
+		return nil, r.err
+	}
+	return reconcile.NewManager(rt, stores, rt.Acct(), slog.Default().With(logfmt.Component("reconcile"))), nil
+}
+
 func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	r := newResolver(i)
 	cfg := resolve[*config.Config](r)
@@ -351,6 +456,7 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	dbBreaker := resolve[*breaker.CircuitBreaker](r)
 	coord := resolve[*writepath.Coordinator](r)
 	multipartManager := resolve[*multipart.Manager](r)
+	objectManager := resolve[*object.Manager](r)
 	integrityCfg := resolve[*syncutil.AtomicConfig[config.IntegrityConfig]](r)
 	drainManager := resolve[*drain.Manager](r)
 	if r.err != nil {
@@ -370,10 +476,7 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 			Backends: br.Backends,
 			Order:    br.Order,
 		},
-		Stores: proxy.StoreDeps{
-			Metadata:  stores,
-			Dashboard: stores,
-		},
+		Stores: proxy.StoreDeps{Metadata: stores},
 		Policies: proxy.PolicyConfig{
 			PendingEnabled:               cfg.WritePath.PendingPattern.IsEnabled(),
 			CacheTTL:                     cfg.CircuitBreaker.CacheTTL,
@@ -398,6 +501,7 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 		Collaborators: proxy.Collaborators{
 			Coord:        coord,
 			Multipart:    multipartManager,
+			Objects:      objectManager,
 			Drain:        drainManager,
 			IntegrityCfg: integrityCfg,
 		},
@@ -407,7 +511,7 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	// the next reads use fresh DB lookups instead of remembered winners.
 	dbBreaker.AddOnStateChange(func(info breaker.StateChangeInfo) {
 		if info.To == breaker.StateClosed {
-			mgr.ClearCache()
+			objectManager.LocationCache().Clear()
 		}
 	})
 

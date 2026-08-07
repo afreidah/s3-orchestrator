@@ -71,14 +71,15 @@ type MultipartStores interface {
 }
 
 type Manager struct {
-	core         MultipartRuntime       // infrastructure subset: backends, usage, timeout, error classification, metrics
-	coord        *writepath.Coordinator // write-path helpers shared with BackendManager and ObjectManager
-	stores       MultipartStores        // multipart row/part operations and WithAdvisoryLock
-	encryptor    *encryption.Encryptor
-	objectCache  objcache.ObjectCache
-	dekCache     *syncutil.TTLCache[string, []byte]
-	integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig] // nil-safe; controls plaintext SHA-256 on Complete
-	log          *slog.Logger
+	core               MultipartRuntime       // infrastructure subset: backends, usage, timeout, error classification, metrics
+	coord              *writepath.Coordinator // write-path helpers shared with BackendManager and ObjectManager
+	stores             MultipartStores        // multipart row/part operations and WithAdvisoryLock
+	encryptor          *encryption.Encryptor
+	objectCache        objcache.ObjectCache
+	dekCache           *syncutil.TTLCache[string, []byte]
+	integrityCfg       *syncutil.AtomicConfig[config.IntegrityConfig] // nil-safe; controls plaintext SHA-256 on Complete
+	enforceMinPartSize bool                                           // reject non-final parts below the S3 5 MiB floor
+	log                *slog.Logger
 }
 
 // New creates a Manager sharing the given core infrastructure and
@@ -94,14 +95,15 @@ func New(deps *Deps) *Manager {
 	must.NotNil("Coord", deps.Coord)
 	must.NotNil("Stores", deps.Stores)
 	return &Manager{
-		core:         deps.Core,
-		coord:        deps.Coord,
-		stores:       deps.Stores,
-		encryptor:    deps.Encryptor,
-		objectCache:  deps.ObjectCache,
-		dekCache:     syncutil.NewTTLCache[string, []byte](deps.DEKCacheTTL),
-		integrityCfg: deps.IntegrityCfg,
-		log:          slog.Default().With(logfmt.Component("multipart")),
+		core:               deps.Core,
+		coord:              deps.Coord,
+		stores:             deps.Stores,
+		encryptor:          deps.Encryptor,
+		objectCache:        deps.ObjectCache,
+		dekCache:           syncutil.NewTTLCache[string, []byte](deps.DEKCacheTTL),
+		integrityCfg:       deps.IntegrityCfg,
+		enforceMinPartSize: deps.EnforceMinPartSize,
+		log:                slog.Default().With(logfmt.Component("multipart")),
 	}
 }
 
@@ -116,6 +118,9 @@ type Deps struct {
 	ObjectCache  objcache.ObjectCache  // nil when object caching is disabled
 	DEKCacheTTL  time.Duration
 	IntegrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]
+	// EnforceMinPartSize requires every non-final part to meet the S3 5 MiB
+	// floor at completion. Off in tests that upload small parts on purpose.
+	EnforceMinPartSize bool
 }
 
 // Close stops the per-upload DEK cache eviction loop.
@@ -594,7 +599,7 @@ func (mp *Manager) AbortMultipartUploadsOnBackend(ctx context.Context, backendNa
 // different writers). When the lock is contended the second caller
 // fails fast with a 409 OperationAborted so the client can decide
 // whether to retry or abort.
-func (mp *Manager) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, partNumbers []int) (string, error) {
+func (mp *Manager) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, manifest []core.CompletePart) (string, error) {
 	const operation = "CompleteMultipartUpload"
 	start := time.Now()
 
@@ -612,7 +617,7 @@ func (mp *Manager) CompleteMultipartUpload(ctx context.Context, bucket, key, upl
 	var etag string
 	acquired, err := mp.stores.WithAdvisoryLock(ctx, uploadIDLockID(uploadID), func(ctx context.Context) error {
 		var inner error
-		etag, inner = mp.completeMultipartUploadLocked(ctx, span, operation, uploadID, partNumbers, start)
+		etag, inner = mp.completeMultipartUploadLocked(ctx, span, operation, uploadID, manifest, start)
 		return inner
 	})
 	if err != nil {
@@ -630,18 +635,18 @@ func (mp *Manager) CompleteMultipartUpload(ctx context.Context, bucket, key, upl
 }
 
 // completeMultipartUploadLocked runs the actual assembly under the
-// advisory lock acquired by CompleteMultipartUpload. Cleanup of part
-// objects and the multipart_uploads metadata row happens via a
-// deferred closure once parts have been resolved, so a failed assembly
-// PUT or recordObject still drops the part objects through
-// deleteOrEnqueue (and accounts for them in cleanup_queue / orphan
-// bytes) instead of leaving them visible only to the periodic
-// stale-multipart sweeper.
+// advisory lock acquired by CompleteMultipartUpload.
+//
+// Ordering is the contract: validate, assemble, commit, and only then drop
+// the parts. Every failure before the commit leaves the parts and the
+// multipart_uploads row untouched so the client can retry completion. An
+// upload abandoned after a failure is reaped by the periodic stale-multipart
+// sweep, which is what keeps that safety from leaking quota.
 func (mp *Manager) completeMultipartUploadLocked(
 	ctx context.Context,
 	span trace.Span,
 	operation, uploadID string,
-	partNumbers []int,
+	manifest []core.CompletePart,
 	start time.Time,
 ) (string, error) {
 	mu, err := mp.stores.GetMultipartUpload(ctx, uploadID)
@@ -654,12 +659,28 @@ func (mp *Manager) completeMultipartUploadLocked(
 		return "", err
 	}
 
+	// Shape first: a malformed manifest is rejected without reading parts.
+	if err := validateManifestShape(manifest); err != nil {
+		observe.RecordSpanError(span, err)
+		return "", err
+	}
+
+	partNumbers := make([]int, len(manifest))
+	for i, p := range manifest {
+		partNumbers[i] = p.PartNumber
+	}
 	parts, err := mp.collectRequestedParts(ctx, span, uploadID, partNumbers)
 	if err != nil {
 		return "", err
 	}
 
-	defer mp.cleanupCompletedUpload(ctx, span, be, mu, uploadID, parts)
+	// ETag and size checks run against the same rows assembly will read,
+	// under the same lock, so a part replaced between validation and
+	// assembly cannot slip through.
+	if err := validateManifestAgainstStored(manifest, parts, mp.enforceMinPartSize); err != nil {
+		observe.RecordSpanError(span, err)
+		return "", err
+	}
 
 	totalPlaintextSize := sumPlaintextSize(parts)
 
@@ -681,6 +702,23 @@ func (mp *Manager) completeMultipartUploadLocked(
 		return "", err
 	}
 
+	// Record the intent before the assembly PUT, the same way the single-object
+	// write path does. Without it, a crash between the PUT and the commit below
+	// leaves the assembled bytes on the backend with no ledger row, and
+	// reconcile later imports them as a real object even though the client saw
+	// a failure. The intent gives the pending reaper the breadcrumb it needs to
+	// either finish the commit or remove the orphan.
+	//
+	// enc has no content hash yet: the plaintext digest is only known once the
+	// stream has drained, so an intent resolved by the reaper commits without
+	// one and the scrubber backfills it later. That matches every other
+	// reaper-promoted object.
+	intentID, err := mp.coord.InsertPendingIntent(ctx, mu.ObjectKey, mu.BackendName, uploadSize, enc)
+	if err != nil {
+		observe.RecordSpanError(span, err)
+		return "", err
+	}
+
 	// Final assembly PUT runs under the configured backend timeout.
 	// The pipe reader is fed by the part-download goroutines,
 	// so the timeout covers the full "stream parts -> assemble -> PUT"
@@ -693,15 +731,23 @@ func (mp *Manager) completeMultipartUploadLocked(
 		pipeCancel()
 		pr.Close()
 		observe.RecordSpanError(span, err)
+		// Parts and the upload row stay put so the client can retry. The
+		// intent stays too: a PUT error does not prove the bytes are absent,
+		// so the reaper HEADs the backend and resolves it either way.
 		return "", fmt.Errorf("failed to upload final object: %w", err)
 	}
 	pr.Close()
 
 	enc = stampContentHash(enc, hasher)
 
-	if err := mp.coord.RecordObjectOrCleanup(ctx, span, be, mu.ObjectKey, mu.BackendName, uploadSize, enc); err != nil {
+	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, mu.ObjectKey, mu.BackendName, uploadSize, enc, intentID); err != nil {
 		return "", err
 	}
+
+	// Only now is the object durably committed, so the source parts are safe
+	// to drop. Every failure path above returns with the parts and the upload
+	// row intact, leaving the completion retryable.
+	mp.cleanupCompletedUpload(ctx, span, be, mu, uploadID, parts)
 
 	// N part GETs + 1 assembled PUT (Ingress charges that one). The N
 	// cleanup DELETEs of the part temp keys go through DeleteOrEnqueue,
@@ -716,12 +762,9 @@ func (mp *Manager) completeMultipartUploadLocked(
 }
 
 // cleanupCompletedUpload removes part objects and the multipart_uploads
-// metadata row for an upload whose Complete attempt has finished
-// (success or failure). Runs from a defer so a failed assembly PUT or
-// recordObject still drops the part objects via deleteOrEnqueue,
-// keeping the cleanup queue and orphan-bytes accounting accurate
-// instead of relying on the periodic stale-multipart sweeper. Also
-// evicts the upload's unwrapped DEK from the per-instance cache so
+// metadata row for an upload that has been durably committed. Called only
+// on the success path: running it after a failure would destroy the parts
+// a retry needs. Also evicts the upload's unwrapped DEK from the per-instance cache so
 // abandoned-upload memory does not linger. Best effort: each step
 // logs and continues so a single transient error cannot strand the
 // rest of the cleanup.
@@ -889,4 +932,11 @@ func (mp *Manager) streamOnePart(
 		return fmt.Errorf("failed to stream part %d: %w", part.PartNumber, err)
 	}
 	return nil
+}
+
+// CountActiveMultipartUploads returns the number of in-progress uploads whose
+// key falls under bucketPrefix. Lives here rather than on a facade because
+// this is the type that already holds the multipart store.
+func (mp *Manager) CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error) {
+	return mp.stores.CountActiveMultipartUploads(ctx, bucketPrefix)
 }

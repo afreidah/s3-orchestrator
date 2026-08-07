@@ -77,14 +77,10 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 
 	// Build a manager with encryption enabled using the same backends/store
 	stores := newStores(testStore)
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, stores, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: testBackends,
 			Order:    testBackendOrder,
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  stores,
-			Dashboard: testStore,
 		},
 		Policies: proxy.PolicyConfig{
 			CacheTTL:        60 * time.Second,
@@ -101,7 +97,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 	workers := proxytest.BuildWorkers(mgr, stores)
 
 	// Start proxy server
-	srv := &s3api.Server{Manager: mgr}
+	srv := &s3api.Server{Objects: mgr.Objects(), Multipart: mgr.Multipart()}
 	srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
 		{
 			Name: virtualBucket,

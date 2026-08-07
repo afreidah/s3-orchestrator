@@ -20,51 +20,25 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
-
-// fakeRebalancer is a minimal RebalancerOps for the handler tests. It records
-// the config it was asked to run with so the default-fallback can be asserted,
-// and replays moves through the observer so the streaming path has progress to
-// render.
-type fakeRebalancer struct {
-	cfg    *config.RebalanceConfig
-	moved  int
-	skip   string
-	err    error
-	gotcfg config.RebalanceConfig
-}
-
-func (f *fakeRebalancer) Config() *config.RebalanceConfig { return f.cfg }
-
-func (f *fakeRebalancer) Rebalance(_ context.Context, cfg config.RebalanceConfig, obs progress.Observer) (worker.RebalanceSummary, error) {
-	f.gotcfg = cfg
-	if f.skip != "" {
-		return worker.RebalanceSummary{SkipReason: f.skip}, f.err
-	}
-	for i := range f.moved {
-		progress.Track(obs, fmt.Sprintf("obj-%d  src -> dst", i), func() string { return progress.StatusOK })
-	}
-	return worker.RebalanceSummary{WorkSummary: worker.WorkSummary{Succeeded: f.moved}}, f.err
-}
 
 // TestHandleRebalance_HappyPath drives the success branch: the handler runs
 // the rebalancer and surfaces the move count under "moved". With a nil worker
 // config it must fall back to the spread-strategy defaults.
 func TestHandleRebalance_HappyPath(t *testing.T) {
 	t.Parallel()
-	fake := &fakeRebalancer{moved: 3}
-	h := newTestHandler()
+	stub := &rebalancerStub{moved: 3}
+	fake := newRebalancer(t, stub)
+	h := newTestHandler(t)
 	h.rebalancer = fake
-	h.backendOps = &fakeBackendOps{}
+	h.backendOps = newBackendOps(t, backendOpsStub{})
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -88,7 +62,7 @@ func TestHandleRebalance_HappyPath(t *testing.T) {
 		t.Errorf("reason = %q, want empty on the ok path", resp.Reason)
 	}
 	// Defaults applied when the worker config is nil, mirroring the dashboard.
-	if g := fake.gotcfg; g.Strategy != defaultRebalanceStrategy || g.BatchSize != defaultRebalanceBatchSize ||
+	if g := *stub.gotCfg; g.Strategy != defaultRebalanceStrategy || g.BatchSize != defaultRebalanceBatchSize ||
 		g.Threshold != defaultRebalanceThreshold || g.Concurrency != defaultRebalanceConcurrency {
 		t.Errorf("ran with cfg %+v, want spread defaults", g)
 	}
@@ -98,13 +72,13 @@ func TestHandleRebalance_HappyPath(t *testing.T) {
 // configured strategy is used verbatim and only zero-value fields are defaulted.
 func TestHandleRebalance_PreservesConfiguredStrategy(t *testing.T) {
 	t.Parallel()
-	fake := &fakeRebalancer{
+	stub := &rebalancerStub{
 		cfg:   &config.RebalanceConfig{Strategy: "pack", BatchSize: 50, Threshold: 0.2, Concurrency: 8},
 		moved: 1,
 	}
-	h := newTestHandler()
-	h.rebalancer = fake
-	h.backendOps = &fakeBackendOps{}
+	h := newTestHandler(t)
+	h.rebalancer = newRebalancer(t, stub)
+	h.backendOps = newBackendOps(t, backendOpsStub{})
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -112,7 +86,7 @@ func TestHandleRebalance_PreservesConfiguredStrategy(t *testing.T) {
 	req.Header.Set("X-Admin-Token", "test-token")
 	mux.ServeHTTP(httptest.NewRecorder(), req)
 
-	if g := fake.gotcfg; g.Strategy != "pack" || g.BatchSize != 50 || g.Threshold != 0.2 || g.Concurrency != 8 {
+	if g := *stub.gotCfg; g.Strategy != "pack" || g.BatchSize != 50 || g.Threshold != 0.2 || g.Concurrency != 8 {
 		t.Errorf("ran with cfg %+v, want configured pack values", g)
 	}
 }
@@ -122,8 +96,8 @@ func TestHandleRebalance_PreservesConfiguredStrategy(t *testing.T) {
 // already happened, so the response is still ok with the move count.
 func TestHandleRebalance_QuotaMetricsErrorStillOK(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
-	h.rebalancer = &fakeRebalancer{moved: 2}
+	h := newTestHandler(t)
+	h.rebalancer = newRebalancer(t, &rebalancerStub{moved: 2})
 	h.backendOps = allFailingOps{} // UpdateQuotaMetrics returns an error
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -150,7 +124,7 @@ func TestHandleRebalance_QuotaMetricsErrorStillOK(t *testing.T) {
 // than panicking.
 func TestHandleRebalance_NotWired(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler() // rebalancer deliberately nil
+	h := newTestHandler(t) // rebalancer deliberately nil
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -180,9 +154,9 @@ func TestHandleRebalance_NotWired(t *testing.T) {
 // that found nothing to do.
 func TestHandleRebalance_SkippedCycle(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
-	h.rebalancer = &fakeRebalancer{skip: worker.SkipReasonWithinThreshold}
-	h.backendOps = &fakeBackendOps{}
+	h := newTestHandler(t)
+	h.rebalancer = newRebalancer(t, &rebalancerStub{skip: worker.SkipReasonWithinThreshold})
+	h.backendOps = newBackendOps(t, backendOpsStub{})
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -203,9 +177,9 @@ func TestHandleRebalance_SkippedCycle(t *testing.T) {
 // TestHandleRebalance_Error surfaces a 500 when the rebalancer fails.
 func TestHandleRebalance_Error(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
-	h.rebalancer = &fakeRebalancer{err: errors.New("boom")}
-	h.backendOps = &fakeBackendOps{}
+	h := newTestHandler(t)
+	h.rebalancer = newRebalancer(t, &rebalancerStub{err: errors.New("boom")})
+	h.backendOps = newBackendOps(t, backendOpsStub{})
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -223,8 +197,8 @@ func TestHandleRebalance_Error(t *testing.T) {
 // token like every other admin route.
 func TestHandleRebalance_RequiresToken(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
-	h.rebalancer = &fakeRebalancer{}
+	h := newTestHandler(t)
+	h.rebalancer = newRebalancer(t, &rebalancerStub{})
 	mux := http.NewServeMux()
 	h.Register(mux)
 

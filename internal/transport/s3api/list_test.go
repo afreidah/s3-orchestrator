@@ -20,6 +20,10 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/mock/gomock"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -27,16 +31,16 @@ import (
 // Asserts that status = , want 200.
 func TestListObjectsV2_Success(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
-
-	mockStore.ListObjectsResp = &core.ListObjectsResult{
-		Objects: []core.ObjectLocation{
-			{ObjectKey: "mybucket/file1.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: now},
-			{ObjectKey: "mybucket/file2.txt", BackendName: "b1", SizeBytes: 200, CreatedAt: now},
-		},
-	}
-
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&core.ListObjectsResult{
+				Objects: []core.ObjectLocation{
+					{ObjectKey: "mybucket/file1.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: now},
+					{ObjectKey: "mybucket/file2.txt", BackendName: "b1", SizeBytes: 200, CreatedAt: now},
+				},
+			}, nil).AnyTimes()
+	})
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?list-type=2", nil)
 	defer resp.Body.Close()
 
@@ -68,18 +72,18 @@ func TestListObjectsV2_Success(t *testing.T) {
 // Asserts that status = , want 200.
 func TestListObjectsV2_WithDelimiter(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
-
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListObjectsDelimited(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&core.ListDelimitedResult{
+				CommonPrefixes: []string{"mybucket/photos/"},
+				Objects: []core.ObjectLocation{
+					{ObjectKey: "mybucket/readme.txt", BackendName: "b1", SizeBytes: 50, CreatedAt: now},
+				},
+			}, nil).AnyTimes()
+	})
 	// The store collapses photos/* into a CommonPrefix and returns readme.txt
 	// as a leaf for a delimiter listing.
-	mockStore.ListObjectsDelimitedResp = &core.ListDelimitedResult{
-		CommonPrefixes: []string{"mybucket/photos/"},
-		Objects: []core.ObjectLocation{
-			{ObjectKey: "mybucket/readme.txt", BackendName: "b1", SizeBytes: 50, CreatedAt: now},
-		},
-	}
-
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?list-type=2&delimiter=/", nil)
 	defer resp.Body.Close()
 
@@ -104,20 +108,20 @@ func TestListObjectsV2_WithDelimiter(t *testing.T) {
 // Asserts that status = , want 200.
 func TestListObjectsV2_Pagination(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
-
-	// The store truncates to maxKeys=2 and reports the continuation marker.
 	marker := "mybucket/b.txt"
-	mockStore.ListObjectsResp = &core.ListObjectsResult{
-		Objects: []core.ObjectLocation{
-			{ObjectKey: "mybucket/a.txt", BackendName: "b1", SizeBytes: 10, CreatedAt: now},
-			{ObjectKey: "mybucket/b.txt", BackendName: "b1", SizeBytes: 20, CreatedAt: now},
-		},
-		IsTruncated:           true,
-		NextContinuationToken: marker,
-	}
-
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&core.ListObjectsResult{
+				Objects: []core.ObjectLocation{
+					{ObjectKey: "mybucket/a.txt", BackendName: "b1", SizeBytes: 10, CreatedAt: now},
+					{ObjectKey: "mybucket/b.txt", BackendName: "b1", SizeBytes: 20, CreatedAt: now},
+				},
+				IsTruncated:           true,
+				NextContinuationToken: marker,
+			}, nil).AnyTimes()
+	})
+	// The store truncates to maxKeys=2 and reports the continuation marker.
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?list-type=2&max-keys=2", nil)
 	defer resp.Body.Close()
 
@@ -153,11 +157,12 @@ func TestListObjectsV2_Pagination(t *testing.T) {
 // Asserts that status = , want 200.
 func TestListObjectsV2_Empty(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
-
-	mockStore.ListObjectsResp = &core.ListObjectsResult{
-		Objects: []core.ObjectLocation{},
-	}
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&core.ListObjectsResult{
+				Objects: []core.ObjectLocation{},
+			}, nil).AnyTimes()
+	})
 
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?list-type=2", nil)
 	defer resp.Body.Close()
@@ -193,16 +198,16 @@ func TestListObjectsV2_Empty(t *testing.T) {
 // Asserts that status = , want 200.
 func TestListObjectsV1_Success(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
-
-	mockStore.ListObjectsResp = &core.ListObjectsResult{
-		Objects: []core.ObjectLocation{
-			{ObjectKey: "mybucket/file1.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: now},
-			{ObjectKey: "mybucket/file2.txt", BackendName: "b1", SizeBytes: 200, CreatedAt: now},
-		},
-	}
-
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&core.ListObjectsResult{
+				Objects: []core.ObjectLocation{
+					{ObjectKey: "mybucket/file1.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: now},
+					{ObjectKey: "mybucket/file2.txt", BackendName: "b1", SizeBytes: 200, CreatedAt: now},
+				},
+			}, nil).AnyTimes()
+	})
 	// V1: GET without list-type=2
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/", nil)
 	defer resp.Body.Close()
@@ -236,15 +241,15 @@ func TestListObjectsV1_Success(t *testing.T) {
 // Asserts that status = , want 200.
 func TestListObjectsV1_WithMarker(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
-
-	mockStore.ListObjectsResp = &core.ListObjectsResult{
-		Objects: []core.ObjectLocation{
-			{ObjectKey: "mybucket/c.txt", BackendName: "b1", SizeBytes: 30, CreatedAt: now},
-		},
-	}
-
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&core.ListObjectsResult{
+				Objects: []core.ObjectLocation{
+					{ObjectKey: "mybucket/c.txt", BackendName: "b1", SizeBytes: 30, CreatedAt: now},
+				},
+			}, nil).AnyTimes()
+	})
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?marker=b.txt", nil)
 	defer resp.Body.Close()
 
@@ -267,12 +272,14 @@ func TestListObjectsV1_WithMarker(t *testing.T) {
 // Asserts that status = , want 500.
 func TestListObjectsV1_StoreError(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
-	mockStore.ListObjectsErr = &core.S3Error{
-		StatusCode: 500,
-		Code:       "InternalError",
-		Message:    "db error",
-	}
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(nil, &core.S3Error{
+				StatusCode: 500,
+				Code:       "InternalError",
+				Message:    "db error",
+			}).AnyTimes()
+	})
 
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/", nil)
 	defer resp.Body.Close()
@@ -286,21 +293,21 @@ func TestListObjectsV1_StoreError(t *testing.T) {
 // Asserts that status = , want 200.
 func TestListObjectsV1_Pagination(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
-
+	marker := "mybucket/b.txt"
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&core.ListObjectsResult{
+				Objects: []core.ObjectLocation{
+					{ObjectKey: "mybucket/a.txt", BackendName: "b1", SizeBytes: 10, CreatedAt: now},
+					{ObjectKey: "mybucket/b.txt", BackendName: "b1", SizeBytes: 20, CreatedAt: now},
+				},
+				IsTruncated:           true,
+				NextContinuationToken: marker,
+			}, nil).AnyTimes()
+	})
 	// The store truncates to maxKeys=2 and reports the continuation marker,
 	// which the V1 handler maps to NextMarker.
-	marker := "mybucket/b.txt"
-	mockStore.ListObjectsResp = &core.ListObjectsResult{
-		Objects: []core.ObjectLocation{
-			{ObjectKey: "mybucket/a.txt", BackendName: "b1", SizeBytes: 10, CreatedAt: now},
-			{ObjectKey: "mybucket/b.txt", BackendName: "b1", SizeBytes: 20, CreatedAt: now},
-		},
-		IsTruncated:           true,
-		NextContinuationToken: marker,
-	}
-
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/?max-keys=2", nil)
 	defer resp.Body.Close()
 
@@ -393,16 +400,16 @@ func assertETagAndStorageClass(t *testing.T, contents []listContentForAssertion)
 // string  -  still a valid string, no nil deref).
 func TestListObjects_IncludesETagAndStorageClass(t *testing.T) {
 	t.Parallel()
-	ts, mockStore, _ := newTestServer(t)
 	now := time.Now()
-
-	mockStore.ListObjectsResp = &core.ListObjectsResult{
-		Objects: []core.ObjectLocation{
-			{ObjectKey: "mybucket/file1.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: now, ContentHash: "d41d8cd98f00b204e9800998ecf8427e"},
-			{ObjectKey: "mybucket/file2.txt", BackendName: "b1", SizeBytes: 200, CreatedAt: now},
-		},
-	}
-
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&core.ListObjectsResult{
+				Objects: []core.ObjectLocation{
+					{ObjectKey: "mybucket/file1.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: now, ContentHash: "d41d8cd98f00b204e9800998ecf8427e"},
+					{ObjectKey: "mybucket/file2.txt", BackendName: "b1", SizeBytes: 200, CreatedAt: now},
+				},
+			}, nil).AnyTimes()
+	})
 	for _, path := range []string{"/mybucket/?list-type=2", "/mybucket/"} {
 		t.Run(path, func(t *testing.T) {
 			assertETagAndStorageClass(t, fetchListResult(t, ts, ts.URL+path))

@@ -19,6 +19,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"go.uber.org/mock/gomock"
+
 	"log/slog"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -26,7 +28,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store"
-	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 )
 
@@ -36,16 +39,24 @@ import (
 // the handler is returned.
 func newAdminHandlerForTest(t testing.TB, opts ...func(*proxy.BackendManager, *proxytest.Workers)) *admin.Handler {
 	t.Helper()
-	mock := testutil.NewMockStore(t)
+	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
+	// The handler drives real workers, whose passes read the ledger. These are
+	// incidental to the wrapper-closure behaviour under test.
+	mock.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	mock.EXPECT().GetUnderReplicatedObjectsExcluding(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	mock.EXPECT().GetOverReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	mock.EXPECT().CountOverReplicatedObjects(gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
+	mock.EXPECT().ListObjectsByBackend(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	mock.EXPECT().GetQuotaStats(gomock.Any()).Return(map[string]core.QuotaStat{}, nil).AnyTimes()
+	mock.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
+	mock.EXPECT().GetUnverifiedObjectCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
+	mock.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
+	mock.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.UsageStat{}, nil).AnyTimes()
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]backend.ObjectBackend{},
 			Order:    []string{},
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  mock,
-			Dashboard: mock,
 		},
 		Policies: proxy.PolicyConfig{
 			RoutingStrategy: config.RoutingPack,

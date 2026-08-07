@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -120,10 +121,10 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 	// client sends Expect: 100-continue, Go's net/http delays the 100
 	// Continue response until the first r.Body.Read(). Rejecting here
 	// avoids transmitting the entire upload body for a doomed request.
-	if !s.Manager.Objects().CanAcceptWrite(r.ContentLength) {
+	if !s.Objects.CanAcceptWrite(r.ContentLength) {
 		telemetry.EarlyRejectionsTotal.Inc()
 		msg := fmt.Sprintf("No backend can accept a %d byte upload", r.ContentLength)
-		if hint := formatCapacityHint(s.Manager.Objects().BackendCapacityStats(ctx)); hint != "" {
+		if hint := formatCapacityHint(s.Objects.BackendCapacityStats(ctx)); hint != "" {
 			msg += "; backend usage: " + hint
 		}
 		writeS3Error(w, http.StatusInsufficientStorage, "InsufficientStorage", msg)
@@ -137,7 +138,7 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 		telemetry.AttrContentType.String(contentType),
 	)
 
-	etag, err := s.Manager.Objects().PutObject(ctx, key, r.Body, r.ContentLength, contentType, metadata)
+	etag, err := s.Objects.PutObject(ctx, key, r.Body, r.ContentLength, contentType, metadata)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to store object"), err
 	}
@@ -155,7 +156,7 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, int64, error) {
 	rangeHeader := r.Header.Get("Range")
 
-	result, err := s.Manager.Objects().GetObject(ctx, key, rangeHeader)
+	result, err := s.Objects.GetObject(ctx, key, rangeHeader)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to retrieve object"), 0, err
 	}
@@ -168,27 +169,41 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 		telemetry.AttrContentType.String(result.ContentType),
 	)
 
+	// Validators go out before the conditional check so a 304 carries the
+	// ETag and Last-Modified it would have carried on a 200 (RFC 9110 15.4.5).
+	setValidatorHeaders(w, result)
+
+	// Preconditions are evaluated before the Range is considered: a failed
+	// precondition aborts the whole request, whether or not only part of the
+	// representation was asked for (RFC 9110 13.1). Evaluating these only for
+	// unranged GETs let a resumable download splice bytes from a replaced
+	// object into the file it had already partly fetched.
+	if status, done := checkConditionals(r, result.ETag, result.LastModified); done {
+		w.WriteHeader(status)
+		return status, 0, nil
+	}
+
+	// If-Range asks for the range only while the representation is unchanged,
+	// and for the whole object otherwise. The partial body already opened is
+	// discarded and the object re-fetched in full, which costs an extra round
+	// trip only on the mismatch that would otherwise corrupt the download.
+	if rangeHeader != "" && !ifRangeMatches(r, result.ETag, result.LastModified) {
+		_ = result.Body.Close()
+		full, ferr := s.Objects.GetObject(ctx, key, "")
+		if ferr != nil {
+			return writeStorageError(w, ferr, "Failed to retrieve object"), 0, ferr
+		}
+		result = full
+		setValidatorHeaders(w, result)
+	}
+
 	w.Header().Set(headerContentType, result.ContentType)
 	if result.Size > 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
 	}
-	if result.ETag != "" {
-		w.Header().Set("ETag", result.ETag)
-	}
-	if !result.LastModified.IsZero() {
-		w.Header().Set("Last-Modified", result.LastModified.UTC().Format(http.TimeFormat))
-	}
 	w.Header().Set("Accept-Ranges", "bytes")
 	for k, v := range result.Metadata {
 		w.Header().Set("x-amz-meta-"+k, v)
-	}
-
-	// --- Conditional request evaluation (skip for range requests) ---
-	if rangeHeader == "" {
-		if status, done := checkConditionals(r, result.ETag, result.LastModified); done {
-			w.WriteHeader(status)
-			return status, 0, nil
-		}
 	}
 
 	status := http.StatusOK
@@ -208,7 +223,7 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 
 // handleHead processes HEAD requests.
 func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, error) {
-	result, err := s.Manager.Objects().HeadObject(ctx, key)
+	result, err := s.Objects.HeadObject(ctx, key)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to retrieve object metadata"), err
 	}
@@ -246,7 +261,7 @@ func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.
 // handleDelete processes DELETE requests. The manager treats missing objects as
 // success (S3 idempotent delete), so any error returned is a real backend failure.
 func (s *Server) handleDelete(ctx context.Context, w http.ResponseWriter, _ *http.Request, key string) (int, error) {
-	if err := s.Manager.Objects().DeleteObject(ctx, key); err != nil {
+	if err := s.Objects.DeleteObject(ctx, key); err != nil {
 		return writeStorageError(w, err, "Failed to delete object"), err
 	}
 
@@ -281,7 +296,7 @@ func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, bu
 	// Prefix source key for internal storage
 	sourceInternalKey := internalkey.Make(bucket, sourceKey)
 
-	etag, err := s.Manager.Objects().CopyObject(ctx, sourceInternalKey, destInternalKey)
+	etag, err := s.Objects.CopyObject(ctx, sourceInternalKey, destInternalKey)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to copy object"), err
 	}
@@ -325,7 +340,7 @@ func (s *Server) handleDeleteObjects(ctx context.Context, w http.ResponseWriter,
 		keys[i] = internalkey.Make(bucket, obj.Key)
 	}
 
-	results := s.Manager.Objects().DeleteObjects(ctx, keys)
+	results := s.Objects.DeleteObjects(ctx, keys)
 
 	// Build XML response with per-key outcomes
 	resp := deleteObjectsResult{
@@ -376,7 +391,7 @@ func (s *Server) checkIfNoneMatchStar(ctx context.Context, w http.ResponseWriter
 	if r.Header.Get("If-None-Match") != "*" {
 		return 0, nil, false
 	}
-	exists, err := s.Manager.Objects().ObjectExists(ctx, key)
+	exists, err := s.Objects.ObjectExists(ctx, key)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to evaluate conditional write"), err, true
 	}
@@ -386,6 +401,42 @@ func (s *Server) checkIfNoneMatchStar(ctx context.Context, w http.ResponseWriter
 		return http.StatusPreconditionFailed, errIfNoneMatchExists, true
 	}
 	return 0, nil, false
+}
+
+// setValidatorHeaders writes the ETag and Last-Modified that identify the
+// representation. Split out because they must also appear on a 304, which
+// carries no body and skips the rest of the header block.
+func setValidatorHeaders(w http.ResponseWriter, result *s3be.GetObjectResult) {
+	if result.ETag != "" {
+		w.Header().Set("ETag", result.ETag)
+	}
+	if !result.LastModified.IsZero() {
+		w.Header().Set("Last-Modified", result.LastModified.UTC().Format(http.TimeFormat))
+	}
+}
+
+// ifRangeMatches reports whether an If-Range validator still describes the
+// current representation, which is what decides between serving the requested
+// range and serving the whole object.
+//
+// An absent header means the client did not ask for the conditional form, so
+// the range stands. A value parseable as an HTTP date is compared as a
+// last-modified validator; anything else is compared as an entity tag. Per
+// RFC 9110 13.1.5 the entity-tag comparison is strong, so a weak tag never
+// matches: a weak validator cannot safely be used to splice a partial
+// response onto bytes already held.
+func ifRangeMatches(r *http.Request, etag string, lastModified time.Time) bool {
+	ir := r.Header.Get("If-Range")
+	if ir == "" {
+		return true
+	}
+	if t, err := http.ParseTime(ir); err == nil {
+		return !lastModified.IsZero() && lastModified.Equal(t)
+	}
+	if strings.HasPrefix(ir, "W/") || etag == "" {
+		return false
+	}
+	return ir == etag
 }
 
 // checkConditionals evaluates conditional request headers per RFC 7232.

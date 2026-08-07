@@ -69,6 +69,25 @@ type CleanupQueueConfig struct {
 // which trades data-loss safety for one fewer round-trip per PUT.
 type WritePathConfig struct {
 	PendingPattern PendingPatternConfig `yaml:"pending_pattern"`
+	Multipart      MultipartConfig      `yaml:"multipart"`
+}
+
+// MultipartConfig gates the S3 protocol invariants enforced at multipart
+// completion. Part-number range, ordering, duplicate and ETag checks are
+// always enforced; only the minimum non-final part size is optional, because
+// turning it on rejects manifests this proxy previously accepted.
+type MultipartConfig struct {
+	// EnforceMinPartSize requires every part but the last to be at least
+	// 5 MiB, matching S3. Default: true. Set to false for a deployment with
+	// existing writers that split more finely than S3 allows.
+	EnforceMinPartSize *bool `yaml:"enforce_min_part_size"`
+}
+
+// IsMinPartSizeEnforced returns true unless the operator has explicitly
+// disabled the check. The pointer-typed field lets the YAML loader
+// distinguish "absent" (default true) from "explicitly false".
+func (m *MultipartConfig) IsMinPartSizeEnforced() bool {
+	return m.EnforceMinPartSize == nil || *m.EnforceMinPartSize
 }
 
 // PendingPatternConfig configures the pending-row pattern used by the

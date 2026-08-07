@@ -57,8 +57,8 @@ func resolveRequiredServices(inj do.Injector, cfg *config.Config) (*proxy.Backen
 		return nil, err
 	}
 	manager.SetUsageFlushConfig(&cfg.UsageFlush)
-	manager.SetLifecycleConfig(&cfg.Lifecycle)
 	manager.SetIntegrityConfig(&cfg.Integrity)
+	// Lifecycle config is seeded by ProvideExpiryManager, which owns it.
 
 	if _, err := do.Invoke[*lifecycle.Manager](inj); err != nil {
 		return nil, fmt.Errorf("initialize lifecycle manager: %w", err)

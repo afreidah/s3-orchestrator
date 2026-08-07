@@ -22,6 +22,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"go.uber.org/mock/gomock"
+
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
@@ -29,7 +31,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -276,16 +278,12 @@ func TestEncryptExisting_HappyPathEmptyStore(t *testing.T) {
 // ciphertext, and the dbUpdate closure marks the object encrypted.
 func TestEncryptExisting_HappyPathOneRow(t *testing.T) {
 	t.Parallel()
-	mock := testutil.NewMockStore(t)
+	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
 	fake := &fakeBackend{payload: []byte("hello world")}
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]backend.ObjectBackend{"backend-a": fake},
 			Order:    []string{"backend-a"},
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  mock,
-			Dashboard: mock,
 		},
 		Policies: proxy.PolicyConfig{
 			RoutingStrategy: config.RoutingPack,

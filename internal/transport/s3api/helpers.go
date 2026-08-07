@@ -10,7 +10,6 @@
 package s3api
 
 import (
-	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 	"bytes"
 	"encoding/xml"
 	"errors"
@@ -21,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"

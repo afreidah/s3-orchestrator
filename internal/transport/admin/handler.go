@@ -31,8 +31,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
-	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
@@ -42,11 +42,16 @@ import (
 // sub-manager (replicator, drain, scrubber, etc.). *proxy.BackendManager
 // satisfies it.
 type BackendOps interface {
-	GetDashboardData(ctx context.Context) (*dashboard.Data, error)
 	FlushUsage(ctx context.Context) error
 	ReconcileUsage(ctx context.Context) (map[string]int64, error)
 	RecordUsage(backendName string, requests, ingressBytes, egressBytes int64)
 	IntegrityConfig() *config.IntegrityConfig
+}
+
+// DashboardReader is the dashboard surface the admin handler reads for its
+// status endpoint. *dashboard.Aggregator satisfies it.
+type DashboardReader interface {
+	GetData(ctx context.Context) (*dashboard.Data, error)
 }
 
 // RuntimeOps is the backend-runtime surface the admin handler reaches
@@ -59,14 +64,16 @@ type RuntimeOps interface {
 
 // Compile-time assertions.
 var (
-	_ BackendOps = (*proxy.BackendManager)(nil)
-	_ RuntimeOps = (*infra.BackendRuntime)(nil)
+	_ BackendOps      = (*proxy.BackendManager)(nil)
+	_ DashboardReader = (*dashboard.Aggregator)(nil)
+	_ RuntimeOps      = (*infra.BackendRuntime)(nil)
 )
 
 // Handler serves the admin API endpoints.
 type Handler struct {
 	log          *slog.Logger
 	backendOps   BackendOps
+	dashboardOps DashboardReader
 	runtimeOps   RuntimeOps
 	replicator   ReplicatorOps
 	rebalancer   RebalancerOps // nil when the worker pool is not wired
@@ -77,8 +84,8 @@ type Handler struct {
 	reconciler   Reconciler
 	dbHealthy    func() bool
 	workerHealth func() []adminapi.WorkerHealth // nil when lifecycle manager is not wired
-	logs         logReader             // nil when the log buffer is not wired
-	replication  replicationSnapshotter // nil when the metrics collector is not wired
+	logs         logReader                      // nil when the log buffer is not wired
+	replication  replicationSnapshotter         // nil when the metrics collector is not wired
 	objects      core.ObjectStore
 	cleanup      core.CleanupStore
 	encAdmin     core.EncryptionAdmin
@@ -101,6 +108,7 @@ type Handler struct {
 // hand the handler a god-shaped *proxy.BackendManager.
 type Deps struct {
 	BackendOps   BackendOps
+	Dashboard    DashboardReader
 	RuntimeOps   RuntimeOps
 	Replicator   ReplicatorOps
 	Rebalancer   RebalancerOps // nil when the worker pool is not wired
@@ -108,10 +116,10 @@ type Deps struct {
 	Drain        *drain.Manager
 	Scrubber     ScrubberOps
 	Lifecycle    core.BackendLifecycleStore
-	DBHealthy    func() bool           // typically *breaker.CircuitBreaker.IsHealthy
+	DBHealthy    func() bool                    // typically *breaker.CircuitBreaker.IsHealthy
 	WorkerHealth func() []adminapi.WorkerHealth // typically lifecycle.Manager.Health adapted
-	LogBuffer    logReader             // nil when the log buffer is not wired
-	Replication  replicationSnapshotter // nil when the metrics collector is not wired
+	LogBuffer    logReader                      // nil when the log buffer is not wired
+	Replication  replicationSnapshotter         // nil when the metrics collector is not wired
 	Encryption   core.EncryptionAdmin
 	Objects      core.ObjectStore
 	Cleanup      core.CleanupStore
@@ -137,6 +145,7 @@ func New(d *Deps) *Handler {
 	return &Handler{
 		log:          slog.Default().With(logfmt.Component("admin")),
 		backendOps:   d.BackendOps,
+		dashboardOps: d.Dashboard,
 		runtimeOps:   d.RuntimeOps,
 		replicator:   d.Replicator,
 		rebalancer:   d.Rebalancer,
