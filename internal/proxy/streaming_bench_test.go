@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 )
 
@@ -68,8 +69,8 @@ func BenchmarkStreamCopy(b *testing.B) {
 
 	for _, tc := range sizes {
 		b.Run(tc.name, func(b *testing.B) {
-			src := newMockBackend()
-			dst := newMockBackend()
+			src := backendtest.NewInMemory()
+			dst := backendtest.NewInMemory()
 
 			data := make([]byte, tc.size)
 			_, _ = src.PutObject(context.Background(), "bench-key", bytes.NewReader(data), int64(tc.size), "application/octet-stream", nil)

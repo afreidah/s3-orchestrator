@@ -11,7 +11,7 @@
 
 package worker
 
-//go:generate mockgen -destination=mock_ops_test.go -package=worker github.com/afreidah/s3-orchestrator/internal/worker Ops,CleanupOps,ScrubberOps,Placement,BackendSyncer
+//go:generate mockgen -destination=mock_ops_test.go -package=worker github.com/afreidah/s3-orchestrator/internal/worker Ops,CleanupOps,ScrubberOps,Placement,BackendSyncer,FleetOps
 
 import (
 	"context"

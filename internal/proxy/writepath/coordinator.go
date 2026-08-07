@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"go.opentelemetry.io/otel/trace"
 
@@ -45,6 +46,8 @@ import (
 // object record/move, write-target selection (quota), pending-intent
 // insert/promote, and cleanup enqueue/recovery. Declared locally so
 // writepath does not pull in the full MetadataStore.
+//go:generate mockgen -destination=mock_stores_test.go -package=writepath github.com/afreidah/s3-orchestrator/internal/proxy/writepath CoordinatorStores
+
 type CoordinatorStores interface {
 	core.ObjectStore
 	core.QuotaStore
@@ -446,4 +449,23 @@ func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, 
 	w.core.Acct().Egress(req.SrcName, movedSize)
 	w.core.Acct().Ingress(req.DestName, movedSize)
 	return movedSize, nil
+}
+
+// SelectReplicaTarget picks a destination for a replication copy using the
+// same routing strategy as a normal write, excluding backends that already
+// hold a copy. Returns "" with no error when nothing is eligible, so the
+// caller can treat "no room right now" as a skip rather than a failure.
+func (w *Coordinator) SelectReplicaTarget(ctx context.Context, size int64, exclusion map[string]bool) (string, error) {
+	eligible := w.core.EligibleForWrite(1, 0, size)
+	filtered := slices.DeleteFunc(slices.Clone(eligible), func(name string) bool {
+		return exclusion[name]
+	})
+	if len(filtered) == 0 {
+		return "", nil
+	}
+	name, err := w.SelectBackendForWrite(ctx, size, filtered)
+	if errors.Is(err, core.ErrNoSpaceAvailable) {
+		return "", nil
+	}
+	return name, err
 }

@@ -135,8 +135,8 @@ func TestBarColor(t *testing.T) {
 		{85, 100, "#f59e0b"},  // amber (85%)
 		{90, 100, "#ef4444"},  // red (90%)
 		{100, 100, "#ef4444"}, // red (100%)
-		{0, 0, "#6b7280"},    // gray (unlimited)
-		{500, 0, "#6b7280"},  // gray (unlimited)
+		{0, 0, "#6b7280"},     // gray (unlimited)
+		{500, 0, "#6b7280"},   // gray (unlimited)
 	}
 
 	for _, tt := range tests {

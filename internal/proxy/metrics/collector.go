@@ -34,6 +34,8 @@ import (
 // gauges. Defined here  -  at the consumer  -  rather than in the store
 // package: adding a new metric is a Collector concern, not a store-package
 // concern.
+//go:generate mockgen -destination=mock_test.go -package=metrics github.com/afreidah/s3-orchestrator/internal/proxy/metrics Deps
+
 type Deps interface {
 	GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error)
 	GetObjectCounts(ctx context.Context) (map[string]int64, error)

@@ -106,7 +106,7 @@ func TestHmacSHA256(t *testing.T) {
 }
 
 // TestHashSHA256 verifies the hash sha256 contract.
-// Asserts that hashSHA256('') = , want.
+// Asserts that hashSHA256(”) = , want.
 func TestHashSHA256(t *testing.T) {
 	t.Parallel()
 	// SHA256 of empty string

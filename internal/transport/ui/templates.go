@@ -10,12 +10,13 @@
 package ui
 
 import (
-	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 	"embed"
 	"fmt"
 	"html/template"
 	"io/fs"
 	"strings"
+
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 )
 
 //go:embed templates/*.html static/*

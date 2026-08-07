@@ -31,13 +31,13 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
-	"github.com/afreidah/s3-orchestrator/internal/worker"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // -------------------------------------------------------------------------
@@ -470,7 +470,7 @@ func listServiceNames(inj do.Injector) []string {
 // Drives the big composite providers (Backends, BackendManager, S3Server,
 // LifecycleManager, UIHandler, AdminHandler, Notifier) end-to-end against
 // an in-memory SQLite store and a fake S3 backend endpoint. The storage
-// calls never fire during construction  -  NewS3Backend only parses config  - 
+// calls never fire during construction  -  NewS3Backend only parses config  -
 // so no live network is required.
 // -------------------------------------------------------------------------
 

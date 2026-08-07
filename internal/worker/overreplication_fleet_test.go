@@ -1,14 +1,14 @@
 // -------------------------------------------------------------------------------
-// Over-Replication Cleaner Tests
+// Over-Replication Cleaner Tests - Fleet-Level Behaviour
 //
 // Author: Alex Freidah
 //
-// Tests for background over-replication cleanup: finding over-replicated
-// objects, scoring copies by backend health and utilization, removing excess
-// copies, and handling errors during cleanup.
-// -------------------------------------------------------------------------------
+// Covers the cleaner against a live fleet - real backends, a real write
+// coordinator, and the usage/admission policy the runtime enforces - for the
+// paths whose behaviour depends on that machinery. The narrow-mock unit tests
+// for scoring and config live in overreplication_test.go.
 
-package proxy
+package worker
 
 import (
 	"context"
@@ -20,6 +20,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -58,84 +59,19 @@ func stubRemoveExcessCopy(rt *removeExcessTracker) func(context.Context, string,
 	}
 }
 
-// TestScoreCopy_HealthyBackend pins the healthy-backend scoring formula.
-func TestScoreCopy_HealthyBackend(t *testing.T) {
-	t.Parallel()
-	store := newPermissiveMock(t)
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
-
-	loc := core.ObjectLocation{BackendName: "b1", SizeBytes: 100}
-	stats := map[string]core.QuotaStat{
-		"b1": {BytesUsed: 500, BytesLimit: 1000},
-	}
-	score := workers.OverReplicationCleaner.ScoreCopy(&loc, stats)
-
-	if score < 2.4 || score > 2.6 {
-		t.Errorf("expected score ~2.5, got %f", score)
-	}
-}
-
-// TestScoreCopy_UnknownBackend asserts unknown backends score 0.
-func TestScoreCopy_UnknownBackend(t *testing.T) {
-	t.Parallel()
-	store := newPermissiveMock(t)
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
-
-	loc := core.ObjectLocation{BackendName: "nonexistent", SizeBytes: 100}
-	score := workers.OverReplicationCleaner.ScoreCopy(&loc, nil)
-
-	if score != 0 {
-		t.Errorf("expected score 0 for unknown backend, got %f", score)
-	}
-}
-
-// TestScoreCopy_DrainingBackend asserts a draining backend scores 0.
-func TestScoreCopy_DrainingBackend(t *testing.T) {
-	t.Parallel()
-	store := newPermissiveMock(t)
-	mgr, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
-	mgr.drainManager.SeedActiveForTest("b1")
-
-	loc := core.ObjectLocation{BackendName: "b1", SizeBytes: 100}
-	score := workers.OverReplicationCleaner.ScoreCopy(&loc, nil)
-
-	if score != 0 {
-		t.Errorf("expected score 0 for draining backend, got %f", score)
-	}
-}
-
 // TestScoreCopy_CircuitBrokenBackend pins the score for a tripped breaker.
 func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 	t.Parallel()
-	store := newPermissiveMock(t)
-	mock := newMockBackend()
-	mock.putErr = errors.New("backend down")
+	store := newPermissiveStore(t)
+	mock := backendtest.NewInMemory()
+	mock.PutErr = errors.New("backend down")
 	cbBackend := backend.NewCircuitBreakerBackend(mock, backend.CircuitBreakerConfig{Name: "b1", Threshold: 1, Timeout: time.Minute})
 	_, _ = cbBackend.PutObject(context.Background(), "k", nil, 0, "", nil)
 
-	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Storage: StorageDeps{
-			Backends: map[string]backend.ObjectBackend{"b1": cbBackend},
-			Order:    []string{"b1"},
-		},
-		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
-		},
-		Policies: PolicyConfig{
-			CacheTTL:        5 * time.Second,
-			BackendTimeout:  30 * time.Second,
-			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: OperationalDeps{
-			Metrics: store,
-		},
-	})
-	workers := wireWorkersForTest(mgr, store)
-	_ = workers
+	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{"b1": cbBackend}, &fleetOpts{Order: []string{"b1"}})
 
 	loc := core.ObjectLocation{BackendName: "b1", SizeBytes: 100}
-	score := workers.OverReplicationCleaner.ScoreCopy(&loc, nil)
+	score := w.ScoreCopy(&loc, nil)
 
 	if score != 1 {
 		t.Errorf("expected score 1 for circuit-broken backend, got %f", score)
@@ -145,51 +81,14 @@ func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {
 // TestScoreCopy_NoQuotaData asserts the no-data fallback score.
 func TestScoreCopy_NoQuotaData(t *testing.T) {
 	t.Parallel()
-	store := newPermissiveMock(t)
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
+	store := newPermissiveStore(t)
+	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{})
 
 	loc := core.ObjectLocation{BackendName: "b1", SizeBytes: 100}
-	score := workers.OverReplicationCleaner.ScoreCopy(&loc, nil)
+	score := w.ScoreCopy(&loc, nil)
 
 	if score != 2.5 {
 		t.Errorf("expected score 2.5, got %f", score)
-	}
-}
-
-// TestClean_FactorDisabled asserts factor=1 short-circuits.
-func TestClean_FactorDisabled(t *testing.T) {
-	t.Parallel()
-	store := newPermissiveMock(t)
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
-
-	removed, err := workers.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
-		Factor:    1,
-		BatchSize: 10,
-	}, nil)
-	if err != nil {
-		t.Fatalf("Clean: %v", err)
-	}
-	if removed != 0 {
-		t.Errorf("expected 0 removed, got %d", removed)
-	}
-}
-
-// TestClean_NoOverReplicatedObjects asserts an empty over-replicated
-// query produces zero work.
-func TestClean_NoOverReplicatedObjects(t *testing.T) {
-	t.Parallel()
-	store := newPermissiveMock(t)
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
-
-	removed, err := workers.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
-		Factor:    2,
-		BatchSize: 10,
-	}, nil)
-	if err != nil {
-		t.Fatalf("Clean: %v", err)
-	}
-	if removed != 0 {
-		t.Errorf("expected 0 removed, got %d", removed)
 	}
 }
 
@@ -202,9 +101,9 @@ func TestClean_QueryError(t *testing.T) {
 		Return(nil, errors.New("db down")).AnyTimes()
 	storetest.Permissive(store)
 
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
+	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{})
 
-	if _, err := workers.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
+	if _, err := w.Clean(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	}, nil); err == nil {
@@ -228,13 +127,13 @@ func TestClean_QuotaStatsError_StillCleansUp(t *testing.T) {
 		Return(nil, errors.New("db timeout")).AnyTimes()
 	storetest.Permissive(store)
 
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{
-		"b1": newMockBackend(),
-		"b2": newMockBackend(),
-		"b3": newMockBackend(),
-	})
+	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{
+		"b1": backendtest.NewInMemory(),
+		"b2": backendtest.NewInMemory(),
+		"b3": backendtest.NewInMemory(),
+	}, &fleetOpts{})
 
-	removed, err := workers.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
+	removed, err := w.Clean(context.Background(), config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
@@ -269,13 +168,13 @@ func TestClean_RemovesExcessCopies(t *testing.T) {
 		DoAndReturn(stubRemoveExcessCopy(rt)).AnyTimes()
 	storetest.Permissive(store)
 
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{
-		"b1": newMockBackend(),
-		"b2": newMockBackend(),
-		"b3": newMockBackend(),
-	})
+	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{
+		"b1": backendtest.NewInMemory(),
+		"b2": backendtest.NewInMemory(),
+		"b3": backendtest.NewInMemory(),
+	}, &fleetOpts{})
 
-	removed, err := workers.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
+	removed, err := w.Clean(context.Background(), config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
@@ -310,13 +209,13 @@ func TestClean_RemoveExcessCopyError(t *testing.T) {
 		DoAndReturn(stubRemoveExcessCopy(rt)).AnyTimes()
 	storetest.Permissive(store)
 
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{
-		"b1": newMockBackend(),
-		"b2": newMockBackend(),
-		"b3": newMockBackend(),
-	})
+	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{
+		"b1": backendtest.NewInMemory(),
+		"b2": backendtest.NewInMemory(),
+		"b3": backendtest.NewInMemory(),
+	}, &fleetOpts{})
 
-	removed, err := workers.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
+	removed, err := w.Clean(context.Background(), config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
@@ -345,13 +244,13 @@ func TestClean_MultipleObjects(t *testing.T) {
 		}, nil).AnyTimes()
 	storetest.Permissive(store)
 
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{
-		"b1": newMockBackend(),
-		"b2": newMockBackend(),
-		"b3": newMockBackend(),
-	})
+	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{
+		"b1": backendtest.NewInMemory(),
+		"b2": backendtest.NewInMemory(),
+		"b3": backendtest.NewInMemory(),
+	}, &fleetOpts{})
 
-	removed, err := workers.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
+	removed, err := w.Clean(context.Background(), config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
@@ -378,11 +277,11 @@ func TestClean_BackendNotFoundDuringCleanup(t *testing.T) {
 		}, nil).AnyTimes()
 	storetest.Permissive(store)
 
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{
-		"b1": newMockBackend(),
-	})
+	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{
+		"b1": backendtest.NewInMemory(),
+	}, &fleetOpts{})
 
-	removed, err := workers.OverReplicationCleaner.Clean(context.Background(), config.ReplicationConfig{
+	removed, err := w.Clean(context.Background(), config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
@@ -395,48 +294,6 @@ func TestClean_BackendNotFoundDuringCleanup(t *testing.T) {
 	}
 }
 
-// TestSetConfig_Config pins the SetConfig/Config round-trip.
-func TestSetConfig_Config(t *testing.T) {
-	t.Parallel()
-	store := newPermissiveMock(t)
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
-
-	if workers.OverReplicationCleaner.Config() != nil {
-		t.Fatal("expected nil config initially")
-	}
-
-	cfg := &config.ReplicationConfig{Factor: 3, BatchSize: 50, Concurrency: 5}
-	workers.OverReplicationCleaner.SetConfig(cfg)
-
-	got := workers.OverReplicationCleaner.Config()
-	if got == nil {
-		t.Fatal("expected non-nil config after SetConfig")
-	}
-	if got.Factor != 3 || got.BatchSize != 50 || got.Concurrency != 5 {
-		t.Errorf("unexpected config: %+v", got)
-	}
-}
-
-// TestCountPending_Success returns the configured count.
-func TestCountPending_Success(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().CountOverReplicatedObjects(gomock.Any(), gomock.Any()).
-		Return(int64(42), nil).AnyTimes()
-	storetest.Permissive(store)
-
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
-
-	count, err := workers.OverReplicationCleaner.CountPending(context.Background(), 2)
-	if err != nil {
-		t.Fatalf("CountPending: %v", err)
-	}
-	if count != 42 {
-		t.Errorf("expected 42, got %d", count)
-	}
-}
-
 // TestCountPending_Error surfaces the count-query failure.
 func TestCountPending_Error(t *testing.T) {
 	t.Parallel()
@@ -446,15 +303,15 @@ func TestCountPending_Error(t *testing.T) {
 		Return(int64(0), errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
 
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
+	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{})
 
-	if _, err := workers.OverReplicationCleaner.CountPending(context.Background(), 2); err == nil {
+	if _, err := w.CountPending(context.Background(), 2); err == nil {
 		t.Fatal("expected error from CountPending")
 	}
 }
 
 // TestClean_AdmissionBlocked asserts a saturated admission semaphore +
-// cancelled ctx halts the worker.
+// cancelled ctx halts the
 func TestClean_AdmissionBlocked(t *testing.T) {
 	t.Parallel()
 	sem := make(chan struct{}, 1)
@@ -470,32 +327,12 @@ func TestClean_AdmissionBlocked(t *testing.T) {
 		}, nil).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Storage: StorageDeps{
-			Backends: map[string]backend.ObjectBackend{"b1": newMockBackend(), "b2": newMockBackend(), "b3": newMockBackend()},
-			Order:    []string{"b1", "b2", "b3"},
-		},
-		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
-		},
-		Policies: PolicyConfig{
-			CacheTTL:        5 * time.Second,
-			BackendTimeout:  30 * time.Second,
-			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: OperationalDeps{
-			Metrics:      store,
-			AdmissionSem: sem,
-		},
-	})
-	workers := wireWorkersForTest(mgr, store)
-	_ = workers
+	w := newOverRepFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory(), "b3": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"b1", "b2", "b3"}})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	removed, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+	removed, err := w.Clean(ctx, config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,

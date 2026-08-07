@@ -200,7 +200,7 @@ func BenchmarkBuildListContents(b *testing.B) {
 	})
 }
 
-// BenchmarkSpanNameSprintf and BenchmarkRecordRequestStatusItoa were removed  - 
+// BenchmarkSpanNameSprintf and BenchmarkRecordRequestStatusItoa were removed  -
 // they measured code paths (fmt.Sprintf for span names, strconv.Itoa for status
 // codes) that were already optimized to pre-computed map lookups (httpSpanName,
 // statusStrings). Benchmarking the replaced implementation was misleading.

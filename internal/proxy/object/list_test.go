@@ -20,29 +20,9 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"go.uber.org/mock/gomock"
 )
-
-// fakeListStore returns canned store responses and records which query the
-// manager called, so routing and mapping can be asserted without a database.
-type fakeListStore struct {
-	ObjectStores // embedded nil; only the list methods are implemented
-
-	flatResp  *core.ListObjectsResult
-	delimResp *core.ListDelimitedResult
-
-	flatCalls  int
-	delimCalls int
-}
-
-func (s *fakeListStore) ListObjects(_ context.Context, _, _ string, _ int) (*core.ListObjectsResult, error) {
-	s.flatCalls++
-	return s.flatResp, nil
-}
-
-func (s *fakeListStore) ListObjectsDelimited(_ context.Context, _, _, _ string, _ int) (*core.ListDelimitedResult, error) {
-	s.delimCalls++
-	return s.delimResp, nil
-}
 
 // newListTestManager wires a Manager with only what ListObjects touches: the
 // store and a no-op accounting recorder.
@@ -65,20 +45,22 @@ func (r listTestRuntime) Acct() *accounting.Recorder { return r.acct }
 // store's grouped query and maps CommonPrefixes, leaf objects, truncation,
 // token, and KeyCount into the response.
 func TestListObjects_DelimiterRoutesToStore(t *testing.T) {
-	store := &fakeListStore{delimResp: &core.ListDelimitedResult{
-		CommonPrefixes:        []string{"p/a/", "p/b/"},
-		Objects:               []core.ObjectLocation{{ObjectKey: "p/file.txt", BackendName: "b1"}},
-		IsTruncated:           true,
-		NextContinuationToken: "p/b0",
-	}}
+	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	// Times(1)/Times(0) is the routing assertion: a delimiter list must reach
+	// the grouped query and never the flat one.
+	store.EXPECT().ListObjectsDelimited(gomock.Any(), "p/", "/", "", 1000).
+		Return(&core.ListDelimitedResult{
+			CommonPrefixes:        []string{"p/a/", "p/b/"},
+			Objects:               []core.ObjectLocation{{ObjectKey: "p/file.txt", BackendName: "b1"}},
+			IsTruncated:           true,
+			NextContinuationToken: "p/b0",
+		}, nil).Times(1)
+	store.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 	m := newListTestManager(store)
 
 	res, err := m.ListObjects(context.Background(), "p/", "/", "", 1000)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
-	}
-	if store.delimCalls != 1 || store.flatCalls != 0 {
-		t.Errorf("calls: delim=%d flat=%d, want delim=1 flat=0", store.delimCalls, store.flatCalls)
 	}
 	if len(res.CommonPrefixes) != 2 || len(res.Objects) != 1 {
 		t.Errorf("got %d prefixes / %d objects, want 2 / 1", len(res.CommonPrefixes), len(res.Objects))
@@ -94,19 +76,19 @@ func TestListObjects_DelimiterRoutesToStore(t *testing.T) {
 // TestListObjects_NoDelimiterRoutesToFlatStore verifies a non-delimiter list
 // calls the flat store query and maps its objects, truncation, and token.
 func TestListObjects_NoDelimiterRoutesToFlatStore(t *testing.T) {
-	store := &fakeListStore{flatResp: &core.ListObjectsResult{
-		Objects:               []core.ObjectLocation{{ObjectKey: "p/1"}, {ObjectKey: "p/2"}},
-		IsTruncated:           true,
-		NextContinuationToken: "p/2",
-	}}
+	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	store.EXPECT().ListObjects(gomock.Any(), "p/", "", 1000).
+		Return(&core.ListObjectsResult{
+			Objects:               []core.ObjectLocation{{ObjectKey: "p/1"}, {ObjectKey: "p/2"}},
+			IsTruncated:           true,
+			NextContinuationToken: "p/2",
+		}, nil).Times(1)
+	store.EXPECT().ListObjectsDelimited(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 	m := newListTestManager(store)
 
 	res, err := m.ListObjects(context.Background(), "p/", "", "", 1000)
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
-	}
-	if store.flatCalls != 1 || store.delimCalls != 0 {
-		t.Errorf("calls: flat=%d delim=%d, want flat=1 delim=0", store.flatCalls, store.delimCalls)
 	}
 	if len(res.CommonPrefixes) != 0 {
 		t.Errorf("CommonPrefixes = %v, want none", res.CommonPrefixes)

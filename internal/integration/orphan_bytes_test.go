@@ -57,7 +57,7 @@ func TestOrphanBytes_OrphanBytesBlockWrite(t *testing.T) {
 	}
 
 	setOrphanBytes(t, "minio-1", 10)
-	testManager.ClearCache()
+	testManager.Objects().LocationCache().Clear()
 
 	overflowKey := uniqueKey(t, "orphan-block")
 	_, err = client.PutObject(ctx, &s3.PutObjectInput{
@@ -110,7 +110,7 @@ func TestOrphanBytes_OrphanBytesBlockAllBackends507(t *testing.T) {
 
 	setOrphanBytes(t, "minio-1", 24)
 	setOrphanBytes(t, "minio-2", 48)
-	testManager.ClearCache()
+	testManager.Objects().LocationCache().Clear()
 
 	tinyKey := uniqueKey(t, "orphan-507")
 	_, err = client.PutObject(ctx, &s3.PutObjectInput{
@@ -436,7 +436,7 @@ func TestOrphanBytes_ReplicationRespectsOrphanBytes(t *testing.T) {
 	}
 
 	setOrphanBytes(t, "minio-2", 148)
-	testManager.ClearCache()
+	testManager.Objects().LocationCache().Clear()
 
 	replCfg := config.ReplicationConfig{
 		Factor:    2,
@@ -548,14 +548,10 @@ func TestOrphanBytesSpreadRouting_SpreadRoutingRespectsOrphanBytes(t *testing.T)
 	ctx := context.Background()
 	_ = ctx
 	stores := newStores(testStore)
-	spreadManager := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	spreadManager := proxytest.NewManager(t, stores, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: testBackends,
 			Order:    testBackendOrder,
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  stores,
-			Dashboard: testStore,
 		},
 		Policies: proxy.PolicyConfig{
 			CacheTTL:        60 * time.Second,
@@ -569,7 +565,8 @@ func TestOrphanBytesSpreadRouting_SpreadRoutingRespectsOrphanBytes(t *testing.T)
 	_ = spreadManager
 	_ = proxytest.BuildWorkers(spreadManager, stores)
 	spreadSrv := &s3api.Server{
-		Manager: spreadManager,
+		Objects:   spreadManager.Objects(),
+		Multipart: spreadManager.Multipart(),
 	}
 	_ = spreadSrv
 	spreadSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
@@ -617,7 +614,7 @@ func TestOrphanBytesSpreadRouting_SpreadRoutingRespectsOrphanBytes(t *testing.T)
 	}
 
 	setOrphanBytes(t, "minio-2", 1500)
-	spreadManager.ClearCache()
+	spreadManager.Objects().LocationCache().Clear()
 
 	spreadKey := uniqueKey(t, "spread-orphan")
 	_, err = spreadClient.PutObject(ctx, &s3.PutObjectInput{

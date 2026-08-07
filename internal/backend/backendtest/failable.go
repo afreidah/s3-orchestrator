@@ -50,10 +50,10 @@ const (
 type FailableBackend struct {
 	backend.ObjectBackend
 
-	mu       sync.RWMutex
-	failAll  bool
+	mu         sync.RWMutex
+	failAll    bool
 	failAllErr error
-	perMethod map[Method]error
+	perMethod  map[Method]error
 }
 
 // New wraps the given backend. The returned FailableBackend passes through

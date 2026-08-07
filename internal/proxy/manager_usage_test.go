@@ -21,6 +21,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -68,7 +69,7 @@ func newUsageManager(t *testing.T, backendNames []string, store core.MetadataSto
 	t.Helper()
 	backends := make(map[string]backend.ObjectBackend, len(backendNames))
 	for _, name := range backendNames {
-		backends[name] = newMockBackend()
+		backends[name] = backendtest.NewInMemory()
 	}
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Storage: StorageDeps{
@@ -76,8 +77,7 @@ func newUsageManager(t *testing.T, backendNames []string, store core.MetadataSto
 			Order:    backendNames,
 		},
 		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
+			Metadata: testStoresFromMock(store),
 		},
 		Policies: PolicyConfig{
 			RoutingStrategy: config.RoutingPack,
@@ -96,7 +96,7 @@ func newUsageManagerWithLimits(t *testing.T, backendNames []string, store core.M
 	t.Helper()
 	backends := make(map[string]backend.ObjectBackend, len(backendNames))
 	for _, name := range backendNames {
-		backends[name] = newMockBackend()
+		backends[name] = backendtest.NewInMemory()
 	}
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
 		Storage: StorageDeps{
@@ -104,8 +104,7 @@ func newUsageManagerWithLimits(t *testing.T, backendNames []string, store core.M
 			Order:    backendNames,
 		},
 		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
+			Metadata: testStoresFromMock(store),
 		},
 		Policies: PolicyConfig{
 			UsageLimits:     limits,

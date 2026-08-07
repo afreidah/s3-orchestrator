@@ -23,12 +23,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
+	"go.uber.org/mock/gomock"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 )
@@ -42,22 +45,18 @@ import (
 // driven by varying the X-Proxy-Token header. The mock store's
 // GetMultipartUpload always returns mu, simulating a multipart upload that
 // physically lives under bucket-b.
-func twoBucketServer(t *testing.T, mu *core.MultipartUpload) (*httptest.Server, *testutil.MockStore) {
+func twoBucketServer(t *testing.T, mu *core.MultipartUpload) (*httptest.Server, *storetest.MockMetadataStore) {
 	t.Helper()
 
-	backend := newServerMockBackend()
-	mockStore := testutil.NewMockStore(t)
-	mockStore.GetBackendResp = "b1"
-	mockStore.GetMultipartResp = mu
+	backend := backendtest.NewInMemory()
+	mockStore := storetest.NewMockMetadataStore(gomock.NewController(t))
+	mockStore.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("b1", nil).AnyTimes()
+	mockStore.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).Return(mu, nil).AnyTimes()
 
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, mockStore, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]s3be.ObjectBackend{"b1": backend},
 			Order:    []string{"b1"},
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  mockStore,
-			Dashboard: mockStore,
 		},
 		Policies: proxy.PolicyConfig{
 			RoutingStrategy: config.RoutingPack,
@@ -70,7 +69,8 @@ func twoBucketServer(t *testing.T, mu *core.MultipartUpload) (*httptest.Server, 
 	t.Cleanup(mgr.Close)
 
 	srv := &Server{
-		Manager:       mgr,
+		Objects:       mgr.Objects(),
+		Multipart:     mgr.Multipart(),
 		MaxObjectSize: 10 * 1024 * 1024,
 	}
 	srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{

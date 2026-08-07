@@ -518,4 +518,3 @@ func (r *Replicator) IsBackendHealthy(name string) bool {
 	}
 	return cbb.IsHealthy()
 }
-

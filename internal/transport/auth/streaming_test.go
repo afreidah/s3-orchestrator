@@ -445,8 +445,8 @@ func TestParseTrailerNames(t *testing.T) {
 func TestStreamingMaterialFromRequest(t *testing.T) {
 	t.Parallel()
 	const seedSig = "deadbeef"
-	signingKey := []byte("k")                              //nolint:gosec // not a credential; deterministic test input
-	credScope := "20260507/us-east-1/s3/aws4_request"      //nolint:gosec // canonical SigV4 scope literal, not a credential
+	signingKey := []byte("k")                         //nolint:gosec // not a credential; deterministic test input
+	credScope := "20260507/us-east-1/s3/aws4_request" //nolint:gosec // canonical SigV4 scope literal, not a credential
 	amzDate := "20260507T000000Z"
 
 	build := func(headers map[string]string) *http.Request {

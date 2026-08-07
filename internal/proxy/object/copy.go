@@ -194,17 +194,17 @@ type nativeCopyContext struct {
 // accounting, and emits the completion observability. Returns:
 //
 //   - (etag, true, nil):  native copy + record both succeeded (the
-//                         success may have been confirmed via the
-//                         HEAD-probe recovery path; either way the
-//                         caller treats this as a successful copy)
+//     success may have been confirmed via the
+//     HEAD-probe recovery path; either way the
+//     caller treats this as a successful copy)
 //   - (_, true, err):     native copy succeeded but a post-step failed;
-//                         bytes are already on the destination, so the
-//                         caller MUST NOT fall back (that would copy
-//                         the bytes a second time)
+//     bytes are already on the destination, so the
+//     caller MUST NOT fall back (that would copy
+//     the bytes a second time)
 //   - (_, false, nil):    backend does not support native copy, or the
-//                         native call failed AND a HEAD probe confirmed
-//                         the destination is not in the expected state;
-//                         caller falls back to the materialized copy path
+//     native call failed AND a HEAD probe confirmed
+//     the destination is not in the expected state;
+//     caller falls back to the materialized copy path
 //
 // Native copy accounting differs from the materialized path: one API
 // call against the destination backend with no egress and no ingress,

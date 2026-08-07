@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
@@ -45,10 +46,10 @@ func TestBackendCore_LogFallback(t *testing.T) {
 // Asserts that expected 1 eligible backend, got.
 func TestExcludeUnhealthy_FiltersOpenCircuitBreaker(t *testing.T) {
 	t.Parallel()
-	healthy := backend.NewCircuitBreakerBackend(newMockBackend(), backend.CircuitBreakerConfig{Name: "healthy", Threshold: 3, Timeout: 15 * time.Second})
+	healthy := backend.NewCircuitBreakerBackend(backendtest.NewInMemory(), backend.CircuitBreakerConfig{Name: "healthy", Threshold: 3, Timeout: 15 * time.Second})
 
-	failingMock := newMockBackend()
-	failingMock.putErr = errors.New("backend down")
+	failingMock := backendtest.NewInMemory()
+	failingMock.PutErr = errors.New("backend down")
 	unhealthy := backend.NewCircuitBreakerBackend(failingMock, backend.CircuitBreakerConfig{Name: "unhealthy", Threshold: 1, Timeout: 15 * time.Second})
 
 	_, _ = unhealthy.PutObject(context.TODO(), "key", strings.NewReader("x"), 1, "", nil)
@@ -72,8 +73,8 @@ func TestExcludeUnhealthy_FiltersOpenCircuitBreaker(t *testing.T) {
 // TestExcludeUnhealthy_AllHealthy verifies the exclude unhealthy all healthy contract.
 func TestExcludeUnhealthy_AllHealthy(t *testing.T) {
 	t.Parallel()
-	b1 := backend.NewCircuitBreakerBackend(newMockBackend(), backend.CircuitBreakerConfig{Name: "b1", Threshold: 3, Timeout: 15 * time.Second})
-	b2 := backend.NewCircuitBreakerBackend(newMockBackend(), backend.CircuitBreakerConfig{Name: "b2", Threshold: 3, Timeout: 15 * time.Second})
+	b1 := backend.NewCircuitBreakerBackend(backendtest.NewInMemory(), backend.CircuitBreakerConfig{Name: "b1", Threshold: 3, Timeout: 15 * time.Second})
+	b2 := backend.NewCircuitBreakerBackend(backendtest.NewInMemory(), backend.CircuitBreakerConfig{Name: "b2", Threshold: 3, Timeout: 15 * time.Second})
 
 	c := infra.New(&infra.Config{
 		Backends: map[string]backend.ObjectBackend{
@@ -91,12 +92,12 @@ func TestExcludeUnhealthy_AllHealthy(t *testing.T) {
 // TestExcludeUnhealthy_AllUnhealthy_TimeoutNotElapsed verifies the timeout-not-elapsed contract.
 func TestExcludeUnhealthy_AllUnhealthy_TimeoutNotElapsed(t *testing.T) {
 	t.Parallel()
-	failingMock1 := newMockBackend()
-	failingMock1.putErr = errors.New("backend down")
+	failingMock1 := backendtest.NewInMemory()
+	failingMock1.PutErr = errors.New("backend down")
 	b1 := backend.NewCircuitBreakerBackend(failingMock1, backend.CircuitBreakerConfig{Name: "b1", Threshold: 1, Timeout: 15 * time.Second})
 
-	failingMock2 := newMockBackend()
-	failingMock2.putErr = errors.New("backend down")
+	failingMock2 := backendtest.NewInMemory()
+	failingMock2.PutErr = errors.New("backend down")
 	b2 := backend.NewCircuitBreakerBackend(failingMock2, backend.CircuitBreakerConfig{Name: "b2", Threshold: 1, Timeout: 15 * time.Second})
 
 	_, _ = b1.PutObject(context.TODO(), "key", strings.NewReader("x"), 1, "", nil)
@@ -118,12 +119,12 @@ func TestExcludeUnhealthy_AllUnhealthy_TimeoutNotElapsed(t *testing.T) {
 // TestExcludeUnhealthy_AllUnhealthy_ProbeEligible verifies the probe-eligible contract.
 func TestExcludeUnhealthy_AllUnhealthy_ProbeEligible(t *testing.T) {
 	t.Parallel()
-	failingMock1 := newMockBackend()
-	failingMock1.putErr = errors.New("backend down")
+	failingMock1 := backendtest.NewInMemory()
+	failingMock1.PutErr = errors.New("backend down")
 	b1 := backend.NewCircuitBreakerBackend(failingMock1, backend.CircuitBreakerConfig{Name: "b1", Threshold: 1, Timeout: 1 * time.Millisecond})
 
-	failingMock2 := newMockBackend()
-	failingMock2.putErr = errors.New("backend down")
+	failingMock2 := backendtest.NewInMemory()
+	failingMock2.PutErr = errors.New("backend down")
 	b2 := backend.NewCircuitBreakerBackend(failingMock2, backend.CircuitBreakerConfig{Name: "b2", Threshold: 1, Timeout: 1 * time.Millisecond})
 
 	_, _ = b1.PutObject(context.TODO(), "key", strings.NewReader("x"), 1, "", nil)
@@ -152,8 +153,8 @@ func TestExcludeUnhealthy_AllUnhealthy_ProbeEligible(t *testing.T) {
 // TestExcludeUnhealthy_HalfOpenAllowedForProbe verifies the half-open probe contract.
 func TestExcludeUnhealthy_HalfOpenAllowedForProbe(t *testing.T) {
 	t.Parallel()
-	failingMock := newMockBackend()
-	failingMock.putErr = errors.New("backend down")
+	failingMock := backendtest.NewInMemory()
+	failingMock.PutErr = errors.New("backend down")
 	b := backend.NewCircuitBreakerBackend(failingMock, backend.CircuitBreakerConfig{Name: "probe", Threshold: 1, Timeout: 1 * time.Millisecond})
 
 	_, _ = b.PutObject(context.TODO(), "key", strings.NewReader("x"), 1, "", nil)
@@ -190,7 +191,7 @@ func TestExcludeUnhealthy_NonCBBackendsAlwaysEligible(t *testing.T) {
 	t.Parallel()
 	c := infra.New(&infra.Config{
 		Backends: map[string]backend.ObjectBackend{
-			"plain": newMockBackend(),
+			"plain": backendtest.NewInMemory(),
 		},
 	})
 
@@ -319,15 +320,15 @@ func TestAcquireAdmission_Bounded(t *testing.T) {
 
 func TestEligibleForWrite_CombinesAllFilters(t *testing.T) {
 	t.Parallel()
-	healthy := newMockBackend()
-	draining := newMockBackend()
+	healthy := backendtest.NewInMemory()
+	draining := backendtest.NewInMemory()
 
-	failingMock := newMockBackend()
-	failingMock.putErr = errors.New("down")
+	failingMock := backendtest.NewInMemory()
+	failingMock.PutErr = errors.New("down")
 	unhealthy := backend.NewCircuitBreakerBackend(failingMock, backend.CircuitBreakerConfig{Name: "unhealthy", Threshold: 1, Timeout: 30 * time.Second})
 	_, _ = unhealthy.PutObject(context.TODO(), "k", strings.NewReader("x"), 1, "", nil)
 
-	overLimit := newMockBackend()
+	overLimit := backendtest.NewInMemory()
 
 	limits := map[string]storecore.UsageLimits{
 		"over-limit": {APIRequestLimit: 1},
@@ -366,9 +367,9 @@ func TestEligibleForWrite_MaxObjectSize(t *testing.T) {
 
 	c := infra.New(&infra.Config{
 		Backends: map[string]backend.ObjectBackend{
-			"small":     newMockBackend(),
-			"large":     newMockBackend(),
-			"unlimited": newMockBackend(),
+			"small":     backendtest.NewInMemory(),
+			"large":     backendtest.NewInMemory(),
+			"unlimited": backendtest.NewInMemory(),
 		},
 		Order:          []string{"small", "large", "unlimited"},
 		Usage:          usage,

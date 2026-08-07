@@ -248,6 +248,13 @@ func failoverFailureResult(span trace.Span, operation string, locations []core.O
 		observe.MarkSpanError(span, "all copies over usage limit")
 		return core.ErrUsageLimitExceeded
 	}
+	// No location was even attempted, so no probe error was recorded. The
+	// store contract makes this unreachable, but a nil return here would read
+	// as a successful zero-value response.
+	if lastErr == nil {
+		observe.MarkSpanError(span, "no copies to read from")
+		return core.ErrObjectNotFound
+	}
 	observe.RecordSpanError(span, lastErr)
 	return lastErr
 }

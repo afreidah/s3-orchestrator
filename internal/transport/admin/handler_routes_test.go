@@ -24,7 +24,7 @@ import (
 // summary the generated description uses as its operation summary.
 func TestRoutes_EntriesAreIdentified(t *testing.T) {
 	t.Parallel()
-	for _, rt := range newTestHandler().routes() {
+	for _, rt := range newTestHandler(t).routes() {
 		name := rt.Method + " " + rt.Pattern
 		if rt.Method == "" || rt.Pattern == "" {
 			t.Errorf("entry %q is missing a method or pattern", name)
@@ -47,7 +47,7 @@ func TestRoutes_EntriesAreIdentified(t *testing.T) {
 // prevent.
 func TestRoutes_EntriesDeclareAResponse(t *testing.T) {
 	t.Parallel()
-	for _, rt := range newTestHandler().routes() {
+	for _, rt := range newTestHandler(t).routes() {
 		name := rt.Method + " " + rt.Pattern
 		// A nil Response is only legitimate when the route says it does not
 		// answer in JSON, which today is the binary trace download.
@@ -65,7 +65,7 @@ func TestRoutes_EntriesDeclareAResponse(t *testing.T) {
 func TestRoutes_NoDuplicatePatterns(t *testing.T) {
 	t.Parallel()
 	seen := map[string]bool{}
-	for _, rt := range newTestHandler().routes() {
+	for _, rt := range newTestHandler(t).routes() {
 		key := rt.Method + " " + rt.Pattern
 		if seen[key] {
 			t.Errorf("duplicate route entry %q", key)
@@ -81,7 +81,7 @@ func TestRoutes_NoDuplicatePatterns(t *testing.T) {
 // never enters a handler body, which would need every dependency wired.
 func TestRegister_MountsEveryEntry(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -104,7 +104,7 @@ func TestRegister_MountsEveryEntry(t *testing.T) {
 // request must be rejected on every path in the table.
 func TestRegister_AppliesAuthToEveryEntry(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -136,7 +136,7 @@ func TestRoutes_StreamingEntriesDeclareTheEventType(t *testing.T) {
 		"POST /admin/api/reconcile":          true,
 		"DELETE /admin/api/backends/{name}":  true,
 	}
-	for _, rt := range newTestHandler().routes() {
+	for _, rt := range newTestHandler(t).routes() {
 		key := rt.Method + " " + rt.Pattern
 		switch {
 		case want[key] && rt.Stream == nil:

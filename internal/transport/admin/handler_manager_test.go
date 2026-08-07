@@ -5,7 +5,7 @@
 //
 // Extends handler_test.go, which only exercises the auth and input-validation
 // paths, with tests that route through a real BackendManager backed by the
-// shared testutil.MockStore. Covers status, cleanup queue, replication,
+// shared union store mock. Covers status, cleanup queue, replication,
 // drain, and integrity-skip branches of the admin API.
 // -------------------------------------------------------------------------------
 
@@ -30,29 +30,28 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"go.uber.org/mock/gomock"
 )
 
 // newTestHandlerWithManager returns a Handler backed by a real BackendManager
-// wrapping testutil.MockStore. Suitable for exercising handlers that reach
+// wrapping the generated union store mock. Suitable for exercising handlers that reach
 // into manager or cb-store methods. Encryptor, rawStore, and reconciler are
 // nil  -  handlers that require them should assert the documented nil-handling
 // behaviour rather than the happy path.
 func newTestHandlerWithManager(t *testing.T) *Handler {
 	t.Helper()
-	mock := testutil.NewMockStore(t)
+	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
+	storetest.Permissive(mock)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
 		FailureThreshold: 3,
 	})
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]backend.ObjectBackend{},
 			Order:    []string{},
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  mock,
-			Dashboard: mock,
 		},
 		Policies: proxy.PolicyConfig{
 			RoutingStrategy: config.RoutingPack,
@@ -70,20 +69,21 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	return &Handler{
-		log:        slog.Default().With(logfmt.Component("admin")),
-		backendOps: mgr,
-		runtimeOps: mgr.Runtime(),
-		replicator: workers.Replicator,
-		overRep:    workers.OverReplicationCleaner,
-		drain:      mgr.Drain(),
-		scrubber:   workers.Scrubber,
-		lifecycle:  mock,
-		dbHealthy:  cb.IsHealthy,
-		objects:    mock,
-		cleanup:    mock,
-		encAdmin:   mock,
-		token:      "test-token",
-		logLevel:   &lv,
+		log:          slog.Default().With(logfmt.Component("admin")),
+		backendOps:   mgr,
+		dashboardOps: dashboard.New(mock, mgr.Runtime().Usage(), nil, mgr.Runtime(), mgr.Drain()),
+		runtimeOps:   mgr.Runtime(),
+		replicator:   workers.Replicator,
+		overRep:      workers.OverReplicationCleaner,
+		drain:        mgr.Drain(),
+		scrubber:     workers.Scrubber,
+		lifecycle:    mock,
+		dbHealthy:    cb.IsHealthy,
+		objects:      mock,
+		cleanup:      mock,
+		encAdmin:     mock,
+		token:        "test-token",
+		logLevel:     &lv,
 	}
 }
 
@@ -143,16 +143,16 @@ func TestHandleCleanupQueue_ReturnsDepth(t *testing.T) {
 func TestHandleCleanupQueue_ItemShape(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithManager(t)
-	cleanupMock := testutil.NewMockStore(t)
-	cleanupMock.CleanupQueueDepthResp = 2
-	cleanupMock.PendingCleanupsResp = []core.CleanupItem{{
+	cleanupMock := storetest.NewMockCleanupStore(gomock.NewController(t))
+	cleanupMock.EXPECT().CleanupQueueDepth(gomock.Any()).Return(int64(2), nil).Times(1)
+	cleanupMock.EXPECT().GetPendingCleanups(gomock.Any(), gomock.Any()).Return([]core.CleanupItem{{
 		ID:          7,
 		BackendName: "minio-1",
 		ObjectKey:   "photos/cat.jpg",
 		Reason:      "delete_failed",
 		SizeBytes:   4096,
 		Attempts:    2,
-	}}
+	}}, nil).Times(1)
 	h.cleanup = cleanupMock
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -188,17 +188,17 @@ func TestHandleCleanupQueue_ItemShape(t *testing.T) {
 // is pre-seeded so GetAllObjectLocations returns a non-empty slice.
 func TestHandleObjectLocations_Happy(t *testing.T) {
 	t.Parallel()
-	mock := testutil.NewMockStore(t)
-	mock.GetAllLocationsResp = []core.ObjectLocation{{
+	mock := storetest.NewMockObjectStore(gomock.NewController(t))
+	mock.EXPECT().GetAllObjectLocations(gomock.Any(), "foo").Return([]core.ObjectLocation{{
 		ObjectKey:     "foo",
 		BackendName:   "b1",
 		Encrypted:     true,
 		KeyID:         "kid-1",
 		EncryptionKey: []byte("super-secret-raw-key"),
-	}}
+	}}, nil).Times(1)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: mock, cleanup: mock, token: "test-token", logLevel: &lv}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: mock, token: "test-token", logLevel: &lv}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -227,11 +227,14 @@ func TestHandleObjectLocations_Happy(t *testing.T) {
 }
 
 // TestHandleObjectLocations_NotFound covers the 500 path when the store
-// returns ErrObjectNotFound (the default MockStore behaviour). Handler
-// currently does not distinguish not-found from other store errors.
+// returns ErrObjectNotFound. The handler does not distinguish not-found from
+// any other store error, so an unknown key is a 500 rather than a 404.
 func TestHandleObjectLocations_NotFound(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithManager(t)
+	objects := storetest.NewMockObjectStore(gomock.NewController(t))
+	objects.EXPECT().GetAllObjectLocations(gomock.Any(), "ghost").Return(nil, core.ErrObjectNotFound).Times(1)
+	h.objects = objects
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -539,8 +542,8 @@ func TestHandleCleanupQueue_DepthError(t *testing.T) {
 	// Swap the cleanup store for one whose depth call fails. The
 	// handler reads h.cleanup directly, so assigning a fresh mock
 	// is sufficient.
-	cleanupMock := testutil.NewMockStore(t)
-	cleanupMock.CleanupQueueDepthErr = errors.New("db down")
+	cleanupMock := storetest.NewMockCleanupStore(gomock.NewController(t))
+	cleanupMock.EXPECT().CleanupQueueDepth(gomock.Any()).Return(int64(0), errors.New("db down")).Times(1)
 	h.cleanup = cleanupMock
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -558,9 +561,9 @@ func TestHandleCleanupQueue_DepthError(t *testing.T) {
 func TestHandleCleanupQueue_PendingError(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithManager(t)
-	cleanupMock := testutil.NewMockStore(t)
-	cleanupMock.CleanupQueueDepthResp = 5
-	cleanupMock.PendingCleanupsErr = errors.New("query failed")
+	cleanupMock := storetest.NewMockCleanupStore(gomock.NewController(t))
+	cleanupMock.EXPECT().CleanupQueueDepth(gomock.Any()).Return(int64(5), nil).Times(1)
+	cleanupMock.EXPECT().GetPendingCleanups(gomock.Any(), gomock.Any()).Return(nil, errors.New("query failed")).Times(1)
 	h.cleanup = cleanupMock
 	mux := http.NewServeMux()
 	h.Register(mux)
@@ -601,9 +604,6 @@ type flushUsageFailingOps struct {
 	inner BackendOps
 }
 
-func (f *flushUsageFailingOps) GetDashboardData(ctx context.Context) (*dashboard.Data, error) {
-	return f.inner.GetDashboardData(ctx)
-}
 func (f *flushUsageFailingOps) FlushUsage(_ context.Context) error {
 	return errors.New("flush failed")
 }
@@ -647,9 +647,6 @@ func TestHandleReconcile_CancelledContext(t *testing.T) {
 // per-handler error fixtures.
 type allFailingOps struct{}
 
-func (allFailingOps) GetDashboardData(_ context.Context) (*dashboard.Data, error) {
-	return nil, errors.New("dashboard down")
-}
 func (allFailingOps) FlushUsage(_ context.Context) error {
 	return errors.New("flush down")
 }
@@ -672,7 +669,7 @@ func (allFailingOps) IntegrityConfig() *config.IntegrityConfig {
 func TestHandleStatus_DashboardError(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithManager(t)
-	h.backendOps = allFailingOps{}
+	h.dashboardOps = newDashboardOps(t, nil, errors.New("dashboard unavailable"))
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -688,11 +685,11 @@ func TestHandleStatus_DashboardError(t *testing.T) {
 // the object store fails to fetch object locations.
 func TestHandleObjectLocations_StoreError(t *testing.T) {
 	t.Parallel()
-	mock := testutil.NewMockStore(t)
-	mock.GetAllLocationsErr = errors.New("query failed")
+	mock := storetest.NewMockObjectStore(gomock.NewController(t))
+	mock.EXPECT().GetAllObjectLocations(gomock.Any(), "foo").Return(nil, errors.New("query failed")).Times(1)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: mock, cleanup: mock, token: "test-token", logLevel: &lv}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: mock, token: "test-token", logLevel: &lv}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -852,26 +849,27 @@ func TestHandleRemoveBackend_PurgeTwoPhaseShapes(t *testing.T) {
 // way out so the background pass does not outlive the test.
 func TestHandleStartDrain_AcknowledgementShape(t *testing.T) {
 	t.Parallel()
-	mock := testutil.NewMockStore(t)
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
+	storetest.Permissive(mock)
+	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]backend.ObjectBackend{"b1": &fakeBackend{}},
 			Order:    []string{"b1"},
 		},
-		Stores:     proxy.StoreDeps{Metadata: mock, Dashboard: mock},
 		Policies:   proxy.PolicyConfig{RoutingStrategy: config.RoutingPack},
 		Operations: proxy.OperationalDeps{Metrics: mock},
 	})
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	h := &Handler{
-		log:        slog.Default().With(logfmt.Component("admin")),
-		backendOps: mgr,
-		runtimeOps: mgr.Runtime(),
-		drain:      mgr.Drain(),
-		lifecycle:  mock,
-		token:      "test-token",
-		logLevel:   &lv,
+		log:          slog.Default().With(logfmt.Component("admin")),
+		backendOps:   mgr,
+		dashboardOps: dashboard.New(mock, mgr.Runtime().Usage(), nil, mgr.Runtime(), mgr.Drain()),
+		runtimeOps:   mgr.Runtime(),
+		drain:        mgr.Drain(),
+		lifecycle:    mock,
+		token:        "test-token",
+		logLevel:     &lv,
 	}
 	t.Cleanup(func() { _ = h.drain.CancelDrain("b1") })
 

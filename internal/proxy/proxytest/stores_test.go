@@ -5,26 +5,24 @@ package proxytest_test
 import (
 	"testing"
 
+	"go.uber.org/mock/gomock"
+
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
-	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // newManager builds a minimal *proxy.BackendManager fed only by a single
 // MockStore. BuildWorkers needs the manager's MultipartManager to be
 // populated (NewBackendManager always builds it).
-func newManager(t *testing.T, mock *testutil.MockStore) *proxy.BackendManager {
+func newManager(t *testing.T, mock *storetest.MockMetadataStore) *proxy.BackendManager {
 	t.Helper()
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]backend.ObjectBackend{},
 			Order:    []string{},
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  mock,
-			Dashboard: mock,
 		},
 		Policies: proxy.PolicyConfig{
 			RoutingStrategy: config.RoutingPack,
@@ -42,7 +40,7 @@ func newManager(t *testing.T, mock *testutil.MockStore) *proxy.BackendManager {
 // that drain.Manager is installed on the manager.
 func TestBuildWorkers(t *testing.T) {
 	t.Parallel()
-	mock := testutil.NewMockStore(t)
+	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
 	mgr := newManager(t, mock)
 
 	w := proxytest.BuildWorkers(mgr, mock)

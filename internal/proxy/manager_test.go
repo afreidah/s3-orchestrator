@@ -52,7 +52,7 @@ func TestCountActiveMultipartUploads_DelegatesToStore(t *testing.T) {
 	mgr := newUsageManager(t, []string{"b1"}, store)
 	defer mgr.Close()
 
-	got, err := mgr.CountActiveMultipartUploads(context.Background(), "bucket/")
+	got, err := mgr.Multipart().CountActiveMultipartUploads(context.Background(), "bucket/")
 	if err != nil {
 		t.Fatalf("CountActiveMultipartUploads: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestCountActiveMultipartUploads_PropagatesError(t *testing.T) {
 	mgr := newUsageManager(t, []string{"b1"}, store)
 	defer mgr.Close()
 
-	if _, err := mgr.CountActiveMultipartUploads(context.Background(), "x/"); !errors.Is(err, storeErr) {
+	if _, err := mgr.Multipart().CountActiveMultipartUploads(context.Background(), "x/"); !errors.Is(err, storeErr) {
 		t.Errorf("err = %v, want %v", err, storeErr)
 	}
 }
@@ -221,32 +221,6 @@ func TestUsageFlushConfig_RoundTrip(t *testing.T) {
 // SetLifecycleConfig / LifecycleConfig
 // -------------------------------------------------------------------------
 
-// TestLifecycleConfig_RoundTrip verifies the lifecycle config round trip contract.
-// Asserts that lifecycle config mismatch: v.
-func TestLifecycleConfig_RoundTrip(t *testing.T) {
-	t.Parallel()
-	mgr := newUsageManager(t, []string{"b1"}, newPermissiveMock(t))
-
-	if mgr.LifecycleConfig() != nil {
-		t.Error("expected nil initial lifecycle config")
-	}
-
-	cfg := &config.LifecycleConfig{
-		Rules: []config.LifecycleRule{
-			{Prefix: "tmp/", ExpirationDays: 7},
-		},
-	}
-	mgr.SetLifecycleConfig(cfg)
-
-	got := mgr.LifecycleConfig()
-	if got == nil {
-		t.Fatal("expected non-nil lifecycle config")
-	}
-	if len(got.Rules) != 1 || got.Rules[0].Prefix != "tmp/" {
-		t.Errorf("lifecycle config mismatch: %+v", got)
-	}
-}
-
 // -------------------------------------------------------------------------
 // NearUsageLimit
 // -------------------------------------------------------------------------
@@ -293,7 +267,7 @@ func TestClearCache_RemovesAllEntries(t *testing.T) {
 	mgr.objectManager.LocationCache().Set("key1", "b1")
 	mgr.objectManager.LocationCache().Set("key2", "b1")
 
-	mgr.ClearCache()
+	mgr.Objects().LocationCache().Clear()
 
 	if _, ok := mgr.objectManager.LocationCache().Get("key1"); ok {
 		t.Error("expected key1 cache miss after ClearCache")
@@ -382,10 +356,7 @@ func TestNewBackendManager_RequiredDepsPanic(t *testing.T) {
 			},
 		}},
 		{"no metrics", &BackendManagerConfig{
-			Stores: StoreDeps{
-				Metadata:  mock,
-				Dashboard: mock,
-			},
+			Stores: StoreDeps{Metadata: mock},
 		}},
 	}
 	for _, tc := range cases {
@@ -411,10 +382,7 @@ func TestClearDrainState_NoDrainManager(t *testing.T) {
 	t.Parallel()
 	mock := newPermissiveMock(t)
 	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Stores: StoreDeps{
-			Metadata:  mock,
-			Dashboard: mock,
-		},
+		Stores: StoreDeps{Metadata: mock},
 		Policies: PolicyConfig{
 			RoutingStrategy: config.RoutingPack,
 		},

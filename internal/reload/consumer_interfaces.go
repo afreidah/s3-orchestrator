@@ -25,11 +25,16 @@ type usageLimitsApplier interface {
 }
 
 // managerConfigApplier is the subset of *proxy.BackendManager the
-// manager-config reload hook needs to swap UsageFlush, Lifecycle, and
-// Integrity sections and refresh quota gauges.
+// manager-config reload hook needs to swap UsageFlush and Integrity sections
+// and refresh quota gauges.
 type managerConfigApplier interface {
 	SetUsageFlushConfig(cfg *config.UsageFlushConfig)
-	SetLifecycleConfig(cfg *config.LifecycleConfig)
 	SetIntegrityConfig(cfg *config.IntegrityConfig)
 	UpdateQuotaMetrics(ctx context.Context) error
+}
+
+// lifecycleConfigApplier is the reloadable surface of *expiry.Manager, which
+// owns the lifecycle rules it applies.
+type lifecycleConfigApplier interface {
+	SetConfig(cfg *config.LifecycleConfig)
 }

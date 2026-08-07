@@ -182,4 +182,3 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 func adminPanicWriter(w http.ResponseWriter, status int, _ string, message string) {
 	httputil.WriteJSONError(w, status, message)
 }
-

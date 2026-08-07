@@ -8,27 +8,26 @@
 // sequential fallback (concurrency=1) works identically to the old behavior.
 // -------------------------------------------------------------------------------
 
-package proxy
+package worker
 
 import (
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"sync"
 	"testing"
 	"time"
 
 	"go.uber.org/mock/gomock"
 
-	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
-	"github.com/afreidah/s3-orchestrator/internal/worker"
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 )
 
@@ -76,113 +75,31 @@ func rebalanceStoreWithMoveSize(t *testing.T, size int64) *storetest.MockMetadat
 	return store
 }
 
-// delayedGetBackend wraps mockBackend with a configurable Get delay so
-// the concurrency tests can prove parallel execution.
+// delayedGetBackend adds a configurable GetObject delay to the shared
+// in-memory backend, so the concurrency tests can prove moves overlap rather
+// than run one after another.
 type delayedGetBackend struct {
-	mu      sync.Mutex
-	objects map[string]mockObject
-	putErr  error
-	getErr  error
-	headErr error
-	delErr  error
-	delay   time.Duration
+	*backendtest.InMemory
+	delay time.Duration
 }
 
 // newDelayedGetBackend constructs a delayed-Get backend.
 func newDelayedGetBackend(delay time.Duration) *delayedGetBackend {
-	return &delayedGetBackend{
-		objects: make(map[string]mockObject),
-		delay:   delay,
-	}
+	return &delayedGetBackend{InMemory: backendtest.NewInMemory(), delay: delay}
 }
 
-var _ s3be.ObjectBackend = (*delayedGetBackend)(nil)
+var _ backend.ObjectBackend = (*delayedGetBackend)(nil)
 
-// PutObject implements ObjectBackend.
-func (m *delayedGetBackend) PutObject(_ context.Context, key string, body io.Reader, _ int64, contentType string, metadata map[string]string) (string, error) {
-	m.mu.Lock()
-	err := m.putErr
-	m.mu.Unlock()
-	if err != nil {
-		return "", err
-	}
-	data, err := io.ReadAll(body)
-	if err != nil {
-		return "", err
-	}
-	etag := fmt.Sprintf(`"%x"`, len(data))
-	m.mu.Lock()
-	m.objects[key] = mockObject{data: data, contentType: contentType, etag: etag, metadata: metadata}
-	m.mu.Unlock()
-	return etag, nil
-}
-
-// GetObject implements ObjectBackend.
-func (m *delayedGetBackend) GetObject(_ context.Context, key string, _ string) (*s3be.GetObjectResult, error) {
+// GetObject sleeps for the configured delay before delegating.
+func (m *delayedGetBackend) GetObject(ctx context.Context, key, rangeHeader string) (*backend.GetObjectResult, error) {
 	time.Sleep(m.delay)
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.getErr != nil {
-		return nil, m.getErr
-	}
-	obj, ok := m.objects[key]
-	if !ok {
-		return nil, fmt.Errorf("object %q not found", key)
-	}
-	cp := make([]byte, len(obj.data))
-	copy(cp, obj.data)
-	return &s3be.GetObjectResult{
-		Body:        io.NopCloser(bytes.NewReader(cp)),
-		Size:        int64(len(cp)),
-		ContentType: obj.contentType,
-		ETag:        obj.etag,
-		Metadata:    obj.metadata,
-	}, nil
+	return m.InMemory.GetObject(ctx, key, rangeHeader)
 }
 
-// HeadObject implements ObjectBackend.
-func (m *delayedGetBackend) HeadObject(_ context.Context, key string) (*s3be.HeadObjectResult, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.headErr != nil {
-		return nil, m.headErr
-	}
-	obj, ok := m.objects[key]
-	if !ok {
-		return nil, fmt.Errorf("object %q not found", key)
-	}
-	return &s3be.HeadObjectResult{
-		Size:        int64(len(obj.data)),
-		ContentType: obj.contentType,
-		ETag:        obj.etag,
-		Metadata:    obj.metadata,
-	}, nil
-}
-
-// DeleteObject implements ObjectBackend.
-func (m *delayedGetBackend) DeleteObject(_ context.Context, key string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.delErr != nil {
-		return m.delErr
-	}
-	delete(m.objects, key)
-	return nil
-}
-
-// seedObject pre-populates the fake's in-memory store.
+// seedObject pre-populates the backing store without going through the write
+// path, for a test that only cares that the object is already there.
 func (m *delayedGetBackend) seedObject(key string, data []byte) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.objects[key] = mockObject{data: data, contentType: "application/octet-stream"}
-}
-
-// hasObject reports whether the key is present.
-func (m *delayedGetBackend) hasObject(key string) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	_, ok := m.objects[key]
-	return ok
+	m.Put(key, &backendtest.Object{Data: data, ContentType: "application/octet-stream"})
 }
 
 // TestExecuteMoves_Concurrent pins parallel execution.
@@ -195,31 +112,12 @@ func TestExecuteMoves_Concurrent(t *testing.T) {
 	}
 
 	store := rebalanceStoreWithMoveSize(t, 4)
-	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
-	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Storage: StorageDeps{
-			Backends: obs,
-			Order:    []string{"src", "dest"},
-		},
-		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
-		},
-		Policies: PolicyConfig{
-			CacheTTL:        5 * time.Second,
-			BackendTimeout:  30 * time.Second,
-			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: OperationalDeps{
-			Metrics: store,
-		},
-	})
-	workers := wireWorkersForTest(mgr, store)
-	_ = workers
+	obs := map[string]backend.ObjectBackend{"src": src, "dest": dest}
+	w := newRebalancerFor(t, store, obs, &fleetOpts{Order: []string{"src", "dest"}})
 
-	var plan []worker.RebalanceMove
+	var plan []RebalanceMove
 	for i := range 5 {
-		plan = append(plan, worker.RebalanceMove{
+		plan = append(plan, RebalanceMove{
 			ObjectKey:   fmt.Sprintf("key%d", i),
 			FromBackend: "src",
 			ToBackend:   "dest",
@@ -228,7 +126,7 @@ func TestExecuteMoves_Concurrent(t *testing.T) {
 	}
 
 	start := time.Now()
-	moved := workers.Rebalancer.ExecuteMoves(context.Background(), plan, "spread", 3, nil).Succeeded
+	moved := w.ExecuteMoves(context.Background(), plan, "spread", 3, nil).Succeeded
 	elapsed := time.Since(start)
 
 	if moved != 5 {
@@ -238,7 +136,7 @@ func TestExecuteMoves_Concurrent(t *testing.T) {
 		t.Errorf("elapsed = %v, expected < 200ms with concurrency 3", elapsed)
 	}
 	for i := range 5 {
-		if !dest.hasObject(fmt.Sprintf("key%d", i)) {
+		if !dest.Has(fmt.Sprintf("key%d", i)) {
 			t.Errorf("key%d not found on destination", i)
 		}
 	}
@@ -253,35 +151,16 @@ func TestExecuteMoves_PartialFailure(t *testing.T) {
 	src.seedObject("ok2", []byte("data"))
 
 	store := rebalanceStoreWithMoveSize(t, 4)
-	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
-	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Storage: StorageDeps{
-			Backends: obs,
-			Order:    []string{"src", "dest"},
-		},
-		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
-		},
-		Policies: PolicyConfig{
-			CacheTTL:        5 * time.Second,
-			BackendTimeout:  30 * time.Second,
-			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: OperationalDeps{
-			Metrics: store,
-		},
-	})
-	workers := wireWorkersForTest(mgr, store)
-	_ = workers
+	obs := map[string]backend.ObjectBackend{"src": src, "dest": dest}
+	w := newRebalancerFor(t, store, obs, &fleetOpts{Order: []string{"src", "dest"}})
 
-	plan := []worker.RebalanceMove{
+	plan := []RebalanceMove{
 		{ObjectKey: "ok1", FromBackend: "src", ToBackend: "dest", SizeBytes: 4},
 		{ObjectKey: "fail", FromBackend: "src", ToBackend: "dest", SizeBytes: 4},
 		{ObjectKey: "ok2", FromBackend: "src", ToBackend: "dest", SizeBytes: 4},
 	}
 
-	moved := workers.Rebalancer.ExecuteMoves(context.Background(), plan, "spread", 3, nil).Succeeded
+	moved := w.ExecuteMoves(context.Background(), plan, "spread", 3, nil).Succeeded
 	if moved != 2 {
 		t.Errorf("moved = %d, want 2 (one should fail)", moved)
 	}
@@ -296,50 +175,19 @@ func TestExecuteMoves_SequentialFallback(t *testing.T) {
 	src.seedObject("b", []byte("world"))
 
 	store := rebalanceStoreWithMoveSize(t, 5)
-	obs := map[string]s3be.ObjectBackend{"src": src, "dest": dest}
-	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Storage: StorageDeps{
-			Backends: obs,
-			Order:    []string{"src", "dest"},
-		},
-		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
-		},
-		Policies: PolicyConfig{
-			CacheTTL:        5 * time.Second,
-			BackendTimeout:  30 * time.Second,
-			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: OperationalDeps{
-			Metrics: store,
-		},
-	})
-	workers := wireWorkersForTest(mgr, store)
-	_ = workers
+	obs := map[string]backend.ObjectBackend{"src": src, "dest": dest}
+	w := newRebalancerFor(t, store, obs, &fleetOpts{Order: []string{"src", "dest"}})
 
-	plan := []worker.RebalanceMove{
+	plan := []RebalanceMove{
 		{ObjectKey: "a", FromBackend: "src", ToBackend: "dest", SizeBytes: 5},
 		{ObjectKey: "b", FromBackend: "src", ToBackend: "dest", SizeBytes: 5},
 	}
-	moved := workers.Rebalancer.ExecuteMoves(context.Background(), plan, "pack", 1, nil).Succeeded
+	moved := w.ExecuteMoves(context.Background(), plan, "pack", 1, nil).Succeeded
 	if moved != 2 {
 		t.Errorf("moved = %d, want 2", moved)
 	}
-	if !dest.hasObject("a") || !dest.hasObject("b") {
+	if !dest.Has("a") || !dest.Has("b") {
 		t.Error("expected both objects on destination")
-	}
-}
-
-// TestExceedsThreshold_BelowThreshold pins the no-spread case.
-func TestExceedsThreshold_BelowThreshold(t *testing.T) {
-	t.Parallel()
-	stats := map[string]core.QuotaStat{
-		"b1": {BytesUsed: 500, BytesLimit: 1000},
-		"b2": {BytesUsed: 400, BytesLimit: 1000},
-	}
-	if worker.ExceedsThreshold(stats, []string{"b1", "b2"}, 0.20) {
-		t.Error("10% spread should not exceed 20% threshold")
 	}
 }
 
@@ -350,20 +198,8 @@ func TestExceedsThreshold_AtThreshold(t *testing.T) {
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	if !worker.ExceedsThreshold(stats, []string{"b1", "b2"}, 0.50) {
+	if !ExceedsThreshold(stats, []string{"b1", "b2"}, 0.50) {
 		t.Error("60% spread should exceed 50% threshold")
-	}
-}
-
-// TestExceedsThreshold_SingleBackend pins the single-backend short
-// circuit.
-func TestExceedsThreshold_SingleBackend(t *testing.T) {
-	t.Parallel()
-	stats := map[string]core.QuotaStat{
-		"b1": {BytesUsed: 900, BytesLimit: 1000},
-	}
-	if worker.ExceedsThreshold(stats, []string{"b1"}, 0.10) {
-		t.Error("single backend should never exceed threshold")
 	}
 }
 
@@ -375,7 +211,7 @@ func TestExceedsThreshold_ZeroLimitSkipped(t *testing.T) {
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 0, BytesLimit: 0},
 	}
-	if worker.ExceedsThreshold(stats, []string{"b1", "b2"}, 0.10) {
+	if ExceedsThreshold(stats, []string{"b1", "b2"}, 0.10) {
 		t.Error("zero-limit backends should be skipped")
 	}
 }
@@ -387,7 +223,7 @@ func TestExceedsThreshold_MissingStatsSkipped(t *testing.T) {
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 	}
-	if worker.ExceedsThreshold(stats, []string{"b1", "b2"}, 0.10) {
+	if ExceedsThreshold(stats, []string{"b1", "b2"}, 0.10) {
 		t.Error("missing stats should be skipped, leaving single backend")
 	}
 }
@@ -401,8 +237,9 @@ func TestRebalance_QuotaStatsError(t *testing.T) {
 		Return(nil, fmt.Errorf("db down")).AnyTimes()
 	storetest.Permissive(store)
 
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{"b1": newMockBackend()})
-	if _, err := workers.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
+	w := newRebalancerFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{})
+
+	if _, err := w.Rebalance(context.Background(), config.RebalanceConfig{
 		Strategy:  "spread",
 		BatchSize: 10,
 		Threshold: 0.10,
@@ -431,12 +268,12 @@ func TestRebalance_CopyMapFetchFails_Propagates(t *testing.T) {
 		Return(nil, fmt.Errorf("db down")).AnyTimes()
 	storetest.Permissive(store)
 
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{
-		"b1": newMockBackend(),
-		"b2": newMockBackend(),
-	})
+	w := newRebalancerFor(t, store, map[string]backend.ObjectBackend{
+		"b1": backendtest.NewInMemory(),
+		"b2": backendtest.NewInMemory(),
+	}, &fleetOpts{})
 
-	if _, err := workers.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
+	if _, err := w.Rebalance(context.Background(), config.RebalanceConfig{
 		Strategy:  "spread",
 		BatchSize: 10,
 		Threshold: 0.10,
@@ -458,12 +295,12 @@ func TestRebalance_BelowThreshold_Skips(t *testing.T) {
 		}, nil).AnyTimes()
 	storetest.Permissive(store)
 
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{
-		"b1": newMockBackend(),
-		"b2": newMockBackend(),
-	})
+	w := newRebalancerFor(t, store, map[string]backend.ObjectBackend{
+		"b1": backendtest.NewInMemory(),
+		"b2": backendtest.NewInMemory(),
+	}, &fleetOpts{})
 
-	movedSum, err := workers.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
+	movedSum, err := w.Rebalance(context.Background(), config.RebalanceConfig{
 		Strategy:  "spread",
 		BatchSize: 10,
 		Threshold: 0.20,
@@ -491,12 +328,12 @@ func TestRebalance_EmptyPlan_Skips(t *testing.T) {
 		Return(nil, nil).AnyTimes()
 	storetest.Permissive(store)
 
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{
-		"b1": newMockBackend(),
-		"b2": newMockBackend(),
-	})
+	w := newRebalancerFor(t, store, map[string]backend.ObjectBackend{
+		"b1": backendtest.NewInMemory(),
+		"b2": backendtest.NewInMemory(),
+	}, &fleetOpts{})
 
-	movedSum, err := workers.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
+	movedSum, err := w.Rebalance(context.Background(), config.RebalanceConfig{
 		Strategy:  "pack",
 		BatchSize: 10,
 		Threshold: 0.10,
@@ -513,58 +350,15 @@ func TestRebalance_EmptyPlan_Skips(t *testing.T) {
 	}
 }
 
-// TestRebalance_UnknownStrategy surfaces the unknown-strategy guard.
-func TestRebalance_UnknownStrategy(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetQuotaStats(gomock.Any()).
-		Return(map[string]core.QuotaStat{
-			"b1": {BytesUsed: 900, BytesLimit: 1000},
-			"b2": {BytesUsed: 100, BytesLimit: 1000},
-		}, nil).AnyTimes()
-	storetest.Permissive(store)
-
-	_, workers := newTestManagerWithWorkers(t, store, map[string]*mockBackend{
-		"b1": newMockBackend(),
-		"b2": newMockBackend(),
-	})
-	if _, err := workers.Rebalancer.Rebalance(context.Background(), config.RebalanceConfig{
-		Strategy:  "invalid",
-		BatchSize: 10,
-		Threshold: 0.10,
-	}, nil); err == nil {
-		t.Fatal("expected error for unknown strategy")
-	}
-}
-
-// newRebalanceManager wires a manager with the mock store and named
-// backends.
-func newRebalanceManager(t *testing.T, store core.MetadataStore, names []string) (*BackendManager, *testWorkers) {
+// newRebalancerOver builds a Rebalancer over one in-memory backend per name,
+// in the order given.
+func newRebalancerOver(t *testing.T, store core.MetadataStore, names []string) *Rebalancer {
 	t.Helper()
-	backends := make(map[string]s3be.ObjectBackend, len(names))
+	backends := make(map[string]backend.ObjectBackend, len(names))
 	for _, name := range names {
-		backends[name] = newMockBackend()
+		backends[name] = backendtest.NewInMemory()
 	}
-	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Storage: StorageDeps{
-			Backends: backends,
-			Order:    names,
-		},
-		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
-		},
-		Policies: PolicyConfig{
-			CacheTTL:        5 * time.Second,
-			BackendTimeout:  30 * time.Second,
-			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: OperationalDeps{
-			Metrics: store,
-		},
-	})
-	return mgr, wireWorkersForTest(mgr, store)
+	return newRebalancerFor(t, store, backends, &fleetOpts{Order: names})
 }
 
 // rebalanceStoreWithList returns a store that lists the supplied
@@ -595,14 +389,14 @@ func TestPlanPackTight_MovesFromLeastToMostFull(t *testing.T) {
 	store := rebalanceStoreWithList(t, []core.ObjectLocation{
 		{ObjectKey: "small.txt", BackendName: "b2", SizeBytes: 100},
 	}, nil, nil)
-	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
+	w := newRebalancerOver(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
 
-	plan, err := workers.Rebalancer.PlanPackTight(context.Background(), stats, 10)
+	plan, err := w.PlanPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -626,13 +420,13 @@ func TestPlanPackTight_RespectsBatchSize(t *testing.T) {
 		}
 	}
 	store := rebalanceStoreWithList(t, objects, nil, nil)
-	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
+	w := newRebalancerOver(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 100, BytesLimit: 1000},
 		"b2": {BytesUsed: 900, BytesLimit: 1000},
 	}
-	plan, err := workers.Rebalancer.PlanPackTight(context.Background(), stats, 3)
+	plan, err := w.PlanPackTight(context.Background(), stats, 3)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -648,13 +442,13 @@ func TestPlanPackTight_SkipsLargeObjects(t *testing.T) {
 	store := rebalanceStoreWithList(t, []core.ObjectLocation{
 		{ObjectKey: "huge.bin", BackendName: "b2", SizeBytes: 500},
 	}, nil, nil)
-	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
+	w := newRebalancerOver(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	plan, err := workers.Rebalancer.PlanPackTight(context.Background(), stats, 10)
+	plan, err := w.PlanPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -667,14 +461,14 @@ func TestPlanPackTight_SkipsLargeObjects(t *testing.T) {
 // are skipped.
 func TestPlanPackTight_ZeroLimitBackendsSkipped(t *testing.T) {
 	t.Parallel()
-	store := newPermissiveMock(t)
-	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
+	store := newPermissiveStore(t)
+	w := newRebalancerOver(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 0, BytesLimit: 0},
 		"b2": {BytesUsed: 500, BytesLimit: 1000},
 	}
-	plan, err := workers.Rebalancer.PlanPackTight(context.Background(), stats, 10)
+	plan, err := w.PlanPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -690,13 +484,13 @@ func TestPlanSpreadEven_EqualizesUtilization(t *testing.T) {
 		{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 100},
 		{ObjectKey: "obj2", BackendName: "b1", SizeBytes: 100},
 	}, nil, nil)
-	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
+	w := newRebalancerOver(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	plan, err := workers.Rebalancer.PlanSpreadEven(context.Background(), stats, 10)
+	plan, err := w.PlanSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -717,13 +511,13 @@ func TestPlanSpreadEven_SkipsWhenTargetHasCopy(t *testing.T) {
 	store := rebalanceStoreWithList(t, []core.ObjectLocation{
 		{ObjectKey: "obj1", BackendName: "b1", SizeBytes: 100},
 	}, nil, map[string][]string{"obj1": {"b1", "b2"}})
-	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
+	w := newRebalancerOver(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	plan, err := workers.Rebalancer.PlanSpreadEven(context.Background(), stats, 10)
+	plan, err := w.PlanSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -739,13 +533,13 @@ func TestPlanPackTight_SkipsWhenTargetHasCopy(t *testing.T) {
 	store := rebalanceStoreWithList(t, []core.ObjectLocation{
 		{ObjectKey: "obj1", BackendName: "b2", SizeBytes: 100},
 	}, nil, map[string][]string{"obj1": {"b1", "b2"}})
-	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
+	w := newRebalancerOver(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
-	plan, err := workers.Rebalancer.PlanPackTight(context.Background(), stats, 10)
+	plan, err := w.PlanPackTight(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planPackTight: %v", err)
 	}
@@ -757,10 +551,10 @@ func TestPlanPackTight_SkipsWhenTargetHasCopy(t *testing.T) {
 // TestPlanSpreadEven_ZeroTotalLimit handles the empty-stats case.
 func TestPlanSpreadEven_ZeroTotalLimit(t *testing.T) {
 	t.Parallel()
-	store := newPermissiveMock(t)
-	_, workers := newRebalanceManager(t, store, []string{"b1"})
+	store := newPermissiveStore(t)
+	w := newRebalancerOver(t, store, []string{"b1"})
 
-	plan, err := workers.Rebalancer.PlanSpreadEven(context.Background(), map[string]core.QuotaStat{}, 10)
+	plan, err := w.PlanSpreadEven(context.Background(), map[string]core.QuotaStat{}, 10)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -772,14 +566,14 @@ func TestPlanSpreadEven_ZeroTotalLimit(t *testing.T) {
 // TestPlanSpreadEven_AlreadyBalanced asserts no moves when balanced.
 func TestPlanSpreadEven_AlreadyBalanced(t *testing.T) {
 	t.Parallel()
-	store := newPermissiveMock(t)
-	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
+	store := newPermissiveStore(t)
+	w := newRebalancerOver(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 500, BytesLimit: 1000},
 		"b2": {BytesUsed: 500, BytesLimit: 1000},
 	}
-	plan, err := workers.Rebalancer.PlanSpreadEven(context.Background(), stats, 10)
+	plan, err := w.PlanSpreadEven(context.Background(), stats, 10)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -792,13 +586,13 @@ func TestPlanSpreadEven_AlreadyBalanced(t *testing.T) {
 func TestPlanSpreadEven_ListObjectsByBackendError(t *testing.T) {
 	t.Parallel()
 	store := rebalanceStoreWithList(t, nil, errors.New("db error"), nil)
-	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
+	w := newRebalancerOver(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	if _, err := workers.Rebalancer.PlanSpreadEven(context.Background(), stats, 10); err == nil {
+	if _, err := w.PlanSpreadEven(context.Background(), stats, 10); err == nil {
 		t.Fatal("expected error from ListObjectsByBackend failure")
 	}
 }
@@ -808,13 +602,13 @@ func TestPlanSpreadEven_ListObjectsByBackendError(t *testing.T) {
 func TestPlanPackTight_ListObjectsByBackendError(t *testing.T) {
 	t.Parallel()
 	store := rebalanceStoreWithList(t, nil, errors.New("db error"), nil)
-	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
+	w := newRebalancerOver(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 800, BytesLimit: 1000},
 		"b2": {BytesUsed: 200, BytesLimit: 1000},
 	}
-	if _, err := workers.Rebalancer.PlanPackTight(context.Background(), stats, 10); err == nil {
+	if _, err := w.PlanPackTight(context.Background(), stats, 10); err == nil {
 		t.Fatal("expected error from ListObjectsByBackend failure")
 	}
 }
@@ -826,9 +620,9 @@ func TestPlanPackTight_ListObjectsByBackendError(t *testing.T) {
 // DeleteOrEnqueue), not 3.
 func TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete(t *testing.T) {
 	t.Parallel()
-	src := newMockBackend()
+	src := backendtest.NewInMemory()
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
-	dest := newMockBackend()
+	dest := backendtest.NewInMemory()
 
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
@@ -836,97 +630,44 @@ func TestExecuteOneMove_AccountsAPICallExactlyOncePerDelete(t *testing.T) {
 		Return(int64(4), nil).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Storage: StorageDeps{
-			Backends: map[string]s3be.ObjectBackend{"src": src, "dest": dest},
-			Order:    []string{"src", "dest"},
-		},
-		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
-		},
-		Policies: PolicyConfig{
-			CacheTTL:        5 * time.Second,
-			BackendTimeout:  30 * time.Second,
-			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: OperationalDeps{
-			Metrics: store,
-		},
-	})
-	workers := wireWorkersForTest(mgr, store)
-	_ = workers
+	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+		&fleetOpts{Order: []string{"src", "dest"}})
+	w := NewRebalancer(rt, coord, store)
 
-	move := worker.RebalanceMove{
+	move := RebalanceMove{
 		ObjectKey:   "key",
 		FromBackend: "src",
 		ToBackend:   "dest",
 		SizeBytes:   4,
 	}
-	if !workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+	if !w.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Fatal("ExecuteOneMove returned false on the success path")
 	}
 
-	if got := mgr.Runtime().Usage().Backend().Load("src", counter.FieldAPIRequests); got != 2 {
+	if got := rt.Usage().Backend().Load("src", counter.FieldAPIRequests); got != 2 {
 		t.Errorf("src apiRequests = %d, want 2 (Egress + DeleteOrEnqueue, no double-count)", got)
 	}
-	if got := mgr.Runtime().Usage().Backend().Load("dest", counter.FieldAPIRequests); got != 1 {
+	if got := rt.Usage().Backend().Load("dest", counter.FieldAPIRequests); got != 1 {
 		t.Errorf("dest apiRequests = %d, want 1 (Ingress only)", got)
-	}
-}
-
-// TestExecuteOneMove_SourceBackendNotFound rejects an unknown source.
-func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
-	t.Parallel()
-	store := newPermissiveMock(t)
-	_, workers := newRebalanceManager(t, store, []string{"b1"})
-
-	move := worker.RebalanceMove{
-		ObjectKey:   "key",
-		FromBackend: "nonexistent",
-		ToBackend:   "b1",
-		SizeBytes:   100,
-	}
-	if workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
-		t.Error("expected false when source backend not found")
 	}
 }
 
 // TestExecuteOneMove_DestBackendNotFound rejects an unknown destination.
 func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 	t.Parallel()
-	src := newMockBackend()
+	src := backendtest.NewInMemory()
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
-	store := newPermissiveMock(t)
-	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Storage: StorageDeps{
-			Backends: map[string]s3be.ObjectBackend{"src": src},
-			Order:    []string{"src"},
-		},
-		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
-		},
-		Policies: PolicyConfig{
-			CacheTTL:        5 * time.Second,
-			BackendTimeout:  30 * time.Second,
-			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: OperationalDeps{
-			Metrics: store,
-		},
-	})
-	workers := wireWorkersForTest(mgr, store)
-	_ = workers
+	store := newPermissiveStore(t)
+	w := newRebalancerFor(t, store, map[string]backend.ObjectBackend{"src": src}, &fleetOpts{Order: []string{"src"}})
 
-	move := worker.RebalanceMove{
+	move := RebalanceMove{
 		ObjectKey:   "key",
 		FromBackend: "src",
 		ToBackend:   "nonexistent",
 		SizeBytes:   4,
 	}
-	if workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+	if w.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when dest backend not found")
 	}
 }
@@ -934,39 +675,22 @@ func TestExecuteOneMove_DestBackendNotFound(t *testing.T) {
 // TestExecuteOneMove_SourceGetFails returns false on a Get failure.
 func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 	t.Parallel()
-	src := newMockBackend()
-	src.getErr = errors.New("read error")
-	dest := newMockBackend()
+	src := backendtest.NewInMemory()
+	src.GetErr = errors.New("read error")
+	dest := backendtest.NewInMemory()
 
-	store := newPermissiveMock(t)
-	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Storage: StorageDeps{
-			Backends: map[string]s3be.ObjectBackend{"src": src, "dest": dest},
-			Order:    []string{"src", "dest"},
-		},
-		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
-		},
-		Policies: PolicyConfig{
-			CacheTTL:        5 * time.Second,
-			BackendTimeout:  30 * time.Second,
-			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: OperationalDeps{
-			Metrics: store,
-		},
-	})
-	workers := wireWorkersForTest(mgr, store)
-	_ = workers
+	store := newPermissiveStore(t)
+	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+		&fleetOpts{Order: []string{"src", "dest"}})
+	w := NewRebalancer(rt, coord, store)
 
-	move := worker.RebalanceMove{
+	move := RebalanceMove{
 		ObjectKey:   "key",
 		FromBackend: "src",
 		ToBackend:   "dest",
 		SizeBytes:   4,
 	}
-	if workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+	if w.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when source get fails")
 	}
 }
@@ -974,40 +698,23 @@ func TestExecuteOneMove_SourceGetFails(t *testing.T) {
 // TestExecuteOneMove_DestPutFails returns false on a Put failure.
 func TestExecuteOneMove_DestPutFails(t *testing.T) {
 	t.Parallel()
-	src := newMockBackend()
+	src := backendtest.NewInMemory()
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
-	dest := newMockBackend()
-	dest.putErr = errors.New("write error")
+	dest := backendtest.NewInMemory()
+	dest.PutErr = errors.New("write error")
 
-	store := newPermissiveMock(t)
-	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Storage: StorageDeps{
-			Backends: map[string]s3be.ObjectBackend{"src": src, "dest": dest},
-			Order:    []string{"src", "dest"},
-		},
-		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
-		},
-		Policies: PolicyConfig{
-			CacheTTL:        5 * time.Second,
-			BackendTimeout:  30 * time.Second,
-			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: OperationalDeps{
-			Metrics: store,
-		},
-	})
-	workers := wireWorkersForTest(mgr, store)
-	_ = workers
+	store := newPermissiveStore(t)
+	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+		&fleetOpts{Order: []string{"src", "dest"}})
+	w := NewRebalancer(rt, coord, store)
 
-	move := worker.RebalanceMove{
+	move := RebalanceMove{
 		ObjectKey:   "key",
 		FromBackend: "src",
 		ToBackend:   "dest",
 		SizeBytes:   4,
 	}
-	if workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+	if w.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when dest put fails")
 	}
 }
@@ -1016,9 +723,9 @@ func TestExecuteOneMove_DestPutFails(t *testing.T) {
 // dest-orphan cleanup runs when MoveObjectLocation returns an error.
 func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 	t.Parallel()
-	src := newMockBackend()
+	src := backendtest.NewInMemory()
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
-	dest := newMockBackend()
+	dest := backendtest.NewInMemory()
 
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
@@ -1026,37 +733,20 @@ func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 		DoAndReturn(stubMoveErr(errors.New("db error"))).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Storage: StorageDeps{
-			Backends: map[string]s3be.ObjectBackend{"src": src, "dest": dest},
-			Order:    []string{"src", "dest"},
-		},
-		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
-		},
-		Policies: PolicyConfig{
-			CacheTTL:        5 * time.Second,
-			BackendTimeout:  30 * time.Second,
-			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: OperationalDeps{
-			Metrics: store,
-		},
-	})
-	workers := wireWorkersForTest(mgr, store)
-	_ = workers
+	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+		&fleetOpts{Order: []string{"src", "dest"}})
+	w := NewRebalancer(rt, coord, store)
 
-	move := worker.RebalanceMove{
+	move := RebalanceMove{
 		ObjectKey:   "key",
 		FromBackend: "src",
 		ToBackend:   "dest",
 		SizeBytes:   4,
 	}
-	if workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+	if w.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when MoveObjectLocation fails")
 	}
-	if dest.hasObject("key") {
+	if dest.Has("key") {
 		t.Error("orphan should be cleaned up from destination")
 	}
 }
@@ -1065,10 +755,10 @@ func TestExecuteOneMove_MoveLocationError_CleansUpOrphan(t *testing.T) {
 // asserts the cleanup-queue fallback when the inline delete also fails.
 func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testing.T) {
 	t.Parallel()
-	src := newMockBackend()
+	src := backendtest.NewInMemory()
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
-	dest := newMockBackend()
-	dest.delErr = errors.New("delete failed")
+	dest := backendtest.NewInMemory()
+	dest.DeleteErr = errors.New("delete failed")
 
 	re := &rebalEnqueue{}
 	ctrl := gomock.NewController(t)
@@ -1079,34 +769,17 @@ func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testin
 		DoAndReturn(stubRebalEnqueue(re)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Storage: StorageDeps{
-			Backends: map[string]s3be.ObjectBackend{"src": src, "dest": dest},
-			Order:    []string{"src", "dest"},
-		},
-		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
-		},
-		Policies: PolicyConfig{
-			CacheTTL:        5 * time.Second,
-			BackendTimeout:  30 * time.Second,
-			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: OperationalDeps{
-			Metrics: store,
-		},
-	})
-	workers := wireWorkersForTest(mgr, store)
-	_ = workers
+	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+		&fleetOpts{Order: []string{"src", "dest"}})
+	w := NewRebalancer(rt, coord, store)
 
-	move := worker.RebalanceMove{
+	move := RebalanceMove{
 		ObjectKey:   "key",
 		FromBackend: "src",
 		ToBackend:   "dest",
 		SizeBytes:   4,
 	}
-	if workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+	if w.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false")
 	}
 	if len(re.calls) != 1 {
@@ -1121,42 +794,25 @@ func TestExecuteOneMove_MoveLocationError_CleanupFails_EnqueuesCleanup(t *testin
 // row Move triggers dest cleanup.
 func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
 	t.Parallel()
-	src := newMockBackend()
+	src := backendtest.NewInMemory()
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
-	dest := newMockBackend()
+	dest := backendtest.NewInMemory()
 
 	store := rebalanceStoreWithMoveSize(t, 0)
-	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Storage: StorageDeps{
-			Backends: map[string]s3be.ObjectBackend{"src": src, "dest": dest},
-			Order:    []string{"src", "dest"},
-		},
-		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
-		},
-		Policies: PolicyConfig{
-			CacheTTL:        5 * time.Second,
-			BackendTimeout:  30 * time.Second,
-			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: OperationalDeps{
-			Metrics: store,
-		},
-	})
-	workers := wireWorkersForTest(mgr, store)
-	_ = workers
+	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+		&fleetOpts{Order: []string{"src", "dest"}})
+	w := NewRebalancer(rt, coord, store)
 
-	move := worker.RebalanceMove{
+	move := RebalanceMove{
 		ObjectKey:   "key",
 		FromBackend: "src",
 		ToBackend:   "dest",
 		SizeBytes:   4,
 	}
-	if workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+	if w.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected false when movedSize is 0")
 	}
-	if dest.hasObject("key") {
+	if dest.Has("key") {
 		t.Error("orphan should be cleaned up from destination")
 	}
 }
@@ -1165,10 +821,10 @@ func TestExecuteOneMove_MovedSizeZero_CleansUpOrphan(t *testing.T) {
 // source-delete failure enqueues a cleanup row but still returns true.
 func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 	t.Parallel()
-	src := newMockBackend()
+	src := backendtest.NewInMemory()
 	_, _ = src.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
-	src.delErr = errors.New("delete failed")
-	dest := newMockBackend()
+	src.DeleteErr = errors.New("delete failed")
+	dest := backendtest.NewInMemory()
 
 	re := &rebalEnqueue{}
 	ctrl := gomock.NewController(t)
@@ -1179,34 +835,17 @@ func TestExecuteOneMove_SourceDeleteFails_EnqueuesCleanup(t *testing.T) {
 		DoAndReturn(stubRebalEnqueue(re)).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Storage: StorageDeps{
-			Backends: map[string]s3be.ObjectBackend{"src": src, "dest": dest},
-			Order:    []string{"src", "dest"},
-		},
-		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
-		},
-		Policies: PolicyConfig{
-			CacheTTL:        5 * time.Second,
-			BackendTimeout:  30 * time.Second,
-			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: OperationalDeps{
-			Metrics: store,
-		},
-	})
-	workers := wireWorkersForTest(mgr, store)
-	_ = workers
+	rt, coord := newFleet(t, store, map[string]backend.ObjectBackend{"src": src, "dest": dest},
+		&fleetOpts{Order: []string{"src", "dest"}})
+	w := NewRebalancer(rt, coord, store)
 
-	move := worker.RebalanceMove{
+	move := RebalanceMove{
 		ObjectKey:   "key",
 		FromBackend: "src",
 		ToBackend:   "dest",
 		SizeBytes:   4,
 	}
-	if !workers.Rebalancer.ExecuteOneMove(context.Background(), move, "spread") {
+	if !w.ExecuteOneMove(context.Background(), move, "spread") {
 		t.Error("expected true (move succeeded, source delete failure is non-fatal)")
 	}
 	if len(re.calls) != 1 {
@@ -1230,13 +869,13 @@ func TestPlanSpreadEven_RespectsBatchSize(t *testing.T) {
 		}
 	}
 	store := rebalanceStoreWithList(t, objects, nil, nil)
-	_, workers := newRebalanceManager(t, store, []string{"b1", "b2"})
+	w := newRebalancerOver(t, store, []string{"b1", "b2"})
 
 	stats := map[string]core.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
-	plan, err := workers.Rebalancer.PlanSpreadEven(context.Background(), stats, 5)
+	plan, err := w.PlanSpreadEven(context.Background(), stats, 5)
 	if err != nil {
 		t.Fatalf("planSpreadEven: %v", err)
 	}
@@ -1252,37 +891,17 @@ func TestExecuteMoves_AdmissionBlocked(t *testing.T) {
 	sem := make(chan struct{}, 1)
 	sem <- struct{}{}
 
-	src := newMockBackend()
-	src.objects["key1"] = mockObject{data: []byte("data")}
-	dst := newMockBackend()
+	src := backendtest.NewInMemory()
+	src.Objects["key1"] = backendtest.Object{Data: []byte("data")}
+	dst := backendtest.NewInMemory()
 
-	store := newPermissiveMock(t)
-	mgr := newTestBackendManager(t, &BackendManagerConfig{
-		Storage: StorageDeps{
-			Backends: map[string]s3be.ObjectBackend{"b1": src, "b2": dst},
-			Order:    []string{"b1", "b2"},
-		},
-		Stores: StoreDeps{
-			Metadata:  testStoresFromMock(store),
-			Dashboard: store,
-		},
-		Policies: PolicyConfig{
-			CacheTTL:        5 * time.Second,
-			BackendTimeout:  30 * time.Second,
-			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: OperationalDeps{
-			Metrics:      store,
-			AdmissionSem: sem,
-		},
-	})
-	workers := wireWorkersForTest(mgr, store)
-	_ = workers
+	store := newPermissiveStore(t)
+	w := newRebalancerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{Order: []string{"b1", "b2"}})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	moved := workers.Rebalancer.ExecuteMoves(ctx, []worker.RebalanceMove{
+	moved := w.ExecuteMoves(ctx, []RebalanceMove{
 		{ObjectKey: "key1", FromBackend: "b1", ToBackend: "b2", SizeBytes: 4},
 	}, "pack", 1, nil).Succeeded
 	if moved != 0 {

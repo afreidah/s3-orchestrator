@@ -31,7 +31,7 @@ import (
 // Asserts that status = , want.
 func TestRequireToken_Missing(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -48,7 +48,7 @@ func TestRequireToken_Missing(t *testing.T) {
 // Asserts that status = , want.
 func TestRequireToken_Wrong(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -66,7 +66,7 @@ func TestRequireToken_Wrong(t *testing.T) {
 // Asserts that status = , want.
 func TestRequireToken_Valid(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -84,7 +84,7 @@ func TestRequireToken_Valid(t *testing.T) {
 // Asserts that status = , want.
 func TestLogLevel_Get(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -110,7 +110,7 @@ func TestLogLevel_Get(t *testing.T) {
 // Asserts that status = , want.
 func TestLogLevel_Put(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -142,7 +142,7 @@ func TestLogLevel_Put(t *testing.T) {
 // Asserts that status = , want.
 func TestLogLevel_PutInvalidJSON(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -161,7 +161,7 @@ func TestLogLevel_PutInvalidJSON(t *testing.T) {
 // Asserts that status = , want.
 func TestLogLevel_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -179,7 +179,7 @@ func TestLogLevel_MethodNotAllowed(t *testing.T) {
 // reload provider has not been wired (no SIGHUP has happened yet).
 func TestReloadStatus_NoReloadYet(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -200,7 +200,7 @@ func TestReloadStatus_NoReloadYet(t *testing.T) {
 // Provider hook the runtime calls after building the reload coordinator.
 func TestReloadStatus_ReturnsProvidedResult(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	h.SetReloadStatusProvider(func() *adminapi.ReloadStatusResponse {
 		gen := int64(7)
 		return &adminapi.ReloadStatusResponse{Generation: &gen, Status: "full_success"}
@@ -229,7 +229,7 @@ func TestReloadStatus_ReturnsProvidedResult(t *testing.T) {
 // Asserts that status = , want.
 func TestStatus_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -247,7 +247,7 @@ func TestStatus_MethodNotAllowed(t *testing.T) {
 // Asserts that status = , want.
 func TestObjectLocations_MissingKey(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -265,7 +265,7 @@ func TestObjectLocations_MissingKey(t *testing.T) {
 // Asserts that status = , want.
 func TestUsageFlush_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -283,7 +283,7 @@ func TestUsageFlush_MethodNotAllowed(t *testing.T) {
 // Asserts that status = , want.
 func TestReplicate_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -306,7 +306,7 @@ func TestReplicate_MethodNotAllowed(t *testing.T) {
 // so callers can distinguish "no cache" from "cache empty after flush."
 func TestCacheFlush_Disabled(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler() // objectCache is nil
+	h := newTestHandler(t) // objectCache is nil
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -396,7 +396,7 @@ func TestCacheFlush_Cleared(t *testing.T) {
 // cache is not configured, distinguishing it from "stats valid but zero."
 func TestCacheStats_Disabled(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -560,7 +560,7 @@ func TestCacheInvalidatePrefix_EmptyRejected(t *testing.T) {
 // can distinguish a no-op invalidation from a missing cache.
 func TestCacheInvalidateKey_Disabled(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler() // objectCache is nil
+	h := newTestHandler(t) // objectCache is nil
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -578,7 +578,7 @@ func TestCacheInvalidateKey_Disabled(t *testing.T) {
 // endpoint reports 503 when the cache is not configured.
 func TestCacheInvalidatePrefix_Disabled(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler() // objectCache is nil
+	h := newTestHandler(t) // objectCache is nil
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -597,12 +597,13 @@ func TestCacheInvalidatePrefix_Disabled(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // newTestHandler constructs a new test handler.
-func newTestHandler() *Handler {
+func newTestHandler(t *testing.T) *Handler {
+	t.Helper()
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	return &Handler{
 		log:        slog.Default().With(logfmt.Component("admin")),
-		runtimeOps: fakeRuntimeOps{},
+		runtimeOps: newRuntimeOps(t),
 		token:      "test-token",
 		logLevel:   &lv,
 	}
@@ -621,7 +622,7 @@ func newTestHandlerWithCache(t *testing.T) *Handler {
 	if err != nil {
 		t.Fatalf("NewMemoryCache: %v", err)
 	}
-	h := newTestHandler()
+	h := newTestHandler(t)
 	h.objectCache = mc
 	return h
 }
@@ -634,7 +635,7 @@ func newTestHandlerWithCache(t *testing.T) *Handler {
 // Asserts that status = , want.
 func TestDecryptExisting_NoEncryptor(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -660,7 +661,7 @@ func TestDecryptExisting_NoEncryptor(t *testing.T) {
 // Asserts that status = , want.
 func TestDecryptExisting_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -678,7 +679,7 @@ func TestDecryptExisting_MethodNotAllowed(t *testing.T) {
 // Asserts that status = , want.
 func TestEncryptExisting_NoEncryptor(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -699,7 +700,7 @@ func TestEncryptExisting_NoEncryptor(t *testing.T) {
 // TestRemoveToken_RoundTrip verifies the remove token round trip behaviour described by the test name.
 func TestRemoveToken_RoundTrip(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	token := h.generateRemoveToken("my-backend")
 
 	if !h.validRemoveToken(token, "my-backend") {
@@ -710,7 +711,7 @@ func TestRemoveToken_RoundTrip(t *testing.T) {
 // TestRemoveToken_WrongBackend verifies the remove token wrong backend behaviour described by the test name.
 func TestRemoveToken_WrongBackend(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	token := h.generateRemoveToken("backend-a")
 
 	if h.validRemoveToken(token, "backend-b") {
@@ -721,7 +722,7 @@ func TestRemoveToken_WrongBackend(t *testing.T) {
 // TestRemoveToken_Tampered verifies the remove token tampered behaviour described by the test name.
 func TestRemoveToken_Tampered(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	token := h.generateRemoveToken("my-backend")
 
 	if h.validRemoveToken(token+"x", "my-backend") {
@@ -732,7 +733,7 @@ func TestRemoveToken_Tampered(t *testing.T) {
 // TestRemoveToken_Empty verifies the remove token empty behaviour described by the test name.
 func TestRemoveToken_Empty(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 
 	if h.validRemoveToken("", "my-backend") {
 		t.Error("empty token should fail validation")
@@ -742,7 +743,7 @@ func TestRemoveToken_Empty(t *testing.T) {
 // TestRemoveToken_MalformedBase64 verifies the remove token malformed base64 behaviour described by the test name.
 func TestRemoveToken_MalformedBase64(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	if h.validRemoveToken("not-valid-base64!!!.also-bad!!!", "my-backend") {
 		t.Error("malformed base64 should fail")
 	}
@@ -751,7 +752,7 @@ func TestRemoveToken_MalformedBase64(t *testing.T) {
 // TestRemoveToken_NoDot verifies the remove token no dot behaviour described by the test name.
 func TestRemoveToken_NoDot(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	if h.validRemoveToken("nodotinthisstring", "my-backend") {
 		t.Error("token without dot separator should fail")
 	}
@@ -760,7 +761,7 @@ func TestRemoveToken_NoDot(t *testing.T) {
 // TestRemoveToken_BadPayloadFormat verifies the remove token bad payload format path by exercising hmac.New, mac.Write, mac.Sum.
 func TestRemoveToken_BadPayloadFormat(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler()
+	h := newTestHandler(t)
 	// Valid base64 but wrong payload structure (not "purge|name|expiry")
 	payload := base64.RawURLEncoding.EncodeToString([]byte("wrong|format"))
 	mac := hmac.New(sha256.New, []byte("test-token"))
@@ -775,7 +776,7 @@ func TestRemoveToken_BadPayloadFormat(t *testing.T) {
 // TestRemoveToken_WrongKey verifies the remove token wrong key behaviour described by the test name.
 func TestRemoveToken_WrongKey(t *testing.T) {
 	t.Parallel()
-	h1 := newTestHandler()
+	h1 := newTestHandler(t)
 	h2 := &Handler{token: "different-key"}
 
 	token := h1.generateRemoveToken("my-backend")

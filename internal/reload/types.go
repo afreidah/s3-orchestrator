@@ -76,7 +76,7 @@ type ReloadResult struct {
 	RequiresRestart []string `json:"requires_restart,omitempty"`
 	// LoadError is the rendered LoadConfig error when Status is
 	// LoadFailed. Empty otherwise.
-	LoadError string `json:"load_error,omitempty"`
+	LoadError string    `json:"load_error,omitempty"`
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at"`
 }

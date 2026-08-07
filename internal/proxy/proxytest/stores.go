@@ -16,6 +16,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -26,20 +27,27 @@ import (
 // coordinator, multipart manager, and drain manager built and injected so
 // cross-package tests get a fully-wired manager (including a live drain
 // manager reachable via mgr.Drain()) from a single call.
-func NewManager(t testing.TB, cfg *proxy.BackendManagerConfig) *proxy.BackendManager {
+func NewManager(t testing.TB, store core.MetadataStore, cfg *proxy.BackendManagerConfig) *proxy.BackendManager {
 	t.Helper()
-	return BuildManager(cfg)
+	return BuildManager(store, cfg)
 }
 
 // BuildManager is NewManager without a testing.TB, for callers that lack
 // one such as an integration TestMain. When cfg omits a prebuilt Runtime,
 // it assembles one from the flat fields, mirroring di.ProvideBackendRuntime.
-func BuildManager(cfg *proxy.BackendManagerConfig) *proxy.BackendManager {
+// store is the wide metadata store the sub-managers are built over.
+// BackendManager itself now takes only the narrow usage surface, so the
+// fixture supplies the wide value separately rather than recovering it from
+// the config.
+func BuildManager(store core.MetadataStore, cfg *proxy.BackendManagerConfig) *proxy.BackendManager {
 	if cfg != nil && cfg.Runtime == nil {
 		cfg.Runtime = backendRuntimeFromConfig(cfg)
 	}
+	if cfg.Stores.Metadata == nil {
+		cfg.Stores.Metadata = store
+	}
 	rt := cfg.Runtime
-	stores := cfg.Stores.Metadata
+	stores := store
 
 	integrityCfg := &syncutil.AtomicConfig[config.IntegrityConfig]{}
 	coord := writepath.New(rt, stores, cfg.Policies.PendingEnabled)
@@ -52,6 +60,20 @@ func BuildManager(cfg *proxy.BackendManagerConfig) *proxy.BackendManager {
 		DEKCacheTTL:  time.Hour,
 		IntegrityCfg: integrityCfg,
 	})
+	om := object.New(&object.Deps{
+		Core:                         rt,
+		BroadcastCore:                rt,
+		Coord:                        coord,
+		Stores:                       stores,
+		Encryptor:                    cfg.Features.Encryptor,
+		LocationCache:                object.NewLocationCache(cfg.Policies.CacheTTL),
+		ObjectCache:                  cfg.Features.ObjectCache,
+		ParallelBroadcast:            cfg.Policies.ParallelBroadcast,
+		DegradedBroadcastParallelism: cfg.Policies.DegradedBroadcastParallelism,
+		DisableDegradedReads:         cfg.Policies.DisableDegradedReads,
+		IntegrityCfg:                 integrityCfg,
+		BackendTimeout:               cfg.Policies.BackendTimeout,
+	})
 	cleanup := worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: rt, Store: stores, Concurrency: 10, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	processCleanup := func(ctx context.Context) (int, int) {
 		sum := cleanup.ProcessCleanupQueue(ctx)
@@ -62,6 +84,7 @@ func BuildManager(cfg *proxy.BackendManagerConfig) *proxy.BackendManager {
 	cfg.Collaborators = proxy.Collaborators{
 		Coord:        coord,
 		Multipart:    mp,
+		Objects:      om,
 		Drain:        dm,
 		IntegrityCfg: integrityCfg,
 	}
@@ -124,13 +147,16 @@ type Workers struct {
 // without re-implementing each worker's narrow ops surface. Drain is the
 // manager's own drain.Manager.
 func BuildWorkers(mgr *proxy.BackendManager, m core.MetadataStore) *Workers {
+	// The manager's own coordinator, so a worker's placement decisions run
+	// against the same write-path state the manager writes through.
+	coord := mgr.Coordinator()
 	w := &Workers{}
-	w.Rebalancer = worker.NewRebalancer(mgr.Runtime(), mgr, m)
-	w.Replicator = worker.NewReplicator(mgr.Runtime(), mgr, m)
-	w.OverReplicationCleaner = worker.NewOverReplicationCleaner(mgr.Runtime(), mgr, m)
+	w.Rebalancer = worker.NewRebalancer(mgr.Runtime(), coord, m)
+	w.Replicator = worker.NewReplicator(mgr.Runtime(), coord, m)
+	w.OverReplicationCleaner = worker.NewOverReplicationCleaner(mgr.Runtime(), coord, m)
 	w.CleanupWorker = worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: mgr.Runtime(), Store: m, Concurrency: 10, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
-	w.PendingReaper = worker.NewPendingReaper(worker.PendingReaperDeps{Ops: mgr.Runtime(), Placement: mgr, Store: m})
-	w.Scrubber = worker.NewScrubber(worker.ScrubberDeps{Ops: mgr.Runtime(), Placement: mgr, Store: m})
+	w.PendingReaper = worker.NewPendingReaper(worker.PendingReaperDeps{Ops: mgr.Runtime(), Placement: coord, Store: m})
+	w.Scrubber = worker.NewScrubber(worker.ScrubberDeps{Ops: mgr.Runtime(), Placement: coord, Store: m})
 	w.Drain = mgr.Drain()
 	return w
 }

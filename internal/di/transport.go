@@ -30,8 +30,12 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -55,12 +59,13 @@ func ProvideBucketAuth(i do.Injector) (*auth.BucketRegistry, error) {
 func ProvideS3Server(i do.Injector) (*s3api.Server, error) {
 	r := newResolver(i)
 	cfg := resolve[*config.Config](r)
-	manager := resolve[*proxy.BackendManager](r)
+	objects := resolve[*object.Manager](r)
+	multipartManager := resolve[*multipart.Manager](r)
 	bucketAuth := resolve[*auth.BucketRegistry](r)
 	if r.err != nil {
 		return nil, r.err
 	}
-	srv := s3api.NewServer(manager, cfg.Server.MaxObjectSize)
+	srv := s3api.NewServer(objects, multipartManager, cfg.Server.MaxObjectSize)
 	srv.SetBucketAuth(bucketAuth)
 	return srv, nil
 }
@@ -96,12 +101,15 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 	adminHandler := resolve[*admin.Handler](r)
 	rebalancer := resolve[*worker.Rebalancer](r)
 	overRep := resolve[*worker.OverReplicationCleaner](r)
+	aggregator := resolve[*dashboard.Aggregator](r)
+	reconciler := resolve[*reconcile.Manager](r)
 	if r.err != nil {
 		return nil, r.err
 	}
 
 	return ui.New(&ui.Deps{
-		BackendOps:    manager,
+		Dashboard:     aggregator,
+		Sync:          reconciler,
 		Objects:       manager.Objects(),
 		Rebalancer:    rebalancer,
 		OverRep:       overRep,
@@ -207,8 +215,13 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	// handler ends up holding a nil *trace.FlightRecorder and the
 	// snapshot endpoint responds 503.
 	frRes := Optional[*debug.FlightRecorderService](i)
+	aggregator, err := do.Invoke[*dashboard.Aggregator](i)
+	if err != nil {
+		return nil, err
+	}
 	deps := &admin.Deps{
 		BackendOps:   d.manager,
+		Dashboard:    aggregator,
 		RuntimeOps:   d.manager.Runtime(),
 		Replicator:   d.replicator,
 		Rebalancer:   d.rebalancer,

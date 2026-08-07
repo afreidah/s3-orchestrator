@@ -167,27 +167,6 @@ func TestProcessCleanupQueue_BackendNotFound(t *testing.T) {
 	}
 }
 
-// TestCleanupBackoff verifies the cleanup backoff contract.
-// Asserts that CleanupBackoff() = , want.
-func TestCleanupBackoff(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		attempts int32
-		want     time.Duration
-	}{
-		{0, 1 * time.Minute},
-		{1, 2 * time.Minute},
-		{5, 32 * time.Minute},
-		{11, 24 * time.Hour},
-	}
-	for _, tt := range tests {
-		got := CleanupBackoff(tt.attempts)
-		if got != tt.want {
-			t.Errorf("CleanupBackoff(%d) = %v, want %v", tt.attempts, got, tt.want)
-		}
-	}
-}
-
 // TestProcessCleanupQueue_Exhausted_MovesToDLQ asserts that an item
 // that has used its full retry budget (Attempts already at
 // maxCleanupAttempts-1, so newAttempts crosses the ceiling) graduates

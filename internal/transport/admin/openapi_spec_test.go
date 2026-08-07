@@ -95,7 +95,7 @@ func openAPIRoutes(rts []route) []openapi.Route {
 // regenerate, or the change was not intended.
 func TestOpenAPISpec_MatchesRouteTable(t *testing.T) {
 	t.Parallel()
-	got, err := openapi.Generate(specInfo, specSecurity, openAPIRoutes(newTestHandler().routes()))
+	got, err := openapi.Generate(specInfo, specSecurity, openAPIRoutes(newTestHandler(t).routes()))
 	if err != nil {
 		t.Fatalf(errGenerate, err)
 	}
@@ -122,7 +122,7 @@ func TestOpenAPISpec_MatchesRouteTable(t *testing.T) {
 // bytes, or CI would fail on unrelated changes.
 func TestOpenAPISpec_IsDeterministic(t *testing.T) {
 	t.Parallel()
-	routes := openAPIRoutes(newTestHandler().routes())
+	routes := openAPIRoutes(newTestHandler(t).routes())
 	first, err := openapi.Generate(specInfo, specSecurity, routes)
 	if err != nil {
 		t.Fatalf(errGenerate, err)

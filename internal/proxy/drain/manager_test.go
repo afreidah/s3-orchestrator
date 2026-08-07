@@ -53,12 +53,16 @@ func TestCopyAndRemoveSource_UsesDrainMoveReasons(t *testing.T) {
 		Usage:    usage,
 	})
 
-	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), int64(50), gomock.Any()).Return("dest", nil)
-	storetest.Permissive(store)
+	// Each drain dependency takes its own role: only the quota store is
+	// exercised here, and an unexpected call to either of the others fails the
+	// test rather than being silently absorbed.
+	objects := storetest.NewMockObjectStore(ctrl)
+	quota := storetest.NewMockQuotaStore(ctrl)
+	backendLifecycle := storetest.NewMockBackendLifecycleStore(ctrl)
+	quota.EXPECT().GetLeastUtilizedBackend(gomock.Any(), int64(50), gomock.Any()).Return("dest", nil)
 
 	mover := &captureMover{}
-	mgr := New(inf, mover, store, store, store,
+	mgr := New(inf, mover, objects, quota, backendLifecycle,
 		func(context.Context, string) {},
 		func(context.Context) (int, int) { return 0, 0 })
 

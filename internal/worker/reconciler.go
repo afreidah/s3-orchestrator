@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
@@ -31,11 +32,17 @@ type ReconcileResult struct {
 	BackendsScanned int `json:"backends_scanned"`
 }
 
-// BackendSyncer is the interface the reconciler needs from the proxy layer.
-// Defined here to avoid a worker->proxy import cycle.
+// BackendSyncer scans and reconciles one backend against the ledger.
+// *reconcile.Manager satisfies it.
 type BackendSyncer interface {
 	SyncBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (imported, skipped int, err error)
-	ReconcileBackend(ctx context.Context, backendName string, knownBuckets []string) (*ReconcileResult, error)
+	ReconcileBackend(ctx context.Context, backendName string, knownBuckets []string) (*reconcile.Result, error)
+}
+
+// FleetOps is the fleet-wide surface the reconciler needs around a pass: the
+// backends to walk, and the counters to correct afterwards.
+// *proxy.BackendManager satisfies it.
+type FleetOps interface {
 	UpdateQuotaMetrics(ctx context.Context) error
 	ReconcileUsage(ctx context.Context) (map[string]int64, error)
 	BackendOrder() []string
@@ -46,16 +53,19 @@ type BackendSyncer interface {
 type Reconciler struct {
 	log         *slog.Logger
 	syncer      BackendSyncer
+	fleet       FleetOps
 	bucketNames []string
 }
 
 // NewReconciler creates a reconciler that uses the syncer's SyncBackend to
 // import untracked objects.
-func NewReconciler(syncer BackendSyncer, bucketNames []string) *Reconciler {
+func NewReconciler(syncer BackendSyncer, fleet FleetOps, bucketNames []string) *Reconciler {
 	must.NotNil("syncer", syncer)
+	must.NotNil("fleet", fleet)
 	return &Reconciler{
 		log:         slog.Default().With(logfmt.Component("reconciler")),
 		syncer:      syncer,
+		fleet:       fleet,
 		bucketNames: bucketNames,
 	}
 }
@@ -76,7 +86,7 @@ func (r *Reconciler) Run(ctx context.Context) {
 
 	var totalImported, totalSkipped int
 
-	for _, backendName := range r.syncer.BackendOrder() {
+	for _, backendName := range r.fleet.BackendOrder() {
 		bucket := r.bucketNames[0]
 
 		imported, skipped, err := r.syncer.SyncBackend(ctx, backendName, bucket, r.bucketNames)
@@ -96,7 +106,7 @@ func (r *Reconciler) Run(ctx context.Context) {
 			"imported", totalImported, "skipped", totalSkipped,
 			"duration", duration.Round(time.Millisecond))
 
-		if err := r.syncer.UpdateQuotaMetrics(ctx); err != nil {
+		if err := r.fleet.UpdateQuotaMetrics(ctx); err != nil {
 			r.log.WarnContext(ctx, "failed to update quota metrics after reconcile", "error", err)
 		}
 	}
@@ -115,7 +125,7 @@ func (r *Reconciler) Run(ctx context.Context) {
 // (drift can exist with zero imports); a failure is logged and swallowed so it
 // never aborts the reconcile cycle.
 func (r *Reconciler) reconcileUsage(ctx context.Context) {
-	adjustments, err := r.syncer.ReconcileUsage(ctx)
+	adjustments, err := r.fleet.ReconcileUsage(ctx)
 	if err != nil {
 		r.log.WarnContext(ctx, "usage reconciliation failed", logfmt.Err(err))
 		return
@@ -150,26 +160,30 @@ func (r *Reconciler) ReconcileStreaming(ctx context.Context, backendName string,
 	if backendName != "" {
 		backends = []string{backendName}
 	} else {
-		backends = r.syncer.BackendOrder()
+		backends = r.fleet.BackendOrder()
 	}
 
 	total := &ReconcileResult{}
 	for _, name := range backends {
 		progress.Track(observer, name, func() string {
 			result, err := r.syncer.ReconcileBackend(ctx, name, r.bucketNames)
+			// A failed pass still reports what it managed before erroring, so
+			// partial progress is not lost from the tally.
+			if result != nil {
+				total.Imported += int(result.Imported)
+				total.Removed += int(result.Removed)
+				total.BackendsScanned++
+			}
 			if err != nil {
 				r.log.ErrorContext(ctx, "backend failed", "backend", name, "error", err)
 				return progress.StatusFailed
 			}
-			total.Imported += result.Imported
-			total.Removed += result.Removed
-			total.BackendsScanned += result.BackendsScanned
 			return progress.StatusOK
 		})
 	}
 
 	if total.Imported > 0 || total.Removed > 0 {
-		if err := r.syncer.UpdateQuotaMetrics(ctx); err != nil {
+		if err := r.fleet.UpdateQuotaMetrics(ctx); err != nil {
 			r.log.WarnContext(ctx, "failed to update quota metrics after reconcile", "error", err)
 		}
 	}

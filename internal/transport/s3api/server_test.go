@@ -14,14 +14,17 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 
+	"go.uber.org/mock/gomock"
+
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
-	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 )
 
@@ -54,18 +57,14 @@ func TestServer_LoggerReturnsCustomLog(t *testing.T) {
 // under coverage.
 func TestNewServer_AssignsScopedLogger(t *testing.T) {
 	t.Parallel()
-	mockStore := testutil.NewMockStore(t)
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
-		Stores: proxy.StoreDeps{
-			Metadata:  mockStore,
-			Dashboard: mockStore,
-		},
+	mockStore := storetest.NewMockMetadataStore(gomock.NewController(t))
+	mgr := proxytest.NewManager(t, mockStore, &proxy.BackendManagerConfig{
 		Operations: proxy.OperationalDeps{
 			Metrics: mockStore,
 		},
 	})
 	t.Cleanup(mgr.Close)
-	srv := NewServer(mgr, 1024)
+	srv := NewServer(mgr.Objects(), mgr.Multipart(), 1024)
 	if srv.log == nil {
 		t.Fatal("NewServer left log field nil")
 	}
@@ -216,4 +215,23 @@ func TestInvalidPath_Returns400(t *testing.T) {
 	if !strings.Contains(string(body), "InvalidRequest") {
 		t.Error("response should contain InvalidRequest error code")
 	}
+}
+
+// newOpsServer builds a Server over mocked ObjectOps/MultipartOps, with no
+// BackendManager, store, or backend behind it. Use it for the handler
+// behaviour that depends only on what the ops layer returns - status
+// mapping, header handling, response shape - so the test states the one
+// call it cares about instead of steering a whole fleet into that state.
+func newOpsServer(t *testing.T) (*httptest.Server, *MockObjectOps, *MockMultipartOps) {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	objects, multipart := NewMockObjectOps(ctrl), NewMockMultipartOps(ctrl)
+
+	srv := &Server{Objects: objects, Multipart: multipart, MaxObjectSize: 10 * 1024 * 1024}
+	srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+		{Name: "mybucket", Credentials: []config.CredentialConfig{{Token: "test-token"}}},
+	}))
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+	return ts, objects, multipart
 }

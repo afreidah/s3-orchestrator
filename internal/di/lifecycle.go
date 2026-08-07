@@ -20,6 +20,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -69,7 +70,7 @@ func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 // registerWorkerServices registers the worker-mode lifecycle services
 // (multipart cleanup, cleanup queue, pending reaper, rebalancer,
 // replicator, over-replication, lifecycle, scrubber) on sm.
-func registerWorkerServices(sm *lifecycle.Manager, mgr *proxy.BackendManager, ws lifecycleWorkerSet, locker core.AdvisoryLocker, cfg *config.Config) {
+func registerWorkerServices(sm *lifecycle.Manager, mgr *proxy.BackendManager, expirer *expiry.Manager, ws lifecycleWorkerSet, locker core.AdvisoryLocker, cfg *config.Config) {
 	sm.Register("multipart-cleanup", multipart.NewCleanupService(mgr.Multipart(), locker, cfg.CleanupQueue.MultipartStaleTimeout))
 	sm.Register("cleanup-queue", worker.NewCleanupQueueService(ws.cleanup, locker))
 	if svc := worker.NewPendingReaperService(ws.pendingReaper, locker, cfg.WritePath.PendingPattern.ReaperTick); svc != nil {
@@ -78,7 +79,7 @@ func registerWorkerServices(sm *lifecycle.Manager, mgr *proxy.BackendManager, ws
 	sm.Register("rebalancer", worker.NewRebalancerService(mgr.Runtime(), ws.rebalancer, locker))
 	sm.Register("replicator", worker.NewReplicatorService(mgr.Runtime(), ws.replicator, locker))
 	sm.Register("over-replication", worker.NewOverReplicationService(mgr.Runtime(), ws.overRep, locker))
-	sm.Register("lifecycle", NewLifecycleService(mgr, locker))
+	sm.Register("lifecycle", NewLifecycleService(expirer, locker))
 	sm.Register("scrubber", worker.NewScrubberService(ws.scrubber, locker))
 }
 
@@ -114,7 +115,11 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	registerWorkerServices(sm, manager, ws, locker, cfg)
+	expirer, err := do.Invoke[*expiry.Manager](i)
+	if err != nil {
+		return nil, err
+	}
+	registerWorkerServices(sm, manager, expirer, ws, locker, cfg)
 
 	if cfg.Reconcile.Enabled {
 		reconciler, err := do.Invoke[*worker.Reconciler](i)

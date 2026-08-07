@@ -890,3 +890,10 @@ func (mp *Manager) streamOnePart(
 	}
 	return nil
 }
+
+// CountActiveMultipartUploads returns the number of in-progress uploads whose
+// key falls under bucketPrefix. Lives here rather than on a facade because
+// this is the type that already holds the multipart store.
+func (mp *Manager) CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error) {
+	return mp.stores.CountActiveMultipartUploads(ctx, bucketPrefix)
+}

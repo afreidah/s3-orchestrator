@@ -8,6 +8,13 @@ import "github.com/afreidah/s3-orchestrator/internal/store/core"
 
 //go:generate mockgen -destination=mocks.go -package=storetest github.com/afreidah/s3-orchestrator/internal/store/storetest MetadataStore
 
+// Per-role mocks let a test that exercises one capability stub that
+// capability alone, instead of standing up the 79-method union and
+// silencing the rest with Permissive. The list carries only the roles a
+// test actually mocks today - add a name when the first consumer appears
+// rather than generating mocks nothing calls.
+//go:generate mockgen -destination=role_mocks.go -package=storetest github.com/afreidah/s3-orchestrator/internal/store/core ObjectStore,QuotaStore,CleanupStore,ExpiredObjectsLister,BackendLifecycleStore,DashboardStore,LifecycleAdmin
+
 // MetadataStore is the union of every narrow store role interface. It
 // exists only as a mockgen target so a single generated MockMetadataStore
 // can stand in wherever a fully-populated proxy.ManagerStores or a

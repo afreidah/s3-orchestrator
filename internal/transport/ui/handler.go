@@ -39,7 +39,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -66,21 +65,24 @@ const (
 	opCleanExcess        = "clean-excess"
 )
 
-// BackendOps is the narrow surface of *proxy.BackendManager that the UI
-// dashboard depends on for operations not exposed via a named sub-manager.
-// *proxy.BackendManager satisfies it.
-type BackendOps interface {
-	GetDashboardData(ctx context.Context) (*dashboard.Data, error)
-	GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error)
+// BackendSyncer is the backend-sync surface the UI's admin actions pane
+// invokes. *reconcile.Manager satisfies it.
+type BackendSyncer interface {
 	SyncBackend(ctx context.Context, backendName, virtualBucket string, virtualBuckets []string) (int, int, error)
 }
 
-// Compile-time assertion: *proxy.BackendManager implements BackendOps.
-var _ BackendOps = (*proxy.BackendManager)(nil)
+// DashboardOps is the dashboard surface the UI reads: the aggregated snapshot
+// and the lazy directory expansion behind the object browser.
+// *dashboard.Aggregator satisfies it.
+type DashboardOps interface {
+	GetData(ctx context.Context) (*dashboard.Data, error)
+	GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error)
+}
 
 // Deps holds the dependencies New requires.
 type Deps struct {
-	BackendOps    BackendOps
+	Dashboard     DashboardOps
+	Sync          BackendSyncer
 	Objects       *object.Manager
 	Rebalancer    *worker.Rebalancer
 	OverRep       *worker.OverReplicationCleaner
@@ -94,7 +96,8 @@ type Deps struct {
 // Handler serves the web UI dashboard.
 type Handler struct {
 	log            *slog.Logger
-	backendOps     BackendOps
+	dashboardOps   DashboardOps
+	syncOps        BackendSyncer
 	objects        *object.Manager
 	rebalancer     *worker.Rebalancer
 	overRep        *worker.OverReplicationCleaner
@@ -118,13 +121,13 @@ type Handler struct {
 // contract the handler uses, so wiring stays visible at the call site.
 func New(d *Deps) *Handler {
 	must.NotNil("d", d)
-	must.NotNil("d.BackendOps", d.BackendOps)
 	must.NotNil("d.Objects", d.Objects)
 	must.NotNil("d.AdminHandler", d.AdminHandler)
 	must.NotNil("d.Cfg", d.Cfg)
 	h := &Handler{
 		log:            slog.Default().With(logfmt.Component("ui")),
-		backendOps:     d.BackendOps,
+		dashboardOps:   d.Dashboard,
+		syncOps:        d.Sync,
 		objects:        d.Objects,
 		rebalancer:     d.Rebalancer,
 		overRep:        d.OverRep,

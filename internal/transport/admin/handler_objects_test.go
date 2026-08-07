@@ -21,12 +21,14 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"go.uber.org/mock/gomock"
 )
 
 // newObjectsHandler builds a Handler backed by the given mock store.
-func newObjectsHandler(mock *testutil.MockStore) *Handler {
+func newObjectsHandler(mock core.ObjectStore) *Handler {
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar
 	return &Handler{
@@ -41,13 +43,14 @@ func newObjectsHandler(mock *testutil.MockStore) *Handler {
 // TestHandleListObjects_Happy maps a delimiter-grouped store page into the DTO.
 func TestHandleListObjects_Happy(t *testing.T) {
 	t.Parallel()
-	mock := testutil.NewMockStore(t)
-	mock.ListObjectsDelimitedResp = &core.ListDelimitedResult{
-		CommonPrefixes:        []string{"photos/", "docs/"},
-		Objects:               []core.ObjectLocation{{ObjectKey: "readme.txt", SizeBytes: 42}},
-		IsTruncated:           true,
-		NextContinuationToken: "readme.txt",
-	}
+	mock := storetest.NewMockObjectStore(gomock.NewController(t))
+	mock.EXPECT().ListObjectsDelimited(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&core.ListDelimitedResult{
+			CommonPrefixes:        []string{"photos/", "docs/"},
+			Objects:               []core.ObjectLocation{{ObjectKey: "readme.txt", SizeBytes: 42}},
+			IsTruncated:           true,
+			NextContinuationToken: "readme.txt",
+		}, nil).Times(1)
 	mux := http.NewServeMux()
 	newObjectsHandler(mock).Register(mux)
 
@@ -75,8 +78,9 @@ func TestHandleListObjects_Happy(t *testing.T) {
 // TestHandleListObjects_StoreError returns 500 when the store fails.
 func TestHandleListObjects_StoreError(t *testing.T) {
 	t.Parallel()
-	mock := testutil.NewMockStore(t)
-	mock.ListObjectsDelimitedErr = errors.New("boom")
+	mock := storetest.NewMockObjectStore(gomock.NewController(t))
+	mock.EXPECT().ListObjectsDelimited(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("boom")).Times(1)
 	mux := http.NewServeMux()
 	newObjectsHandler(mock).Register(mux)
 

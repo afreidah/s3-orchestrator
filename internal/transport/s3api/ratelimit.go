@@ -22,13 +22,12 @@ import (
 	"sync"
 	"time"
 
-
 	"golang.org/x/time/rate"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
 // -------------------------------------------------------------------------
