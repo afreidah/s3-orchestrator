@@ -1452,3 +1452,168 @@ func TestBucketOnlyGET_RoutesToList(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/xml", ct)
 	}
 }
+
+// -------------------------------------------------------------------------
+// RANGE + CONDITIONAL HEADERS
+// -------------------------------------------------------------------------
+
+// rangeCondServer serves one 11-byte object with a known ETag and
+// Last-Modified, which is all the conditional cases need.
+func rangeCondServer(t *testing.T) (*httptest.Server, time.Time) {
+	t.Helper()
+	modified := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	ts, _, backend := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
+			Return([]core.ObjectLocation{
+				{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 11},
+			}, nil).AnyTimes()
+	})
+	backend.Put("mybucket/testkey", &backendtest.Object{
+		Data:         []byte("hello world"),
+		ContentType:  "text/plain",
+		ETag:         `"abc"`,
+		LastModified: modified,
+	})
+	return ts, modified
+}
+
+// rangeCondGet issues a ranged GET carrying the supplied conditional headers.
+func rangeCondGet(t *testing.T, ts *httptest.Server, headers map[string]string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("Range", "bytes=0-4")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// TestGet_RangeHonorsPreconditions pins the fix for the corruption case: a
+// failed precondition aborts the request even when only a range was asked
+// for. Serving 206 here let a resumable download splice bytes from a
+// replaced object onto what it had already fetched.
+func TestGet_RangeHonorsPreconditions(t *testing.T) {
+	t.Parallel()
+	ts, modified := rangeCondServer(t)
+
+	for _, c := range []struct {
+		name    string
+		headers map[string]string
+		want    int
+	}{
+		{"if-match mismatch", map[string]string{"If-Match": `"stale"`}, http.StatusPreconditionFailed},
+		{"if-match hit", map[string]string{"If-Match": `"abc"`}, http.StatusPartialContent},
+		{"if-match star", map[string]string{"If-Match": "*"}, http.StatusPartialContent},
+		{"if-none-match hit", map[string]string{"If-None-Match": `"abc"`}, http.StatusNotModified},
+		{"if-none-match miss", map[string]string{"If-None-Match": `"other"`}, http.StatusPartialContent},
+		{
+			"if-unmodified-since older than the object",
+			map[string]string{"If-Unmodified-Since": modified.Add(-time.Hour).Format(http.TimeFormat)},
+			http.StatusPreconditionFailed,
+		},
+		{
+			"if-modified-since newer than the object",
+			map[string]string{"If-Modified-Since": modified.Add(time.Hour).Format(http.TimeFormat)},
+			http.StatusNotModified,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			resp := rangeCondGet(t, ts, c.headers)
+			defer resp.Body.Close()
+			if resp.StatusCode != c.want {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status = %d, want %d; body=%s", resp.StatusCode, c.want, body)
+			}
+		})
+	}
+}
+
+// TestGet_NotModifiedCarriesValidators asserts a 304 still carries the ETag
+// it would have carried on a 200, which is what lets a cache refresh its
+// stored validator instead of discarding the entry.
+func TestGet_NotModifiedCarriesValidators(t *testing.T) {
+	t.Parallel()
+	ts, _ := rangeCondServer(t)
+
+	resp := rangeCondGet(t, ts, map[string]string{"If-None-Match": `"abc"`})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotModified {
+		t.Fatalf("status = %d, want 304", resp.StatusCode)
+	}
+	if got := resp.Header.Get("ETag"); got != `"abc"` {
+		t.Errorf("ETag = %q, want %q on a 304", got, `"abc"`)
+	}
+	if resp.Header.Get("Last-Modified") == "" {
+		t.Error("Last-Modified missing on a 304")
+	}
+}
+
+// TestGet_IfRange pins the range-or-restart contract: a matching validator
+// serves the range, and a stale one serves the whole object instead of a
+// partial the client would have spliced onto bytes from another version.
+func TestGet_IfRange(t *testing.T) {
+	t.Parallel()
+	ts, modified := rangeCondServer(t)
+
+	for _, c := range []struct {
+		name     string
+		ifRange  string
+		want     int
+		wantBody string
+	}{
+		{"matching etag serves the range", `"abc"`, http.StatusPartialContent, "hello"},
+		{"stale etag serves the whole object", `"stale"`, http.StatusOK, "hello world"},
+		{
+			"matching date serves the range",
+			modified.Format(http.TimeFormat), http.StatusPartialContent, "hello",
+		},
+		{
+			"stale date serves the whole object",
+			modified.Add(-time.Hour).Format(http.TimeFormat), http.StatusOK, "hello world",
+		},
+		// A weak validator cannot safely gate a partial response, so it is
+		// treated as a mismatch and the whole object is served.
+		{"weak etag serves the whole object", `W/"abc"`, http.StatusOK, "hello world"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			resp := rangeCondGet(t, ts, map[string]string{"If-Range": c.ifRange})
+			defer resp.Body.Close()
+			if resp.StatusCode != c.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, c.want)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			if string(body) != c.wantBody {
+				t.Errorf("body = %q, want %q", body, c.wantBody)
+			}
+			if c.want == http.StatusOK && resp.Header.Get("Content-Range") != "" {
+				t.Error("a full response must not carry Content-Range")
+			}
+		})
+	}
+}
+
+// TestGet_RangeWithoutConditionalsStillPartial guards against the fix
+// over-reaching: a plain ranged GET is unaffected.
+func TestGet_RangeWithoutConditionalsStillPartial(t *testing.T) {
+	t.Parallel()
+	ts, _ := rangeCondServer(t)
+
+	resp := rangeCondGet(t, ts, nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("status = %d, want 206", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "hello" {
+		t.Errorf("body = %q, want %q", body, "hello")
+	}
+}
