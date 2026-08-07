@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -168,27 +169,41 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 		telemetry.AttrContentType.String(result.ContentType),
 	)
 
+	// Validators go out before the conditional check so a 304 carries the
+	// ETag and Last-Modified it would have carried on a 200 (RFC 9110 15.4.5).
+	setValidatorHeaders(w, result)
+
+	// Preconditions are evaluated before the Range is considered: a failed
+	// precondition aborts the whole request, whether or not only part of the
+	// representation was asked for (RFC 9110 13.1). Evaluating these only for
+	// unranged GETs let a resumable download splice bytes from a replaced
+	// object into the file it had already partly fetched.
+	if status, done := checkConditionals(r, result.ETag, result.LastModified); done {
+		w.WriteHeader(status)
+		return status, 0, nil
+	}
+
+	// If-Range asks for the range only while the representation is unchanged,
+	// and for the whole object otherwise. The partial body already opened is
+	// discarded and the object re-fetched in full, which costs an extra round
+	// trip only on the mismatch that would otherwise corrupt the download.
+	if rangeHeader != "" && !ifRangeMatches(r, result.ETag, result.LastModified) {
+		_ = result.Body.Close()
+		full, ferr := s.Objects.GetObject(ctx, key, "")
+		if ferr != nil {
+			return writeStorageError(w, ferr, "Failed to retrieve object"), 0, ferr
+		}
+		result = full
+		setValidatorHeaders(w, result)
+	}
+
 	w.Header().Set(headerContentType, result.ContentType)
 	if result.Size > 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
 	}
-	if result.ETag != "" {
-		w.Header().Set("ETag", result.ETag)
-	}
-	if !result.LastModified.IsZero() {
-		w.Header().Set("Last-Modified", result.LastModified.UTC().Format(http.TimeFormat))
-	}
 	w.Header().Set("Accept-Ranges", "bytes")
 	for k, v := range result.Metadata {
 		w.Header().Set("x-amz-meta-"+k, v)
-	}
-
-	// --- Conditional request evaluation (skip for range requests) ---
-	if rangeHeader == "" {
-		if status, done := checkConditionals(r, result.ETag, result.LastModified); done {
-			w.WriteHeader(status)
-			return status, 0, nil
-		}
 	}
 
 	status := http.StatusOK
@@ -386,6 +401,42 @@ func (s *Server) checkIfNoneMatchStar(ctx context.Context, w http.ResponseWriter
 		return http.StatusPreconditionFailed, errIfNoneMatchExists, true
 	}
 	return 0, nil, false
+}
+
+// setValidatorHeaders writes the ETag and Last-Modified that identify the
+// representation. Split out because they must also appear on a 304, which
+// carries no body and skips the rest of the header block.
+func setValidatorHeaders(w http.ResponseWriter, result *s3be.GetObjectResult) {
+	if result.ETag != "" {
+		w.Header().Set("ETag", result.ETag)
+	}
+	if !result.LastModified.IsZero() {
+		w.Header().Set("Last-Modified", result.LastModified.UTC().Format(http.TimeFormat))
+	}
+}
+
+// ifRangeMatches reports whether an If-Range validator still describes the
+// current representation, which is what decides between serving the requested
+// range and serving the whole object.
+//
+// An absent header means the client did not ask for the conditional form, so
+// the range stands. A value parseable as an HTTP date is compared as a
+// last-modified validator; anything else is compared as an entity tag. Per
+// RFC 9110 13.1.5 the entity-tag comparison is strong, so a weak tag never
+// matches: a weak validator cannot safely be used to splice a partial
+// response onto bytes already held.
+func ifRangeMatches(r *http.Request, etag string, lastModified time.Time) bool {
+	ir := r.Header.Get("If-Range")
+	if ir == "" {
+		return true
+	}
+	if t, err := http.ParseTime(ir); err == nil {
+		return !lastModified.IsZero() && lastModified.Equal(t)
+	}
+	if strings.HasPrefix(ir, "W/") || etag == "" {
+		return false
+	}
+	return ir == etag
 }
 
 // checkConditionals evaluates conditional request headers per RFC 7232.

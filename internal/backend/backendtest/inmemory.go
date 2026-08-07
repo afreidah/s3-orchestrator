@@ -24,6 +24,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -131,9 +133,51 @@ func (m *InMemory) PutObject(
 	return etag, nil
 }
 
-// GetObject returns the stored object. The body is a copy, so the caller can
-// read it after the lock is released.
-func (m *InMemory) GetObject(_ context.Context, key, _ string) (*backend.GetObjectResult, error) {
+// parseByteRange resolves an RFC 9110 single byte-range against an object of
+// size total, returning the inclusive offsets. ok is false when the header is
+// absent or not a form this fake supports, in which case the caller serves the
+// whole object - the same fallback a real backend applies to a range it cannot
+// satisfy in the "ignore unsatisfiable" direction.
+func parseByteRange(header string, total int64) (start, end int64, ok bool) {
+	spec, found := strings.CutPrefix(header, "bytes=")
+	if !found || strings.Contains(spec, ",") {
+		return 0, 0, false
+	}
+	from, to, found := strings.Cut(spec, "-")
+	if !found {
+		return 0, 0, false
+	}
+
+	switch {
+	case from == "": // suffix form: last N bytes
+		n, err := strconv.ParseInt(to, 10, 64)
+		if err != nil || n <= 0 {
+			return 0, 0, false
+		}
+		return max(total-n, 0), total - 1, true
+	case to == "": // open-ended: from N to the end
+		start, err := strconv.ParseInt(from, 10, 64)
+		if err != nil || start < 0 || start >= total {
+			return 0, 0, false
+		}
+		return start, total - 1, true
+	}
+
+	start, err := strconv.ParseInt(from, 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	end, err = strconv.ParseInt(to, 10, 64)
+	if err != nil || start < 0 || start > end || start >= total {
+		return 0, 0, false
+	}
+	return start, min(end, total-1), true
+}
+
+// GetObject returns the stored object, honouring a single byte-range when one
+// is supplied. The body is a copy, so the caller can read it after the lock is
+// released.
+func (m *InMemory) GetObject(_ context.Context, key, rangeHeader string) (*backend.GetObjectResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.GetPanic {
@@ -147,16 +191,24 @@ func (m *InMemory) GetObject(_ context.Context, key, _ string) (*backend.GetObje
 		return nil, &notFoundError{key: key}
 	}
 
-	body := io.NopCloser(bytes.NewReader(bytes.Clone(obj.Data)))
+	data := bytes.Clone(obj.Data)
+	var contentRange string
+	if start, end, ok := parseByteRange(rangeHeader, int64(len(data))); ok {
+		contentRange = fmt.Sprintf("bytes %d-%d/%d", start, end, len(data))
+		data = data[start : end+1]
+	}
+
+	body := io.NopCloser(bytes.NewReader(data))
 	if m.GetReadErr != nil {
 		body = io.NopCloser(&errReader{err: m.GetReadErr})
 	}
 	return &backend.GetObjectResult{
 		Body:         body,
-		Size:         int64(len(obj.Data)),
+		Size:         int64(len(data)),
 		ContentType:  obj.ContentType,
 		ETag:         obj.ETag,
 		LastModified: obj.LastModified,
+		ContentRange: contentRange,
 		Metadata:     obj.Metadata,
 	}, nil
 }
