@@ -28,10 +28,9 @@ type usageFlushOps interface {
 	UpdateQuotaMetrics(ctx context.Context) error
 }
 
-// lifecycleOps is the subset of *proxy.BackendManager that
-// NewLifecycleService needs to read the lifecycle config and process a
-// tick.
+// lifecycleOps is the subset of *expiry.Manager that NewLifecycleService
+// needs to read the lifecycle config and process a tick.
 type lifecycleOps interface {
-	LifecycleConfig() *config.LifecycleConfig
-	ProcessLifecycleRules(ctx context.Context, rules []config.LifecycleRule) (deleted, failed int)
+	Config() *config.LifecycleConfig
+	ProcessRules(ctx context.Context, rules []config.LifecycleRule) (deleted, failed int)
 }

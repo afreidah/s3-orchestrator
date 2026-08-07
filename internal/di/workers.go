@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -36,6 +37,7 @@ import (
 // workerCore bundles the dependencies every background worker needs.
 type workerCore struct {
 	Mgr    *proxy.BackendManager
+	Coord  *writepath.Coordinator
 	Stores core.MetadataStore
 }
 
@@ -53,6 +55,7 @@ type workerCoreWithCfg struct {
 func workerCoreFrom(r *resolver) workerCore {
 	return workerCore{
 		Mgr:    resolveNamed[*proxy.BackendManager](r, "BackendManager"),
+		Coord:  resolveNamed[*writepath.Coordinator](r, "WriteCoordinator"),
 		Stores: resolveNamed[core.MetadataStore](r, "MetadataStore"),
 	}
 }
@@ -78,7 +81,7 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewRebalancer(c.Mgr.Runtime(), c.Mgr, c.Stores), nil
+	return worker.NewRebalancer(c.Mgr.Runtime(), c.Coord, c.Stores), nil
 }
 
 // ProvideReplicator constructs the replication worker.
@@ -87,7 +90,7 @@ func ProvideReplicator(i do.Injector) (*worker.Replicator, error) {
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewReplicator(c.Mgr.Runtime(), c.Mgr, c.Stores), nil
+	return worker.NewReplicator(c.Mgr.Runtime(), c.Coord, c.Stores), nil
 }
 
 // ProvideOverReplicationCleaner constructs the over-replication cleanup worker.
@@ -96,7 +99,7 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewOverReplicationCleaner(c.Mgr.Runtime(), c.Mgr, c.Stores), nil
+	return worker.NewOverReplicationCleaner(c.Mgr.Runtime(), c.Coord, c.Stores), nil
 }
 
 // ProvideCleanupWorker constructs the cleanup-queue worker. It resolves
@@ -141,7 +144,7 @@ func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error) {
 	}
 	return worker.NewPendingReaper(worker.PendingReaperDeps{
 		Ops:       c.Mgr.Runtime(),
-		Placement: c.Mgr,
+		Placement: c.Coord,
 		Store:     c.Stores,
 		MinAge:    c.Cfg.WritePath.PendingPattern.MinAge,
 		BatchSize: c.Cfg.WritePath.PendingPattern.BatchSize,
@@ -162,7 +165,7 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 	}
 	return worker.NewScrubber(worker.ScrubberDeps{
 		Ops:       c.Mgr.Runtime(),
-		Placement: c.Mgr,
+		Placement: c.Coord,
 		Store:     c.Stores,
 		Encryptor: enc,
 	}), nil
@@ -182,7 +185,11 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 	for idx, b := range c.Cfg.Buckets {
 		bktNames[idx] = b.Name
 	}
-	return worker.NewReconciler(c.Mgr, bktNames), nil
+	rec, err := do.Invoke[*reconcile.Manager](i)
+	if err != nil {
+		return nil, err
+	}
+	return worker.NewReconciler(rec, c.Mgr, bktNames), nil
 }
 
 // ProvideDrainManager constructs the drain manager from the backend

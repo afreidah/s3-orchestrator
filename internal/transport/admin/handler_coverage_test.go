@@ -23,134 +23,24 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
-	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
-// -------------------------------------------------------------------------
-// FAKES
-// -------------------------------------------------------------------------
-
-type fakeBackendOps struct {
-	dashData     *dashboard.Data
-	dashErr      error
-	flushErr     error
-	intCfg       *config.IntegrityConfig
-	reconcileMap map[string]int64
-	reconcileErr error
-}
-
-func (f *fakeBackendOps) GetDashboardData(_ context.Context) (*dashboard.Data, error) {
-	return f.dashData, f.dashErr
-}
-func (f *fakeBackendOps) FlushUsage(_ context.Context) error { return f.flushErr }
-func (f *fakeBackendOps) ReconcileUsage(_ context.Context) (map[string]int64, error) {
-	return f.reconcileMap, f.reconcileErr
-}
-func (f *fakeBackendOps) RecordUsage(_ string, _, _, _ int64)      {}
-func (f *fakeBackendOps) IntegrityConfig() *config.IntegrityConfig { return f.intCfg }
-
-// fakeRuntimeOps is the RuntimeOps double: the runtime surface the handler
-// reaches directly. GetBackend errors by default (rewrite tests cover the
-// not-found branch); UpdateQuotaMetrics is a no-op success.
-type fakeRuntimeOps struct{}
-
-func (fakeRuntimeOps) GetBackend(_ string) (backend.ObjectBackend, error) {
-	return nil, errors.New("no backend")
-}
-func (fakeRuntimeOps) UpdateQuotaMetrics(_ context.Context) error { return nil }
-
-type fakeReplicator struct {
-	cfg     *config.ReplicationConfig
-	created int
-	err     error
-}
-
-func (f *fakeReplicator) Config() *config.ReplicationConfig { return f.cfg }
-func (f *fakeReplicator) Replicate(_ context.Context, _ config.ReplicationConfig, observer progress.Observer) (int, error) {
-	for range f.created {
-		progress.Track(observer, "fake-key", func() string { return progress.StatusOK })
-	}
-	return f.created, f.err
-}
-
-type fakeOverRep struct {
-	cfg      *config.ReplicationConfig
-	count    int64
-	countErr error
-	cleaned  int
-	cleanErr error
-}
-
-func (f *fakeOverRep) Config() *config.ReplicationConfig { return f.cfg }
-func (f *fakeOverRep) CountPending(_ context.Context, _ int) (int64, error) {
-	return f.count, f.countErr
-}
-func (f *fakeOverRep) Clean(_ context.Context, _ config.ReplicationConfig, observer progress.Observer) (int, error) {
-	for range f.cleaned {
-		progress.Track(observer, "fake-key", func() string { return progress.StatusOK })
-	}
-	return f.cleaned, f.cleanErr
-}
-
-type fakeScrubber struct {
-	scrubChecked, scrubFailed int
-	backfillProcessed         int
-	backfillMore              bool // when true, always report another batch (nextOffset != 0)
-	backfillCalls             int
-}
-
-func (f *fakeScrubber) Scrub(_ context.Context, _ int, observer progress.Observer) worker.WorkSummary {
-	for range f.scrubChecked {
-		progress.Track(observer, "fake-key", func() string { return progress.StatusOK })
-	}
-	return worker.WorkSummary{Attempted: f.scrubChecked, Succeeded: f.scrubChecked - f.scrubFailed, Failed: f.scrubFailed}
-}
-func (f *fakeScrubber) Backfill(_ context.Context, batchSize, offset int, observer progress.Observer) (worker.WorkSummary, int) {
-	f.backfillCalls++
-	for range f.backfillProcessed {
-		progress.Track(observer, "fake-key", func() string { return progress.StatusOK })
-	}
-	sum := worker.WorkSummary{Attempted: f.backfillProcessed, Succeeded: f.backfillProcessed}
-	if f.backfillMore {
-		return sum, offset + batchSize
-	}
-	// One batch processed, then signal done with nextOffset=0.
-	return sum, 0
-}
-
-type fakeReconciler struct {
-	result *worker.ReconcileResult
-	err    error
-}
-
-func (f *fakeReconciler) Reconcile(_ context.Context, _ string) (*worker.ReconcileResult, error) {
-	return f.result, f.err
-}
-
-func (f *fakeReconciler) ReconcileStreaming(_ context.Context, _ string, observer progress.Observer) (*worker.ReconcileResult, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	progress.Track(observer, "fake-backend", func() string { return progress.StatusOK })
-	return f.result, f.err
-}
-
-// newCoverageHandler builds a Handler wired entirely from the lightweight
-// fakes above so each test can dial in the precise branch it wants to
-// exercise without standing up a BackendManager.
-func newCoverageHandler() *Handler {
+// newCoverageHandler builds a Handler wired entirely from the generated ops
+// mocks, so each test can dial in the precise branch it wants to exercise
+// without standing up a BackendManager.
+func newCoverageHandler(t *testing.T) *Handler {
+	t.Helper()
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	return &Handler{
 		log:        slog.Default().With(logfmt.Component("admin")),
-		runtimeOps: fakeRuntimeOps{},
+		runtimeOps: newRuntimeOps(t),
 		token:      "test-token",
 		logLevel:   &lv,
 		dbHealthy:  func() bool { return true },
@@ -166,16 +56,14 @@ func newCoverageHandler() *Handler {
 // ObjectCounts, and UsageStats lookups all succeeding for the same key.
 func TestHandleStatus_PopulatedDashboard(t *testing.T) {
 	t.Parallel()
-	h := newCoverageHandler()
-	h.backendOps = &fakeBackendOps{
-		dashData: &dashboard.Data{
-			BackendOrder: []string{"b1"},
-			QuotaStats:   map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
-			ObjectCounts: map[string]int64{"b1": 5},
-			UsageStats:   map[string]core.UsageStat{"b1": {APIRequests: 3, IngressBytes: 50, EgressBytes: 25}},
-			UsagePeriod:  "2026-05",
-		},
-	}
+	h := newCoverageHandler(t)
+	h.dashboardOps = newDashboardOps(t, &dashboard.Data{
+		BackendOrder: []string{"b1"},
+		QuotaStats:   map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
+		ObjectCounts: map[string]int64{"b1": 5},
+		UsageStats:   map[string]core.UsageStat{"b1": {APIRequests: 3, IngressBytes: 50, EgressBytes: 25}},
+		UsagePeriod:  "2026-05",
+	}, nil)
 
 	w := httptest.NewRecorder()
 	h.handleStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/status", nil))
@@ -205,8 +93,8 @@ func TestHandleStatus_PopulatedDashboard(t *testing.T) {
 // path that the existing skip-only test never reaches.
 func TestHandleOverReplicationStatus_Configured(t *testing.T) {
 	t.Parallel()
-	h := newCoverageHandler()
-	h.overRep = &fakeOverRep{cfg: &config.ReplicationConfig{Factor: 2}, count: 7}
+	h := newCoverageHandler(t)
+	h.overRep = newOverRep(t, overRepStub{cfg: &config.ReplicationConfig{Factor: 2}, count: 7})
 
 	w := httptest.NewRecorder()
 	h.handleOverReplicationStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/over-replication", nil))
@@ -231,8 +119,8 @@ func TestHandleOverReplicationStatus_Configured(t *testing.T) {
 // endpoints rather than a sentence in the status field.
 func TestHandleOverReplicationStatus_Unconfigured(t *testing.T) {
 	t.Parallel()
-	h := newCoverageHandler()
-	h.overRep = &fakeOverRep{cfg: &config.ReplicationConfig{Factor: 1}}
+	h := newCoverageHandler(t)
+	h.overRep = newOverRep(t, overRepStub{cfg: &config.ReplicationConfig{Factor: 1}})
 
 	w := httptest.NewRecorder()
 	h.handleOverReplicationStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/over-replication", nil))
@@ -253,8 +141,8 @@ func TestHandleOverReplicationStatus_Unconfigured(t *testing.T) {
 // TestHandleOverReplicationStatus_CountError exercises the error branch.
 func TestHandleOverReplicationStatus_CountError(t *testing.T) {
 	t.Parallel()
-	h := newCoverageHandler()
-	h.overRep = &fakeOverRep{cfg: &config.ReplicationConfig{Factor: 2}, countErr: errors.New("db down")}
+	h := newCoverageHandler(t)
+	h.overRep = newOverRep(t, overRepStub{cfg: &config.ReplicationConfig{Factor: 2}, countErr: errors.New("db down")})
 
 	w := httptest.NewRecorder()
 	h.handleOverReplicationStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/over-replication", nil))
@@ -268,9 +156,9 @@ func TestHandleOverReplicationStatus_CountError(t *testing.T) {
 // including the batch_size query parameter parser.
 func TestHandleOverReplicationClean_Configured(t *testing.T) {
 	t.Parallel()
-	h := newCoverageHandler()
-	h.backendOps = &fakeBackendOps{}
-	h.overRep = &fakeOverRep{cfg: &config.ReplicationConfig{Factor: 2, BatchSize: 5}, cleaned: 3}
+	h := newCoverageHandler(t)
+	h.backendOps = newBackendOps(t, backendOpsStub{})
+	h.overRep = newOverRep(t, overRepStub{cfg: &config.ReplicationConfig{Factor: 2, BatchSize: 5}, cleaned: 3})
 
 	w := httptest.NewRecorder()
 	h.handleOverReplicationClean(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/over-replication?batch_size=100", nil))
@@ -293,8 +181,8 @@ func TestHandleOverReplicationClean_Configured(t *testing.T) {
 // returns the per-backend bytes_used corrections from the store.
 func TestHandleReconcileUsage_Success(t *testing.T) {
 	t.Parallel()
-	h := newCoverageHandler()
-	h.backendOps = &fakeBackendOps{reconcileMap: map[string]int64{"e2": -163}}
+	h := newCoverageHandler(t)
+	h.backendOps = newBackendOps(t, backendOpsStub{reconcileMap: map[string]int64{"e2": -163}})
 
 	w := httptest.NewRecorder()
 	h.handleReconcileUsage(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/usage-reconcile", nil))
@@ -316,8 +204,8 @@ func TestHandleReconcileUsage_Success(t *testing.T) {
 // surfaces as a 500.
 func TestHandleReconcileUsage_Error(t *testing.T) {
 	t.Parallel()
-	h := newCoverageHandler()
-	h.backendOps = &fakeBackendOps{reconcileErr: errors.New("db down")}
+	h := newCoverageHandler(t)
+	h.backendOps = newBackendOps(t, backendOpsStub{reconcileErr: errors.New("db down")})
 
 	w := httptest.NewRecorder()
 	h.handleReconcileUsage(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/usage-reconcile", nil))
@@ -336,9 +224,9 @@ func TestHandleReconcileUsage_Error(t *testing.T) {
 // hook stay covered.
 func TestHandleReplicate_Configured(t *testing.T) {
 	t.Parallel()
-	h := newCoverageHandler()
-	h.backendOps = &fakeBackendOps{}
-	h.replicator = &fakeReplicator{cfg: &config.ReplicationConfig{Factor: 2}, created: 4}
+	h := newCoverageHandler(t)
+	h.backendOps = newBackendOps(t, backendOpsStub{})
+	h.replicator = newReplicator(t, replicatorStub{cfg: &config.ReplicationConfig{Factor: 2}, created: 4})
 
 	w := httptest.NewRecorder()
 	h.handleReplicate(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/replicate", nil))
@@ -361,9 +249,9 @@ func TestHandleReplicate_Configured(t *testing.T) {
 // the success-branch handler and the typed Scrub method stay covered.
 func TestHandleScrub_IntegrityEnabled(t *testing.T) {
 	t.Parallel()
-	h := newCoverageHandler()
-	h.backendOps = &fakeBackendOps{intCfg: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}}
-	h.scrubber = &fakeScrubber{scrubChecked: 12, scrubFailed: 1}
+	h := newCoverageHandler(t)
+	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}})
+	h.scrubber = newScrubber(t, &scrubberStub{scrubChecked: 12, scrubFailed: 1})
 
 	w := httptest.NewRecorder()
 	h.handleScrub(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/scrub?batch_size=10", nil))
@@ -386,9 +274,9 @@ func TestHandleScrub_IntegrityEnabled(t *testing.T) {
 // paginated loop on the first batch.
 func TestHandleBackfillChecksums_IntegrityEnabled(t *testing.T) {
 	t.Parallel()
-	h := newCoverageHandler()
-	h.backendOps = &fakeBackendOps{intCfg: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}}
-	h.scrubber = &fakeScrubber{backfillProcessed: 8}
+	h := newCoverageHandler(t)
+	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}})
+	h.scrubber = newScrubber(t, &scrubberStub{backfillProcessed: 8})
 
 	w := httptest.NewRecorder()
 	h.handleBackfillChecksums(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/backfill-checksums", nil))
@@ -412,9 +300,10 @@ func TestHandleBackfillChecksums_IntegrityEnabled(t *testing.T) {
 // delay_ms exercises the inter-batch pacing path.
 func TestHandleBackfillChecksums_BoundedByMax(t *testing.T) {
 	t.Parallel()
-	h := newCoverageHandler()
-	h.backendOps = &fakeBackendOps{intCfg: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}}
-	sc := &fakeScrubber{backfillProcessed: 10, backfillMore: true}
+	h := newCoverageHandler(t)
+	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}})
+	scrubs := &scrubberStub{backfillProcessed: 10, backfillMore: true}
+	sc := newScrubber(t, scrubs)
 	h.scrubber = sc
 
 	w := httptest.NewRecorder()
@@ -433,8 +322,8 @@ func TestHandleBackfillChecksums_BoundedByMax(t *testing.T) {
 	if resp["done"] != false {
 		t.Errorf("done = %v, want false (backlog not drained)", resp["done"])
 	}
-	if sc.backfillCalls != 3 {
-		t.Errorf("backfillCalls = %d, want 3", sc.backfillCalls)
+	if scrubs.backfillCalls != 3 {
+		t.Errorf("backfillCalls = %d, want 3", scrubs.backfillCalls)
 	}
 }
 
@@ -446,8 +335,8 @@ func TestHandleBackfillChecksums_BoundedByMax(t *testing.T) {
 // configured reconciler returning non-zero counts.
 func TestHandleReconcile_Success(t *testing.T) {
 	t.Parallel()
-	h := newCoverageHandler()
-	h.reconciler = &fakeReconciler{result: &worker.ReconcileResult{Imported: 4, Removed: 1, BackendsScanned: 2}}
+	h := newCoverageHandler(t)
+	h.reconciler = newReconciler(t, &worker.ReconcileResult{Imported: 4, Removed: 1, BackendsScanned: 2}, nil)
 
 	w := httptest.NewRecorder()
 	h.handleReconcile(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/reconcile?backend=b1", nil))
@@ -466,8 +355,8 @@ func TestHandleReconcile_Success(t *testing.T) {
 // returns a non-nil error.
 func TestHandleReconcile_Error(t *testing.T) {
 	t.Parallel()
-	h := newCoverageHandler()
-	h.reconciler = &fakeReconciler{err: errors.New("scan failed")}
+	h := newCoverageHandler(t)
+	h.reconciler = newReconciler(t, nil, errors.New("scan failed"))
 
 	w := httptest.NewRecorder()
 	h.handleReconcile(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/reconcile", nil))
@@ -507,7 +396,7 @@ func TestBulkRewriteAdapters(t *testing.T) {
 // returned branches; this fills the middle case.
 func TestHandleReloadStatus_ProviderReturnsNil(t *testing.T) {
 	t.Parallel()
-	h := newCoverageHandler()
+	h := newCoverageHandler(t)
 	h.SetReloadStatusProvider(func() *adminapi.ReloadStatusResponse { return nil })
 
 	w := httptest.NewRecorder()

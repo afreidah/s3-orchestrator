@@ -5,84 +5,43 @@
 //
 // Tests for dashboard data aggregation: successful assembly, individual query
 // errors, empty data, and directory listing edge cases.
+//
+// Drives the aggregator against the generated 6-method DashboardStore mock, so
+// a test states only the reads it cares about and any unstubbed call fails the
+// test rather than returning a silent zero value.
 // -------------------------------------------------------------------------------
 
 package dashboard
 
 import (
-	"context"
 	"errors"
 	"testing"
 
-	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"go.uber.org/mock/gomock"
+
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
-
-// mockDashboardStore implements store.DashboardStore for aggregator tests.
-type mockDashboardStore struct {
-	quotaStats          map[string]core.QuotaStat
-	quotaStatsErr       error
-	objectCounts        map[string]int64
-	objectCountsErr     error
-	unverifiedCounts    map[string]int64
-	unverifiedCountsErr error
-	multipartCounts     map[string]int64
-	multipartCountsErr  error
-	usageStats          map[string]core.UsageStat
-	usageStatsErr       error
-	dirChildren         *core.DirectoryListResult
-	dirChildrenErr      error
-}
-
-// GetQuotaStats returns quota stats.
-func (m *mockDashboardStore) GetQuotaStats(_ context.Context) (map[string]core.QuotaStat, error) {
-	return m.quotaStats, m.quotaStatsErr
-}
-
-// GetObjectCounts returns object counts.
-func (m *mockDashboardStore) GetObjectCounts(_ context.Context) (map[string]int64, error) {
-	return m.objectCounts, m.objectCountsErr
-}
-
-// GetUnverifiedObjectCounts returns unverified counts.
-func (m *mockDashboardStore) GetUnverifiedObjectCounts(_ context.Context) (map[string]int64, error) {
-	return m.unverifiedCounts, m.unverifiedCountsErr
-}
-
-// GetActiveMultipartCounts returns active multipart counts.
-func (m *mockDashboardStore) GetActiveMultipartCounts(_ context.Context) (map[string]int64, error) {
-	return m.multipartCounts, m.multipartCountsErr
-}
-
-// GetUsageForPeriod returns usage for period.
-func (m *mockDashboardStore) GetUsageForPeriod(_ context.Context, _ string) (map[string]core.UsageStat, error) {
-	return m.usageStats, m.usageStatsErr
-}
-
-// ListDirectoryChildren lists directory children.
-func (m *mockDashboardStore) ListDirectoryChildren(_ context.Context, _, _ string, _ int) (*core.DirectoryListResult, error) {
-	return m.dirChildren, m.dirChildrenErr
-}
 
 // TestAggregator_Success verifies the aggregator success contract.
 // Asserts that BytesUsed = , want 100.
 func TestAggregator_Success(t *testing.T) {
 	t.Parallel()
-	ms := &mockDashboardStore{
-		quotaStats:      map[string]core.QuotaStat{"b1": {BytesUsed: 100}},
-		objectCounts:    map[string]int64{"b1": 5},
-		multipartCounts: map[string]int64{"b1": 1},
-		usageStats:      map[string]core.UsageStat{"b1": {APIRequests: 10}},
-		dirChildren:     &core.DirectoryListResult{},
-	}
+	ctrl := gomock.NewController(t)
 
-	usage := counter.NewUsageTracker(
-		counter.NewLocalCounterBackend([]string{"b1"}),
-		nil,
-	)
+	store := storetest.NewMockDashboardStore(ctrl)
+	store.EXPECT().GetQuotaStats(gomock.Any()).
+		Return(map[string]core.QuotaStat{"b1": {BytesUsed: 100}}, nil)
+	store.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{"b1": 5}, nil)
+	store.EXPECT().GetUnverifiedObjectCounts(gomock.Any()).Return(map[string]int64{}, nil)
+	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{"b1": 1}, nil)
+	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
+		Return(map[string]core.UsageStat{"b1": {APIRequests: 10}}, nil)
+	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&core.DirectoryListResult{}, nil)
 
-	da := New(ms, usage, []string{"b1"})
-	data, err := da.GetData(context.Background())
+	da := New(store, stubUsage(ctrl), []string{"b1"}, nil, nil)
+	data, err := da.GetData(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,132 +57,129 @@ func TestAggregator_Success(t *testing.T) {
 	}
 }
 
-// TestAggregator_QuotaStatsError verifies the aggregator quota stats error path by exercising errors.New, counter.NewUsageTracker, counter.NewLocalCounterBackend.
-func TestAggregator_QuotaStatsError(t *testing.T) {
-	t.Parallel()
-	ms := &mockDashboardStore{
-		quotaStatsErr: errors.New("db down"),
-	}
-	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	da := New(ms, usage, nil)
+// dashboardRead is one of the store reads GetData makes, in issue order, with
+// a stub for its success and failure forms.
+type dashboardRead struct {
+	name string
+	ok   func(*storetest.MockDashboardStore)
+	fail func(*storetest.MockDashboardStore, error)
+}
 
-	_, err := da.GetData(context.Background())
-	if err == nil {
-		t.Fatal("expected error when QuotaStats fails")
+// dashboardReads lists every read GetData issues, in the order it issues them.
+func dashboardReads() []dashboardRead {
+	a := gomock.Any()
+	return []dashboardRead{
+		{"quota stats",
+			func(m *storetest.MockDashboardStore) {
+				m.EXPECT().GetQuotaStats(a).Return(map[string]core.QuotaStat{}, nil)
+			},
+			func(m *storetest.MockDashboardStore, err error) {
+				m.EXPECT().GetQuotaStats(a).Return(nil, err)
+			}},
+		{"object counts",
+			func(m *storetest.MockDashboardStore) {
+				m.EXPECT().GetObjectCounts(a).Return(map[string]int64{}, nil)
+			},
+			func(m *storetest.MockDashboardStore, err error) {
+				m.EXPECT().GetObjectCounts(a).Return(nil, err)
+			}},
+		{"unverified counts",
+			func(m *storetest.MockDashboardStore) {
+				m.EXPECT().GetUnverifiedObjectCounts(a).Return(map[string]int64{}, nil)
+			},
+			func(m *storetest.MockDashboardStore, err error) {
+				m.EXPECT().GetUnverifiedObjectCounts(a).Return(nil, err)
+			}},
+		{"multipart counts",
+			func(m *storetest.MockDashboardStore) {
+				m.EXPECT().GetActiveMultipartCounts(a).Return(map[string]int64{}, nil)
+			},
+			func(m *storetest.MockDashboardStore, err error) {
+				m.EXPECT().GetActiveMultipartCounts(a).Return(nil, err)
+			}},
+		{"usage stats",
+			func(m *storetest.MockDashboardStore) {
+				m.EXPECT().GetUsageForPeriod(a, a).Return(map[string]core.UsageStat{}, nil)
+			},
+			func(m *storetest.MockDashboardStore, err error) {
+				m.EXPECT().GetUsageForPeriod(a, a).Return(nil, err)
+			}},
+		{"directory children",
+			func(m *storetest.MockDashboardStore) {
+				m.EXPECT().ListDirectoryChildren(a, a, a, a).Return(&core.DirectoryListResult{}, nil)
+			},
+			func(m *storetest.MockDashboardStore, err error) {
+				m.EXPECT().ListDirectoryChildren(a, a, a, a).Return(nil, err)
+			}},
 	}
 }
 
-// TestAggregator_ObjectCountsError verifies the aggregator object counts error path by exercising errors.New, counter.NewUsageTracker, counter.NewLocalCounterBackend.
-func TestAggregator_ObjectCountsError(t *testing.T) {
+// TestAggregator_ReadErrorsFailGetData asserts every store read is
+// load-bearing: whichever one fails, GetData fails rather than returning a
+// partially-populated dashboard. Each case stubs the reads issued before the
+// failing one so the aggregator actually reaches it.
+func TestAggregator_ReadErrorsFailGetData(t *testing.T) {
 	t.Parallel()
-	ms := &mockDashboardStore{
-		quotaStats:      map[string]core.QuotaStat{},
-		objectCountsErr: errors.New("db down"),
-	}
-	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	da := New(ms, usage, nil)
 
-	_, err := da.GetData(context.Background())
-	if err == nil {
-		t.Fatal("expected error when ObjectCounts fails")
+	reads := dashboardReads()
+	for i, c := range reads {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			ctrl := gomock.NewController(t)
+			store := storetest.NewMockDashboardStore(ctrl)
+			for _, earlier := range reads[:i] {
+				earlier.ok(store)
+			}
+			c.fail(store, errors.New("db down"))
+
+			da := New(store, stubUsage(ctrl), nil, nil, nil)
+			if _, err := da.GetData(t.Context()); err == nil {
+				t.Fatalf("GetData succeeded despite %s failing", c.name)
+			}
+		})
 	}
 }
 
-// TestAggregator_UnverifiedCountsError pins the GetData failure when
-// GetUnverifiedObjectCounts errors. Mirrors TestAggregator_ObjectCountsError.
-func TestAggregator_UnverifiedCountsError(t *testing.T) {
-	t.Parallel()
-	ms := &mockDashboardStore{
-		quotaStats:          map[string]core.QuotaStat{},
-		objectCounts:        map[string]int64{},
-		unverifiedCountsErr: errors.New("db down"),
-	}
-	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	da := New(ms, usage, nil)
-
-	if _, err := da.GetData(context.Background()); err == nil {
-		t.Fatal("expected error when GetUnverifiedObjectCounts fails")
-	}
-}
-
-// TestAggregator_MultipartCountsError verifies the aggregator multipart counts error path by exercising errors.New, counter.NewUsageTracker, counter.NewLocalCounterBackend.
-func TestAggregator_MultipartCountsError(t *testing.T) {
-	t.Parallel()
-	ms := &mockDashboardStore{
-		quotaStats:         map[string]core.QuotaStat{},
-		objectCounts:       map[string]int64{},
-		multipartCountsErr: errors.New("db down"),
-	}
-	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	da := New(ms, usage, nil)
-
-	_, err := da.GetData(context.Background())
-	if err == nil {
-		t.Fatal("expected error when MultipartCounts fails")
-	}
-}
-
-// TestAggregator_UsageStatsError verifies the aggregator usage stats error path by exercising errors.New, counter.NewUsageTracker, counter.NewLocalCounterBackend.
-func TestAggregator_UsageStatsError(t *testing.T) {
-	t.Parallel()
-	ms := &mockDashboardStore{
-		quotaStats:      map[string]core.QuotaStat{},
-		objectCounts:    map[string]int64{},
-		multipartCounts: map[string]int64{},
-		usageStatsErr:   errors.New("db down"),
-	}
-	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	da := New(ms, usage, nil)
-
-	_, err := da.GetData(context.Background())
-	if err == nil {
-		t.Fatal("expected error when UsageStats fails")
-	}
-}
-
-// TestAggregator_DirChildrenError verifies the aggregator dir children error path by exercising errors.New, counter.NewUsageTracker, counter.NewLocalCounterBackend.
-func TestAggregator_DirChildrenError(t *testing.T) {
-	t.Parallel()
-	ms := &mockDashboardStore{
-		quotaStats:      map[string]core.QuotaStat{},
-		objectCounts:    map[string]int64{},
-		multipartCounts: map[string]int64{},
-		usageStats:      map[string]core.UsageStat{},
-		dirChildrenErr:  errors.New("db down"),
-	}
-	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	da := New(ms, usage, nil)
-
-	_, err := da.GetData(context.Background())
-	if err == nil {
-		t.Fatal("expected error when DirChildren fails")
-	}
-}
-
-// TestAggregator_GetDirectoryChildren_ClampsMaxKeys verifies the aggregator get directory children clamps max keys path by exercising counter.NewUsageTracker, counter.NewLocalCounterBackend, da.GetDirectoryChildren.
+// TestAggregator_GetDirectoryChildren_ClampsMaxKeys pins the bound the
+// aggregator puts on a caller-supplied page size. The assertion is the
+// argument the store receives, not just that a result came back.
 func TestAggregator_GetDirectoryChildren_ClampsMaxKeys(t *testing.T) {
 	t.Parallel()
-	ms := &mockDashboardStore{
-		dirChildren: &core.DirectoryListResult{},
-	}
-	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
-	da := New(ms, usage, nil)
 
-	// maxKeys=0 should be clamped to 200
-	result, err := da.GetDirectoryChildren(context.Background(), "", "", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
+	for _, c := range []struct {
+		name    string
+		maxKeys int
+	}{
+		{"unset", 0},
+		{"negative", -1},
+		{"over the clamp", 999},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			ctrl := gomock.NewController(t)
+			store := storetest.NewMockDashboardStore(ctrl)
+			store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), maxDirectoryChildren).
+				Return(&core.DirectoryListResult{}, nil).Times(1)
 
-	// maxKeys=999 should be clamped to 200
-	result, err = da.GetDirectoryChildren(context.Background(), "", "", 999)
-	if err != nil {
-		t.Fatal(err)
+			da := New(store, stubUsage(ctrl), nil, nil, nil)
+			if _, err := da.GetDirectoryChildren(t.Context(), "", "", c.maxKeys); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
+}
+
+// TestAggregator_GetDirectoryChildren_PassesThroughInRange asserts a page size
+// inside the bound reaches the store unchanged.
+func TestAggregator_GetDirectoryChildren_PassesThroughInRange(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockDashboardStore(ctrl)
+	store.EXPECT().ListDirectoryChildren(gomock.Any(), "photos/", "cat.jpg", 25).
+		Return(&core.DirectoryListResult{}, nil).Times(1)
+
+	da := New(store, stubUsage(ctrl), nil, nil, nil)
+	if _, err := da.GetDirectoryChildren(t.Context(), "photos/", "cat.jpg", 25); err != nil {
+		t.Fatal(err)
 	}
 }

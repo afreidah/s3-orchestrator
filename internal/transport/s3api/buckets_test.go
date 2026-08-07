@@ -10,8 +10,8 @@
 package s3api
 
 import (
-	"io"
 	"context"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -56,7 +56,7 @@ func TestListBucketsNoAuth(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	getReq, _ := http.NewRequestWithContext(context.Background(), "GET", ts.URL + "/", nil)
+	getReq, _ := http.NewRequestWithContext(context.Background(), "GET", ts.URL+"/", nil)
 	resp, err := ts.Client().Do(getReq) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +128,7 @@ func TestGetBucketLocationNoAuth(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t)
 
-	getReq, _ := http.NewRequestWithContext(context.Background(), "GET", ts.URL + "/mybucket?location", nil)
+	getReq, _ := http.NewRequestWithContext(context.Background(), "GET", ts.URL+"/mybucket?location", nil)
 	resp, err := ts.Client().Do(getReq) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)

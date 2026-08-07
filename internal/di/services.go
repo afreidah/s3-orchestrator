@@ -155,15 +155,15 @@ func NewLifecycleService(manager lifecycleOps, locker tickrunner.AdvisoryLocker)
 		Name:     slug,
 		Log:      log,
 		ShouldRun: func() bool {
-			cfg := manager.LifecycleConfig()
+			cfg := manager.Config()
 			return cfg != nil && len(cfg.Rules) > 0
 		},
 		Work: func(ctx context.Context) error {
-			cfg := manager.LifecycleConfig()
+			cfg := manager.Config()
 			if cfg == nil {
 				return nil
 			}
-			deleted, failed := manager.ProcessLifecycleRules(ctx, cfg.Rules)
+			deleted, failed := manager.ProcessRules(ctx, cfg.Rules)
 			if deleted > 0 || failed > 0 {
 				log.InfoContext(ctx, "expiration completed",
 					"deleted", deleted, "failed", failed)

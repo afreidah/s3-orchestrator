@@ -25,7 +25,10 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"go.uber.org/mock/gomock"
+
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -33,7 +36,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
-	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"golang.org/x/crypto/bcrypt"
 	// newTestHandler builds a Handler wired to mock data for testing.
 )
@@ -46,6 +49,17 @@ const (
 )
 
 // newTestHandler constructs a new test handler.
+// testDashboard builds the aggregator the UI now reads directly, wired to the
+// same mock store and live fleet the manager under test uses.
+// testSync builds the reconcile manager the UI's sync action invokes.
+func testSync(mgr *proxy.BackendManager, store reconcile.Stores) *reconcile.Manager {
+	return reconcile.NewManager(mgr.Runtime(), store, mgr.Runtime().Acct(), nil)
+}
+
+func testDashboard(mgr *proxy.BackendManager, store core.DashboardStore) *dashboard.Aggregator {
+	return dashboard.New(store, mgr.Runtime().Usage(), mgr.BackendOrder(), mgr.Runtime(), mgr.Drain())
+}
+
 func newTestHandler(t *testing.T) (*Handler, *http.ServeMux) {
 	t.Helper()
 	h, mux, _ := newTestHandlerWithMock(t)
@@ -53,31 +67,34 @@ func newTestHandler(t *testing.T) (*Handler, *http.ServeMux) {
 }
 
 // newTestHandlerWithMock builds a Handler and also returns the underlying mock
-// store so tests can configure per-test error/response behaviour.
-func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.MockStore) {
+// store. Each opt registers expectations before the fixture's own, so a test
+// that cares about one call can override just that one and inherit the rest.
+func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataStore)) (*Handler, *http.ServeMux, *storetest.MockMetadataStore) {
 	t.Helper()
 
-	mockStore := testutil.NewMockStore(t)
-	mockStore.GetQuotaStatsResp = map[string]core.QuotaStat{
+	mockStore := storetest.NewMockMetadataStore(gomock.NewController(t))
+	for _, opt := range opts {
+		opt(mockStore)
+	}
+	mockStore.EXPECT().GetQuotaStats(gomock.Any()).Return(map[string]core.QuotaStat{
 		"b1": {BackendName: "b1", BytesUsed: 500, BytesLimit: 1000},
-	}
-	mockStore.GetObjectCountsResp = map[string]int64{"b1": 42}
-	mockStore.GetActiveMultipartResp = map[string]int64{"b1": 0}
-	mockStore.GetUsageForPeriodResp = map[string]core.UsageStat{"b1": {APIRequests: 100}}
-	mockStore.ListDirChildrenResp = &core.DirectoryListResult{
-		Entries: []core.DirEntry{
-			{Name: "bucket1/", IsDir: true, FileCount: 10, TotalSize: 4096},
-		},
-	}
+	}, nil).AnyTimes()
+	mockStore.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{"b1": 42}, nil).AnyTimes()
+	mockStore.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{"b1": 0}, nil).AnyTimes()
+	mockStore.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
+		Return(map[string]core.UsageStat{"b1": {APIRequests: 100}}, nil).AnyTimes()
+	mockStore.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&core.DirectoryListResult{
+			Entries: []core.DirEntry{
+				{Name: "bucket1/", IsDir: true, FileCount: 10, TotalSize: 4096},
+			},
+		}, nil).AnyTimes()
+	storetest.Permissive(mockStore)
 
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(t, mockStore, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]backend.ObjectBackend{},
 			Order:    []string{"b1"},
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  mockStore,
-			Dashboard: mockStore,
 		},
 		Policies: proxy.PolicyConfig{
 			RoutingStrategy: config.RoutingPack,
@@ -108,7 +125,7 @@ func newTestHandlerWithMock(t *testing.T) (*Handler, *http.ServeMux, *testutil.M
 		},
 	}
 
-	h := New(&Deps{BackendOps: mgr, Objects: mgr.Objects(), Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(t), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: mgr.Objects(), Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(t), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
@@ -459,20 +476,12 @@ func TestLogin_BcryptSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mockStore := testutil.NewMockStore(t)
-	mockStore.GetQuotaStatsResp = map[string]core.QuotaStat{}
-	mockStore.GetObjectCountsResp = map[string]int64{}
-	mockStore.GetActiveMultipartResp = map[string]int64{}
-	mockStore.GetUsageForPeriodResp = map[string]core.UsageStat{}
-	mockStore.ListDirChildrenResp = &core.DirectoryListResult{}
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	mockStore := storetest.NewMockMetadataStore(gomock.NewController(t))
+	storetest.Permissive(mockStore)
+	mgr := proxytest.NewManager(t, mockStore, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]backend.ObjectBackend{},
 			Order:    []string{},
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  mockStore,
-			Dashboard: mockStore,
 		},
 		Operations: proxy.OperationalDeps{
 			Metrics: mockStore,
@@ -492,7 +501,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 		},
 	}
 
-	h := New(&Deps{BackendOps: mgr, Objects: mgr.Objects(), Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(t), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: mgr.Objects(), Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(t), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 
@@ -541,20 +550,12 @@ func TestDeriveSessionKey_DifferentSecretsDifferentKeys(t *testing.T) {
 func TestCrossInstanceSession(t *testing.T) {
 	t.Parallel()
 	// Two handlers with the same config should accept each other's sessions.
-	mockStore := testutil.NewMockStore(t)
-	mockStore.GetQuotaStatsResp = map[string]core.QuotaStat{}
-	mockStore.GetObjectCountsResp = map[string]int64{}
-	mockStore.GetActiveMultipartResp = map[string]int64{}
-	mockStore.GetUsageForPeriodResp = map[string]core.UsageStat{}
-	mockStore.ListDirChildrenResp = &core.DirectoryListResult{}
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	mockStore := storetest.NewMockMetadataStore(gomock.NewController(t))
+	storetest.Permissive(mockStore)
+	mgr := proxytest.NewManager(t, mockStore, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]backend.ObjectBackend{},
 			Order:    []string{},
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  mockStore,
-			Dashboard: mockStore,
 		},
 		Operations: proxy.OperationalDeps{
 			Metrics: mockStore,
@@ -573,8 +574,8 @@ func TestCrossInstanceSession(t *testing.T) {
 		},
 	}
 
-	h1 := New(&Deps{BackendOps: mgr, Objects: mgr.Objects(), Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(t), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
-	h2 := New(&Deps{BackendOps: mgr, Objects: mgr.Objects(), Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(t), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h1 := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: mgr.Objects(), Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(t), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h2 := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: mgr.Objects(), Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(t), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux1 := http.NewServeMux()
 	mux2 := http.NewServeMux()
 	h1.Register(mux1, "/ui")
@@ -895,8 +896,9 @@ func TestAPIDelete_Success(t *testing.T) {
 // Asserts that status = , want 500.
 func TestAPIDelete_ManagerError(t *testing.T) {
 	t.Parallel()
-	h, mux, mock := newTestHandlerWithMock(t)
-	mock.DeleteObjectErr = errors.New("db down")
+	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(nil, errors.New("db down")).AnyTimes()
+	})
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete",
 		strings.NewReader(`{"key":"test-bucket/file.txt"}`))
@@ -982,14 +984,14 @@ func TestAPIDeletePrefix_EmptyPrefix(t *testing.T) {
 // Asserts that status = , want 200; body =.
 func TestAPIDeletePrefix_Success(t *testing.T) {
 	t.Parallel()
-	h, mux, mock := newTestHandlerWithMock(t)
-	mock.ListObjectsResp = &core.ListObjectsResult{
-		Objects: []core.ObjectLocation{
-			{ObjectKey: "test-bucket/a.txt", BackendName: "b1", SizeBytes: 100},
-			{ObjectKey: "test-bucket/b.txt", BackendName: "b1", SizeBytes: 200},
-		},
-		IsTruncated: false,
-	}
+	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&core.ListObjectsResult{
+			Objects: []core.ObjectLocation{
+				{ObjectKey: "test-bucket/a.txt", BackendName: "b1", SizeBytes: 100},
+				{ObjectKey: "test-bucket/b.txt", BackendName: "b1", SizeBytes: 200},
+			},
+		}, nil).AnyTimes()
+	})
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
 		strings.NewReader(`{"prefix":"test-bucket/"}`))
@@ -1019,11 +1021,10 @@ func TestAPIDeletePrefix_Success(t *testing.T) {
 // Asserts that status = , want 200; body =.
 func TestAPIDeletePrefix_EmptyResult(t *testing.T) {
 	t.Parallel()
-	h, mux, mock := newTestHandlerWithMock(t)
-	mock.ListObjectsResp = &core.ListObjectsResult{
-		Objects:     nil,
-		IsTruncated: false,
-	}
+	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(&core.ListObjectsResult{}, nil).AnyTimes()
+	})
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
 		strings.NewReader(`{"prefix":"empty-prefix/"}`))
@@ -1053,8 +1054,9 @@ func TestAPIDeletePrefix_EmptyResult(t *testing.T) {
 // Asserts that status = , want 500.
 func TestAPIDeletePrefix_ListObjectsError(t *testing.T) {
 	t.Parallel()
-	h, mux, mock := newTestHandlerWithMock(t)
-	mock.ListObjectsErr = errors.New("db down")
+	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("db down")).AnyTimes()
+	})
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
 		strings.NewReader(`{"prefix":"test-bucket/"}`))
@@ -1071,14 +1073,14 @@ func TestAPIDeletePrefix_ListObjectsError(t *testing.T) {
 // Asserts that status = , want 500.
 func TestAPIDeletePrefix_DeleteError(t *testing.T) {
 	t.Parallel()
-	h, mux, mock := newTestHandlerWithMock(t)
-	mock.ListObjectsResp = &core.ListObjectsResult{
-		Objects: []core.ObjectLocation{
-			{ObjectKey: "test-bucket/a.txt", BackendName: "b1", SizeBytes: 100},
-		},
-		IsTruncated: false,
-	}
-	mock.DeleteObjectsBatchErr = errors.New("delete failed")
+	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&core.ListObjectsResult{
+			Objects: []core.ObjectLocation{
+				{ObjectKey: "test-bucket/a.txt", BackendName: "b1", SizeBytes: 100},
+			},
+		}, nil).AnyTimes()
+		m.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).Return(nil, errors.New("delete failed")).AnyTimes()
+	})
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
 		strings.NewReader(`{"prefix":"test-bucket/"}`))
@@ -1320,8 +1322,9 @@ func TestAPIRebalance_StatusPolling(t *testing.T) {
 // Asserts that status = , want 202.
 func TestAPIRebalance_ManagerError(t *testing.T) {
 	t.Parallel()
-	h, mux, mock := newTestHandlerWithMock(t)
-	mock.GetQuotaStatsErr = errors.New("db down")
+	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().GetQuotaStats(gomock.Any()).Return(nil, errors.New("db down")).AnyTimes()
+	})
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/rebalance", nil)
 	w := httptest.NewRecorder()
@@ -1501,8 +1504,9 @@ func TestLogin_UnsupportedMethod(t *testing.T) {
 // Asserts that status = , want 500.
 func TestDashboard_DataError(t *testing.T) {
 	t.Parallel()
-	h, mux, mock := newTestHandlerWithMock(t)
-	mock.GetQuotaStatsErr = errors.New("db down")
+	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().GetQuotaStats(gomock.Any()).Return(nil, errors.New("db down")).AnyTimes()
+	})
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/", nil)
 	w := httptest.NewRecorder()
@@ -1517,8 +1521,9 @@ func TestDashboard_DataError(t *testing.T) {
 // Asserts that status = , want 500.
 func TestAPIDashboard_DataError(t *testing.T) {
 	t.Parallel()
-	h, mux, mock := newTestHandlerWithMock(t)
-	mock.GetQuotaStatsErr = errors.New("db down")
+	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().GetQuotaStats(gomock.Any()).Return(nil, errors.New("db down")).AnyTimes()
+	})
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/dashboard", nil)
 	w := httptest.NewRecorder()
@@ -1563,8 +1568,9 @@ func TestTreeAPI_InvalidBucketPrefix(t *testing.T) {
 // Asserts that status = , want 500.
 func TestTreeAPI_DataError(t *testing.T) {
 	t.Parallel()
-	h, mux, mock := newTestHandlerWithMock(t)
-	mock.ListDirChildrenErr = errors.New("db down")
+	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("db down")).AnyTimes()
+	})
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/tree?prefix=", nil)
 	w := httptest.NewRecorder()
@@ -1942,21 +1948,13 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		b.Fatal(err)
 	}
 
-	mockStore := testutil.NewMockStore(b)
-	mockStore.GetQuotaStatsResp = map[string]core.QuotaStat{}
-	mockStore.GetObjectCountsResp = map[string]int64{}
-	mockStore.GetActiveMultipartResp = map[string]int64{}
-	mockStore.GetUsageForPeriodResp = map[string]core.UsageStat{}
-	mockStore.ListDirChildrenResp = &core.DirectoryListResult{}
+	mockStore := storetest.NewMockMetadataStore(gomock.NewController(b))
+	storetest.Permissive(mockStore)
 
-	mgr := proxytest.NewManager(b, &proxy.BackendManagerConfig{
+	mgr := proxytest.NewManager(b, mockStore, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]backend.ObjectBackend{},
 			Order:    []string{},
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  mockStore,
-			Dashboard: mockStore,
 		},
 		Policies: proxy.PolicyConfig{
 			RoutingStrategy: config.RoutingPack,
@@ -1980,7 +1978,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		},
 	}
 
-	h := New(&Deps{BackendOps: mgr, Objects: mgr.Objects(), Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(b), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: mgr.Objects(), Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(b), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 
@@ -2040,8 +2038,9 @@ func TestDownload_InvalidBucketPrefix(t *testing.T) {
 // Asserts that status = , want.
 func TestDownload_NotFound(t *testing.T) {
 	t.Parallel()
-	h, mux := newTestHandler(t)
-	// Default mock store returns ErrObjectNotFound for GetAllObjectLocations
+	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).Return(nil, core.ErrObjectNotFound).AnyTimes()
+	})
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/download?key=test-bucket/missing.txt", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -2055,8 +2054,9 @@ func TestDownload_NotFound(t *testing.T) {
 // Asserts that status = , want.
 func TestDownload_StoreError(t *testing.T) {
 	t.Parallel()
-	h, mux, mock := newTestHandlerWithMock(t)
-	mock.GetAllLocationsErr = errors.New("db down")
+	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).Return(nil, errors.New("db down")).AnyTimes()
+	})
 
 	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/download?key=test-bucket/file.txt", nil)
 	w := httptest.NewRecorder()

@@ -45,7 +45,7 @@ func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := h.backendOps.GetDirectoryChildren(r.Context(), prefix, startAfter, maxKeys)
+	result, err := h.dashboardOps.GetDirectoryChildren(r.Context(), prefix, startAfter, maxKeys)
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "failed to list directory children", "prefix", prefix, "error", err)
 		httputil.WriteJSONError(w, http.StatusInternalServerError, "failed to list children")

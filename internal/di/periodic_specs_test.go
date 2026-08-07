@@ -45,10 +45,10 @@ func allLockedTickerServices(t *testing.T) []*tickrunner.Service {
 		multipart.NewCleanupService(f.mgr.Multipart(), locker, 0),
 		worker.NewCleanupQueueService(f.cleanupWorker, locker),
 		worker.NewRebalancerService(f.mgr, f.rebalancer, locker),
-		NewLifecycleService(f.mgr, locker),
+		NewLifecycleService(f.expirer, locker),
 		worker.NewOverReplicationService(f.mgr, f.overRep, locker),
 		worker.NewReplicatorService(f.mgr, f.replicator, locker),
-		worker.NewReconcileService(worker.NewReconciler(f.mgr, nil), locker, time.Hour),
+		worker.NewReconcileService(worker.NewReconciler(f.reconciler, f.mgr, nil), locker, time.Hour),
 		worker.NewScrubberService(f.scrubber, locker),
 	}
 	out := make([]*tickrunner.Service, 0, len(runners))

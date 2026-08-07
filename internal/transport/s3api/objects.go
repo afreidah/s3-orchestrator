@@ -120,10 +120,10 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 	// client sends Expect: 100-continue, Go's net/http delays the 100
 	// Continue response until the first r.Body.Read(). Rejecting here
 	// avoids transmitting the entire upload body for a doomed request.
-	if !s.Manager.Objects().CanAcceptWrite(r.ContentLength) {
+	if !s.Objects.CanAcceptWrite(r.ContentLength) {
 		telemetry.EarlyRejectionsTotal.Inc()
 		msg := fmt.Sprintf("No backend can accept a %d byte upload", r.ContentLength)
-		if hint := formatCapacityHint(s.Manager.Objects().BackendCapacityStats(ctx)); hint != "" {
+		if hint := formatCapacityHint(s.Objects.BackendCapacityStats(ctx)); hint != "" {
 			msg += "; backend usage: " + hint
 		}
 		writeS3Error(w, http.StatusInsufficientStorage, "InsufficientStorage", msg)
@@ -137,7 +137,7 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 		telemetry.AttrContentType.String(contentType),
 	)
 
-	etag, err := s.Manager.Objects().PutObject(ctx, key, r.Body, r.ContentLength, contentType, metadata)
+	etag, err := s.Objects.PutObject(ctx, key, r.Body, r.ContentLength, contentType, metadata)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to store object"), err
 	}
@@ -155,7 +155,7 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, int64, error) {
 	rangeHeader := r.Header.Get("Range")
 
-	result, err := s.Manager.Objects().GetObject(ctx, key, rangeHeader)
+	result, err := s.Objects.GetObject(ctx, key, rangeHeader)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to retrieve object"), 0, err
 	}
@@ -208,7 +208,7 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 
 // handleHead processes HEAD requests.
 func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) (int, error) {
-	result, err := s.Manager.Objects().HeadObject(ctx, key)
+	result, err := s.Objects.HeadObject(ctx, key)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to retrieve object metadata"), err
 	}
@@ -246,7 +246,7 @@ func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.
 // handleDelete processes DELETE requests. The manager treats missing objects as
 // success (S3 idempotent delete), so any error returned is a real backend failure.
 func (s *Server) handleDelete(ctx context.Context, w http.ResponseWriter, _ *http.Request, key string) (int, error) {
-	if err := s.Manager.Objects().DeleteObject(ctx, key); err != nil {
+	if err := s.Objects.DeleteObject(ctx, key); err != nil {
 		return writeStorageError(w, err, "Failed to delete object"), err
 	}
 
@@ -281,7 +281,7 @@ func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, bu
 	// Prefix source key for internal storage
 	sourceInternalKey := internalkey.Make(bucket, sourceKey)
 
-	etag, err := s.Manager.Objects().CopyObject(ctx, sourceInternalKey, destInternalKey)
+	etag, err := s.Objects.CopyObject(ctx, sourceInternalKey, destInternalKey)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to copy object"), err
 	}
@@ -325,7 +325,7 @@ func (s *Server) handleDeleteObjects(ctx context.Context, w http.ResponseWriter,
 		keys[i] = internalkey.Make(bucket, obj.Key)
 	}
 
-	results := s.Manager.Objects().DeleteObjects(ctx, keys)
+	results := s.Objects.DeleteObjects(ctx, keys)
 
 	// Build XML response with per-key outcomes
 	resp := deleteObjectsResult{
@@ -376,7 +376,7 @@ func (s *Server) checkIfNoneMatchStar(ctx context.Context, w http.ResponseWriter
 	if r.Header.Get("If-None-Match") != "*" {
 		return 0, nil, false
 	}
-	exists, err := s.Manager.Objects().ObjectExists(ctx, key)
+	exists, err := s.Objects.ObjectExists(ctx, key)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to evaluate conditional write"), err, true
 	}

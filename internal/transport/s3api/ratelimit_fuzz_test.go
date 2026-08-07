@@ -11,8 +11,8 @@
 package s3api
 
 import (
-	"net"
 	"context"
+	"net"
 	"net/http"
 	"testing"
 )

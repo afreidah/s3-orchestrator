@@ -23,13 +23,15 @@ import (
 	"log/slog"
 	"testing"
 
+	"go.uber.org/mock/gomock"
+
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/testutil"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // passResultManager builds the smallest BackendManager that
@@ -37,15 +39,14 @@ import (
 // success path can call UpdateQuotaMetrics without erroring.
 func passResultManager(t *testing.T) *proxy.BackendManager {
 	t.Helper()
-	mock := testutil.NewMockStore(t)
-	mgr := proxytest.NewManager(t, &proxy.BackendManagerConfig{
+	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
+	// The metrics collector runs on every quota refresh; stub its reads so the
+	// test states only the pass-result behaviour it is about.
+	expectCollectorReads(mock)
+	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]backend.ObjectBackend{},
 			Order:    []string{},
-		},
-		Stores: proxy.StoreDeps{
-			Metadata:  mock,
-			Dashboard: mock,
 		},
 		Policies: proxy.PolicyConfig{
 			RoutingStrategy: config.RoutingPack,
@@ -106,4 +107,17 @@ func TestHandlePassResult_OtherErrorSurfaces(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Errorf("expected boom propagated, got %v", err)
 	}
+}
+
+// expectCollectorReads stubs the reads metrics.Collector performs on a quota
+// refresh. They are incidental to what these tests assert, but stating them
+// keeps the mock strict about everything else.
+func expectCollectorReads(m *storetest.MockMetadataStore) {
+	m.EXPECT().GetQuotaStats(gomock.Any()).Return(map[string]core.QuotaStat{}, nil).AnyTimes()
+	m.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
+	m.EXPECT().GetUnverifiedObjectCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
+	m.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
+	m.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.UsageStat{}, nil).AnyTimes()
+	m.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	m.EXPECT().CountOverReplicatedObjects(gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
 }

@@ -14,7 +14,7 @@
 // flow until the pending pattern extends to the multipart manager.
 // -------------------------------------------------------------------------------
 
-package proxy
+package multipart
 
 import (
 	"bytes"
@@ -24,6 +24,8 @@ import (
 
 	"go.uber.org/mock/gomock"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
@@ -32,7 +34,7 @@ import (
 // upload-part record-failure cleanup delete carries a deadline.
 func TestUploadPart_RecordFailure_CleanupDeleteCarriesDeadline(t *testing.T) {
 	t.Parallel()
-	backend := newMockBackend()
+	be := backendtest.NewInMemory()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetMultipartUpload(gomock.Any(), "upload-1").
@@ -49,16 +51,14 @@ func TestUploadPart_RecordFailure_CleanupDeleteCarriesDeadline(t *testing.T) {
 		Return(nil).
 		AnyTimes()
 
-	mgr := newTestManager(t, store, map[string]*mockBackend{"b1": backend})
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	_, err := mgr.multipartManager.UploadPart(context.Background(), "multi", "key", "upload-1", 1, bytes.NewReader([]byte("data")), 4)
+	_, err := mgr.UploadPart(context.Background(), "multi", "key", "upload-1", 1, bytes.NewReader([]byte("data")), 4)
 	if err == nil {
 		t.Fatal("expected error from RecordPart failure to trigger part cleanup")
 	}
 
-	backend.mu.Lock()
-	defer backend.mu.Unlock()
-	if !backend.lastDeleteHadDdl {
+	if hadDeadline, _ := be.LastDelete(); !hadDeadline {
 		t.Error("part-cleanup DeleteObject should be invoked with a deadline-bound ctx (deleteWithTimeout)")
 	}
 }

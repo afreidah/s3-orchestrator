@@ -16,17 +16,21 @@ package s3api
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
+	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
-	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -48,9 +52,47 @@ var httpSpanName = map[string]string{
 	http.MethodPost:   "HTTP POST",
 }
 
-// Server handles HTTP requests and routes them to the backend manager.
+//go:generate mockgen -destination=mock_ops_test.go -package=s3api github.com/afreidah/s3-orchestrator/internal/transport/s3api ObjectOps,MultipartOps
+
+// ObjectOps is the narrow object surface the S3 transport depends on:
+// the object CRUD, listing, and capacity queries reachable from an S3
+// request. *object.Manager satisfies it.
+type ObjectOps interface {
+	PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error)
+	GetObject(ctx context.Context, key, rangeHeader string) (*s3be.GetObjectResult, error)
+	HeadObject(ctx context.Context, key string) (*s3be.HeadObjectResult, error)
+	DeleteObject(ctx context.Context, key string) error
+	DeleteObjects(ctx context.Context, keys []string) []object.DeleteObjectResult
+	CopyObject(ctx context.Context, sourceKey, destKey string) (string, error)
+	ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*object.ListObjectsV2Result, error)
+	ObjectExists(ctx context.Context, key string) (bool, error)
+	CanAcceptWrite(size int64) bool
+	BackendCapacityStats(ctx context.Context) map[string]core.QuotaStat
+}
+
+// MultipartOps is the narrow multipart surface the S3 transport depends on.
+// *multipart.Manager satisfies it.
+type MultipartOps interface {
+	CreateMultipartUpload(ctx context.Context, key, contentType string, metadata map[string]string) (string, string, error)
+	UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, body io.Reader, size int64) (string, error)
+	CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, partNumbers []int) (string, error)
+	AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error
+	ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]core.MultipartUpload, error)
+	GetParts(ctx context.Context, bucket, key, uploadID string) ([]core.MultipartPart, error)
+	CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error)
+}
+
+// Compile-time assertions.
+var (
+	_ ObjectOps    = (*object.Manager)(nil)
+	_ MultipartOps = (*multipart.Manager)(nil)
+)
+
+// Server handles HTTP requests and routes them to the object and multipart
+// managers.
 type Server struct {
-	Manager       *proxy.BackendManager
+	Objects       ObjectOps
+	Multipart     MultipartOps
 	bucketAuth    syncutil.AtomicConfig[auth.BucketRegistry]
 	MaxObjectSize int64        // Max upload body size in bytes
 	startedAt     time.Time    // Stable timestamp for ListBuckets CreationDate
@@ -69,10 +111,12 @@ func (s *Server) logger() *slog.Logger {
 }
 
 // NewServer creates a Server with a stable start timestamp.
-func NewServer(manager *proxy.BackendManager, maxObjectSize int64) *Server {
-	must.NotNil("manager", manager)
+func NewServer(objects ObjectOps, multipartMgr MultipartOps, maxObjectSize int64) *Server {
+	must.NotNil("objects", objects)
+	must.NotNil("multipart", multipartMgr)
 	return &Server{
-		Manager:       manager,
+		Objects:       objects,
+		Multipart:     multipartMgr,
 		MaxObjectSize: maxObjectSize,
 		startedAt:     time.Now(),
 		log:           slog.Default().With(logfmt.Component("s3_server")),
