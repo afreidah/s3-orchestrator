@@ -172,12 +172,7 @@ func (a *pgTxAdapter) DeleteObjectFromBackend(ctx context.Context, objectKey, ba
 // already exist for (key, backend). Returns true when the row was newly
 // inserted.
 func (a *pgTxAdapter) InsertObjectLocationIfNotExists(ctx context.Context, loc *core.ObjectLocation) (bool, error) {
-	inserted, err := a.q.InsertObjectLocationIfNotExists(ctx, db.InsertObjectLocationIfNotExistsParams{
-		ObjectKey:   loc.ObjectKey,
-		BackendName: loc.BackendName,
-		SizeBytes:   loc.SizeBytes,
-		Managed:     !loc.Unmanaged,
-	})
+	inserted, err := a.q.InsertObjectLocationIfNotExists(ctx, objectInsertIfNotExistsParams(loc))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
