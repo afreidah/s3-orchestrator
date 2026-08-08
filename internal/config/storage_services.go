@@ -29,7 +29,7 @@ import (
 // Disabled by default to avoid unexpected API calls and egress charges.
 type RebalanceConfig struct {
 	Enabled     bool          `yaml:"enabled"`
-	Strategy    string        `yaml:"strategy"`    // "pack" or "spread"
+	Strategy    string        `yaml:"strategy"` // "pack" or "spread"
 	Interval    time.Duration `yaml:"interval"`
 	BatchSize   int           `yaml:"batch_size"`
 	Threshold   float64       `yaml:"threshold"`   // min utilization spread to trigger
@@ -43,8 +43,8 @@ type ReplicationConfig struct {
 	Factor             int           `yaml:"factor"`
 	WorkerInterval     time.Duration `yaml:"worker_interval"`
 	BatchSize          int           `yaml:"batch_size"`
-	Concurrency        int           `yaml:"concurrency"`          // Parallel object replications (default: 5)
-	UnhealthyThreshold time.Duration `yaml:"unhealthy_threshold"`  // Grace period before replacing copies on circuit-broken backends (default: 10m)
+	Concurrency        int           `yaml:"concurrency"`         // Parallel object replications (default: 5)
+	UnhealthyThreshold time.Duration `yaml:"unhealthy_threshold"` // Grace period before replacing copies on circuit-broken backends (default: 10m)
 }
 
 // CleanupQueueConfig holds settings for the background orphan cleanup worker

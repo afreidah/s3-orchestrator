@@ -20,8 +20,9 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
 // TestAdmissionController_AllowsWithinLimit verifies the admission controller allows within limit contract.

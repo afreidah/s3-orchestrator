@@ -16,10 +16,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
-	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 	"io"
 	"strings"
+
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/admintarget"
 	"github.com/afreidah/s3-orchestrator/internal/config"

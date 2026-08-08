@@ -15,9 +15,10 @@ package tui
 import (
 	"context"
 	"fmt"
-	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"strconv"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 

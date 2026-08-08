@@ -49,29 +49,29 @@ const (
 
 // Config holds the complete service configuration.
 type Config struct {
-	Server         ServerConfig         `yaml:"server"`
-	Buckets        []BucketConfig       `yaml:"buckets"`
-	Database       DatabaseConfig       `yaml:"database"`
-	Backends       []BackendConfig      `yaml:"backends"`
-	Telemetry      TelemetryConfig      `yaml:"telemetry"`
-	Rebalance      RebalanceConfig      `yaml:"rebalance"`
-	Replication    ReplicationConfig    `yaml:"replication"`
-	RateLimit      RateLimitConfig      `yaml:"rate_limit"`
+	Server                ServerConfig                `yaml:"server"`
+	Buckets               []BucketConfig              `yaml:"buckets"`
+	Database              DatabaseConfig              `yaml:"database"`
+	Backends              []BackendConfig             `yaml:"backends"`
+	Telemetry             TelemetryConfig             `yaml:"telemetry"`
+	Rebalance             RebalanceConfig             `yaml:"rebalance"`
+	Replication           ReplicationConfig           `yaml:"replication"`
+	RateLimit             RateLimitConfig             `yaml:"rate_limit"`
 	CircuitBreaker        CircuitBreakerConfig        `yaml:"circuit_breaker"`
 	BackendCircuitBreaker BackendCircuitBreakerConfig `yaml:"backend_circuit_breaker"`
 	Encryption            EncryptionConfig            `yaml:"encryption"`
 	UI                    UIConfig                    `yaml:"ui"`
-	CleanupQueue    CleanupQueueConfig   `yaml:"cleanup_queue"`
-	WritePath       WritePathConfig      `yaml:"write_path"`
-	UsageFlush      UsageFlushConfig     `yaml:"usage_flush"`
-	Lifecycle       LifecycleConfig      `yaml:"lifecycle"`
-	Reconcile       ReconcileConfig      `yaml:"reconcile"`
-	Integrity       IntegrityConfig      `yaml:"integrity"`
-	Cache           CacheConfig          `yaml:"cache"`
-	Redis           *RedisConfig         `yaml:"redis"`
-	Notifications   NotificationConfig   `yaml:"notifications"`
-	Debug           DebugConfig          `yaml:"debug"`
-	RoutingStrategy RoutingStrategy      `yaml:"routing_strategy"` // "pack" (default) or "spread"
+	CleanupQueue          CleanupQueueConfig          `yaml:"cleanup_queue"`
+	WritePath             WritePathConfig             `yaml:"write_path"`
+	UsageFlush            UsageFlushConfig            `yaml:"usage_flush"`
+	Lifecycle             LifecycleConfig             `yaml:"lifecycle"`
+	Reconcile             ReconcileConfig             `yaml:"reconcile"`
+	Integrity             IntegrityConfig             `yaml:"integrity"`
+	Cache                 CacheConfig                 `yaml:"cache"`
+	Redis                 *RedisConfig                `yaml:"redis"`
+	Notifications         NotificationConfig          `yaml:"notifications"`
+	Debug                 DebugConfig                 `yaml:"debug"`
+	RoutingStrategy       RoutingStrategy             `yaml:"routing_strategy"` // "pack" (default) or "spread"
 }
 
 // -------------------------------------------------------------------------

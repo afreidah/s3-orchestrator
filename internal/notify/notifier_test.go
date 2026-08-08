@@ -583,7 +583,7 @@ func TestDrainOnce_UnknownEndpointCompleted(t *testing.T) {
 		},
 	}
 	n := &Notifier{
-		log: slog.Default(),
+		log:       slog.Default(),
 		endpoints: []config.NotificationEndpoint{},
 		store:     ms,
 		client:    &http.Client{Timeout: 5 * time.Second},

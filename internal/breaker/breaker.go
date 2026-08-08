@@ -344,7 +344,6 @@ func (cb *CircuitBreaker) ResetStaleProbe() bool {
 
 // transition changes the circuit state, emits structured logs, and notifies
 // the OnStateChange callback. Caller must hold cb.mu.
-//
 func (cb *CircuitBreaker) transition(to State) {
 	from := cb.state
 	cb.state = to

@@ -15,8 +15,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+
+	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 // nonSeekableReader wraps a reader so it cannot be type-asserted to

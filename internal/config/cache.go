@@ -19,10 +19,10 @@ import (
 
 // CacheConfig holds settings for the object data cache.
 type CacheConfig struct {
-	Enabled       bool          `yaml:"enabled"`          // Enable the object data cache (default: false)
-	MaxSize       string        `yaml:"max_size"`         // Maximum total cache size (e.g., "256MB", "1GB")
-	MaxObjectSize string        `yaml:"max_object_size"`  // Maximum cacheable object size (e.g., "10MB"); 0 = no limit
-	TTL           time.Duration `yaml:"ttl"`              // Time before a cached entry expires (default: 5m)
+	Enabled       bool          `yaml:"enabled"`         // Enable the object data cache (default: false)
+	MaxSize       string        `yaml:"max_size"`        // Maximum total cache size (e.g., "256MB", "1GB")
+	MaxObjectSize string        `yaml:"max_object_size"` // Maximum cacheable object size (e.g., "10MB"); 0 = no limit
+	TTL           time.Duration `yaml:"ttl"`             // Time before a cached entry expires (default: 5m)
 
 	// Parsed values (not from YAML)
 	MaxSizeBytes       int64 `yaml:"-"`

@@ -193,4 +193,3 @@ func TestRun_PreCancelledContext(t *testing.T) {
 		t.Errorf("processed %d items under pre-cancelled ctx, want 0", got)
 	}
 }
-

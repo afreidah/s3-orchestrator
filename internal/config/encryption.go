@@ -30,12 +30,12 @@ import (
 // AES-256-GCM before being stored on backends. Exactly one key source
 // (master_key, master_key_file, or vault) must be configured.
 type EncryptionConfig struct {
-	Enabled       bool              `yaml:"enabled"`
-	ChunkSize     int               `yaml:"chunk_size"`      // Plaintext bytes per chunk (default: 65536, range: 4KB-1MB, must be power of 2)
-	MasterKey     string            `yaml:"master_key"`      // Base64-encoded 256-bit key (inline or via env var)
-	MasterKeyFile string            `yaml:"master_key_file"` // Path to file containing raw 32-byte key
-	Vault         *VaultTransitConfig `yaml:"vault"`          // Vault Transit key management
-	PreviousKeys  []string          `yaml:"previous_keys"`   // Base64-encoded previous master keys for rotation (unwrap only)
+	Enabled       bool                `yaml:"enabled"`
+	ChunkSize     int                 `yaml:"chunk_size"`      // Plaintext bytes per chunk (default: 65536, range: 4KB-1MB, must be power of 2)
+	MasterKey     string              `yaml:"master_key"`      // Base64-encoded 256-bit key (inline or via env var)
+	MasterKeyFile string              `yaml:"master_key_file"` // Path to file containing raw 32-byte key
+	Vault         *VaultTransitConfig `yaml:"vault"`           // Vault Transit key management
+	PreviousKeys  []string            `yaml:"previous_keys"`   // Base64-encoded previous master keys for rotation (unwrap only)
 }
 
 // VaultTransitConfig holds settings for HashiCorp Vault Transit key management.

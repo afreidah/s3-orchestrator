@@ -30,9 +30,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // objectsCalls holds the per-test capture state for assertions.

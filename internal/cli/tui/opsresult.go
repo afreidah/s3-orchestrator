@@ -14,7 +14,6 @@
 package tui
 
 import (
-	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,6 +21,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"

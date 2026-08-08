@@ -180,6 +180,8 @@ package backend
 
 - **1 tab** - Go standard (`gofmt` enforced)
 
+Formatting is a lint failure, not a convention: `make lint` runs `gofmt` and `goimports`, and `make fmt` applies both.
+
 ### Imports
 
 Group imports in three blocks separated by blank lines:

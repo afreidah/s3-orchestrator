@@ -322,7 +322,6 @@ func (r *RedisCounterBackend) healthProbe() {
 // tryRecover PINGs Redis and, on success, atomically deletes stale keys
 // and syncs local deltas in a single pipeline, then closes the circuit
 // breaker.
-//
 func (r *RedisCounterBackend) tryRecover() {
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
@@ -410,7 +409,6 @@ func (r *RedisCounterBackend) setFallback(v bool) {
 // records any bookkeeping error to the internal-errors metric. Prefer this
 // over a bare `_ = r.cb.PostCheck(...)`: it makes state-transition bugs
 // observable via s3o_circuit_breaker_internal_errors_total.
-//
 func (r *RedisCounterBackend) notePostCheck(op string, opErr error) {
 	if cbErr := r.cb.PostCheck(opErr); cbErr != nil {
 		telemetry.CircuitBreakerInternalErrorsTotal.WithLabelValues("redis", op).Inc()
@@ -421,7 +419,6 @@ func (r *RedisCounterBackend) notePostCheck(op string, opErr error) {
 
 // recordFailure feeds the error to the circuit breaker. If the breaker
 // opens, transitions to fallback mode.
-//
 func (r *RedisCounterBackend) recordFailure(err error) {
 	r.notePostCheck("failure", err)
 	if !r.cb.IsHealthy() && !r.inFallback() {

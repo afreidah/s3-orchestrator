@@ -22,9 +22,9 @@ import (
 // virtual bucket. Supports SigV4 (access_key_id + secret_access_key) or legacy
 // token auth.
 type CredentialConfig struct {
-	AccessKeyID    string `yaml:"access_key_id"`
+	AccessKeyID     string `yaml:"access_key_id"`
 	SecretAccessKey string `yaml:"secret_access_key"`
-	Token          string `yaml:"token"`
+	Token           string `yaml:"token"`
 }
 
 // BucketConfig defines a virtual bucket with one or more credential sets.
