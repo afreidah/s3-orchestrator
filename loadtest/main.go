@@ -47,6 +47,17 @@ import (
 // Used for all methods - this is a load tester, not a security tool.
 const unsignedPayload = "UNSIGNED-PAYLOAD"
 
+// defaultMaxErrorRate is the share of failed requests a run may absorb before
+// it is reported as a failure. Non-zero by default so a scenario added without
+// an explicit budget is gated rather than silently unchecked.
+const defaultMaxErrorRate = 0.01
+
+// needsSeeding reports whether an operation reads objects, and so requires a
+// working set to exist on the endpoint before the run starts.
+func needsSeeding(op string) bool {
+	return op == "get" || op == "mixed" || op == "listobjects"
+}
+
 // scenarioConfig captures the immutable inputs to a single scenario run.
 // Extracted so the sweep loop can re-run with only the body size varying.
 type scenarioConfig struct {
@@ -150,6 +161,7 @@ func main() {
 		rampTo           = flag.Int("ramp-to", 0, "Saturation-find: ramp from -rate up to this rate; stop when error rate exceeds -ramp-error-threshold (0 disables ramp mode)")
 		rampStep         = flag.Int("ramp-step", 100, "Rate increment per ramp step")
 		rampErrThreshold = flag.Float64("ramp-error-threshold", 0.05, "Error rate threshold (0..1) for ramp termination")
+		maxErrorRate     = flag.Float64("max-error-rate", defaultMaxErrorRate, "Fail the run when any result exceeds this error rate (0..1); 0 disables")
 		cacheFlushBefore = flag.Bool("cache-flush-before", false, "POST /admin/api/cache/flush before each scenario step (requires -admin-token)")
 		adminToken       = flag.String("admin-token", "", "Admin token for cache-flush calls (also read from S3O_ADMIN_TOKEN env var)")
 		cold             = flag.Bool("cold", false, "Cold-cache read mode for -op get: read each seeded object exactly once so every GET is a first touch; the run lasts one pass over the working set, not -duration")
@@ -211,7 +223,7 @@ func main() {
 		Hardware:  newHardwareInfo(),
 		StartedAt: time.Now().UTC(),
 	}
-	if *op == "get" || *op == "mixed" || *op == "listobjects" {
+	if needsSeeding(*op) {
 		results.SeedCount = *seedN
 	}
 	switch {
@@ -238,6 +250,34 @@ func main() {
 		}
 		fmt.Printf("\nResults written to %s\n", *outputJSON)
 	}
+
+	// Checked last so the summary and JSON are always produced: a run that
+	// blows its budget is exactly the one whose numbers you want to keep.
+	if err := enforceErrorBudget(&results, *maxErrorRate, *rampTo > 0); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// enforceErrorBudget reports the first result whose error rate exceeded the
+// budget, so a scenario that ran to completion while failing a large share of
+// its requests is a failure rather than a successful measurement of one.
+//
+// Ramp runs are exempt: they drive the system into saturation deliberately,
+// and crossing an error threshold is their terminal condition rather than a
+// fault.
+func enforceErrorBudget(results *sweepResults, maxRate float64, ramp bool) error {
+	if ramp || maxRate <= 0 {
+		return nil
+	}
+	for i := range results.Results {
+		r := &results.Results[i]
+		if r.ErrorRate > maxRate {
+			return fmt.Errorf("error budget exceeded: size=%d requested_rps=%d observed %.2f%% errors (budget %.2f%%)",
+				r.SizeBytes, r.RequestedRPS, r.ErrorRate*100, maxRate*100)
+		}
+	}
+	return nil
 }
 
 // runSizes executes the scenario once per size in sizes, optionally
@@ -372,9 +412,9 @@ func runScenario(cfg *scenarioConfig, size int) (runResult, error) {
 	}
 
 	var keys []string
-	if cfg.op == "get" || cfg.op == "mixed" || cfg.op == "listobjects" {
+	if needsSeeding(cfg.op) {
 		fmt.Printf("Seeding %d objects (%d B each)...\n", cfg.seedCount, size)
-		keys = seedObjects(cfg.endpoint, cfg.bucket, cfg.region, cfg.signer, cfg.creds, body, cfg.seedCount)
+		keys = seedObjects(cfg.endpoint, cfg.bucket, cfg.region, cfg.signer, &cfg.creds, body, cfg.seedCount)
 		fmt.Printf("Seeded %d objects\n", len(keys))
 		if len(keys) == 0 {
 			return runResult{}, fmt.Errorf("no objects seeded")
@@ -470,7 +510,7 @@ func writeJSON(path string, r *sweepResults) error {
 
 // seedObjects uploads n objects and returns the keys that succeeded.
 // Retries on 429 with backoff to avoid overwhelming the rate limiter.
-func seedObjects(endpoint, bucket, region string, signer *v4.Signer, creds aws.Credentials, body []byte, n int) []string {
+func seedObjects(endpoint, bucket, region string, signer *v4.Signer, creds *aws.Credentials, body []byte, n int) []string {
 	client := &http.Client{Timeout: 30 * time.Second}
 	keys := make([]string, 0, n)
 
@@ -483,7 +523,7 @@ func seedObjects(endpoint, bucket, region string, signer *v4.Signer, creds aws.C
 		key := fmt.Sprintf("loadtest/seed-%06d", i)
 		reqURL := fmt.Sprintf("%s/%s/%s", endpoint, bucket, key)
 
-		req, err := http.NewRequest(http.MethodPut, reqURL, bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, reqURL, bytes.NewReader(body))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  seed %d: %v\n", i, err)
 			continue
@@ -491,7 +531,7 @@ func seedObjects(endpoint, bucket, region string, signer *v4.Signer, creds aws.C
 		req.Header.Set("Content-Type", "application/octet-stream")
 		req.Header.Set("X-Amz-Content-Sha256", unsignedPayload)
 
-		if err := signer.SignHTTP(context.Background(), creds, req, unsignedPayload, "s3", region, time.Now()); err != nil {
+		if err := signer.SignHTTP(context.Background(), *creds, req, unsignedPayload, "s3", region, time.Now()); err != nil {
 			fmt.Fprintf(os.Stderr, "  seed %d sign: %v\n", i, err)
 			continue
 		}
@@ -559,7 +599,7 @@ func newTargeter(cfg *scenarioConfig, body []byte, keys []string) vegeta.Targete
 		}
 
 		// Build a temporary http.Request to sign, then copy headers to the target.
-		req, err := http.NewRequest(tgt.Method, tgt.URL, nil)
+		req, err := http.NewRequestWithContext(context.Background(), tgt.Method, tgt.URL, nil)
 		if err != nil {
 			return err
 		}
