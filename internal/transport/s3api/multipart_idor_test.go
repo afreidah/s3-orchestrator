@@ -32,8 +32,6 @@ import (
 
 	"go.uber.org/mock/gomock"
 
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
-
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 )
 
@@ -74,7 +72,7 @@ func twoBucketServer(t *testing.T, mu *core.MultipartUpload) (*httptest.Server, 
 		Multipart:     mgr.Multipart(),
 		MaxObjectSize: 10 * 1024 * 1024,
 	}
-	srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
 		{Name: "bucket-a", Credentials: []config.CredentialConfig{{Token: "token-a"}}},
 		{Name: "bucket-b", Credentials: []config.CredentialConfig{{Token: "token-b"}}},
 	}))

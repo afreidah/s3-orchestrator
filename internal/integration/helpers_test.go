@@ -351,7 +351,12 @@ func TestMain(m *testing.M) {
 		Objects:   manager.Objects(),
 		Multipart: manager.Multipart(),
 	}
-	srv.SetBucketAuth(auth.NewBucketRegistry(cfg.Buckets))
+	bucketAuth, err := auth.NewBucketRegistry(cfg.Buckets)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build bucket registry: %v\n", err)
+		os.Exit(1)
+	}
+	srv.SetBucketAuth(bucketAuth)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -1029,4 +1034,15 @@ func newTestS3Backend(t *testing.T, name string) *s3be.S3Backend {
 		t.Fatalf("NewS3Backend(%s): %v", name, err)
 	}
 	return backend
+}
+
+// mustBucketRegistry builds a registry from config the test controls, failing
+// the test if that config turns out to be ambiguous.
+func mustBucketRegistry(tb testing.TB, buckets []config.BucketConfig) *auth.BucketRegistry {
+	tb.Helper()
+	br, err := auth.NewBucketRegistry(buckets)
+	if err != nil {
+		tb.Fatalf("NewBucketRegistry: %v", err)
+	}
+	return br
 }

@@ -3441,3 +3441,72 @@ func TestRateLimitConfig_CIDRValidatedWhenDisabled(t *testing.T) {
 		t.Errorf("invalid CIDR should be caught even when disabled, got: %v", errs)
 	}
 }
+
+// TestConfigValidation_DuplicateTokensAcrossBuckets verifies a proxy token
+// claimed by two buckets fails validation. The token selects the bucket a
+// request is authorized against, so allowing it would let a credential issued
+// for one namespace resolve to another.
+func TestConfigValidation_DuplicateTokensAcrossBuckets(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	cfg.Buckets = []BucketConfig{
+		{Name: "b1", Credentials: []CredentialConfig{{Token: "SAME"}}},
+		{Name: "b2", Credentials: []CredentialConfig{{Token: "SAME"}}},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Fatal("duplicate proxy tokens across buckets should fail validation")
+	}
+	if !strings.Contains(err.Error(), "duplicate proxy token") {
+		t.Errorf("error should mention duplicate proxy token, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "SAME") {
+		t.Error("the token is a secret and must not appear in the error")
+	}
+}
+
+// TestConfigValidation_DuplicateTokensWithinBucket verifies the check spans
+// credentials inside one bucket too, not just across bucket boundaries.
+func TestConfigValidation_DuplicateTokensWithinBucket(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	cfg.Buckets = []BucketConfig{
+		{Name: "b1", Credentials: []CredentialConfig{{Token: "SAME"}, {Token: "SAME"}}},
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err == nil {
+		t.Error("duplicate proxy tokens within a bucket should fail validation")
+	}
+}
+
+// TestConfigValidation_DistinctTokensAccepted verifies unique tokens still
+// validate, so the new check does not reject working configurations.
+func TestConfigValidation_DistinctTokensAccepted(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	cfg.Buckets = []BucketConfig{
+		{Name: "b1", Credentials: []CredentialConfig{{Token: "one"}}},
+		{Name: "b2", Credentials: []CredentialConfig{{Token: "two"}}},
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("distinct tokens must validate, got: %v", err)
+	}
+}
+
+// TestConfigValidation_EmptyTokensAccepted verifies buckets authenticating by
+// SigV4 alone are unaffected: an absent token is not a duplicate of another
+// absent token.
+func TestConfigValidation_EmptyTokensAccepted(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	cfg.Buckets = []BucketConfig{
+		{Name: "b1", Credentials: []CredentialConfig{{AccessKeyID: "A1", SecretAccessKey: "s1"}}},
+		{Name: "b2", Credentials: []CredentialConfig{{AccessKeyID: "A2", SecretAccessKey: "s2"}}},
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("credentials without tokens must validate, got: %v", err)
+	}
+}

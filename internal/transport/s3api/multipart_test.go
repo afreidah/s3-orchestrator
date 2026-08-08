@@ -31,8 +31,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 
 	"go.uber.org/mock/gomock"
-
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 )
 
 // -------------------------------------------------------------------------
@@ -710,7 +708,7 @@ func newTestServerWithMultipartLimit(t *testing.T, maxUploads int, opts ...func(
 		MaxMultipartUploads: maxUploads,
 		Credentials:         []config.CredentialConfig{{Token: "test-token"}},
 	}}
-	srv.SetBucketAuth(auth.NewBucketRegistry(buckets))
+	srv.SetBucketAuth(mustBucketRegistry(t, buckets))
 
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)

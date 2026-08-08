@@ -557,3 +557,49 @@ func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 		Cfg:          &config.Config{},
 	}
 }
+
+// duplicateTokenConfig is a config whose buckets both claim one proxy token.
+func duplicateTokenConfig() *config.Config {
+	return &config.Config{Buckets: []config.BucketConfig{
+		{Name: "backups", Credentials: []config.CredentialConfig{{Token: "SAME"}}},
+		{Name: "traces", Credentials: []config.CredentialConfig{{Token: "SAME"}}},
+	}}
+}
+
+// TestBucketAuthHook_CheckRejectsAmbiguousCredential proves an ambiguous
+// credential is caught in the Check pass. That is what matters for safety:
+// Reload aborts before any hook applies, so the server keeps serving with the
+// registry it already had rather than one where a token resolves to whichever
+// bucket happened to be written last.
+func TestBucketAuthHook_CheckRejectsAmbiguousCredential(t *testing.T) {
+	h := &bucketAuthHook{inj: do.New()}
+	if err := h.Check(&config.Config{}, duplicateTokenConfig()); err == nil {
+		t.Fatal("Check must reject a token claimed by two buckets")
+	}
+}
+
+// TestBucketAuthHook_CheckAcceptsDistinctCredentials verifies the Check pass
+// stays out of the way of a valid reload.
+func TestBucketAuthHook_CheckAcceptsDistinctCredentials(t *testing.T) {
+	h := &bucketAuthHook{inj: do.New()}
+	cfg := &config.Config{Buckets: []config.BucketConfig{
+		{Name: "backups", Credentials: []config.CredentialConfig{{Token: "one"}}},
+		{Name: "traces", Credentials: []config.CredentialConfig{{Token: "two"}}},
+	}}
+	if err := h.Check(&config.Config{}, cfg); err != nil {
+		t.Fatalf("Check rejected a valid config: %v", err)
+	}
+}
+
+// TestBucketAuthHook_ApplyRejectsAmbiguousCredential covers the Apply path
+// directly, so a caller that skipped Check still cannot install a registry
+// built from an ambiguous credential.
+func TestBucketAuthHook_ApplyRejectsAmbiguousCredential(t *testing.T) {
+	inj := do.New()
+	do.ProvideValue(inj, &s3api.Server{})
+	h := &bucketAuthHook{inj: inj}
+	status, err := h.Apply(context.Background(), nil, duplicateTokenConfig())
+	if status != HookFailed || err == nil {
+		t.Fatalf("Apply = (%s, %v), want (failed, error)", status, err)
+	}
+}

@@ -36,7 +36,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 
 	// -------------------------------------------------------------------------
@@ -971,7 +970,7 @@ func TestSpreadWriteRouting_DistributesAcrossBackends(t *testing.T) {
 		Multipart: spreadManager.Multipart(),
 	}
 	_ = spreadSrv
-	spreadSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
+	spreadSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{{
 		Name: virtualBucket,
 		Credentials: []config.CredentialConfig{{
 			AccessKeyID:     "test",
@@ -1069,7 +1068,7 @@ func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
 		Multipart: spreadManager.Multipart(),
 	}
 	_ = spreadSrv
-	spreadSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
+	spreadSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{{
 		Name: virtualBucket,
 		Credentials: []config.CredentialConfig{{
 			AccessKeyID:     "test",
@@ -1152,7 +1151,7 @@ func TestSpreadWriteRouting_ContrastWithPackBehavior(t *testing.T) {
 		Multipart: spreadManager.Multipart(),
 	}
 	_ = spreadSrv
-	spreadSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
+	spreadSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{{
 		Name: virtualBucket,
 		Credentials: []config.CredentialConfig{{
 			AccessKeyID:     "test",
@@ -3505,7 +3504,7 @@ func TestAuthSigV4_ValidCredentials(t *testing.T) {
 		Multipart: testManager.Multipart(),
 	}
 	_ = authSrv
-	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+	authSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
 		{
 			Name: virtualBucket,
 			Credentials: []config.CredentialConfig{
@@ -3583,7 +3582,7 @@ func TestAuthSigV4_WrongCredentials403(t *testing.T) {
 		Multipart: testManager.Multipart(),
 	}
 	_ = authSrv
-	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+	authSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
 		{
 			Name: virtualBucket,
 			Credentials: []config.CredentialConfig{
@@ -3643,7 +3642,7 @@ func TestAuthSigV4_UnsignedRequest403(t *testing.T) {
 		Multipart: testManager.Multipart(),
 	}
 	_ = authSrv
-	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+	authSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
 		{
 			Name: virtualBucket,
 			Credentials: []config.CredentialConfig{
@@ -3706,7 +3705,7 @@ func TestAuthSigV4_SpecialCharKeysSigV4(t *testing.T) {
 		Multipart: testManager.Multipart(),
 	}
 	_ = authSrv
-	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+	authSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
 		{
 			Name: virtualBucket,
 			Credentials: []config.CredentialConfig{
@@ -3791,7 +3790,7 @@ func TestAuthSigV4_AccessDeniedDoesNotLeakBucketName(t *testing.T) {
 		Multipart: testManager.Multipart(),
 	}
 	_ = authSrv
-	authSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+	authSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
 		{
 			Name: virtualBucket,
 			Credentials: []config.CredentialConfig{
