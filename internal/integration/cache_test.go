@@ -29,7 +29,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
@@ -77,7 +76,7 @@ func setupCacheEnv(t *testing.T) *cacheTestEnv {
 	_ = proxytest.BuildWorkers(mgr, stores)
 
 	srv := &s3api.Server{Objects: mgr.Objects(), Multipart: mgr.Multipart()}
-	srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
 		{
 			Name: virtualBucket,
 			Credentials: []config.CredentialConfig{

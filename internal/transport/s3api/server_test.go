@@ -80,7 +80,7 @@ func TestSetGetBucketAuth_RoundTrip(t *testing.T) {
 			{AccessKeyID: "AKID1", SecretAccessKey: "secret1"},
 		}},
 	}
-	br := auth.NewBucketRegistry(buckets)
+	br := mustBucketRegistry(t, buckets)
 	srv.SetBucketAuth(br)
 
 	got := srv.GetBucketAuth()
@@ -95,7 +95,7 @@ func TestSetBucketAuth_ConcurrentAccess(t *testing.T) {
 	srv := &Server{}
 
 	// Set an initial registry
-	initial := auth.NewBucketRegistry([]config.BucketConfig{
+	initial := mustBucketRegistry(t, []config.BucketConfig{
 		{Name: "init", Credentials: []config.CredentialConfig{
 			{AccessKeyID: "AKID0", SecretAccessKey: "secret0"},
 		}},
@@ -126,7 +126,7 @@ func TestSetBucketAuth_ConcurrentAccess(t *testing.T) {
 		go func(n int) {
 			defer wg.Done()
 			for range 100 {
-				br := auth.NewBucketRegistry([]config.BucketConfig{
+				br := mustBucketRegistry(t, []config.BucketConfig{
 					{Name: "b", Credentials: []config.CredentialConfig{
 						{AccessKeyID: "AKID", SecretAccessKey: "secret"},
 					}},
@@ -228,10 +228,21 @@ func newOpsServer(t *testing.T) (*httptest.Server, *MockObjectOps, *MockMultipar
 	objects, multipart := NewMockObjectOps(ctrl), NewMockMultipartOps(ctrl)
 
 	srv := &Server{Objects: objects, Multipart: multipart, MaxObjectSize: 10 * 1024 * 1024}
-	srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
 		{Name: "mybucket", Credentials: []config.CredentialConfig{{Token: "test-token"}}},
 	}))
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 	return ts, objects, multipart
+}
+
+// mustBucketRegistry builds a registry from config the test controls, failing
+// the test if that config turns out to be ambiguous.
+func mustBucketRegistry(tb testing.TB, buckets []config.BucketConfig) *auth.BucketRegistry {
+	tb.Helper()
+	br, err := auth.NewBucketRegistry(buckets)
+	if err != nil {
+		tb.Fatalf("NewBucketRegistry: %v", err)
+	}
+	return br
 }
