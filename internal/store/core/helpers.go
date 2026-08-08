@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"slices"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/encryption"
 )
 
 // -------------------------------------------------------------------------
@@ -201,9 +203,15 @@ func ValidateEncryptionMetadata(loc *ObjectLocation) error {
 	if len(loc.EncryptionKey) == 0 {
 		return fmt.Errorf("%w: row is encrypted but carries no key", ErrEncryptionFlagMismatch)
 	}
+	if loc.PlaintextSize < 0 {
+		return fmt.Errorf("%w: row is encrypted but carries a negative plaintext size", ErrEncryptionFlagMismatch)
+	}
 	// Without a plaintext size there is no way to size the response or bound
 	// range math, and the ciphertext size would be reported to the client.
-	if loc.PlaintextSize <= 0 && loc.SizeBytes > 0 {
+	// Zero is a real size, though: an empty object encrypts to a bare header,
+	// so only a row claiming no plaintext over a ciphertext large enough to
+	// hold chunks has actually lost its size.
+	if loc.PlaintextSize == 0 && loc.SizeBytes > int64(encryption.HeaderSize) {
 		return fmt.Errorf("%w: row is encrypted but carries no plaintext size", ErrEncryptionFlagMismatch)
 	}
 	return nil
