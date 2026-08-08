@@ -20,9 +20,12 @@ import (
 	"io"
 	"strings"
 
+	"go.opentelemetry.io/otel/trace"
+
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	pobserve "github.com/afreidah/s3-orchestrator/internal/proxy/observe"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
@@ -102,7 +105,14 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 		return fail, fmt.Errorf("backend %s: %w", beName, err)
 	}
 
-	actualRange, rng, ptStart, ptEnd := o.resolveBackendRange(rangeHeader, loc)
+	br, err := o.resolveBackendRange(rangeHeader, loc)
+	if err != nil {
+		observe.RecordSpanError(trace.SpanFromContext(ctx), err)
+		o.log.WarnContext(ctx, "range translation failed",
+			"key", key, "backend", beName, "range", rangeHeader, "error", err)
+		return fail, err
+	}
+	actualRange := br.header
 
 	r, cancel, err := o.core.GetWithTimeout(ctx, backend, key, actualRange)
 	if err != nil {
@@ -130,7 +140,7 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 		return fail, fmt.Errorf("backend %s: %w", beName, err)
 	}
 
-	if err := o.buildPlaintextReader(ctx, r, loc, key, beName, backend, rng, ptStart, ptEnd); err != nil {
+	if err := o.buildPlaintextReader(ctx, r, loc, key, beName, backend, br.rng, br.ptStart, br.ptEnd); err != nil {
 		_ = r.Body.Close()
 		cancel()
 		return fail, err
@@ -147,22 +157,44 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 	}, nil
 }
 
-// resolveBackendRange translates a plaintext Range header into the actual
-// ciphertext range to request from the backend. Returns the original
-// header verbatim for unencrypted objects.
-func (o *Manager) resolveBackendRange(rangeHeader string, loc *core.ObjectLocation) (string, *encryption.RangeResult, int64, int64) {
+// backendRange is a client Range header translated into what the backend
+// should actually be asked for.
+type backendRange struct {
+	// header is the Range header to send the backend, empty for a whole-object
+	// read. For an encrypted object this is in ciphertext coordinates.
+	header string
+	// rng carries the chunk math needed to slice the plaintext back out. Nil
+	// when no translation happened.
+	rng *encryption.RangeResult
+	// ptStart and ptEnd are the plaintext bounds the client asked for.
+	ptStart, ptEnd int64
+}
+
+// resolveBackendRange translates a plaintext Range header into the ciphertext
+// range to request from the backend. An unencrypted object passes its header
+// through verbatim, since its stored bytes are already in the coordinates the
+// client used.
+//
+// A range that cannot be translated is never sent to the backend as-is.
+// Plaintext offsets addressed against ciphertext select the wrong bytes
+// entirely, so a failure here has to surface rather than fall back.
+func (o *Manager) resolveBackendRange(rangeHeader string, loc *core.ObjectLocation) (backendRange, error) {
 	if loc == nil || !loc.Encrypted || rangeHeader == "" {
-		return rangeHeader, nil, 0, 0
+		return backendRange{header: rangeHeader}, nil
 	}
 	ptStart, ptEnd, ok := ParsePlaintextRange(rangeHeader, loc.PlaintextSize)
 	if !ok {
-		return rangeHeader, nil, 0, 0
+		// Unparseable or unsatisfiable against this object. RFC 9110 lets a
+		// server ignore a Range it cannot act on, and reading the whole object
+		// is the one safe answer: the alternative was handing the backend
+		// plaintext offsets for ciphertext.
+		return backendRange{}, nil
 	}
-	rng, _ := encryption.CiphertextRange(ptStart, ptEnd, o.encryptor.ChunkSize())
-	if rng == nil {
-		return rangeHeader, nil, ptStart, ptEnd
+	rng, err := encryption.CiphertextRange(ptStart, ptEnd, o.encryptor.ChunkSize())
+	if err != nil {
+		return backendRange{}, fmt.Errorf("%w: %w", core.ErrInvalidRange, err)
 	}
-	return rng.BackendRange, rng, ptStart, ptEnd
+	return backendRange{header: rng.BackendRange, rng: rng, ptStart: ptStart, ptEnd: ptEnd}, nil
 }
 
 // buildPlaintextReader turns a backend GetObject result into the client-facing
