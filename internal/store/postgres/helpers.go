@@ -75,6 +75,8 @@ func existingCopyFromRow(r *db.GetExistingCopiesForUpdateRow) core.ExistingCopy 
 		BackendName: r.BackendName,
 		SizeBytes:   r.SizeBytes,
 		CreatedAt:   r.CreatedAt.Time,
+		Encrypted:   r.Encrypted,
+		HasDEK:      r.HasDek != nil && *r.HasDek,
 	}
 }
 

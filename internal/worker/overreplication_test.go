@@ -265,3 +265,34 @@ func TestClean_NothingOverReplicated(t *testing.T) {
 		t.Errorf("OverReplicationPending = %v, want 0", p)
 	}
 }
+
+// TestCleanObject_SkipsVictimHoldingOnlyKey verifies a refusal from the store
+// is treated as a skip rather than a failure: the cleaner must not go on to
+// delete the backend object whose metadata row it was denied permission to
+// drop, or the only readable copy would be destroyed anyway.
+func TestCleanObject_SkipsVictimHoldingOnlyKey(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockOps(ctrl)
+	pl := NewMockPlacement(ctrl)
+	ms := &mockMetadataStore{removeExcessErr: core.ErrCopyHoldsOnlyDEK}
+
+	be1 := backendtest.NewMockObjectBackend(ctrl)
+	be2 := backendtest.NewMockObjectBackend(ctrl)
+	ops.EXPECT().IsDraining(gomock.Any()).Return(false).AnyTimes()
+	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be1, "b2": be2}).AnyTimes()
+
+	c := NewOverReplicationCleaner(ops, pl, ms)
+	copies := []core.ObjectLocation{
+		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 100},
+		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 100},
+	}
+	stats := map[string]core.QuotaStat{
+		"b1": {BytesUsed: 900, BytesLimit: 1000},
+		"b2": {BytesUsed: 100, BytesLimit: 1000},
+	}
+
+	if removed := c.cleanObject(context.Background(), "key1", copies, 1, 1, stats); removed != 0 {
+		t.Errorf("removed = %d, want 0 when the victim holds the only key", removed)
+	}
+}

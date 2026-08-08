@@ -29,23 +29,23 @@ import "github.com/jackc/pgx/v5/pgtype"
 
 // ListObjectsByBackendRow
 
-func (r ListObjectsByBackendRow) GetObjectKey() string         { return r.ObjectKey }
-func (r ListObjectsByBackendRow) GetBackendName() string       { return r.BackendName }
-func (r ListObjectsByBackendRow) GetSizeBytes() int64          { return r.SizeBytes }
+func (r ListObjectsByBackendRow) GetObjectKey() string             { return r.ObjectKey }
+func (r ListObjectsByBackendRow) GetBackendName() string           { return r.BackendName }
+func (r ListObjectsByBackendRow) GetSizeBytes() int64              { return r.SizeBytes }
 func (r ListObjectsByBackendRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
 
 // ListObjectsByPrefixRow
 
-func (r ListObjectsByPrefixRow) GetObjectKey() string         { return r.ObjectKey }
-func (r ListObjectsByPrefixRow) GetBackendName() string       { return r.BackendName }
-func (r ListObjectsByPrefixRow) GetSizeBytes() int64          { return r.SizeBytes }
+func (r ListObjectsByPrefixRow) GetObjectKey() string             { return r.ObjectKey }
+func (r ListObjectsByPrefixRow) GetBackendName() string           { return r.BackendName }
+func (r ListObjectsByPrefixRow) GetSizeBytes() int64              { return r.SizeBytes }
 func (r ListObjectsByPrefixRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
 
 // ListExpiredObjectsRow
 
-func (r ListExpiredObjectsRow) GetObjectKey() string         { return r.ObjectKey }
-func (r ListExpiredObjectsRow) GetBackendName() string       { return r.BackendName }
-func (r ListExpiredObjectsRow) GetSizeBytes() int64          { return r.SizeBytes }
+func (r ListExpiredObjectsRow) GetObjectKey() string             { return r.ObjectKey }
+func (r ListExpiredObjectsRow) GetBackendName() string           { return r.BackendName }
+func (r ListExpiredObjectsRow) GetSizeBytes() int64              { return r.SizeBytes }
 func (r ListExpiredObjectsRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
 
 // ListDirectChildrenRow has no ObjectLocation projection; it groups by

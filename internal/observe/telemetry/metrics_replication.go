@@ -87,6 +87,17 @@ var (
 		},
 	)
 
+	// OverReplicationKeyPreservedTotal counts copies the over-replication
+	// cleaner declined to remove because they held the only usable encryption
+	// key for their object. A non-zero value means some copy set disagrees
+	// about encryption and wants repair.
+	OverReplicationKeyPreservedTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3o_over_replication_key_preserved_total",
+			Help: "Copies kept because they held the only usable encryption key for the object",
+		},
+	)
+
 	// OverReplicationErrorsTotal counts over-replication cleanup errors.
 	OverReplicationErrorsTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
@@ -112,5 +123,4 @@ var (
 			Buckets: []float64{1, 5, 10, 30, 60, 120, 300, 600},
 		},
 	)
-
 )

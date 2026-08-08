@@ -14,7 +14,8 @@
 SELECT pg_advisory_xact_lock(hashtext($1));
 
 -- name: GetExistingCopiesForUpdate :many
-SELECT backend_name, size_bytes, created_at
+SELECT backend_name, size_bytes, created_at, encrypted,
+       (encryption_key IS NOT NULL AND length(encryption_key) > 0) AS has_dek
 FROM object_locations
 WHERE object_key = $1
 FOR UPDATE;

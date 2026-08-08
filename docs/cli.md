@@ -339,6 +339,15 @@ Objects are recorded at the key the backend actually holds them under. An object
 
 Importing raw data at the bucket root therefore makes the orchestrator *aware* of it, not responsible for it. To bring such objects under management, move them under a virtual bucket's prefix on the backend first, then sync.
 
+### Encrypted objects
+
+Import reads the start of each object to see whether it is an orchestrator encryption envelope, because recording ciphertext as plaintext would make the read path serve raw encrypted bytes to clients.
+
+An envelope needs the key that encrypted it. Every write mints its own key, so a matching object key is not enough to prove a stray copy belongs to the row the ledger still holds: import adopts an existing copy's key only when the object's header shows the two came from the same encryption. That is the normal case for a replica whose row was lost, and it is imported fully readable.
+
+An envelope no surviving row can decrypt is recorded as encrypted with no key. It counts toward quota, but reads of that copy fail rather than returning ciphertext, and it is counted under `s3o_import_classified_total{decision="unreadable"}`. Restore those objects from another source or delete them; the key is gone.
+
+
 ### Dry run first
 
 Always preview what would be imported before committing:

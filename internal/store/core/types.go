@@ -61,6 +61,12 @@ type ExistingCopy struct {
 	BackendName string
 	SizeBytes   int64
 	CreatedAt   time.Time
+	// Encrypted and HasDEK describe whether this copy's row claims the bytes
+	// are an encryption envelope and whether the key needed to read them is
+	// still present. Carried here so copy-set decisions (which copy to drop)
+	// can avoid destroying the last row that can decrypt the object.
+	Encrypted bool
+	HasDEK    bool
 }
 
 // DeletedCopy describes a copy displaced by an overwrite or delete. The

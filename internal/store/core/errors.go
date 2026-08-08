@@ -44,6 +44,19 @@ var (
 	// fallback on reads or 503 rejection on writes.
 	ErrDBUnavailable = errors.New("database unavailable")
 
+	// ErrCopyHoldsOnlyDEK is returned when a copy cannot be removed because it
+	// is the only one still carrying the key that decrypts the object while a
+	// sibling copy has lost its encryption metadata. Removing it would make
+	// the object permanently unreadable, so the caller skips the key and the
+	// divergence is surfaced for repair.
+	ErrCopyHoldsOnlyDEK = errors.New("copy holds the only usable encryption key for this object")
+
+	// ErrEncryptionFlagMismatch means a row's encrypted flag disagrees with the
+	// bytes stored for it: an envelope the row calls plaintext, or plaintext the
+	// row calls an envelope. Callers must refuse to serve or hash such a copy
+	// rather than guess which side is right.
+	ErrEncryptionFlagMismatch = errors.New("stored bytes disagree with the object's encryption flag")
+
 	// ErrObjectNotFound is returned when an object is not in the
 	// location table.
 	ErrObjectNotFound = &S3Error{

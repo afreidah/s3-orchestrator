@@ -79,6 +79,14 @@ func RemoveExcessCopy(ctx context.Context, runner Runner, key, backendName strin
 		if len(existing) <= factor {
 			return false, nil
 		}
+		// Never drop the copy that carries the key when a sibling does not.
+		// Copies of a key share one ciphertext and one DEK, so a set that
+		// disagrees means some row lost its metadata; removing the row that
+		// still has the key destroys the only way to read the bytes, while
+		// removing the one without it is both safe and self-correcting.
+		if isLastDecryptableCopy(existing, backendName) {
+			return false, ErrCopyHoldsOnlyDEK
+		}
 		size, found := copySizeForBackend(existing, backendName)
 		if !found {
 			return false, nil

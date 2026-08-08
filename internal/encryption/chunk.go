@@ -117,7 +117,7 @@ func newEncryptReader(src io.Reader, dek []byte, chunkSize int, bufs *chunkBuffe
 	// Build header into the reusable header buffer.
 	hdr := bufs.header[:HeaderSize]
 	copy(hdr[0:4], headerMagic[:])
-	hdr[4] = 0x01 // version
+	hdr[4] = 0x01                                           // version
 	binary.BigEndian.PutUint32(hdr[5:9], uint32(chunkSize)) //nolint:gosec // G115: chunkSize validated <= 1MB in config
 	copy(hdr[9:21], baseNonce)
 	for i := 21; i < HeaderSize; i++ {
@@ -389,9 +389,18 @@ func ParseHeader(r io.Reader) (chunkSize int, baseNonce []byte, err error) {
 	if _, err := io.ReadFull(r, hdr); err != nil {
 		return 0, nil, fmt.Errorf("read header: %w", err)
 	}
+	return ParseHeaderBytes(hdr)
+}
 
-	if hdr[0] != headerMagic[0] || hdr[1] != headerMagic[1] ||
-		hdr[2] != headerMagic[2] || hdr[3] != headerMagic[3] {
+// ParseHeaderBytes validates an already-read 32-byte encryption header and
+// returns the chunk size and base nonce encoded in it. Callers that fetched
+// the header as part of a larger ranged read use this to avoid a second read.
+func ParseHeaderBytes(hdr []byte) (chunkSize int, baseNonce []byte, err error) {
+	if len(hdr) < HeaderSize {
+		return 0, nil, fmt.Errorf("short encryption header: %d bytes", len(hdr))
+	}
+
+	if !HasEnvelopeMagic(hdr) {
 		return 0, nil, fmt.Errorf("invalid encryption header magic")
 	}
 
@@ -407,4 +416,64 @@ func ParseHeader(r io.Reader) (chunkSize int, baseNonce []byte, err error) {
 	copy(nonce, hdr[9:21])
 
 	return cs, nonce, nil
+}
+
+// SameEncryptionOperation reports whether an envelope header read off a
+// backend was produced by the same encryption operation as the stored key
+// blob packed by PackKeyData.
+//
+// The base nonce is drawn fresh from crypto/rand for every encryption run
+// (see newEncryptReader), and copies of an object reproduce its ciphertext
+// byte for byte, so a matching nonce means the blob's DEK is the one that
+// encrypted these bytes. A separate write of the same key gets a different
+// nonce, which is what makes this safe to use for deciding whether a stray
+// backend object may adopt a sibling row's key.
+//
+// This establishes identity, not authenticity: it assumes the backend holds
+// what the orchestrator wrote. Bytes that lie about their header still fail
+// the AEAD tag on the first real read.
+func SameEncryptionOperation(header, packedKey []byte) bool {
+	_, headerNonce, err := ParseHeaderBytes(header)
+	if err != nil {
+		return false
+	}
+	storedNonce, _, err := UnpackKeyData(packedKey)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(headerNonce, storedNonce)
+}
+
+// HasEnvelopeMagic reports whether b begins with the envelope signature.
+// b shorter than the signature is never an envelope.
+func HasEnvelopeMagic(b []byte) bool {
+	if len(b) < len(headerMagic) {
+		return false
+	}
+	return b[0] == headerMagic[0] && b[1] == headerMagic[1] &&
+		b[2] == headerMagic[2] && b[3] == headerMagic[3]
+}
+
+// PeekEnvelope reports whether r's stream begins with the envelope signature,
+// returning a reader that replays the bytes it consumed so the caller can go
+// on reading from the start.
+//
+// This is how a caller checks that a row's encrypted flag agrees with the
+// bytes actually stored. The two disagreeing means either ciphertext would be
+// served as plaintext or plaintext decrypted as ciphertext, both of which are
+// worth failing on rather than guessing.
+//
+// A short stream is reported as not-an-envelope with the bytes replayed; a
+// read error is returned with a reader that still replays whatever arrived.
+func PeekEnvelope(r io.Reader) (bool, io.Reader, error) {
+	buf := make([]byte, len(headerMagic))
+	n, err := io.ReadFull(r, buf)
+	replayed := io.MultiReader(bytes.NewReader(buf[:n]), r)
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return false, replayed, nil
+	}
+	if err != nil {
+		return false, replayed, fmt.Errorf("peek encryption header: %w", err)
+	}
+	return HasEnvelopeMagic(buf), replayed, nil
 }

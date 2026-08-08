@@ -348,7 +348,7 @@ func TestImportObject(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	imported, err := s.ImportObject(ctx, "bucket/new", "backend-a", 500, false)
+	imported, err := s.ImportObject(ctx, "bucket/new", "backend-a", 500, false, nil)
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestImportObject(t *testing.T) {
 	}
 
 	// Import again should be a no-op
-	imported, err = s.ImportObject(ctx, "bucket/new", "backend-a", 500, false)
+	imported, err = s.ImportObject(ctx, "bucket/new", "backend-a", 500, false, nil)
 	if err != nil {
 		t.Fatalf("ImportObject duplicate: %v", err)
 	}
@@ -2467,10 +2467,10 @@ func TestImportObject_UnmanagedCountsForQuotaButNotForWork(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, err := s.ImportObject(ctx, "bucket/owned", "backend-a", 100, false); err != nil {
+	if _, err := s.ImportObject(ctx, "bucket/owned", "backend-a", 100, false, nil); err != nil {
 		t.Fatalf("ImportObject(managed): %v", err)
 	}
-	if _, err := s.ImportObject(ctx, "stray.txt", "backend-a", 400, true); err != nil {
+	if _, err := s.ImportObject(ctx, "stray.txt", "backend-a", 400, true, nil); err != nil {
 		t.Fatalf("ImportObject(unmanaged): %v", err)
 	}
 

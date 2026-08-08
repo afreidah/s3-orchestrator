@@ -246,7 +246,8 @@ func (q *Queries) GetDirectoryStats(ctx context.Context, arg GetDirectoryStatsPa
 }
 
 const getExistingCopiesForUpdate = `-- name: GetExistingCopiesForUpdate :many
-SELECT backend_name, size_bytes, created_at
+SELECT backend_name, size_bytes, created_at, encrypted,
+       (encryption_key IS NOT NULL AND length(encryption_key) > 0) AS has_dek
 FROM object_locations
 WHERE object_key = $1
 FOR UPDATE
@@ -256,6 +257,8 @@ type GetExistingCopiesForUpdateRow struct {
 	BackendName string
 	SizeBytes   int64
 	CreatedAt   pgtype.Timestamptz
+	Encrypted   bool
+	HasDek      *bool
 }
 
 func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKey string) ([]GetExistingCopiesForUpdateRow, error) {
@@ -267,7 +270,13 @@ func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKey stri
 	items := []GetExistingCopiesForUpdateRow{}
 	for rows.Next() {
 		var i GetExistingCopiesForUpdateRow
-		if err := rows.Scan(&i.BackendName, &i.SizeBytes, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.BackendName,
+			&i.SizeBytes,
+			&i.CreatedAt,
+			&i.Encrypted,
+			&i.HasDek,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

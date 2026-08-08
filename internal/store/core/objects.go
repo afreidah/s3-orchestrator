@@ -251,14 +251,14 @@ func MoveObjectLocation(ctx context.Context, runner Runner, key, fromBackend, to
 // bucket prefix. It is still recorded, because it occupies backend quota
 // that placement decisions have to account for, but the workers leave it
 // alone.
-func ImportObject(ctx context.Context, runner Runner, key, backend string, size int64, unmanaged bool) (bool, error) {
+//
+// enc carries what the caller established about the bytes on the backend.
+// Passing nil records the object as plaintext, so callers that import bytes
+// they have not inspected will publish ciphertext as if it were the object.
+func ImportObject(ctx context.Context, runner Runner, key, backend string, size int64, unmanaged bool, enc *EncryptionMeta) (bool, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (bool, error) {
-		loc := &ObjectLocation{
-			ObjectKey:   key,
-			BackendName: backend,
-			SizeBytes:   size,
-			Unmanaged:   unmanaged,
-		}
+		loc := objectFromEnc(key, backend, size, enc)
+		loc.Unmanaged = unmanaged
 		inserted, err := tx.InsertObjectLocationIfNotExists(ctx, loc)
 		if err != nil {
 			return false, err

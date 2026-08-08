@@ -19,7 +19,9 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // freshStore opens a fresh in-memory sqlite store for each test so
@@ -49,8 +51,14 @@ type errorObjectStore struct {
 // ImportObject records the import call so the test can assert it
 // happened. The first return value mirrors the real store's
 // inserted=true semantics for a fresh row.
-func (e errorObjectStore) ImportObject(context.Context, string, string, int64, bool) (bool, error) {
+func (e errorObjectStore) ImportObject(context.Context, string, string, int64, bool, *core.EncryptionMeta) (bool, error) {
 	return false, e.err
+}
+
+// GetAllObjectLocations reports no existing copies, so a discovered object is
+// classified purely on its own bytes.
+func (e errorObjectStore) GetAllObjectLocations(context.Context, string) ([]core.ObjectLocation, error) {
+	return nil, core.ErrObjectNotFound
 }
 
 // writeYAML drops the given config content into a temp file and returns the
@@ -211,7 +219,7 @@ func TestImportPage_DryRun(t *testing.T) {
 		{Key: "b.txt", SizeBytes: 20},
 	}
 	imp, skip, bytesIn, err := importPage(
-		context.Background(), objects, page, "b1", []string{"vb"},
+		context.Background(), syncTestBackend(page), objects, page, "b1", []string{"vb"},
 		&Options{BucketName: "vb", DryRun: true},
 	)
 	if err != nil {
@@ -233,7 +241,7 @@ func TestImportPage_RealImportSkipsExisting(t *testing.T) {
 
 	// First pass: both rows are created.
 	imp, skip, bytesIn, err := importPage(
-		context.Background(), objects, page, "b1", []string{"vb"},
+		context.Background(), syncTestBackend(page), objects, page, "b1", []string{"vb"},
 		&Options{BucketName: "vb"},
 	)
 	if err != nil {
@@ -245,7 +253,7 @@ func TestImportPage_RealImportSkipsExisting(t *testing.T) {
 
 	// Second pass: both already exist, so ImportObject returns (false, nil).
 	imp, skip, bytesIn, err = importPage(
-		context.Background(), objects, page, "b1", []string{"vb"},
+		context.Background(), syncTestBackend(page), objects, page, "b1", []string{"vb"},
 		&Options{BucketName: "vb"},
 	)
 	if err != nil {
@@ -261,9 +269,9 @@ func TestImportPage_RealImportSkipsExisting(t *testing.T) {
 func TestImportPage_PropagatesError(t *testing.T) {
 	_, _ = freshStore(t)
 	wrapped := errorObjectStore{err: os.ErrPermission}
+	page := []backend.ListedObject{{Key: "x", SizeBytes: 1}}
 	_, _, _, err := importPage(
-		context.Background(), wrapped,
-		[]backend.ListedObject{{Key: "x", SizeBytes: 1}},
+		context.Background(), syncTestBackend(page), wrapped, page,
 		"b1", []string{"vb"}, &Options{BucketName: "vb"},
 	)
 	if err == nil {
@@ -291,4 +299,15 @@ func TestRun_FailsWithoutLiveBackend(t *testing.T) {
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1 (no live S3 backend at fixture URL)", code)
 	}
+}
+
+// syncTestBackend returns an in-memory backend holding plaintext bytes for
+// every key in a listing page, so the import path's envelope inspection has
+// something real to read.
+func syncTestBackend(page []backend.ListedObject) *backendtest.InMemory {
+	be := backendtest.NewInMemory()
+	for _, o := range page {
+		be.Objects[o.Key] = backendtest.Object{Data: []byte("plaintext body")}
+	}
+	return be
 }

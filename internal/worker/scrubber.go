@@ -238,6 +238,14 @@ func (s *Scrubber) hashOne(ctx context.Context, loc *core.ObjectLocation) ItemRe
 // returns the SHA-256 hex digest of the plaintext. Records API call and
 // egress against the backend's usage quota.
 func (s *Scrubber) readAndHash(ctx context.Context, loc *core.ObjectLocation) (string, error) {
+	// A row that contradicts itself about encryption cannot produce a
+	// meaningful plaintext hash, so it is rejected before a backend read is
+	// spent on it.
+	if err := core.ValidateEncryptionMetadata(loc); err != nil {
+		telemetry.EncryptionFlagMismatchTotal.WithLabelValues("scrubber").Inc()
+		return "", err
+	}
+
 	be, err := s.deps.GetBackend(loc.BackendName)
 	if err != nil {
 		return "", err
@@ -253,10 +261,24 @@ func (s *Scrubber) readAndHash(ctx context.Context, loc *core.ObjectLocation) (s
 
 	s.deps.Acct().Egress(loc.BackendName, result.Size)
 
+	// Check the stored bytes against what the row claims before hashing.
+	// Hashing an envelope as if it were plaintext writes a ciphertext digest
+	// into content_hash, which makes the mismatch look verified forever and
+	// turns any later repair of the flag into a false integrity failure.
+	isEnvelope, body, err := encryption.PeekEnvelope(result.Body)
+	if err != nil {
+		return "", fmt.Errorf("inspect object header: %w", err)
+	}
+	if isEnvelope != loc.Encrypted {
+		telemetry.EncryptionFlagMismatchTotal.WithLabelValues("scrubber").Inc()
+		return "", fmt.Errorf("%w: row says encrypted=%t but stored bytes say encrypted=%t",
+			core.ErrEncryptionFlagMismatch, loc.Encrypted, isEnvelope)
+	}
+
 	// Decrypt if the object is encrypted  -  hash is computed on plaintext
-	var reader io.Reader = result.Body
+	reader := body
 	if loc.Encrypted && s.encryptor != nil {
-		decrypted, _, decErr := s.encryptor.DecryptStored(ctx, result.Body, loc.EncryptionKey, loc.KeyID, loc.PlaintextSize, nil)
+		decrypted, _, decErr := s.encryptor.DecryptStored(ctx, body, loc.EncryptionKey, loc.KeyID, loc.PlaintextSize, nil)
 		if decErr != nil {
 			return "", fmt.Errorf("decrypt: %w", decErr)
 		}

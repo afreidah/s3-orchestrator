@@ -151,4 +151,3 @@ func (s *Store) DeletePendingByBackend(ctx context.Context, backendName string) 
 func (s *Store) PromotePending(ctx context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.DeletedCopy, error) {
 	return core.PromotePending(ctx, s, p)
 }
-

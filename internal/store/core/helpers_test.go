@@ -271,14 +271,17 @@ func (*quotaTxStub) AcquireKeyLock(context.Context, string) error { return nil }
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
 func (*quotaTxStub) ClaimPending(context.Context, string) (bool, error) { return false, nil }
+
 // InsertPending is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
 func (*quotaTxStub) InsertPending(context.Context, *PendingObject) error { return nil }
+
 // DeletePending is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
-func (*quotaTxStub) DeletePending(context.Context, string) error         { return nil }
+func (*quotaTxStub) DeletePending(context.Context, string) error { return nil }
+
 // DeletePendingByBackend is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
@@ -292,46 +295,55 @@ func (*quotaTxStub) DeletePendingByBackend(context.Context, string) error {
 func (*quotaTxStub) GetExistingCopiesForUpdate(context.Context, string) ([]ExistingCopy, error) {
 	return nil, nil
 }
+
 // InsertObjectLocation is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
 func (*quotaTxStub) InsertObjectLocation(context.Context, *ObjectLocation) error { return nil }
+
 // DeleteObjectCopies is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
-func (*quotaTxStub) DeleteObjectCopies(context.Context, string) error            { return nil }
+func (*quotaTxStub) DeleteObjectCopies(context.Context, string) error { return nil }
+
 // GetCopiesForKeysForUpdate is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
 func (*quotaTxStub) GetCopiesForKeysForUpdate(context.Context, []string) ([]KeyedExistingCopy, error) {
 	return nil, nil
 }
+
 // DeleteObjectsByKeys is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
 func (*quotaTxStub) DeleteObjectsByKeys(context.Context, []string) error { return nil }
+
 // CheckObjectExistsOnBackend is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
 func (*quotaTxStub) CheckObjectExistsOnBackend(context.Context, string, string) (bool, error) {
 	return false, nil
 }
+
 // LockObjectOnBackend is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
 func (*quotaTxStub) LockObjectOnBackend(context.Context, string, string) (*ObjectLocation, bool, error) {
 	return nil, false, nil
 }
+
 // DeleteObjectFromBackend is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
 func (*quotaTxStub) DeleteObjectFromBackend(context.Context, string, string) error { return nil }
+
 // InsertObjectLocationIfNotExists is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
 func (*quotaTxStub) InsertObjectLocationIfNotExists(context.Context, *ObjectLocation) (bool, error) {
 	return false, nil
 }
+
 // InsertReplicaConditional is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
@@ -345,20 +357,24 @@ func (*quotaTxStub) InsertReplicaConditional(context.Context, string, string, st
 func (*quotaTxStub) SumAndDeleteCleanupQueueRows(context.Context, string, string) (int64, int64, error) {
 	return 0, 0, nil
 }
+
 // GetCleanupQueueRow is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
 func (*quotaTxStub) GetCleanupQueueRow(context.Context, int64) (CleanupQueueRow, error) {
 	return CleanupQueueRow{}, nil
 }
+
 // InsertCleanupDLQ is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
 func (*quotaTxStub) InsertCleanupDLQ(context.Context, *CleanupQueueRow) error { return nil }
+
 // DeleteCleanupItem is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
-func (*quotaTxStub) DeleteCleanupItem(context.Context, int64) error           { return nil }
+func (*quotaTxStub) DeleteCleanupItem(context.Context, int64) error { return nil }
+
 // DecrementOrphanBytes is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
@@ -461,3 +477,38 @@ func TestApplyQuotaDeltas_EmptyMap(t *testing.T) {
 	}
 }
 
+// TestValidateEncryptionMetadata covers every self-consistency rule the read
+// path relies on, in both directions: a row that describes bytes it cannot
+// actually produce is rejected, a coherent row of either kind is accepted.
+func TestValidateEncryptionMetadata(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		loc     *ObjectLocation
+		wantErr bool
+	}{
+		{"nil location is unmanaged, not contradictory", nil, false},
+		{"plain row with no key", &ObjectLocation{SizeBytes: 10}, false},
+		{"plain row still carrying a key", &ObjectLocation{SizeBytes: 10, EncryptionKey: []byte("k")}, true},
+		{"encrypted row with key and plaintext size",
+			&ObjectLocation{SizeBytes: 100, Encrypted: true, EncryptionKey: []byte("k"), PlaintextSize: 25}, false},
+		{"encrypted row with no key",
+			&ObjectLocation{SizeBytes: 100, Encrypted: true, PlaintextSize: 25}, true},
+		{"encrypted row with no plaintext size",
+			&ObjectLocation{SizeBytes: 100, Encrypted: true, EncryptionKey: []byte("k")}, true},
+		{"encrypted empty object needs no plaintext size",
+			&ObjectLocation{Encrypted: true, EncryptionKey: []byte("k")}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateEncryptionMetadata(tt.loc)
+			if tt.wantErr && !errors.Is(err, ErrEncryptionFlagMismatch) {
+				t.Errorf("expected ErrEncryptionFlagMismatch, got %v", err)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("expected no error, got %v", err)
+			}
+		})
+	}
+}

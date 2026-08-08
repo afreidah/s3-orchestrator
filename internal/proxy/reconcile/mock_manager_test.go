@@ -56,19 +56,34 @@ func (mr *MockStoresMockRecorder) DeleteObjectLocation(ctx, key, backendName any
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockStores)(nil).DeleteObjectLocation), ctx, key, backendName)
 }
 
-// ImportObject mocks base method.
-func (m *MockStores) ImportObject(ctx context.Context, key, arg2 string, size int64, unmanaged bool) (bool, error) {
+// GetAllObjectLocations mocks base method.
+func (m *MockStores) GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ImportObject", ctx, key, arg2, size, unmanaged)
+	ret := m.ctrl.Call(m, "GetAllObjectLocations", ctx, key)
+	ret0, _ := ret[0].([]core.ObjectLocation)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAllObjectLocations indicates an expected call of GetAllObjectLocations.
+func (mr *MockStoresMockRecorder) GetAllObjectLocations(ctx, key any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllObjectLocations", reflect.TypeOf((*MockStores)(nil).GetAllObjectLocations), ctx, key)
+}
+
+// ImportObject mocks base method.
+func (m *MockStores) ImportObject(ctx context.Context, key, arg2 string, size int64, unmanaged bool, enc *core.EncryptionMeta) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ImportObject", ctx, key, arg2, size, unmanaged, enc)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ImportObject indicates an expected call of ImportObject.
-func (mr *MockStoresMockRecorder) ImportObject(ctx, key, arg2, size, unmanaged any) *gomock.Call {
+func (mr *MockStoresMockRecorder) ImportObject(ctx, key, arg2, size, unmanaged, enc any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportObject", reflect.TypeOf((*MockStores)(nil).ImportObject), ctx, key, arg2, size, unmanaged)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportObject", reflect.TypeOf((*MockStores)(nil).ImportObject), ctx, key, arg2, size, unmanaged, enc)
 }
 
 // ListObjectsByBackendKeyAsc mocks base method.

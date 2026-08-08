@@ -400,8 +400,8 @@ func (s *Store) DeleteObjectLocation(ctx context.Context, key, backendName strin
 }
 
 // ImportObject delegates to core.ImportObject.
-func (s *Store) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool) (bool, error) {
-	return core.ImportObject(ctx, s, key, backend, size, unmanaged)
+func (s *Store) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, enc *core.EncryptionMeta) (bool, error) {
+	return core.ImportObject(ctx, s, key, backend, size, unmanaged, enc)
 }
 
 // BackendObjectStats returns the object count and total bytes stored on a backend.

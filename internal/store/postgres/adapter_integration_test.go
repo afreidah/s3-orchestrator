@@ -605,10 +605,10 @@ func TestPgAdapter_InsertObjectLocationIfNotExists_BothBranches(t *testing.T) {
 	key := uniqueKey(t, "k")
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
-	if got, err := s.ImportObject(ctx, key, "backend-a", 50, false); err != nil || !got {
+	if got, err := s.ImportObject(ctx, key, "backend-a", 50, false, nil); err != nil || !got {
 		t.Fatalf("ImportObject(insert): got=%v err=%v, want (true, nil)", got, err)
 	}
-	if got, err := s.ImportObject(ctx, key, "backend-a", 50, false); err != nil || got {
+	if got, err := s.ImportObject(ctx, key, "backend-a", 50, false, nil); err != nil || got {
 		t.Errorf("ImportObject(idempotent): got=%v err=%v, want (false, nil)", got, err)
 	}
 }
@@ -760,6 +760,76 @@ func TestPgAdapter_DecrementOrphanBytes_NoErrorOnZero(t *testing.T) {
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
 		if err := a.DecrementOrphanBytes(context.Background(), "backend-a", 9999); err != nil {
 			t.Errorf("DecrementOrphanBytes: %v", err)
+		}
+	})
+}
+
+// TestPgAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState verifies the
+// Postgres locked re-read reports the same encryption state the SQLite adapter
+// does. RemoveExcessCopy's guard reads these two fields, so the engines must
+// agree or the guard protects objects on one backend and not the other.
+func TestPgAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "enc")
+
+	enc := &core.EncryptionMeta{
+		Encrypted:     true,
+		EncryptionKey: []byte("wrapped-dek"),
+		KeyID:         "key-1",
+		PlaintextSize: 1024,
+	}
+	if _, err := s.RecordObject(ctx, key, "backend-a", 1100, enc); err != nil {
+		t.Fatalf("RecordObject encrypted: %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
+		t.Fatalf("RecordReplica: %v", err)
+	}
+
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		copies, err := a.GetExistingCopiesForUpdate(ctx, key)
+		if err != nil {
+			t.Fatalf("GetExistingCopiesForUpdate: %v", err)
+		}
+		if len(copies) != 2 {
+			t.Fatalf("expected 2 copies, got %d", len(copies))
+		}
+		for _, ec := range copies {
+			if !ec.Encrypted {
+				t.Errorf("%s: Encrypted = false, want true", ec.BackendName)
+			}
+			if !ec.HasDEK {
+				t.Errorf("%s: HasDEK = false, want true (replication copies the key)", ec.BackendName)
+			}
+		}
+	})
+}
+
+// TestPgAdapter_GetExistingCopiesForUpdate_ReportsUnencryptedCopy verifies a
+// plain object reports neither flag, so the guard stays inert for copy sets
+// that were never encrypted.
+func TestPgAdapter_GetExistingCopiesForUpdate_ReportsUnencryptedCopy(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "plain")
+
+	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		copies, err := a.GetExistingCopiesForUpdate(ctx, key)
+		if err != nil {
+			t.Fatalf("GetExistingCopiesForUpdate: %v", err)
+		}
+		if len(copies) != 1 {
+			t.Fatalf("expected 1 copy, got %d", len(copies))
+		}
+		if copies[0].Encrypted || copies[0].HasDEK {
+			t.Errorf("plain copy reported Encrypted=%v HasDEK=%v, want both false",
+				copies[0].Encrypted, copies[0].HasDEK)
 		}
 	})
 }

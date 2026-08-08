@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
@@ -93,6 +94,14 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 		return fail, core.ErrServiceUnavailable
 	}
 
+	// Reject a copy whose row contradicts itself before doing range math on
+	// its sizes. Failing here fails over to a sibling copy, so one damaged row
+	// costs a retry rather than a wrong response body.
+	if err := core.ValidateEncryptionMetadata(loc); err != nil {
+		telemetry.EncryptionFlagMismatchTotal.WithLabelValues("get").Inc()
+		return fail, fmt.Errorf("backend %s: %w", beName, err)
+	}
+
 	actualRange, rng, ptStart, ptEnd := o.resolveBackendRange(rangeHeader, loc)
 
 	r, cancel, err := o.core.GetWithTimeout(ctx, backend, key, actualRange)
@@ -112,6 +121,13 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 	// stored creation time so every object carries a valid Last-Modified.
 	if r.LastModified.IsZero() && loc != nil {
 		r.LastModified = loc.CreatedAt
+	}
+
+	if err := verifyStoredEnvelope(r, loc, actualRange); err != nil {
+		telemetry.EncryptionFlagMismatchTotal.WithLabelValues("get").Inc()
+		_ = r.Body.Close()
+		cancel()
+		return fail, fmt.Errorf("backend %s: %w", beName, err)
 	}
 
 	if err := o.buildPlaintextReader(ctx, r, loc, key, beName, backend, rng, ptStart, ptEnd); err != nil {
@@ -238,5 +254,31 @@ func (o *Manager) populateObjectCache(key, rangeHeader string, result *s3be.GetO
 	result.Body = newCacheTeeBody(result.Body, result.Size, func(data []byte) {
 		o.objectCache.PutBytes(key, data, meta)
 	})
+	return nil
+}
+
+// verifyStoredEnvelope checks the bytes a backend actually returned against
+// what the metadata row claims about them, and replaces r.Body with an
+// equivalent stream so the caller reads from the start either way.
+//
+// The check only applies when the response begins at byte 0 of the stored
+// object, which is where the envelope signature lives: a full read, or a
+// range read of an object the row calls plaintext that starts at 0. A ranged
+// read of an encrypted object starts past the header by construction, and a
+// range that starts mid-object carries no signature to compare, so both are
+// left to the scrubber to catch.
+func verifyStoredEnvelope(r *s3be.GetObjectResult, loc *core.ObjectLocation, actualRange string) error {
+	if loc == nil || (actualRange != "" && !strings.HasPrefix(actualRange, "bytes=0-")) {
+		return nil
+	}
+	isEnvelope, body, err := encryption.PeekEnvelope(r.Body)
+	if err != nil {
+		return fmt.Errorf("inspect object header: %w", err)
+	}
+	r.Body = ioutilx.ReadCloser(body, r.Body)
+	if isEnvelope != loc.Encrypted {
+		return fmt.Errorf("%w: row says encrypted=%t but stored bytes say encrypted=%t",
+			core.ErrEncryptionFlagMismatch, loc.Encrypted, isEnvelope)
+	}
 	return nil
 }

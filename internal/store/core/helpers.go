@@ -12,6 +12,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"time"
 )
@@ -147,4 +148,63 @@ func copySizeForBackend(existing []ExistingCopy, backendName string) (int64, boo
 		}
 	}
 	return 0, false
+}
+
+// isLastDecryptableCopy reports whether the copy on backendName is the only
+// one still carrying the key needed to decrypt the object, while at least one
+// sibling claims to be plaintext or has lost its key.
+//
+// Every copy of a key holds the same ciphertext under the same DEK, so a copy
+// set that disagrees about encryption is already damaged. Dropping the row
+// that still has the key makes the object permanently unreadable; dropping one
+// of the others loses nothing. This reports the case worth refusing so the
+// caller can skip the key and surface it rather than completing the loss.
+func isLastDecryptableCopy(existing []ExistingCopy, backendName string) bool {
+	var decryptable, target int
+	for i := range existing {
+		if existing[i].Encrypted && existing[i].HasDEK {
+			decryptable++
+			if existing[i].BackendName == backendName {
+				target++
+			}
+		}
+	}
+	// Only a mixed set is suspicious: when every copy is decryptable (the
+	// normal encrypted case) or none are (the normal plaintext case), the
+	// caller's choice is arbitrary and safe.
+	return decryptable == 1 && target == 1 && decryptable < len(existing)
+}
+
+// ValidateEncryptionMetadata reports whether a location row is self-consistent
+// about encryption, so the read path can reject a copy it cannot serve
+// correctly instead of returning the wrong bytes or the wrong size.
+//
+// A nil location is fine: callers that have no metadata row are serving
+// unmanaged bytes and have nothing to contradict.
+//
+// The read path treats a failure here as a per-copy error, which fails over to
+// a sibling copy; only an object whose every copy is inconsistent surfaces the
+// error to the client.
+func ValidateEncryptionMetadata(loc *ObjectLocation) error {
+	if loc == nil {
+		return nil
+	}
+	if !loc.Encrypted {
+		// A cleared flag next to a surviving key is the signature of a row that
+		// lost its encryption metadata: the bytes are almost certainly still an
+		// envelope, and serving them as plaintext hands the client ciphertext.
+		if len(loc.EncryptionKey) > 0 {
+			return fmt.Errorf("%w: row is not encrypted but still carries a key", ErrEncryptionFlagMismatch)
+		}
+		return nil
+	}
+	if len(loc.EncryptionKey) == 0 {
+		return fmt.Errorf("%w: row is encrypted but carries no key", ErrEncryptionFlagMismatch)
+	}
+	// Without a plaintext size there is no way to size the response or bound
+	// range math, and the ciphertext size would be reported to the client.
+	if loc.PlaintextSize <= 0 && loc.SizeBytes > 0 {
+		return fmt.Errorf("%w: row is encrypted but carries no plaintext size", ErrEncryptionFlagMismatch)
+	}
+	return nil
 }
