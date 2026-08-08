@@ -496,8 +496,12 @@ func TestValidateEncryptionMetadata(t *testing.T) {
 			&ObjectLocation{SizeBytes: 100, Encrypted: true, PlaintextSize: 25}, true},
 		{"encrypted row with no plaintext size",
 			&ObjectLocation{SizeBytes: 100, Encrypted: true, EncryptionKey: []byte("k")}, true},
-		{"encrypted empty object needs no plaintext size",
-			&ObjectLocation{Encrypted: true, EncryptionKey: []byte("k")}, false},
+		{"encrypted empty object stores a bare header and no plaintext",
+			&ObjectLocation{Encrypted: true, EncryptionKey: []byte("k"), SizeBytes: 32}, false},
+		{"encrypted row with chunks but no plaintext size lost it",
+			&ObjectLocation{Encrypted: true, EncryptionKey: []byte("k"), SizeBytes: 4096}, true},
+		{"encrypted row with a negative plaintext size",
+			&ObjectLocation{Encrypted: true, EncryptionKey: []byte("k"), SizeBytes: 4096, PlaintextSize: -1}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

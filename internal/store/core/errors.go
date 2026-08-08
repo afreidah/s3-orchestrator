@@ -73,6 +73,15 @@ var (
 		Message:    "multipart upload not found",
 	}
 
+	// ErrInvalidRange is returned when a client's Range header cannot address
+	// any byte of the object, such as a suffix range against a zero-length
+	// object.
+	ErrInvalidRange = &S3Error{
+		StatusCode: 416,
+		Code:       "InvalidRange",
+		Message:    "the requested range is not satisfiable",
+	}
+
 	// ErrServiceUnavailable is returned to S3 clients when writes are
 	// rejected during a database outage.
 	ErrServiceUnavailable = &S3Error{

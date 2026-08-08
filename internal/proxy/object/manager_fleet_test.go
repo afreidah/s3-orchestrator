@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -2870,5 +2871,164 @@ func TestCopyObject_SourceGetPanics(t *testing.T) {
 
 	if _, err := mgr.CopyObject(context.Background(), "src", "dst"); err == nil {
 		t.Fatal("expected error from panicking source reader, got nil")
+	}
+}
+
+// TestGetObject_EmptyEncryptedObject proves a zero-byte object survives the
+// read path when encryption is on. An empty plaintext encrypts to a bare
+// 32-byte header with no chunks, so its row carries plaintext_size 0 over a
+// non-zero stored size - the one legitimate shape that looks, at a glance,
+// like a row that lost its plaintext size.
+func TestGetObject_EmptyEncryptedObject(t *testing.T) {
+	t.Parallel()
+	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	if err != nil {
+		t.Fatalf("NewConfigKeyProvider: %v", err)
+	}
+	enc, err := encryption.NewEncryptor(provider, 64*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := enc.Encrypt(context.Background(), bytes.NewReader(nil), 0)
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	ciphertext, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read ciphertext: %v", err)
+	}
+
+	b1 := backendtest.NewInMemory()
+	b1.Objects["empty"] = backendtest.Object{Data: ciphertext}
+
+	store := locationsStore(t, []core.ObjectLocation{{
+		ObjectKey:     "empty",
+		BackendName:   "b1",
+		SizeBytes:     int64(len(ciphertext)),
+		Encrypted:     true,
+		EncryptionKey: encryption.PackKeyData(res.BaseNonce, res.WrappedDEK),
+		KeyID:         res.KeyID,
+		PlaintextSize: 0,
+	}}, nil)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1},
+		&fleetOpts{Order: []string{"b1"}, BackendTimeout: 30 * time.Second, Encryptor: enc, PendingDisabled: true})
+
+	result, err := mgr.GetObject(context.Background(), "empty", "")
+	if err != nil {
+		t.Fatalf("GetObject on an empty encrypted object: %v", err)
+	}
+	defer func() { _ = result.Body.Close() }()
+	got, err := io.ReadAll(result.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("body = %q, want empty", got)
+	}
+
+	head, err := mgr.HeadObject(context.Background(), "empty")
+	if err != nil {
+		t.Fatalf("HeadObject on an empty encrypted object: %v", err)
+	}
+	if head.Size != 0 {
+		t.Errorf("HeadObject size = %d, want 0", head.Size)
+	}
+}
+
+// encryptedObjectFleet builds a fleet holding one encrypted object with the
+// given plaintext, returning the manager and the recorded location row.
+func encryptedObjectFleet(t *testing.T, key, plaintext string) *fleet {
+	t.Helper()
+	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
+	if err != nil {
+		t.Fatalf("NewConfigKeyProvider: %v", err)
+	}
+	enc, err := encryption.NewEncryptor(provider, 64*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := enc.Encrypt(context.Background(), strings.NewReader(plaintext), int64(len(plaintext)))
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	ciphertext, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read ciphertext: %v", err)
+	}
+
+	b1 := backendtest.NewInMemory()
+	b1.Objects[key] = backendtest.Object{Data: ciphertext}
+	store := locationsStore(t, []core.ObjectLocation{{
+		ObjectKey:     key,
+		BackendName:   "b1",
+		SizeBytes:     int64(len(ciphertext)),
+		Encrypted:     true,
+		EncryptionKey: encryption.PackKeyData(res.BaseNonce, res.WrappedDEK),
+		KeyID:         res.KeyID,
+		PlaintextSize: int64(len(plaintext)),
+	}}, nil)
+	return newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1},
+		&fleetOpts{Order: []string{"b1"}, BackendTimeout: 30 * time.Second, Encryptor: enc, PendingDisabled: true})
+}
+
+// TestGetObject_SuffixRangeOnEmptyEncryptedObject verifies an unsatisfiable
+// range surfaces as InvalidRange instead of being silently swapped for an
+// untranslated plaintext range against ciphertext.
+func TestGetObject_SuffixRangeOnEmptyEncryptedObject(t *testing.T) {
+	t.Parallel()
+	mgr := encryptedObjectFleet(t, "empty", "")
+
+	_, err := mgr.GetObject(context.Background(), "empty", "bytes=-5")
+	if err == nil {
+		t.Fatal("a suffix range against a zero-length object must not succeed")
+	}
+	s3err, ok := errors.AsType[*core.S3Error](err)
+	if !ok {
+		t.Fatalf("error must carry an S3 status, got %v", err)
+	}
+	if s3err.StatusCode != 416 || s3err.Code != "InvalidRange" {
+		t.Errorf("got %d %s, want 416 InvalidRange", s3err.StatusCode, s3err.Code)
+	}
+}
+
+// TestGetObject_UnparseableRangeOnEncryptedObject verifies a Range the server
+// cannot act on falls back to the whole object rather than shipping plaintext
+// offsets to a backend holding ciphertext.
+func TestGetObject_UnparseableRangeOnEncryptedObject(t *testing.T) {
+	t.Parallel()
+	mgr := encryptedObjectFleet(t, "obj", "hello world")
+
+	result, err := mgr.GetObject(context.Background(), "obj", "items=0-4")
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+	defer func() { _ = result.Body.Close() }()
+	got, err := io.ReadAll(result.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(got) != "hello world" {
+		t.Errorf("body = %q, want the whole object", got)
+	}
+}
+
+// TestGetObject_RangeOnEncryptedObject verifies the ordinary translated range
+// still returns exactly the requested plaintext window.
+func TestGetObject_RangeOnEncryptedObject(t *testing.T) {
+	t.Parallel()
+	mgr := encryptedObjectFleet(t, "obj", "hello world")
+
+	result, err := mgr.GetObject(context.Background(), "obj", "bytes=6-10")
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+	defer func() { _ = result.Body.Close() }()
+	got, err := io.ReadAll(result.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(got) != "world" {
+		t.Errorf("body = %q, want %q", got, "world")
 	}
 }
