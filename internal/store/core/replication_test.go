@@ -173,3 +173,103 @@ func TestRemoveExcessCopy_RemovesVictimWithLockedSize(t *testing.T) {
 		t.Errorf("expected quota debit of 100 for b1 from locked row, got %v", stub.ops)
 	}
 }
+
+// decryptable builds a copy that both claims encryption and still holds a key.
+func decryptable(backend string) ExistingCopy {
+	return ExistingCopy{BackendName: backend, SizeBytes: 10, Encrypted: true, HasDEK: true}
+}
+
+// TestRemoveExcessCopy_RefusesLastDecryptableCopy verifies a copy set that
+// disagrees about encryption never loses the one copy that can still be read.
+func TestRemoveExcessCopy_RefusesLastDecryptableCopy(t *testing.T) {
+	t.Parallel()
+	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{
+		decryptable("b1"),
+		{BackendName: "b2", SizeBytes: 10},
+		{BackendName: "b3", SizeBytes: 10},
+	}})
+	removed, err := runRemoveExcess(stub, "k", "b1", 1)
+	if !errors.Is(err, ErrCopyHoldsOnlyDEK) {
+		t.Errorf("expected ErrCopyHoldsOnlyDEK, got %v", err)
+	}
+	if removed {
+		t.Error("removed must be false when the victim holds the only key")
+	}
+	if len(stub.deleted) != 0 {
+		t.Errorf("nothing may be deleted, got %v", stub.deleted)
+	}
+}
+
+// TestRemoveExcessCopy_RemovesKeylessSiblingFromMixedSet verifies the guard
+// only protects the victim that holds the key: the copies that lost their
+// metadata are still removable, which is what makes the set self-correcting.
+func TestRemoveExcessCopy_RemovesKeylessSiblingFromMixedSet(t *testing.T) {
+	t.Parallel()
+	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{
+		decryptable("b1"),
+		{BackendName: "b2", SizeBytes: 10},
+		{BackendName: "b3", SizeBytes: 10},
+	}})
+	removed, err := runRemoveExcess(stub, "k", "b2", 1)
+	if err != nil {
+		t.Fatalf("removing a keyless sibling must succeed, got %v", err)
+	}
+	if !removed {
+		t.Error("removed must be true for a keyless sibling")
+	}
+	if len(stub.deleted) != 1 || stub.deleted[0] != "b2" {
+		t.Errorf("expected b2 deleted, got %v", stub.deleted)
+	}
+}
+
+// TestRemoveExcessCopy_AllowsRemovalWhenEveryCopyDecryptable verifies the
+// guard does not fire on a consistent encrypted set, where every remaining
+// copy can still read the object.
+func TestRemoveExcessCopy_AllowsRemovalWhenEveryCopyDecryptable(t *testing.T) {
+	t.Parallel()
+	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{
+		decryptable("b1"), decryptable("b2"), decryptable("b3"),
+	}})
+	removed, err := runRemoveExcess(stub, "k", "b1", 1)
+	if err != nil {
+		t.Fatalf("a fully encrypted set must stay removable, got %v", err)
+	}
+	if !removed {
+		t.Error("removed must be true when every copy carries a key")
+	}
+}
+
+// TestRemoveExcessCopy_AllowsRemovalWhenNoCopyEncrypted verifies an entirely
+// unencrypted set is untouched by the guard.
+func TestRemoveExcessCopy_AllowsRemovalWhenNoCopyEncrypted(t *testing.T) {
+	t.Parallel()
+	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{
+		{BackendName: "b1", SizeBytes: 10},
+		{BackendName: "b2", SizeBytes: 10},
+	}})
+	removed, err := runRemoveExcess(stub, "k", "b1", 1)
+	if err != nil {
+		t.Fatalf("an unencrypted set must stay removable, got %v", err)
+	}
+	if !removed {
+		t.Error("removed must be true when no copy is encrypted")
+	}
+}
+
+// TestRemoveExcessCopy_AllowsRemovalWhenEncryptedCopyLostItsKey verifies a
+// copy flagged encrypted but missing its key is not mistaken for the last
+// decryptable one: it cannot read the object either, so it stays removable.
+func TestRemoveExcessCopy_AllowsRemovalWhenEncryptedCopyLostItsKey(t *testing.T) {
+	t.Parallel()
+	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{
+		{BackendName: "b1", SizeBytes: 10, Encrypted: true},
+		{BackendName: "b2", SizeBytes: 10},
+	}})
+	removed, err := runRemoveExcess(stub, "k", "b1", 1)
+	if err != nil {
+		t.Fatalf("a keyless encrypted copy must stay removable, got %v", err)
+	}
+	if !removed {
+		t.Error("removed must be true when the encrypted copy has no key")
+	}
+}

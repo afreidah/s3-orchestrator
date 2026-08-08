@@ -16,6 +16,7 @@ package worker
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -265,7 +266,22 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 		// race outcome: a parallel client delete or earlier tick already
 		// absorbed the excess, so this victim no longer needs touching.
 		didRemove, err := c.store.RemoveExcessCopy(ctx, key, victim.BackendName, factor)
-		if err != nil {
+		switch {
+		case errors.Is(err, core.ErrCopyHoldsOnlyDEK):
+			// The copy set disagrees about encryption and this victim is the
+			// only one that can still decrypt the object. Skipping leaves the
+			// key over-replicated, which costs quota; removing it would cost
+			// the object. Logged at warn because a mixed set always means a
+			// row lost its metadata somewhere and wants repair.
+			c.log.WarnContext(ctx, "skipping over-replication removal: victim holds the only usable encryption key",
+				"key", key, "backend", victim.BackendName)
+			telemetry.OverReplicationKeyPreservedTotal.Inc()
+			audit.Log(ctx, "over_replication.key_preserved",
+				slog.String("key", key),
+				slog.String("backend", victim.BackendName),
+			)
+			continue
+		case err != nil:
 			c.log.WarnContext(ctx, "failed to remove metadata",
 				"key", key, "backend", victim.BackendName, "error", err)
 			telemetry.OverReplicationErrorsTotal.Inc()

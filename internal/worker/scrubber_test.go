@@ -304,3 +304,77 @@ func TestScrub_ContextCancelled(t *testing.T) {
 		t.Errorf("expected 0 failed, got %d", failed)
 	}
 }
+
+// TestScrub_RefusesEnvelopeOnPlainRow verifies the scrubber will not hash an
+// envelope as if it were plaintext. Doing so would write a ciphertext digest
+// into content_hash, making the divergence look verified and turning any later
+// repair of the flag into a false integrity failure. The copy must be skipped,
+// not counted as checked, and above all not enqueued for deletion.
+func TestScrub_RefusesEnvelopeOnPlainRow(t *testing.T) {
+	t.Parallel()
+	s, ops, _, be, ms := setupScrubber(t)
+	ciphertext := "SENC\x01" + strings.Repeat("x", 64)
+
+	ms.randomHashedObjects = []core.ObjectLocation{
+		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: int64(len(ciphertext)), ContentHash: hashString(ciphertext)},
+	}
+	ops.EXPECT().GetBackend("b1").Return(be, nil)
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+		Body: io.NopCloser(strings.NewReader(ciphertext)),
+		Size: int64(len(ciphertext)),
+	}, func() {}, nil)
+
+	scrubSum := s.Scrub(context.Background(), 10, nil)
+	if scrubSum.Attempted != 0 {
+		t.Errorf("a divergent copy must not count as checked, got %d", scrubSum.Attempted)
+	}
+	if scrubSum.Failed != 0 {
+		t.Errorf("a divergent copy is skipped, not failed, got %d", scrubSum.Failed)
+	}
+}
+
+// TestBackfill_RefusesEnvelopeOnPlainRow verifies backfill never writes a hash
+// for a copy whose bytes disagree with its row. This is the path that would
+// cement the divergence permanently, since these rows have no hash yet.
+func TestBackfill_RefusesEnvelopeOnPlainRow(t *testing.T) {
+	t.Parallel()
+	s, ops, _, be, ms := setupScrubber(t)
+	ciphertext := "SENC\x01" + strings.Repeat("x", 64)
+
+	ms.objectsWithoutHash = []core.ObjectLocation{
+		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: int64(len(ciphertext))},
+	}
+	ops.EXPECT().GetBackend("b1").Return(be, nil)
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+		Body: io.NopCloser(strings.NewReader(ciphertext)),
+		Size: int64(len(ciphertext)),
+	}, func() {}, nil)
+
+	sum, _ := s.Backfill(context.Background(), 10, 0, nil)
+	if sum.Failed != 1 {
+		t.Errorf("expected 1 failed, got %d", sum.Failed)
+	}
+	if ms.lastUpdatedHash != "" {
+		t.Errorf("no hash may be stored for a divergent copy, got %q", ms.lastUpdatedHash)
+	}
+}
+
+// TestScrub_RefusesContradictoryRow verifies a row claiming encryption without
+// a key is rejected before any backend read, since no plaintext hash can be
+// computed from it and spending a read to discover that is waste.
+func TestScrub_RefusesContradictoryRow(t *testing.T) {
+	t.Parallel()
+	s, ops, _, _, ms := setupScrubber(t)
+
+	ms.randomHashedObjects = []core.ObjectLocation{
+		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 100, ContentHash: "abc", Encrypted: true},
+	}
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+
+	scrubSum := s.Scrub(context.Background(), 10, nil)
+	if scrubSum.Attempted != 0 {
+		t.Errorf("a contradictory row must not count as checked, got %d", scrubSum.Attempted)
+	}
+}

@@ -31,7 +31,8 @@ import (
 // drop a stale row, walk the ledger in byte order, and sweep cleanup-queue
 // rows belonging to a key that no longer exists.
 type Stores interface {
-	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool) (bool, error)
+	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, enc *core.EncryptionMeta) (bool, error)
+	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 	DeleteObjectLocation(ctx context.Context, key, backendName string) error
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error)
 	SweepStaleCleanupQueueRows(ctx context.Context, key, backendName string) (int64, error)
@@ -119,7 +120,7 @@ func (m *Manager) importPage(
 ) (imported, skipped int, err error) {
 	for _, obj := range objects {
 		unmanaged := Unmanaged(obj.Key, bucketPrefixes)
-		inserted, importErr := m.stores.ImportObject(ctx, obj.Key, backendName, obj.SizeBytes, unmanaged)
+		inserted, importErr := m.importDiscovered(ctx, obj.Key, backendName, obj.SizeBytes, unmanaged)
 		if importErr != nil {
 			return imported, skipped, fmt.Errorf("failed to import %s: %w", obj.Key, importErr)
 		}
@@ -130,6 +131,27 @@ func (m *Manager) importPage(
 		}
 	}
 	return imported, skipped, nil
+}
+
+// importDiscovered records one key found on a backend, first working out
+// whether its bytes are an encryption envelope and, if so, which existing row
+// holds the key that reads them. Satisfies ImporterFn, so the sorted-merge
+// reconcile and the bulk sync scan classify identically.
+func (m *Manager) importDiscovered(ctx context.Context, key, backendName string, size int64, unmanaged bool) (bool, error) {
+	be, err := m.backends.GetBackend(backendName)
+	if err != nil {
+		return false, err
+	}
+	enc, err := ClassifyImport(ctx, ClassifyDeps{
+		Backend: be,
+		Stores:  m.stores,
+		Source:  "reconcile",
+		Log:     m.logger(),
+	}, backendName, key)
+	if err != nil {
+		return false, err
+	}
+	return m.stores.ImportObject(ctx, key, backendName, size, unmanaged, enc)
 }
 
 // ReconcileBackend reconciles a backend against the ledger using the
@@ -161,7 +183,7 @@ func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, know
 	res := &Result{}
 	mergeErr := Sorted(
 		ctx, s3, dbIter,
-		ImportHandler(m.logger(), backendName, m.stores.ImportObject, res),
+		ImportHandler(m.logger(), backendName, m.importDiscovered, res),
 		DeleteHandler(m.logger(), backendName, m.deleter(), res),
 	)
 

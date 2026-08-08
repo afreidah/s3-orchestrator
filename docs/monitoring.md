@@ -166,6 +166,9 @@ Key metrics to alert on:
 | `s3o_replication_health_copies_total` | Non-zero means health-aware replication is creating replacement copies for circuit-broken backends |
 | `s3o_over_replication_pending` | Objects with more copies than the replication factor — should return to 0 after cleanup runs |
 | `s3o_over_replication_errors_total` | Cleanup errors — indicates backends or metadata issues preventing excess copy removal |
+| `s3o_over_replication_key_preserved_total` | Any non-zero value means a copy set disagrees about encryption and the cleaner kept the only copy that can still be decrypted. Repair the diverged rows; until then the object stays over-replicated |
+| `s3o_encryption_flag_mismatch_total{component}` | Any non-zero value is an alert: an object's stored bytes disagree with its recorded encryption flag, so that copy cannot be read or hashed. `component` names what noticed (`get`, `head`, `scrubber`) |
+| `s3o_import_classified_total{decision="unreadable"}` | Reconcile or sync found an encrypted object whose key is gone. It is recorded so its space is accounted for, but nothing can serve it. Restore it from elsewhere or delete it |
 | `s3o_requests_total{status_code="5xx"}` | Alert on elevated 5xx rates |
 | `s3o_http_panic_recovered_total{route}` | Any non-zero rate is an alert: a handler panicked and the recovery middleware returned a 500. Pivot via the matching `http.PanicRecovered` audit entry for the captured stack and request id |
 | `s3o_degraded_write_rejections_total` | Writes being rejected due to degraded mode |
@@ -238,6 +241,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_over_replication_pending` | Gauge | — | Objects exceeding the replication factor |
 | `s3o_over_replication_removed_total` | Counter | — | Excess copies removed |
 | `s3o_over_replication_errors_total` | Counter | — | Over-replication cleanup errors |
+| `s3o_over_replication_key_preserved_total` | Counter | — | Copies kept because they held the only usable encryption key for the object |
 | `s3o_over_replication_runs_total` | Counter | status | Over-replication worker executions |
 | `s3o_over_replication_duration_seconds` | Histogram | — | Over-replication cleanup cycle time |
 | `s3o_circuit_breaker_state` | Gauge | name | 0=closed, 1=open, 2=half-open (name: "database" or backend name) |
@@ -275,6 +279,8 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_encryption_operations_total` | Counter | op | Encrypt/decrypt operations |
 | `s3o_encryption_errors_total` | Counter | op, error_type | Encryption/decryption failures |
 | `s3o_encryption_unknown_key_id_total` | Counter | — | Decryption attempts with unknown keyID (primary key fallback) |
+| `s3o_encryption_flag_mismatch_total` | Counter | component | Copies whose stored bytes disagreed with their recorded encryption flag |
+| `s3o_import_classified_total` | Counter | source, decision | Discovered objects imported, by what their bytes were classified as (`plaintext`, `adopted_key`, `unreadable`) |
 | `s3o_encrypt_existing_objects_total` | Counter | status | Objects processed by encrypt-existing |
 | `s3o_decrypt_existing_objects_total` | Counter | status | Objects processed by decrypt-existing |
 | `s3o_key_rotation_objects_total` | Counter | status | DEKs re-wrapped by key rotation |

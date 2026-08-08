@@ -109,7 +109,8 @@ func (a *sqliteTxAdapter) DeletePendingByBackend(ctx context.Context, backendNam
 // single-writer model means no row lock is needed inside a write tx.
 func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, objectKey string) ([]core.ExistingCopy, error) {
 	rows, err := a.tx.QueryContext(ctx,
-		`SELECT backend_name, size_bytes, created_at
+		`SELECT backend_name, size_bytes, created_at, encrypted,
+		        (encryption_key IS NOT NULL AND length(encryption_key) > 0)
 		 FROM object_locations
 		 WHERE object_key = ?`, objectKey)
 	if err != nil {
@@ -122,10 +123,14 @@ func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, object
 		var (
 			ec        core.ExistingCopy
 			createdAt string
+			encrypted int
+			hasDEK    int
 		)
-		if err := rows.Scan(&ec.BackendName, &ec.SizeBytes, &createdAt); err != nil {
+		if err := rows.Scan(&ec.BackendName, &ec.SizeBytes, &createdAt, &encrypted, &hasDEK); err != nil {
 			return nil, fmt.Errorf("scan existing copy: %w", err)
 		}
+		ec.Encrypted = encrypted != 0
+		ec.HasDEK = hasDEK != 0
 		if t, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
 			ec.CreatedAt = t
 		}
