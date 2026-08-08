@@ -26,8 +26,8 @@ import (
 // selects between "sqlite" (embedded, zero-dependency default) and "postgres"
 // (required for multi-instance deployments).
 type DatabaseConfig struct {
-	Driver          string        `yaml:"driver"`            // "sqlite" or "postgres" (default: inferred from config)
-	Path            string        `yaml:"path"`              // SQLite file path (default: "s3-orchestrator.db")
+	Driver          string        `yaml:"driver"` // "sqlite" or "postgres" (default: inferred from config)
+	Path            string        `yaml:"path"`   // SQLite file path (default: "s3-orchestrator.db")
 	Host            string        `yaml:"host"`
 	Port            int           `yaml:"port"`
 	Database        string        `yaml:"database"`

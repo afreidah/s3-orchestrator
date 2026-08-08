@@ -25,9 +25,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // queryPendingCount returns the number of pending intents for a key.

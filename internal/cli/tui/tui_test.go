@@ -13,10 +13,11 @@ package tui
 import (
 	"bytes"
 	"context"
-	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"

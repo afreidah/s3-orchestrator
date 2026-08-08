@@ -163,14 +163,14 @@ func TestPromptDatabase_Postgres(t *testing.T) {
 // another, exercising promptSingleBackend end-to-end.
 func TestPromptBackends_Single(t *testing.T) {
 	input := canned(
-		"primary",                 // name
-		"http://localhost:9000",   // endpoint
-		"data",                    // bucket
-		"AKID",                    // access key
-		"SECRET",                  // secret
-		"yes",                     // force path style
-		"0", "0", "0", "0",        // quotas
-		"n",                       // add another? no
+		"primary",               // name
+		"http://localhost:9000", // endpoint
+		"data",                  // bucket
+		"AKID",                  // access key
+		"SECRET",                // secret
+		"yes",                   // force path style
+		"0", "0", "0", "0",      // quotas
+		"n", // add another? no
 	)
 	var out bytes.Buffer
 	var p Params

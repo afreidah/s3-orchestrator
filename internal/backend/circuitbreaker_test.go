@@ -261,7 +261,8 @@ type httpError struct {
 }
 
 // Error returns the error message.
-func (e *httpError) Error() string       { return e.msg }
+func (e *httpError) Error() string { return e.msg }
+
 // HTTPStatusCode satisfies the smithy http.ResponseError
 // interface used by the awserr-style typed-error tests below.
 func (e *httpError) HTTPStatusCode() int { return e.code }

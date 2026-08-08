@@ -19,9 +19,10 @@ import (
 	"strings"
 	"testing"
 
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // -------------------------------------------------------------------------

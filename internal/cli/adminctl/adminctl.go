@@ -20,9 +20,10 @@ package adminctl
 import (
 	"flag"
 	"fmt"
-	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"io"
 	"strings"
+
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/admintarget"
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"

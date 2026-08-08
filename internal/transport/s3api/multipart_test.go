@@ -30,8 +30,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"go.uber.org/mock/gomock"
+
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 )
 
 // -------------------------------------------------------------------------

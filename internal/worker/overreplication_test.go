@@ -16,13 +16,14 @@ import (
 	"context"
 	"testing"
 
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
+	"go.uber.org/mock/gomock"
+
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	promtest "github.com/prometheus/client_golang/prometheus/testutil"
-	"go.uber.org/mock/gomock"
 )
 
 // TestOverReplicationCleaner_SetConfig_RoundTrip verifies the over replication cleaner set config round trip contract.

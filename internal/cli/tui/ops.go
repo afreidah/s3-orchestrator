@@ -18,10 +18,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 
