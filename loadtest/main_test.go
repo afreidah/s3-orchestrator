@@ -213,3 +213,66 @@ func TestWriteJSON_RoundTrip(t *testing.T) {
 		t.Error("hardware fingerprint lost in round-trip")
 	}
 }
+
+// TestEnforceErrorBudget_FailsAboveBudget verifies a run that completed while
+// failing a large share of its requests is reported as a failure. This is the
+// gate that was missing: a scenario used to pass purely because the binary ran
+// to completion.
+func TestEnforceErrorBudget_FailsAboveBudget(t *testing.T) {
+	results := &sweepResults{Results: []runResult{
+		{SizeBytes: 1024, RequestedRPS: 200, ErrorRate: 0.0},
+		{SizeBytes: 65536, RequestedRPS: 200, ErrorRate: 0.2699},
+	}}
+	err := enforceErrorBudget(results, 0.01, false)
+	if err == nil {
+		t.Fatal("26.99% errors against a 1% budget must fail")
+	}
+	// The message has to name the offending step and both numbers, or the
+	// summary tells an operator nothing about which size blew the budget.
+	for _, want := range []string{"65536", "26.99", "1.00"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err, want)
+		}
+	}
+}
+
+// TestEnforceErrorBudget_PassesWithinBudget verifies a clean run is unaffected.
+func TestEnforceErrorBudget_PassesWithinBudget(t *testing.T) {
+	results := &sweepResults{Results: []runResult{
+		{SizeBytes: 1024, ErrorRate: 0.0},
+		{SizeBytes: 65536, ErrorRate: 0.005},
+	}}
+	if err := enforceErrorBudget(results, 0.01, false); err != nil {
+		t.Errorf("a run inside its budget must pass, got %v", err)
+	}
+}
+
+// TestEnforceErrorBudget_ZeroDisables verifies the budget can be turned off,
+// which is how ad-hoc measurement runs opt out of the gate.
+func TestEnforceErrorBudget_ZeroDisables(t *testing.T) {
+	results := &sweepResults{Results: []runResult{{ErrorRate: 1.0}}}
+	if err := enforceErrorBudget(results, 0, false); err != nil {
+		t.Errorf("a zero budget disables the gate, got %v", err)
+	}
+}
+
+// TestEnforceErrorBudget_RampExempt verifies a ramp run is never failed by the
+// budget. Ramps drive the system into saturation on purpose, so a high error
+// rate at the top of the ramp is the measurement, not a fault.
+func TestEnforceErrorBudget_RampExempt(t *testing.T) {
+	results := &sweepResults{Results: []runResult{
+		{RequestedRPS: 4800, ErrorRate: 0.42},
+	}}
+	if err := enforceErrorBudget(results, 0.01, true); err != nil {
+		t.Errorf("a ramp run must be exempt from the budget, got %v", err)
+	}
+}
+
+// TestEnforceErrorBudget_BoundaryIsInclusive verifies a run sitting exactly on
+// its budget passes, so the threshold reads as "at most this much".
+func TestEnforceErrorBudget_BoundaryIsInclusive(t *testing.T) {
+	results := &sweepResults{Results: []runResult{{ErrorRate: 0.01}}}
+	if err := enforceErrorBudget(results, 0.01, false); err != nil {
+		t.Errorf("exactly at budget must pass, got %v", err)
+	}
+}

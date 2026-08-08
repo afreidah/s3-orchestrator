@@ -29,18 +29,21 @@ case "$PROFILE" in
     SIZES="1024,65536"
     RAMP_FROM=100; RAMP_TO=500; RAMP_STEP=100
     MPU_CONCURRENCY=5; MPU_PART_COUNT=3; MPU_PART_SIZE=5242880
+    MAX_ERROR_RATE=0.01
     ;;
   baseline)
     DURATION=60s; RATE=500; SEED=1000; COLD_SEED=3000
     SIZES="1024,1048576,104857600"
     RAMP_FROM=200; RAMP_TO=2000; RAMP_STEP=200
     MPU_CONCURRENCY=10; MPU_PART_COUNT=5; MPU_PART_SIZE=5242880
+    MAX_ERROR_RATE=0.01
     ;;
   saturation)
     DURATION=30s; RATE=200; SEED=1000; COLD_SEED=3000
     SIZES="1048576"
     RAMP_FROM=200; RAMP_TO=5000; RAMP_STEP=200
     MPU_CONCURRENCY=20; MPU_PART_COUNT=5; MPU_PART_SIZE=5242880
+    MAX_ERROR_RATE=0.01
     ;;
   *)
     echo "unknown profile: $PROFILE (expected smoke|baseline|saturation)" >&2
@@ -84,13 +87,13 @@ run_scenario() {
 run_scenario "put-sweep" "$BINARY" \
   -endpoint "$ENDPOINT" -bucket "$BUCKET" \
   -op put -rate "$RATE" -duration "$DURATION" \
-  -sizes "$SIZES" \
+  -sizes "$SIZES" -max-error-rate "$MAX_ERROR_RATE" \
   -output-json "$RESULTS_DIR/put-sweep.json"
 
 run_scenario "get-warm" "$BINARY" \
   -endpoint "$ENDPOINT" -bucket "$BUCKET" \
   -op get -rate "$RATE" -duration "$DURATION" \
-  -sizes "$SIZES" -seed "$SEED" \
+  -sizes "$SIZES" -seed "$SEED" -max-error-rate "$MAX_ERROR_RATE" \
   -output-json "$RESULTS_DIR/get-warm.json"
 
 if [[ -n "${S3O_ADMIN_TOKEN:-}" ]]; then
@@ -99,6 +102,7 @@ if [[ -n "${S3O_ADMIN_TOKEN:-}" ]]; then
     -op get -rate "$RATE" -duration "$DURATION" \
     -sizes "$SIZES" -seed "$COLD_SEED" -cold \
     -cache-flush-before -admin-token "$S3O_ADMIN_TOKEN" \
+    -max-error-rate "$MAX_ERROR_RATE" \
     -output-json "$RESULTS_DIR/get-cold.json"
 else
   echo "=== get-cold ==="
@@ -116,7 +120,7 @@ run_scenario "mixed-ramp" "$BINARY" \
 run_scenario "list" "$BINARY" \
   -endpoint "$ENDPOINT" -bucket "$BUCKET" \
   -op listobjects -rate "$RATE" -duration "$DURATION" \
-  -seed "$SEED" \
+  -seed "$SEED" -max-error-rate "$MAX_ERROR_RATE" \
   -output-json "$RESULTS_DIR/list.json"
 
 if command -v k6 >/dev/null; then

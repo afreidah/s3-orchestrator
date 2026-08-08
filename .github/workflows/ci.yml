@@ -144,6 +144,14 @@ jobs:
         with:
           version: v2.12.2
 
+      # loadtest is a separate Go module: the step above only covers the root
+      # one, so without this it is never linted in CI either.
+      - name: Lint loadtest module
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.12.2
+          working-directory: loadtest
+
   test:
     needs: [changes]
     # Run on Go-touching PRs and on every push to main: a main push always
