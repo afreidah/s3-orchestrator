@@ -900,3 +900,74 @@ func TestAdapter_SatisfiesCoreInterfaces(t *testing.T) {
 		_ = time.Now() // silence unused import when other helpers change
 	})
 }
+
+// TestAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState verifies the
+// locked re-read reports each copy's encryption flag and whether its key
+// survived. RemoveExcessCopy decides what to delete from these two fields, so
+// an adapter that dropped them would silently re-enable destroying the only
+// readable copy of a mixed set.
+func TestAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	key := "bucket/mixed"
+
+	enc := &core.EncryptionMeta{
+		Encrypted:     true,
+		EncryptionKey: []byte("wrapped-dek"),
+		KeyID:         "key-1",
+		PlaintextSize: 1024,
+	}
+	if _, err := s.RecordObject(ctx, key, "backend-a", 1100, enc); err != nil {
+		t.Fatalf("RecordObject encrypted: %v", err)
+	}
+	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
+		t.Fatalf("RecordReplica: %v", err)
+	}
+
+	withAdapter(t, s, func(a *sqliteTxAdapter) {
+		copies, err := a.GetExistingCopiesForUpdate(ctx, key)
+		if err != nil {
+			t.Fatalf("GetExistingCopiesForUpdate: %v", err)
+		}
+		if len(copies) != 2 {
+			t.Fatalf("expected 2 copies, got %d", len(copies))
+		}
+		for _, ec := range copies {
+			if !ec.Encrypted {
+				t.Errorf("%s: Encrypted = false, want true", ec.BackendName)
+			}
+			if !ec.HasDEK {
+				t.Errorf("%s: HasDEK = false, want true (replication copies the key)", ec.BackendName)
+			}
+		}
+	})
+}
+
+// TestAdapter_GetExistingCopiesForUpdate_ReportsUnencryptedCopy verifies a
+// plain object reports neither flag, so the guard stays inert for copy sets
+// that were never encrypted.
+func TestAdapter_GetExistingCopiesForUpdate_ReportsUnencryptedCopy(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	key := "bucket/plain"
+
+	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	withAdapter(t, s, func(a *sqliteTxAdapter) {
+		copies, err := a.GetExistingCopiesForUpdate(ctx, key)
+		if err != nil {
+			t.Fatalf("GetExistingCopiesForUpdate: %v", err)
+		}
+		if len(copies) != 1 {
+			t.Fatalf("expected 1 copy, got %d", len(copies))
+		}
+		if copies[0].Encrypted || copies[0].HasDEK {
+			t.Errorf("plain copy reported Encrypted=%v HasDEK=%v, want both false",
+				copies[0].Encrypted, copies[0].HasDEK)
+		}
+	})
+}

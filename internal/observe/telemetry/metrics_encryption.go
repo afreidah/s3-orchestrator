@@ -93,3 +93,27 @@ var (
 		[]string{"status"},
 	)
 )
+
+// EncryptionFlagMismatchTotal counts copies whose stored bytes disagreed with
+// their row's encrypted flag, labelled by the component that noticed. Any
+// non-zero value means at least one object cannot be safely read or hashed
+// until its metadata is repaired.
+var EncryptionFlagMismatchTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "s3o_encryption_flag_mismatch_total",
+		Help: "Copies whose stored bytes disagreed with their recorded encryption flag",
+	},
+	[]string{"component"},
+)
+
+// ImportClassifiedTotal counts objects brought under management by reconcile
+// or sync, labelled by what their bytes turned out to be. A rising
+// "unreadable" count means encrypted objects are being discovered whose key
+// is gone, which no amount of retrying will fix.
+var ImportClassifiedTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "s3o_import_classified_total",
+		Help: "Discovered objects imported, by what their bytes were classified as",
+	},
+	[]string{"source", "decision"},
+)

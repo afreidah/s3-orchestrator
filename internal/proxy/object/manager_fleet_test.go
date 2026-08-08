@@ -902,7 +902,7 @@ func TestHeadObject_WithEncryption(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
 		Return([]core.ObjectLocation{
-			{ObjectKey: "enc-key", BackendName: "b1", SizeBytes: 100, Encrypted: true, PlaintextSize: 25},
+			{ObjectKey: "enc-key", BackendName: "b1", SizeBytes: 100, Encrypted: true, PlaintextSize: 25, EncryptionKey: []byte("wrapped-dek")},
 		}, nil).AnyTimes()
 	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjGetBackend(c, "b1", nil)).AnyTimes()

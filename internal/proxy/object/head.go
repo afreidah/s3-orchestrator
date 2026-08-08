@@ -15,6 +15,7 @@ import (
 	"fmt"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	pobserve "github.com/afreidah/s3-orchestrator/internal/proxy/observe"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -30,6 +31,15 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*s3be.HeadObjectR
 			if !o.core.Usage().WithinLimits(beName, 1, 0, 0) {
 				return fail, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 			}
+			// HEAD has no body to inspect, so a contradictory row is the only
+			// divergence it can see - but it is the one that matters here,
+			// since the size reported below is read straight off that row.
+			// Failing over beats answering with a ciphertext size.
+			if err := core.ValidateEncryptionMetadata(loc); err != nil {
+				telemetry.EncryptionFlagMismatchTotal.WithLabelValues("head").Inc()
+				return fail, fmt.Errorf("backend %s: %w", beName, err)
+			}
+
 			r, err := o.core.HeadWithTimeout(ctx, backend, key)
 			if err != nil {
 				o.core.Acct().APICall(beName) // API call was made even on failure

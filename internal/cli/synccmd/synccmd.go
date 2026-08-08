@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 )
@@ -139,7 +140,8 @@ func loadConfig(path, backendName string) (*config.Config, *config.BackendConfig
 // to: a single ImportObject per backend row. Declared locally so the
 // command owns its own dependency contract.
 type importer interface {
-	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool) (bool, error)
+	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, enc *core.EncryptionMeta) (bool, error)
+	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 }
 
 // adminStore is the boot-time slice of the store sync needs to apply
@@ -213,7 +215,7 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB importer, bac
 
 	err := s3b.ListObjects(ctx, opts.Prefix, func(objects []backend.ListedObject) error {
 		pageNum++
-		imported, skipped, bytes, err := importPage(ctx, metaDB, objects, backendCfg.Name, buckets, opts)
+		imported, skipped, bytes, err := importPage(ctx, s3b, metaDB, objects, backendCfg.Name, buckets, opts)
 		if err != nil {
 			return err
 		}
@@ -245,7 +247,7 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB importer, bac
 // exactly as the backend holds them; an object outside every configured bucket
 // prefix is recorded as unmanaged so it counts toward quota without any worker
 // acting on it.
-func importPage(ctx context.Context, metaDB importer, objects []backend.ListedObject, backendName string, buckets []string, opts *Options) (imported, skipped int, bytes int64, err error) {
+func importPage(ctx context.Context, s3b backend.ObjectBackend, metaDB importer, objects []backend.ListedObject, backendName string, buckets []string, opts *Options) (imported, skipped int, bytes int64, err error) {
 	prefixes := bucketPrefixes(buckets)
 	for _, obj := range objects {
 		unmanaged := reconcile.Unmanaged(obj.Key, prefixes)
@@ -256,7 +258,16 @@ func importPage(ctx context.Context, metaDB importer, objects []backend.ListedOb
 			bytes += obj.SizeBytes
 			continue
 		}
-		ok, err := metaDB.ImportObject(ctx, obj.Key, backendName, obj.SizeBytes, unmanaged)
+		enc, err := reconcile.ClassifyImport(ctx, reconcile.ClassifyDeps{
+			Backend: s3b,
+			Stores:  metaDB,
+			Source:  "sync",
+			Log:     synccmdLogger(),
+		}, backendName, obj.Key)
+		if err != nil {
+			return imported, skipped, bytes, err
+		}
+		ok, err := metaDB.ImportObject(ctx, obj.Key, backendName, obj.SizeBytes, unmanaged, enc)
 		if err != nil {
 			return imported, skipped, bytes, fmt.Errorf("failed to import %s: %w", obj.Key, err)
 		}

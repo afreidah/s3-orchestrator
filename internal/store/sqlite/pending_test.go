@@ -303,7 +303,7 @@ func TestPromotePending_Superseded(t *testing.T) {
 	// strictly later created_at.
 	time.Sleep(10 * time.Millisecond)
 
-	// Now record a successful object_locations row for the same key  - 
+	// Now record a successful object_locations row for the same key  -
 	// simulates a retry that committed normally after the original PUT's
 	// metadata commit failed.
 	if _, err := s.RecordObject(ctx, "bucket/k1", "backend-a", 200, nil); err != nil {
