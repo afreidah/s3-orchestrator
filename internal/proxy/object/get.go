@@ -68,11 +68,12 @@ func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string
 	}
 	pobserve.GetCompleted(ctx, key, "cache", int64(len(entry.Data)))
 	return &s3be.GetObjectResult{
-		Body:        io.NopCloser(bytes.NewReader(entry.Data)),
-		Size:        int64(len(entry.Data)),
-		ContentType: entry.ContentType,
-		ETag:        entry.ETag,
-		Metadata:    entry.Metadata,
+		Body:         io.NopCloser(bytes.NewReader(entry.Data)),
+		Size:         int64(len(entry.Data)),
+		ContentType:  entry.ContentType,
+		ETag:         entry.ETag,
+		LastModified: entry.LastModified,
+		Metadata:     entry.Metadata,
 	}, true
 }
 
@@ -104,6 +105,13 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 		cancel()
 		o.core.Acct().APICall(beName)
 		return fail, fmt.Errorf("backend %s egress: %w", beName, readpath.ErrUsageLimitSkip)
+	}
+
+	// Backends that report no modification time leave LastModified zero, which
+	// the transport then drops from the response entirely. Fall back to the
+	// stored creation time so every object carries a valid Last-Modified.
+	if r.LastModified.IsZero() && loc != nil {
+		r.LastModified = loc.CreatedAt
 	}
 
 	if err := o.buildPlaintextReader(ctx, r, loc, key, beName, backend, rng, ptStart, ptEnd); err != nil {
@@ -222,9 +230,10 @@ func (o *Manager) populateObjectCache(key, rangeHeader string, result *s3be.GetO
 		return nil
 	}
 	meta := objcache.EntryMeta{
-		ContentType: result.ContentType,
-		ETag:        result.ETag,
-		Metadata:    result.Metadata,
+		ContentType:  result.ContentType,
+		ETag:         result.ETag,
+		LastModified: result.LastModified,
+		Metadata:     result.Metadata,
 	}
 	result.Body = newCacheTeeBody(result.Body, result.Size, func(data []byte) {
 		o.objectCache.PutBytes(key, data, meta)

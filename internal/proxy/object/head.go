@@ -41,6 +41,15 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*s3be.HeadObjectR
 				r.Size = loc.PlaintextSize
 			}
 
+			// Backends that report no modification time leave LastModified zero,
+			// which the transport then drops from the response entirely. Fall back
+			// to the stored creation time so every object carries a valid
+			// Last-Modified (clients like Tempo's blocklist poller reject an empty
+			// one and fail the whole listing).
+			if r.LastModified.IsZero() && loc != nil {
+				r.LastModified = loc.CreatedAt
+			}
+
 			// HEAD carries no streaming body, so a losing result has nothing to
 			// release; Cleanup is a no-op.
 			return readpath.ProbeResult[*s3be.HeadObjectResult]{
