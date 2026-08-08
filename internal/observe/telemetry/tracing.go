@@ -14,7 +14,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/afreidah/s3-orchestrator/internal/config"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -23,6 +22,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
 // -------------------------------------------------------------------------

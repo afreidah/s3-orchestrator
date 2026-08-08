@@ -12,10 +12,11 @@ package tui
 
 import (
 	"errors"
-	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 
 	tea "github.com/charmbracelet/bubbletea"
 

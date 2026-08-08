@@ -25,6 +25,9 @@ make test
 # Run linter
 make lint
 
+# Apply the formatting the linter enforces
+make fmt
+
 # Run static analysis
 make vet
 

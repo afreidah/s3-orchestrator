@@ -21,11 +21,11 @@ import (
 // When enabled, objects are checksummed on write and optionally verified
 // on read and during replication.
 type IntegrityConfig struct {
-	Enabled           bool          `yaml:"enabled"`              // Enable integrity verification (default: false)
-	VerifyOnRead      bool          `yaml:"verify_on_read"`       // Hash-check every GET response (default: false)
-	VerifyOnReplicate *bool         `yaml:"verify_on_replicate"`  // Hash-check before recording a replica (default: true when enabled)
-	ScrubberInterval  time.Duration `yaml:"scrubber_interval"`    // Background verification interval (0 = disabled)
-	ScrubberBatchSize int           `yaml:"scrubber_batch_size"`  // Objects per scrub cycle (default: 100)
+	Enabled           bool          `yaml:"enabled"`             // Enable integrity verification (default: false)
+	VerifyOnRead      bool          `yaml:"verify_on_read"`      // Hash-check every GET response (default: false)
+	VerifyOnReplicate *bool         `yaml:"verify_on_replicate"` // Hash-check before recording a replica (default: true when enabled)
+	ScrubberInterval  time.Duration `yaml:"scrubber_interval"`   // Background verification interval (0 = disabled)
+	ScrubberBatchSize int           `yaml:"scrubber_batch_size"` // Objects per scrub cycle (default: 100)
 }
 
 // ShouldVerifyOnReplicate returns whether replication copies should be

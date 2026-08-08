@@ -12,10 +12,11 @@
 package tui
 
 import (
-	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 	"context"
 	"fmt"
 	"strconv"
+
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 

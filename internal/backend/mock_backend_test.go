@@ -16,7 +16,6 @@ import (
 	"io"
 	"sync"
 	"time"
-
 )
 
 // mockBackend is an in-memory ObjectBackend for unit testing.
@@ -130,4 +129,5 @@ func (m *mockBackend) DeleteObject(_ context.Context, key string) error {
 // hasObject returns true if the key exists in the mock backend's store.
 
 type errReader struct{ err error }
+
 func (r *errReader) Read([]byte) (int, error) { return 0, r.err }

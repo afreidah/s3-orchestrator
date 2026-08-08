@@ -21,6 +21,8 @@ import (
 
 	"go.uber.org/mock/gomock"
 
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -28,7 +30,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
-	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // rebalEnqueue captures EnqueueCleanup calls for rebalancer tests.

@@ -16,10 +16,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 )

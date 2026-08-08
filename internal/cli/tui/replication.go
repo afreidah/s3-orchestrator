@@ -41,7 +41,9 @@ type replicationView struct {
 // -------------------------------------------------------------------------
 
 // replicationLoadedMsg carries a successfully loaded replication snapshot.
-type replicationLoadedMsg struct{ resp *adminapi.ReplicationStatusResponse }
+type replicationLoadedMsg struct {
+	resp *adminapi.ReplicationStatusResponse
+}
 
 // replicationErrMsg carries a failed replication fetch.
 type replicationErrMsg struct{ err error }

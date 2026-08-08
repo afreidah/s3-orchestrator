@@ -13,9 +13,10 @@ package tui
 import (
 	"context"
 	"errors"
-	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"strings"
 	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"

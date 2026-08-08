@@ -26,6 +26,7 @@ func neverError(_ error) bool { return false }
 // errTest is the non-DB sentinel passed through in tests where
 // the call result must NOT trip the breaker.
 var errTest = errors.New("test error")
+
 // errSentinel is the DB-typed sentinel passed through in tests
 // where the call result must trip the breaker.
 var errSentinel = errors.New("circuit open")

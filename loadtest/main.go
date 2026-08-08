@@ -16,6 +16,7 @@
 //	go run . -op mixed -rate 300 -duration 2m -seed 500
 //	go run . -op put -rate 200 -duration 30s -sizes 1024,1048576,104857600
 //	go run . -op get -rate 200 -duration 30s -sizes 1024,1048576 -output-json results.json
+//
 // -------------------------------------------------------------------------------
 package main
 
@@ -49,20 +50,20 @@ const unsignedPayload = "UNSIGNED-PAYLOAD"
 // scenarioConfig captures the immutable inputs to a single scenario run.
 // Extracted so the sweep loop can re-run with only the body size varying.
 type scenarioConfig struct {
-	endpoint     string
-	bucket       string
-	region       string
-	op           string
-	rate         int
-	duration     time.Duration
-	workers      uint64
-	seedCount    int
-	cold         bool
-	listPrefix   string
-	listMaxKeys  int
-	signer       *v4.Signer
-	creds        aws.Credentials
-	runID        string
+	endpoint    string
+	bucket      string
+	region      string
+	op          string
+	rate        int
+	duration    time.Duration
+	workers     uint64
+	seedCount   int
+	cold        bool
+	listPrefix  string
+	listMaxKeys int
+	signer      *v4.Signer
+	creds       aws.Credentials
+	runID       string
 }
 
 // runResult is the per-size summary for a single scenario run, structured
@@ -86,18 +87,18 @@ type runResult struct {
 // the static scenario inputs, hardware fingerprint, and one runResult
 // per object size (single-size runs produce a one-element matrix).
 type sweepResults struct {
-	Scenario        string       `json:"scenario"`
-	Endpoint        string       `json:"endpoint"`
-	Bucket          string       `json:"bucket"`
-	Rate            int          `json:"rate"`
-	Duration        string       `json:"duration"`
-	Workers         uint64       `json:"workers"`
-	SeedCount       int          `json:"seed_count,omitempty"`
-	Mode            string       `json:"mode"` // "single", "size-sweep", "ramp"
-	SaturationRPS   int          `json:"saturation_rps,omitempty"` // ramp mode: rate at which error_rate first exceeded threshold
-	Hardware        hardwareInfo `json:"hardware"`
-	StartedAt       time.Time    `json:"started_at"`
-	Results         []runResult  `json:"results"`
+	Scenario      string       `json:"scenario"`
+	Endpoint      string       `json:"endpoint"`
+	Bucket        string       `json:"bucket"`
+	Rate          int          `json:"rate"`
+	Duration      string       `json:"duration"`
+	Workers       uint64       `json:"workers"`
+	SeedCount     int          `json:"seed_count,omitempty"`
+	Mode          string       `json:"mode"`                     // "single", "size-sweep", "ramp"
+	SaturationRPS int          `json:"saturation_rps,omitempty"` // ramp mode: rate at which error_rate first exceeded threshold
+	Hardware      hardwareInfo `json:"hardware"`
+	StartedAt     time.Time    `json:"started_at"`
+	Results       []runResult  `json:"results"`
 }
 
 // hardwareInfo records the host the loadtest ran on so a results file
@@ -131,27 +132,27 @@ func validateRampFlags(rampTo, rate, rampStep int, multiSize bool) error {
 // main is the program entry point.
 func main() {
 	var (
-		endpoint          = flag.String("endpoint", "http://localhost:9000", "S3 orchestrator endpoint")
-		accessKey         = flag.String("access-key", "photoskey", "Access key ID")
-		secretKey         = flag.String("secret-key", "photossecret", "Secret access key")
-		bucket            = flag.String("bucket", "photos", "Target bucket")
-		region            = flag.String("region", "us-east-1", "AWS region for SigV4")
-		rateFlag          = flag.Int("rate", 100, "Requests per second (initial rate when -ramp-to is set)")
-		dur               = flag.Duration("duration", 30*time.Second, "Test duration per scenario step")
-		size              = flag.Int("size", 1024, "Object size in bytes (ignored if -sizes is set)")
-		sizesFlag         = flag.String("sizes", "", "Comma-separated object sizes for sweep mode (e.g. 1024,1048576,104857600); overrides -size")
-		op                = flag.String("op", "put", "Operation: put, get, mixed, listobjects")
-		workers           = flag.Uint64("workers", 10, "Concurrent workers")
-		seedN             = flag.Int("seed", 100, "Objects to pre-seed for get/mixed/listobjects (per size in sweep mode)")
-		listPrefix        = flag.String("list-prefix", "loadtest/", "Prefix for listobjects scenario")
-		listMaxKeys       = flag.Int("list-max-keys", 1000, "max-keys query parameter for listobjects scenario")
-		outputJSON        = flag.String("output-json", "", "Write structured results to this file")
-		rampTo            = flag.Int("ramp-to", 0, "Saturation-find: ramp from -rate up to this rate; stop when error rate exceeds -ramp-error-threshold (0 disables ramp mode)")
-		rampStep          = flag.Int("ramp-step", 100, "Rate increment per ramp step")
-		rampErrThreshold  = flag.Float64("ramp-error-threshold", 0.05, "Error rate threshold (0..1) for ramp termination")
-		cacheFlushBefore  = flag.Bool("cache-flush-before", false, "POST /admin/api/cache/flush before each scenario step (requires -admin-token)")
-		adminToken        = flag.String("admin-token", "", "Admin token for cache-flush calls (also read from S3O_ADMIN_TOKEN env var)")
-		cold              = flag.Bool("cold", false, "Cold-cache read mode for -op get: read each seeded object exactly once so every GET is a first touch; the run lasts one pass over the working set, not -duration")
+		endpoint         = flag.String("endpoint", "http://localhost:9000", "S3 orchestrator endpoint")
+		accessKey        = flag.String("access-key", "photoskey", "Access key ID")
+		secretKey        = flag.String("secret-key", "photossecret", "Secret access key")
+		bucket           = flag.String("bucket", "photos", "Target bucket")
+		region           = flag.String("region", "us-east-1", "AWS region for SigV4")
+		rateFlag         = flag.Int("rate", 100, "Requests per second (initial rate when -ramp-to is set)")
+		dur              = flag.Duration("duration", 30*time.Second, "Test duration per scenario step")
+		size             = flag.Int("size", 1024, "Object size in bytes (ignored if -sizes is set)")
+		sizesFlag        = flag.String("sizes", "", "Comma-separated object sizes for sweep mode (e.g. 1024,1048576,104857600); overrides -size")
+		op               = flag.String("op", "put", "Operation: put, get, mixed, listobjects")
+		workers          = flag.Uint64("workers", 10, "Concurrent workers")
+		seedN            = flag.Int("seed", 100, "Objects to pre-seed for get/mixed/listobjects (per size in sweep mode)")
+		listPrefix       = flag.String("list-prefix", "loadtest/", "Prefix for listobjects scenario")
+		listMaxKeys      = flag.Int("list-max-keys", 1000, "max-keys query parameter for listobjects scenario")
+		outputJSON       = flag.String("output-json", "", "Write structured results to this file")
+		rampTo           = flag.Int("ramp-to", 0, "Saturation-find: ramp from -rate up to this rate; stop when error rate exceeds -ramp-error-threshold (0 disables ramp mode)")
+		rampStep         = flag.Int("ramp-step", 100, "Rate increment per ramp step")
+		rampErrThreshold = flag.Float64("ramp-error-threshold", 0.05, "Error rate threshold (0..1) for ramp termination")
+		cacheFlushBefore = flag.Bool("cache-flush-before", false, "POST /admin/api/cache/flush before each scenario step (requires -admin-token)")
+		adminToken       = flag.String("admin-token", "", "Admin token for cache-flush calls (also read from S3O_ADMIN_TOKEN env var)")
+		cold             = flag.Bool("cold", false, "Cold-cache read mode for -op get: read each seeded object exactly once so every GET is a first touch; the run lasts one pass over the working set, not -duration")
 	)
 	flag.Parse()
 	if *adminToken == "" {

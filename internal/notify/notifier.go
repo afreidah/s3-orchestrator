@@ -97,7 +97,7 @@ const defaultEndpointTimeout = 5 * time.Second
 // Notifier delivers webhook notifications from a durable outbox queue.
 // Implements lifecycle.Runner via the Run method.
 type Notifier struct {
-	log *slog.Logger
+	log       *slog.Logger
 	endpoints []config.NotificationEndpoint
 	store     OutboxStore
 	client    *http.Client

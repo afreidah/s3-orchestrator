@@ -19,12 +19,13 @@ import (
 	"errors"
 	"testing"
 
+	"go.uber.org/mock/gomock"
+
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"go.uber.org/mock/gomock"
 )
 
 // TestRebalancer_SetConfig_RoundTrip verifies the rebalancer set config round trip contract.

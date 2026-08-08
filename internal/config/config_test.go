@@ -3288,8 +3288,8 @@ func TestParseByteSize_Overflow(t *testing.T) {
 	t.Parallel()
 	cases := []string{
 		"9999999999999999999GB",
-		"9223372036854775808",  // math.MaxInt64 + 1
-		"8589934592GB",         // 8GB * 1Gi overflows
+		"9223372036854775808", // math.MaxInt64 + 1
+		"8589934592GB",        // 8GB * 1Gi overflows
 	}
 	for _, input := range cases {
 		t.Run(input, func(t *testing.T) {

@@ -19,10 +19,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	dto "github.com/prometheus/client_model/go"
 	"go.uber.org/mock/gomock"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // TestProcessCleanupQueue_DeleteSuccess verifies the process cleanup queue delete success contract.

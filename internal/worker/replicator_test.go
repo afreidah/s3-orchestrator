@@ -21,13 +21,14 @@ import (
 	"testing"
 	"time"
 
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
+	"go.uber.org/mock/gomock"
+
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	promtest "github.com/prometheus/client_golang/prometheus/testutil"
-	"go.uber.org/mock/gomock"
 )
 
 // -------------------------------------------------------------------------

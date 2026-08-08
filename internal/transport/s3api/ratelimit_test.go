@@ -16,10 +16,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
-	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // TestRateLimiter_AllowAndBlock verifies the rate limiter allow and block path by exercising rl.Close, rl.Allow.

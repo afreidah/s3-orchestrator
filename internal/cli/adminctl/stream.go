@@ -17,10 +17,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 	"io"
 	"strings"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
@@ -33,8 +34,7 @@ import (
 func (c *client) stream(method, path, body string) int {
 	events, err := c.api.Stream(context.Background(), method, path, nil, bodyReader(body))
 	if err != nil {
-		var apiErr *adminclient.Error
-		if errors.As(err, &apiErr) {
+		if apiErr, ok := errors.AsType[*adminclient.Error](err); ok {
 			c.renderError([]byte(apiErr.Body))
 		} else {
 			fmt.Fprintf(c.stderr, fmtError, err)
