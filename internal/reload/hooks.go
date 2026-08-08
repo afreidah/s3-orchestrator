@@ -89,8 +89,19 @@ type bucketAuthHook struct {
 	inj do.Injector
 }
 
-func (*bucketAuthHook) Name() string                    { return "bucket_credentials" }
-func (*bucketAuthHook) Check(_, _ *config.Config) error { return nil }
+func (*bucketAuthHook) Name() string { return "bucket_credentials" }
+
+// Check builds the replacement registry and throws it away. Doing it here
+// means an ambiguous credential aborts the whole reload before any hook has
+// applied anything, so the running server keeps the registry it already had.
+func (*bucketAuthHook) Check(_, newCfg *config.Config) error {
+	if newCfg == nil {
+		return nil
+	}
+	_, err := auth.NewBucketRegistry(newCfg.Buckets)
+	return err
+}
+
 func (h *bucketAuthHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
 	res := di.Optional[*s3api.Server](h.inj)
 	if res.Failed() {
@@ -99,7 +110,11 @@ func (h *bucketAuthHook) Apply(_ context.Context, _, newCfg *config.Config) (Hoo
 	if res.Value == nil {
 		return HookSkipped, nil
 	}
-	res.Value.SetBucketAuth(auth.NewBucketRegistry(newCfg.Buckets))
+	registry, err := auth.NewBucketRegistry(newCfg.Buckets)
+	if err != nil {
+		return HookFailed, err
+	}
+	res.Value.SetBucketAuth(registry)
 	return HookApplied, nil
 }
 

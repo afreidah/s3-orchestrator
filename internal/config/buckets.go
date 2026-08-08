@@ -46,18 +46,38 @@ func validateBuckets(buckets []BucketConfig) []error {
 		errs = append(errs, ErrNoBuckets)
 	}
 
-	seenNames := make(map[string]bool)
-	seenAccessKeys := make(map[string]bool)
+	seen := newSeenCredentials()
 	for i := range buckets {
-		errs = append(errs, validateBucket(i, &buckets[i], seenNames, seenAccessKeys)...)
+		errs = append(errs, validateBucket(i, &buckets[i], seen)...)
 	}
 	return errs
 }
 
-// validateBucket checks a single bucket entry. seenNames and seenAccessKeys
-// are shared maps the caller maintains across the full list to detect
-// duplicates across bucket boundaries.
-func validateBucket(idx int, bkt *BucketConfig, seenNames, seenAccessKeys map[string]bool) []error {
+// seenCredentials tracks the identifiers that have to be unique across every
+// bucket, so a duplicate is caught wherever in the list it appears.
+//
+// Uniqueness is a security property here, not tidiness: each of these
+// identifiers resolves an inbound request to the bucket whose namespace it may
+// read and write, so two buckets claiming one identifier means whichever the
+// registry stored last silently owns it.
+type seenCredentials struct {
+	names      map[string]bool
+	accessKeys map[string]bool
+	tokens     map[string]bool
+}
+
+// newSeenCredentials builds an empty tracker.
+func newSeenCredentials() *seenCredentials {
+	return &seenCredentials{
+		names:      make(map[string]bool),
+		accessKeys: make(map[string]bool),
+		tokens:     make(map[string]bool),
+	}
+}
+
+// validateBucket checks a single bucket entry. seen is shared across the full
+// list so duplicates are detected across bucket boundaries.
+func validateBucket(idx int, bkt *BucketConfig, seen *seenCredentials) []error {
 	prefix := fmt.Sprintf("buckets[%d]", idx)
 	var errs []error
 
@@ -67,10 +87,10 @@ func validateBucket(idx int, bkt *BucketConfig, seenNames, seenAccessKeys map[st
 	if strings.Contains(bkt.Name, "/") {
 		errs = append(errs, prefixed(prefix, ErrBucketNameHasSlash))
 	}
-	if seenNames[bkt.Name] {
+	if seen.names[bkt.Name] {
 		errs = append(errs, prefixedDetail(prefix, ErrDuplicateBucketName, fmt.Sprintf("%q", bkt.Name)))
 	}
-	seenNames[bkt.Name] = true
+	seen.names[bkt.Name] = true
 
 	if bkt.MaxMultipartUploads < 0 {
 		errs = append(errs, prefixed(prefix, ErrNegativeMaxUploads))
@@ -80,13 +100,13 @@ func validateBucket(idx int, bkt *BucketConfig, seenNames, seenAccessKeys map[st
 	}
 
 	for j := range bkt.Credentials {
-		errs = append(errs, validateCredential(prefix, j, &bkt.Credentials[j], seenAccessKeys)...)
+		errs = append(errs, validateCredential(prefix, j, &bkt.Credentials[j], seen)...)
 	}
 	return errs
 }
 
 // validateCredential checks a single credential entry within a bucket.
-func validateCredential(bucketPrefix string, idx int, cred *CredentialConfig, seenAccessKeys map[string]bool) []error {
+func validateCredential(bucketPrefix string, idx int, cred *CredentialConfig, seen *seenCredentials) []error {
 	prefix := fmt.Sprintf("%s.credentials[%d]", bucketPrefix, idx)
 	var errs []error
 
@@ -96,10 +116,17 @@ func validateCredential(bucketPrefix string, idx int, cred *CredentialConfig, se
 		errs = append(errs, prefixed(prefix, ErrInvalidCredential))
 	}
 	if cred.AccessKeyID != "" {
-		if seenAccessKeys[cred.AccessKeyID] {
+		if seen.accessKeys[cred.AccessKeyID] {
 			errs = append(errs, prefixedDetail(prefix, ErrDuplicateCredential, fmt.Sprintf("%q", cred.AccessKeyID)))
 		}
-		seenAccessKeys[cred.AccessKeyID] = true
+		seen.accessKeys[cred.AccessKeyID] = true
+	}
+	// The token itself is the secret, so it is never echoed in the error.
+	if hasToken {
+		if seen.tokens[cred.Token] {
+			errs = append(errs, prefixed(prefix, ErrDuplicateToken))
+		}
+		seen.tokens[cred.Token] = true
 	}
 	return errs
 }

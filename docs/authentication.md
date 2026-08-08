@@ -64,6 +64,7 @@ openssl rand -base64 30
 - Bucket names must not contain `/`.
 - Bucket names must be unique across the config.
 - Access key IDs must be globally unique across all buckets.
+- Proxy tokens must be globally unique across all buckets. A token selects the bucket a request is authorized against, so a shared one has no unambiguous target and startup fails.
 - Each bucket must have at least one credential set.
 - Each credential needs either `access_key_id` + `secret_access_key` (SigV4) or `token` (legacy).
 

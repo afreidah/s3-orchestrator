@@ -57,7 +57,12 @@ var (
 	ErrNoCredential        = errors.New("at least one credential is required")
 	ErrInvalidCredential   = errors.New("must have access_key_id+secret_access_key or token")
 	ErrDuplicateCredential = errors.New("duplicate access_key_id")
-	ErrNegativeMaxUploads  = errors.New("max_multipart_uploads must be >= 0")
+
+	// ErrDuplicateToken means two credentials share one proxy token. The token
+	// selects the bucket a request is authorized against, so a shared token
+	// would resolve to whichever bucket the registry happened to store last.
+	ErrDuplicateToken     = errors.New("duplicate proxy token")
+	ErrNegativeMaxUploads = errors.New("max_multipart_uploads must be >= 0")
 )
 
 // Backend validation errors.

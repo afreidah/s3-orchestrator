@@ -24,7 +24,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -78,7 +77,7 @@ func newTestServer(t *testing.T, opts ...func(*storetest.MockMetadataStore)) (*h
 			{Token: "test-token"},
 		}},
 	}
-	srv.SetBucketAuth(auth.NewBucketRegistry(buckets))
+	srv.SetBucketAuth(mustBucketRegistry(t, buckets))
 
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
@@ -432,7 +431,7 @@ func newCapacityHintTestServer(t *testing.T, mockStore *storetest.MockMetadataSt
 		Multipart:     mgr.Multipart(),
 		MaxObjectSize: 10 * 1024 * 1024,
 	}
-	srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
 		{Name: "mybucket", Credentials: []config.CredentialConfig{{Token: "test-token"}}},
 	}))
 	ts := httptest.NewServer(srv)

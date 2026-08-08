@@ -98,7 +98,7 @@ func BenchmarkAuthenticateAndResolveBucket(b *testing.B) {
 			{AccessKeyID: accessKey, SecretAccessKey: secret},
 		}},
 	}
-	br := NewBucketRegistry(buckets)
+	br := mustBucketRegistry(b, buckets)
 	r := benchSignedRequest(accessKey, secret)
 
 	b.ResetTimer()
@@ -205,7 +205,7 @@ func BenchmarkVerifyPresignedSigV4(b *testing.B) {
 			{AccessKeyID: accessKey, SecretAccessKey: secret},
 		}},
 	}
-	br := NewBucketRegistry(buckets)
+	br := mustBucketRegistry(b, buckets)
 	r := benchPresignedRequest(accessKey, secret)
 
 	b.ResetTimer()
@@ -236,7 +236,7 @@ func BenchmarkTokenAuth(b *testing.B) {
 					}},
 				}
 			}
-			br := NewBucketRegistry(buckets)
+			br := mustBucketRegistry(b, buckets)
 
 			// Use the last token so the loop iterates all entries
 			lastToken := buckets[tc.count-1].Credentials[0].Token

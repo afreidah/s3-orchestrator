@@ -57,6 +57,10 @@ type bucketEntry struct {
 	SecretAccessKey string
 }
 
+// ErrDuplicateCredential means two buckets claim the same client credential,
+// so no unambiguous authorization target exists for it.
+var ErrDuplicateCredential = errors.New("credential claimed by more than one bucket")
+
 // BucketRegistry resolves client credentials to virtual bucket names.
 type BucketRegistry struct {
 	byAccessKey    map[string]bucketEntry // access_key_id -> {bucket, secret}
@@ -65,7 +69,13 @@ type BucketRegistry struct {
 }
 
 // NewBucketRegistry builds a credential-to-bucket lookup from the config.
-func NewBucketRegistry(buckets []config.BucketConfig) *BucketRegistry {
+//
+// A credential that two buckets both claim is rejected rather than resolved.
+// Both maps are keyed by the credential, so the last bucket written would
+// otherwise become the effective authorization target for it, silently and in
+// config order. Config validation rejects these too; this is the backstop that
+// keeps a gap there from turning into a cross-bucket access grant.
+func NewBucketRegistry(buckets []config.BucketConfig) (*BucketRegistry, error) {
 	br := &BucketRegistry{
 		byAccessKey:    make(map[string]bucketEntry),
 		byToken:        make(map[string]string),
@@ -77,19 +87,37 @@ func NewBucketRegistry(buckets []config.BucketConfig) *BucketRegistry {
 			br.multipartLimit[bkt.Name] = bkt.MaxMultipartUploads
 		}
 		for _, cred := range bkt.Credentials {
-			if cred.AccessKeyID != "" && cred.SecretAccessKey != "" {
-				br.byAccessKey[cred.AccessKeyID] = bucketEntry{
-					BucketName:      bkt.Name,
-					SecretAccessKey: cred.SecretAccessKey,
-				}
-			}
-			if cred.Token != "" {
-				br.byToken[cred.Token] = bkt.Name
+			if err := br.addCredential(bkt.Name, &cred); err != nil {
+				return nil, err
 			}
 		}
 	}
 
-	return br
+	return br, nil
+}
+
+// addCredential registers one credential against its bucket, refusing any a
+// different bucket already claims.
+func (br *BucketRegistry) addCredential(bucketName string, cred *config.CredentialConfig) error {
+	if cred.AccessKeyID != "" && cred.SecretAccessKey != "" {
+		if prior, ok := br.byAccessKey[cred.AccessKeyID]; ok {
+			return fmt.Errorf("%w: access key %q claimed by buckets %q and %q",
+				ErrDuplicateCredential, cred.AccessKeyID, prior.BucketName, bucketName)
+		}
+		br.byAccessKey[cred.AccessKeyID] = bucketEntry{
+			BucketName:      bucketName,
+			SecretAccessKey: cred.SecretAccessKey,
+		}
+	}
+	if cred.Token != "" {
+		// The token is itself the secret, so only the buckets are named.
+		if prior, ok := br.byToken[cred.Token]; ok {
+			return fmt.Errorf("%w: one proxy token claimed by buckets %q and %q",
+				ErrDuplicateCredential, prior, bucketName)
+		}
+		br.byToken[cred.Token] = bucketName
+	}
+	return nil
 }
 
 // MaxMultipartUploads returns the configured limit for active multipart

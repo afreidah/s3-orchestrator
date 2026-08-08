@@ -36,7 +36,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
@@ -98,7 +97,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 
 	// Start proxy server
 	srv := &s3api.Server{Objects: mgr.Objects(), Multipart: mgr.Multipart()}
-	srv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{
+	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
 		{
 			Name: virtualBucket,
 			Credentials: []config.CredentialConfig{

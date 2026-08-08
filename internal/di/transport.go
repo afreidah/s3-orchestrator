@@ -52,7 +52,7 @@ func ProvideBucketAuth(i do.Injector) (*auth.BucketRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return auth.NewBucketRegistry(cfg.Buckets), nil
+	return auth.NewBucketRegistry(cfg.Buckets)
 }
 
 // ProvideS3Server creates the S3-compatible HTTP handler.

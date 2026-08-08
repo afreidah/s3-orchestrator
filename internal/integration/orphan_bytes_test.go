@@ -27,7 +27,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
@@ -569,7 +568,7 @@ func TestOrphanBytesSpreadRouting_SpreadRoutingRespectsOrphanBytes(t *testing.T)
 		Multipart: spreadManager.Multipart(),
 	}
 	_ = spreadSrv
-	spreadSrv.SetBucketAuth(auth.NewBucketRegistry([]config.BucketConfig{{
+	spreadSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{{
 		Name: virtualBucket,
 		Credentials: []config.CredentialConfig{{
 			AccessKeyID:     "test",
