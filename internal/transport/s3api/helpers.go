@@ -256,6 +256,70 @@ func writeStorageError(w http.ResponseWriter, err error, fallbackMsg string) int
 	return http.StatusBadGateway
 }
 
+// Request-body ceilings for the two XML control-plane operations. Both sit
+// above the largest request the S3 API permits, so a legal client is never
+// rejected: a 1000-object delete with maximum-length keys is roughly 1.05 MB,
+// and a 10000-part manifest roughly 900 KB before SDK indentation.
+const (
+	maxDeleteObjectsBody     = 4 << 20
+	maxCompleteMultipartBody = 2 << 20
+)
+
+// decodeXMLBody reads exactly one XML document from the request body into v,
+// writes the matching S3 error response on failure, and returns the status it
+// used.
+//
+// MaxBytesReader rather than io.LimitReader: a LimitReader silently truncates
+// at the ceiling, which reports an oversized body as malformed XML and, worse,
+// accepts it outright whenever the prefix happens to be a complete document.
+// MaxBytesReader fails instead, and lets the server close the connection
+// rather than leaving unread bytes in the pipe.
+//
+// The second decode is what rejects trailing content. Decode stops at the end
+// of the first document, so without this a second document or any junk after
+// the first is accepted and silently discarded - and what the orchestrator
+// then acts on is not what anything upstream inspected.
+func decodeXMLBody(w http.ResponseWriter, r *http.Request, limit int64, v any) (int, error) {
+	dec := xml.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
+
+	if err := dec.Decode(v); err != nil {
+		return xmlBodyError(w, err)
+	}
+
+	// Walk what remains rather than decoding again: a second Decode skips
+	// character data looking for a start element, so bare junk after the
+	// document reads as a clean EOF. Trailing whitespace is tolerated because
+	// SDKs routinely append a newline; anything else is refused.
+	for {
+		tok, err := dec.Token()
+		if errors.Is(err, io.EOF) {
+			return http.StatusOK, nil
+		}
+		if err != nil {
+			return xmlBodyError(w, err)
+		}
+		text, isText := tok.(xml.CharData)
+		if !isText || len(bytes.TrimSpace(text)) > 0 {
+			writeS3Error(w, http.StatusBadRequest, "MalformedXML",
+				"Request body must contain exactly one XML document")
+			return http.StatusBadRequest, errors.New("trailing content after XML document")
+		}
+	}
+}
+
+// xmlBodyError renders a request-body failure, separating a body that ran past
+// its ceiling from one that is simply not valid XML. A LimitReader could not
+// tell those apart, so an oversized request was reported as malformed.
+func xmlBodyError(w http.ResponseWriter, err error) (int, error) {
+	if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
+		writeS3Error(w, http.StatusRequestEntityTooLarge, "MaxMessageLengthExceeded",
+			"Request body exceeds the maximum allowed size")
+		return http.StatusRequestEntityTooLarge, fmt.Errorf("request body over %d bytes: %w", maxErr.Limit, err)
+	}
+	writeS3Error(w, http.StatusBadRequest, "MalformedXML", "Failed to parse request body")
+	return http.StatusBadRequest, fmt.Errorf("decode request body: %w", err)
+}
+
 // writeXML writes an S3-compatible XML response with the standard XML header.
 // Encodes to a pooled buffer first so a serialization error doesn't commit a
 // success status to the client.

@@ -10,6 +10,7 @@
 package s3api
 
 import (
+	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -396,5 +397,98 @@ func TestFormatCapacityHint_ClampsNegativeCounters(t *testing.T) {
 	}
 	if got, want := formatCapacityHint(stats), "drifted=0 B/0 B"; got != want {
 		t.Errorf("formatCapacityHint = %q, want %q", got, want)
+	}
+}
+
+// decodeTarget is a minimal document shape for the decodeXMLBody tests.
+type decodeTarget struct {
+	XMLName xml.Name `xml:"Delete"`
+	Keys    []string `xml:"Object>Key"`
+}
+
+// decodeBody runs decodeXMLBody against body with the given limit.
+func decodeBody(t *testing.T, body string, limit int64) (int, *decodeTarget, error) {
+	t.Helper()
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mybucket?delete", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	var got decodeTarget
+	status, err := decodeXMLBody(w, r, limit, &got)
+	return status, &got, err
+}
+
+// TestDecodeXMLBody_AcceptsOneDocument verifies an ordinary request decodes.
+func TestDecodeXMLBody_AcceptsOneDocument(t *testing.T) {
+	t.Parallel()
+	status, got, err := decodeBody(t, `<Delete><Object><Key>a.txt</Key></Object></Delete>`, 1024)
+	if err != nil {
+		t.Fatalf("decodeXMLBody: %v (status %d)", err, status)
+	}
+	if len(got.Keys) != 1 || got.Keys[0] != "a.txt" {
+		t.Errorf("keys = %v, want [a.txt]", got.Keys)
+	}
+}
+
+// TestDecodeXMLBody_RejectsTrailingContent verifies junk after a complete
+// document is refused. Decode stops at the end of the first document, so
+// without the second decode this was accepted and the remainder discarded.
+func TestDecodeXMLBody_RejectsTrailingContent(t *testing.T) {
+	t.Parallel()
+	status, _, err := decodeBody(t, `<Delete><Object><Key>a.txt</Key></Object></Delete>garbage`, 1024)
+	if err == nil {
+		t.Fatal("trailing content must be rejected")
+	}
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+}
+
+// TestDecodeXMLBody_RejectsSecondDocument is the case that matters most for a
+// batch delete: two documents used to parse as the first one alone, so the
+// orchestrator acted on a different key set than the full body described.
+func TestDecodeXMLBody_RejectsSecondDocument(t *testing.T) {
+	t.Parallel()
+	body := `<Delete><Object><Key>a.txt</Key></Object></Delete>` +
+		`<Delete><Object><Key>b.txt</Key></Object></Delete>`
+	status, _, err := decodeBody(t, body, 1024)
+	if err == nil {
+		t.Fatal("a second document must be rejected")
+	}
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+}
+
+// TestDecodeXMLBody_OversizedIsTooLarge verifies an over-limit body is reported
+// as too large rather than as malformed XML. A LimitReader truncated instead,
+// so a client sending a legal-but-large request was told its XML was broken.
+func TestDecodeXMLBody_OversizedIsTooLarge(t *testing.T) {
+	t.Parallel()
+	body := `<Delete><Object><Key>` + strings.Repeat("x", 512) + `</Key></Object></Delete>`
+	status, _, err := decodeBody(t, body, 64)
+	if err == nil {
+		t.Fatal("an oversized body must be rejected")
+	}
+	if status != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", status)
+	}
+}
+
+// TestDecodeXMLBody_OversizedAfterCompleteDocument is the silent-truncation
+// case. The document closes inside the limit and padding follows, so a
+// LimitReader handed back a complete, valid document and threw the rest away:
+// nothing failed, and the orchestrator acted on a prefix of what was sent.
+//
+// The padding is both trailing content and over the ceiling. It is reported as
+// trailing content, which is the more actionable of the two - a body that is
+// one oversized document still reports too-large, covered separately.
+func TestDecodeXMLBody_OversizedAfterCompleteDocument(t *testing.T) {
+	t.Parallel()
+	body := `<Delete><Object><Key>a.txt</Key></Object></Delete>` + strings.Repeat("x", 4096)
+	status, _, err := decodeBody(t, body, 128)
+	if err == nil {
+		t.Fatal("padding past the limit must not be silently discarded")
+	}
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
 	}
 }
