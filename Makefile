@@ -115,11 +115,21 @@ check: ## Run fast local checks for contributor iteration
 GOLANGCI_VERSION ?= v2.12.2
 GOLANGCI := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
 
+# loadtest is a separate Go module, so the root ./... never reaches it and it
+# went unlinted entirely. Every module has to be named explicitly.
+GO_MODULE_DIRS := . loadtest
+
 lint: ## Run Go linter
-	$(GOLANGCI) run ./...
+	@for dir in $(GO_MODULE_DIRS); do \
+		echo "==> lint $$dir"; \
+		(cd $$dir && $(GOLANGCI) run ./...) || exit 1; \
+	done
 
 fmt: ## Apply the formatting lint enforces (gofmt + goimports)
-	$(GOLANGCI) fmt ./...
+	@for dir in $(GO_MODULE_DIRS); do \
+		echo "==> fmt $$dir"; \
+		(cd $$dir && $(GOLANGCI) fmt ./...) || exit 1; \
+	done
 
 modernize: ## Report gopls modernization/hygiene hints (skips generated files)
 	GOFLAGS=-tags=integration go run golang.org/x/tools/gopls@v0.22.0 check -severity=hint \
