@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1614,5 +1615,68 @@ func TestGet_RangeWithoutConditionalsStillPartial(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != "hello" {
 		t.Errorf("body = %q, want %q", body, "hello")
+	}
+}
+
+// TestDeleteObjects_RejectsSecondDocument proves the one-document rule is wired
+// into the live route, not just the helper. Two concatenated documents used to
+// parse as the first alone, so the orchestrator deleted one key set while the
+// full body described another.
+func TestDeleteObjects_RejectsSecondDocument(t *testing.T) {
+	t.Parallel()
+	ts, _, _ := newTestServer(t)
+
+	body := strings.NewReader(
+		`<Delete><Object><Key>a.txt</Key></Object></Delete>` +
+			`<Delete><Object><Key>b.txt</Key></Object></Delete>`)
+	resp := doReq(t, ts, http.MethodPost, ts.URL+"/mybucket?delete", body)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestDeleteObjects_RejectsOversizedBody proves an over-ceiling body is
+// reported as too large through the live route, rather than being truncated
+// and blamed on the client's XML.
+func TestDeleteObjects_RejectsOversizedBody(t *testing.T) {
+	t.Parallel()
+	ts, _, _ := newTestServer(t)
+
+	var b strings.Builder
+	b.WriteString(`<Delete>`)
+	for b.Len() < maxDeleteObjectsBody+1024 {
+		b.WriteString(`<Object><Key>` + strings.Repeat("k", 1024) + `</Key></Object>`)
+	}
+	b.WriteString(`</Delete>`)
+
+	resp := doReq(t, ts, http.MethodPost, ts.URL+"/mybucket?delete", strings.NewReader(b.String()))
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	}
+}
+
+// TestDeleteObjects_AcceptsMaximumLegalRequest pins the ceiling above what S3
+// permits: 1000 keys at the maximum key length. The previous 1 MB limit sat
+// under this, so a legal request was truncated and rejected as malformed.
+func TestDeleteObjects_AcceptsMaximumLegalRequest(t *testing.T) {
+	t.Parallel()
+	ts, _, _ := newTestServer(t)
+
+	var b strings.Builder
+	b.WriteString(`<Delete>`)
+	for i := range 1000 {
+		fmt.Fprintf(&b, `<Object><Key>%s%03d</Key></Object>`, strings.Repeat("k", 1021), i)
+	}
+	b.WriteString(`</Delete>`)
+
+	resp := doReq(t, ts, http.MethodPost, ts.URL+"/mybucket?delete", strings.NewReader(b.String()))
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusRequestEntityTooLarge {
+		t.Fatalf("a legal 1000-key request must not be rejected as too large (body %d bytes)", b.Len())
 	}
 }

@@ -15,7 +15,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -318,11 +317,9 @@ func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, bu
 // 1000 objects per request and returns per-key results in an XML response.
 // Per the S3 spec, HTTP 200 is always returned even when individual keys fail.
 func (s *Server) handleDeleteObjects(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket string) (int, error) {
-	// Parse XML request body
 	var req deleteObjectsRequest
-	if err := xml.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
-		writeS3Error(w, http.StatusBadRequest, "MalformedXML", "Failed to parse request body")
-		return http.StatusBadRequest, fmt.Errorf("failed to decode delete request: %w", err)
+	if status, err := decodeXMLBody(w, r, maxDeleteObjectsBody, &req); err != nil {
+		return status, fmt.Errorf("delete objects: %w", err)
 	}
 
 	if len(req.Objects) == 0 {
