@@ -99,3 +99,22 @@ func objectInsertParams(loc *core.ObjectLocation) db.InsertObjectLocationParams 
 	}
 	return params
 }
+
+// objectInsertIfNotExistsParams builds the conditional-insert params from the
+// same mapping the unconditional insert uses, so the two can only ever write
+// the same columns from the same location. They previously diverged, and the
+// conditional one silently dropped every encryption field.
+func objectInsertIfNotExistsParams(loc *core.ObjectLocation) db.InsertObjectLocationIfNotExistsParams {
+	p := objectInsertParams(loc)
+	return db.InsertObjectLocationIfNotExistsParams{
+		ObjectKey:     p.ObjectKey,
+		BackendName:   p.BackendName,
+		SizeBytes:     p.SizeBytes,
+		Encrypted:     p.Encrypted,
+		EncryptionKey: p.EncryptionKey,
+		KeyID:         p.KeyID,
+		PlaintextSize: p.PlaintextSize,
+		ContentHash:   p.ContentHash,
+		Managed:       !loc.Unmanaged,
+	}
+}

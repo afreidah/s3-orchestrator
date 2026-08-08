@@ -14,6 +14,7 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -832,4 +833,115 @@ func TestPgAdapter_GetExistingCopiesForUpdate_ReportsUnencryptedCopy(t *testing.
 				copies[0].Encrypted, copies[0].HasDEK)
 		}
 	})
+}
+
+// TestPgAdapter_ImportObject_PreservesEncryptionMetadata verifies an import
+// carrying encryption metadata writes every column, not just the four the
+// adapter used to populate.
+//
+// This is the shape reconcile produces when it rediscovers an encrypted object
+// on a backend: dropping the flag records ciphertext as plaintext, and
+// replication then inherits that from the source row and spreads it.
+func TestPgAdapter_ImportObject_PreservesEncryptionMetadata(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "enc-import")
+
+	enc := &core.EncryptionMeta{
+		Encrypted:     true,
+		EncryptionKey: []byte("packed-nonce-and-wrapped-dek"),
+		KeyID:         "key-1",
+		PlaintextSize: 1024,
+		ContentHash:   "abc123",
+	}
+	inserted, err := s.ImportObject(ctx, key, "backend-a", 1100, false, enc)
+	if err != nil {
+		t.Fatalf("ImportObject: %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	if !inserted {
+		t.Fatal("ImportObject reported no insert")
+	}
+
+	locs, err := s.GetAllObjectLocations(ctx, key)
+	if err != nil {
+		t.Fatalf("GetAllObjectLocations: %v", err)
+	}
+	if len(locs) != 1 {
+		t.Fatalf("expected 1 copy, got %d", len(locs))
+	}
+	got := locs[0]
+
+	if !got.Encrypted {
+		t.Error("Encrypted = false, want true")
+	}
+	if !bytes.Equal(got.EncryptionKey, enc.EncryptionKey) {
+		t.Errorf("EncryptionKey = %q, want %q", got.EncryptionKey, enc.EncryptionKey)
+	}
+	if got.KeyID != enc.KeyID {
+		t.Errorf("KeyID = %q, want %q", got.KeyID, enc.KeyID)
+	}
+	if got.PlaintextSize != enc.PlaintextSize {
+		t.Errorf("PlaintextSize = %d, want %d", got.PlaintextSize, enc.PlaintextSize)
+	}
+	if got.ContentHash != enc.ContentHash {
+		t.Errorf("ContentHash = %q, want %q", got.ContentHash, enc.ContentHash)
+	}
+}
+
+// TestPgAdapter_ImportObject_KeylessEncryptedRow verifies the exact row
+// reconcile writes for an envelope whose key is gone: encrypted, but with no
+// key to read it. Recording that as plaintext is what publishes ciphertext to
+// clients as though it were the object.
+func TestPgAdapter_ImportObject_KeylessEncryptedRow(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "unreadable")
+
+	inserted, err := s.ImportObject(ctx, key, "backend-a", 508, false,
+		&core.EncryptionMeta{Encrypted: true})
+	if err != nil {
+		t.Fatalf("ImportObject: %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	if !inserted {
+		t.Fatal("ImportObject reported no insert")
+	}
+
+	locs, err := s.GetAllObjectLocations(ctx, key)
+	if err != nil {
+		t.Fatalf("GetAllObjectLocations: %v", err)
+	}
+	if len(locs) != 1 {
+		t.Fatalf("expected 1 copy, got %d", len(locs))
+	}
+	if !locs[0].Encrypted {
+		t.Error("Encrypted = false, want true - an envelope must never be recorded as plaintext")
+	}
+	if len(locs[0].EncryptionKey) != 0 {
+		t.Errorf("EncryptionKey = %q, want empty", locs[0].EncryptionKey)
+	}
+}
+
+// TestPgAdapter_ImportObject_PlaintextStaysPlaintext verifies an import with no
+// encryption metadata is unaffected, so the fix does not start flagging
+// ordinary objects.
+func TestPgAdapter_ImportObject_PlaintextStaysPlaintext(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "plain")
+
+	if _, err := s.ImportObject(ctx, key, "backend-a", 100, false, nil); err != nil {
+		t.Fatalf("ImportObject: %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+
+	locs, err := s.GetAllObjectLocations(ctx, key)
+	if err != nil {
+		t.Fatalf("GetAllObjectLocations: %v", err)
+	}
+	if locs[0].Encrypted || len(locs[0].EncryptionKey) != 0 {
+		t.Errorf("plain import recorded Encrypted=%v key=%q, want false/empty",
+			locs[0].Encrypted, locs[0].EncryptionKey)
+	}
 }
