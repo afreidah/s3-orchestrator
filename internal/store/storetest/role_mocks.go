@@ -742,6 +742,22 @@ func (mr *MockDashboardStoreMockRecorder) ListDirectoryChildren(ctx, prefix, sta
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListDirectoryChildren", reflect.TypeOf((*MockDashboardStore)(nil).ListDirectoryChildren), ctx, prefix, startAfter, maxKeys)
 }
 
+// OldestUnverifiedAge mocks base method.
+func (m *MockDashboardStore) OldestUnverifiedAge(ctx context.Context) (time.Duration, int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "OldestUnverifiedAge", ctx)
+	ret0, _ := ret[0].(time.Duration)
+	ret1, _ := ret[1].(int64)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// OldestUnverifiedAge indicates an expected call of OldestUnverifiedAge.
+func (mr *MockDashboardStoreMockRecorder) OldestUnverifiedAge(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OldestUnverifiedAge", reflect.TypeOf((*MockDashboardStore)(nil).OldestUnverifiedAge), ctx)
+}
+
 // MockLifecycleAdmin is a mock of LifecycleAdmin interface.
 type MockLifecycleAdmin struct {
 	ctrl     *gomock.Controller

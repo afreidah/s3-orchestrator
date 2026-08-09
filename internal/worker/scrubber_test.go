@@ -21,12 +21,16 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/mock/gomock"
+
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -377,5 +381,102 @@ func TestScrub_RefusesContradictoryRow(t *testing.T) {
 	scrubSum := s.Scrub(context.Background(), 10, nil)
 	if scrubSum.Attempted != 0 {
 		t.Errorf("a contradictory row must not count as checked, got %d", scrubSum.Attempted)
+	}
+}
+
+// TestScrub_DiscardedCopyDropsItsLocation verifies a corrupted copy loses its
+// ledger row along with its bytes. Leaving the row behind lets the replicator
+// keep counting a copy that is gone, so the object stays below its replication
+// factor with nothing to trigger a rebuild.
+func TestScrub_DiscardedCopyDropsItsLocation(t *testing.T) {
+	t.Parallel()
+	s, ops, pl, be, ms := setupScrubber(t)
+
+	ms.randomHashedObjects = []core.ObjectLocation{
+		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "expected-hash"},
+	}
+	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, "b1", "bucket/key1", "integrity_scrub_failed", int64(11))
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+		Body: io.NopCloser(strings.NewReader("different bytes")),
+		Size: 11,
+	}, func() {}, nil)
+
+	if sum := s.Scrub(context.Background(), 10, nil); sum.Failed != 1 {
+		t.Fatalf("expected 1 mismatch, got %+v", sum)
+	}
+	if len(ms.deletedLocations) != 1 || ms.deletedLocations[0] != "bucket/key1@b1" {
+		t.Errorf("discarded copy's location not dropped, got %v", ms.deletedLocations)
+	}
+}
+
+// TestScrub_StampsEveryAttempt verifies the sweep advances past a copy it could
+// not read. Stamping only successful verifications would leave a permanently
+// broken copy at the head of the queue, starving everything behind it.
+func TestScrub_StampsEveryAttempt(t *testing.T) {
+	t.Parallel()
+	s, ops, _, be, ms := setupScrubber(t)
+
+	ms.randomHashedObjects = []core.ObjectLocation{
+		{ObjectKey: "bucket/unreadable", BackendName: "b1", SizeBytes: 11, ContentHash: "abc"},
+	}
+	ops.EXPECT().GetBackend("b1").Return(be, nil)
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/unreadable", "").
+		Return(nil, func() {}, errors.New("backend down"))
+
+	s.Scrub(context.Background(), 10, nil)
+
+	if len(ms.scrubbed) != 1 || ms.scrubbed[0] != "bucket/unreadable@b1" {
+		t.Errorf("an unreadable copy must still be stamped, got %v", ms.scrubbed)
+	}
+}
+
+// TestScrub_ReportsCoverage verifies the cycle publishes how far behind
+// verification is, which is the figure operators alert on.
+func TestScrub_ReportsCoverage(t *testing.T) {
+	t.Parallel()
+	s, ops, _, _, ms := setupScrubber(t)
+
+	ms.oldestUnverified = 36 * time.Hour
+	ms.neverVerified = 42
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+
+	s.Scrub(context.Background(), 10, nil)
+
+	if got := promtest.ToFloat64(telemetry.IntegrityNeverVerifiedCopies); got != 42 {
+		t.Errorf("never-verified gauge = %v, want 42", got)
+	}
+	if got := promtest.ToFloat64(telemetry.IntegrityOldestUnverifiedSeconds); got != (36 * time.Hour).Seconds() {
+		t.Errorf("oldest-unverified gauge = %v, want %v", got, (36 * time.Hour).Seconds())
+	}
+}
+
+// TestScrub_SurvivesBookkeepingFailures verifies the cycle still completes when
+// the ledger writes that follow a verification fail. The scrub result is what
+// matters; a failed stamp or row removal is logged and retried next sweep
+// rather than aborting the batch.
+func TestScrub_SurvivesBookkeepingFailures(t *testing.T) {
+	t.Parallel()
+	s, ops, pl, be, ms := setupScrubber(t)
+
+	ms.randomHashedObjects = []core.ObjectLocation{
+		{ObjectKey: "bucket/key1", BackendName: "b1", SizeBytes: 11, ContentHash: "expected-hash"},
+	}
+	ms.markScrubbedErr = errors.New("stamp failed")
+	ms.deleteLocationErr = errors.New("row removal failed")
+	ms.oldestUnverifiedErr = errors.New("coverage query failed")
+
+	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, "b1", "bucket/key1", "integrity_scrub_failed", int64(11))
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
+		Body: io.NopCloser(strings.NewReader("different bytes")),
+		Size: 11,
+	}, func() {}, nil)
+
+	if sum := s.Scrub(context.Background(), 10, nil); sum.Failed != 1 {
+		t.Errorf("the mismatch must still be reported, got %+v", sum)
 	}
 }

@@ -181,3 +181,41 @@ func TestLoadStatus_Error(t *testing.T) {
 		t.Errorf("cmd result = %#v, want statusErrMsg", cmd())
 	}
 }
+
+// TestIntegrityCoverage renders each state the verification summary can be in.
+// The never-verified case is the one that matters: it is what a fleet whose
+// scrubber has never reached it looks like.
+func TestIntegrityCoverage(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   adminapi.IntegrityStatus
+		want string
+	}{
+		{"never verified dominates", adminapi.IntegrityStatus{NeverVerifiedCopies: 132986, OldestUnverifiedSeconds: 90}, "132,986 never"},
+		{"fully swept", adminapi.IntegrityStatus{}, "up to date"},
+		{"oldest age once everything has been seen", adminapi.IntegrityStatus{OldestUnverifiedSeconds: 7200}, "2h"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := initialModel(&fakeLister{})
+			m.backends.integrity = tt.in
+			if got := m.integrityCoverage(); !strings.Contains(got, tt.want) {
+				t.Errorf("integrityCoverage() = %q, want it to contain %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBackendsStatsLine_CarriesIntegrity verifies the verification summary
+// reaches the stats line, not just its own helper.
+func TestBackendsStatsLine_CarriesIntegrity(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	m.backends.dbHealthy = true
+	m.backends.integrity = adminapi.IntegrityStatus{NeverVerifiedCopies: 7}
+	if got := m.backendsStatsLine(); !strings.Contains(got, "verified:") {
+		t.Errorf("stats line missing the verification summary: %q", got)
+	}
+}

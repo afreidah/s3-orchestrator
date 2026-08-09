@@ -919,6 +919,18 @@ components:
             required:
                 - event
             type: object
+        IntegrityStatus:
+            properties:
+                never_verified_copies:
+                    format: int64
+                    type: integer
+                oldest_unverified_seconds:
+                    format: int64
+                    type: integer
+            required:
+                - oldest_unverified_seconds
+                - never_verified_copies
+            type: object
         LogEntry:
             properties:
                 attrs:
@@ -1240,12 +1252,15 @@ components:
                     type: array
                 db_healthy:
                     type: boolean
+                integrity:
+                    $ref: '#/components/schemas/IntegrityStatus'
                 usage_period:
                     type: string
             required:
                 - db_healthy
                 - usage_period
                 - backends
+                - integrity
             type: object
         UsageFlushResponse:
             properties:

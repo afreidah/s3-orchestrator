@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -205,12 +206,5 @@ func replicationAge(computed time.Time) string {
 // humanDuration renders a short, coarse age: seconds under a minute, then
 // minutes, then hours.
 func humanDuration(d time.Duration) string {
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	default:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	}
+	return humanize.Duration(d)
 }

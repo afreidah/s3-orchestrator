@@ -442,19 +442,19 @@ func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error
 // INTEGRITY
 // -------------------------------------------------------------------------
 
-// GetRandomHashedObjects returns random object locations that have a stored
-// content hash. Used by the scrubber to verify data integrity. Uses
-// ORDER BY RANDOM() LIMIT instead of PostgreSQL TABLESAMPLE BERNOULLI.
-func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]core.ObjectLocation, error) {
+// GetLeastRecentlyScrubbedObjects returns the copies most overdue for
+// verification, never-checked ones first. SQLite sorts NULLs first by default,
+// which is the ordering wanted here.
+func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes, encrypted, encryption_key,
 		       key_id, plaintext_size, content_hash, created_at
 		FROM object_locations
 		WHERE content_hash IS NOT NULL AND managed
-		ORDER BY RANDOM()
+		ORDER BY last_scrubbed_at ASC, object_key ASC
 		LIMIT ?`, limit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get random hashed objects: %w", err)
+		return nil, fmt.Errorf("failed to get least recently scrubbed objects: %w", err)
 	}
 	defer rows.Close()
 
@@ -467,9 +467,47 @@ func (s *Store) GetRandomHashedObjects(ctx context.Context, limit int) ([]core.O
 		locs = append(locs, loc)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate random hashed objects: %w", err)
+		return nil, fmt.Errorf("failed to iterate least recently scrubbed objects: %w", err)
 	}
 	return locs, nil
+}
+
+// MarkObjectScrubbed records that a copy was examined, which is what advances
+// the sweep past it.
+func (s *Store) MarkObjectScrubbed(ctx context.Context, key, backendName string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE object_locations SET last_scrubbed_at = ?
+		 WHERE object_key = ? AND backend_name = ?`,
+		now, key, backendName,
+	); err != nil {
+		return fmt.Errorf("failed to mark object scrubbed: %w", err)
+	}
+	return nil
+}
+
+// OldestUnverifiedAge reports how stale the least recently verified copy is,
+// and how many copies have never been verified at all.
+func (s *Store) OldestUnverifiedAge(ctx context.Context) (time.Duration, int64, error) {
+	var oldest sql.NullString
+	var neverVerified int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT MIN(last_scrubbed_at),
+		        COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL)
+		 FROM object_locations
+		 WHERE content_hash IS NOT NULL AND managed`,
+	).Scan(&oldest, &neverVerified)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to read oldest unverified age: %w", err)
+	}
+	if !oldest.Valid {
+		return 0, neverVerified, nil
+	}
+	ts, err := time.Parse(time.RFC3339Nano, oldest.String)
+	if err != nil {
+		return 0, neverVerified, fmt.Errorf("failed to parse last_scrubbed_at %q: %w", oldest.String, err)
+	}
+	return time.Since(ts), neverVerified, nil
 }
 
 // GetObjectsWithoutHash returns object locations that have no stored content

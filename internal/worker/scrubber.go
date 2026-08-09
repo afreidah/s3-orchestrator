@@ -38,10 +38,12 @@ import (
 )
 
 // ScrubberStore is the narrow persistence surface the scrubber needs:
-// integrity row reads/writes. Declared locally so the worker does not
-// pull in the full MetadataStore.
+// integrity row reads/writes, plus removal of a location whose bytes failed
+// verification. Declared locally so the worker does not pull in the full
+// MetadataStore.
 type ScrubberStore interface {
 	core.IntegrityStore
+	DeleteObjectLocation(ctx context.Context, key, backendName string) error
 }
 
 // Scrubber periodically verifies stored object integrity by reading objects
@@ -95,11 +97,14 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int, observer progress.O
 	ctx, span := telemetry.StartSpan(ctx, "Scrub")
 	defer span.End()
 
-	locs, err := s.store.GetRandomHashedObjects(ctx, batchSize)
+	locs, err := s.store.GetLeastRecentlyScrubbedObjects(ctx, batchSize)
 	if err != nil {
 		s.log.ErrorContext(ctx, "failed to fetch objects", "error", err)
 		return WorkSummary{}
 	}
+
+	// Published after the cycle so the gauges reflect the work just done.
+	defer s.reportCoverage(ctx)
 
 	// Scrub stays sequential (Concurrency 1): each item reads and hashes a full
 	// object body, so a wider window can hammer the backends. Concurrency is a
@@ -122,12 +127,32 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int, observer progress.O
 	})
 }
 
+// reportCoverage publishes how far behind verification is, which is what says
+// whether the scrubber is keeping up with the fleet rather than merely running.
+func (s *Scrubber) reportCoverage(ctx context.Context) {
+	age, neverVerified, err := s.store.OldestUnverifiedAge(ctx)
+	if err != nil {
+		s.log.WarnContext(ctx, "failed to read scrub coverage", "error", err)
+		return
+	}
+	telemetry.IntegrityOldestUnverifiedSeconds.Set(age.Seconds())
+	telemetry.IntegrityNeverVerifiedCopies.Set(float64(neverVerified))
+}
+
 // verifyOne verifies one object's stored hash and classifies the result for the
 // batch tally: a matched hash succeeds, a mismatch fails, and a verify error is
 // skipped (not counted as checked). The returned Status feeds the progress
 // stream the BatchRunner brackets each item with.
 func (s *Scrubber) verifyOne(ctx context.Context, loc *core.ObjectLocation) ItemResult {
 	match, verifyErr := s.verifyObject(ctx, loc)
+
+	// Stamped even when the read failed: a copy that always fails would
+	// otherwise sit at the head of the queue and starve the rest of the sweep.
+	if err := s.store.MarkObjectScrubbed(ctx, loc.ObjectKey, loc.BackendName); err != nil {
+		s.log.WarnContext(ctx, "failed to record scrub timestamp",
+			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+	}
+
 	if verifyErr != nil {
 		s.log.WarnContext(ctx, "failed to verify object",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", verifyErr)
@@ -158,10 +183,25 @@ func (s *Scrubber) verifyObject(ctx context.Context, loc *core.ObjectLocation) (
 			s.placement.DeleteOrEnqueue(ctx, be, loc.BackendName, loc.ObjectKey,
 				"integrity_scrub_failed", loc.SizeBytes)
 		}
+		s.dropCorruptedLocation(ctx, loc)
 		return false, nil
 	}
 
 	return true, nil
+}
+
+// dropCorruptedLocation removes the ledger row for a discarded copy. Without
+// it the replicator still counts the copy and never rebuilds the object.
+func (s *Scrubber) dropCorruptedLocation(ctx context.Context, loc *core.ObjectLocation) {
+	if err := s.store.DeleteObjectLocation(ctx, loc.ObjectKey, loc.BackendName); err != nil {
+		s.log.ErrorContext(ctx, "failed to drop location for corrupted copy",
+			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+		return
+	}
+	audit.Log(ctx, "integrity.copy_discarded",
+		slog.String("key", loc.ObjectKey),
+		slog.String("backend", loc.BackendName),
+	)
 }
 
 // -------------------------------------------------------------------------
