@@ -111,17 +111,17 @@ func (r GetOverReplicatedObjectsRow) GetKeyID() *string                { return 
 func (r GetOverReplicatedObjectsRow) GetPlaintextSize() *int64         { return r.PlaintextSize }
 func (r GetOverReplicatedObjectsRow) GetContentHash() *string          { return r.ContentHash }
 
-// GetRandomHashedObjectsRow
+// GetLeastRecentlyScrubbedObjectsRow
 
-func (r GetRandomHashedObjectsRow) GetObjectKey() string             { return r.ObjectKey }
-func (r GetRandomHashedObjectsRow) GetBackendName() string           { return r.BackendName }
-func (r GetRandomHashedObjectsRow) GetSizeBytes() int64              { return r.SizeBytes }
-func (r GetRandomHashedObjectsRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
-func (r GetRandomHashedObjectsRow) GetEncrypted() bool               { return r.Encrypted }
-func (r GetRandomHashedObjectsRow) GetEncryptionKey() []byte         { return r.EncryptionKey }
-func (r GetRandomHashedObjectsRow) GetKeyID() *string                { return r.KeyID }
-func (r GetRandomHashedObjectsRow) GetPlaintextSize() *int64         { return r.PlaintextSize }
-func (r GetRandomHashedObjectsRow) GetContentHash() *string          { return r.ContentHash }
+func (r GetLeastRecentlyScrubbedObjectsRow) GetObjectKey() string             { return r.ObjectKey }
+func (r GetLeastRecentlyScrubbedObjectsRow) GetBackendName() string           { return r.BackendName }
+func (r GetLeastRecentlyScrubbedObjectsRow) GetSizeBytes() int64              { return r.SizeBytes }
+func (r GetLeastRecentlyScrubbedObjectsRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
+func (r GetLeastRecentlyScrubbedObjectsRow) GetEncrypted() bool               { return r.Encrypted }
+func (r GetLeastRecentlyScrubbedObjectsRow) GetEncryptionKey() []byte         { return r.EncryptionKey }
+func (r GetLeastRecentlyScrubbedObjectsRow) GetKeyID() *string                { return r.KeyID }
+func (r GetLeastRecentlyScrubbedObjectsRow) GetPlaintextSize() *int64         { return r.PlaintextSize }
+func (r GetLeastRecentlyScrubbedObjectsRow) GetContentHash() *string          { return r.ContentHash }
 
 // GetObjectsWithoutHashRow
 

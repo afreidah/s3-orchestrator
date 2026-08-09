@@ -190,9 +190,11 @@ type PendingStore interface {
 
 // IntegrityStore defines content hash verification operations.
 type IntegrityStore interface {
-	GetRandomHashedObjects(ctx context.Context, limit int) ([]ObjectLocation, error)
+	GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int) ([]ObjectLocation, error)
 	GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]ObjectLocation, error)
 	UpdateContentHash(ctx context.Context, key, backendName, hash string) error
+	MarkObjectScrubbed(ctx context.Context, key, backendName string) error
+	OldestUnverifiedAge(ctx context.Context) (age time.Duration, neverVerified int64, err error)
 }
 
 // ExpiredObjectsLister defines object lifecycle expiration operations.
@@ -228,6 +230,7 @@ type DashboardStore interface {
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
 	GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error)
 	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error)
+	OldestUnverifiedAge(ctx context.Context) (age time.Duration, neverVerified int64, err error)
 }
 
 // -------------------------------------------------------------------------

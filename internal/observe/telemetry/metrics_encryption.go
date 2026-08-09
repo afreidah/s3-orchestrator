@@ -66,6 +66,24 @@ var (
 		[]string{"operation"},
 	)
 
+	// IntegrityOldestUnverifiedSeconds rises when the scrubber cannot keep
+	// pace with the fleet, so it is the figure to alert on.
+	IntegrityOldestUnverifiedSeconds = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3o_integrity_oldest_unverified_seconds",
+			Help: "Age of the least recently verified object copy",
+		},
+	)
+
+	// IntegrityNeverVerifiedCopies stays non-zero until the first full sweep
+	// completes.
+	IntegrityNeverVerifiedCopies = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3o_integrity_never_verified_copies",
+			Help: "Object copies with a content hash that have never been verified",
+		},
+	)
+
 	// KeyRotationObjectsTotal counts objects processed during key rotation.
 	KeyRotationObjectsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
