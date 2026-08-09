@@ -18,6 +18,14 @@ type StatusResponse struct {
 	DBHealthy   bool            `json:"db_healthy"`
 	UsagePeriod string          `json:"usage_period"`
 	Backends    []BackendStatus `json:"backends"`
+	Integrity   IntegrityStatus `json:"integrity"`
+}
+
+// IntegrityStatus reports how far behind content verification is. Distinct
+// from a copy lacking a hash: a fleet can be fully hashed and unverified.
+type IntegrityStatus struct {
+	OldestUnverifiedSeconds int64 `json:"oldest_unverified_seconds"`
+	NeverVerifiedCopies     int64 `json:"never_verified_copies"`
 }
 
 // BackendStatus is the configured-and-live state of one backend: its quota and

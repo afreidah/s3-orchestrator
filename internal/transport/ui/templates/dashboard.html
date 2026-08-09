@@ -92,7 +92,7 @@
           <th style="width:20%"></th>
           <th class="num">Objects</th>
           <th class="num">Multipart</th>
-          {{if .Config.IntegrityEnabled}}<th class="num" title="Objects without a stored SHA-256 content hash. Run Backfill Checksums to populate.">Unverified</th>{{end}}
+          {{if .Config.IntegrityEnabled}}<th class="num" title="Objects without a stored SHA-256 content hash. Run Backfill Checksums to populate. Having a hash is not the same as having been verified against it - see Integrity Coverage below.">No Hash</th>{{end}}
         </tr>
       </thead>
       <tbody>
@@ -131,6 +131,34 @@
       </tbody>
     </table>
   </section>
+
+  {{if .Config.IntegrityEnabled}}
+  <!-- Integrity Coverage -->
+  <section>
+    <h2>Integrity Coverage</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th class="num">Value</th>
+          <th>Meaning</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Oldest unverified</td>
+          <td class="num">{{if ne .Data.OldestUnverifiedAge 0}}{{formatDuration .Data.OldestUnverifiedAge}}{{else}}&mdash;{{end}}</td>
+          <td>How long ago the least recently checked copy was verified. Rises when the scrubber cannot keep pace with the fleet.</td>
+        </tr>
+        <tr>
+          <td>Never verified</td>
+          <td class="num">{{if ne .Data.NeverVerifiedCopies 0}}<span class="orphan-value">{{formatNumber .Data.NeverVerifiedCopies}}</span>{{else}}&mdash;{{end}}</td>
+          <td>Copies that have a content hash but have never been checked against it. Falls to zero once the first full sweep completes.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  {{end}}
 
   <!-- Monthly Usage -->
   <section>

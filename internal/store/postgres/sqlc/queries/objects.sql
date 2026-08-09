@@ -178,15 +178,34 @@ SET encrypted = FALSE,
     plaintext_size = NULL
 WHERE object_key = $1 AND backend_name = $2;
 
--- name: GetRandomHashedObjects :many
--- Return random object locations that have a content hash, for scrubber
--- verification. Uses TABLESAMPLE to avoid a full table sort, then filters
--- and limits. The sample percentage is generous (10%) to ensure enough rows
--- pass the WHERE filter; the LIMIT caps the final result.
+-- name: GetLeastRecentlyScrubbedObjects :many
+-- Return the copies most overdue for verification, never-checked ones first.
+-- Ordering by last_scrubbed_at makes the sweep a queue rather than a sample,
+-- so every copy is reached on a bounded cycle. object_key breaks ties among
+-- the NULLs so repeated cycles advance instead of re-reading the same rows.
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
-FROM object_locations TABLESAMPLE BERNOULLI (10)
+FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
+ORDER BY last_scrubbed_at ASC NULLS FIRST, object_key ASC
 LIMIT $1;
+
+-- name: MarkObjectScrubbed :exec
+-- Stamp a copy the scrubber just examined. Applied to every attempted copy,
+-- not only the ones that verified: a copy that cannot be read would otherwise
+-- stay at the head of the queue and starve the rest of the sweep.
+UPDATE object_locations
+SET last_scrubbed_at = NOW()
+WHERE object_key = $1 AND backend_name = $2;
+
+-- name: OldestUnverifiedAge :one
+-- Age in seconds of the least recently verified copy, which is the figure that
+-- says whether integrity checking is keeping up. Never-verified copies count
+-- as infinitely old, so they dominate until the first full sweep completes.
+SELECT
+    COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(last_scrubbed_at))), 0)::bigint AS age_seconds,
+    COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL)::bigint AS never_verified
+FROM object_locations
+WHERE content_hash IS NOT NULL AND managed;
 
 -- name: GetObjectsWithoutHash :many
 -- Return object locations that have no content hash, for backfill. Hashing

@@ -51,6 +51,13 @@ type mockMetadataStore struct {
 	dlqDepthErr         error
 	randomHashedObjects []core.ObjectLocation
 	objectsWithoutHash  []core.ObjectLocation
+	scrubbed            []string
+	markScrubbedErr     error
+	deletedLocations    []string
+	deleteLocationErr   error
+	oldestUnverifiedErr error
+	oldestUnverified    time.Duration
+	neverVerified       int64
 	lastUpdatedHash     string
 	underReplicated     []core.ObjectLocation
 	overReplicated      []core.ObjectLocation
@@ -149,10 +156,23 @@ func (m *mockMetadataStore) CleanupDLQDepth(_ context.Context) (int64, error) {
 	return m.dlqDepthVal, m.dlqDepthErr
 }
 
-// GetRandomHashedObjects is a stub on mockMetadataStore; returns either the test-set
+// GetLeastRecentlyScrubbedObjects is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
-func (m *mockMetadataStore) GetRandomHashedObjects(_ context.Context, _ int) ([]core.ObjectLocation, error) {
+func (m *mockMetadataStore) GetLeastRecentlyScrubbedObjects(_ context.Context, _ int) ([]core.ObjectLocation, error) {
 	return m.randomHashedObjects, nil
+}
+
+// MarkObjectScrubbed is a stub on mockMetadataStore; records the copies a
+// scrub cycle stamped so tests can assert the sweep advanced past them.
+func (m *mockMetadataStore) MarkObjectScrubbed(_ context.Context, key, backendName string) error {
+	m.scrubbed = append(m.scrubbed, key+"@"+backendName)
+	return m.markScrubbedErr
+}
+
+// OldestUnverifiedAge is a stub on mockMetadataStore; returns either the
+// test-set fixture fields or the zero value.
+func (m *mockMetadataStore) OldestUnverifiedAge(_ context.Context) (time.Duration, int64, error) {
+	return m.oldestUnverified, m.neverVerified, m.oldestUnverifiedErr
 }
 
 // GetObjectsWithoutHash is a stub on mockMetadataStore; returns either the test-set
@@ -274,8 +294,12 @@ func (m *mockMetadataStore) FlushUsageDeltas(_ context.Context, _, _ string, _, 
 
 // DeleteObjectLocation is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
-func (m *mockMetadataStore) DeleteObjectLocation(_ context.Context, _, _ string) error {
+func (m *mockMetadataStore) DeleteObjectLocation(_ context.Context, key, backendName string) error {
+	if m.deleteLocationErr != nil {
+		return m.deleteLocationErr
+	}
 	m.staleDeleted++
+	m.deletedLocations = append(m.deletedLocations, key+"@"+backendName)
 	return nil
 }
 

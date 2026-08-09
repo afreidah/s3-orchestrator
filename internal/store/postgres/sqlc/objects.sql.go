@@ -287,6 +287,60 @@ func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKey stri
 	return items, nil
 }
 
+const getLeastRecentlyScrubbedObjects = `-- name: GetLeastRecentlyScrubbedObjects :many
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
+FROM object_locations
+WHERE content_hash IS NOT NULL AND managed
+ORDER BY last_scrubbed_at ASC NULLS FIRST, object_key ASC
+LIMIT $1
+`
+
+type GetLeastRecentlyScrubbedObjectsRow struct {
+	ObjectKey     string
+	BackendName   string
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
+	ContentHash   *string
+	CreatedAt     pgtype.Timestamptz
+}
+
+// Return the copies most overdue for verification, never-checked ones first.
+// Ordering by last_scrubbed_at makes the sweep a queue rather than a sample,
+// so every copy is reached on a bounded cycle. object_key breaks ties among
+// the NULLs so repeated cycles advance instead of re-reading the same rows.
+func (q *Queries) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int32) ([]GetLeastRecentlyScrubbedObjectsRow, error) {
+	rows, err := q.db.Query(ctx, getLeastRecentlyScrubbedObjects, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetLeastRecentlyScrubbedObjectsRow{}
+	for rows.Next() {
+		var i GetLeastRecentlyScrubbedObjectsRow
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.SizeBytes,
+			&i.Encrypted,
+			&i.EncryptionKey,
+			&i.KeyID,
+			&i.PlaintextSize,
+			&i.ContentHash,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getObjectBackendsForKeys = `-- name: GetObjectBackendsForKeys :many
 SELECT object_key, backend_name
 FROM object_locations
@@ -359,59 +413,6 @@ func (q *Queries) GetObjectsWithoutHash(ctx context.Context, arg GetObjectsWitho
 	items := []GetObjectsWithoutHashRow{}
 	for rows.Next() {
 		var i GetObjectsWithoutHashRow
-		if err := rows.Scan(
-			&i.ObjectKey,
-			&i.BackendName,
-			&i.SizeBytes,
-			&i.Encrypted,
-			&i.EncryptionKey,
-			&i.KeyID,
-			&i.PlaintextSize,
-			&i.ContentHash,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getRandomHashedObjects = `-- name: GetRandomHashedObjects :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
-FROM object_locations TABLESAMPLE BERNOULLI (10)
-WHERE content_hash IS NOT NULL AND managed
-LIMIT $1
-`
-
-type GetRandomHashedObjectsRow struct {
-	ObjectKey     string
-	BackendName   string
-	SizeBytes     int64
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         *string
-	PlaintextSize *int64
-	ContentHash   *string
-	CreatedAt     pgtype.Timestamptz
-}
-
-// Return random object locations that have a content hash, for scrubber
-// verification. Uses TABLESAMPLE to avoid a full table sort, then filters
-// and limits. The sample percentage is generous (10%) to ensure enough rows
-// pass the WHERE filter; the LIMIT caps the final result.
-func (q *Queries) GetRandomHashedObjects(ctx context.Context, limit int32) ([]GetRandomHashedObjectsRow, error) {
-	rows, err := q.db.Query(ctx, getRandomHashedObjects, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetRandomHashedObjectsRow{}
-	for rows.Next() {
-		var i GetRandomHashedObjectsRow
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
@@ -1102,6 +1103,48 @@ func (q *Queries) MarkObjectEncrypted(ctx context.Context, arg MarkObjectEncrypt
 		arg.SizeBytes,
 	)
 	return err
+}
+
+const markObjectScrubbed = `-- name: MarkObjectScrubbed :exec
+UPDATE object_locations
+SET last_scrubbed_at = NOW()
+WHERE object_key = $1 AND backend_name = $2
+`
+
+type MarkObjectScrubbedParams struct {
+	ObjectKey   string
+	BackendName string
+}
+
+// Stamp a copy the scrubber just examined. Applied to every attempted copy,
+// not only the ones that verified: a copy that cannot be read would otherwise
+// stay at the head of the queue and starve the rest of the sweep.
+func (q *Queries) MarkObjectScrubbed(ctx context.Context, arg MarkObjectScrubbedParams) error {
+	_, err := q.db.Exec(ctx, markObjectScrubbed, arg.ObjectKey, arg.BackendName)
+	return err
+}
+
+const oldestUnverifiedAge = `-- name: OldestUnverifiedAge :one
+SELECT
+    COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(last_scrubbed_at))), 0)::bigint AS age_seconds,
+    COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL)::bigint AS never_verified
+FROM object_locations
+WHERE content_hash IS NOT NULL AND managed
+`
+
+type OldestUnverifiedAgeRow struct {
+	AgeSeconds    int64
+	NeverVerified int64
+}
+
+// Age in seconds of the least recently verified copy, which is the figure that
+// says whether integrity checking is keeping up. Never-verified copies count
+// as infinitely old, so they dominate until the first full sweep completes.
+func (q *Queries) OldestUnverifiedAge(ctx context.Context) (OldestUnverifiedAgeRow, error) {
+	row := q.db.QueryRow(ctx, oldestUnverifiedAge)
+	var i OldestUnverifiedAgeRow
+	err := row.Scan(&i.AgeSeconds, &i.NeverVerified)
+	return i, err
 }
 
 const updateContentHash = `-- name: UpdateContentHash :exec

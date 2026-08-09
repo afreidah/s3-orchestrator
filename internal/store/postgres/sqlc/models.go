@@ -87,16 +87,17 @@ type NotificationOutbox struct {
 }
 
 type ObjectLocation struct {
-	ObjectKey     string
-	BackendName   string
-	SizeBytes     int64
-	CreatedAt     pgtype.Timestamptz
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         *string
-	PlaintextSize *int64
-	ContentHash   *string
-	Managed       bool
+	ObjectKey      string
+	BackendName    string
+	SizeBytes      int64
+	CreatedAt      pgtype.Timestamptz
+	Encrypted      bool
+	EncryptionKey  []byte
+	KeyID          *string
+	PlaintextSize  *int64
+	ContentHash    *string
+	Managed        bool
+	LastScrubbedAt pgtype.Timestamptz
 }
 
 type PendingObject struct {

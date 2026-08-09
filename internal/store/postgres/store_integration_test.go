@@ -210,9 +210,9 @@ func TestStoreInt_GetObjectsWithoutHash(t *testing.T) {
 	}
 }
 
-// TestStoreInt_GetRandomHashedObjects verifies the helper returns
+// TestStoreInt_GetLeastRecentlyScrubbedObjects verifies the helper returns
 // hashed rows. The clamp on small/zero limits is exercised too.
-func TestStoreInt_GetRandomHashedObjects(t *testing.T) {
+func TestStoreInt_GetLeastRecentlyScrubbedObjects(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
@@ -226,12 +226,12 @@ func TestStoreInt_GetRandomHashedObjects(t *testing.T) {
 
 	// The query uses TABLESAMPLE / RANDOM and may return 0 rows on a
 	// small table; we assert only that the query runs without error.
-	if _, err := s.GetRandomHashedObjects(ctx, 100); err != nil {
-		t.Fatalf("GetRandomHashedObjects: %v", err)
+	if _, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100); err != nil {
+		t.Fatalf("GetLeastRecentlyScrubbedObjects: %v", err)
 	}
 	// Zero/negative limits clamp to 1, exercising the safeLimit branch.
-	if _, err := s.GetRandomHashedObjects(ctx, 0); err != nil {
-		t.Errorf("GetRandomHashedObjects(0): %v", err)
+	if _, err := s.GetLeastRecentlyScrubbedObjects(ctx, 0); err != nil {
+		t.Errorf("GetLeastRecentlyScrubbedObjects(0): %v", err)
 	}
 }
 

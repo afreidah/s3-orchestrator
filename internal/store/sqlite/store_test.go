@@ -1231,7 +1231,7 @@ func TestIntegrity_HashOperations(t *testing.T) {
 	}
 
 	// GetRandomHashedObjects should return the hashed one
-	hashed, err := s.GetRandomHashedObjects(ctx, 10)
+	hashed, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10)
 	if err != nil {
 		t.Fatalf("GetRandomHashedObjects: %v", err)
 	}
@@ -2514,5 +2514,135 @@ func assertNoStray(t *testing.T, scan string, locs []core.ObjectLocation) {
 		if locs[i].ObjectKey == "stray.txt" {
 			t.Errorf("unmanaged object queued for %s", scan)
 		}
+	}
+}
+
+// TestScrubQueue_OrdersByLeastRecentlyScrubbed verifies the sweep is a queue
+// rather than a sample: never-verified copies come first, then the oldest
+// stamp, so repeated cycles reach every copy instead of resampling one slice.
+func TestScrubQueue_OrdersByLeastRecentlyScrubbed(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	for _, key := range []string{"bucket/a", "bucket/b", "bucket/c"} {
+		mustRecordObject(t, s, key, "backend-a", 100)
+		if err := s.UpdateContentHash(ctx, key, "backend-a", "sha256:"+key); err != nil {
+			t.Fatalf("UpdateContentHash(%s): %v", key, err)
+		}
+	}
+
+	// Stamp two of them, leaving bucket/c never verified.
+	if err := s.MarkObjectScrubbed(ctx, "bucket/a", "backend-a"); err != nil {
+		t.Fatalf("MarkObjectScrubbed(a): %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if err := s.MarkObjectScrubbed(ctx, "bucket/b", "backend-a"); err != nil {
+		t.Fatalf("MarkObjectScrubbed(b): %v", err)
+	}
+
+	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10)
+	if err != nil {
+		t.Fatalf("GetLeastRecentlyScrubbedObjects: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 copies, got %d", len(got))
+	}
+	want := []string{"bucket/c", "bucket/a", "bucket/b"}
+	for i, w := range want {
+		if got[i].ObjectKey != w {
+			t.Errorf("position %d = %q, want %q (order: %v)", i, got[i].ObjectKey, w, keysOf(got))
+		}
+	}
+}
+
+// keysOf extracts object keys for a readable ordering assertion failure.
+func keysOf(locs []core.ObjectLocation) []string {
+	keys := make([]string, len(locs))
+	for i := range locs {
+		keys[i] = locs[i].ObjectKey
+	}
+	return keys
+}
+
+// TestOldestUnverifiedAge_ReportsCoverage verifies the figures the dashboard
+// and the alerting rule read: how stale the oldest verified copy is, and how
+// many have never been verified.
+func TestOldestUnverifiedAge_ReportsCoverage(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// No hashed copies at all: nothing to report.
+	age, never, err := s.OldestUnverifiedAge(ctx)
+	if err != nil {
+		t.Fatalf("OldestUnverifiedAge on an empty ledger: %v", err)
+	}
+	if age != 0 || never != 0 {
+		t.Errorf("empty ledger reported age=%s never=%d, want 0/0", age, never)
+	}
+
+	for _, key := range []string{"bucket/a", "bucket/b"} {
+		mustRecordObject(t, s, key, "backend-a", 100)
+		if err := s.UpdateContentHash(ctx, key, "backend-a", "sha256:"+key); err != nil {
+			t.Fatalf("UpdateContentHash(%s): %v", key, err)
+		}
+	}
+
+	// Hashed but unverified: both count as never verified.
+	_, never, err = s.OldestUnverifiedAge(ctx)
+	if err != nil {
+		t.Fatalf("OldestUnverifiedAge: %v", err)
+	}
+	if never != 2 {
+		t.Errorf("never verified = %d, want 2", never)
+	}
+
+	// Verifying one leaves the other outstanding and starts the age clock.
+	if err := s.MarkObjectScrubbed(ctx, "bucket/a", "backend-a"); err != nil {
+		t.Fatalf("MarkObjectScrubbed: %v", err)
+	}
+	age, never, err = s.OldestUnverifiedAge(ctx)
+	if err != nil {
+		t.Fatalf("OldestUnverifiedAge after stamping: %v", err)
+	}
+	if never != 1 {
+		t.Errorf("never verified = %d, want 1", never)
+	}
+	if age < 0 {
+		t.Errorf("age = %s, want a non-negative span", age)
+	}
+}
+
+// TestMarkObjectScrubbed_UnknownCopyIsNoOp verifies stamping a row that is not
+// there fails silently rather than erroring, so a copy deleted mid-cycle does
+// not fail the sweep.
+func TestMarkObjectScrubbed_UnknownCopyIsNoOp(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	if err := s.MarkObjectScrubbed(context.Background(), "bucket/missing", "backend-a"); err != nil {
+		t.Errorf("stamping an absent copy should be a no-op, got %v", err)
+	}
+}
+
+// TestScrubQueries_SurfaceDatabaseErrors verifies the scrub-queue reads and
+// writes report a failing database rather than reporting an empty or zeroed
+// result, which would read as "nothing to verify" and stall the sweep silently.
+func TestScrubQueries_SurfaceDatabaseErrors(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.db.Close(); err != nil {
+		t.Fatalf("closing the test database: %v", err)
+	}
+
+	if _, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10); err == nil {
+		t.Error("GetLeastRecentlyScrubbedObjects should surface a closed database")
+	}
+	if err := s.MarkObjectScrubbed(ctx, "bucket/a", "backend-a"); err == nil {
+		t.Error("MarkObjectScrubbed should surface a closed database")
+	}
+	if _, _, err := s.OldestUnverifiedAge(ctx); err == nil {
+		t.Error("OldestUnverifiedAge should surface a closed database")
 	}
 }

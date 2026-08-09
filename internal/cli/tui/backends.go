@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 
@@ -30,6 +31,7 @@ type backendsView struct {
 	table       table.Model              // scrolling table over the backends
 	dbHealthy   bool                     // metadata database health
 	usagePeriod string                   // period the usage counters cover
+	integrity   adminapi.IntegrityStatus // how far behind content verification is
 	loading     bool                     // a status fetch is in flight
 	err         error                    // last fetch error, if any
 }
@@ -66,6 +68,7 @@ func (m *model) applyStatus(resp *adminapi.StatusResponse) {
 	m.backends.rows = resp.Backends
 	m.backends.dbHealthy = resp.DBHealthy
 	m.backends.usagePeriod = resp.UsagePeriod
+	m.backends.integrity = resp.Integrity
 	healthy := resp.DBHealthy
 	m.dbHealthy = &healthy // surface globally for the sidebar indicator
 	m.backends.table.SetRows(rowsFromBackends(resp.Backends))
@@ -202,7 +205,22 @@ func (m *model) backendsStatsLine() string {
 		total = fmt.Sprintf("total: %s / %s (%s)",
 			humanize.Bytes(used), humanize.Bytes(limit), usageStyle(pct).Render(fmt.Sprintf("%d%%", pct)))
 	}
-	return fmt.Sprintf("db: %s   %s", db, total)
+	return fmt.Sprintf("db: %s   %s   %s", db, total, m.integrityCoverage())
+}
+
+// integrityCoverage renders how far behind verification is. Never-verified
+// copies read as a warning because they are the ones a scrub has never seen.
+func (m *model) integrityCoverage() string {
+	iv := m.backends.integrity
+	if iv.NeverVerifiedCopies > 0 {
+		return "verified: " + statusErrStyle.Render(
+			fmt.Sprintf("%s never", humanize.Comma(iv.NeverVerifiedCopies)))
+	}
+	if iv.OldestUnverifiedSeconds <= 0 {
+		return "verified: " + statusOKStyle.Render("up to date")
+	}
+	return "verified: oldest " + humanize.Duration(
+		time.Duration(iv.OldestUnverifiedSeconds)*time.Second)
 }
 
 // usagePercent returns used as a whole-number percentage of limit (0 when

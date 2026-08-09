@@ -134,7 +134,7 @@ func TestToFatObjectLocations_EveryRowType(t *testing.T) {
 	if got := toFatObjectLocations([]db.GetOverReplicatedObjectsRow{{ObjectKey: "d", CreatedAt: now}}); got[0].ObjectKey != "d" {
 		t.Error("GetOverReplicatedObjectsRow not converted")
 	}
-	if got := toFatObjectLocations([]db.GetRandomHashedObjectsRow{{ObjectKey: "f", CreatedAt: now}}); got[0].ObjectKey != "f" {
+	if got := toFatObjectLocations([]db.GetLeastRecentlyScrubbedObjectsRow{{ObjectKey: "f", CreatedAt: now}}); got[0].ObjectKey != "f" {
 		t.Error("GetRandomHashedObjectsRow not converted")
 	}
 	if got := toFatObjectLocations([]db.GetObjectsWithoutHashRow{{ObjectKey: "g", CreatedAt: now}}); got[0].ObjectKey != "g" {

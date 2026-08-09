@@ -18,6 +18,7 @@ package dashboard
 
 import (
 	"context"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
@@ -39,6 +40,8 @@ type Data struct {
 	// otherwise have not been checksummed). Drives the dashboard's
 	// "needs backfill" column when integrity is enabled.
 	UnverifiedObjectCounts map[string]int64
+	NeverVerifiedCopies    int64
+	OldestUnverifiedAge    time.Duration
 	ActiveMultipartCounts  map[string]int64
 	UsageStats             map[string]core.UsageStat
 	UsageLimits            map[string]core.UsageLimits
@@ -145,6 +148,11 @@ func (da *Aggregator) GetData(ctx context.Context) (*Data, error) {
 	}
 
 	data.UnverifiedObjectCounts, err = da.store.GetUnverifiedObjectCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	data.OldestUnverifiedAge, data.NeverVerifiedCopies, err = da.store.OldestUnverifiedAge(ctx)
 	if err != nil {
 		return nil, err
 	}

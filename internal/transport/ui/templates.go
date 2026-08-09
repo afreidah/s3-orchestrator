@@ -35,12 +35,13 @@ var staticFS, _ = fs.Sub(embeddedFS, "static")
 // parse step.
 func loadTemplates() *template.Template {
 	funcMap := template.FuncMap{
-		"formatBytes":  humanize.Bytes,
-		"formatNumber": formatNumber,
-		"pct":          pct,
-		"pctFloat":     pctFloat,
-		"barColor":     barColor,
-		"joinStrings":  strings.Join,
+		"formatBytes":    humanize.Bytes,
+		"formatNumber":   formatNumber,
+		"formatDuration": humanize.Duration,
+		"pct":            pct,
+		"pctFloat":       pctFloat,
+		"barColor":       barColor,
+		"joinStrings":    strings.Join,
 	}
 	return template.Must(
 		template.New("").Funcs(funcMap).ParseFS(embeddedFS, "templates/*.html"),

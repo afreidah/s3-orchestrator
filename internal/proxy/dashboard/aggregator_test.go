@@ -16,6 +16,7 @@ package dashboard
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"go.uber.org/mock/gomock"
 
@@ -35,6 +36,7 @@ func TestAggregator_Success(t *testing.T) {
 	store.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{"b1": 5}, nil)
 	store.EXPECT().GetUnverifiedObjectCounts(gomock.Any()).Return(map[string]int64{}, nil)
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{"b1": 1}, nil)
+	store.EXPECT().OldestUnverifiedAge(gomock.Any()).Return(2*time.Hour, int64(3), nil)
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
 		Return(map[string]core.UsageStat{"b1": {APIRequests: 10}}, nil)
 	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -89,6 +91,13 @@ func dashboardReads() []dashboardRead {
 			},
 			func(m *storetest.MockDashboardStore, err error) {
 				m.EXPECT().GetUnverifiedObjectCounts(a).Return(nil, err)
+			}},
+		{"integrity coverage",
+			func(m *storetest.MockDashboardStore) {
+				m.EXPECT().OldestUnverifiedAge(a).Return(time.Duration(0), int64(0), nil)
+			},
+			func(m *storetest.MockDashboardStore, err error) {
+				m.EXPECT().OldestUnverifiedAge(a).Return(time.Duration(0), int64(0), err)
 			}},
 		{"multipart counts",
 			func(m *storetest.MockDashboardStore) {

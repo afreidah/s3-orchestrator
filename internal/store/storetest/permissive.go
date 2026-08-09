@@ -2,6 +2,7 @@ package storetest
 
 import (
 	"context"
+	time "time"
 
 	"go.uber.org/mock/gomock"
 
@@ -59,7 +60,9 @@ func Permissive(m *MockMetadataStore) {
 	r.GetPendingCleanups(a, a).Return(nil, nil).AnyTimes()
 	r.GetPendingNotifications(a, a).Return(nil, nil).AnyTimes()
 	r.GetQuotaStats(a).Return(nil, nil).AnyTimes()
-	r.GetRandomHashedObjects(a, a).Return(nil, nil).AnyTimes()
+	r.GetLeastRecentlyScrubbedObjects(a, a).Return(nil, nil).AnyTimes()
+	r.MarkObjectScrubbed(a, a, a).Return(nil).AnyTimes()
+	r.OldestUnverifiedAge(a).Return(time.Duration(0), int64(0), nil).AnyTimes()
 	r.GetStaleMultipartUploads(a, a).Return(nil, nil).AnyTimes()
 	r.GetStalePending(a, a, a).Return(nil, nil).AnyTimes()
 	r.GetUnderReplicatedObjects(a, a, a).Return(nil, nil).AnyTimes()

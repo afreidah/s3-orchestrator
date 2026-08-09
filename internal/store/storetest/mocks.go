@@ -375,6 +375,21 @@ func (mr *MockMetadataStoreMockRecorder) GetBackendWithSpace(ctx, size, backendO
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBackendWithSpace", reflect.TypeOf((*MockMetadataStore)(nil).GetBackendWithSpace), ctx, size, backendOrder)
 }
 
+// GetLeastRecentlyScrubbedObjects mocks base method.
+func (m *MockMetadataStore) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int) ([]core.ObjectLocation, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetLeastRecentlyScrubbedObjects", ctx, limit)
+	ret0, _ := ret[0].([]core.ObjectLocation)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetLeastRecentlyScrubbedObjects indicates an expected call of GetLeastRecentlyScrubbedObjects.
+func (mr *MockMetadataStoreMockRecorder) GetLeastRecentlyScrubbedObjects(ctx, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeastRecentlyScrubbedObjects", reflect.TypeOf((*MockMetadataStore)(nil).GetLeastRecentlyScrubbedObjects), ctx, limit)
+}
+
 // GetLeastUtilizedBackend mocks base method.
 func (m *MockMetadataStore) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
 	m.ctrl.T.Helper()
@@ -538,21 +553,6 @@ func (m *MockMetadataStore) GetQuotaStats(ctx context.Context) (map[string]core.
 func (mr *MockMetadataStoreMockRecorder) GetQuotaStats(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQuotaStats", reflect.TypeOf((*MockMetadataStore)(nil).GetQuotaStats), ctx)
-}
-
-// GetRandomHashedObjects mocks base method.
-func (m *MockMetadataStore) GetRandomHashedObjects(ctx context.Context, limit int) ([]core.ObjectLocation, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetRandomHashedObjects", ctx, limit)
-	ret0, _ := ret[0].([]core.ObjectLocation)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetRandomHashedObjects indicates an expected call of GetRandomHashedObjects.
-func (mr *MockMetadataStoreMockRecorder) GetRandomHashedObjects(ctx, limit any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRandomHashedObjects", reflect.TypeOf((*MockMetadataStore)(nil).GetRandomHashedObjects), ctx, limit)
 }
 
 // GetStaleMultipartUploads mocks base method.
@@ -895,6 +895,20 @@ func (mr *MockMetadataStoreMockRecorder) MarkObjectEncrypted(ctx, objectKey, bac
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkObjectEncrypted", reflect.TypeOf((*MockMetadataStore)(nil).MarkObjectEncrypted), ctx, objectKey, backendName, encryptionKey, keyID, plaintextSize, ciphertextSize)
 }
 
+// MarkObjectScrubbed mocks base method.
+func (m *MockMetadataStore) MarkObjectScrubbed(ctx context.Context, key, backendName string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkObjectScrubbed", ctx, key, backendName)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// MarkObjectScrubbed indicates an expected call of MarkObjectScrubbed.
+func (mr *MockMetadataStoreMockRecorder) MarkObjectScrubbed(ctx, key, backendName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkObjectScrubbed", reflect.TypeOf((*MockMetadataStore)(nil).MarkObjectScrubbed), ctx, key, backendName)
+}
+
 // MoveCleanupToDLQ mocks base method.
 func (m *MockMetadataStore) MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error) {
 	m.ctrl.T.Helper()
@@ -923,6 +937,22 @@ func (m *MockMetadataStore) MoveObjectLocation(ctx context.Context, key, fromBac
 func (mr *MockMetadataStoreMockRecorder) MoveObjectLocation(ctx, key, fromBackend, toBackend any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObjectLocation", reflect.TypeOf((*MockMetadataStore)(nil).MoveObjectLocation), ctx, key, fromBackend, toBackend)
+}
+
+// OldestUnverifiedAge mocks base method.
+func (m *MockMetadataStore) OldestUnverifiedAge(ctx context.Context) (time.Duration, int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "OldestUnverifiedAge", ctx)
+	ret0, _ := ret[0].(time.Duration)
+	ret1, _ := ret[1].(int64)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// OldestUnverifiedAge indicates an expected call of OldestUnverifiedAge.
+func (mr *MockMetadataStoreMockRecorder) OldestUnverifiedAge(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OldestUnverifiedAge", reflect.TypeOf((*MockMetadataStore)(nil).OldestUnverifiedAge), ctx)
 }
 
 // PendingDepth mocks base method.

@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS object_locations (
     plaintext_size INTEGER,
     content_hash   TEXT,
     managed        INTEGER NOT NULL DEFAULT 1,
+    -- NULL means never verified, which sorts to the front of the scrub queue.
+    last_scrubbed_at TEXT,
     created_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (object_key, backend_name)
 );
@@ -51,6 +53,10 @@ CREATE INDEX IF NOT EXISTS idx_object_locations_key_pattern
 
 CREATE INDEX IF NOT EXISTS idx_object_locations_created
     ON object_locations(created_at);
+
+-- Backs the scrub queue: oldest-verified first, never-verified ahead of all.
+CREATE INDEX IF NOT EXISTS idx_object_locations_scrub_queue
+    ON object_locations(last_scrubbed_at, object_key);
 
 CREATE INDEX IF NOT EXISTS idx_object_locations_key_created
     ON object_locations(object_key, created_at);
@@ -184,4 +190,4 @@ CREATE INDEX IF NOT EXISTS idx_pending_objects_backend
     ON pending_objects(backend_name);
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (3);
+INSERT INTO schema_version (version) VALUES (4);
