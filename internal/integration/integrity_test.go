@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"slices"
 	"testing"
 	"time"
 
@@ -52,6 +53,49 @@ func queryHashedCopies(t *testing.T, key string) int {
 		t.Fatalf("queryHashedCopies(%q): %v", key, err)
 	}
 	return n
+}
+
+// enableVerifyOnRead turns on hash checking for the GET path and returns a
+// function restoring the previous configuration. Verify-on-read is off by
+// default, so a test that wants it has to ask.
+func enableVerifyOnRead(t *testing.T) func() {
+	t.Helper()
+
+	previous := testManager.IntegrityConfig()
+	testManager.SetIntegrityConfig(&config.IntegrityConfig{
+		Enabled:      true,
+		VerifyOnRead: true,
+	})
+	return func() { testManager.SetIntegrityConfig(previous) }
+}
+
+// resyncQuotaLimits restores the configured quota limits, which backend
+// removal deletes, so later tests still see the fleet they expect.
+func resyncQuotaLimits(t *testing.T, ctx context.Context) {
+	t.Helper()
+
+	if err := testStore.SyncQuotaLimits(ctx, []config.BackendConfig{
+		{Name: "minio-1", QuotaBytes: 1024},
+		{Name: "minio-2", QuotaBytes: 2048},
+	}); err != nil {
+		t.Fatalf("SyncQuotaLimits: %v", err)
+	}
+}
+
+// waitFor polls until cond returns true, failing the test if it never does.
+// Detection that happens in the server's response-close path is not visible
+// the instant the client's own Close returns.
+func waitFor(t *testing.T, timeout time.Duration, what string, cond func() bool) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("timed out after %s waiting for %s", timeout, what)
 }
 
 // -------------------------------------------------------------------------
@@ -125,6 +169,89 @@ func assertObjectIntact(t *testing.T, ctx context.Context, client *s3.Client, ke
 	t.Helper()
 	assertProxyServes(t, ctx, client, key, want, stage)
 	assertAllCopiesIntact(t, ctx, key, want, stage)
+}
+
+// -------------------------------------------------------------------------
+// WRITE SET
+// -------------------------------------------------------------------------
+
+// writeSet writes objects through the proxy and remembers what it wrote, so a
+// later assertion can require the same bytes back.
+//
+// The seeding loops elsewhere in this suite build a body, write it, and drop it
+// on the floor, which leaves nothing to compare against once an operation has
+// moved the object. Writing and recording happen in the same call here so the
+// two cannot drift apart.
+type writeSet struct {
+	t      *testing.T
+	client *s3.Client
+	bodies map[string][]byte
+	keys   []string
+}
+
+func newWriteSet(t *testing.T, client *s3.Client) *writeSet {
+	t.Helper()
+	return &writeSet{t: t, client: client, bodies: map[string][]byte{}}
+}
+
+// put writes body at key through the proxy and records it.
+func (w *writeSet) put(ctx context.Context, key string, body []byte) {
+	w.t.Helper()
+
+	if _, err := w.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
+	}); err != nil {
+		w.t.Fatalf("writeSet.put(%q): %v", key, err)
+	}
+
+	recorded := bytes.Clone(body)
+	if _, seen := w.bodies[key]; !seen {
+		w.keys = append(w.keys, key)
+	}
+	w.bodies[key] = recorded
+}
+
+// seed writes count objects of size bytes each under prefix, giving every
+// object a distinct body so a swap between two of them is detectable.
+func (w *writeSet) seed(ctx context.Context, prefix string, count, size int) []string {
+	w.t.Helper()
+
+	keys := make([]string, count)
+	for i := range keys {
+		keys[i] = uniqueKey(w.t, prefix)
+		body := bytes.Repeat([]byte{byte('a' + i%26)}, size)
+		w.put(ctx, keys[i], body)
+	}
+	return keys
+}
+
+// assertIntact requires every recorded object to still read back byte-for-byte,
+// both through the proxy and from every copy the ledger claims for it.
+func (w *writeSet) assertIntact(ctx context.Context, stage string) {
+	w.t.Helper()
+
+	if len(w.keys) == 0 {
+		w.t.Fatalf("%s: write set is empty, nothing was verified", stage)
+	}
+	for _, key := range w.keys {
+		assertObjectIntact(w.t, ctx, w.client, key, w.bodies[key], stage)
+	}
+}
+
+// drop stops tracking key, for an object the test deleted on purpose.
+func (w *writeSet) drop(key string) {
+	delete(w.bodies, key)
+	w.keys = slices.DeleteFunc(w.keys, func(k string) bool { return k == key })
+}
+
+// forget drops the recorded objects, for tests that call resetState partway
+// through and start a second scenario against the same client.
+func (w *writeSet) forget() {
+	w.bodies = map[string][]byte{}
+	w.keys = nil
 }
 
 // corruptBackendCopy overwrites an object's bytes on one backend, behind the
@@ -253,4 +380,117 @@ func TestIntegrity_ScrubberAcceptsHealthyCopies(t *testing.T) {
 			scrubSum.Failed, scrubSum)
 	}
 	assertObjectIntact(t, ctx, client, key, body, "after clean scrub")
+}
+
+// -------------------------------------------------------------------------
+// VERIFY ON READ
+// -------------------------------------------------------------------------
+
+// TestIntegrity_VerifyOnReadDiscardsCorruptedCopy covers the second detector:
+// the scrubber finds corruption on its own schedule, while verify-on-read
+// finds it the moment a client happens to touch the bad copy.
+//
+// The object deliberately has a single copy. With a replica present the proxy
+// fails over to the healthy one and the corrupted bytes are never read, so
+// there would be nothing for this path to catch.
+//
+// Verification completes when the body is closed rather than mid-stream, so
+// the client still receives the bad bytes for this request. What must happen
+// is that the copy does not survive to serve a second one.
+func TestIntegrity_VerifyOnReadDiscardsCorruptedCopy(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+	resetState(t)
+
+	restore := enableVerifyOnRead(t)
+	defer restore()
+
+	key := uniqueKey(t, "verify-read")
+	body := bytes.Repeat([]byte("V"), 400)
+
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
+	}); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	// Integrity was enabled before the write, so the write path stored the
+	// hash itself and there is nothing for a backfill to do.
+	if hashed := queryHashedCopies(t, key); hashed != 1 {
+		t.Fatalf("expected the written copy to carry a hash, got %d hashed copies", hashed)
+	}
+
+	backends := queryObjectBackends(t, key)
+	if len(backends) != 1 {
+		t.Fatalf("expected a single copy so the read cannot fail over, got %v", backends)
+	}
+	victim := backends[0]
+	corruptBackendCopy(t, ctx, victim, key, bytes.Repeat([]byte("X"), 400))
+
+	// Read the object to completion and close it, which is what drives
+	// verification.
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	waitFor(t, 10*time.Second, "corrupted copy discarded", func() bool {
+		be := allBackends[victim]
+		_, getErr := be.GetObject(ctx, internalKey(key), "")
+		return getErr != nil
+	})
+
+	// The ledger must not keep pointing at bytes that were just deleted. A
+	// surviving row overstates the replication factor, so the replicator sees
+	// the object as adequately covered and never rebuilds it.
+	if remaining := queryObjectBackends(t, key); len(remaining) != 0 {
+		t.Errorf("ledger still lists %v after the copy on %s was discarded", remaining, victim)
+	}
+}
+
+// -------------------------------------------------------------------------
+// BACKEND REMOVAL
+// -------------------------------------------------------------------------
+
+// TestIntegrity_RemoveBackendKeepsSurvivingCopies removes a backend out from
+// under a replicated object and requires the remaining copy to still hold the
+// original bytes. Removal rewrites ledger rows in bulk, which is exactly the
+// kind of operation that can leave an object pointing at the wrong copy.
+func TestIntegrity_RemoveBackendKeepsSurvivingCopies(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+	resetState(t)
+
+	ws := newWriteSet(t, client)
+	keys := ws.seed(ctx, "remove-backend", 3, 120)
+
+	if _, err := testWorkers.Replicator.Replicate(ctx, replicationFactorTwo(), nil); err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+	for _, key := range keys {
+		if copies := queryObjectBackends(t, key); len(copies) != 2 {
+			t.Fatalf("expected 2 copies of %q before removal, got %v", key, copies)
+		}
+	}
+	ws.assertIntact(ctx, "before backend removal")
+
+	if err := testManager.Drain().RemoveBackend(ctx, "minio-2", false, nil); err != nil {
+		t.Fatalf("RemoveBackend: %v", err)
+	}
+	defer resyncQuotaLimits(t, ctx)
+
+	for _, key := range keys {
+		if copies := queryObjectBackends(t, key); len(copies) != 1 {
+			t.Errorf("expected 1 copy of %q after removal, got %v", key, copies)
+		}
+	}
+	ws.assertIntact(ctx, "after backend removal")
 }

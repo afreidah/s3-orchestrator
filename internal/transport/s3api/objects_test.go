@@ -1647,7 +1647,9 @@ func TestDeleteObjects_RejectsOversizedBody(t *testing.T) {
 	var b strings.Builder
 	b.WriteString(`<Delete>`)
 	for b.Len() < maxDeleteObjectsBody+1024 {
-		b.WriteString(`<Object><Key>` + strings.Repeat("k", 1024) + `</Key></Object>`)
+		b.WriteString(`<Object><Key>`)
+		b.WriteString(strings.Repeat("k", 1024))
+		b.WriteString(`</Key></Object>`)
 	}
 	b.WriteString(`</Delete>`)
 
