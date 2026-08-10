@@ -794,3 +794,138 @@ func TestEncryptDecryptExisting_DirectBackendVerification(t *testing.T) {
 		t.Fatalf("raw backend bytes should be plaintext after decrypt: got %d bytes, want %d", len(decBytes), len(body))
 	}
 }
+
+// -------------------------------------------------------------------------
+// ENCRYPTED WRITE PATH
+// -------------------------------------------------------------------------
+
+// encryptionChunkSize is the chunk size setupEncryptionEnv builds its
+// encryptor with. Sizes around this boundary are where chunked encryption
+// framing is most likely to go wrong.
+const encryptionChunkSize = 65536
+
+// TestEncryptedWritePath_RoundTrip writes through the encryption-enabled proxy
+// and reads back through it.
+//
+// The rest of this file converts plaintext objects with the admin
+// encrypt-existing endpoint, which exercises the rewrite path rather than the
+// write path. This covers what a real deployment actually does on every
+// request: client PUT, encrypt, store, client GET, decrypt.
+//
+// Sizes bracket the chunk boundary because that is where framing errors hide:
+// an off-by-one in chunk accounting can round trip a 1 KiB object correctly
+// and still corrupt one of exactly a chunk or a chunk plus a byte.
+func TestEncryptedWritePath_RoundTrip(t *testing.T) {
+	env := setupEncryptionEnv(t)
+	ctx := context.Background()
+
+	// The fleet's normal quotas are a few kilobytes, which cannot hold an
+	// object a chunk or more in size.
+	if err := testStore.SyncQuotaLimits(ctx, []config.BackendConfig{
+		{Name: "minio-1", QuotaBytes: 8 << 20},
+		{Name: "minio-2", QuotaBytes: 8 << 20},
+	}); err != nil {
+		t.Fatalf("raising quota limits: %v", err)
+	}
+	defer resyncQuotaLimits(t, ctx)
+
+	cases := []struct {
+		name string
+		size int
+	}{
+		{"empty", 0},
+		{"single byte", 1},
+		{"sub chunk", 1024},
+		{"exactly one chunk", encryptionChunkSize},
+		{"one chunk plus one", encryptionChunkSize + 1},
+		{"multi chunk", encryptionChunkSize*3 + 17},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			key := uniqueKey(t, "enc-write")
+			body := make([]byte, tc.size)
+			for i := range body {
+				body[i] = byte(i % 251)
+			}
+
+			if _, err := env.proxyClient.PutObject(ctx, &s3.PutObjectInput{
+				Bucket:        aws.String(virtualBucket),
+				Key:           aws.String(key),
+				Body:          bytes.NewReader(body),
+				ContentLength: aws.Int64(int64(tc.size)),
+			}); err != nil {
+				t.Fatalf("PutObject through encrypting proxy: %v", err)
+			}
+
+			assertStoredAsEnvelope(t, ctx, key, body)
+
+			resp, err := env.proxyClient.GetObject(ctx, &s3.GetObjectInput{
+				Bucket: aws.String(virtualBucket),
+				Key:    aws.String(key),
+			})
+			if err != nil {
+				t.Fatalf("GetObject through encrypting proxy: %v", err)
+			}
+			got, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if readErr != nil {
+				t.Fatalf("reading decrypted body: %v", readErr)
+			}
+			if !bytes.Equal(got, body) {
+				t.Errorf("round trip returned %d bytes, want %d (contents differ)", len(got), len(body))
+			}
+		})
+	}
+}
+
+// assertStoredAsEnvelope requires the bytes actually on the backend to be an
+// encryption envelope rather than the client's plaintext, and the ledger to
+// describe them as such.
+func assertStoredAsEnvelope(t *testing.T, ctx context.Context, key string, plaintext []byte) {
+	t.Helper()
+
+	backendName := queryObjectBackend(t, key)
+	be, ok := allBackends[backendName]
+	if !ok {
+		t.Fatalf("ledger names backend %q, which is not configured", backendName)
+	}
+
+	result, err := be.GetObject(ctx, internalKey(key), "")
+	if err != nil {
+		t.Fatalf("direct backend read: %v", err)
+	}
+	stored, readErr := io.ReadAll(result.Body)
+	_ = result.Body.Close()
+	if readErr != nil {
+		t.Fatalf("reading stored bytes: %v", readErr)
+	}
+
+	if !encryption.HasEnvelopeMagic(stored) {
+		t.Fatalf("stored bytes for %q are not an encryption envelope", key)
+	}
+	if len(plaintext) > 0 && bytes.Equal(stored, plaintext) {
+		t.Fatalf("stored bytes for %q are the client's plaintext", key)
+	}
+	if len(stored) <= len(plaintext) {
+		t.Errorf("stored %d bytes for a %d byte object, expected envelope overhead",
+			len(stored), len(plaintext))
+	}
+
+	encrypted, sizeBytes, plaintextSize := queryEncryptionState(t, internalKey(key))
+	if !encrypted {
+		t.Errorf("ledger records %q as plaintext", key)
+	}
+	if sizeBytes != int64(len(stored)) {
+		t.Errorf("ledger size_bytes = %d, want %d (the stored envelope)", sizeBytes, len(stored))
+	}
+	// plaintext_size is stored as NULL rather than 0 for an empty object, so
+	// a nil pointer and a stored zero mean the same thing.
+	gotPlaintextSize := int64(0)
+	if plaintextSize != nil {
+		gotPlaintextSize = *plaintextSize
+	}
+	if gotPlaintextSize != int64(len(plaintext)) {
+		t.Errorf("ledger plaintext_size = %d, want %d", gotPlaintextSize, len(plaintext))
+	}
+}

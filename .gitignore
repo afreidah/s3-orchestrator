@@ -18,3 +18,8 @@ web/public/
 web/content/godoc/
 !web/content/godoc/_index.md
 tags
+
+# Editor swap and backup files
+*.swp
+*.swo
+*~

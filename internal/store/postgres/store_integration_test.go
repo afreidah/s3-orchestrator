@@ -1047,7 +1047,8 @@ func TestStoreInt_ScrubQueue_IndexMatchesQuery(t *testing.T) {
 		if err := rows.Scan(&line); err != nil {
 			t.Fatalf("scanning plan: %v", err)
 		}
-		plan.WriteString(line + "\n")
+		plan.WriteString(line)
+		plan.WriteString("\n")
 	}
 	if !strings.Contains(plan.String(), "idx_object_locations_scrub_queue") {
 		t.Errorf("the scrub queue index cannot serve the candidate query, so the "+
