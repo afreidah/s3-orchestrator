@@ -20,6 +20,7 @@ When `ui.enabled` is `true`, the dashboard at `{path}/` shows a live snapshot of
 
 - **Storage summary** — total bytes used/capacity across all backends
 - **Backend quota** — bytes used/limit with progress bars per backend, object counts, active multipart uploads
+- **Integrity coverage** — how long ago the least recently verified copy was checked, and how many copies have never been checked. Shown when `integrity.enabled` is true. Distinct from the backend table's **No Hash** column, which counts copies with no stored hash at all: a fully hashed fleet can still be entirely unverified
 - **Monthly usage** — API requests, egress, and ingress per backend with limits
 - **Object tree** — interactive collapsible file browser. Buckets and directories are collapsed by default; click to expand. Each directory shows a rollup file count and total size.
 - **Configuration** — virtual bucket names, write routing strategy, replication factor, rebalance status, rate limiting, encryption status
@@ -248,9 +249,16 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_over_replication_duration_seconds` | Histogram | — | Over-replication cleanup cycle time |
 | `s3o_circuit_breaker_state` | Gauge | name | 0=closed, 1=open, 2=half-open (name: "database" or backend name) |
 | `s3o_circuit_breaker_transitions_total` | Counter | name, from, to | State transitions per component |
+| `s3o_circuit_breaker_internal_errors_total` | Counter | — | Errors returned by breaker post-check or state transitions |
+| `s3o_degraded_mode_active` | Gauge | — | 1 while the read path is in degraded mode (database unavailable), 0 otherwise |
 | `s3o_degraded_reads_total` | Counter | operation | Broadcast reads in degraded mode |
 | `s3o_degraded_cache_hits_total` | Counter | — | Cache hits during degraded reads |
 | `s3o_degraded_write_rejections_total` | Counter | operation | Writes rejected in degraded mode |
+| `s3o_degraded_broadcast_duration_seconds` | Histogram | outcome | Wall-clock duration of degraded-mode broadcast reads, by terminal outcome |
+| `s3o_degraded_broadcast_drain_timeout_total` | Counter | — | Loser-drain goroutines that gave up at the bounded timeout because a cancelled probe never returned. Non-zero means a backend is stranding goroutines under degraded fan-out |
+| `s3o_degraded_broadcast_mixed_outcomes_total` | Counter | — | Broadcasts whose all-failed terminal saw both 404 and non-404 failures, which surfaces provider divergence otherwise hidden under not_found |
+| `s3o_write_failover_total` | Counter | — | Write operations that failed over to a different backend |
+| `s3o_quota_reconcile_corrections_total` | Counter | backend | Per-backend `bytes_used` drift corrections applied by usage reconciliation |
 | `s3o_usage_api_requests` | Gauge | backend | Current month API request count |
 | `s3o_usage_egress_bytes` | Gauge | backend | Current month egress bytes |
 | `s3o_usage_ingress_bytes` | Gauge | backend | Current month ingress bytes |
@@ -267,6 +275,8 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_pending_intents_depth` | Gauge | — | Current number of unresolved pending PUT intents |
 | `s3o_rate_limit_rejections_total` | Counter | — | Requests rejected by per-IP rate limiting |
 | `s3o_admission_rejections_total` | Counter | — | Requests rejected by server-level admission control |
+| `s3o_admission_client_canceled_total` | Counter | — | Admission waits abandoned because the client cancelled first |
+| `s3o_worker_admission_rejections_total` | Counter | worker | Background worker tasks skipped because admission control was saturated |
 | `s3o_lifecycle_deleted_total` | Counter | — | Objects deleted by lifecycle expiration |
 | `s3o_lifecycle_failed_total` | Counter | — | Objects that failed lifecycle deletion |
 | `s3o_lifecycle_runs_total` | Counter | status | Lifecycle worker executions |
@@ -301,10 +311,12 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_integrity_never_verified_copies` | Gauge | — | Copies with a content hash that have never been verified |
 | `s3o_auth_streaming_requests_total` | Counter | variant | Streaming-payload SigV4 PUTs by variant |
 | `s3o_auth_streaming_rejections_total` | Counter | reason | Chunk-validation failures (tampered body, signature mismatch, etc.) |
-| `s3o_notification_outbox_depth` | Gauge | — | Pending webhook events queued for delivery |
-| `s3o_notifications_delivered_total` | Counter | endpoint | Successfully POSTed webhook events |
-| `s3o_notifications_failed_total` | Counter | endpoint | Webhook POST failures (before retry) |
-| `s3o_notifications_dropped_total` | Counter | endpoint | Webhook events dropped after exhausting `max_retries` |
+| `s3o_notification_queue_depth` | Gauge | — | Pending webhook events queued for delivery |
+| `s3o_notification_sent_total` | Counter | endpoint, event_type | Successfully POSTed webhook events |
+| `s3o_notification_failed_total` | Counter | endpoint, event_type | Webhook POST failures (before retry) |
+| `s3o_notification_dropped_total` | Counter | endpoint, event_type | Webhook events dropped (dampened, or the outbox enqueue failed) |
+| `s3o_notification_duration_seconds` | Histogram | endpoint | Webhook delivery latency |
+| `s3o_notification_store_errors_total` | Counter | — | Outbox persistence failures |
 | `s3o_http_panic_recovered_total` | Counter | route | Handler panics caught by the recovery middleware |
 
 Quota metrics are refreshed from PostgreSQL every 30 seconds (no backend API calls).

@@ -83,7 +83,7 @@ integrity:
 
 - **Write path:** SHA-256 is computed on the plaintext body (before encryption) and stored in `object_locations.content_hash`.
 - **Read path (`verify_on_read`):** A `VerifyingReader` wraps the response body and computes the hash as data streams to the client. On mismatch at EOF, the corrupted copy is enqueued for cleanup.
-- **Scrubber:** A background worker periodically reads random objects from backends, decrypts if needed, and verifies their hash. Corrupted copies are enqueued for cleanup. Each read counts against the backend's usage quota.
+- **Scrubber:** A background worker works through the copies least recently verified, reads them from their backend, decrypts if needed, and checks the hash. A copy that fails has its bytes discarded and its ledger row removed, so the replicator rebuilds it from a healthy copy. Each read counts against the backend's usage quota.
 - **Backfill:** Objects written before integrity was enabled have no stored hash. Use `admin backfill-checksums` to read those objects and compute their hashes.
 
 **Integrity is hot-reloadable** — changes take effect on SIGHUP without a restart.
