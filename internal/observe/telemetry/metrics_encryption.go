@@ -75,8 +75,9 @@ var (
 		},
 	)
 
-	// IntegrityNeverVerifiedCopies stays non-zero until the first full sweep
-	// completes.
+	// IntegrityNeverVerifiedCopies stays non-zero on a fleet that is still
+	// being written to, since new copies queue behind older data. Alert on it
+	// climbing, not on it being above zero.
 	IntegrityNeverVerifiedCopies = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "s3o_integrity_never_verified_copies",
