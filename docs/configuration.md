@@ -638,8 +638,12 @@ integrity:
 
 - **Write path:** SHA-256 is computed on the plaintext body (before encryption) and stored in `object_locations.content_hash`.
 - **Read path (`verify_on_read`):** A `VerifyingReader` wraps the response body and computes the hash as data streams to the client. On mismatch at EOF, the corrupted copy is enqueued for cleanup.
-- **Scrubber:** A background worker periodically reads random objects from backends, decrypts if needed, and verifies their hash. Corrupted copies are enqueued for cleanup. Each read counts against the backend's usage quota.
+- **Scrubber:** A background worker works through the copies least recently verified, reads them from their backend, decrypts if needed, and checks the hash. A copy that fails has its bytes discarded and its ledger row removed, so the replicator rebuilds it from a healthy copy. Each read counts against the backend's usage quota.
 - **Backfill:** Objects written before integrity was enabled have no stored hash. Use `admin backfill-checksums` to read those objects and compute their hashes.
+
+**Sizing the sweep.** `scrubber_interval` and `scrubber_batch_size` together decide how long a full pass takes: copies divided by batch size, times the interval. Verifying a copy means reading its whole body from the backend, so a complete pass re-reads the entire dataset and that egress is metered on most providers. Pick the period first, monthly being a normal operating point for bit rot, then derive the batch from the fleet size.
+
+Two footguns are worth knowing. The scrubber runs on a tick and never at startup, so an interval longer than the process lifetime means it never runs at all while the dashboard still reports integrity as enabled. And `s3o_integrity_oldest_unverified_seconds` is the figure that tells you whether the sweep is keeping up: it should settle around the period implied by these two settings, and a steadily climbing value means the batch is too small or the interval too long.
 
 **Integrity is hot-reloadable** — changes take effect on SIGHUP without a restart.
 

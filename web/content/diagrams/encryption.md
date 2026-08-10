@@ -28,8 +28,8 @@ When encryption is enabled, every object stored through the S3 Orchestrator is e
 2. **Wrap the DEK**: The master key encrypts the DEK via the configured key provider (e.g., Vault Transit API call). This produces a **wrapped DEK** — an opaque blob that can only be unwrapped by the same master key.
 3. **Generate a base nonce**: 12 random bytes.
 4. **Write the header**: A 32-byte header is prepended to the ciphertext stream — `"SENC"` magic bytes, format version, chunk size, and the base nonce.
-5. **Encrypt chunk by chunk** (default 1 MB per chunk):
-   - Read up to 1 MB of plaintext.
+5. **Encrypt chunk by chunk** (default 64 KiB per chunk):
+   - Read up to one chunk of plaintext.
    - Derive this chunk's nonce: take the base nonce and XOR the chunk index into its last 8 bytes.
    - Encrypt the chunk with AES-256-GCM using the DEK and the derived nonce. This produces ciphertext + a 16-byte auth tag.
    - Write to the output: `nonce (12 bytes) | ciphertext | auth tag (16 bytes)`.
@@ -191,7 +191,7 @@ The base nonce is stored in the database specifically so range decryption can de
     CHUNK: {
       title: 'Read Plaintext Chunk',
       badge: 'process', badgeText: 'chunking',
-      body: '<p><code>io.ReadFull(src, plain[:chunkSize])</code> reads up to <code>chunkSize</code> bytes (default 1MB = 1048576 bytes). The last chunk may be shorter.</p><p>Streaming design: <code>encryptReader</code> implements <code>io.Reader</code>, encrypting one chunk per <code>Read()</code> call. No need to buffer the entire object in memory.</p>'
+      body: '<p><code>io.ReadFull(src, plain[:chunkSize])</code> reads up to <code>chunkSize</code> bytes (default 65536 bytes; configurable 4 KiB-1 MiB, power of two). The last chunk may be shorter.</p><p>Streaming design: <code>encryptReader</code> implements <code>io.Reader</code>, encrypting one chunk per <code>Read()</code> call. No need to buffer the entire object in memory.</p>'
     },
     NONCE: {
       title: 'Derive Per-Chunk Nonce',

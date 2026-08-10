@@ -66,6 +66,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        BIGINT plaintext_size',
     '        TEXT content_hash',
     '        BOOLEAN managed',
+    '        TIMESTAMPTZ last_scrubbed_at',
     '        TIMESTAMPTZ created_at',
     '    }',
     '',
@@ -201,8 +202,9 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>plaintext_size</td><td>BIGINT</td><td>Original size before encryption</td></tr>' +
         '<tr><td>content_hash</td><td>TEXT</td><td>SHA-256 hex digest of plaintext (nullable)</td></tr>' +
         '<tr><td>managed</td><td>BOOLEAN</td><td>False for objects reconcile found outside every virtual bucket prefix &mdash; they count toward quota but replication, rebalance, integrity and drain ignore them (default true)</td></tr>' +
+        '<tr><td>last_scrubbed_at</td><td>TIMESTAMPTZ</td><td>When the scrubber last verified this copy. NULL means never verified; the scrub queue falls back to created_at so a fresh write sorts behind older unverified data (nullable)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Insert timestamp</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_backend (backend_name) &bull; idx_object_locations_key_pattern (object_key text_pattern_ops) &bull; idx_object_locations_created (created_at) &bull; idx_object_locations_key_created (object_key, created_at) &bull; idx_object_locations_backend_key_collate_c (backend_name, object_key COLLATE "C") &bull; idx_object_locations_key_collate_c (object_key COLLATE "C") &bull; idx_object_locations_managed (backend_name) WHERE managed</p>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_backend (backend_name) &bull; idx_object_locations_key_pattern (object_key text_pattern_ops) &bull; idx_object_locations_created (created_at) &bull; idx_object_locations_key_created (object_key, created_at) &bull; idx_object_locations_backend_key_collate_c (backend_name, object_key COLLATE "C") &bull; idx_object_locations_key_collate_c (object_key COLLATE "C") &bull; idx_object_locations_managed (backend_name) WHERE managed &bull; idx_object_locations_scrub_queue (COALESCE(last_scrubbed_at, created_at), object_key) WHERE content_hash IS NOT NULL AND managed</p>' +
         '<p>Used by: <a href="../write-path/">write path</a> (RecordObject), <a href="../read-path/">read path</a> (GetAllObjectLocations), <a href="../background-services/">replicator</a> (GetUnderReplicatedObjects), directory tree listing, <a href="../encryption/">key rotation</a>.</p>' +
         '<p class="ac-metric">Key queries: InsertObjectLocation, ListObjectsByPrefix, GetDirectoryStats, GetUnderReplicatedObjects, BackendObjectStats</p>'
     },
@@ -446,3 +448,5 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | `00012_reconcile_cursor_collation_index` | Add `idx_object_locations_backend_key_collate_c (backend_name, object_key COLLATE "C")` so the reconcile sorted-merge cursor's byte-ordered scan is index-backed |
 | `00013_delimiter_prefix_collation_index` | Add `idx_object_locations_key_collate_c (object_key COLLATE "C")` so `ListObjectsDelimited` folds keys into `CommonPrefixes` with a loose index scan instead of a per-step sort |
 | `00014_object_managed_flag` | Add `managed` to `object_locations` (default true) plus `idx_object_locations_managed (backend_name) WHERE managed`, so reconcile can import objects that sit outside every virtual bucket prefix for quota accounting without the workers acting on them |
+| `00015_object_last_scrubbed_at` | Add `last_scrubbed_at` to `object_locations` (nullable) plus a partial index for the scrub queue. Replaces random sampling, which on Postgres could not reach past the front of the table: `TABLESAMPLE` walks the heap in physical order and `LIMIT` halts the scan, so most of the fleet was never verified |
+| `00016_scrub_queue_last_touched` | Re-index the scrub queue on `COALESCE(last_scrubbed_at, created_at)` so a freshly written copy sorts behind an old unverified one. Ordering on the verified timestamp alone put every new write at the head, and a write rate above the scrub rate meant older data was never reached |
