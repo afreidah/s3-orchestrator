@@ -442,16 +442,17 @@ func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error
 // INTEGRITY
 // -------------------------------------------------------------------------
 
-// GetLeastRecentlyScrubbedObjects returns the copies most overdue for
-// verification, never-checked ones first. SQLite sorts NULLs first by default,
-// which is the ordering wanted here.
+// GetLeastRecentlyScrubbedObjects returns the copies least recently touched,
+// by verification or by writing. Falling back to created_at keeps a freshly
+// written copy from jumping the queue, so a write rate above the scrub rate
+// cannot starve older data.
 func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes, encrypted, encryption_key,
 		       key_id, plaintext_size, content_hash, created_at
 		FROM object_locations
 		WHERE content_hash IS NOT NULL AND managed
-		ORDER BY last_scrubbed_at ASC, object_key ASC
+		ORDER BY COALESCE(last_scrubbed_at, created_at) ASC, object_key ASC
 		LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get least recently scrubbed objects: %w", err)
