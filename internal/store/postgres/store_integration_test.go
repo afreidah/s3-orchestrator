@@ -224,8 +224,6 @@ func TestStoreInt_GetLeastRecentlyScrubbedObjects(t *testing.T) {
 		t.Fatalf("UpdateContentHash: %v", err)
 	}
 
-	// The query uses TABLESAMPLE / RANDOM and may return 0 rows on a
-	// small table; we assert only that the query runs without error.
 	if _, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100); err != nil {
 		t.Fatalf("GetLeastRecentlyScrubbedObjects: %v", err)
 	}
@@ -954,5 +952,105 @@ func TestStoreInt_VerifySchemaVersion_NewerThanExpected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "newer than expected") {
 		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// TestStoreInt_ScrubQueue_FreshWritesDoNotJumpTheQueue pins the property that
+// keeps the sweep alive on a busy fleet. Ordering purely on the verified
+// timestamp put every new write at the head of the queue, so once writes
+// outpaced the scrubber nothing older was ever reached.
+func TestStoreInt_ScrubQueue_FreshWritesDoNotJumpTheQueue(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+
+	oldKey := uniqueKey(t, "old")
+	freshKey := uniqueKey(t, "fresh")
+	for _, key := range []string{oldKey, freshKey} {
+		if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+			t.Fatalf("RecordObject(%s): %v", key, err)
+		}
+		defer func() { _, _ = s.DeleteObject(ctx, key) }()
+		if err := s.UpdateContentHash(ctx, key, "backend-a", "abc123"); err != nil {
+			t.Fatalf("UpdateContentHash(%s): %v", key, err)
+		}
+	}
+
+	// oldKey was written a year ago and verified a month ago; freshKey was
+	// written just now and has never been verified.
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE object_locations
+		 SET created_at = NOW() - interval '365 days',
+		     last_scrubbed_at = NOW() - interval '30 days'
+		 WHERE object_key = $1`, oldKey); err != nil {
+		t.Fatalf("backdating %s: %v", oldKey, err)
+	}
+
+	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100)
+	if err != nil {
+		t.Fatalf("GetLeastRecentlyScrubbedObjects: %v", err)
+	}
+
+	var oldPos, freshPos = -1, -1
+	for i := range got {
+		switch got[i].ObjectKey {
+		case oldKey:
+			oldPos = i
+		case freshKey:
+			freshPos = i
+		}
+	}
+	if oldPos == -1 || freshPos == -1 {
+		t.Fatalf("expected both copies in the queue, got old=%d fresh=%d", oldPos, freshPos)
+	}
+	if oldPos > freshPos {
+		t.Errorf("a copy verified a month ago sorted behind one written moments ago (old=%d fresh=%d)",
+			oldPos, freshPos)
+	}
+}
+
+// TestStoreInt_ScrubQueue_IndexMatchesQuery verifies the partial expression
+// index can serve the candidate query, which is what keeps the sweep from
+// sorting the whole ledger once it is large.
+//
+// Sequential scans are disabled rather than asserting the planner picks the
+// index unprompted: on a test-sized table a sequential scan is genuinely
+// cheaper and choosing it is correct. What matters here is that the index is
+// usable at all, since an ORDER BY expression that drifts from the indexed one
+// would still fall back to a sort with sequential scans off.
+func TestStoreInt_ScrubQueue_IndexMatchesQuery(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquiring a connection: %v", err)
+	}
+	defer conn.Release()
+
+	if _, err := conn.Exec(ctx, `SET enable_seqscan = off`); err != nil {
+		t.Fatalf("disabling seqscan: %v", err)
+	}
+
+	rows, err := conn.Query(ctx, `EXPLAIN (COSTS OFF)
+		SELECT object_key FROM object_locations
+		WHERE content_hash IS NOT NULL AND managed
+		ORDER BY COALESCE(last_scrubbed_at, created_at) ASC, object_key ASC
+		LIMIT 100`)
+	if err != nil {
+		t.Fatalf("EXPLAIN: %v", err)
+	}
+	defer rows.Close()
+
+	var plan strings.Builder
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatalf("scanning plan: %v", err)
+		}
+		plan.WriteString(line + "\n")
+	}
+	if !strings.Contains(plan.String(), "idx_object_locations_scrub_queue") {
+		t.Errorf("the scrub queue index cannot serve the candidate query, so the "+
+			"ORDER BY and the index expression have drifted apart:\n%s", plan.String())
 	}
 }

@@ -2556,6 +2556,53 @@ func TestScrubQueue_OrdersByLeastRecentlyScrubbed(t *testing.T) {
 	}
 }
 
+// TestScrubQueue_FreshWritesDoNotJumpTheQueue is the property that keeps the
+// sweep alive on a busy fleet. A never-verified copy written moments ago must
+// sort behind an old copy verified long ago; ordering purely on the verified
+// timestamp put every new write at the head, and once writes outpaced the
+// scrubber nothing older was ever reached.
+func TestScrubQueue_FreshWritesDoNotJumpTheQueue(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	for _, key := range []string{"bucket/old", "bucket/fresh"} {
+		mustRecordObject(t, s, key, "backend-a", 100)
+		if err := s.UpdateContentHash(ctx, key, "backend-a", "sha256:"+key); err != nil {
+			t.Fatalf("UpdateContentHash(%s): %v", key, err)
+		}
+	}
+
+	// bucket/old was written a year ago and verified a month ago.
+	// bucket/fresh was written just now and never verified.
+	backdate := func(key, created, scrubbed string) {
+		t.Helper()
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE object_locations SET created_at = ?, last_scrubbed_at = ?
+			 WHERE object_key = ? AND backend_name = 'backend-a'`,
+			created, scrubbed, key,
+		); err != nil {
+			t.Fatalf("backdating %s: %v", key, err)
+		}
+	}
+	now := time.Now().UTC()
+	backdate("bucket/old",
+		now.Add(-365*24*time.Hour).Format(time.RFC3339Nano),
+		now.Add(-30*24*time.Hour).Format(time.RFC3339Nano))
+
+	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10)
+	if err != nil {
+		t.Fatalf("GetLeastRecentlyScrubbedObjects: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 copies, got %d", len(got))
+	}
+	if got[0].ObjectKey != "bucket/old" {
+		t.Errorf("queue head = %q, want bucket/old: a fresh write must not "+
+			"outrank a copy last verified a month ago (order: %v)", got[0].ObjectKey, keysOf(got))
+	}
+}
+
 // keysOf extracts object keys for a readable ordering assertion failure.
 func keysOf(locs []core.ObjectLocation) []string {
 	keys := make([]string, len(locs))

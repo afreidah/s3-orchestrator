@@ -291,7 +291,7 @@ const getLeastRecentlyScrubbedObjects = `-- name: GetLeastRecentlyScrubbedObject
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
 FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
-ORDER BY last_scrubbed_at ASC NULLS FIRST, object_key ASC
+ORDER BY COALESCE(last_scrubbed_at, created_at) ASC, object_key ASC
 LIMIT $1
 `
 
@@ -307,10 +307,13 @@ type GetLeastRecentlyScrubbedObjectsRow struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
-// Return the copies most overdue for verification, never-checked ones first.
-// Ordering by last_scrubbed_at makes the sweep a queue rather than a sample,
-// so every copy is reached on a bounded cycle. object_key breaks ties among
-// the NULLs so repeated cycles advance instead of re-reading the same rows.
+// Return the copies least recently touched, by verification or by writing.
+//
+// Falling back to created_at is what keeps the sweep alive on a busy fleet: a
+// copy written moments ago sorts to the back rather than jumping the queue, so
+// a write rate above the scrub rate cannot starve older data. It also puts the
+// effort where rot actually accumulates, since churn is deleted long before it
+// degrades while the copies that persist for months are the ones at risk.
 func (q *Queries) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int32) ([]GetLeastRecentlyScrubbedObjectsRow, error) {
 	rows, err := q.db.Query(ctx, getLeastRecentlyScrubbedObjects, limit)
 	if err != nil {

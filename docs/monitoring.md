@@ -169,6 +169,8 @@ Key metrics to alert on:
 | `s3o_over_replication_key_preserved_total` | Any non-zero value means a copy set disagrees about encryption and the cleaner kept the only copy that can still be decrypted. Repair the diverged rows; until then the object stays over-replicated |
 | `s3o_encryption_flag_mismatch_total{component}` | Any non-zero value is an alert: an object's stored bytes disagree with its recorded encryption flag, so that copy cannot be read or hashed. `component` names what noticed (`get`, `head`, `scrubber`) |
 | `s3o_import_classified_total{decision="unreadable"}` | Reconcile or sync found an encrypted object whose key is gone. It is recorded so its space is accounted for, but nothing can serve it. Restore it from elsewhere or delete it |
+| `s3o_integrity_oldest_unverified_seconds` | Alert when it climbs steadily. The scrubber is not completing a sweep. It should settle around the sweep period implied by `scrubber_interval` and `scrubber_batch_size`; a rising value means the batch is too small or the interval too long for the fleet |
+| `s3o_integrity_never_verified_copies` | Stays non-zero on a fleet being written to, since new copies queue behind older data by design. Alert on a climbing value, not on it being above zero |
 | `s3o_requests_total{status_code="5xx"}` | Alert on elevated 5xx rates |
 | `s3o_http_panic_recovered_total{route}` | Any non-zero rate is an alert: a handler panicked and the recovery middleware returned a 500. Pivot via the matching `http.PanicRecovered` audit entry for the captured stack and request id |
 | `s3o_degraded_write_rejections_total` | Writes being rejected due to degraded mode |
@@ -295,6 +297,8 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_cache_admin_invalidations_total` | Counter | — | Admin-triggered single-key cache invalidations |
 | `s3o_integrity_checks_total` | Counter | operation | Integrity hash verifications performed (read, scrub) |
 | `s3o_integrity_errors_total` | Counter | operation | Hash mismatches detected (corrupted copies enqueued for cleanup) |
+| `s3o_integrity_oldest_unverified_seconds` | Gauge | — | Age of the least recently verified object copy |
+| `s3o_integrity_never_verified_copies` | Gauge | — | Copies with a content hash that have never been verified |
 | `s3o_auth_streaming_requests_total` | Counter | variant | Streaming-payload SigV4 PUTs by variant |
 | `s3o_auth_streaming_rejections_total` | Counter | reason | Chunk-validation failures (tampered body, signature mismatch, etc.) |
 | `s3o_notification_outbox_depth` | Gauge | — | Pending webhook events queued for delivery |

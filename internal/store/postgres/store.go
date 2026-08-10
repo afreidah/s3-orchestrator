@@ -145,7 +145,7 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 
 // ExpectedSchemaVersion is the migration version this binary expects.
 // Updated when new migration files are added.
-const ExpectedSchemaVersion = 15
+const ExpectedSchemaVersion = 16
 
 // VerifySchemaVersion checks that the database schema version matches
 // what this binary expects. Returns an error if the schema is older
