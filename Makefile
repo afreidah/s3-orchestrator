@@ -115,6 +115,10 @@ check: ## Run fast local checks for contributor iteration
 GOLANGCI_VERSION ?= v2.12.2
 GOLANGCI := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
 
+# Which modernizers exist is decided by this pin; which ones apply is decided
+# by the go directive in go.mod, so only this has to be bumped by hand.
+GOPLS_VERSION ?= v0.22.0
+
 # loadtest is a separate Go module, so the root ./... never reaches it and it
 # went unlinted entirely. Every module has to be named explicitly.
 GO_MODULE_DIRS := . loadtest
@@ -132,7 +136,7 @@ fmt: ## Apply the formatting lint enforces (gofmt + goimports)
 	done
 
 modernize: ## Report gopls modernization/hygiene hints (skips generated files)
-	GOFLAGS=-tags=integration go run golang.org/x/tools/gopls@v0.22.0 check -severity=hint \
+	GOFLAGS=-tags=integration go run golang.org/x/tools/gopls@$(GOPLS_VERSION) check -severity=hint \
 		$$(git ls-files '*.go' | xargs grep -L 'DO NOT EDIT')
 
 openapi: ## Regenerate docs/openapi.yaml from the admin route table

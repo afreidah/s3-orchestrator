@@ -249,8 +249,22 @@ func (o *Manager) maybeWrapIntegrityReader(
 			"expected_hash", expected, "actual_hash", actual)
 		telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()
 		o.coord.DeleteOrEnqueue(ctx, backend, beName, key, "integrity_failed", r.Size)
+		o.dropCorruptedLocation(ctx, key, beName)
 	})
 	r.Body = vr
+}
+
+// dropCorruptedLocation removes the ledger row for a copy discarded on read.
+// Without it the replicator still counts the copy and never rebuilds the
+// object, leaving it below its replication factor until a reconcile sweeps
+// the stale row.
+func (o *Manager) dropCorruptedLocation(ctx context.Context, key, beName string) {
+	if err := o.stores.DeleteObjectLocation(ctx, key, beName); err != nil {
+		o.log.ErrorContext(ctx, "failed to drop location for corrupted copy",
+			"key", key, "backend", beName, "error", err)
+		return
+	}
+	o.cache.Delete(key)
 }
 
 // populateObjectCache wraps result.Body in a tee that copies bytes into
