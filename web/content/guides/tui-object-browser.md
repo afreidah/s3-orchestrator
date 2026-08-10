@@ -113,12 +113,17 @@ The inspector shows encryption *metadata* only. The wrapped data-encryption key 
 Press `b` (or select **Backends** in the sidebar) to switch to the status view. Each row is one configured backend:
 
 ```
-backends   3 configured   db: healthy   usage period: 2026-07
+backends   3 configured   usage period: 2026-07
+db: healthy   total: 11.3 GiB / 20.0 GiB (56%)   verified: oldest 9h
 BACKEND    HEALTH     DRAIN     USED       LIMIT      OBJECTS   API      INGRESS    EGRESS
 minio-a    healthy    -         2.4 GiB    10.0 GiB   1284      9021     4.7 GiB    2.8 GiB
 minio-b    healthy    draining  8.9 GiB    10.0 GiB   4102      512      1.0 GiB    3.1 GiB
 minio-c    unhealthy  -         0 B        -          0         0        0 B        0 B
 ```
+
+The second line carries fleet-wide state. `verified:` is how far behind
+integrity checking is: an age when every copy has been checked at least once,
+or a count of never-checked copies while the first sweep is still running.
 
 ![The Backends section listing per-backend health and usage](/docs/images/tui-backends.png?classes=lightbox)
 

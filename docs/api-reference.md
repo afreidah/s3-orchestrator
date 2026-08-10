@@ -23,6 +23,8 @@ Admin endpoints use a token rather than a session; see [Admin API](../admin-api/
 
 All JSON request bodies on admin and UI endpoints are limited to 1 MB.
 
+Two S3 operations carry an XML request body, and both are capped above the largest request the S3 API permits: multi-object delete at 4 MB and CompleteMultipartUpload at 2 MB. Exceeding the cap returns `413 MaxMessageLengthExceeded` rather than a parse error, and a body containing anything after its first XML document is rejected as `400 MalformedXML` rather than having the remainder silently ignored.
+
 **Object data caching:** When the optional in-memory cache is enabled, GET responses for eligible objects may be served from cache rather than from a backend. This is fully transparent to S3 API clients -- cached responses have the same headers, status codes, and body content as uncached responses. No client-side configuration or awareness is needed.
 
 ## UI API Endpoints
