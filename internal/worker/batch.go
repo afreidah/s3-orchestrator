@@ -49,12 +49,17 @@ type ItemResult struct {
 // count tuples (checked/failed, processed/failed, moved) each worker used to
 // return, so partial-failure reporting and metric labels are consistent.
 type WorkSummary struct {
-	Planned   int           // items the cycle set out to process
-	Attempted int           // items the per-item function ran (succeeded + failed)
-	Succeeded int           // items that completed successfully
-	Failed    int           // items attempted but not completed
-	Skipped   int           // items declined before any work
-	Duration  time.Duration // wall-clock time for the cycle
+	Planned   int // items the cycle set out to process
+	Attempted int // items the per-item function ran (succeeded + failed)
+	Succeeded int // items that completed successfully
+	Failed    int // items attempted but not completed
+	Skipped   int // items declined before any work
+	// Deferred counts work this cycle never selected, because the backend
+	// holding it is over its usage limit. It is not an item outcome: these
+	// items were never in the batch, so reporting it alongside the per-item
+	// counts is what stops a budget-limited cycle reading as a complete one.
+	Deferred int
+	Duration time.Duration // wall-clock time for the cycle
 }
 
 // Outcome classifies the cycle for metric labels: success (work done, no

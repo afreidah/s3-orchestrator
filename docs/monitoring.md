@@ -262,7 +262,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_usage_api_requests` | Gauge | backend | Current month API request count |
 | `s3o_usage_egress_bytes` | Gauge | backend | Current month egress bytes |
 | `s3o_usage_ingress_bytes` | Gauge | backend | Current month ingress bytes |
-| `s3o_usage_limit_rejections_total` | Counter | operation, limit_type | Operations rejected by usage limits |
+| `s3o_usage_limit_rejections_total` | Counter | operation, limit_type | Operations rejected by usage limits. `operation` covers the client paths plus `rebalance` (moves not planned) and `scrub` (copies deferred) |
 | `s3o_cleanup_queue_enqueued_total` | Counter | reason | Items added to the cleanup retry queue |
 | `s3o_cleanup_queue_processed_total` | Counter | status | Items processed from the cleanup queue (success/success_absent/retry/exhausted) |
 | `s3o_cleanup_queue_depth` | Gauge | — | Current pending items in the cleanup queue |

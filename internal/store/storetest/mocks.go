@@ -174,6 +174,21 @@ func (mr *MockMetadataStoreMockRecorder) CountOverReplicatedObjects(ctx, factor 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountOverReplicatedObjects", reflect.TypeOf((*MockMetadataStore)(nil).CountOverReplicatedObjects), ctx, factor)
 }
 
+// CountScrubCandidatesOnBackends mocks base method.
+func (m *MockMetadataStore) CountScrubCandidatesOnBackends(ctx context.Context, backends []string) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountScrubCandidatesOnBackends", ctx, backends)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountScrubCandidatesOnBackends indicates an expected call of CountScrubCandidatesOnBackends.
+func (mr *MockMetadataStoreMockRecorder) CountScrubCandidatesOnBackends(ctx, backends any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountScrubCandidatesOnBackends", reflect.TypeOf((*MockMetadataStore)(nil).CountScrubCandidatesOnBackends), ctx, backends)
+}
+
 // CreateMultipartUpload mocks base method.
 func (m *MockMetadataStore) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) error {
 	m.ctrl.T.Helper()
@@ -376,18 +391,18 @@ func (mr *MockMetadataStoreMockRecorder) GetBackendWithSpace(ctx, size, backendO
 }
 
 // GetLeastRecentlyScrubbedObjects mocks base method.
-func (m *MockMetadataStore) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int) ([]core.ObjectLocation, error) {
+func (m *MockMetadataStore) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetLeastRecentlyScrubbedObjects", ctx, limit)
+	ret := m.ctrl.Call(m, "GetLeastRecentlyScrubbedObjects", ctx, limit, backends)
 	ret0, _ := ret[0].([]core.ObjectLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetLeastRecentlyScrubbedObjects indicates an expected call of GetLeastRecentlyScrubbedObjects.
-func (mr *MockMetadataStoreMockRecorder) GetLeastRecentlyScrubbedObjects(ctx, limit any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) GetLeastRecentlyScrubbedObjects(ctx, limit, backends any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeastRecentlyScrubbedObjects", reflect.TypeOf((*MockMetadataStore)(nil).GetLeastRecentlyScrubbedObjects), ctx, limit)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeastRecentlyScrubbedObjects", reflect.TypeOf((*MockMetadataStore)(nil).GetLeastRecentlyScrubbedObjects), ctx, limit, backends)
 }
 
 // GetLeastUtilizedBackend mocks base method.

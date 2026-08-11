@@ -446,14 +446,26 @@ func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error
 // by verification or by writing. Falling back to created_at keeps a freshly
 // written copy from jumping the queue, so a write rate above the scrub rate
 // cannot starve older data.
-func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int) ([]core.ObjectLocation, error) {
+//
+// backends restricts the batch to copies the scrubber can afford to read. An
+// empty slice selects nothing: the caller has established that no backend can
+// be read right now, and returning the whole queue would ignore it.
+func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string) ([]core.ObjectLocation, error) {
+	if len(backends) == 0 {
+		return nil, nil
+	}
+	backendsJSON, err := json.Marshal(backends)
+	if err != nil {
+		return nil, fmt.Errorf("encode scrub backend list: %w", err)
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes, encrypted, encryption_key,
 		       key_id, plaintext_size, content_hash, created_at
 		FROM object_locations
 		WHERE content_hash IS NOT NULL AND managed
+		  AND backend_name IN (SELECT value FROM json_each(?))
 		ORDER BY COALESCE(last_scrubbed_at, created_at) ASC, object_key ASC
-		LIMIT ?`, limit)
+		LIMIT ?`, string(backendsJSON), limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get least recently scrubbed objects: %w", err)
 	}
@@ -471,6 +483,28 @@ func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int) 
 		return nil, fmt.Errorf("failed to iterate least recently scrubbed objects: %w", err)
 	}
 	return locs, nil
+}
+
+// CountScrubCandidatesOnBackends reports how many scrubbable copies live on the
+// named backends, so a cycle can say how much of the queue it declined to read.
+func (s *Store) CountScrubCandidatesOnBackends(ctx context.Context, backends []string) (int64, error) {
+	if len(backends) == 0 {
+		return 0, nil
+	}
+	backendsJSON, err := json.Marshal(backends)
+	if err != nil {
+		return 0, fmt.Errorf("encode scrub backend list: %w", err)
+	}
+	var n int64
+	err = s.db.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM object_locations
+		WHERE content_hash IS NOT NULL AND managed
+		  AND backend_name IN (SELECT value FROM json_each(?))`, string(backendsJSON)).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count scrub candidates: %w", err)
+	}
+	return n, nil
 }
 
 // MarkObjectScrubbed records that a copy was examined, which is what advances

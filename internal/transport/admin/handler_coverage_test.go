@@ -559,7 +559,7 @@ func TestHandleScrub_StreamSummaryReportsUnreadable(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
 	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}})
-	h.scrubber = newScrubber(t, &scrubberStub{scrubChecked: 3, scrubFailed: 2, scrubSkipped: 5})
+	h.scrubber = newScrubber(t, &scrubberStub{scrubChecked: 3, scrubFailed: 2, scrubSkipped: 5, scrubDeferred: 9})
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/scrub", nil)
 	req.Header.Set("Accept", adminstream.ContentType)
@@ -589,5 +589,13 @@ func TestHandleScrub_StreamSummaryReportsUnreadable(t *testing.T) {
 	}
 	if got := result.Fields["unreadable"]; got != float64(5) {
 		t.Errorf("fields[unreadable] = %v, want 5", got)
+	}
+	// Deferred copies were never selected, so a summary that omits them reports
+	// a budget-limited sweep as a complete one.
+	if !strings.Contains(result.Message, "deferred 9") {
+		t.Errorf("summary = %q, want it to report deferred 9", result.Message)
+	}
+	if got := result.Fields["deferred"]; got != float64(9) {
+		t.Errorf("fields[deferred] = %v, want 9", got)
 	}
 }

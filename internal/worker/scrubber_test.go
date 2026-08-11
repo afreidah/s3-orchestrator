@@ -32,6 +32,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -51,6 +52,14 @@ func setupScrubber(t *testing.T) (*Scrubber, *MockScrubberOps, *MockPlacement, *
 	pl := NewMockPlacement(ctrl)
 	be := backendtest.NewMockObjectBackend(ctrl)
 	ms := &mockMetadataStore{}
+
+	// Default fleet: one backend, no usage limits, so every existing test sees
+	// a scrubber that can afford to read everything. Budget-aware tests
+	// override these.
+	ops.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
+	ops.EXPECT().Usage().
+		Return(counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)).AnyTimes()
+
 	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: pl, Store: ms})
 	s.SetConfig(&config.IntegrityConfig{
 		Enabled:           true,
@@ -622,5 +631,137 @@ func TestScrubCycle_SilentWhenNothingToDo(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "scrub completed") {
 		t.Errorf("empty cycle should not log a completion line: %s", buf.String())
+	}
+}
+
+// -------------------------------------------------------------------------
+// USAGE BUDGET
+// -------------------------------------------------------------------------
+
+// limitedUsage builds a tracker where b2 has already spent its egress
+// allowance and b1 has none configured.
+func limitedUsage(t *testing.T) *counter.UsageTracker {
+	t.Helper()
+	cb := counter.NewLocalCounterBackend([]string{"b1", "b2"})
+	tracker := counter.NewUsageTracker(cb, map[string]core.UsageLimits{
+		"b2": {EgressByteLimit: 1},
+	})
+	tracker.Record("b2", 0, 1000, 0)
+	return tracker
+}
+
+// TestScrub_DeclinesBackendsOverTheirUsageLimit is the core of the budget
+// behaviour: an over-limit backend is filtered out of the selection query, not
+// filtered out after selection.
+//
+// Filtering after selection would force a choice between two broken options -
+// stamp the copy as examined without reading it, or leave it at the head of the
+// queue to be re-selected every cycle. Excluding it from the query avoids both.
+func TestScrub_DeclinesBackendsOverTheirUsageLimit(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockScrubberOps(ctrl)
+	ms := &mockMetadataStore{deferredCandidates: 12}
+
+	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+	ops.EXPECT().Usage().Return(limitedUsage(t)).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+
+	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms})
+	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
+
+	sum := s.Scrub(context.Background(), 10, nil)
+
+	if got := ms.scrubSelectedBackends; len(got) != 1 || got[0] != "b1" {
+		t.Errorf("selected backends = %v, want only the affordable one [b1]", got)
+	}
+	if got := ms.scrubDeclinedBackends; len(got) != 1 || got[0] != "b2" {
+		t.Errorf("declined backends = %v, want [b2]", got)
+	}
+	if sum.Deferred != 12 {
+		t.Errorf("Deferred = %d, want 12 (the copies on the declined backend)", sum.Deferred)
+	}
+}
+
+// TestScrub_SelectsEverythingWhenNothingIsOverBudget guards the common case:
+// with no limits configured the whole fleet is offered to the query and nothing
+// is reported as deferred.
+func TestScrub_SelectsEverythingWhenNothingIsOverBudget(t *testing.T) {
+	t.Parallel()
+	s, _, _, _, ms := setupScrubber(t)
+
+	sum := s.Scrub(context.Background(), 10, nil)
+
+	if got := ms.scrubSelectedBackends; len(got) != 1 || got[0] != "b1" {
+		t.Errorf("selected backends = %v, want the full fleet [b1]", got)
+	}
+	if ms.scrubDeclinedBackends != nil {
+		t.Errorf("declined backends = %v, want none", ms.scrubDeclinedBackends)
+	}
+	if sum.Deferred != 0 {
+		t.Errorf("Deferred = %d, want 0", sum.Deferred)
+	}
+}
+
+// TestScrub_DeferredCopiesDoNotFlatterCoverage is the assertion the whole
+// policy rests on. Deferred copies were never read, so the coverage gauges must
+// keep reporting them as unverified. If a budget-limited sweep let the age
+// gauge fall, a fleet nobody can afford to verify would look like a verified
+// one, which is the failure the deferred count exists to prevent.
+func TestScrub_DeferredCopiesDoNotFlatterCoverage(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	ops := NewMockScrubberOps(ctrl)
+	ms := &mockMetadataStore{
+		deferredCandidates: 40,
+		oldestUnverified:   72 * time.Hour,
+		neverVerified:      40,
+	}
+
+	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+	ops.EXPECT().Usage().Return(limitedUsage(t)).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+
+	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms})
+	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
+
+	sum := s.Scrub(context.Background(), 10, nil)
+	if sum.Deferred != 40 {
+		t.Fatalf("Deferred = %d, want 40", sum.Deferred)
+	}
+
+	// Coverage still reports the backlog the deferred copies represent.
+	if got := promtest.ToFloat64(telemetry.IntegrityNeverVerifiedCopies); got != 40 {
+		t.Errorf("never-verified gauge = %v, want 40: deferred copies are still unverified", got)
+	}
+	if got := promtest.ToFloat64(telemetry.IntegrityOldestUnverifiedSeconds); got != (72 * time.Hour).Seconds() {
+		t.Errorf("oldest-unverified gauge = %v, want %v: a deferred sweep must not reset coverage age",
+			got, (72 * time.Hour).Seconds())
+	}
+}
+
+// TestScrub_SurvivesADeferredCountFailure keeps a failing count from aborting
+// the cycle. The copies the scrubber can afford to read are still worth
+// verifying even when the size of the deferred backlog cannot be established.
+func TestScrub_SurvivesADeferredCountFailure(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockScrubberOps(ctrl)
+	ms := &mockMetadataStore{deferredCandidatesErr: errors.New("ledger unavailable")}
+
+	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+	ops.EXPECT().Usage().Return(limitedUsage(t)).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+
+	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms})
+	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
+
+	sum := s.Scrub(context.Background(), 10, nil)
+
+	if sum.Deferred != 0 {
+		t.Errorf("Deferred = %d, want 0 when the count could not be read", sum.Deferred)
+	}
+	// The affordable backend was still offered to the selection query.
+	if got := ms.scrubSelectedBackends; len(got) != 1 || got[0] != "b1" {
+		t.Errorf("selected backends = %v, want [b1] despite the count failing", got)
 	}
 }
