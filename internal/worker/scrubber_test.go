@@ -14,11 +14,13 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -435,8 +438,10 @@ func TestScrub_StampsEveryAttempt(t *testing.T) {
 
 // TestScrub_ReportsCoverage verifies the cycle publishes how far behind
 // verification is, which is the figure operators alert on.
+// Deliberately not parallel: the assertions read process-wide gauges that
+// every other scrub test overwrites through reportCoverage, so running
+// alongside them reads whichever cycle finished last.
 func TestScrub_ReportsCoverage(t *testing.T) {
-	t.Parallel()
 	s, ops, _, _, ms := setupScrubber(t)
 
 	ms.oldestUnverified = 36 * time.Hour
@@ -478,5 +483,144 @@ func TestScrub_SurvivesBookkeepingFailures(t *testing.T) {
 
 	if sum := s.Scrub(context.Background(), 10, nil); sum.Failed != 1 {
 		t.Errorf("the mismatch must still be reported, got %+v", sum)
+	}
+}
+
+// -------------------------------------------------------------------------
+// REPORTING
+// -------------------------------------------------------------------------
+
+// TestScrub_UnreadableCopyIsCountedAndLabelled pins the distinction that a
+// silent fleet depends on: a copy the scrubber could not read is reported as
+// unreadable, not as a failure and not as a pass.
+//
+// Counting it as a failure would overstate corruption; leaving it out of the
+// summary entirely, which is what "checked N, failed 0" used to do, lets a
+// fleet whose copies are all unreadable report a clean pass.
+func TestScrub_UnreadableCopyIsCountedAndLabelled(t *testing.T) {
+	t.Parallel()
+	s, ops, _, be, ms := setupScrubber(t)
+
+	ms.randomHashedObjects = []core.ObjectLocation{
+		{ObjectKey: "bucket/gone", BackendName: "b1", SizeBytes: 11, ContentHash: "somehash"},
+	}
+	ops.EXPECT().GetBackend("b1").Return(be, nil)
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/gone", "").
+		Return(nil, nil, errors.New("no such key"))
+
+	var statuses []string
+	var labels []string
+	observer := func(step progress.Step) {
+		if step.Phase == progress.PhaseEnd {
+			statuses = append(statuses, step.Status)
+			labels = append(labels, step.Label)
+		}
+	}
+
+	sum := s.Scrub(context.Background(), 10, observer)
+
+	if sum.Skipped != 1 {
+		t.Errorf("unreadable copy: Skipped = %d, want 1 (%+v)", sum.Skipped, sum)
+	}
+	if sum.Failed != 0 {
+		t.Errorf("unreadable copy must not count as a hash failure, got Failed = %d", sum.Failed)
+	}
+	if len(statuses) != 1 || statuses[0] != progress.StatusUnreadable {
+		t.Errorf("reported status = %v, want [%s]", statuses, progress.StatusUnreadable)
+	}
+	// The backend belongs in the label because copies are scrubbed per
+	// (key, backend); without it a replicated object reads as a repeated line.
+	if len(labels) != 1 || labels[0] != "bucket/gone [b1]" {
+		t.Errorf("progress label = %v, want [\"bucket/gone [b1]\"]", labels)
+	}
+}
+
+// TestScrub_MismatchStaysDistinctFromUnreadable guards the other side of the
+// split: a copy that was read and did not match is a failure, so widening the
+// unreadable bucket cannot quietly swallow real corruption.
+func TestScrub_MismatchStaysDistinctFromUnreadable(t *testing.T) {
+	t.Parallel()
+	s, ops, placement, be, ms := setupScrubber(t)
+
+	ms.randomHashedObjects = []core.ObjectLocation{
+		{ObjectKey: "bucket/rotted", BackendName: "b1", SizeBytes: 5, ContentHash: "not-the-hash"},
+	}
+	ops.EXPECT().GetBackend("b1").Return(be, nil).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/rotted", "").
+		Return(&backend.GetObjectResult{
+			Body: io.NopCloser(strings.NewReader("hello")),
+			Size: 5,
+		}, func() {}, nil)
+	placement.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), "b1", "bucket/rotted", gomock.Any(), gomock.Any()).AnyTimes()
+
+	var statuses []string
+	sum := s.Scrub(context.Background(), 10, func(step progress.Step) {
+		if step.Phase == progress.PhaseEnd {
+			statuses = append(statuses, step.Status)
+		}
+	})
+
+	if sum.Failed != 1 {
+		t.Errorf("hash mismatch: Failed = %d, want 1 (%+v)", sum.Failed, sum)
+	}
+	if sum.Skipped != 0 {
+		t.Errorf("hash mismatch must not be reported as unreadable, got Skipped = %d", sum.Skipped)
+	}
+	if len(statuses) != 1 || statuses[0] == progress.StatusUnreadable {
+		t.Errorf("reported status = %v, want a mismatch status", statuses)
+	}
+}
+
+// TestScrubCycle_LogsAPassOfOnlyUnreadableCopies guards the quietest failure
+// mode. Skipped is excluded from Attempted, so a cycle whose every copy was
+// unreadable reports zero checked and zero failed. Gating the log on those two
+// alone meant the tick that most needed reporting produced no output at all.
+func TestScrubCycle_LogsAPassOfOnlyUnreadableCopies(t *testing.T) {
+	t.Parallel()
+	s, ops, _, be, ms := setupScrubber(t)
+	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10})
+
+	ms.randomHashedObjects = []core.ObjectLocation{
+		{ObjectKey: "bucket/gone", BackendName: "b1", SizeBytes: 11, ContentHash: "somehash"},
+	}
+	ops.EXPECT().GetBackend("b1").Return(be, nil)
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/gone", "").
+		Return(nil, nil, errors.New("no such key"))
+
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	if err := scrubCycle(context.Background(), s, log); err != nil {
+		t.Fatalf("scrubCycle: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "scrub completed") {
+		t.Fatalf("a cycle of only unreadable copies logged nothing: %q", out)
+	}
+	if !strings.Contains(out, `"unreadable":1`) {
+		t.Errorf("log line does not report the unreadable count: %s", out)
+	}
+}
+
+// TestScrubCycle_SilentWhenNothingToDo keeps the log honest in the other
+// direction: an empty batch is not worth a line every tick.
+func TestScrubCycle_SilentWhenNothingToDo(t *testing.T) {
+	t.Parallel()
+	s, _, _, _, ms := setupScrubber(t)
+	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10})
+	ms.randomHashedObjects = nil
+
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	if err := scrubCycle(context.Background(), s, log); err != nil {
+		t.Fatalf("scrubCycle: %v", err)
+	}
+	if strings.Contains(buf.String(), "scrub completed") {
+		t.Errorf("empty cycle should not log a completion line: %s", buf.String())
 	}
 }

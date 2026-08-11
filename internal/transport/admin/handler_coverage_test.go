@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -521,5 +522,72 @@ func TestHandleRotateEncryptionKey_DrivesListLoop(t *testing.T) {
 	}
 	if len(raw) != 4 {
 		t.Errorf("response has %d keys, want exactly 4: %s", len(raw), body2)
+	}
+}
+
+// TestHandleScrub_ReportsUnreadableCount pins the count that used to be
+// dropped. A pass that could not read half the copies must not report the same
+// shape as a clean one, so the JSON response carries unreadable next to
+// checked and failed.
+func TestHandleScrub_ReportsUnreadableCount(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}})
+	h.scrubber = newScrubber(t, &scrubberStub{scrubChecked: 4, scrubFailed: 1, scrubSkipped: 7})
+
+	w := httptest.NewRecorder()
+	h.handleScrub(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/scrub", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp adminapi.ScrubResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Checked != 4 || resp.Failed != 1 || resp.Unreadable != 7 {
+		t.Errorf("got checked=%d failed=%d unreadable=%d, want 4/1/7",
+			resp.Checked, resp.Failed, resp.Unreadable)
+	}
+}
+
+// TestHandleScrub_StreamSummaryReportsUnreadable drives the NDJSON path, where
+// the terminal summary line is what an operator actually reads. Reporting only
+// checked and failed there is what let a pass over unreadable copies look
+// clean.
+func TestHandleScrub_StreamSummaryReportsUnreadable(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}})
+	h.scrubber = newScrubber(t, &scrubberStub{scrubChecked: 3, scrubFailed: 2, scrubSkipped: 5})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/scrub", nil)
+	req.Header.Set("Accept", adminstream.ContentType)
+	w := httptest.NewRecorder()
+	h.handleScrub(w, req)
+
+	if ct := w.Header().Get("Content-Type"); ct != adminstream.ContentType {
+		t.Fatalf("Content-Type = %q, want %q", ct, adminstream.ContentType)
+	}
+
+	var result adminstream.Event
+	for line := range strings.SplitSeq(strings.TrimSpace(w.Body.String()), "\n") {
+		var ev adminstream.Event
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatalf("decode %q: %v", line, err)
+		}
+		if ev.Kind == adminstream.KindResult {
+			result = ev
+		}
+	}
+
+	if result.Kind != adminstream.KindResult {
+		t.Fatalf("no result event in stream: %s", w.Body.String())
+	}
+	if !strings.Contains(result.Message, "unreadable 5") {
+		t.Errorf("summary = %q, want it to report unreadable 5", result.Message)
+	}
+	if got := result.Fields["unreadable"]; got != float64(5) {
+		t.Errorf("fields[unreadable] = %v, want 5", got)
 	}
 }
