@@ -530,8 +530,10 @@ func TestReplicate_FactorOne_Noop(t *testing.T) {
 
 // TestReplicate_NothingUnderReplicated verifies the replicate nothing under replicated contract.
 // Asserts that unexpected error:.
+// Deliberately not parallel: asserts a process-wide gauge that other
+// replication tests overwrite, so a concurrent run reads whichever cycle
+// finished last.
 func TestReplicate_NothingUnderReplicated(t *testing.T) {
-	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)

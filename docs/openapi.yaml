@@ -1232,10 +1232,14 @@ components:
                     type: string
                 status:
                     type: string
+                unreadable:
+                    format: int64
+                    type: integer
             required:
                 - status
                 - checked
                 - failed
+                - unreadable
             type: object
         SetLogLevelRequest:
             properties:

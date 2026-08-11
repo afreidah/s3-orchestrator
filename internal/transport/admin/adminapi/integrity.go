@@ -20,12 +20,19 @@ type IntegrityOutcome struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// ScrubResponse reports a scrub pass: how many stored objects had their
-// content hash verified against backend data, and how many did not match.
+// ScrubResponse reports a scrub pass: how many stored copies had their content
+// hash verified against backend data, how many did not match, and how many
+// could not be read at all.
+//
+// Unreadable is reported separately because it is not a hash result. A pass
+// that could not read a single copy has nothing to say about whether the
+// bytes are intact, and reporting only Checked and Failed makes that pass look
+// like a clean one.
 type ScrubResponse struct {
 	IntegrityOutcome
-	Checked int `json:"checked"`
-	Failed  int `json:"failed"`
+	Checked    int `json:"checked"`
+	Failed     int `json:"failed"`
+	Unreadable int `json:"unreadable"`
 }
 
 // BackfillChecksumsResponse reports a checksum backfill pass. Done is true

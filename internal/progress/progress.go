@@ -23,9 +23,15 @@ const (
 )
 
 // Outcome values reported on a PhaseEnd step.
+//
+// StatusFailed means the work ran and the item did not pass. StatusUnreadable
+// means it never ran, because the item could not be retrieved: a distinct word
+// so an item the worker could not even look at is not reported as one it
+// judged and rejected.
 const (
-	StatusOK     = "ok"
-	StatusFailed = "failed"
+	StatusOK         = "ok"
+	StatusFailed     = "failed"
+	StatusUnreadable = "unreadable"
 )
 
 // Step is one progress notification for a single unit of work. Status and

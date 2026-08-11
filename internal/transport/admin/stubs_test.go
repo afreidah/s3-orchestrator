@@ -160,6 +160,7 @@ func newOverRep(t *testing.T, cfg overRepStub) *MockOverReplicationOps {
 type scrubberStub struct {
 	scrubChecked      int
 	scrubFailed       int
+	scrubSkipped      int
 	backfillProcessed int
 	backfillMore      bool
 	backfillCalls     int
@@ -176,6 +177,7 @@ func newScrubber(t *testing.T, cfg *scrubberStub) *MockScrubberOps {
 				Attempted: cfg.scrubChecked,
 				Succeeded: cfg.scrubChecked - cfg.scrubFailed,
 				Failed:    cfg.scrubFailed,
+				Skipped:   cfg.scrubSkipped,
 			}
 		}).AnyTimes()
 	m.EXPECT().Backfill(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
