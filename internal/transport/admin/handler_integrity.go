@@ -49,6 +49,7 @@ func (h *Handler) Scrub(ctx context.Context, batchSize int, observer progress.Ob
 		IntegrityOutcome: adminapi.IntegrityOutcome{Status: "ok"},
 		Checked:          sum.Attempted,
 		Failed:           sum.Failed,
+		Unreadable:       sum.Skipped,
 	}
 }
 
@@ -76,8 +77,13 @@ func (h *Handler) streamScrub(w http.ResponseWriter, r *http.Request, batchSize 
 		}
 		return stepResult{
 			Processed: res.Checked,
-			Summary:   fmt.Sprintf("checked %d, failed %d", res.Checked, res.Failed),
-			Fields:    map[string]any{"checked": res.Checked, "failed": res.Failed},
+			Summary: fmt.Sprintf("checked %d, failed %d, unreadable %d",
+				res.Checked, res.Failed, res.Unreadable),
+			Fields: map[string]any{
+				"checked":    res.Checked,
+				"failed":     res.Failed,
+				"unreadable": res.Unreadable,
+			},
 		}, nil
 	})
 }

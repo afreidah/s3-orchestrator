@@ -247,8 +247,10 @@ func TestClean_FactorOne_Noop(t *testing.T) {
 
 // TestClean_NothingOverReplicated verifies the clean nothing over replicated contract.
 // Asserts that unexpected error:.
+// Deliberately not parallel: asserts a process-wide gauge that other
+// over-replication tests overwrite, so a concurrent run reads whichever
+// cycle finished last.
 func TestClean_NothingOverReplicated(t *testing.T) {
-	t.Parallel()
 	ctrl := gomock.NewController(t)
 	ops := NewMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)

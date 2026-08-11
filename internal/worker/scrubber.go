@@ -114,7 +114,10 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int, observer progress.O
 		Log:         s.log,
 		Concurrency: 1,
 		Observer:    observer,
-		Key:         func(l core.ObjectLocation) string { return l.ObjectKey },
+		// Copies are verified per (key, backend), so a replicated object is
+		// scrubbed once per backend. Naming the backend keeps those from
+		// reading as the same object listed twice.
+		Key: func(l core.ObjectLocation) string { return l.ObjectKey + " [" + l.BackendName + "]" },
 	}
 	return runner.Run(ctx, locs, func(ctx context.Context, loc core.ObjectLocation) ItemResult {
 		res := s.verifyOne(ctx, &loc)
@@ -156,7 +159,7 @@ func (s *Scrubber) verifyOne(ctx context.Context, loc *core.ObjectLocation) Item
 	if verifyErr != nil {
 		s.log.WarnContext(ctx, "failed to verify object",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", verifyErr)
-		return ItemResult{Outcome: ItemSkipped, Status: progress.StatusFailed}
+		return ItemResult{Outcome: ItemSkipped, Status: progress.StatusUnreadable}
 	}
 	if match {
 		return ItemResult{Outcome: ItemSucceeded, Status: progress.StatusOK}
