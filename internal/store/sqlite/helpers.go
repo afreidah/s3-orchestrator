@@ -19,12 +19,44 @@ import (
 // TIMESTAMP HELPERS
 // -------------------------------------------------------------------------
 
-// now returns the current time as an RFC3339Nano string for SQLite storage.
+// timestampFormat is the canonical on-disk shape for every timestamp column.
+//
+// SQLite stores these as TEXT, so ORDER BY and every range comparison on them
+// is lexicographic, and text order has to agree with chronological order.
+// time.RFC3339Nano cannot be used for writes because it strips trailing zeros:
+// the fractional part varies in width, and wherever the earlier value is a
+// prefix of the later one the comparison inverts, because 'Z' (0x5A) sorts
+// above '0' (0x30).
+//
+//	"...00.5Z"  >  "...00.50000001Z"   as text
+//	"...00.5Z"  <  "...00.50000001Z"   in time
+//
+// Nine digits, always padded, keeps the two orders identical. Milliseconds
+// would also be fixed width but are too coarse: writes made within the same
+// millisecond collapse into ties, and the scrub queue then falls through to its
+// object_key tiebreak rather than ordering by age.
+const timestampFormat = "2006-01-02T15:04:05.000000000Z07:00"
+
+// canonicalTimestampLen is the width every stored timestamp has once written in
+// timestampFormat: "2006-01-02T15:04:05.000000000Z". Migration 0006 uses it to
+// recognise rows it has already normalised, which is what makes re-running free.
+const canonicalTimestampLen = 30
+
+// now returns the current time in the canonical on-disk shape.
 func now() string {
-	return time.Now().UTC().Format(time.RFC3339Nano)
+	return formatTime(time.Now())
 }
 
-// parseTime parses an RFC3339Nano timestamp string from SQLite into a time.Time.
+// formatTime renders t in the canonical on-disk shape. Every write of a
+// timestamp column goes through here or through now(), so no column ever holds
+// a mix of widths.
+func formatTime(t time.Time) string {
+	return t.UTC().Format(timestampFormat)
+}
+
+// parseTime parses a stored timestamp. Reads accept RFC3339Nano rather than the
+// canonical format so rows written before this change, and rows written by a
+// column DEFAULT, still parse.
 func parseTime(s string) (time.Time, error) {
 	return time.Parse(time.RFC3339Nano, s)
 }

@@ -17,6 +17,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -1946,29 +1947,97 @@ func TestVerifySchemaVersion_TableMissing(t *testing.T) {
 	}
 }
 
-// TestRunMigrations_VersionMismatchReturnsError verifies the schema-
-// mismatch branch in RunMigrations: an existing schema_version row whose
-// value differs from expectedSchemaVersion must surface the "manual
-// migration required" diagnostic rather than silently re-applying the
-// schema on top of stale state.
-func TestRunMigrations_VersionMismatchReturnsError(t *testing.T) {
+// TestRunMigrations_NewerSchemaReturnsError covers the one mismatch that is
+// still fatal. A database written by a later release may contain changes this
+// binary knows nothing about, so running against it is refused rather than
+// guessed at.
+func TestRunMigrations_NewerSchemaReturnsError(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	// newTestStore already ran RunMigrations, so schema_version is at the
-	// current expected value. Bump it so the next RunMigrations call hits
-	// the mismatch branch.
 	if _, err := s.db.ExecContext(ctx, `UPDATE schema_version SET version = version + 100`); err != nil {
 		t.Fatalf("bump schema version: %v", err)
 	}
 
 	err := s.RunMigrations(ctx)
 	if err == nil {
-		t.Fatal("expected mismatch error from RunMigrations, got nil")
+		t.Fatal("expected an error for a schema newer than the binary, got nil")
 	}
-	if !strings.Contains(err.Error(), "does not match expected") {
+	if !strings.Contains(err.Error(), "newer than expected") {
 		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// TestRunMigrations_UpgradesAnOlderDatabase is the behaviour the numbered
+// migrations exist for: a database left at an earlier version is brought up to
+// the current one rather than refused. Before this, any mismatch was fatal and
+// every schema change demanded hand-migration by the operator.
+func TestRunMigrations_UpgradesAnOlderDatabase(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Rewind to the version before the first numbered migration, as an
+	// installation predating it would be.
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM schema_version; INSERT INTO schema_version (version) VALUES (?)`,
+		expectedSchemaVersion-1); err != nil {
+		t.Fatalf("rewind schema version: %v", err)
+	}
+
+	if err := s.RunMigrations(ctx); err != nil {
+		t.Fatalf("RunMigrations on an older database: %v", err)
+	}
+
+	version, exists, err := s.currentSchemaVersion(ctx)
+	if err != nil || !exists {
+		t.Fatalf("read schema version: %v (exists=%v)", err, exists)
+	}
+	if version != expectedSchemaVersion {
+		t.Errorf("schema version = %d after upgrade, want %d", version, expectedSchemaVersion)
+	}
+
+	// Running again is a no-op: an applied migration is recorded, so it is not
+	// replayed on the next start.
+	if err := s.RunMigrations(ctx); err != nil {
+		t.Fatalf("second RunMigrations: %v", err)
+	}
+	var rows int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM schema_version WHERE version = ?`, expectedSchemaVersion).Scan(&rows); err != nil {
+		t.Fatalf("count version rows: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("version %d recorded %d times, want once", expectedSchemaVersion, rows)
+	}
+}
+
+// TestMigrations_AreNumberedAndReachExpectedVersion guards the pairing between
+// the embedded files and expectedSchemaVersion. A migration added without
+// bumping the constant would never run; a constant bumped without a migration
+// would leave every database reporting a version it never reached.
+func TestMigrations_AreNumberedAndReachExpectedVersion(t *testing.T) {
+	t.Parallel()
+
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations: %v", err)
+	}
+	if len(migrations) == 0 {
+		t.Fatal("no embedded migrations found")
+	}
+
+	for i, m := range migrations {
+		if i > 0 && m.version <= migrations[i-1].version {
+			t.Errorf("migration %d (%s) does not sort after %d", m.version, m.name, migrations[i-1].version)
+		}
+		if m.version > expectedSchemaVersion {
+			t.Errorf("migration %d (%s) is above expectedSchemaVersion %d", m.version, m.name, expectedSchemaVersion)
+		}
+	}
+	if highest := migrations[len(migrations)-1].version; highest != expectedSchemaVersion {
+		t.Errorf("highest migration is %d but expectedSchemaVersion is %d", highest, expectedSchemaVersion)
 	}
 }
 
@@ -2767,5 +2836,226 @@ func TestSqlite_CountScrubCandidatesOnBackends(t *testing.T) {
 
 	if n, err := s.CountScrubCandidatesOnBackends(ctx, nil); err != nil || n != 0 {
 		t.Errorf("empty backend list: count=%d err=%v, want 0/nil", n, err)
+	}
+}
+
+// -------------------------------------------------------------------------
+// TIMESTAMP ORDERING
+// -------------------------------------------------------------------------
+
+// TestTimestampFormat_TextOrderMatchesChronologicalOrder is the property the
+// canonical format exists for. These columns are TEXT, so ORDER BY compares
+// them lexicographically; if the two orders can disagree, every queue and
+// cutoff built on them is unreliable.
+//
+// The instants below are the shape that broke RFC3339Nano: one is a prefix of
+// the other once trailing zeros are stripped, and 'Z' sorts above '0'.
+func TestTimestampFormat_TextOrderMatchesChronologicalOrder(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 8, 11, 6, 0, 0, 0, time.UTC)
+	instants := []time.Time{
+		base,
+		base.Add(1),                      // 1ns  - forces a nine-digit fraction
+		base.Add(10 * time.Nanosecond),   // trailing zero
+		base.Add(500 * time.Millisecond), // ".5" under RFC3339Nano
+		base.Add(500*time.Millisecond + 10*time.Nanosecond),
+		base.Add(time.Second),
+	}
+
+	for i := 1; i < len(instants); i++ {
+		earlier, later := instants[i-1], instants[i]
+		a, b := formatTime(earlier), formatTime(later)
+		if a >= b {
+			t.Errorf("text order disagrees with time order:\n  earlier %q\n  later   %q", a, b)
+		}
+		if len(a) != canonicalTimestampLen || len(b) != canonicalTimestampLen {
+			t.Errorf("timestamps are not fixed width: %q (%d), %q (%d)", a, len(a), b, len(b))
+		}
+	}
+}
+
+// TestMigration0006_NormalizesLegacyTimestamps proves the migration repairs
+// rows already on disk. Writing new rows correctly is not enough on its own: a
+// padded value and an unpadded one are not mutually orderable, so a fleet
+// upgraded mid-life would keep mis-ordering until the old rows were brought up.
+func TestMigration0006_NormalizesLegacyTimestamps(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Write rows in the pre-canonical shape, exactly as RFC3339Nano rendered
+	// them: variable fraction, and one with no fraction at all.
+	legacy := map[string]string{
+		"bucket/none":  "2026-08-11T06:00:00Z",
+		"bucket/short": "2026-08-11T06:00:00.5Z",
+		"bucket/long":  "2026-08-11T06:00:00.50000001Z",
+	}
+	for key, ts := range legacy {
+		mustRecordObject(t, s, key, "backend-a", 100)
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE object_locations SET created_at = ?, last_scrubbed_at = NULL
+			 WHERE object_key = ?`, ts, key); err != nil {
+			t.Fatalf("seed legacy timestamp for %s: %v", key, err)
+		}
+	}
+
+	// Rewind and re-run so migration 0006 applies to the seeded rows.
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM schema_version; INSERT INTO schema_version (version) VALUES (?)`,
+		expectedSchemaVersion-1); err != nil {
+		t.Fatalf("rewind schema version: %v", err)
+	}
+	if err := s.RunMigrations(ctx); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT object_key, created_at FROM object_locations
+		 WHERE object_key LIKE 'bucket/%' ORDER BY created_at`)
+	if err != nil {
+		t.Fatalf("read normalized rows: %v", err)
+	}
+	defer rows.Close()
+
+	var order []string
+	for rows.Next() {
+		var key, ts string
+		if err := rows.Scan(&key, &ts); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if len(ts) != canonicalTimestampLen {
+			t.Errorf("%s kept a non-canonical timestamp %q (%d chars)", key, ts, len(ts))
+		}
+		order = append(order, key)
+	}
+
+	// Chronologically: none < short < long. Before the migration the text
+	// comparison put "…00.5Z" after "…00.50000001Z".
+	want := []string{"bucket/none", "bucket/short", "bucket/long"}
+	for i := range want {
+		if i >= len(order) || order[i] != want[i] {
+			t.Fatalf("ORDER BY created_at gave %v, want %v", order, want)
+		}
+	}
+}
+
+// -------------------------------------------------------------------------
+// MIGRATION LOADING
+// -------------------------------------------------------------------------
+
+// TestLoadMigrations_RejectsMalformedNames pins the naming rules the runner
+// depends on. The version comes from the file name, so a name it cannot parse
+// has to stop startup: guessing an order, or silently skipping the file, would
+// leave a database that reports a version it never reached.
+func TestLoadMigrations_RejectsMalformedNames(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		file    string
+		wantErr string
+	}{
+		{"no separator", "0006.sql", "is not named"},
+		{"non-numeric version", "abc_thing.sql", "non-numeric version prefix"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fsys := fstest.MapFS{
+				migrationDir + "/" + tc.file: &fstest.MapFile{Data: []byte("SELECT 1;")},
+			}
+			_, err := loadMigrationsFrom(fsys)
+			if err == nil {
+				t.Fatalf("expected an error for %q, got nil", tc.file)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %v, want it to mention %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestLoadMigrations_OrdersByVersionAndIgnoresNonSQL checks the two things the
+// runner assumes: ascending order regardless of directory listing order, and
+// that unrelated files in the directory are skipped rather than parsed.
+func TestLoadMigrations_OrdersByVersionAndIgnoresNonSQL(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{
+		migrationDir + "/0010_ten.sql":   &fstest.MapFile{Data: []byte("SELECT 10;")},
+		migrationDir + "/0002_two.sql":   &fstest.MapFile{Data: []byte("SELECT 2;")},
+		migrationDir + "/0001_one.sql":   &fstest.MapFile{Data: []byte("SELECT 1;")},
+		migrationDir + "/README.md":      &fstest.MapFile{Data: []byte("not a migration")},
+		migrationDir + "/notes.sql.orig": &fstest.MapFile{Data: []byte("not a migration")},
+	}
+
+	got, err := loadMigrationsFrom(fsys)
+	if err != nil {
+		t.Fatalf("loadMigrationsFrom: %v", err)
+	}
+	want := []int{1, 2, 10}
+	if len(got) != len(want) {
+		t.Fatalf("loaded %d migrations, want %d: %+v", len(got), len(want), got)
+	}
+	for i, v := range want {
+		if got[i].version != v {
+			t.Errorf("position %d = version %d, want %d", i, got[i].version, v)
+		}
+	}
+	// 10 must sort after 2, which string ordering on the file name would not do.
+	if got[2].name != "ten" {
+		t.Errorf("last migration name = %q, want %q", got[2].name, "ten")
+	}
+}
+
+// TestLoadMigrations_MissingDirectoryIsAnError covers the read failure. An
+// empty or absent migration set is not something to shrug at: it means the
+// binary cannot bring a database to the version it claims to expect.
+func TestLoadMigrations_MissingDirectoryIsAnError(t *testing.T) {
+	t.Parallel()
+
+	if _, err := loadMigrationsFrom(fstest.MapFS{}); err == nil {
+		t.Fatal("expected an error when the migrations directory is absent")
+	}
+}
+
+// TestRunMigrations_SurfacesDatabaseErrors keeps a failing database from
+// reading as a successful migration. Returning nil here would let the process
+// start against a database that was never brought up to date.
+func TestRunMigrations_SurfacesDatabaseErrors(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.db.Close(); err != nil {
+		t.Fatalf("closing the test database: %v", err)
+	}
+	if err := s.RunMigrations(ctx); err == nil {
+		t.Error("RunMigrations should surface a closed database")
+	}
+}
+
+// TestApplyMigration_FailedStatementRecordsNothing is the transactional
+// guarantee. A migration whose SQL fails must leave no version row behind, or
+// the next start would skip it and treat a database as migrated when it is not.
+func TestApplyMigration_FailedStatementRecordsNothing(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	bad := migration{version: expectedSchemaVersion + 1, name: "broken", sql: "THIS IS NOT SQL;"}
+	if err := s.applyMigration(ctx, bad); err == nil {
+		t.Fatal("expected an error from a migration with invalid SQL")
+	}
+
+	var rows int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM schema_version WHERE version = ?`, bad.version).Scan(&rows); err != nil {
+		t.Fatalf("count version rows: %v", err)
+	}
+	if rows != 0 {
+		t.Errorf("a failed migration recorded %d version rows, want 0", rows)
 	}
 }

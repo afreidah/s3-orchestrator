@@ -15,7 +15,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -110,7 +109,7 @@ func (s *Store) GetLeastUtilizedBackend(ctx context.Context, size int64, eligibl
 // backends with their quota limits. Creates new entries or updates existing limits.
 func (s *Store) SyncQuotaLimits(ctx context.Context, backends []config.BackendConfig) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
-		now := time.Now().UTC().Format(time.RFC3339Nano)
+		now := now()
 		for i := range backends {
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO backend_quotas (backend_name, bytes_limit, bytes_used, updated_at)
@@ -211,7 +210,7 @@ func (s *Store) countObjectsByBackend(ctx context.Context, whereClause, errLabel
 // IncrementOrphanBytes adds bytes to the orphan_bytes counter for a backend.
 // Called when a physical delete fails and is enqueued for retry.
 func (s *Store) IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := now()
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE backend_quotas
 		SET orphan_bytes = orphan_bytes + ?, updated_at = ?
@@ -227,7 +226,7 @@ func (s *Store) IncrementOrphanBytes(ctx context.Context, backendName string, am
 // exhausted. Uses MAX(0, x-y) instead of PostgreSQL GREATEST to prevent
 // underflow.
 func (s *Store) DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := now()
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE backend_quotas
 		SET orphan_bytes = MAX(0, orphan_bytes - ?), updated_at = ?
@@ -245,7 +244,7 @@ func (s *Store) DecrementOrphanBytes(ctx context.Context, backendName string, am
 // FlushUsageDeltas atomically adds accumulated usage deltas to the persistent
 // usage row. Creates the row if it doesn't exist for this (backend, period).
 func (s *Store) FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := now()
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO backend_usage (backend_name, period, api_requests, egress_bytes, ingress_bytes, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?)

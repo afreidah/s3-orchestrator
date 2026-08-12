@@ -762,17 +762,36 @@ they truly belong to a new bounded concern - into a new role.
    handwritten test mocks (`internal/proxy/mock_store_test.go` etc.).
 6. Add a `Provide<Role>` provider in `internal/di/di.go` if it is a new
    role; otherwise the existing provider already covers it.
-7. Schema changes go in a new `internal/store/postgres/migrations/000NN_*.sql`
-   AND `internal/store/sqlite/schema.sql`. Each engine pins the version it
-   expects, and both have to move together with the schema:
-   - bump `postgres.ExpectedSchemaVersion` to the new migration number
-   - bump `sqlite.expectedSchemaVersion` and the `INSERT INTO schema_version`
-     value at the bottom of `schema.sql` to match
+7. Schema changes are written twice, once per engine, and both engines pin the
+   version they expect:
 
-   Missing either one leaves the binary refusing to start against a database
-   it just migrated, and only the integration suite catches it: those tests
-   are behind `//go:build integration`, so `go test ./...` compiles and passes
-   without them. Verify schema work with `make integration-test`.
+   **PostgreSQL** - add `internal/store/postgres/migrations/000NN_*.sql` and
+   bump `postgres.ExpectedSchemaVersion` to the new migration number.
+
+   **SQLite** - add `internal/store/sqlite/migrations/000NN_*.sql`, apply the
+   same change to `internal/store/sqlite/schema.sql`, and bump both
+   `sqlite.expectedSchemaVersion` and the `INSERT INTO schema_version` value at
+   the bottom of `schema.sql`.
+
+   Both files are needed because they serve different databases. `schema.sql`
+   is the baseline a fresh database is created from; the numbered migration is
+   what an existing database is upgraded through. A change made in only one of
+   them means a new install and an upgraded install disagree, which is the kind
+   of drift nothing notices until an operator hits it.
+
+   Migrations are named `<version>_<description>.sql`; the runner reads the
+   version from the file name, applies every migration above the recorded
+   version in order, and writes the version row in the same transaction as the
+   migration itself.
+
+   Data repair belongs in a migration too, not in a startup pass. A one-off
+   fixup that runs on every boot is unversioned, unrecorded, and invisible to
+   the operator whose data it rewrites.
+
+   Missing a version bump leaves the binary refusing to start against a
+   database it just migrated, and only the integration suite catches it: those
+   tests are behind `//go:build integration`, so `go test ./...` compiles and
+   passes without them. Verify schema work with `make integration-test`.
 
 ### Adding a New Worker
 

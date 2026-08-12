@@ -296,7 +296,7 @@ func scanDelimitedEntries(rows *sql.Rows) ([]core.DelimitedEntry, error) {
 // expiration to find objects eligible for deletion.
 func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]core.ObjectLocation, error) {
 	escapedPrefix := likeEscaper.Replace(prefix)
-	cutoffStr := cutoff.UTC().Format(time.RFC3339Nano)
+	cutoffStr := formatTime(cutoff)
 
 	// Subquery with GROUP BY + MIN(rowid) replaces DISTINCT ON (object_key).
 	rows, err := s.db.QueryContext(ctx, `
@@ -510,7 +510,7 @@ func (s *Store) CountScrubCandidatesOnBackends(ctx context.Context, backends []s
 // MarkObjectScrubbed records that a copy was examined, which is what advances
 // the sweep past it.
 func (s *Store) MarkObjectScrubbed(ctx context.Context, key, backendName string) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := now()
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE object_locations SET last_scrubbed_at = ?
 		 WHERE object_key = ? AND backend_name = ?`,

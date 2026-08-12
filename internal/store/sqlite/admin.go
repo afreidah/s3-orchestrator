@@ -261,7 +261,7 @@ func (s *Store) CompleteNotification(ctx context.Context, id int64) error {
 // RetryNotification increments the attempt counter and schedules the next
 // retry at an absolute time computed from the backoff duration.
 func (s *Store) RetryNotification(ctx context.Context, id int64, backoff time.Duration, lastError string) error {
-	nextRetry := time.Now().Add(backoff).UTC().Format(time.RFC3339Nano)
+	nextRetry := formatTime(time.Now().Add(backoff))
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE notification_outbox
 		SET attempts = attempts + 1, next_retry = ?, last_error = ?
