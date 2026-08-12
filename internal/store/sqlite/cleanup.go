@@ -22,7 +22,7 @@ import (
 
 // EnqueueCleanup adds a failed cleanup operation to the retry queue.
 func (s *Store) EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := now()
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes, created_at, next_retry)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
@@ -39,7 +39,7 @@ func (s *Store) EnqueueCleanup(ctx context.Context, backendName, objectKey, reas
 // instead. claimed_at is parsed back from RFC3339Nano text since SQLite has
 // no native timestamp type.
 func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]core.CleanupItem, error) {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := now()
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, backend_name, object_key, reason, attempts, size_bytes,
 		        claimed_at, claimed_by
@@ -79,8 +79,8 @@ func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]core.Clean
 // path apply (next_retry due, attempts < 10, claim NULL or older than
 // graceCutoff). The reclaimed flag is computed at SELECT time.
 func (s *Store) ClaimPendingCleanups(ctx context.Context, limit int, instanceID string, graceCutoff time.Time) ([]core.CleanupItem, error) {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	cutoff := graceCutoff.UTC().Format(time.RFC3339Nano)
+	now := now()
+	cutoff := formatTime(graceCutoff)
 
 	var items []core.CleanupItem
 	err := cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
@@ -138,7 +138,7 @@ func selectClaimableRows(ctx context.Context, tx *sql.Tx, now, cutoff string, li
 // caller wraps both the SELECT and these UPDATEs in one transaction so
 // the claim is atomic against concurrent workers.
 func stampClaims(ctx context.Context, tx *sql.Tx, items []core.CleanupItem, instanceID string) error {
-	stamp := time.Now().UTC().Format(time.RFC3339Nano)
+	stamp := now()
 	for i := range items {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE cleanup_queue
@@ -191,7 +191,7 @@ func (s *Store) CompleteCleanupItem(ctx context.Context, id int64) error {
 // and clears the claim so the row is immediately re-eligible for the next
 // worker tick.
 func (s *Store) RetryCleanupItem(ctx context.Context, id int64, backoff time.Duration, lastError string) error {
-	nextRetry := time.Now().Add(backoff).UTC().Format(time.RFC3339Nano)
+	nextRetry := formatTime(time.Now().Add(backoff))
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE cleanup_queue
 		 SET attempts = attempts + 1,
@@ -304,7 +304,7 @@ func (s *Store) RequeueCleanupDLQ(ctx context.Context, backend string) (int64, e
 	// EnqueueCleanup and GetPendingCleanups' comparison format; the column
 	// default's millisecond form sorts inconsistently (a trailing 'Z' outranks
 	// digits), which would delay eligibility of the requeued rows.
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := now()
 	var n int64
 	err := cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `

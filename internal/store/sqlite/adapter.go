@@ -68,13 +68,16 @@ func (a *sqliteTxAdapter) InsertPending(ctx context.Context, p *core.PendingObje
 		encrypted = 1
 	}
 	if _, err := a.tx.ExecContext(ctx,
+		// created_at is set here rather than left to the column default: the
+		// default renders milliseconds while every other write renders
+		// nanoseconds, and the reaper's min-age check compares the two as text.
 		`INSERT INTO pending_objects
 		   (intent_id, object_key, backend_name, size_bytes,
-		    encrypted, encryption_key, key_id, plaintext_size, content_hash)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.IntentID, p.ObjectKey, p.BackendName, p.SizeBytes,
 		encrypted, p.EncryptionKey,
-		nullableString(p.KeyID), nullableInt64(p.PlaintextSize), nullableString(p.ContentHash),
+		nullableString(p.KeyID), nullableInt64(p.PlaintextSize), nullableString(p.ContentHash), now(),
 	); err != nil {
 		return fmt.Errorf("insert pending object: %w", err)
 	}
@@ -201,7 +204,7 @@ func (a *sqliteTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string
 // InsertObjectLocation writes a new object_locations row carrying the
 // encryption and integrity metadata on loc.
 func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.ObjectLocation) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := now()
 	if _, err := a.tx.ExecContext(ctx,
 		`INSERT INTO object_locations
 		   (object_key, backend_name, size_bytes, encrypted, encryption_key,
@@ -411,9 +414,9 @@ func (a *sqliteTxAdapter) GetCleanupQueueRow(ctx context.Context, id int64) (cor
 // reconciled here because the underlying object is still on the backend;
 // orphan_bytes accounting stays untouched on the move.
 func (a *sqliteTxAdapter) InsertCleanupDLQ(ctx context.Context, row *core.CleanupQueueRow) error {
-	firstEnqueued := row.CreatedAt.UTC().Format(time.RFC3339Nano)
+	firstEnqueued := formatTime(row.CreatedAt)
 	if row.CreatedAt.IsZero() {
-		firstEnqueued = time.Now().UTC().Format(time.RFC3339Nano)
+		firstEnqueued = now()
 	}
 	var lastErr any
 	if row.LastError != "" {
@@ -452,7 +455,7 @@ func (a *sqliteTxAdapter) DeleteCleanupItem(ctx context.Context, id int64) error
 // core.ErrNoSpaceAvailable when the guarded UPDATE touches zero rows
 // (quota ceiling would be exceeded).
 func (a *sqliteTxAdapter) IncrementBackendQuota(ctx context.Context, backendName string, delta int64) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := now()
 	res, err := a.tx.ExecContext(ctx, `
 		UPDATE backend_quotas
 		SET bytes_used = bytes_used + ?, updated_at = ?
@@ -474,7 +477,7 @@ func (a *sqliteTxAdapter) IncrementBackendQuota(ctx context.Context, backendName
 
 // DecrementBackendQuota debits delta bytes from backendName.
 func (a *sqliteTxAdapter) DecrementBackendQuota(ctx context.Context, backendName string, delta int64) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := now()
 	if _, err := a.tx.ExecContext(ctx, `
 		UPDATE backend_quotas
 		SET bytes_used = MAX(0, bytes_used - ?), updated_at = ?
@@ -487,7 +490,7 @@ func (a *sqliteTxAdapter) DecrementBackendQuota(ctx context.Context, backendName
 // DecrementOrphanBytes debits delta bytes from the backend's
 // orphan_bytes counter (clamped at zero).
 func (a *sqliteTxAdapter) DecrementOrphanBytes(ctx context.Context, backendName string, delta int64) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := now()
 	if _, err := a.tx.ExecContext(ctx, `
 		UPDATE backend_quotas
 		SET orphan_bytes = MAX(0, orphan_bytes - ?), updated_at = ?
@@ -552,7 +555,7 @@ func (a *sqliteTxAdapter) SumObjectSizesByBackend(ctx context.Context) (map[stri
 
 // SetBackendBytesUsed overwrites bytes_used with the authoritative value.
 func (a *sqliteTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName string, value int64) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := now()
 	if _, err := a.tx.ExecContext(ctx, `
 		UPDATE backend_quotas
 		SET bytes_used = ?, updated_at = ?
