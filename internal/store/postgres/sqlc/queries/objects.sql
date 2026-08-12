@@ -146,6 +146,13 @@ UPDATE object_locations
 SET encryption_key = $3, key_id = $4
 WHERE object_key = $1 AND backend_name = $2;
 
+-- name: CountUnencryptedLocations :one
+-- Copies still stored as plaintext. Uses the same predicate as
+-- ListUnencryptedLocations, so the figure is exactly what encrypt-existing
+-- would process rather than a differently-scoped count that happens to be near
+-- it.
+SELECT count(*) FROM object_locations WHERE encrypted = FALSE;
+
 -- name: ListUnencryptedLocations :many
 SELECT object_key, backend_name, size_bytes
 FROM object_locations

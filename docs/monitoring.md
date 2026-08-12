@@ -294,6 +294,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_encryption_flag_mismatch_total` | Counter | component | Copies whose stored bytes disagreed with their recorded encryption flag |
 | `s3o_import_classified_total` | Counter | source, decision | Discovered objects imported, by what their bytes were classified as (`plaintext`, `adopted_key`, `unreadable`) |
 | `s3o_encrypt_existing_objects_total` | Counter | status | Objects processed by encrypt-existing |
+| `s3o_encryption_plaintext_copies` | Gauge | — | Copies still stored unencrypted; falls only when encrypt-existing is run |
 | `s3o_decrypt_existing_objects_total` | Counter | status | Objects processed by decrypt-existing |
 | `s3o_key_rotation_objects_total` | Counter | status | DEKs re-wrapped by key rotation |
 | `s3o_redis_operations_total` | Counter | operation, status | Redis command outcomes |

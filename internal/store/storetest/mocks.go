@@ -189,6 +189,21 @@ func (mr *MockMetadataStoreMockRecorder) CountScrubCandidatesOnBackends(ctx, bac
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountScrubCandidatesOnBackends", reflect.TypeOf((*MockMetadataStore)(nil).CountScrubCandidatesOnBackends), ctx, backends)
 }
 
+// CountUnencryptedLocations mocks base method.
+func (m *MockMetadataStore) CountUnencryptedLocations(ctx context.Context) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountUnencryptedLocations", ctx)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountUnencryptedLocations indicates an expected call of CountUnencryptedLocations.
+func (mr *MockMetadataStoreMockRecorder) CountUnencryptedLocations(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountUnencryptedLocations", reflect.TypeOf((*MockMetadataStore)(nil).CountUnencryptedLocations), ctx)
+}
+
 // CreateMultipartUpload mocks base method.
 func (m *MockMetadataStore) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) error {
 	m.ctrl.T.Helper()

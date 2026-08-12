@@ -2757,6 +2757,10 @@ func TestScrubQueries_SurfaceDatabaseErrors(t *testing.T) {
 	}
 	// A zero count from a failing database would read as "nothing deferred",
 	// hiding exactly the backlog this figure exists to report.
+	// A zero from a failing database would read as a fully encrypted fleet.
+	if _, err := s.CountUnencryptedLocations(ctx); err == nil {
+		t.Error("CountUnencryptedLocations should surface a closed database")
+	}
 	if _, err := s.CountScrubCandidatesOnBackends(ctx, []string{"backend-a"}); err == nil {
 		t.Error("CountScrubCandidatesOnBackends should surface a closed database")
 	}
@@ -3057,5 +3061,43 @@ func TestApplyMigration_FailedStatementRecordsNothing(t *testing.T) {
 	}
 	if rows != 0 {
 		t.Errorf("a failed migration recorded %d version rows, want 0", rows)
+	}
+}
+
+// TestCountUnencryptedLocations counts what encrypt-existing would process, so
+// the figure an operator sees matches the work the command would actually do.
+func TestCountUnencryptedLocations(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if n, err := s.CountUnencryptedLocations(ctx); err != nil || n != 0 {
+		t.Fatalf("empty store: count=%d err=%v, want 0/nil", n, err)
+	}
+
+	mustRecordObject(t, s, "bucket/plain-a", "backend-a", 100)
+	mustRecordObject(t, s, "bucket/plain-b", "backend-a", 100)
+	mustRecordObject(t, s, "bucket/secret", "backend-a", 100)
+	if err := s.MarkObjectEncrypted(ctx, "bucket/secret", "backend-a",
+		[]byte("wrapped"), "key-0", 100, 132); err != nil {
+		t.Fatalf("MarkObjectEncrypted: %v", err)
+	}
+
+	n, err := s.CountUnencryptedLocations(ctx)
+	if err != nil {
+		t.Fatalf("CountUnencryptedLocations: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("count = %d, want 2 (the encrypted copy must not be counted)", n)
+	}
+
+	// The count and the list agree, so the dashboard figure and the work
+	// encrypt-existing performs cannot drift apart.
+	listed, err := s.ListUnencryptedLocations(ctx, 100, 0)
+	if err != nil {
+		t.Fatalf("ListUnencryptedLocations: %v", err)
+	}
+	if int64(len(listed)) != n {
+		t.Errorf("count = %d but list returned %d rows", n, len(listed))
 	}
 }
