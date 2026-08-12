@@ -449,6 +449,34 @@ func (mr *MockScrubberOpsMockRecorder) Acct() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Acct", reflect.TypeOf((*MockScrubberOps)(nil).Acct))
 }
 
+// BackendOrder mocks base method.
+func (m *MockScrubberOps) BackendOrder() []string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BackendOrder")
+	ret0, _ := ret[0].([]string)
+	return ret0
+}
+
+// BackendOrder indicates an expected call of BackendOrder.
+func (mr *MockScrubberOpsMockRecorder) BackendOrder() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BackendOrder", reflect.TypeOf((*MockScrubberOps)(nil).BackendOrder))
+}
+
+// Backends mocks base method.
+func (m *MockScrubberOps) Backends() map[string]backend.ObjectBackend {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Backends")
+	ret0, _ := ret[0].(map[string]backend.ObjectBackend)
+	return ret0
+}
+
+// Backends indicates an expected call of Backends.
+func (mr *MockScrubberOpsMockRecorder) Backends() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Backends", reflect.TypeOf((*MockScrubberOps)(nil).Backends))
+}
+
 // DeleteWithTimeout mocks base method.
 func (m *MockScrubberOps) DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error {
 	m.ctrl.T.Helper()
@@ -461,6 +489,20 @@ func (m *MockScrubberOps) DeleteWithTimeout(ctx context.Context, be backend.Obje
 func (mr *MockScrubberOpsMockRecorder) DeleteWithTimeout(ctx, be, key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteWithTimeout", reflect.TypeOf((*MockScrubberOps)(nil).DeleteWithTimeout), ctx, be, key)
+}
+
+// ExcludeDraining mocks base method.
+func (m *MockScrubberOps) ExcludeDraining(eligible []string) []string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ExcludeDraining", eligible)
+	ret0, _ := ret[0].([]string)
+	return ret0
+}
+
+// ExcludeDraining indicates an expected call of ExcludeDraining.
+func (mr *MockScrubberOpsMockRecorder) ExcludeDraining(eligible any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExcludeDraining", reflect.TypeOf((*MockScrubberOps)(nil).ExcludeDraining), eligible)
 }
 
 // GetBackend mocks base method.
@@ -507,6 +549,20 @@ func (m *MockScrubberOps) HeadWithTimeout(ctx context.Context, be backend.Object
 func (mr *MockScrubberOpsMockRecorder) HeadWithTimeout(ctx, be, key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeadWithTimeout", reflect.TypeOf((*MockScrubberOps)(nil).HeadWithTimeout), ctx, be, key)
+}
+
+// IsDraining mocks base method.
+func (m *MockScrubberOps) IsDraining(name string) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsDraining", name)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsDraining indicates an expected call of IsDraining.
+func (mr *MockScrubberOpsMockRecorder) IsDraining(name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsDraining", reflect.TypeOf((*MockScrubberOps)(nil).IsDraining), name)
 }
 
 // StreamCopy mocks base method.

@@ -92,9 +92,13 @@ type CleanupOps interface {
 }
 
 // ScrubberOps is the dependency contract for Scrubber. It omits
-// AdmissionControl and BackendAccess because integrity checks are
-// best-effort background work.
+// AdmissionControl because integrity checks are best-effort background work.
+//
+// BackendAccess is required for the fleet roster: the scrubber has to know
+// which backends exist before it can ask the usage tracker which of them it can
+// still afford to read from.
 type ScrubberOps interface {
+	BackendAccess
 	DataMover
 	UsageAccessor
 	RecorderProvider

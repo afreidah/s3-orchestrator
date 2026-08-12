@@ -48,6 +48,23 @@ func (q *Queries) CheckObjectExistsOnBackend(ctx context.Context, arg CheckObjec
 	return exists, err
 }
 
+const countScrubCandidatesOnBackends = `-- name: CountScrubCandidatesOnBackends :one
+SELECT count(*)
+FROM object_locations
+WHERE content_hash IS NOT NULL AND managed
+  AND backend_name = ANY($1::text[])
+`
+
+// Copies eligible for scrubbing that live on the named backends. Used to report
+// how much of the queue a cycle declined to read, which a sampled count of the
+// batch cannot show.
+func (q *Queries) CountScrubCandidatesOnBackends(ctx context.Context, backendNames []string) (int64, error) {
+	row := q.db.QueryRow(ctx, countScrubCandidatesOnBackends, backendNames)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteObjectCopies = `-- name: DeleteObjectCopies :exec
 DELETE FROM object_locations
 WHERE object_key = $1
@@ -291,9 +308,15 @@ const getLeastRecentlyScrubbedObjects = `-- name: GetLeastRecentlyScrubbedObject
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
 FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
+  AND backend_name = ANY($1::text[])
 ORDER BY COALESCE(last_scrubbed_at, created_at) ASC, object_key ASC
-LIMIT $1
+LIMIT $2
 `
+
+type GetLeastRecentlyScrubbedObjectsParams struct {
+	BackendNames []string
+	RowLimit     int32
+}
 
 type GetLeastRecentlyScrubbedObjectsRow struct {
 	ObjectKey     string
@@ -314,8 +337,14 @@ type GetLeastRecentlyScrubbedObjectsRow struct {
 // a write rate above the scrub rate cannot starve older data. It also puts the
 // effort where rot actually accumulates, since churn is deleted long before it
 // degrades while the copies that persist for months are the ones at risk.
-func (q *Queries) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int32) ([]GetLeastRecentlyScrubbedObjectsRow, error) {
-	rows, err := q.db.Query(ctx, getLeastRecentlyScrubbedObjects, limit)
+//
+// backend_names restricts the batch to copies the scrubber can afford to read.
+// Filtering here rather than after selection is what keeps a sweep useful when
+// a backend is over its usage limit: a copy the scrubber would decline never
+// occupies a slot, so it is neither stamped as examined nor left at the head of
+// the queue to be re-selected every cycle.
+func (q *Queries) GetLeastRecentlyScrubbedObjects(ctx context.Context, arg GetLeastRecentlyScrubbedObjectsParams) ([]GetLeastRecentlyScrubbedObjectsRow, error) {
+	rows, err := q.db.Query(ctx, getLeastRecentlyScrubbedObjects, arg.BackendNames, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}

@@ -1231,7 +1231,7 @@ func TestIntegrity_HashOperations(t *testing.T) {
 	}
 
 	// GetRandomHashedObjects should return the hashed one
-	hashed, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10)
+	hashed, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10, []string{"backend-a"})
 	if err != nil {
 		t.Fatalf("GetRandomHashedObjects: %v", err)
 	}
@@ -2541,7 +2541,7 @@ func TestScrubQueue_OrdersByLeastRecentlyScrubbed(t *testing.T) {
 		t.Fatalf("MarkObjectScrubbed(b): %v", err)
 	}
 
-	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10)
+	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10, []string{"backend-a"})
 	if err != nil {
 		t.Fatalf("GetLeastRecentlyScrubbedObjects: %v", err)
 	}
@@ -2590,7 +2590,7 @@ func TestScrubQueue_FreshWritesDoNotJumpTheQueue(t *testing.T) {
 		now.Add(-365*24*time.Hour).Format(time.RFC3339Nano),
 		now.Add(-30*24*time.Hour).Format(time.RFC3339Nano))
 
-	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10)
+	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10, []string{"backend-a"})
 	if err != nil {
 		t.Fatalf("GetLeastRecentlyScrubbedObjects: %v", err)
 	}
@@ -2683,13 +2683,89 @@ func TestScrubQueries_SurfaceDatabaseErrors(t *testing.T) {
 		t.Fatalf("closing the test database: %v", err)
 	}
 
-	if _, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10); err == nil {
+	if _, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10, []string{"backend-a"}); err == nil {
 		t.Error("GetLeastRecentlyScrubbedObjects should surface a closed database")
+	}
+	// A zero count from a failing database would read as "nothing deferred",
+	// hiding exactly the backlog this figure exists to report.
+	if _, err := s.CountScrubCandidatesOnBackends(ctx, []string{"backend-a"}); err == nil {
+		t.Error("CountScrubCandidatesOnBackends should surface a closed database")
 	}
 	if err := s.MarkObjectScrubbed(ctx, "bucket/a", "backend-a"); err == nil {
 		t.Error("MarkObjectScrubbed should surface a closed database")
 	}
 	if _, _, err := s.OldestUnverifiedAge(ctx); err == nil {
 		t.Error("OldestUnverifiedAge should surface a closed database")
+	}
+}
+
+// TestSqlite_ScrubQueue_BackendFilterExcludesUnaffordableBackends proves the
+// filter is applied in SQL rather than by the caller. A copy on an excluded
+// backend must not appear in the batch at all: if it did, the scrubber would
+// have to either stamp it without reading it or leave it at the head of the
+// queue forever.
+func TestSqlite_ScrubQueue_BackendFilterExcludesUnaffordableBackends(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	for backend, key := range map[string]string{"backend-a": "bucket/a", "backend-b": "bucket/b"} {
+		if _, err := s.RecordObject(ctx, key, backend, 10, nil); err != nil {
+			t.Fatalf("RecordObject(%s): %v", key, err)
+		}
+		if err := s.UpdateContentHash(ctx, key, backend, "sha256:"+key); err != nil {
+			t.Fatalf("UpdateContentHash(%s): %v", key, err)
+		}
+	}
+
+	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10, []string{"backend-a"})
+	if err != nil {
+		t.Fatalf("GetLeastRecentlyScrubbedObjects: %v", err)
+	}
+	if len(got) != 1 || got[0].BackendName != "backend-a" {
+		t.Fatalf("got %d copies %+v, want only the one on backend-a", len(got), got)
+	}
+
+	// An empty affordable set means nothing may be read, not everything.
+	none, err := s.GetLeastRecentlyScrubbedObjects(ctx, 10, nil)
+	if err != nil {
+		t.Fatalf("GetLeastRecentlyScrubbedObjects(nil): %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("an empty backend list returned %d copies, want 0", len(none))
+	}
+}
+
+// TestSqlite_CountScrubCandidatesOnBackends counts the queue behind the
+// backends a cycle declined, which is what lets a scrub report how much it left
+// undone rather than only what it happened to sample.
+func TestSqlite_CountScrubCandidatesOnBackends(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	for _, key := range []string{"bucket/x", "bucket/y"} {
+		if _, err := s.RecordObject(ctx, key, "backend-b", 10, nil); err != nil {
+			t.Fatalf("RecordObject(%s): %v", key, err)
+		}
+		if err := s.UpdateContentHash(ctx, key, "backend-b", "sha256:"+key); err != nil {
+			t.Fatalf("UpdateContentHash(%s): %v", key, err)
+		}
+	}
+	// Hashless copies are not scrub candidates and must not be counted.
+	if _, err := s.RecordObject(ctx, "bucket/z", "backend-b", 10, nil); err != nil {
+		t.Fatalf("RecordObject(z): %v", err)
+	}
+
+	n, err := s.CountScrubCandidatesOnBackends(ctx, []string{"backend-b"})
+	if err != nil {
+		t.Fatalf("CountScrubCandidatesOnBackends: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("count = %d, want 2 (the hashed copies only)", n)
+	}
+
+	if n, err := s.CountScrubCandidatesOnBackends(ctx, nil); err != nil || n != 0 {
+		t.Errorf("empty backend list: count=%d err=%v, want 0/nil", n, err)
 	}
 }

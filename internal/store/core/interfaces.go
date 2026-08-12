@@ -190,7 +190,13 @@ type PendingStore interface {
 
 // IntegrityStore defines content hash verification operations.
 type IntegrityStore interface {
-	GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int) ([]ObjectLocation, error)
+	// GetLeastRecentlyScrubbedObjects returns the copies most overdue for
+	// verification on the named backends. The backend filter belongs in the
+	// query rather than in the caller: a copy the scrubber cannot afford to
+	// read must never occupy a batch slot, or it is either stamped as examined
+	// without being read or left at the head of the queue forever.
+	GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string) ([]ObjectLocation, error)
+	CountScrubCandidatesOnBackends(ctx context.Context, backends []string) (int64, error)
 	GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]ObjectLocation, error)
 	UpdateContentHash(ctx context.Context, key, backendName, hash string) error
 	MarkObjectScrubbed(ctx context.Context, key, backendName string) error

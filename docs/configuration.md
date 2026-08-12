@@ -645,6 +645,8 @@ integrity:
 
 Two footguns are worth knowing. The scrubber runs on a tick and never at startup, so an interval longer than the process lifetime means it never runs at all while the dashboard still reports integrity as enabled. And `s3o_integrity_oldest_unverified_seconds` is the figure that tells you whether the sweep is keeping up: it should settle around the period implied by these two settings, and a steadily climbing value means the batch is too small or the interval too long.
 
+**Usage limits bound the sweep.** A backend that has spent its configured egress or API allowance is excluded from the batch entirely, and the copies it holds are reported as `deferred` rather than checked. The coverage figures deliberately do not improve for them: a sweep that could not afford to read a backend has not verified it, and `s3o_integrity_oldest_unverified_seconds` keeps climbing so the gap stays visible instead of resolving into an apparently clean pass. Deferred work is also counted by `s3o_usage_limit_rejections_total{operation="scrub"}`.
+
 **Integrity is hot-reloadable** — changes take effect on SIGHUP without a restart.
 
 ### cache

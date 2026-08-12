@@ -161,6 +161,7 @@ type scrubberStub struct {
 	scrubChecked      int
 	scrubFailed       int
 	scrubSkipped      int
+	scrubDeferred     int
 	backfillProcessed int
 	backfillMore      bool
 	backfillCalls     int
@@ -178,6 +179,7 @@ func newScrubber(t *testing.T, cfg *scrubberStub) *MockScrubberOps {
 				Succeeded: cfg.scrubChecked - cfg.scrubFailed,
 				Failed:    cfg.scrubFailed,
 				Skipped:   cfg.scrubSkipped,
+				Deferred:  cfg.scrubDeferred,
 			}
 		}).AnyTimes()
 	m.EXPECT().Backfill(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).

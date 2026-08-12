@@ -224,11 +224,11 @@ func TestStoreInt_GetLeastRecentlyScrubbedObjects(t *testing.T) {
 		t.Fatalf("UpdateContentHash: %v", err)
 	}
 
-	if _, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100); err != nil {
+	if _, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100, []string{"backend-a"}); err != nil {
 		t.Fatalf("GetLeastRecentlyScrubbedObjects: %v", err)
 	}
 	// Zero/negative limits clamp to 1, exercising the safeLimit branch.
-	if _, err := s.GetLeastRecentlyScrubbedObjects(ctx, 0); err != nil {
+	if _, err := s.GetLeastRecentlyScrubbedObjects(ctx, 0, []string{"backend-a"}); err != nil {
 		t.Errorf("GetLeastRecentlyScrubbedObjects(0): %v", err)
 	}
 }
@@ -985,7 +985,7 @@ func TestStoreInt_ScrubQueue_FreshWritesDoNotJumpTheQueue(t *testing.T) {
 		t.Fatalf("backdating %s: %v", oldKey, err)
 	}
 
-	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100)
+	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100, []string{"backend-a"})
 	if err != nil {
 		t.Fatalf("GetLeastRecentlyScrubbedObjects: %v", err)
 	}
@@ -1053,5 +1053,56 @@ func TestStoreInt_ScrubQueue_IndexMatchesQuery(t *testing.T) {
 	if !strings.Contains(plan.String(), "idx_object_locations_scrub_queue") {
 		t.Errorf("the scrub queue index cannot serve the candidate query, so the "+
 			"ORDER BY and the index expression have drifted apart:\n%s", plan.String())
+	}
+}
+
+// TestStoreInt_ScrubQueue_BackendFilter proves the Postgres selection applies
+// the affordable-backend filter in SQL. Filtering after selection would force
+// the scrubber to either stamp a copy it never read or leave it at the head of
+// the queue to be re-selected every cycle.
+func TestStoreInt_ScrubQueue_BackendFilter(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+
+	keyA := uniqueKey(t, "affordable")
+	keyB := uniqueKey(t, "declined")
+	for backend, key := range map[string]string{"backend-a": keyA, "backend-b": keyB} {
+		if _, err := s.RecordObject(ctx, key, backend, 10, nil); err != nil {
+			t.Fatalf("RecordObject(%s): %v", key, err)
+		}
+		defer func() { _, _ = s.DeleteObject(ctx, key) }()
+		if err := s.UpdateContentHash(ctx, key, backend, "abc123"); err != nil {
+			t.Fatalf("UpdateContentHash(%s): %v", key, err)
+		}
+	}
+
+	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100, []string{"backend-a"})
+	if err != nil {
+		t.Fatalf("GetLeastRecentlyScrubbedObjects: %v", err)
+	}
+	for _, loc := range got {
+		if loc.BackendName != "backend-a" {
+			t.Fatalf("batch contains a copy on %s, which was not offered", loc.BackendName)
+		}
+	}
+
+	// An empty affordable set selects nothing rather than everything.
+	none, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100, nil)
+	if err != nil {
+		t.Fatalf("GetLeastRecentlyScrubbedObjects(nil): %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("an empty backend list returned %d copies, want 0", len(none))
+	}
+
+	n, err := s.CountScrubCandidatesOnBackends(ctx, []string{"backend-b"})
+	if err != nil {
+		t.Fatalf("CountScrubCandidatesOnBackends: %v", err)
+	}
+	if n < 1 {
+		t.Errorf("count on the declined backend = %d, want at least the one copy written here", n)
+	}
+	if n, err := s.CountScrubCandidatesOnBackends(ctx, nil); err != nil || n != 0 {
+		t.Errorf("empty backend list: count=%d err=%v, want 0/nil", n, err)
 	}
 }

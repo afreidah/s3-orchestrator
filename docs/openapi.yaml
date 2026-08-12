@@ -1225,6 +1225,9 @@ components:
                 checked:
                     format: int64
                     type: integer
+                deferred:
+                    format: int64
+                    type: integer
                 failed:
                     format: int64
                     type: integer
@@ -1240,6 +1243,7 @@ components:
                 - checked
                 - failed
                 - unreadable
+                - deferred
             type: object
         SetLogLevelRequest:
             properties:

@@ -33,6 +33,10 @@ type ScrubResponse struct {
 	Checked    int `json:"checked"`
 	Failed     int `json:"failed"`
 	Unreadable int `json:"unreadable"`
+	// Deferred counts copies the cycle never selected because the backend
+	// holding them is over its usage limit. Distinct from Unreadable: those
+	// were reached and failed, these were never attempted.
+	Deferred int `json:"deferred"`
 }
 
 // BackfillChecksumsResponse reports a checksum backfill pass. Done is true

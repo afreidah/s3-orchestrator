@@ -186,11 +186,27 @@ WHERE object_key = $1 AND backend_name = $2;
 -- a write rate above the scrub rate cannot starve older data. It also puts the
 -- effort where rot actually accumulates, since churn is deleted long before it
 -- degrades while the copies that persist for months are the ones at risk.
+--
+-- backend_names restricts the batch to copies the scrubber can afford to read.
+-- Filtering here rather than after selection is what keeps a sweep useful when
+-- a backend is over its usage limit: a copy the scrubber would decline never
+-- occupies a slot, so it is neither stamped as examined nor left at the head of
+-- the queue to be re-selected every cycle.
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
 FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
+  AND backend_name = ANY(@backend_names::text[])
 ORDER BY COALESCE(last_scrubbed_at, created_at) ASC, object_key ASC
-LIMIT $1;
+LIMIT @row_limit;
+
+-- name: CountScrubCandidatesOnBackends :one
+-- Copies eligible for scrubbing that live on the named backends. Used to report
+-- how much of the queue a cycle declined to read, which a sampled count of the
+-- batch cannot show.
+SELECT count(*)
+FROM object_locations
+WHERE content_hash IS NOT NULL AND managed
+  AND backend_name = ANY(@backend_names::text[]);
 
 -- name: MarkObjectScrubbed :exec
 -- Stamp a copy the scrubber just examined. Applied to every attempted copy,
