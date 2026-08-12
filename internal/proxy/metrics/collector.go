@@ -43,6 +43,7 @@ type Deps interface {
 	GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error)
 	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error)
 	CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error)
+	CountUnencryptedLocations(ctx context.Context) (int64, error)
 }
 
 // ReplicationSnapshot is the last-computed replication state, retained so a
@@ -123,7 +124,23 @@ func (mc *Collector) UpdateQuotaMetrics(ctx context.Context) error {
 	mc.updateMultipartCountGauges(ctx, stats)
 	mc.updateUsageGauges(ctx, stats)
 	mc.updateReplicationPending(ctx)
+	mc.updatePlaintextCopies(ctx)
 	return nil
+}
+
+// updatePlaintextCopies publishes how many copies are still unencrypted.
+//
+// Refreshed here rather than from the dashboard so the figure keeps moving on a
+// deployment that scrapes Prometheus and never opens the web UI. Encryption
+// applies to new writes only, so without this nothing reports that a fleet
+// configured for encryption is still partly plaintext.
+func (mc *Collector) updatePlaintextCopies(ctx context.Context) {
+	count, err := mc.store.CountUnencryptedLocations(ctx)
+	if err != nil {
+		mc.log.WarnContext(ctx, "failed to count unencrypted copies", "error", err)
+		return
+	}
+	telemetry.EncryptionPlaintextCopies.Set(float64(count))
 }
 
 // updateQuotaGauges sets per-backend quota bytes gauges and emits a

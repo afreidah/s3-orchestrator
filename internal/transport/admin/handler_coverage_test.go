@@ -599,3 +599,32 @@ func TestHandleScrub_StreamSummaryReportsUnreadable(t *testing.T) {
 		t.Errorf("fields[deferred] = %v, want 9", got)
 	}
 }
+
+// TestHandleStatus_ReportsPlaintextCopies pins the figure onto the wire. The
+// status payload is what the TUI and any external monitoring read, so a fleet
+// that is only partly encrypted has to be visible there rather than only in the
+// web dashboard.
+func TestHandleStatus_ReportsPlaintextCopies(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	h.dashboardOps = newDashboardOps(t, &dashboard.Data{
+		BackendOrder:    []string{"b1"},
+		QuotaStats:      map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}},
+		UsagePeriod:     "2026-05",
+		PlaintextCopies: 42,
+	}, nil)
+
+	w := httptest.NewRecorder()
+	h.handleStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/status", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp adminapi.StatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Integrity.PlaintextCopies != 42 {
+		t.Errorf("plaintext_copies = %d, want 42", resp.Integrity.PlaintextCopies)
+	}
+}

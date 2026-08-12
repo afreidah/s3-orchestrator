@@ -74,6 +74,18 @@ func (s *Store) UpdateEncryptionKey(ctx context.Context, objectKey, backendName 
 // ListUnencryptedLocations returns a page of unencrypted object locations.
 // Used by the encrypt-existing admin endpoint to find objects that need
 // encryption.
+// CountUnencryptedLocations reports how many copies are still stored as
+// plaintext. Enabling encryption only affects new writes, so this is what says
+// whether a fleet is actually covered or merely configured to be.
+func (s *Store) CountUnencryptedLocations(ctx context.Context) (int64, error) {
+	var n int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM object_locations WHERE encrypted = 0`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count unencrypted locations: %w", err)
+	}
+	return n, nil
+}
+
 func (s *Store) ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]core.UnencryptedLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes

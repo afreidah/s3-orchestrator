@@ -1106,3 +1106,54 @@ func TestStoreInt_ScrubQueue_BackendFilter(t *testing.T) {
 		t.Errorf("empty backend list: count=%d err=%v, want 0/nil", n, err)
 	}
 }
+
+// TestStoreInt_CountUnencryptedLocations pins the figure the dashboard, the
+// status endpoint and the plaintext gauge all read. It has to agree with
+// ListUnencryptedLocations, because that is the set encrypt-existing processes:
+// a count that drifts from the work would tell an operator the fleet is covered
+// when it is not.
+func TestStoreInt_CountUnencryptedLocations(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+
+	before, err := s.CountUnencryptedLocations(ctx)
+	if err != nil {
+		t.Fatalf("CountUnencryptedLocations: %v", err)
+	}
+
+	key := uniqueKey(t, "plaintext")
+	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+
+	after, err := s.CountUnencryptedLocations(ctx)
+	if err != nil {
+		t.Fatalf("CountUnencryptedLocations: %v", err)
+	}
+	if after != before+1 {
+		t.Errorf("count = %d after writing one plaintext copy, want %d", after, before+1)
+	}
+
+	// Encrypting the copy removes it from the count, so the figure falls as an
+	// operator works through the backlog rather than staying put.
+	if err := s.MarkObjectEncrypted(ctx, key, "backend-a", []byte("wrapped"), "key-0", 100, 132); err != nil {
+		t.Fatalf("MarkObjectEncrypted: %v", err)
+	}
+	encrypted, err := s.CountUnencryptedLocations(ctx)
+	if err != nil {
+		t.Fatalf("CountUnencryptedLocations: %v", err)
+	}
+	if encrypted != before {
+		t.Errorf("count = %d after encrypting the copy, want %d", encrypted, before)
+	}
+
+	// The count and the list describe the same set.
+	listed, err := s.ListUnencryptedLocations(ctx, 10000, 0)
+	if err != nil {
+		t.Fatalf("ListUnencryptedLocations: %v", err)
+	}
+	if int64(len(listed)) != encrypted {
+		t.Errorf("count = %d but list returned %d rows", encrypted, len(listed))
+	}
+}

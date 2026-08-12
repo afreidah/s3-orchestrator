@@ -65,6 +65,21 @@ func (q *Queries) CountScrubCandidatesOnBackends(ctx context.Context, backendNam
 	return count, err
 }
 
+const countUnencryptedLocations = `-- name: CountUnencryptedLocations :one
+SELECT count(*) FROM object_locations WHERE encrypted = FALSE
+`
+
+// Copies still stored as plaintext. Uses the same predicate as
+// ListUnencryptedLocations, so the figure is exactly what encrypt-existing
+// would process rather than a differently-scoped count that happens to be near
+// it.
+func (q *Queries) CountUnencryptedLocations(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countUnencryptedLocations)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteObjectCopies = `-- name: DeleteObjectCopies :exec
 DELETE FROM object_locations
 WHERE object_key = $1

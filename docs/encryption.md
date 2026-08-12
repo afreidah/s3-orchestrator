@@ -65,6 +65,30 @@ After updating the config, call the `rotate-encryption-key` admin API to re-wrap
 - Encrypted objects are slightly larger than their plaintext (header + per-chunk overhead). The exact overhead is: 32 bytes (header) + 28 bytes per chunk (nonce + auth tag).
 
 
+## Encrypting objects that already exist
+
+Enabling encryption applies to **new writes only**. Objects already on a backend when you turned it on stay plaintext, and nothing rewrites them on its own. A bucket can sit indefinitely half-encrypted while the config reads as though encryption covers it.
+
+Closing that gap is a one-time, operator-triggered pass:
+
+```bash
+s3-orchestrator admin encrypt-existing
+```
+
+It walks every copy still recorded as plaintext, downloads it, encrypts it, re-uploads the ciphertext, and updates the ledger row. It is safe to re-run: copies already encrypted are not selected. Expect it to cost a full read and write of every affected object, which is metered egress and ingress on most providers, so run it deliberately rather than on a schedule.
+
+**Knowing whether you need to.** Three places report how much of the fleet is still plaintext:
+
+| Where | What it shows |
+|-------|---------------|
+| `s3o_encryption_plaintext_copies` | Gauge of copies still stored unencrypted |
+| `GET /admin/api/status` | `integrity.plaintext_copies` |
+| Web dashboard | **Encryption Coverage** section, shown when encryption is enabled |
+| TUI backends pane | `plaintext: N` on the stats line, hidden once the count is zero |
+
+A non-zero value on a fleet configured for encryption means exactly one thing: objects predating the setting were never rewritten. It does not fall on its own.
+
+
 ## Integrity verification
 
 

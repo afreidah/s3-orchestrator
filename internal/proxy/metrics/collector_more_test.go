@@ -27,7 +27,9 @@ import (
 // only the reads it depends on.
 func stubMetricsStore(t *testing.T) *MockDeps {
 	t.Helper()
-	return NewMockDeps(gomock.NewController(t))
+	store := NewMockDeps(gomock.NewController(t))
+	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
+	return store
 }
 
 // TestRecordOperation_Success exercises the success label path.
@@ -54,6 +56,7 @@ func TestUpdateQuotaMetrics_Success(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
+	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{
 			"b1": {BytesUsed: 500, BytesLimit: 1000},
@@ -86,6 +89,7 @@ func TestUpdateQuotaMetrics_CapacityWarning(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
+	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{
 			"b1": {BytesUsed: 900, BytesLimit: 1000},
@@ -110,6 +114,7 @@ func TestUpdateQuotaMetrics_QuotaStatsError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
+	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).Return(nil, errors.New("db down")).AnyTimes()
 
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(nil), nil)
@@ -125,6 +130,7 @@ func TestUpdateQuotaMetrics_ObjectCountsError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
+	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}}, nil).
 		AnyTimes()
@@ -147,6 +153,7 @@ func TestUpdateQuotaMetrics_MultipartCountsError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
+	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}}, nil).
 		AnyTimes()
@@ -167,6 +174,7 @@ func TestUpdateQuotaMetrics_UsageForPeriodError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
+	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}}, nil).
 		AnyTimes()
@@ -187,6 +195,7 @@ func TestUpdateQuotaMetrics_ReplicationPending(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
+	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}}, nil).
 		AnyTimes()
@@ -211,6 +220,7 @@ func TestUpdateQuotaMetrics_ReplicationPendingSkippedWhenDisabled(t *testing.T) 
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
+	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}}, nil).
 		AnyTimes()
@@ -231,6 +241,7 @@ func TestUpdateQuotaMetrics_ReplicationPendingQueryError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockDeps(ctrl)
+	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{"b1": {BytesUsed: 100, BytesLimit: 1000}}, nil).
 		AnyTimes()

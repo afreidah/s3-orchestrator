@@ -205,7 +205,18 @@ func (m *model) backendsStatsLine() string {
 		total = fmt.Sprintf("total: %s / %s (%s)",
 			humanize.Bytes(used), humanize.Bytes(limit), usageStyle(pct).Render(fmt.Sprintf("%d%%", pct)))
 	}
-	return fmt.Sprintf("db: %s   %s   %s", db, total, m.integrityCoverage())
+	return fmt.Sprintf("db: %s   %s   %s%s", db, total, m.integrityCoverage(), m.encryptionCoverage())
+}
+
+// encryptionCoverage renders how much of the fleet is still plaintext, and
+// nothing at all once none of it is. Encryption applies to new writes, so a
+// non-zero count means existing objects were never rewritten.
+func (m *model) encryptionCoverage() string {
+	plaintext := m.backends.integrity.PlaintextCopies
+	if plaintext <= 0 {
+		return ""
+	}
+	return "   plaintext: " + statusErrStyle.Render(humanize.Comma(plaintext))
 }
 
 // integrityCoverage renders how far behind verification is. Never-verified
