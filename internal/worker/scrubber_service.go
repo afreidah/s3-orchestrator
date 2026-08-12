@@ -59,9 +59,10 @@ func scrubCycle(ctx context.Context, scrubber *Scrubber, log *slog.Logger) error
 	// Skipped is excluded from Attempted, so a cycle whose every copy was
 	// unreadable used to satisfy neither arm and log nothing at all - the
 	// quietest possible report of the loudest problem.
-	if sum.Attempted > 0 || sum.Failed > 0 || sum.Skipped > 0 {
+	if sum.Attempted > 0 || sum.Failed > 0 || sum.Skipped > 0 || sum.Deferred > 0 {
 		log.InfoContext(ctx, "scrub completed",
-			"checked", sum.Attempted, "failed", sum.Failed, "unreadable", sum.Skipped)
+			"checked", sum.Attempted, "failed", sum.Failed,
+			"unreadable", sum.Skipped, "deferred", sum.Deferred)
 	}
 	return nil
 }

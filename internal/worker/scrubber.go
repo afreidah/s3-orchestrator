@@ -97,13 +97,20 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int, observer progress.O
 	ctx, span := telemetry.StartSpan(ctx, "Scrub")
 	defer span.End()
 
-	locs, err := s.store.GetLeastRecentlyScrubbedObjects(ctx, batchSize)
+	affordable, declined := s.affordableBackends()
+
+	locs, err := s.store.GetLeastRecentlyScrubbedObjects(ctx, batchSize, affordable)
 	if err != nil {
 		s.log.ErrorContext(ctx, "failed to fetch objects", "error", err)
 		return WorkSummary{}
 	}
 
+	deferred := s.countDeferred(ctx, declined)
+
 	// Published after the cycle so the gauges reflect the work just done.
+	// Deferred copies are excluded from the batch but not from the gauges: they
+	// were not verified, so the coverage age must keep climbing rather than
+	// reporting the fleet as checked.
 	defer s.reportCoverage(ctx)
 
 	// Scrub stays sequential (Concurrency 1): each item reads and hashes a full
@@ -119,7 +126,7 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int, observer progress.O
 		// reading as the same object listed twice.
 		Key: func(l core.ObjectLocation) string { return l.ObjectKey + " [" + l.BackendName + "]" },
 	}
-	return runner.Run(ctx, locs, func(ctx context.Context, loc core.ObjectLocation) ItemResult {
+	sum := runner.Run(ctx, locs, func(ctx context.Context, loc core.ObjectLocation) ItemResult {
 		res := s.verifyOne(ctx, &loc)
 		// "checked" = an object we actually verified (matched or mismatched); a
 		// verify error is skipped, not checked.
@@ -128,6 +135,51 @@ func (s *Scrubber) Scrub(ctx context.Context, batchSize int, observer progress.O
 		}
 		return res
 	})
+	sum.Deferred = deferred
+	return sum
+}
+
+// affordableBackends splits the fleet into the backends the scrubber can still
+// read from and the ones whose usage limits it would breach.
+//
+// The check asks only for headroom, not for a specific object's size, because
+// the split decides which backends a batch may be drawn from before any object
+// is known. verifyOne re-checks against the real size.
+func (s *Scrubber) affordableBackends() (affordable, declined []string) {
+	order := s.deps.BackendOrder()
+	affordable = s.deps.Usage().BackendsWithinLimits(order, 1, 0, 0)
+
+	if len(affordable) == len(order) {
+		return affordable, nil
+	}
+	keep := make(map[string]bool, len(affordable))
+	for _, name := range affordable {
+		keep[name] = true
+	}
+	for _, name := range order {
+		if !keep[name] {
+			declined = append(declined, name)
+		}
+	}
+	return affordable, declined
+}
+
+// countDeferred reports how many scrubbable copies sit on backends this cycle
+// declined to read. Counting the queue rather than the batch is the point: the
+// batch never contained them, so it cannot say how much was left undone.
+func (s *Scrubber) countDeferred(ctx context.Context, declined []string) int {
+	if len(declined) == 0 {
+		return 0
+	}
+	n, err := s.store.CountScrubCandidatesOnBackends(ctx, declined)
+	if err != nil {
+		s.log.WarnContext(ctx, "failed to count deferred scrub candidates", "error", err)
+		return 0
+	}
+	telemetry.UsageLimitRejectionsTotal.WithLabelValues("scrub", "read").Add(float64(n))
+	s.log.WarnContext(ctx, "scrub deferred copies on backends over their usage limit",
+		"backends", declined, "copies", n)
+	return int(n)
 }
 
 // reportCoverage publishes how far behind verification is, which is what says

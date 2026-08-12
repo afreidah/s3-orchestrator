@@ -50,6 +50,7 @@ func (h *Handler) Scrub(ctx context.Context, batchSize int, observer progress.Ob
 		Checked:          sum.Attempted,
 		Failed:           sum.Failed,
 		Unreadable:       sum.Skipped,
+		Deferred:         sum.Deferred,
 	}
 }
 
@@ -77,12 +78,13 @@ func (h *Handler) streamScrub(w http.ResponseWriter, r *http.Request, batchSize 
 		}
 		return stepResult{
 			Processed: res.Checked,
-			Summary: fmt.Sprintf("checked %d, failed %d, unreadable %d",
-				res.Checked, res.Failed, res.Unreadable),
+			Summary: fmt.Sprintf("checked %d, failed %d, unreadable %d, deferred %d",
+				res.Checked, res.Failed, res.Unreadable, res.Deferred),
 			Fields: map[string]any{
 				"checked":    res.Checked,
 				"failed":     res.Failed,
 				"unreadable": res.Unreadable,
+				"deferred":   res.Deferred,
 			},
 		}, nil
 	})
