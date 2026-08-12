@@ -35,12 +35,15 @@ func (s *Store) InsertPending(ctx context.Context, p *core.PendingObject) error 
 		encrypted = 1
 	}
 	if _, err := s.db.ExecContext(ctx,
+		// created_at is set here rather than left to the column default: the
+		// default renders milliseconds while every other write renders
+		// nanoseconds, and the reaper's min-age check compares the two as text.
 		`INSERT INTO pending_objects
 		   (intent_id, object_key, backend_name, size_bytes,
-		    encrypted, encryption_key, key_id, plaintext_size, content_hash)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.IntentID, p.ObjectKey, p.BackendName, p.SizeBytes,
-		encrypted, p.EncryptionKey, keyID, plaintextSize, contentHash,
+		encrypted, p.EncryptionKey, keyID, plaintextSize, contentHash, now(),
 	); err != nil {
 		return fmt.Errorf("insert pending object: %w", err)
 	}
@@ -60,7 +63,7 @@ func (s *Store) DeletePending(ctx context.Context, intentID string) error {
 // GetStalePending returns pending intents at or older than olderThan,
 // oldest first, capped at limit.
 func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]core.PendingObject, error) {
-	cutoff := olderThan.UTC().Format(time.RFC3339Nano)
+	cutoff := formatTime(olderThan)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT intent_id, object_key, backend_name, size_bytes,
 		        encrypted, encryption_key, key_id, plaintext_size,

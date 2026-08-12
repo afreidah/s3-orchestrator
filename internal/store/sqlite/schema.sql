@@ -191,4 +191,4 @@ CREATE INDEX IF NOT EXISTS idx_pending_objects_backend
     ON pending_objects(backend_name);
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (5);
+INSERT INTO schema_version (version) VALUES (6);

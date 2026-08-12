@@ -36,7 +36,7 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMu
 		}
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := now()
 	var encKey any
 	if len(params.EncryptionKey) > 0 {
 		encKey = params.EncryptionKey
@@ -85,7 +85,7 @@ func (s *Store) RecordPart(ctx context.Context, uploadID string, partNumber int,
 		return fmt.Errorf("invalid part number %d: must be between 1 and 10000", partNumber)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := now()
 
 	var (
 		encrypted     bool
@@ -234,7 +234,7 @@ func (s *Store) CountActiveMultipartUploads(ctx context.Context, bucketPrefix st
 
 // GetStaleMultipartUploads returns uploads older than the given duration.
 func (s *Store) GetStaleMultipartUploads(ctx context.Context, olderThan time.Duration) ([]core.MultipartUpload, error) {
-	cutoff := time.Now().Add(-olderThan).UTC().Format(time.RFC3339Nano)
+	cutoff := formatTime(time.Now().Add(-olderThan))
 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
