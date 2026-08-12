@@ -237,6 +237,7 @@ type DashboardStore interface {
 	GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error)
 	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error)
 	OldestUnverifiedAge(ctx context.Context) (age time.Duration, neverVerified int64, err error)
+	CountUnencryptedLocations(ctx context.Context) (int64, error)
 }
 
 // -------------------------------------------------------------------------
@@ -261,6 +262,7 @@ type EncryptionAdmin interface {
 	ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]EncryptedLocation, error)
 	UpdateEncryptionKey(ctx context.Context, objectKey, backendName string, newEncryptionKey []byte, newKeyID string) error
 	ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]UnencryptedLocation, error)
+	CountUnencryptedLocations(ctx context.Context) (int64, error)
 	MarkObjectEncrypted(ctx context.Context, objectKey, backendName string, encryptionKey []byte, keyID string, plaintextSize, ciphertextSize int64) error
 	ListAllEncryptedLocations(ctx context.Context, limit, offset int) ([]DecryptableLocation, error)
 	MarkObjectDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error

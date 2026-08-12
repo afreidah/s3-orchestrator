@@ -12,21 +12,30 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // fakeReplicationDeps is a metrics.Deps returning canned replication data; the
 // non-replication methods are unused by updateReplicationPending.
 type fakeReplicationDeps struct {
-	under []core.ObjectLocation
-	over  int64
+	under     []core.ObjectLocation
+	over      int64
+	plaintext int64
+	countErr  error
 }
 
 func (fakeReplicationDeps) GetQuotaStats(context.Context) (map[string]core.QuotaStat, error) {
 	return nil, nil
+}
+func (f fakeReplicationDeps) CountUnencryptedLocations(context.Context) (int64, error) {
+	return f.plaintext, f.countErr
 }
 func (fakeReplicationDeps) GetObjectCounts(context.Context) (map[string]int64, error) {
 	return nil, nil
@@ -79,5 +88,35 @@ func TestCollector_ReplicationSnapshot_Disabled(t *testing.T) {
 	snap := mc.ReplicationSnapshot()
 	if !snap.Ready || snap.Factor != 1 || snap.UnderReplicated != 0 || snap.OverReplicated != 0 {
 		t.Errorf("disabled snapshot = %+v", snap)
+	}
+}
+
+// TestCollector_PublishesPlaintextCopies keeps the figure refreshing on the
+// periodic path. Computing it only when the web UI asks would leave a
+// Prometheus-only deployment reading a gauge that never moves.
+func TestCollector_PublishesPlaintextCopies(t *testing.T) {
+	mc := &Collector{store: fakeReplicationDeps{plaintext: 17}, log: slog.Default()}
+
+	mc.updatePlaintextCopies(context.Background())
+
+	if got := promtest.ToFloat64(telemetry.EncryptionPlaintextCopies); got != 17 {
+		t.Errorf("plaintext gauge = %v, want 17", got)
+	}
+}
+
+// TestCollector_PlaintextCountFailureLeavesGauge guards against a failed count
+// publishing zero. Reporting "no plaintext copies" because the query failed
+// would read as a fully encrypted fleet.
+func TestCollector_PlaintextCountFailureLeavesGauge(t *testing.T) {
+	telemetry.EncryptionPlaintextCopies.Set(9)
+	mc := &Collector{
+		store: fakeReplicationDeps{plaintext: 0, countErr: errors.New("ledger unavailable")},
+		log:   slog.Default(),
+	}
+
+	mc.updatePlaintextCopies(context.Background())
+
+	if got := promtest.ToFloat64(telemetry.EncryptionPlaintextCopies); got != 9 {
+		t.Errorf("gauge = %v after a failed count, want the previous value 9", got)
 	}
 }

@@ -85,6 +85,15 @@ var (
 		},
 	)
 
+	// EncryptionPlaintextCopies stays non-zero until an operator runs
+	// encrypt-existing, since enabling encryption covers new writes only.
+	EncryptionPlaintextCopies = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3o_encryption_plaintext_copies",
+			Help: "Object copies still stored unencrypted",
+		},
+	)
+
 	// KeyRotationObjectsTotal counts objects processed during key rotation.
 	KeyRotationObjectsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

@@ -31,17 +31,19 @@ import (
 const maxDirectoryChildren = 200
 
 // Data holds a snapshot of all operational data for the dashboard.
+//
+// UnverifiedObjectCounts is the per-backend count of objects with a NULL
+// content_hash, which drives the "needs backfill" column. PlaintextCopies is
+// how many copies are still stored unencrypted: encryption covers new writes
+// only, so a non-zero value means existing objects were never rewritten.
 type Data struct {
-	BackendOrder []string
-	QuotaStats   map[string]core.QuotaStat
-	ObjectCounts map[string]int64
-	// UnverifiedObjectCounts is per-backend count of objects with a
-	// NULL content_hash (objects that predate integrity verification or
-	// otherwise have not been checksummed). Drives the dashboard's
-	// "needs backfill" column when integrity is enabled.
+	BackendOrder           []string
+	QuotaStats             map[string]core.QuotaStat
+	ObjectCounts           map[string]int64
 	UnverifiedObjectCounts map[string]int64
 	NeverVerifiedCopies    int64
 	OldestUnverifiedAge    time.Duration
+	PlaintextCopies        int64
 	ActiveMultipartCounts  map[string]int64
 	UsageStats             map[string]core.UsageStat
 	UsageLimits            map[string]core.UsageLimits
@@ -153,6 +155,11 @@ func (da *Aggregator) GetData(ctx context.Context) (*Data, error) {
 	}
 
 	data.OldestUnverifiedAge, data.NeverVerifiedCopies, err = da.store.OldestUnverifiedAge(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	data.PlaintextCopies, err = da.store.CountUnencryptedLocations(ctx)
 	if err != nil {
 		return nil, err
 	}

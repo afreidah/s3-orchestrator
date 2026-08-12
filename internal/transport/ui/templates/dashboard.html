@@ -160,6 +160,29 @@
   </section>
   {{end}}
 
+  {{if .Config.EncryptionEnabled}}
+  <!-- Encryption Coverage -->
+  <section>
+    <h2>Encryption Coverage</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th class="num">Value</th>
+          <th>Meaning</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Plaintext copies</td>
+          <td class="num">{{if ne .Data.PlaintextCopies 0}}<span class="orphan-value">{{formatNumber .Data.PlaintextCopies}}</span>{{else}}&mdash;{{end}}</td>
+          <td>Copies still stored unencrypted. Enabling encryption applies to new writes only, so anything already on a backend stays as it is until you run Encrypt Existing. A non-zero value means the fleet is only partly encrypted despite the setting being on.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  {{end}}
+
   <!-- Monthly Usage -->
   <section>
     <h2>Monthly Usage ({{.Data.UsagePeriod}})</h2>

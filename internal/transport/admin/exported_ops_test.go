@@ -118,6 +118,11 @@ func (emptyEncAdmin) UpdateEncryptionKey(_ context.Context, _, _ string, _ []byt
 	return nil
 }
 
+// CountUnencryptedLocations reports no plaintext copies.
+func (emptyEncAdmin) CountUnencryptedLocations(_ context.Context) (int64, error) {
+	return 0, nil
+}
+
 // ListUnencryptedLocations lists unencrypted locations.
 func (emptyEncAdmin) ListUnencryptedLocations(_ context.Context, _, _ int) ([]core.UnencryptedLocation, error) {
 	return nil, nil

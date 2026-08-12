@@ -56,6 +56,21 @@ func (mr *MockDepsMockRecorder) CountOverReplicatedObjects(ctx, factor any) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountOverReplicatedObjects", reflect.TypeOf((*MockDeps)(nil).CountOverReplicatedObjects), ctx, factor)
 }
 
+// CountUnencryptedLocations mocks base method.
+func (m *MockDeps) CountUnencryptedLocations(ctx context.Context) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountUnencryptedLocations", ctx)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountUnencryptedLocations indicates an expected call of CountUnencryptedLocations.
+func (mr *MockDepsMockRecorder) CountUnencryptedLocations(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountUnencryptedLocations", reflect.TypeOf((*MockDeps)(nil).CountUnencryptedLocations), ctx)
+}
+
 // GetActiveMultipartCounts mocks base method.
 func (m *MockDeps) GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error) {
 	m.ctrl.T.Helper()

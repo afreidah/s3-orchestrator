@@ -219,3 +219,43 @@ func TestBackendsStatsLine_CarriesIntegrity(t *testing.T) {
 		t.Errorf("stats line missing the verification summary: %q", got)
 	}
 }
+
+// TestEncryptionCoverage pins when the plaintext count appears at all. It is a
+// standing gap that only an operator action closes, so it stays visible while
+// non-zero and disappears entirely once the fleet is fully encrypted rather
+// than sitting on the stats line reading zero.
+func TestEncryptionCoverage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		plaintext int64
+		want      string
+	}{
+		{"fully encrypted renders nothing", 0, ""},
+		{"negative renders nothing", -1, ""},
+		{"outstanding copies are shown", 1234, "plaintext:"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := initialModel(&fakeLister{})
+			m.backends.integrity = adminapi.IntegrityStatus{PlaintextCopies: tt.plaintext}
+
+			got := m.encryptionCoverage()
+			if tt.want == "" {
+				if got != "" {
+					t.Errorf("encryptionCoverage() = %q, want empty", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("encryptionCoverage() = %q, want it to contain %q", got, tt.want)
+			}
+			if !strings.Contains(got, "1,234") {
+				t.Errorf("encryptionCoverage() = %q, want a thousands-separated count", got)
+			}
+		})
+	}
+}

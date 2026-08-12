@@ -927,9 +927,13 @@ components:
                 oldest_unverified_seconds:
                     format: int64
                     type: integer
+                plaintext_copies:
+                    format: int64
+                    type: integer
             required:
                 - oldest_unverified_seconds
                 - never_verified_copies
+                - plaintext_copies
             type: object
         LogEntry:
             properties:
