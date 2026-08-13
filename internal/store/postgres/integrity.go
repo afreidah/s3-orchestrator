@@ -41,7 +41,7 @@ func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get least recently scrubbed objects: %w", err)
 	}
-	return toFatObjectLocations(rows), nil
+	return toVerifiableObjectLocations(rows), nil
 }
 
 // CountScrubCandidatesOnBackends reports how many scrubbable copies live on the

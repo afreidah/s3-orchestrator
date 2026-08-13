@@ -78,7 +78,7 @@ func (s *Store) GetObjectBackendsForKeys(ctx context.Context, keys []string) (ma
 func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes, encrypted, encryption_key,
-		       key_id, plaintext_size, content_hash, created_at
+		       key_id, plaintext_size, content_hash, created_at, last_scrubbed_at
 		FROM object_locations
 		WHERE object_key = ?
 		ORDER BY created_at ASC`, key)
@@ -460,7 +460,7 @@ func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, 
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes, encrypted, encryption_key,
-		       key_id, plaintext_size, content_hash, created_at
+		       key_id, plaintext_size, content_hash, created_at, last_scrubbed_at
 		FROM object_locations
 		WHERE content_hash IS NOT NULL AND managed
 		  AND backend_name IN (SELECT value FROM json_each(?))
@@ -550,7 +550,7 @@ func (s *Store) OldestUnverifiedAge(ctx context.Context) (time.Duration, int64, 
 func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes, encrypted, encryption_key,
-		       key_id, plaintext_size, content_hash, created_at
+		       key_id, plaintext_size, content_hash, created_at, last_scrubbed_at
 		FROM object_locations
 		WHERE content_hash IS NULL AND managed
 		ORDER BY created_at ASC
@@ -596,12 +596,13 @@ func scanObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
 		keyID         *string
 		plaintextSize *int64
 		contentHash   *string
+		lastScrubbed  *string
 	)
 	if err := rows.Scan(
 		&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes,
 		&loc.Encrypted, &loc.EncryptionKey,
 		&keyID, &plaintextSize, &contentHash,
-		&createdAt,
+		&createdAt, &lastScrubbed,
 	); err != nil {
 		return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
 	}
@@ -618,6 +619,13 @@ func scanObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
 	}
 	if contentHash != nil {
 		loc.ContentHash = *contentHash
+	}
+	if lastScrubbed != nil {
+		scrubbed, err := parseTime(*lastScrubbed)
+		if err != nil {
+			return core.ObjectLocation{}, fmt.Errorf(errInvalidTimestamp, *lastScrubbed, err)
+		}
+		loc.LastScrubbedAt = &scrubbed
 	}
 	return loc, nil
 }

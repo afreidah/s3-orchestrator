@@ -1013,6 +1013,9 @@ components:
                     type: boolean
                 key_id:
                     type: string
+                last_scrubbed_at:
+                    format: date-time
+                    type: string
                 plaintext_size:
                     format: int64
                     type: integer

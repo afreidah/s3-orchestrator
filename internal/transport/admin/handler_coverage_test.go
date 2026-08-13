@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -626,5 +627,39 @@ func TestHandleStatus_ReportsPlaintextCopies(t *testing.T) {
 	}
 	if resp.Integrity.PlaintextCopies != 42 {
 		t.Errorf("plaintext_copies = %d, want 42", resp.Integrity.PlaintextCopies)
+	}
+}
+
+// TestObjectLocationsResponse_VerifiedTimestamp pins the wire contract. A copy
+// never verified omits the field entirely rather than sending a zero time,
+// because "never checked" and "checked at the epoch" are different answers.
+func TestObjectLocationsResponse_VerifiedTimestamp(t *testing.T) {
+	t.Parallel()
+
+	verified := time.Date(2026, 8, 12, 4, 0, 0, 0, time.UTC)
+	resp := objectLocationsResponse("bucket/k", []core.ObjectLocation{
+		{BackendName: "b1", ContentHash: "sha256:x", LastScrubbedAt: &verified},
+		{BackendName: "b2", ContentHash: "sha256:x"},
+	})
+
+	body, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded adminapi.ObjectLocationsResponse
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(decoded.Locations) != 2 {
+		t.Fatalf("got %d locations, want 2", len(decoded.Locations))
+	}
+	if decoded.Locations[0].LastScrubbedAt == nil || !decoded.Locations[0].LastScrubbedAt.Equal(verified) {
+		t.Errorf("verified copy = %v, want %v", decoded.Locations[0].LastScrubbedAt, verified)
+	}
+	if decoded.Locations[1].LastScrubbedAt != nil {
+		t.Errorf("never-verified copy = %v, want absent", decoded.Locations[1].LastScrubbedAt)
+	}
+	if strings.Contains(string(body), `"last_scrubbed_at":"0001-01-01`) {
+		t.Errorf("a never-verified copy serialised a zero time: %s", body)
 	}
 }

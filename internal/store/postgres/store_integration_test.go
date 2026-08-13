@@ -1157,3 +1157,58 @@ func TestStoreInt_CountUnencryptedLocations(t *testing.T) {
 		t.Errorf("count = %d but list returned %d rows", encrypted, len(listed))
 	}
 }
+
+// TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp pins the field
+// per copy against a real database. Having a content hash only says a hash was
+// recorded; this says whether the bytes were ever compared to it, and the two
+// copies here differ on exactly that while sharing everything else.
+func TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+
+	key := uniqueKey(t, "verified")
+	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
+		t.Fatalf("RecordReplica: %v", err)
+	}
+	for _, backend := range []string{"backend-a", "backend-b"} {
+		if err := s.UpdateContentHash(ctx, key, backend, "abc123"); err != nil {
+			t.Fatalf("UpdateContentHash(%s): %v", backend, err)
+		}
+	}
+
+	if err := s.MarkObjectScrubbed(ctx, key, "backend-a"); err != nil {
+		t.Fatalf("MarkObjectScrubbed: %v", err)
+	}
+
+	locs, err := s.GetAllObjectLocations(ctx, key)
+	if err != nil {
+		t.Fatalf("GetAllObjectLocations: %v", err)
+	}
+	byBackend := map[string]core.ObjectLocation{}
+	for _, l := range locs {
+		byBackend[l.BackendName] = l
+	}
+
+	verified, ok := byBackend["backend-a"]
+	if !ok {
+		t.Fatalf("backend-a copy missing from %v", locs)
+	}
+	if verified.LastScrubbedAt == nil || verified.LastScrubbedAt.IsZero() {
+		t.Errorf("verified copy reports %v, want a timestamp", verified.LastScrubbedAt)
+	}
+
+	never, ok := byBackend["backend-b"]
+	if !ok {
+		t.Fatalf("backend-b copy missing from %v", locs)
+	}
+	if never.LastScrubbedAt != nil {
+		t.Errorf("never-verified copy reports %v, want nil", never.LastScrubbedAt)
+	}
+	if verified.ContentHash == "" || never.ContentHash == "" {
+		t.Error("both copies should carry a hash, so the hash alone cannot tell them apart")
+	}
+}

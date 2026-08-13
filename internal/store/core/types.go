@@ -36,23 +36,29 @@ type EncryptionMeta struct {
 
 // ObjectLocation records that a backend currently holds a copy of a key,
 // along with the size and any encryption or integrity metadata.
+//
+// LastScrubbedAt is nil for a copy that has never been verified, which is a
+// different state from one verified long ago and has to stay distinguishable.
+// It is also nil on rows from queries that do not select the column, so a
+// caller reading it wants a query that does.
+//
+// Unmanaged marks an object that exists on the backend but outside every
+// configured virtual bucket prefix: real bytes the orchestrator did not write
+// and does not act on. It is stored as the negated `managed` column, so the
+// zero value means managed and a construction site that omits it cannot
+// accidentally produce a row the workers ignore.
 type ObjectLocation struct {
-	ObjectKey     string
-	BackendName   string
-	SizeBytes     int64
-	CreatedAt     time.Time
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         string
-	PlaintextSize int64
-	ContentHash   string
-
-	// Unmanaged marks an object that exists on the backend but outside every
-	// configured virtual bucket prefix: real bytes the orchestrator did not
-	// write and does not act on. It is stored as the negated `managed` column,
-	// so the zero value means managed and a construction site that omits it
-	// cannot accidentally produce a row the workers ignore.
-	Unmanaged bool
+	ObjectKey      string
+	BackendName    string
+	SizeBytes      int64
+	CreatedAt      time.Time
+	Encrypted      bool
+	EncryptionKey  []byte
+	KeyID          string
+	PlaintextSize  int64
+	ContentHash    string
+	LastScrubbedAt *time.Time
+	Unmanaged      bool
 }
 
 // ExistingCopy is the projection of an object_locations row that promotion

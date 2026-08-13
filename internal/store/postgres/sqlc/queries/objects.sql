@@ -81,7 +81,7 @@ ORDER BY object_key, created_at ASC
 LIMIT @max_keys;
 
 -- name: GetAllObjectLocations :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at, last_scrubbed_at
 FROM object_locations
 WHERE object_key = $1
 ORDER BY created_at ASC;
@@ -199,7 +199,7 @@ WHERE object_key = $1 AND backend_name = $2;
 -- a backend is over its usage limit: a copy the scrubber would decline never
 -- occupies a slot, so it is neither stamped as examined nor left at the head of
 -- the queue to be re-selected every cycle.
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at, last_scrubbed_at
 FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
   AND backend_name = ANY(@backend_names::text[])

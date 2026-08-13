@@ -74,6 +74,9 @@ func (r GetAllObjectLocationsRow) GetEncryptionKey() []byte         { return r.E
 func (r GetAllObjectLocationsRow) GetKeyID() *string                { return r.KeyID }
 func (r GetAllObjectLocationsRow) GetPlaintextSize() *int64         { return r.PlaintextSize }
 func (r GetAllObjectLocationsRow) GetContentHash() *string          { return r.ContentHash }
+func (r GetAllObjectLocationsRow) GetLastScrubbedAt() pgtype.Timestamptz {
+	return r.LastScrubbedAt
+}
 
 // GetUnderReplicatedObjectsRow
 
@@ -122,6 +125,9 @@ func (r GetLeastRecentlyScrubbedObjectsRow) GetEncryptionKey() []byte         { 
 func (r GetLeastRecentlyScrubbedObjectsRow) GetKeyID() *string                { return r.KeyID }
 func (r GetLeastRecentlyScrubbedObjectsRow) GetPlaintextSize() *int64         { return r.PlaintextSize }
 func (r GetLeastRecentlyScrubbedObjectsRow) GetContentHash() *string          { return r.ContentHash }
+func (r GetLeastRecentlyScrubbedObjectsRow) GetLastScrubbedAt() pgtype.Timestamptz {
+	return r.LastScrubbedAt
+}
 
 // GetObjectsWithoutHashRow
 
