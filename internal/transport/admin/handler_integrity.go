@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // integrityDisabledReason is the skip reason the scrub and backfill endpoints
@@ -99,13 +100,34 @@ func (h *Handler) handleScrubKey(w http.ResponseWriter, r *http.Request) {
 
 	resp := adminapi.ScrubKeyResponse{Key: key}
 	for _, c := range copies {
-		resp.Copies = append(resp.Copies, adminapi.CopyScrubResult{
-			Backend: c.Backend,
-			Outcome: c.Outcome,
-			Detail:  c.Detail,
-		})
+		resp.Copies = append(resp.Copies, wireCopyResult(c))
 	}
 	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// scrubOutcomes words each verdict for the wire. The scrubber reports what it
+// established; what that means to an operator, including what became of a copy
+// that failed, is the transport's business.
+var scrubOutcomes = map[worker.CopyOutcome]adminapi.CopyScrubResult{
+	worker.CopyVerified: {Outcome: adminapi.CopyVerified},
+	worker.CopyMismatch: {
+		Outcome: adminapi.CopyMismatch,
+		Detail:  "stored bytes did not match the recorded hash; the copy was discarded and will be rebuilt",
+	},
+	worker.CopyUnreadable: {Outcome: adminapi.CopyUnreadable, Detail: "the copy could not be read"},
+	worker.CopyNotHashed:  {Outcome: adminapi.CopyNotHashed, Detail: "no stored content hash to verify against"},
+}
+
+// wireCopyResult renders one verdict. An outcome this handler does not know is
+// reported as unreadable rather than passed through, so a vocabulary that grows
+// on the worker side cannot make a copy look verified here.
+func wireCopyResult(c worker.CopyVerification) adminapi.CopyScrubResult {
+	res, ok := scrubOutcomes[c.Outcome]
+	if !ok {
+		res = scrubOutcomes[worker.CopyUnreadable]
+	}
+	res.Backend = c.Backend
+	return res
 }
 
 // streamScrub runs a scrub as an NDJSON step stream, one "verifying <key>" line

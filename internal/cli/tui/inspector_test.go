@@ -190,3 +190,215 @@ func TestTruncateAndYesNo(t *testing.T) {
 		t.Errorf("yesNo: %q / %q", yesNo(true), yesNo(false))
 	}
 }
+
+// TestVerifiedAge_NeverIsItsOwnAnswer keeps an unverified copy from rendering
+// like a missing field. "-" reads as no data; "never" is the actual finding.
+func TestVerifiedAge_NeverIsItsOwnAnswer(t *testing.T) {
+	t.Parallel()
+	if got := verifiedAge(nil); got != "never" {
+		t.Errorf("verifiedAge(nil) = %q, want %q", got, "never")
+	}
+	checked := time.Now().Add(-3 * time.Hour)
+	if got := verifiedAge(&checked); got != "3h ago" {
+		t.Errorf("verifiedAge(3h ago) = %q, want %q", got, "3h ago")
+	}
+}
+
+// TestRowsFromLocations_VerifiedIsPerCopy is the asymmetry the pane exists to
+// show: one copy checked last night and another never looked at is exactly the
+// state that matters when a backend has been misbehaving.
+func TestRowsFromLocations_VerifiedIsPerCopy(t *testing.T) {
+	t.Parallel()
+	checked := time.Now().Add(-2 * time.Hour)
+	rows := rowsFromLocations([]adminapi.ObjectLocation{
+		{Backend: "b1", LastScrubbedAt: &checked},
+		{Backend: "b2"},
+	})
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want one per copy", len(rows))
+	}
+	last := len(rows[0]) - 1
+	if rows[0][last] != "2h ago" || rows[1][last] != "never" {
+		t.Errorf("verified column = %q/%q, want 2h ago/never", rows[0][last], rows[1][last])
+	}
+}
+
+// TestArmScrubKey_ConfirmSaysWhatItCosts guards the wording. A prompt that reads
+// as a read-only check would surprise an operator whose copy gets discarded.
+func TestArmScrubKey_ConfirmSaysWhatItCosts(t *testing.T) {
+	t.Parallel()
+	m := modelWith(nil, "p/", &fakeLister{})
+	m.mode = modeInspect
+	m.insp.key = "bucket/k"
+
+	if _, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")}); cmd != nil {
+		t.Error("scrub ran without a confirmation")
+	}
+	if m.confirm == nil {
+		t.Fatal("S did not arm a confirmation")
+	}
+	if !strings.Contains(m.confirm.text, "bucket/k") || !strings.Contains(m.confirm.text, "discarded") {
+		t.Errorf("confirm = %q, want the key and what a failure costs", m.confirm.text)
+	}
+}
+
+// TestArmScrubKey_AcceptMarksItRunning checks the pane reports the scrub the
+// moment it is accepted. The request runs off the main loop, so without this
+// the accepted keypress would look like it did nothing until the reply landed.
+func TestArmScrubKey_AcceptMarksItRunning(t *testing.T) {
+	t.Parallel()
+	m := modelWith(nil, "p/", &fakeLister{
+		scrubbed: &adminapi.ScrubKeyResponse{
+			Key:    "bucket/k",
+			Copies: []adminapi.CopyScrubResult{{Backend: "b1", Outcome: adminapi.CopyVerified}},
+		},
+	})
+	m.mode = modeInspect
+	m.insp.key = "bucket/k"
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")})
+
+	_, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if !m.insp.scrubbing {
+		t.Error("accepting the confirmation did not mark the scrub as running")
+	}
+	if cmd == nil {
+		t.Fatal("accepting the confirmation dispatched nothing")
+	}
+	msg, ok := cmd().(scrubKeyMsg)
+	if !ok || msg.err != nil || len(msg.resp.Copies) != 1 {
+		t.Errorf("cmd result = %#v, want the key's verdicts", cmd())
+	}
+}
+
+// TestArmScrubKey_NoKeyIsANoop covers the inspector opened on nothing.
+func TestArmScrubKey_NoKeyIsANoop(t *testing.T) {
+	t.Parallel()
+	m := modelWith(nil, "p/", &fakeLister{})
+	m.mode = modeInspect
+	if _, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")}); cmd != nil || m.confirm != nil {
+		t.Errorf("armed a scrub with no key: cmd=%v confirm=%v", cmd, m.confirm)
+	}
+}
+
+// TestArmScrubKey_IgnoredWhileScrubbing keeps a held key from queueing a second
+// pass over copies the first one is still reading.
+func TestArmScrubKey_IgnoredWhileScrubbing(t *testing.T) {
+	t.Parallel()
+	m := modelWith(nil, "p/", &fakeLister{})
+	m.mode = modeInspect
+	m.insp.key = "bucket/k"
+	m.insp.scrubbing = true
+
+	if _, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")}); cmd != nil || m.confirm != nil {
+		t.Errorf("armed a second scrub mid-flight: cmd=%v confirm=%v", cmd, m.confirm)
+	}
+}
+
+// TestInspectHeaderView_ReportsScrubInFlight keeps a scrub that takes a while
+// from looking like a keypress that did nothing.
+func TestInspectHeaderView_ReportsScrubInFlight(t *testing.T) {
+	t.Parallel()
+	m := modelWith(nil, "p/", &fakeLister{})
+	m.width, m.height = 100, 24
+	m.insp.key = "bucket/k"
+
+	if got := m.inspectHeaderView(); strings.Contains(got, "verifying") {
+		t.Errorf("idle header claims a scrub is running: %q", got)
+	}
+	m.insp.scrubbing = true
+	if got := m.inspectHeaderView(); !strings.Contains(got, "verifying") {
+		t.Errorf("header = %q, want it to report the scrub in flight", got)
+	}
+}
+
+// TestApplyScrubKey_NamesTheFailingBackend is the point of a targeted scrub:
+// the summary has to say which copy is bad, since that is what the operator
+// acts on. It also reloads, because a discarded copy is gone from the ledger.
+func TestApplyScrubKey_NamesTheFailingBackend(t *testing.T) {
+	t.Parallel()
+	m := modelWith(nil, "p/", &fakeLister{})
+	m.insp.key = "bucket/k"
+	m.insp.scrubbing = true
+
+	_, cmd := m.applyScrubKey(scrubKeyMsg{resp: &adminapi.ScrubKeyResponse{
+		Key: "bucket/k",
+		Copies: []adminapi.CopyScrubResult{
+			{Backend: "b1", Outcome: adminapi.CopyVerified},
+			{Backend: "b2", Outcome: adminapi.CopyMismatch},
+		},
+	}})
+
+	if m.insp.scrubbing {
+		t.Error("scrubbing flag survived the result")
+	}
+	if m.status == nil || m.status.ok {
+		t.Fatalf("status = %+v, want a failure", m.status)
+	}
+	if !strings.Contains(m.status.text, "b2") || !strings.Contains(m.status.text, adminapi.CopyMismatch) {
+		t.Errorf("status = %q, want the failing backend named", m.status.text)
+	}
+	if cmd == nil || !m.insp.loading {
+		t.Errorf("ledger was not reloaded: cmd=%v loading=%v", cmd, m.insp.loading)
+	}
+}
+
+// TestApplyScrubKey_AllVerified renders the clean case as a success.
+func TestApplyScrubKey_AllVerified(t *testing.T) {
+	t.Parallel()
+	m := modelWith(nil, "p/", &fakeLister{})
+	m.insp.key = "bucket/k"
+
+	m.applyScrubKey(scrubKeyMsg{resp: &adminapi.ScrubKeyResponse{
+		Key: "bucket/k",
+		Copies: []adminapi.CopyScrubResult{
+			{Backend: "b1", Outcome: adminapi.CopyVerified},
+			{Backend: "b2", Outcome: adminapi.CopyVerified},
+		},
+	}})
+
+	if m.status == nil || !m.status.ok {
+		t.Fatalf("status = %+v, want a success", m.status)
+	}
+	if !strings.Contains(m.status.text, "2 copies verified") {
+		t.Errorf("status = %q, want a verified count", m.status.text)
+	}
+}
+
+// TestApplyScrubKey_Error reports the failure and leaves the ledger alone,
+// since nothing about it changed.
+func TestApplyScrubKey_Error(t *testing.T) {
+	t.Parallel()
+	m := modelWith(nil, "p/", &fakeLister{})
+	m.insp.scrubbing = true
+
+	_, cmd := m.applyScrubKey(scrubKeyMsg{err: errors.New("boom")})
+	if m.status == nil || m.status.ok || !strings.Contains(m.status.text, "boom") {
+		t.Fatalf("status = %+v, want the error surfaced", m.status)
+	}
+	if cmd != nil || m.insp.loading {
+		t.Errorf("reloaded after a failed scrub: cmd=%v loading=%v", cmd, m.insp.loading)
+	}
+}
+
+// TestUpdate_ScrubKeyMsg wires the message through the model's dispatch.
+func TestUpdate_ScrubKeyMsg(t *testing.T) {
+	t.Parallel()
+	m := initialModel(&fakeLister{})
+	next, _ := m.Update(scrubKeyMsg{resp: &adminapi.ScrubKeyResponse{
+		Copies: []adminapi.CopyScrubResult{{Backend: "b1", Outcome: adminapi.CopyVerified}},
+	}})
+	if nm := next.(*model); nm.status == nil || !nm.status.ok {
+		t.Errorf("status = %+v, want a success", next.(*model).status)
+	}
+}
+
+// TestScrubKeyCmd_Error reports a transport failure as a message rather than
+// leaving the pane stuck on "verifying".
+func TestScrubKeyCmd_Error(t *testing.T) {
+	t.Parallel()
+	cmd := initialModel(errLister{}).scrubKey("k")
+	msg, ok := cmd().(scrubKeyMsg)
+	if !ok || msg.err == nil {
+		t.Errorf("cmd result = %#v, want a failed scrubKeyMsg", cmd())
+	}
+}

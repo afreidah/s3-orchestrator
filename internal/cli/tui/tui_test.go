@@ -39,6 +39,8 @@ type fakeLister struct {
 	cleanupD  *adminapi.CleanupDLQResponse
 	cacheStat *adminapi.CacheStatsResponse
 	requeued  *adminapi.CleanupDLQRequeueResponse
+	scrubbed  *adminapi.ScrubKeyResponse
+	scrubErr  error               // when set, ScrubKey fails
 	opEvents  []adminstream.Event // canned RunOp stream (nil = single ok result)
 	opErr     error               // when set, RunOp fails to open
 }
@@ -55,6 +57,16 @@ func (f *fakeLister) GetObjectLocations(_ context.Context, key string) (*adminap
 		return r, nil
 	}
 	return &adminapi.ObjectLocationsResponse{Key: key}, nil
+}
+
+func (f *fakeLister) ScrubKey(_ context.Context, key string) (*adminapi.ScrubKeyResponse, error) {
+	if f.scrubErr != nil {
+		return nil, f.scrubErr
+	}
+	if f.scrubbed != nil {
+		return f.scrubbed, nil
+	}
+	return &adminapi.ScrubKeyResponse{Key: key}, nil
 }
 
 func (f *fakeLister) GetStatus(_ context.Context) (*adminapi.StatusResponse, error) {

@@ -685,7 +685,7 @@ func TestHandleScrubKey_ReportsEachCopy(t *testing.T) {
 	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true}})
 	h.scrubber = newScrubber(t, &scrubberStub{scrubKeyCopies: []worker.CopyVerification{
 		{Backend: "b1", Outcome: worker.CopyVerified},
-		{Backend: "b2", Outcome: worker.CopyMismatch, Detail: "discarded"},
+		{Backend: "b2", Outcome: worker.CopyMismatch},
 	}})
 
 	w := httptest.NewRecorder()
@@ -701,12 +701,38 @@ func TestHandleScrubKey_ReportsEachCopy(t *testing.T) {
 	if resp.Key != "bucket/k" || len(resp.Copies) != 2 {
 		t.Fatalf("response = %+v, want two copies for bucket/k", resp)
 	}
-	if resp.Copies[0].Outcome != worker.CopyVerified || resp.Copies[1].Outcome != worker.CopyMismatch {
+	if resp.Copies[0].Outcome != adminapi.CopyVerified || resp.Copies[1].Outcome != adminapi.CopyMismatch {
 		t.Errorf("outcomes = %q/%q, want verified/mismatch",
 			resp.Copies[0].Outcome, resp.Copies[1].Outcome)
 	}
 	if resp.Copies[1].Detail == "" {
 		t.Error("a mismatch should explain what happened to the copy")
+	}
+}
+
+// TestHandleScrubKey_UnknownOutcomeIsNotVerified guards the translation's
+// fallback: a verdict this transport does not recognise must not reach a caller
+// as a pass, since "we do not know" and "the bytes are intact" are opposites.
+func TestHandleScrubKey_UnknownOutcomeIsNotVerified(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true}})
+	h.scrubber = newScrubber(t, &scrubberStub{scrubKeyCopies: []worker.CopyVerification{
+		{Backend: "b1", Outcome: worker.CopyOutcome(99)},
+	}})
+
+	w := httptest.NewRecorder()
+	h.handleScrubKey(w, scrubKeyRequest(t, "bucket/k"))
+
+	var resp adminapi.ScrubKeyResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Copies) != 1 || resp.Copies[0].Outcome != adminapi.CopyUnreadable {
+		t.Errorf("copies = %+v, want the unknown verdict reported as unreadable", resp.Copies)
+	}
+	if resp.Copies[0].Backend != "b1" {
+		t.Errorf("backend = %q, want it preserved through the fallback", resp.Copies[0].Backend)
 	}
 }
 

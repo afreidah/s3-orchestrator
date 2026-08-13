@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
@@ -106,6 +107,32 @@ func TestAPIClient_GetObjectLocations_Success(t *testing.T) {
 	}
 	if l := resp.Locations[0]; l.Backend != "b1" || l.SizeBytes != 9 || !l.Encrypted || l.KeyID != "kid" {
 		t.Errorf("location = %+v", resp.Locations[0])
+	}
+}
+
+// TestAPIClient_ScrubKey asserts the targeted scrub POSTs the key and decodes a
+// verdict per copy.
+func TestAPIClient_ScrubKey(t *testing.T) {
+	t.Parallel()
+	var gotPath, gotMethod, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod, gotQuery = r.URL.Path, r.Method, r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"key":"photos/a","copies":[{"backend":"b1","outcome":"verified"},{"backend":"b2","outcome":"mismatch","detail":"discarded"}]}`))
+	}))
+	defer srv.Close()
+
+	resp, err := newAPIClient(srv.URL, "tok").ScrubKey(context.Background(), "photos/a")
+	if err != nil {
+		t.Fatalf("ScrubKey: %v", err)
+	}
+	if gotPath != "/admin/api/object-scrub" || gotMethod != http.MethodPost {
+		t.Errorf("%s %s, want POST /admin/api/object-scrub", gotMethod, gotPath)
+	}
+	if !strings.Contains(gotQuery, "key=photos%2Fa") {
+		t.Errorf("query %q missing key", gotQuery)
+	}
+	if len(resp.Copies) != 2 || resp.Copies[0].Outcome != adminapi.CopyVerified || resp.Copies[1].Outcome != adminapi.CopyMismatch {
+		t.Errorf("copies = %+v", resp.Copies)
 	}
 }
 

@@ -31,14 +31,23 @@ type ScrubKeyResponse struct {
 	Copies []CopyScrubResult `json:"copies"`
 }
 
-// CopyScrubResult is one copy's verdict. Outcome is one of "verified",
-// "mismatch", "unreadable", or "not_hashed" - the last meaning there was no
-// stored hash to compare against, which is not the same as passing.
+// CopyScrubResult is one copy's verdict.
 type CopyScrubResult struct {
 	Backend string `json:"backend"`
 	Outcome string `json:"outcome"`
 	Detail  string `json:"detail,omitempty"`
 }
+
+// The values CopyScrubResult.Outcome takes. NotHashed means there was no stored
+// hash to compare against, which is not the same as passing. Defined here rather
+// than in the worker so every client reads the vocabulary from the wire package
+// instead of importing the server's internals to interpret a response.
+const (
+	CopyVerified   = "verified"
+	CopyMismatch   = "mismatch"
+	CopyUnreadable = "unreadable"
+	CopyNotHashed  = "not_hashed"
+)
 
 // ScrubResponse reports a scrub pass: how many stored copies had their content
 // hash verified against backend data, how many did not match, and how many
