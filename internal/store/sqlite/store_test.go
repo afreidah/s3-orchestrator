@@ -3101,3 +3101,58 @@ func TestCountUnencryptedLocations(t *testing.T) {
 		t.Errorf("count = %d but list returned %d rows", n, len(listed))
 	}
 }
+
+// TestGetAllObjectLocations_ReportsVerifiedTimestamp pins the distinction the
+// field exists for. A copy that has never been verified must stay
+// distinguishable from one verified long ago: having a content hash only says a
+// hash was recorded, not that the bytes were ever compared to it.
+func TestGetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	const key = "bucket/replicated"
+	mustRecordObject(t, s, key, "backend-a", 100)
+	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
+		t.Fatalf("RecordReplica: %v", err)
+	}
+	for _, backend := range []string{"backend-a", "backend-b"} {
+		if err := s.UpdateContentHash(ctx, key, backend, "sha256:x"); err != nil {
+			t.Fatalf("UpdateContentHash(%s): %v", backend, err)
+		}
+	}
+
+	// Verify one copy, leaving the other untouched. Per-copy is the point: a
+	// replicated object can have one copy checked and another never looked at.
+	if err := s.MarkObjectScrubbed(ctx, key, "backend-a"); err != nil {
+		t.Fatalf("MarkObjectScrubbed: %v", err)
+	}
+
+	locs, err := s.GetAllObjectLocations(ctx, key)
+	if err != nil {
+		t.Fatalf("GetAllObjectLocations: %v", err)
+	}
+	if len(locs) != 2 {
+		t.Fatalf("expected 2 copies, got %d", len(locs))
+	}
+
+	byBackend := map[string]core.ObjectLocation{}
+	for _, l := range locs {
+		byBackend[l.BackendName] = l
+	}
+
+	verified := byBackend["backend-a"]
+	if verified.LastScrubbedAt == nil {
+		t.Error("the verified copy reports no timestamp")
+	} else if verified.LastScrubbedAt.IsZero() {
+		t.Error("the verified copy reports a zero timestamp")
+	}
+
+	if never := byBackend["backend-b"]; never.LastScrubbedAt != nil {
+		t.Errorf("the never-verified copy reports %v, want nil", never.LastScrubbedAt)
+	}
+	// Both carry a hash, so the hash alone cannot tell the two apart.
+	if byBackend["backend-a"].ContentHash == "" || byBackend["backend-b"].ContentHash == "" {
+		t.Error("both copies should carry a content hash for this distinction to matter")
+	}
+}

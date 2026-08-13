@@ -127,22 +127,23 @@ func (q *Queries) DeleteObjectsByKeys(ctx context.Context, objectKeys []string) 
 }
 
 const getAllObjectLocations = `-- name: GetAllObjectLocations :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at, last_scrubbed_at
 FROM object_locations
 WHERE object_key = $1
 ORDER BY created_at ASC
 `
 
 type GetAllObjectLocationsRow struct {
-	ObjectKey     string
-	BackendName   string
-	SizeBytes     int64
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         *string
-	PlaintextSize *int64
-	ContentHash   *string
-	CreatedAt     pgtype.Timestamptz
+	ObjectKey      string
+	BackendName    string
+	SizeBytes      int64
+	Encrypted      bool
+	EncryptionKey  []byte
+	KeyID          *string
+	PlaintextSize  *int64
+	ContentHash    *string
+	CreatedAt      pgtype.Timestamptz
+	LastScrubbedAt pgtype.Timestamptz
 }
 
 func (q *Queries) GetAllObjectLocations(ctx context.Context, objectKey string) ([]GetAllObjectLocationsRow, error) {
@@ -164,6 +165,7 @@ func (q *Queries) GetAllObjectLocations(ctx context.Context, objectKey string) (
 			&i.PlaintextSize,
 			&i.ContentHash,
 			&i.CreatedAt,
+			&i.LastScrubbedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -320,7 +322,7 @@ func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKey stri
 }
 
 const getLeastRecentlyScrubbedObjects = `-- name: GetLeastRecentlyScrubbedObjects :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at, last_scrubbed_at
 FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
   AND backend_name = ANY($1::text[])
@@ -334,15 +336,16 @@ type GetLeastRecentlyScrubbedObjectsParams struct {
 }
 
 type GetLeastRecentlyScrubbedObjectsRow struct {
-	ObjectKey     string
-	BackendName   string
-	SizeBytes     int64
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         *string
-	PlaintextSize *int64
-	ContentHash   *string
-	CreatedAt     pgtype.Timestamptz
+	ObjectKey      string
+	BackendName    string
+	SizeBytes      int64
+	Encrypted      bool
+	EncryptionKey  []byte
+	KeyID          *string
+	PlaintextSize  *int64
+	ContentHash    *string
+	CreatedAt      pgtype.Timestamptz
+	LastScrubbedAt pgtype.Timestamptz
 }
 
 // Return the copies least recently touched, by verification or by writing.
@@ -377,6 +380,7 @@ func (q *Queries) GetLeastRecentlyScrubbedObjects(ctx context.Context, arg GetLe
 			&i.PlaintextSize,
 			&i.ContentHash,
 			&i.CreatedAt,
+			&i.LastScrubbedAt,
 		); err != nil {
 			return nil, err
 		}

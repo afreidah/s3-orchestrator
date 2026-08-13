@@ -238,6 +238,13 @@ type fatObjectRow interface {
 	GetContentHash() *string
 }
 
+// verifiableObjectRow extends fatObjectRow with the last-verified timestamp,
+// which only the queries that report scrub coverage select.
+type verifiableObjectRow interface {
+	fatObjectRow
+	GetLastScrubbedAt() pgtype.Timestamptz
+}
+
 // toSlimObjectLocations converts a slice of slim sqlc rows. Encryption and
 // content-hash fields stay zero-valued.
 func toSlimObjectLocations[T slimObjectRow](rows []T) []core.ObjectLocation {
@@ -278,6 +285,26 @@ func toFatObjectLocations[T fatObjectRow](rows []T) []core.ObjectLocation {
 			loc.ContentHash = *h
 		}
 		out[i] = loc
+	}
+	return out
+}
+
+// toVerifiableObjectLocations converts rows from the queries that also select
+// last_scrubbed_at.
+//
+// Separate from toFatObjectLocations because only some queries select that
+// column: it is meaningless on a replication row, and on a row with no hash
+// there is nothing to have verified against. Requiring the accessor here rather
+// than testing for it at runtime means a query that selects the column but
+// omits the accessor fails to compile, instead of silently reporting every copy
+// as never verified.
+func toVerifiableObjectLocations[T verifiableObjectRow](rows []T) []core.ObjectLocation {
+	out := toFatObjectLocations(rows)
+	for i := range rows {
+		if ts := rows[i].GetLastScrubbedAt(); ts.Valid {
+			scrubbed := ts.Time
+			out[i].LastScrubbedAt = &scrubbed
+		}
 	}
 	return out
 }
