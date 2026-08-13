@@ -419,6 +419,21 @@ func (mr *MockScrubberOpsMockRecorder) Scrub(ctx, batchSize, observer any) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Scrub", reflect.TypeOf((*MockScrubberOps)(nil).Scrub), ctx, batchSize, observer)
 }
 
+// ScrubKey mocks base method.
+func (m *MockScrubberOps) ScrubKey(ctx context.Context, key string) ([]worker.CopyVerification, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ScrubKey", ctx, key)
+	ret0, _ := ret[0].([]worker.CopyVerification)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ScrubKey indicates an expected call of ScrubKey.
+func (mr *MockScrubberOpsMockRecorder) ScrubKey(ctx, key any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ScrubKey", reflect.TypeOf((*MockScrubberOps)(nil).ScrubKey), ctx, key)
+}
+
 // MockReconciler is a mock of Reconciler interface.
 type MockReconciler struct {
 	ctrl     *gomock.Controller

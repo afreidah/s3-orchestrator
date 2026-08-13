@@ -388,6 +388,7 @@ var simpleWrapperCases = []wrapperCase{
 	{"log-level-set", "log-level", []string{"-set", "debug"}, http.MethodPut, "/admin/api/log-level", ""},
 	{"scrub", "scrub", nil, http.MethodPost, "/admin/api/scrub", ""},
 	{"scrub-batch", "scrub", []string{"-batch-size", "50"}, http.MethodPost, "/admin/api/scrub", "batch_size=50"},
+	{"scrub-key", "scrub", []string{"-key", "bucket/a b"}, http.MethodPost, "/admin/api/object-scrub", "key=bucket%2Fa+b"},
 	{"backfill-checksums", "backfill-checksums", nil, http.MethodPost, "/admin/api/backfill-checksums", ""},
 	{"backfill-checksums-batch", "backfill-checksums", []string{"-batch-size", "50"}, http.MethodPost, "/admin/api/backfill-checksums", "batch_size=50"},
 	{"backfill-checksums-max", "backfill-checksums", []string{"-max", "200"}, http.MethodPost, "/admin/api/backfill-checksums", "max=200"},

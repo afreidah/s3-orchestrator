@@ -271,6 +271,14 @@ func (h *Handler) routes() []route {
 			Stream: adminstream.Event{},
 		},
 		{
+			Method: http.MethodPost, Pattern: "/admin/api/object-scrub", Handler: h.handleScrubKey,
+			Summary:  "Verify every copy of one object now",
+			Response: adminapi.ScrubKeyResponse{},
+			Params: []param{
+				{Name: "key", In: inQuery, Required: true, Type: typeString, Description: "Object key to verify"},
+			},
+		},
+		{
 			Method: http.MethodPost, Pattern: "/admin/api/backfill-checksums", Handler: h.handleBackfillChecksums,
 			Summary:  "Compute content hashes for objects missing one",
 			Response: adminapi.BackfillChecksumsResponse{},

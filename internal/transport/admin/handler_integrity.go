@@ -16,6 +16,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -66,6 +67,45 @@ func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, h.Scrub(r.Context(), batchSize, nil))
+}
+
+// handleScrubKey verifies every copy of one object immediately.
+//
+// Separate from handleScrub because the answers differ in kind: a pass reports
+// counts, this reports a verdict per copy. Folding both onto one endpoint would
+// mean a response whose shape depends on whether a parameter was supplied.
+func (h *Handler) handleScrubKey(w http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		httputil.WriteJSONError(w, http.StatusBadRequest, "key is required")
+		return
+	}
+
+	icfg := h.backendOps.IntegrityConfig()
+	if icfg == nil || !icfg.Enabled {
+		httputil.WriteJSONError(w, http.StatusConflict, integrityDisabledReason)
+		return
+	}
+
+	copies, err := h.scrubber.ScrubKey(r.Context(), key)
+	if err != nil {
+		h.internalError(r.Context(), w, "failed to verify object", err, slog.String("key", key))
+		return
+	}
+	if len(copies) == 0 {
+		httputil.WriteJSONError(w, http.StatusNotFound, "no copies of that key are recorded")
+		return
+	}
+
+	resp := adminapi.ScrubKeyResponse{Key: key}
+	for _, c := range copies {
+		resp.Copies = append(resp.Copies, adminapi.CopyScrubResult{
+			Backend: c.Backend,
+			Outcome: c.Outcome,
+			Detail:  c.Detail,
+		})
+	}
+	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
 // streamScrub runs a scrub as an NDJSON step stream, one "verifying <key>" line

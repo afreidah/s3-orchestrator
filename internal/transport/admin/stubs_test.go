@@ -162,6 +162,8 @@ type scrubberStub struct {
 	scrubFailed       int
 	scrubSkipped      int
 	scrubDeferred     int
+	scrubKeyCopies    []worker.CopyVerification
+	scrubKeyErr       error
 	backfillProcessed int
 	backfillMore      bool
 	backfillCalls     int
@@ -181,6 +183,10 @@ func newScrubber(t *testing.T, cfg *scrubberStub) *MockScrubberOps {
 				Skipped:   cfg.scrubSkipped,
 				Deferred:  cfg.scrubDeferred,
 			}
+		}).AnyTimes()
+	m.EXPECT().ScrubKey(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string) ([]worker.CopyVerification, error) {
+			return cfg.scrubKeyCopies, cfg.scrubKeyErr
 		}).AnyTimes()
 	m.EXPECT().Backfill(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, batchSize, offset int, observer progress.Observer) (worker.WorkSummary, int) {

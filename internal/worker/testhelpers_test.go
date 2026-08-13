@@ -51,6 +51,8 @@ type mockMetadataStore struct {
 	dlqDepthErr         error
 	randomHashedObjects []core.ObjectLocation
 	objectsWithoutHash  []core.ObjectLocation
+	allLocations        []core.ObjectLocation
+	allLocationsErr     error
 	scrubbed            []string
 
 	// Scrub backend filtering: what the cycle asked for, what it declined,
@@ -290,7 +292,7 @@ func (m *mockMetadataStore) MoveObjectLocation(_ context.Context, _, _, _ string
 // GetAllObjectLocations is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
 func (m *mockMetadataStore) GetAllObjectLocations(_ context.Context, _ string) ([]core.ObjectLocation, error) {
-	return nil, nil
+	return m.allLocations, m.allLocationsErr
 }
 
 // GetObjectBackendsForKeys is a stub on mockMetadataStore; returns either the test-set

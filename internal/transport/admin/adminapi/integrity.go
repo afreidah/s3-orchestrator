@@ -20,6 +20,26 @@ type IntegrityOutcome struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// ScrubKeyResponse reports an on-demand verification of one key, one entry per
+// copy.
+//
+// Per-copy rather than a summary because that is where the useful asymmetry
+// lives: a replicated object can have one copy intact and another corrupt, and
+// a single verdict for the key would hide which backend is at fault.
+type ScrubKeyResponse struct {
+	Key    string            `json:"key"`
+	Copies []CopyScrubResult `json:"copies"`
+}
+
+// CopyScrubResult is one copy's verdict. Outcome is one of "verified",
+// "mismatch", "unreadable", or "not_hashed" - the last meaning there was no
+// stored hash to compare against, which is not the same as passing.
+type CopyScrubResult struct {
+	Backend string `json:"backend"`
+	Outcome string `json:"outcome"`
+	Detail  string `json:"detail,omitempty"`
+}
+
 // ScrubResponse reports a scrub pass: how many stored copies had their content
 // hash verified against backend data, how many did not match, and how many
 // could not be read at all.
