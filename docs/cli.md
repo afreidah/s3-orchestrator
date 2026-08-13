@@ -260,7 +260,7 @@ The admin API requires `ui.admin_token` (or `ui.admin_key` as fallback) to be se
 
 ### tui
 
-Full-screen, read-only terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status; **Replication** shows a self-refreshing view of replication health; **Workers** shows each background service's last-tick health; **Cleanup** shows the cleanup queue and its dead-letter table; **Cache** shows the object data cache's utilization and hit rate; **Logs** shows recent structured log entries; **Ops** runs admin write actions. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the server address and admin token with the same precedence as `admin` (**flag &rarr; environment &rarr; config file**), loading `config.yaml` only when a value is still missing:
+Full-screen terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status; **Replication** shows a self-refreshing view of replication health; **Workers** shows each background service's last-tick health; **Cleanup** shows the cleanup queue and its dead-letter table; **Cache** shows the object data cache's utilization and hit rate; **Logs** shows recent structured log entries; **Ops** runs admin write actions. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the server address and admin token with the same precedence as `admin` (**flag &rarr; environment &rarr; config file**), loading `config.yaml` only when a value is still missing:
 
 ```bash
 export S3O_ADMIN_ADDR="https://s3.example.com"
@@ -294,6 +294,7 @@ s3-orchestrator tui
 | `L` | Cycle the Logs level filter (all / INFO / WARN / ERROR) |
 | `t` | In Cleanup, switch between the pending and dead-letter listings |
 | `R` | In Cleanup's dead-letter listing, requeue the selected row's backend (asks to confirm) |
+| `S` | In the inspector, verify every copy of the object now (asks to confirm) |
 | `y` / `n` | Accept / cancel a pending action confirmation |
 | `up` / `down` | Move the selection (or the sidebar highlight when it has focus) |
 | `enter` / `right` / `l` | Open: a sidebar section, a prefix, or the inspector on an object |
@@ -306,7 +307,9 @@ s3-orchestrator tui
 
 The listing pages lazily: scrolling past the bottom of a truncated prefix pulls the next page. Press `/` to filter the loaded rows by substring, and `s` to sort by name or size. Objects show their stored size in human-readable units alongside child prefixes.
 
-The inspector renders one row per backend copy - backend, size, age, whether the copy is encrypted, its key id, and a content-hash prefix - sourced from `GET /admin/api/object-locations`. It is the interactive equivalent of `admin object-locations`, and like the rest of the admin surface it never displays raw key material.
+The inspector renders one row per backend copy - backend, size, age, whether the copy is encrypted, its key id, a content-hash prefix, and how long ago that hash was last checked against the stored bytes - sourced from `GET /admin/api/object-locations`. It is the interactive equivalent of `admin object-locations`, and like the rest of the admin surface it never displays raw key material.
+
+A copy reading `never` under `VERIFIED` has a recorded hash that nothing has ever read back, which is not the same as a copy known to be intact. Press `S` to verify every copy of the object immediately rather than waiting for the scrub queue to reach it; the footer reports how many passed and names any that did not. A copy whose bytes do not match its hash is discarded and rebuilt from a healthy one, exactly as a scrub pass would, so the confirmation says so.
 
 ![The TUI inspector showing an object's backend copies](/docs/images/tui-file-details.png)
 
