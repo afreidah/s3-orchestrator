@@ -765,3 +765,127 @@ func TestScrub_SurvivesADeferredCountFailure(t *testing.T) {
 		t.Errorf("selected backends = %v, want [b1] despite the count failing", got)
 	}
 }
+
+// -------------------------------------------------------------------------
+// TARGETED SCRUB
+// -------------------------------------------------------------------------
+
+// TestScrubKey_ReportsEachCopySeparately is the point of a targeted scrub: a
+// replicated object can have one copy intact and another corrupt, and a single
+// verdict for the key would hide which backend is at fault.
+func TestScrubKey_ReportsEachCopySeparately(t *testing.T) {
+	t.Parallel()
+	s, ops, pl, be, ms := setupScrubber(t)
+
+	body := "hello world"
+	ms.allLocations = []core.ObjectLocation{
+		{ObjectKey: "bucket/k", BackendName: "b1", SizeBytes: 11, ContentHash: hashString(body)},
+		{ObjectKey: "bucket/k", BackendName: "b2", SizeBytes: 11, ContentHash: "not-the-hash"},
+	}
+	ops.EXPECT().GetBackend(gomock.Any()).Return(be, nil).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/k", "").DoAndReturn(
+		func(_ context.Context, _ backend.ObjectBackend, _, _ string) (*backend.GetObjectResult, context.CancelFunc, error) {
+			return &backend.GetObjectResult{
+				Body: io.NopCloser(strings.NewReader(body)),
+				Size: 11,
+			}, context.CancelFunc(func() {}), nil
+		}).AnyTimes()
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), "b2", "bucket/k", gomock.Any(), gomock.Any()).AnyTimes()
+
+	results, err := s.ScrubKey(context.Background(), "bucket/k")
+	if err != nil {
+		t.Fatalf("ScrubKey: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want one per copy: %+v", len(results), results)
+	}
+
+	byBackend := map[string]CopyVerification{}
+	for _, r := range results {
+		byBackend[r.Backend] = r
+	}
+	if got := byBackend["b1"].Outcome; got != CopyVerified {
+		t.Errorf("intact copy = %q, want %q", got, CopyVerified)
+	}
+	if got := byBackend["b2"].Outcome; got != CopyMismatch {
+		t.Errorf("corrupt copy = %q, want %q", got, CopyMismatch)
+	}
+}
+
+// TestScrubKey_UnhashedCopyIsNotReportedAsVerified keeps the command honest.
+// A copy with no stored hash has nothing to compare against, so calling it
+// verified would assert something nobody ever checked.
+func TestScrubKey_UnhashedCopyIsNotReportedAsVerified(t *testing.T) {
+	t.Parallel()
+	s, ops, _, _, ms := setupScrubber(t)
+
+	ms.allLocations = []core.ObjectLocation{
+		{ObjectKey: "bucket/k", BackendName: "b1", SizeBytes: 11},
+	}
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+
+	results, err := s.ScrubKey(context.Background(), "bucket/k")
+	if err != nil {
+		t.Fatalf("ScrubKey: %v", err)
+	}
+	if len(results) != 1 || results[0].Outcome != CopyNotHashed {
+		t.Fatalf("results = %+v, want a single %q", results, CopyNotHashed)
+	}
+	// Nothing was read, so no stamp was applied either.
+	if len(ms.scrubbed) != 0 {
+		t.Errorf("an unhashed copy was stamped as scrubbed: %v", ms.scrubbed)
+	}
+}
+
+// TestScrubKey_UnreadableCopyIsDistinctFromMismatch keeps the two failures
+// apart. A copy that could not be read says nothing about whether its bytes are
+// intact, and reporting it as a mismatch would claim corruption nobody observed.
+func TestScrubKey_UnreadableCopyIsDistinctFromMismatch(t *testing.T) {
+	t.Parallel()
+	s, ops, _, be, ms := setupScrubber(t)
+
+	ms.allLocations = []core.ObjectLocation{
+		{ObjectKey: "bucket/gone", BackendName: "b1", SizeBytes: 11, ContentHash: "abc"},
+	}
+	ops.EXPECT().GetBackend("b1").Return(be, nil).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/gone", "").
+		Return(nil, nil, errors.New("no such key")).AnyTimes()
+
+	results, err := s.ScrubKey(context.Background(), "bucket/gone")
+	if err != nil {
+		t.Fatalf("ScrubKey: %v", err)
+	}
+	if len(results) != 1 || results[0].Outcome != CopyUnreadable {
+		t.Fatalf("results = %+v, want a single %q", results, CopyUnreadable)
+	}
+}
+
+// TestScrubKey_UnknownKeyReturnsNothing distinguishes "no copies recorded" from
+// a verification result, so the caller can report a missing object rather than
+// an empty pass.
+func TestScrubKey_UnknownKeyReturnsNothing(t *testing.T) {
+	t.Parallel()
+	s, _, _, _, _ := setupScrubber(t)
+
+	results, err := s.ScrubKey(context.Background(), "bucket/missing")
+	if err != nil {
+		t.Fatalf("ScrubKey: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("results = %+v, want none for a key with no copies", results)
+	}
+}
+
+// TestScrubKey_LookupFailureIsAnError keeps an unreachable ledger from looking
+// like an object with no copies, which would read as a clean answer.
+func TestScrubKey_LookupFailureIsAnError(t *testing.T) {
+	t.Parallel()
+	s, _, _, _, ms := setupScrubber(t)
+	ms.allLocationsErr = errors.New("ledger unavailable")
+
+	if _, err := s.ScrubKey(context.Background(), "bucket/k"); err == nil {
+		t.Fatal("ScrubKey succeeded despite a failed lookup")
+	}
+}

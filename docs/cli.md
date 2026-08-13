@@ -224,6 +224,9 @@ s3-orchestrator admin scrub
 # Scrub with a custom batch size
 s3-orchestrator admin scrub -batch-size 500
 
+# Verify every copy of one object now, without waiting for its turn in the queue
+s3-orchestrator admin scrub -key photos/2024/beach.jpg
+
 # Compute and store content hashes for all unhashed objects
 s3-orchestrator admin backfill-checksums
 

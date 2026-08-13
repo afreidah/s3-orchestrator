@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -661,5 +662,111 @@ func TestObjectLocationsResponse_VerifiedTimestamp(t *testing.T) {
 	}
 	if strings.Contains(string(body), `"last_scrubbed_at":"0001-01-01`) {
 		t.Errorf("a never-verified copy serialised a zero time: %s", body)
+	}
+}
+
+// -------------------------------------------------------------------------
+// TARGETED SCRUB
+// -------------------------------------------------------------------------
+
+// scrubKeyRequest builds a targeted-scrub request for key.
+func scrubKeyRequest(t *testing.T, key string) *http.Request {
+	t.Helper()
+	return httptest.NewRequestWithContext(t.Context(), http.MethodPost,
+		"/admin/api/object-scrub?key="+url.QueryEscape(key), nil)
+}
+
+// TestHandleScrubKey_ReportsEachCopy pins the per-copy shape onto the wire. A
+// single verdict for the key would hide which backend holds the bad copy, which
+// is the whole reason to verify one object on demand.
+func TestHandleScrubKey_ReportsEachCopy(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true}})
+	h.scrubber = newScrubber(t, &scrubberStub{scrubKeyCopies: []worker.CopyVerification{
+		{Backend: "b1", Outcome: worker.CopyVerified},
+		{Backend: "b2", Outcome: worker.CopyMismatch, Detail: "discarded"},
+	}})
+
+	w := httptest.NewRecorder()
+	h.handleScrubKey(w, scrubKeyRequest(t, "bucket/k"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp adminapi.ScrubKeyResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Key != "bucket/k" || len(resp.Copies) != 2 {
+		t.Fatalf("response = %+v, want two copies for bucket/k", resp)
+	}
+	if resp.Copies[0].Outcome != worker.CopyVerified || resp.Copies[1].Outcome != worker.CopyMismatch {
+		t.Errorf("outcomes = %q/%q, want verified/mismatch",
+			resp.Copies[0].Outcome, resp.Copies[1].Outcome)
+	}
+	if resp.Copies[1].Detail == "" {
+		t.Error("a mismatch should explain what happened to the copy")
+	}
+}
+
+// TestHandleScrubKey_UnknownKeyIs404 keeps "no copies recorded" from reading as
+// a successful verification of nothing.
+func TestHandleScrubKey_UnknownKeyIs404(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true}})
+	h.scrubber = newScrubber(t, &scrubberStub{})
+
+	w := httptest.NewRecorder()
+	h.handleScrubKey(w, scrubKeyRequest(t, "bucket/missing"))
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleScrubKey_IntegrityDisabled refuses rather than reporting an empty
+// result, so a caller cannot read "nothing wrong" from a feature that is off.
+func TestHandleScrubKey_IntegrityDisabled(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: false}})
+	h.scrubber = newScrubber(t, &scrubberStub{})
+
+	w := httptest.NewRecorder()
+	h.handleScrubKey(w, scrubKeyRequest(t, "bucket/k"))
+
+	if w.Code != http.StatusConflict {
+		t.Errorf("status = %d, want 409; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleScrubKey_MissingKeyIsBadRequest covers the empty path value.
+func TestHandleScrubKey_MissingKeyIsBadRequest(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+
+	w := httptest.NewRecorder()
+	h.handleScrubKey(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/object-scrub", nil))
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleScrubKey_StoreFailureIs500 keeps a failed lookup from reporting a
+// clean result.
+func TestHandleScrubKey_StoreFailureIs500(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true}})
+	h.scrubber = newScrubber(t, &scrubberStub{scrubKeyErr: errors.New("ledger unavailable")})
+
+	w := httptest.NewRecorder()
+	h.handleScrubKey(w, scrubKeyRequest(t, "bucket/k"))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500; body=%s", w.Code, w.Body.String())
 	}
 }
