@@ -38,12 +38,13 @@ import (
 )
 
 // ScrubberStore is the narrow persistence surface the scrubber needs:
-// integrity row reads/writes, plus removal of a location whose bytes failed
-// verification. Declared locally so the worker does not pull in the full
-// MetadataStore.
+// integrity row reads/writes, removal of a location whose bytes failed
+// verification, and the copies of one key for an on-demand verification.
+// Declared locally so the worker does not pull in the full MetadataStore.
 type ScrubberStore interface {
 	core.IntegrityStore
 	DeleteObjectLocation(ctx context.Context, key, backendName string) error
+	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 }
 
 // Scrubber periodically verifies stored object integrity by reading objects
@@ -91,6 +92,95 @@ func (s *Scrubber) Config() *config.IntegrityConfig {
 // -------------------------------------------------------------------------
 
 // Scrub verifies a batch of objects with stored content hashes. Returns the
+// CopyVerification is the outcome of verifying one copy of one key.
+//
+// Outcome distinguishes the three answers that matter: the bytes matched the
+// stored hash, they did not, or the copy could not be read at all. A copy with
+// no stored hash reports NotHashed rather than success, since there was nothing
+// to compare against and reporting it as verified would be a lie.
+type CopyVerification struct {
+	Backend string
+	Outcome string
+	Detail  string
+}
+
+// Outcomes reported by ScrubKey.
+const (
+	CopyVerified   = "verified"
+	CopyMismatch   = "mismatch"
+	CopyUnreadable = "unreadable"
+	CopyNotHashed  = "not_hashed"
+)
+
+// ScrubKey verifies every copy of one key immediately and reports each
+// separately.
+//
+// This is the question an operator has when something looks wrong - a restore
+// failed, a backend threw errors - and the sweep cannot answer it: ordered by
+// least-recently-verified, reaching a specific key can take days.
+//
+// It deliberately does not consult the usage-limit filter the sweep applies. An
+// operator asking about one object is not the same as a background sweep
+// spending an unattended budget, and refusing to answer because a backend is
+// near its egress cap would make the command useless exactly when it is most
+// needed.
+//
+// A mismatch is handled identically to one the sweep finds: the bytes are
+// discarded and the ledger row dropped, so the replicator rebuilds from a
+// healthy copy.
+func (s *Scrubber) ScrubKey(ctx context.Context, key string) ([]CopyVerification, error) {
+	ctx = audit.WithRequestID(ctx, audit.NewID())
+	ctx, span := telemetry.StartSpan(ctx, "ScrubKey")
+	defer span.End()
+
+	locations, err := s.store.GetAllObjectLocations(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up copies of %s: %w", key, err)
+	}
+
+	results := make([]CopyVerification, 0, len(locations))
+	for i := range locations {
+		results = append(results, s.verifyCopy(ctx, &locations[i]))
+	}
+
+	audit.Log(ctx, "integrity.scrub_key",
+		slog.String("key", key),
+		slog.Int("copies", len(results)),
+	)
+	return results, nil
+}
+
+// verifyCopy maps one copy's verification onto the reported outcome. A copy
+// with no stored hash short-circuits: reading it would spend egress to compare
+// against nothing.
+func (s *Scrubber) verifyCopy(ctx context.Context, loc *core.ObjectLocation) CopyVerification {
+	if loc.ContentHash == "" {
+		return CopyVerification{
+			Backend: loc.BackendName,
+			Outcome: CopyNotHashed,
+			Detail:  "no stored content hash to verify against",
+		}
+	}
+
+	res := s.verifyOne(ctx, loc)
+	switch res.Outcome {
+	case ItemSucceeded:
+		return CopyVerification{Backend: loc.BackendName, Outcome: CopyVerified}
+	case ItemFailed:
+		return CopyVerification{
+			Backend: loc.BackendName,
+			Outcome: CopyMismatch,
+			Detail:  "stored bytes did not match the recorded hash; the copy was discarded and will be rebuilt",
+		}
+	default:
+		return CopyVerification{
+			Backend: loc.BackendName,
+			Outcome: CopyUnreadable,
+			Detail:  "the copy could not be read",
+		}
+	}
+}
+
 // number of objects checked and the number of hash mismatches found.
 func (s *Scrubber) Scrub(ctx context.Context, batchSize int, observer progress.Observer) WorkSummary {
 	ctx = audit.WithRequestID(ctx, audit.NewID())

@@ -366,6 +366,26 @@ paths:
                                 $ref: '#/components/schemas/ObjectLocationsResponse'
                 "401":
                     description: Missing or invalid admin token
+    /admin/api/object-scrub:
+        post:
+            summary: Verify every copy of one object now
+            operationId: postObjectScrub
+            parameters:
+                - name: key
+                  in: query
+                  description: Object key to verify
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ScrubKeyResponse'
+                "401":
+                    description: Missing or invalid admin token
     /admin/api/objects:
         get:
             summary: Page of stored objects
@@ -836,6 +856,18 @@ components:
                 - depth
                 - items
             type: object
+        CopyScrubResult:
+            properties:
+                backend:
+                    type: string
+                detail:
+                    type: string
+                outcome:
+                    type: string
+            required:
+                - backend
+                - outcome
+            type: object
         DecryptExistingResponse:
             properties:
                 decrypted:
@@ -1226,6 +1258,18 @@ components:
                 - failed
                 - total
                 - rotated
+            type: object
+        ScrubKeyResponse:
+            properties:
+                copies:
+                    items:
+                        $ref: '#/components/schemas/CopyScrubResult'
+                    type: array
+                key:
+                    type: string
+            required:
+                - key
+                - copies
             type: object
         ScrubResponse:
             properties:

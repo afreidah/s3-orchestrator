@@ -69,7 +69,7 @@ Commands:
   drain-status        Check drain progress (requires backend name arg)
   drain-cancel        Cancel an active drain (requires backend name arg)
   remove-backend      Remove a backend and its data (requires backend name arg, --purge to delete S3 objects)
-  scrub               Trigger an on-demand integrity scrub cycle (use -batch-size to override)
+  scrub               Trigger an on-demand integrity scrub cycle (-batch-size to override, -key to verify one object now)
   backfill-checksums  Compute and store content hashes for unhashed objects (use -max and -delay-ms to bound and pace each run)
   reconcile           Reconcile DB against backend (use -backend to scope to one backend)
   usage-reconcile     Recompute bytes_used from the object ledger to correct quota drift
