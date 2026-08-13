@@ -100,17 +100,38 @@ func (s *Scrubber) Config() *config.IntegrityConfig {
 // to compare against and reporting it as verified would be a lie.
 type CopyVerification struct {
 	Backend string
-	Outcome string
-	Detail  string
+	Outcome CopyOutcome
 }
+
+// CopyOutcome is what verifying one copy established. The zero value is
+// deliberately not a valid outcome, so an unset field cannot read as verified.
+type CopyOutcome int
 
 // Outcomes reported by ScrubKey.
 const (
-	CopyVerified   = "verified"
-	CopyMismatch   = "mismatch"
-	CopyUnreadable = "unreadable"
-	CopyNotHashed  = "not_hashed"
+	CopyVerified CopyOutcome = iota + 1
+	CopyMismatch
+	CopyUnreadable
+	CopyNotHashed
 )
+
+// String names the outcome for logs and test failures. It is not the wire
+// value: how a verdict reads to an operator is the admin transport's business,
+// and it words each one there.
+func (o CopyOutcome) String() string {
+	switch o {
+	case CopyVerified:
+		return "verified"
+	case CopyMismatch:
+		return "mismatch"
+	case CopyUnreadable:
+		return "unreadable"
+	case CopyNotHashed:
+		return "not hashed"
+	default:
+		return "unknown"
+	}
+}
 
 // ScrubKey verifies every copy of one key immediately and reports each
 // separately.
@@ -155,29 +176,16 @@ func (s *Scrubber) ScrubKey(ctx context.Context, key string) ([]CopyVerification
 // against nothing.
 func (s *Scrubber) verifyCopy(ctx context.Context, loc *core.ObjectLocation) CopyVerification {
 	if loc.ContentHash == "" {
-		return CopyVerification{
-			Backend: loc.BackendName,
-			Outcome: CopyNotHashed,
-			Detail:  "no stored content hash to verify against",
-		}
+		return CopyVerification{Backend: loc.BackendName, Outcome: CopyNotHashed}
 	}
 
-	res := s.verifyOne(ctx, loc)
-	switch res.Outcome {
+	switch s.verifyOne(ctx, loc).Outcome {
 	case ItemSucceeded:
 		return CopyVerification{Backend: loc.BackendName, Outcome: CopyVerified}
 	case ItemFailed:
-		return CopyVerification{
-			Backend: loc.BackendName,
-			Outcome: CopyMismatch,
-			Detail:  "stored bytes did not match the recorded hash; the copy was discarded and will be rebuilt",
-		}
+		return CopyVerification{Backend: loc.BackendName, Outcome: CopyMismatch}
 	default:
-		return CopyVerification{
-			Backend: loc.BackendName,
-			Outcome: CopyUnreadable,
-			Detail:  "the copy could not be read",
-		}
+		return CopyVerification{Backend: loc.BackendName, Outcome: CopyUnreadable}
 	}
 }
 

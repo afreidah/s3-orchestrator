@@ -806,10 +806,10 @@ func TestScrubKey_ReportsEachCopySeparately(t *testing.T) {
 		byBackend[r.Backend] = r
 	}
 	if got := byBackend["b1"].Outcome; got != CopyVerified {
-		t.Errorf("intact copy = %q, want %q", got, CopyVerified)
+		t.Errorf("intact copy = %s, want %s", got, CopyVerified)
 	}
 	if got := byBackend["b2"].Outcome; got != CopyMismatch {
-		t.Errorf("corrupt copy = %q, want %q", got, CopyMismatch)
+		t.Errorf("corrupt copy = %s, want %s", got, CopyMismatch)
 	}
 }
 
@@ -830,7 +830,7 @@ func TestScrubKey_UnhashedCopyIsNotReportedAsVerified(t *testing.T) {
 		t.Fatalf("ScrubKey: %v", err)
 	}
 	if len(results) != 1 || results[0].Outcome != CopyNotHashed {
-		t.Fatalf("results = %+v, want a single %q", results, CopyNotHashed)
+		t.Fatalf("results = %+v, want a single %s", results, CopyNotHashed)
 	}
 	// Nothing was read, so no stamp was applied either.
 	if len(ms.scrubbed) != 0 {
@@ -858,7 +858,7 @@ func TestScrubKey_UnreadableCopyIsDistinctFromMismatch(t *testing.T) {
 		t.Fatalf("ScrubKey: %v", err)
 	}
 	if len(results) != 1 || results[0].Outcome != CopyUnreadable {
-		t.Fatalf("results = %+v, want a single %q", results, CopyUnreadable)
+		t.Fatalf("results = %+v, want a single %s", results, CopyUnreadable)
 	}
 }
 
@@ -875,6 +875,24 @@ func TestScrubKey_UnknownKeyReturnsNothing(t *testing.T) {
 	}
 	if len(results) != 0 {
 		t.Errorf("results = %+v, want none for a key with no copies", results)
+	}
+}
+
+// TestCopyOutcome_String covers the diagnostic labels, including the zero value:
+// an unset outcome must not read as verified in a log line either.
+func TestCopyOutcome_String(t *testing.T) {
+	t.Parallel()
+	cases := map[CopyOutcome]string{
+		CopyVerified:   "verified",
+		CopyMismatch:   "mismatch",
+		CopyUnreadable: "unreadable",
+		CopyNotHashed:  "not hashed",
+		0:              "unknown",
+	}
+	for outcome, want := range cases {
+		if got := outcome.String(); got != want {
+			t.Errorf("CopyOutcome(%d).String() = %q, want %q", int(outcome), got, want)
+		}
 	}
 }
 

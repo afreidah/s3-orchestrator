@@ -52,6 +52,14 @@ func (c *apiClient) GetObjectLocations(ctx context.Context, key string) (*admina
 	return adminclient.Get[adminapi.ObjectLocationsResponse](ctx, c.c, "/admin/api/object-locations", q)
 }
 
+// ScrubKey verifies every recorded copy of one key now and reports a verdict
+// per copy.
+func (c *apiClient) ScrubKey(ctx context.Context, key string) (*adminapi.ScrubKeyResponse, error) {
+	q := url.Values{}
+	q.Set("key", key)
+	return adminclient.Post[adminapi.ScrubKeyResponse](ctx, c.c, "/admin/api/object-scrub", q, nil)
+}
+
 // GetStatus fetches instance and per-backend operational status.
 func (c *apiClient) GetStatus(ctx context.Context) (*adminapi.StatusResponse, error) {
 	return adminclient.Get[adminapi.StatusResponse](ctx, c.c, "/admin/api/status", nil)
