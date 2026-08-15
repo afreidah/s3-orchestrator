@@ -31,39 +31,24 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.asyncOps.TryStart("rebalance") {
+	if !h.asyncOps.TryStart(opRebalance) {
 		httputil.WriteJSON(w, http.StatusConflict, map[string]string{"error": "rebalance already running"})
 		return
 	}
 
-	rebalCfg := h.rebalancer.Config()
-	if rebalCfg == nil {
-		rebalCfg = &h.cfg.Load().Rebalance
-	}
-	runCfg := *rebalCfg
-	if runCfg.Strategy == "" {
-		runCfg.Strategy = "spread"
-	}
-	if runCfg.BatchSize == 0 {
-		runCfg.BatchSize = 100
-	}
-	if runCfg.Threshold == 0 {
-		runCfg.Threshold = 0.1
-	}
-	if runCfg.Concurrency == 0 {
-		runCfg.Concurrency = 5
-	}
-
 	go func() {
 		ctx := context.Background()
-		sum, err := h.rebalancer.Rebalance(ctx, runCfg, nil)
-		if err != nil {
-			h.log.ErrorContext(ctx, "rebalance failed", "error", err)
-			h.asyncOps.Complete("rebalance", &asyncResult{Error: "rebalance failed"})
+		res, err := h.rebalance.Run(ctx, nil)
+		if reason, skipped := skipReason(err); skipped {
+			h.asyncOps.Complete(opRebalance, &asyncResult{OK: true, Skipped: reason})
 			return
 		}
-		h.log.InfoContext(ctx, "manual rebalance completed", "moved", sum.Succeeded)
-		h.asyncOps.Complete("rebalance", &asyncResult{OK: true, Count: sum.Succeeded})
+		if err != nil {
+			h.log.ErrorContext(ctx, "rebalance failed", "error", err)
+			h.asyncOps.Complete(opRebalance, &asyncResult{Error: "rebalance failed"})
+			return
+		}
+		h.asyncOps.Complete(opRebalance, &asyncResult{OK: true, Count: res.Moved})
 	}()
 
 	httputil.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "started"})
@@ -71,30 +56,7 @@ func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIRebalanceStatus returns the status of a running or completed rebalance.
 func (h *Handler) handleAPIRebalanceStatus(w http.ResponseWriter, _ *http.Request) {
-	setSecurityHeaders(w)
-	w.Header().Set(headerContentType, contentTypeJSON)
-	result, running := h.asyncOps.Status("rebalance")
-	writeAsyncOpStatus(w, result, running, "moved")
-}
-
-// writeAsyncOpStatus encodes the JSON response for any async-op status
-// endpoint. countKey is the field name used to surface the operation's
-// scalar result (for example "moved" for rebalance, "removed" for the
-// over-replication cleaner) inside the done payload. Note: caller is
-// expected to have already set the JSON content-type header so this
-// helper can also be invoked from non-Handler contexts that pre-stage
-// headers (e.g. existing admin_actions.go status endpoints).
-func writeAsyncOpStatus(w http.ResponseWriter, result *asyncResult, running bool, countKey string) {
-	switch {
-	case running:
-		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "running"})
-	case result == nil:
-		httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "idle"})
-	case result.Error != "":
-		httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "error", "error": result.Error})
-	default:
-		httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "done", "ok": true, countKey: result.Count})
-	}
+	h.writeAdminActionStatus(w, opRebalance, "moved")
 }
 
 // handleAPICleanExcess triggers an on-demand over-replication cleanup in the
@@ -106,38 +68,24 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rcfg := h.overRep.Config()
-	if rcfg == nil {
-		rcfg = &h.cfg.Load().Replication
-	}
-	if rcfg.Factor <= 1 {
-		httputil.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": 0, "reason": "replication factor <= 1"})
-		return
-	}
-
 	if !h.asyncOps.TryStart(opCleanExcess) {
 		httputil.WriteJSON(w, http.StatusConflict, map[string]string{"error": "cleanup already running"})
 		return
 	}
 
-	cfg := *rcfg
-	if cfg.BatchSize == 0 {
-		cfg.BatchSize = 100
-	}
-	if cfg.Concurrency == 0 {
-		cfg.Concurrency = 5
-	}
-
 	go func() {
 		ctx := context.Background()
-		removed, err := h.overRep.Clean(ctx, cfg, nil)
+		res, err := h.replication.CleanExcess(ctx, 0, nil)
+		if reason, skipped := skipReason(err); skipped {
+			h.asyncOps.Complete(opCleanExcess, &asyncResult{OK: true, Skipped: reason})
+			return
+		}
 		if err != nil {
 			h.log.ErrorContext(ctx, "over-replication cleanup failed", "error", err)
 			h.asyncOps.Complete(opCleanExcess, &asyncResult{Error: "cleanup failed"})
 			return
 		}
-		h.log.InfoContext(ctx, "manual over-replication cleanup completed", "removed", removed)
-		h.asyncOps.Complete(opCleanExcess, &asyncResult{OK: true, Count: removed})
+		h.asyncOps.Complete(opCleanExcess, &asyncResult{OK: true, Count: res.CopiesRemoved})
 	}()
 
 	httputil.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "started"})
@@ -145,10 +93,7 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 
 // handleAPICleanExcessStatus returns the status of a running or completed cleanup.
 func (h *Handler) handleAPICleanExcessStatus(w http.ResponseWriter, _ *http.Request) {
-	setSecurityHeaders(w)
-	w.Header().Set(headerContentType, contentTypeJSON)
-	result, running := h.asyncOps.Status(opCleanExcess)
-	writeAsyncOpStatus(w, result, running, "removed")
+	h.writeAdminActionStatus(w, opCleanExcess, "removed")
 }
 
 // handleAPISync triggers a backend sync to import pre-existing objects.

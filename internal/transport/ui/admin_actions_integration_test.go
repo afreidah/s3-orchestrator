@@ -3,21 +3,24 @@
 //
 // Author: Alex Freidah
 //
-// Drives every handleAPI* wrapper through a real *admin.Handler so the
-// closure body that calls into the admin operation is actually executed.
-// The admin handler is configured into the documented "skipped" shape
-// (replication factor 1, encryptor nil, integrity disabled) so each
-// op short-circuits without touching real backends  -  exactly the path
-// the dashboard's banner relies on.
+// Drives every handleAPI* wrapper through a real operations layer so the
+// closure body that calls into the operation is actually executed. The
+// operations are configured into the documented "skipped" shape (replication
+// factor 1, encryptor nil, integrity disabled) so each one short-circuits
+// without touching real backends  -  exactly the path the dashboard's banner
+// relies on.
 // -------------------------------------------------------------------------------
 
 package ui
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"go.uber.org/mock/gomock"
 
@@ -25,19 +28,19 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
+	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
-	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 )
 
-// newAdminHandlerForTest builds an *admin.Handler against a mock store
-// and an empty backend set. opts mutates the resulting BackendManager so
-// individual tests can flip the relevant skipped-vs-happy guards before
-// the handler is returned.
-func newAdminHandlerForTest(t testing.TB, opts ...func(*proxy.BackendManager, *proxytest.Workers)) *admin.Handler {
+// newOpsForTest builds the operations layer against a mock store and an empty
+// backend set. opts mutates the resulting BackendManager and workers so
+// individual tests can flip the relevant skipped-vs-happy guards.
+func newOpsForTest(t testing.TB, opts ...func(*proxy.BackendManager, *proxytest.Workers)) *ops.Services {
 	t.Helper()
 	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
 	// The handler drives real workers, whose passes read the ledger. These are
@@ -53,7 +56,9 @@ func newAdminHandlerForTest(t testing.TB, opts ...func(*proxy.BackendManager, *p
 	mock.EXPECT().GetUnverifiedObjectCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	mock.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	mock.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.UsageStat{}, nil).AnyTimes()
-	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
+	mock.EXPECT().GetLeastRecentlyScrubbedObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	mock.EXPECT().OldestUnverifiedAge(gomock.Any()).Return(time.Duration(0), int64(0), nil).AnyTimes()
+	mock.EXPECT().GetObjectsWithoutHash(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]backend.ObjectBackend{},
@@ -73,29 +78,40 @@ func newAdminHandlerForTest(t testing.TB, opts ...func(*proxy.BackendManager, *p
 		opt(mgr, workers)
 	}
 
-	lv := new(slog.LevelVar)
-	return admin.New(&admin.Deps{
+	return testOps(mgr, workers, mock)
+}
+
+// testOps assembles the operations layer over a manager and its workers, the
+// same wiring the composition root performs.
+func testOps(mgr *proxy.BackendManager, workers *proxytest.Workers, store core.MetadataStore) *ops.Services {
+	return ops.New(&ops.Deps{
+		Objects:    mgr.Objects(),
+		Store:      store,
+		EncStore:   store,
+		Runtime:    mgr.Runtime(),
 		BackendOps: mgr,
-		RuntimeOps: mgr.Runtime(),
 		Replicator: workers.Replicator,
 		OverRep:    workers.OverReplicationCleaner,
-		Drain:      mgr.Drain(),
+		Rebalancer: workers.Rebalancer,
 		Scrubber:   workers.Scrubber,
-		Lifecycle:  mock,
-		DBHealthy:  cb.IsHealthy,
-		Encryption: mock,
-		Objects:    mock,
-		Cleanup:    mock,
-		Token:      "test-token",
-		LogLevel:   lv,
+		Cfg:        &config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}},
 	})
 }
 
-// newSkippedAdminHandler is the most common shape: every op resolves to
-// the skipped branch.
-func newSkippedAdminHandler(t testing.TB) *admin.Handler {
+// newActionsHandler builds a UI handler whose operations are the ones under
+// test. Every operation resolves to the skipped branch unless opts say
+// otherwise.
+func newActionsHandler(t testing.TB, opts ...func(*proxy.BackendManager, *proxytest.Workers)) *Handler {
 	t.Helper()
-	return newAdminHandlerForTest(t)
+	svc := newOpsForTest(t, opts...)
+	return &Handler{
+		log:         slog.Default(),
+		objects:     svc.Objects,
+		integrity:   svc.Integrity,
+		replication: svc.Replication,
+		rebalance:   svc.Rebalance,
+		encryption:  svc.Encryption,
+	}
 }
 
 // TestHandleAPIReplicate_HappyPathReturnsCount asserts that when the
@@ -106,9 +122,9 @@ func newSkippedAdminHandler(t testing.TB) *admin.Handler {
 // across the four operations; covering one is enough.
 func TestHandleAPIReplicate_HappyPathReturnsCount(t *testing.T) {
 	t.Parallel()
-	h := &Handler{log: slog.Default(), adminHandler: newAdminHandlerForTest(t, func(_ *proxy.BackendManager, workers *proxytest.Workers) {
+	h := newActionsHandler(t, func(_ *proxy.BackendManager, workers *proxytest.Workers) {
 		workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 10})
-	})}
+	})
 
 	triggerReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/replicate", nil)
 	triggerW := httptest.NewRecorder()
@@ -134,6 +150,139 @@ func TestHandleAPIReplicate_HappyPathReturnsCount(t *testing.T) {
 	}
 	if body["copies_created"] != float64(0) {
 		t.Errorf("copies_created = %v, want 0", body["copies_created"])
+	}
+}
+
+// TestHandleAPIDownload_StreamsObject asserts the dashboard's download serves
+// the object bytes with the headers a browser needs to save the file.
+func TestHandleAPIDownload_StreamsObject(t *testing.T) {
+	t.Parallel()
+	api := opstest.NewMockObjectAPI(gomock.NewController(t))
+	payload := []byte("hello world")
+	api.EXPECT().GetObject(gomock.Any(), "test-bucket/dir/file.txt", "").
+		Return(&backend.GetObjectResult{
+			Body: io.NopCloser(bytes.NewReader(payload)),
+			Size: int64(len(payload)),
+		}, nil).Times(1)
+
+	h := &Handler{
+		log: slog.Default(),
+		objects: ops.NewObjects(ops.ObjectsDeps{
+			Objects: api,
+			Store:   storetest.NewMockObjectStore(gomock.NewController(t)),
+			Config:  ops.NewConfigStore(&config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}}),
+		}),
+	}
+
+	w := httptest.NewRecorder()
+	h.handleAPIDownload(w, httptest.NewRequestWithContext(context.Background(),
+		http.MethodGet, "/api/download?key=test-bucket/dir/file.txt", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if !bytes.Equal(w.Body.Bytes(), payload) {
+		t.Errorf("body = %q, want %q", w.Body.String(), payload)
+	}
+	if cd := w.Header().Get("Content-Disposition"); cd != `attachment; filename="file.txt"` {
+		t.Errorf("Content-Disposition = %q, want the base filename", cd)
+	}
+	if cl := w.Header().Get("Content-Length"); cl != "11" {
+		t.Errorf("Content-Length = %q, want 11", cl)
+	}
+}
+
+// TestHandleAPIEncryptExisting_ReportsCounts asserts the encrypt-existing
+// wrapper surfaces the pass counts once an encryptor is configured, rather
+// than only the skipped reason.
+func TestHandleAPIEncryptExisting_ReportsCounts(t *testing.T) {
+	t.Parallel()
+	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	storetest.Permissive(store)
+	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-key")
+	if err != nil {
+		t.Fatalf("NewConfigKeyProvider: %v", err)
+	}
+	enc, err := encryption.NewEncryptor(provider, 64*1024)
+	if err != nil {
+		t.Fatalf("NewEncryptor: %v", err)
+	}
+
+	h := &Handler{
+		log: slog.Default(),
+		encryption: ops.NewEncryption(ops.EncryptionDeps{
+			Encryptor:  enc,
+			Store:      store,
+			Runtime:    opstest.NewMockRuntimeOps(gomock.NewController(t)),
+			BackendOps: opstest.NewMockBackendOps(gomock.NewController(t)),
+		}),
+	}
+
+	w := httptest.NewRecorder()
+	h.handleAPIEncryptExisting(w, httptest.NewRequestWithContext(context.Background(),
+		http.MethodPost, "/api/encrypt-existing", nil))
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", w.Code, w.Body.String())
+	}
+
+	res := waitForResult(t, h, "encrypt-existing")
+	if !res.OK || res.Skipped != "" {
+		t.Errorf("result = %+v, want a completed pass with no skip reason", res)
+	}
+}
+
+// TestIntegrityActions_ReportCountsWhenEnabled asserts the scrub and backfill
+// wrappers surface counts once verification is on, rather than only the
+// skipped reason the default fixture produces.
+func TestIntegrityActions_ReportCountsWhenEnabled(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		opName  string
+		trigger func(*Handler, http.ResponseWriter, *http.Request)
+	}{
+		{"scrub", (*Handler).handleAPIScrub},
+		{"backfill-checksums", (*Handler).handleAPIBackfillChecksums},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.opName, func(t *testing.T) {
+			t.Parallel()
+			h := newActionsHandler(t, func(mgr *proxy.BackendManager, _ *proxytest.Workers) {
+				mgr.SetIntegrityConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10})
+			})
+
+			w := httptest.NewRecorder()
+			tc.trigger(h, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/"+tc.opName, nil))
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("trigger status = %d, want 202", w.Code)
+			}
+
+			res := waitForResult(t, h, tc.opName)
+			if !res.OK || res.Skipped != "" {
+				t.Errorf("result = %+v, want a completed pass with no skip reason", res)
+			}
+		})
+	}
+}
+
+// TestHandleAPICleanExcess_ReportsRemovedCount asserts the surplus cleanup
+// reports what it removed once the factor makes the pass meaningful.
+func TestHandleAPICleanExcess_ReportsRemovedCount(t *testing.T) {
+	t.Parallel()
+	h := newActionsHandler(t, func(_ *proxy.BackendManager, workers *proxytest.Workers) {
+		workers.OverReplicationCleaner.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 10})
+	})
+
+	w := httptest.NewRecorder()
+	h.handleAPICleanExcess(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/clean-excess", nil))
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("trigger status = %d, want 202; body=%s", w.Code, w.Body.String())
+	}
+
+	res := waitForResult(t, h, opCleanExcess)
+	if !res.OK || res.Skipped != "" {
+		t.Errorf("result = %+v, want a completed pass with no skip reason", res)
 	}
 }
 
@@ -166,7 +315,7 @@ func TestAdminActionWrappers_RouteIntoAdmin(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.opName, func(t *testing.T) {
 			t.Parallel()
-			h := &Handler{log: slog.Default(), adminHandler: newSkippedAdminHandler(t)}
+			h := newActionsHandler(t)
 
 			triggerReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, tc.triggerPath, nil)
 			triggerW := httptest.NewRecorder()

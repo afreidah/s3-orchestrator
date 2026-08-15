@@ -601,12 +601,19 @@ func newTestHandler(t *testing.T) *Handler {
 	t.Helper()
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
-	return &Handler{
-		log:        slog.Default().With(logfmt.Component("admin")),
-		runtimeOps: newRuntimeOps(t),
-		token:      "test-token",
-		logLevel:   &lv,
+	h := &Handler{
+		log:      slog.Default().With(logfmt.Component("admin")),
+		token:    "test-token",
+		logLevel: &lv,
 	}
+	// Operations over stubs that do nothing, so a test only installs the one
+	// service whose branch it drives. The rebalancer is deliberately absent,
+	// mirroring a proxy-only deployment with no worker pool.
+	integrityWith(t, h, backendOpsStub{}, &scrubberStub{})
+	replicationWith(t, h, replicatorStub{}, overRepStub{})
+	rebalanceWith(t, h, nil)
+	encryptionWith(t, h, nil, nil)
+	return h
 }
 
 // newTestHandlerWithCache constructs a test handler with a real

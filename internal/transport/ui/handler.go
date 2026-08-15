@@ -39,14 +39,12 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
-	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // sessionCookieName and related constants used by this package.
@@ -63,6 +61,7 @@ const (
 	errKeyRequired       = "key is required"
 	errLoginRenderFailed = "failed to render login page"
 	opCleanExcess        = "clean-excess"
+	opRebalance          = "rebalance"
 )
 
 // BackendSyncer is the backend-sync surface the UI's admin actions pane
@@ -83,10 +82,11 @@ type DashboardOps interface {
 type Deps struct {
 	Dashboard     DashboardOps
 	Sync          BackendSyncer
-	Objects       *object.Manager
-	Rebalancer    *worker.Rebalancer
-	OverRep       *worker.OverReplicationCleaner
-	AdminHandler  *admin.Handler
+	Objects       *ops.Objects
+	Integrity     *ops.Integrity
+	Replication   *ops.Replication
+	Rebalance     *ops.Rebalance
+	Encryption    *ops.Encryption
 	DBHealthy     func() bool
 	Cfg           *config.Config
 	LogBuffer     *telemetry.LogBuffer
@@ -98,10 +98,11 @@ type Handler struct {
 	log            *slog.Logger
 	dashboardOps   DashboardOps
 	syncOps        BackendSyncer
-	objects        *object.Manager
-	rebalancer     *worker.Rebalancer
-	overRep        *worker.OverReplicationCleaner
-	adminHandler   *admin.Handler
+	objects        *ops.Objects
+	integrity      *ops.Integrity
+	replication    *ops.Replication
+	rebalance      *ops.Rebalance
+	encryption     *ops.Encryption
 	dbHealthy      func() bool
 	cfg            syncutil.AtomicConfig[config.Config]
 	templates      *template.Template
@@ -122,16 +123,20 @@ type Handler struct {
 func New(d *Deps) *Handler {
 	must.NotNil("d", d)
 	must.NotNil("d.Objects", d.Objects)
-	must.NotNil("d.AdminHandler", d.AdminHandler)
+	must.NotNil("d.Integrity", d.Integrity)
+	must.NotNil("d.Replication", d.Replication)
+	must.NotNil("d.Rebalance", d.Rebalance)
+	must.NotNil("d.Encryption", d.Encryption)
 	must.NotNil("d.Cfg", d.Cfg)
 	h := &Handler{
 		log:            slog.Default().With(logfmt.Component("ui")),
 		dashboardOps:   d.Dashboard,
 		syncOps:        d.Sync,
 		objects:        d.Objects,
-		rebalancer:     d.Rebalancer,
-		overRep:        d.OverRep,
-		adminHandler:   d.AdminHandler,
+		integrity:      d.Integrity,
+		replication:    d.Replication,
+		rebalance:      d.Rebalance,
+		encryption:     d.Encryption,
 		dbHealthy:      d.DBHealthy,
 		templates:      loadTemplates(),
 		logBuffer:      d.LogBuffer,

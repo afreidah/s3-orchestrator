@@ -23,8 +23,6 @@ import (
 	"time"
 
 	"log/slog"
-
-	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 )
 
 // noopOp returns an adminActionOp whose run closure does nothing useful;
@@ -39,17 +37,11 @@ func noopOp(name string) adminActionOp {
 	}
 }
 
-// stubAdminHandler returns a non-nil *admin.Handler so the
-// "admin actions not configured" guard accepts the request. The closure
-// supplied to startAdminAction never calls into it, so a zero-value
-// handler is safe.
-func stubAdminHandler() *admin.Handler { return &admin.Handler{} }
-
 // TestStartAdminAction_MethodNotAllowed asserts that non-POST requests are
 // rejected before the op is started.
 func TestStartAdminAction_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
-	h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
+	h := &Handler{log: slog.Default()}
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/replicate", nil)
 	w := httptest.NewRecorder()
 
@@ -60,27 +52,12 @@ func TestStartAdminAction_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-// TestStartAdminAction_NotConfigured asserts that requests fail fast when
-// the UI handler was built without an admin handler dependency.
-func TestStartAdminAction_NotConfigured(t *testing.T) {
-	t.Parallel()
-	h := &Handler{log: slog.Default()} // adminHandler intentionally nil
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/replicate", nil)
-	w := httptest.NewRecorder()
-
-	h.startAdminAction(w, req, noopOp("replicate"))
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
-	}
-}
-
 // TestStartAdminAction_AlreadyRunning asserts single-flight semantics: a
 // second concurrent invocation returns 409 Conflict instead of clobbering
 // the first run.
 func TestStartAdminAction_AlreadyRunning(t *testing.T) {
 	t.Parallel()
-	h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
+	h := &Handler{log: slog.Default()}
 	if !h.asyncOps.TryStart("replicate") {
 		t.Fatal("test pre-condition: TryStart should claim the slot")
 	}
@@ -99,7 +76,7 @@ func TestStartAdminAction_AlreadyRunning(t *testing.T) {
 // op-specific Extra fields end up on the asyncResult for the poller.
 func TestStartAdminAction_AcceptedStoresExtra(t *testing.T) {
 	t.Parallel()
-	h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
+	h := &Handler{log: slog.Default()}
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/encrypt-existing", nil)
 	w := httptest.NewRecorder()
@@ -133,7 +110,7 @@ func TestStartAdminAction_AcceptedStoresExtra(t *testing.T) {
 // status endpoint can render it.
 func TestStartAdminAction_SkippedReason(t *testing.T) {
 	t.Parallel()
-	h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
+	h := &Handler{log: slog.Default()}
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/scrub", nil)
 	w := httptest.NewRecorder()
 
@@ -155,7 +132,7 @@ func TestStartAdminAction_SkippedReason(t *testing.T) {
 // the run closure is captured on the asyncResult.
 func TestStartAdminAction_ErrorPropagates(t *testing.T) {
 	t.Parallel()
-	h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
+	h := &Handler{log: slog.Default()}
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/replicate", nil)
 	w := httptest.NewRecorder()
 
@@ -321,18 +298,16 @@ func decodeBody(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 
 // -------------------------------------------------------------------------
 // Per-wrapper smoke coverage. Each handleAPI* wrapper is a thin shim over
-// startAdminAction (or writeAdminActionStatus) that closes over a fixed
-// op name and the admin handler's exported method. Exercising the
-// dispatcher's failure paths through every wrapper guarantees the wrapper
-// lines themselves are covered, even though end-to-end happy-path runs
-// would require the full admin dependency graph.
+// startAdminAction (or writeAdminActionStatus) that closes over a fixed op
+// name and one operation. Driving every wrapper's guard paths keeps the
+// wrapper lines themselves covered; the runs themselves are exercised in
+// admin_actions_integration_test.go.
 // -------------------------------------------------------------------------
 
-// TestAdminActionWrappers_NotConfigured asserts every trigger wrapper
-// surfaces 503 when the UI handler was built without an admin dependency,
-// and that every status wrapper reports "idle" before any op has been
-// started. Both paths exercise the wrapper's single line of code.
-func TestAdminActionWrappers_NotConfigured(t *testing.T) {
+// TestAdminActionWrappers_IdleBeforeFirstRun asserts every status wrapper
+// reports "idle" before its operation has ever been started, which is what
+// the dashboard polls into on a fresh page load.
+func TestAdminActionWrappers_IdleBeforeFirstRun(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -355,17 +330,8 @@ func TestAdminActionWrappers_NotConfigured(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := &Handler{log: slog.Default()} // adminHandler nil
+			h := &Handler{log: slog.Default()}
 
-			// Trigger: 503 because admin handler is not configured.
-			triggerReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, tc.triggerPath, nil)
-			triggerW := httptest.NewRecorder()
-			tc.trigger(h, triggerW, triggerReq)
-			if triggerW.Code != http.StatusServiceUnavailable {
-				t.Errorf("trigger status = %d, want %d", triggerW.Code, http.StatusServiceUnavailable)
-			}
-
-			// Status: idle because no run has ever started.
 			statusReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, tc.statusPath, nil)
 			statusW := httptest.NewRecorder()
 			tc.status(h, statusW, statusReq)
@@ -397,7 +363,7 @@ func TestAdminActionWrappers_MethodNotAllowed(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := &Handler{log: slog.Default(), adminHandler: stubAdminHandler()}
+			h := &Handler{log: slog.Default()}
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, tc.path, nil)
 			w := httptest.NewRecorder()
 			tc.trigger(h, w, req)

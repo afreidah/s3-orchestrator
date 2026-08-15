@@ -13,12 +13,14 @@
 package admin
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -98,12 +100,12 @@ func backendStatuses(data *dashboard.Data) []adminapi.BackendStatus {
 // handleObjectLocations returns all copies of an object across backends.
 func (h *Handler) handleObjectLocations(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
-	if key == "" {
+
+	locations, err := h.objects.Locations(r.Context(), key)
+	if errors.Is(err, ops.ErrKeyRequired) {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "key parameter is required")
 		return
 	}
-
-	locations, err := h.objects.GetAllObjectLocations(r.Context(), key)
 	if err != nil {
 		h.internalError(r.Context(), w, "failed to fetch locations", err, slog.String("key", key))
 		return
