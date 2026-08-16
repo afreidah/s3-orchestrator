@@ -14,12 +14,23 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"net/http"
 
-	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
+
+// skipReason reports the reason an operation declined to run, and whether it
+// declined at all. The dashboard surfaces a skip as a completed action
+// carrying the reason rather than as a failure.
+func skipReason(err error) (string, bool) {
+	if skip, ok := errors.AsType[*ops.SkipError](err); ok {
+		return skip.Reason, true
+	}
+	return "", false
+}
 
 // -------------------------------------------------------------------------
 // SHARED HELPERS
@@ -40,10 +51,6 @@ type adminActionOp struct {
 func (h *Handler) startAdminAction(w http.ResponseWriter, r *http.Request, op adminActionOp) {
 	setSecurityHeaders(w)
 	if !httputil.RequireMethod(w, r, http.MethodPost) {
-		return
-	}
-	if h.adminHandler == nil {
-		httputil.WriteJSONError(w, http.StatusServiceUnavailable, "admin actions not configured")
 		return
 	}
 	if !h.asyncOps.TryStart(op.name) {
@@ -121,12 +128,12 @@ func (h *Handler) handleAPIReplicate(w http.ResponseWriter, r *http.Request) {
 		name:      "replicate",
 		resultKey: "copies_created",
 		run: func(ctx context.Context) (int, map[string]any, string, error) {
-			res, err := h.adminHandler.Replicate(ctx, nil)
+			res, err := h.replication.Replicate(ctx, nil)
+			if reason, skipped := skipReason(err); skipped {
+				return 0, nil, reason, nil
+			}
 			if err != nil {
 				return 0, nil, "", err
-			}
-			if res.Status == "skipped" {
-				return 0, nil, res.Reason, nil
 			}
 			return res.CopiesCreated, nil, "", nil
 		},
@@ -150,9 +157,12 @@ func (h *Handler) handleAPIScrub(w http.ResponseWriter, r *http.Request) {
 		name:      "scrub",
 		resultKey: "checked",
 		run: func(ctx context.Context) (int, map[string]any, string, error) {
-			res := h.adminHandler.Scrub(ctx, 0, nil)
-			if res.Status == "skipped" {
-				return 0, nil, res.Reason, nil
+			res, err := h.integrity.Scrub(ctx, 0, nil)
+			if reason, skipped := skipReason(err); skipped {
+				return 0, nil, reason, nil
+			}
+			if err != nil {
+				return 0, nil, "", err
 			}
 			return res.Checked, map[string]any{"failed": res.Failed}, "", nil
 		},
@@ -177,9 +187,12 @@ func (h *Handler) handleAPIBackfillChecksums(w http.ResponseWriter, r *http.Requ
 		name:      "backfill-checksums",
 		resultKey: "processed",
 		run: func(ctx context.Context) (int, map[string]any, string, error) {
-			res := h.adminHandler.BackfillChecksums(ctx, 0, 0, 0, nil)
-			if res.Status == "skipped" {
-				return 0, nil, res.Reason, nil
+			res, err := h.integrity.BackfillChecksums(ctx, 0, 0, 0, nil)
+			if reason, skipped := skipReason(err); skipped {
+				return 0, nil, reason, nil
+			}
+			if err != nil {
+				return 0, nil, "", err
 			}
 			return res.Processed, nil, "", nil
 		},
@@ -204,11 +217,14 @@ func (h *Handler) handleAPIEncryptExisting(w http.ResponseWriter, r *http.Reques
 		name:      "encrypt-existing",
 		resultKey: "encrypted",
 		run: func(ctx context.Context) (int, map[string]any, string, error) {
-			res := h.adminHandler.EncryptExisting(ctx)
-			if res.Status == "skipped" {
-				return 0, nil, res.Reason, nil
+			res, err := h.encryption.EncryptExisting(ctx)
+			if reason, skipped := skipReason(err); skipped {
+				return 0, nil, reason, nil
 			}
-			return res.Success, map[string]any{"failed": res.Failed, "total": res.Total}, "", nil
+			if err != nil {
+				return 0, nil, "", err
+			}
+			return res.Succeeded, map[string]any{"failed": res.Failed, "total": res.Total}, "", nil
 		},
 	})
 }
@@ -219,7 +235,3 @@ func (h *Handler) handleAPIEncryptExisting(w http.ResponseWriter, r *http.Reques
 func (h *Handler) handleAPIEncryptExistingStatus(w http.ResponseWriter, _ *http.Request) {
 	h.writeAdminActionStatus(w, "encrypt-existing", "encrypted")
 }
-
-// Compile-time assertion: admin package import is used (silences unused
-// import lints when the file is regenerated).
-var _ = (*admin.Handler)(nil)

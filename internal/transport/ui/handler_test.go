@@ -105,7 +105,7 @@ func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataSt
 			Metrics: mockStore,
 		},
 	})
-	workers := proxytest.BuildWorkers(mgr, mockStore)
+	svc := testOps(mgr, proxytest.BuildWorkers(mgr, mockStore), mockStore)
 	t.Cleanup(mgr.Close)
 
 	cfg := &config.Config{
@@ -127,7 +127,7 @@ func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataSt
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: mgr.Objects(), Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(t), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
@@ -489,7 +489,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 			Metrics: mockStore,
 		},
 	})
-	workers := proxytest.BuildWorkers(mgr, mockStore)
+	svc := testOps(mgr, proxytest.BuildWorkers(mgr, mockStore), mockStore)
 	t.Cleanup(mgr.Close)
 
 	cfg := &config.Config{
@@ -503,7 +503,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: mgr.Objects(), Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(t), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 
@@ -563,7 +563,7 @@ func TestCrossInstanceSession(t *testing.T) {
 			Metrics: mockStore,
 		},
 	})
-	workers := proxytest.BuildWorkers(mgr, mockStore)
+	svc := testOps(mgr, proxytest.BuildWorkers(mgr, mockStore), mockStore)
 	t.Cleanup(mgr.Close)
 
 	cfg := &config.Config{
@@ -576,8 +576,8 @@ func TestCrossInstanceSession(t *testing.T) {
 		},
 	}
 
-	h1 := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: mgr.Objects(), Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(t), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
-	h2 := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: mgr.Objects(), Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(t), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h1 := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h2 := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux1 := http.NewServeMux()
 	mux2 := http.NewServeMux()
 	h1.Register(mux1, "/ui")
@@ -1965,7 +1965,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 			Metrics: mockStore,
 		},
 	})
-	workers := proxytest.BuildWorkers(mgr, mockStore)
+	svc := testOps(mgr, proxytest.BuildWorkers(mgr, mockStore), mockStore)
 	b.Cleanup(mgr.Close)
 
 	cfg := &config.Config{
@@ -1980,7 +1980,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: mgr.Objects(), Rebalancer: workers.Rebalancer, OverRep: workers.OverReplicationCleaner, AdminHandler: newSkippedAdminHandler(b), DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 
@@ -2169,9 +2169,10 @@ func TestLogin_BruteForceReset(t *testing.T) {
 // CLEAN-EXCESS (OVER-REPLICATION CLEANUP)
 // -------------------------------------------------------------------------
 
-// TestAPICleanExcess_FactorLeOne covers the short-circuit branch: with the
-// default replication factor of 1, the handler returns 200 immediately with
-// removed=0 rather than kicking off a background job.
+// TestAPICleanExcess_FactorLeOne covers the declined branch: with the default
+// replication factor of 1 there is no surplus to remove, so the run is
+// accepted and then reports itself skipped with a reason, which is what the
+// dashboard renders as a banner.
 func TestAPICleanExcess_FactorLeOne(t *testing.T) {
 	t.Parallel()
 	h, mux := newTestHandler(t)
@@ -2180,19 +2181,16 @@ func TestAPICleanExcess_FactorLeOne(t *testing.T) {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
+
+	res := waitForResult(t, h, opCleanExcess)
+	if res.Skipped == "" {
+		t.Error("skip reason is empty; want an explanation for the dashboard banner")
 	}
-	if resp["ok"] != true {
-		t.Errorf("ok = %v, want true", resp["ok"])
-	}
-	// Use JSON unmarshaling's json.Number behaviour: removed comes through as float64.
-	if removed, _ := resp["removed"].(float64); removed != 0 {
-		t.Errorf("removed = %v, want 0", resp["removed"])
+	if res.Count != 0 {
+		t.Errorf("removed = %d, want 0", res.Count)
 	}
 }
 

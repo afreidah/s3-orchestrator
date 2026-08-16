@@ -29,6 +29,8 @@ const (
 	pathBackendDrain    = "/admin/api/backends/{name}/drain"
 	pathOverReplication = "/admin/api/over-replication"
 	pathLogLevel        = "/admin/api/log-level"
+	pathObjects         = "/admin/api/objects"
+	pathObject          = pathObjects + "/" + objectKeyPattern
 )
 
 // param is one query or path parameter a handler reads. Declaring them on the
@@ -48,7 +50,10 @@ const (
 	paramName       = "name"
 	paramBackend    = "backend"
 	paramBatchSize  = "batch_size"
+	paramKey        = "key"
+	paramPrefix     = "prefix"
 	descBackendName = "Backend name"
+	descObjectKey   = "Object key, including its bucket prefix"
 )
 
 // Parameter locations and types, mirrored by the generator.
@@ -59,6 +64,10 @@ const (
 	typeInteger = "integer"
 	typeBoolean = "boolean"
 )
+
+// mediaOctetStream is the media type of every route that carries raw bytes
+// rather than a JSON document.
+const mediaOctetStream = "application/octet-stream"
 
 // route is one admin endpoint. Request, Stream, Alt and ResponseType are zero
 // for the routes that do not need them, which is most of them.
@@ -87,6 +96,9 @@ type route struct {
 	// ResponseType overrides the success media type. Empty means JSON; the
 	// trace snapshot serves a binary trace file and has no Response schema.
 	ResponseType string
+	// RequestType overrides the request media type. Empty means JSON; an
+	// object upload carries raw bytes rather than a decodable document.
+	RequestType string
 }
 
 // routes describes every admin endpoint. Adding an entry here is what mounts
@@ -122,17 +134,50 @@ func (h *Handler) routes() []route {
 			Summary:  "Backend placement for one object key",
 			Response: adminapi.ObjectLocationsResponse{},
 			Params: []param{
-				{Name: "key", In: inQuery, Required: true, Type: typeString, Description: "Object key to resolve"},
+				{Name: paramKey, In: inQuery, Required: true, Type: typeString, Description: "Object key to resolve"},
 			},
 		},
 		{
-			Method: http.MethodGet, Pattern: "/admin/api/objects", Handler: h.handleListObjects,
+			Method: http.MethodGet, Pattern: pathObjects, Handler: h.handleListObjects,
 			Summary:  "Page of stored objects",
 			Response: adminapi.ObjectListResponse{},
 			Params: []param{
-				{Name: "prefix", In: inQuery, Type: typeString, Description: "Restrict the listing to keys under this prefix"},
+				{Name: paramPrefix, In: inQuery, Type: typeString, Description: "Restrict the listing to keys under this prefix"},
 				{Name: "delimiter", In: inQuery, Type: typeString, Description: "Grouping delimiter; defaults to /"},
 				{Name: "continuation", In: inQuery, Type: typeString, Description: "Continuation token from a previous page"},
+			},
+		},
+		{
+			Method: http.MethodGet, Pattern: pathObject, Handler: h.handleGetObject,
+			Summary:      "Download one object",
+			ResponseType: mediaOctetStream,
+			Params: []param{
+				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
+			},
+		},
+		{
+			Method: http.MethodPut, Pattern: pathObject, Handler: h.handlePutObject,
+			Summary:     "Upload one object",
+			RequestType: mediaOctetStream,
+			Response:    adminapi.ObjectUploadResponse{},
+			Params: []param{
+				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
+			},
+		},
+		{
+			Method: http.MethodDelete, Pattern: pathObject, Handler: h.handleDeleteObject,
+			Summary:  "Delete one object",
+			Response: adminapi.ObjectDeleteResponse{},
+			Params: []param{
+				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
+			},
+		},
+		{
+			Method: http.MethodDelete, Pattern: pathObjects, Handler: h.handleDeletePrefix,
+			Summary:  "Delete every object under a prefix",
+			Response: adminapi.ObjectDeleteResponse{},
+			Params: []param{
+				{Name: paramPrefix, In: inQuery, Required: true, Type: typeString, Description: "Prefix whose objects are removed"},
 			},
 		},
 		{
@@ -275,7 +320,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Verify every copy of one object now",
 			Response: adminapi.ScrubKeyResponse{},
 			Params: []param{
-				{Name: "key", In: inQuery, Required: true, Type: typeString, Description: "Object key to verify"},
+				{Name: paramKey, In: inQuery, Required: true, Type: typeString, Description: "Object key to verify"},
 			},
 		},
 		{
@@ -313,7 +358,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Drop one key from the object data cache",
 			Response: adminapi.CacheInvalidateKeyResponse{},
 			Params: []param{
-				{Name: "key", In: inPath, Required: true, Type: typeString, Description: "Full internal object key, slashes included"},
+				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: "Full internal object key, slashes included"},
 			},
 		},
 		{
@@ -321,13 +366,13 @@ func (h *Handler) routes() []route {
 			Summary:  "Drop every cache entry under a key prefix",
 			Response: adminapi.CacheInvalidateResponse{},
 			Params: []param{
-				{Name: "prefix", In: inQuery, Required: true, Type: typeString, Description: "Key prefix to invalidate"},
+				{Name: paramPrefix, In: inQuery, Required: true, Type: typeString, Description: "Key prefix to invalidate"},
 			},
 		},
 		{
 			Method: http.MethodPost, Pattern: "/admin/api/trace/snapshot", Handler: h.handleTraceSnapshot,
 			Summary:      "Download a flight-recorder trace snapshot",
-			ResponseType: "application/octet-stream",
+			ResponseType: mediaOctetStream,
 		},
 	}
 }

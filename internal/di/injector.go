@@ -121,12 +121,14 @@ func registerWorkers(inj do.Injector, cfg *config.Config, mode config.Mode) {
 }
 
 // registerTransport wires the always-on HTTP-side providers: bucket
-// auth, the S3 API server, and the lifecycle manager that supervises
-// the background services registered above. Conditional transport
-// surfaces (UI, admin) live in registerOptionalFeatures.
+// auth, the S3 API server, the operations layer both operator surfaces
+// call, and the lifecycle manager that supervises the background services
+// registered above. Conditional transport surfaces (UI, admin) live in
+// registerOptionalFeatures.
 func registerTransport(inj do.Injector) {
 	do.Provide(inj, ProvideBucketAuth)
 	do.Provide(inj, ProvideS3Server)
+	do.Provide(inj, ProvideOps)
 	do.Provide(inj, ProvideLifecycleManager)
 }
 

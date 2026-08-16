@@ -387,6 +387,25 @@ paths:
                 "401":
                     description: Missing or invalid admin token
     /admin/api/objects:
+        delete:
+            summary: Delete every object under a prefix
+            operationId: deleteObjects
+            parameters:
+                - name: prefix
+                  in: query
+                  description: Prefix whose objects are removed
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ObjectDeleteResponse'
+                "401":
+                    description: Missing or invalid admin token
         get:
             summary: Page of stored objects
             operationId: getObjects
@@ -416,6 +435,72 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/ObjectListResponse'
+                "401":
+                    description: Missing or invalid admin token
+    /admin/api/objects/{key}:
+        delete:
+            summary: Delete one object
+            operationId: deleteObjectsKey
+            parameters:
+                - name: key
+                  in: path
+                  description: Object key, including its bucket prefix
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ObjectDeleteResponse'
+                "401":
+                    description: Missing or invalid admin token
+        get:
+            summary: Download one object
+            operationId: getObjectsKey
+            parameters:
+                - name: key
+                  in: path
+                  description: Object key, including its bucket prefix
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/octet-stream:
+                            schema:
+                                format: binary
+                                type: string
+                "401":
+                    description: Missing or invalid admin token
+        put:
+            summary: Upload one object
+            operationId: putObjectsKey
+            parameters:
+                - name: key
+                  in: path
+                  description: Object key, including its bucket prefix
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                required: true
+                content:
+                    application/octet-stream:
+                        schema:
+                            format: binary
+                            type: string
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ObjectUploadResponse'
                 "401":
                     description: Missing or invalid admin token
     /admin/api/over-replication:
@@ -1002,6 +1087,20 @@ components:
             required:
                 - entries
             type: object
+        ObjectDeleteResponse:
+            properties:
+                deleted:
+                    format: int64
+                    type: integer
+                failed:
+                    format: int64
+                    type: integer
+                total:
+                    format: int64
+                    type: integer
+            required:
+                - deleted
+            type: object
         ObjectEntry:
             properties:
                 key:
@@ -1072,6 +1171,13 @@ components:
             required:
                 - key
                 - locations
+            type: object
+        ObjectUploadResponse:
+            properties:
+                etag:
+                    type: string
+            required:
+                - etag
             type: object
         OverReplicationCleanResponse:
             properties:

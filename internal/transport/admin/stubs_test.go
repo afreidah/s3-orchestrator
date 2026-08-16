@@ -26,6 +26,9 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
+	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -45,7 +48,9 @@ func fixedKey(string) func(int) string {
 	return func(int) string { return "fake-key" }
 }
 
-// backendOpsStub configures the BackendOps mock.
+// backendOpsStub configures the BackendOps mocks. The admin transport reads
+// only the usage counters; the operations layer also reads the integrity
+// settings, so one stub configures both mocks.
 type backendOpsStub struct {
 	flushErr     error
 	integrity    *config.IntegrityConfig
@@ -59,9 +64,67 @@ func newBackendOps(t *testing.T, cfg backendOpsStub) *MockBackendOps {
 	m := NewMockBackendOps(gomock.NewController(t))
 	m.EXPECT().FlushUsage(gomock.Any()).Return(cfg.flushErr).AnyTimes()
 	m.EXPECT().ReconcileUsage(gomock.Any()).Return(cfg.reconcileMap, cfg.reconcileErr).AnyTimes()
+	return m
+}
+
+// newOpsBackendOps builds the operations layer's view of the same backend
+// manager: usage recording plus the integrity settings that gate a scrub.
+func newOpsBackendOps(t *testing.T, cfg backendOpsStub) *opstest.MockBackendOps {
+	t.Helper()
+	m := opstest.NewMockBackendOps(gomock.NewController(t))
 	m.EXPECT().RecordUsage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 	m.EXPECT().IntegrityConfig().Return(cfg.integrity).AnyTimes()
 	return m
+}
+
+// integrityWith installs integrity operations built from the given stubs, for
+// the handler tests that drive scrub, per-key verification, or backfill.
+func integrityWith(t *testing.T, h *Handler, be backendOpsStub, sc *scrubberStub) {
+	t.Helper()
+	h.integrity = ops.NewIntegrity(ops.IntegrityDeps{
+		Scrubber:   newScrubber(t, sc),
+		BackendOps: newOpsBackendOps(t, be),
+	})
+}
+
+// replicationWith installs replication operations built from the given stubs.
+// The half a test does not exercise still needs a stub, since one service
+// serves both the copy-creating and the surplus-removing endpoints.
+func replicationWith(t *testing.T, h *Handler, repl replicatorStub, over overRepStub) {
+	t.Helper()
+	h.replication = ops.NewReplication(ops.ReplicationDeps{
+		Replicator: newReplicator(t, repl),
+		OverRep:    newOverRep(t, over),
+		Runtime:    newRuntimeOps(t),
+		Config:     ops.NewConfigStore(&config.Config{}),
+	})
+}
+
+// rebalanceWith installs rebalance operations built from cfg, so a test can
+// read back the config the cycle actually ran with. A nil cfg stands for a
+// deployment whose worker pool was never wired.
+func rebalanceWith(t *testing.T, h *Handler, cfg *rebalancerStub) {
+	t.Helper()
+	deps := ops.RebalanceDeps{
+		Runtime: newRuntimeOps(t),
+		Config:  ops.NewConfigStore(&config.Config{}),
+	}
+	if cfg != nil {
+		deps.Rebalancer = newRebalancer(t, cfg)
+	}
+	h.rebalance = ops.NewRebalance(deps)
+}
+
+// encryptionWith installs encryption operations over one store, for the tests
+// that drive the bulk rewrite and key rotation endpoints.
+func encryptionWith(t *testing.T, h *Handler, enc *encryption.Encryptor, store ops.EncryptionStore) {
+	t.Helper()
+	h.encryption = ops.NewEncryption(ops.EncryptionDeps{
+		Encryptor:  enc,
+		Store:      store,
+		Runtime:    newRuntimeOps(t),
+		BackendOps: newOpsBackendOps(t, backendOpsStub{}),
+	})
 }
 
 // newDashboardOps builds a permissive DashboardReader mock returning data or err.
@@ -74,9 +137,9 @@ func newDashboardOps(t *testing.T, data *dashboard.Data, err error) *MockDashboa
 
 // newRuntimeOps builds a RuntimeOps mock whose GetBackend always misses, which
 // is the branch the rewrite tests exercise, and whose metrics update succeeds.
-func newRuntimeOps(t *testing.T) *MockRuntimeOps {
+func newRuntimeOps(t *testing.T) *opstest.MockRuntimeOps {
 	t.Helper()
-	m := NewMockRuntimeOps(gomock.NewController(t))
+	m := opstest.NewMockRuntimeOps(gomock.NewController(t))
 	m.EXPECT().GetBackend(gomock.Any()).
 		Return(nil, fmt.Errorf("no backend")).AnyTimes()
 	m.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil).AnyTimes()
@@ -91,9 +154,9 @@ type replicatorStub struct {
 }
 
 // newReplicator builds a ReplicatorOps mock that reports cfg.created copies.
-func newReplicator(t *testing.T, cfg replicatorStub) *MockReplicatorOps {
+func newReplicator(t *testing.T, cfg replicatorStub) *opstest.MockReplicatorOps {
 	t.Helper()
-	m := NewMockReplicatorOps(gomock.NewController(t))
+	m := opstest.NewMockReplicatorOps(gomock.NewController(t))
 	m.EXPECT().Config().Return(cfg.cfg).AnyTimes()
 	m.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ config.ReplicationConfig, observer progress.Observer) (int, error) {
@@ -115,9 +178,9 @@ type rebalancerStub struct {
 
 // newRebalancer builds a RebalancerOps mock that reports cfg.moved moves, or
 // the configured skip reason.
-func newRebalancer(t *testing.T, cfg *rebalancerStub) *MockRebalancerOps {
+func newRebalancer(t *testing.T, cfg *rebalancerStub) *opstest.MockRebalancerOps {
 	t.Helper()
-	m := NewMockRebalancerOps(gomock.NewController(t))
+	m := opstest.NewMockRebalancerOps(gomock.NewController(t))
 	m.EXPECT().Config().Return(cfg.cfg).AnyTimes()
 	m.EXPECT().Rebalance(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, ran config.RebalanceConfig, observer progress.Observer) (worker.RebalanceSummary, error) {
@@ -142,9 +205,9 @@ type overRepStub struct {
 
 // newOverRep builds an OverReplicationOps mock reporting cfg.count pending and
 // cleaning cfg.cleaned copies.
-func newOverRep(t *testing.T, cfg overRepStub) *MockOverReplicationOps {
+func newOverRep(t *testing.T, cfg overRepStub) *opstest.MockOverReplicationOps {
 	t.Helper()
-	m := NewMockOverReplicationOps(gomock.NewController(t))
+	m := opstest.NewMockOverReplicationOps(gomock.NewController(t))
 	m.EXPECT().Config().Return(cfg.cfg).AnyTimes()
 	m.EXPECT().CountPending(gomock.Any(), gomock.Any()).Return(cfg.count, cfg.countErr).AnyTimes()
 	m.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -170,9 +233,9 @@ type scrubberStub struct {
 }
 
 // newScrubber builds a ScrubberOps mock from cfg.
-func newScrubber(t *testing.T, cfg *scrubberStub) *MockScrubberOps {
+func newScrubber(t *testing.T, cfg *scrubberStub) *opstest.MockScrubberOps {
 	t.Helper()
-	m := NewMockScrubberOps(gomock.NewController(t))
+	m := opstest.NewMockScrubberOps(gomock.NewController(t))
 	m.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ int, observer progress.Observer) worker.WorkSummary {
 			trackN(observer, cfg.scrubChecked, fixedKey(""))

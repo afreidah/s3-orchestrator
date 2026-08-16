@@ -22,6 +22,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/di"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -54,6 +55,7 @@ func defaultHooks(inj do.Injector, certReloader *httputil.CertReloader, logLevel
 		&logLevelHook{level: logLevel},
 		&workerConfigsHook{inj: inj},
 		&managerConfigHook{inj: inj},
+		&opsHook{inj: inj},
 		&uiHandlerHook{inj: inj},
 	}
 }
@@ -315,6 +317,30 @@ func (h *managerConfigHook) Apply(ctx context.Context, _, newCfg *config.Config)
 	if err := applier.UpdateQuotaMetrics(ctx); err != nil {
 		return HookFailed, err
 	}
+	return HookApplied, nil
+}
+
+// -------------------------------------------------------------------------
+// OPERATIONS LAYER
+// -------------------------------------------------------------------------
+
+// opsHook swaps the config every operation reads, so a manual run started
+// after a reload uses the settings now in force.
+type opsHook struct {
+	inj do.Injector
+}
+
+func (*opsHook) Name() string                    { return "ops" }
+func (*opsHook) Check(_, _ *config.Config) error { return nil }
+func (h *opsHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
+	res := di.Optional[*ops.Services](h.inj)
+	if res.Failed() {
+		return HookFailed, resolutionError("operations layer", res.Err)
+	}
+	if res.Value == nil {
+		return HookSkipped, nil
+	}
+	res.Value.UpdateConfig(newCfg)
 	return HookApplied, nil
 }
 

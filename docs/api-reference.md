@@ -219,6 +219,7 @@ Returns the status of the most recent rebalance operation.
 ```json
 {"status": "running"}
 {"status": "done", "ok": true, "moved": 5}
+{"status": "skipped", "reason": "backend utilization is within the configured threshold"}
 {"status": "error", "error": "rebalance failed"}
 {"status": "idle"}
 ```
@@ -250,6 +251,7 @@ Returns the status of the most recent cleanup operation.
 ```json
 {"status": "running"}
 {"status": "done", "ok": true, "removed": 3}
+{"status": "skipped", "reason": "replication not configured or factor <= 1"}
 {"status": "error", "error": "cleanup failed"}
 {"status": "idle"}
 ```

@@ -32,6 +32,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
@@ -117,21 +118,32 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 	// Start admin server
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
-	adminHandler := admin.New(&admin.Deps{
+	opsSvc := ops.New(&ops.Deps{
+		Objects:    mgr.Objects(),
+		Store:      testStore,
+		Encryptor:  enc,
+		EncStore:   testStore,
+		Runtime:    mgr.Runtime(),
 		BackendOps: mgr,
-		RuntimeOps: mgr.Runtime(),
 		Replicator: workers.Replicator,
 		OverRep:    workers.OverReplicationCleaner,
-		Drain:      mgr.Drain(),
+		Rebalancer: workers.Rebalancer,
 		Scrubber:   workers.Scrubber,
-		Lifecycle:  testStore,
-		DBHealthy:  testDatabaseCB.IsHealthy,
-		Encryption: testStore,
-		Objects:    testStore,
-		Cleanup:    testStore,
-		Encryptor:  enc,
-		Token:      adminToken,
-		LogLevel:   &lv,
+		Cfg:        &config.Config{Buckets: []config.BucketConfig{{Name: virtualBucket}}},
+	})
+	adminHandler := admin.New(&admin.Deps{
+		BackendOps:  mgr,
+		Objects:     opsSvc.Objects,
+		Integrity:   opsSvc.Integrity,
+		Replication: opsSvc.Replication,
+		Rebalance:   opsSvc.Rebalance,
+		Encryption:  opsSvc.Encryption,
+		Drain:       mgr.Drain(),
+		Lifecycle:   testStore,
+		DBHealthy:   testDatabaseCB.IsHealthy,
+		Cleanup:     testStore,
+		Token:       adminToken,
+		LogLevel:    &lv,
 	})
 	adminMux := http.NewServeMux()
 	adminHandler.Register(adminMux)

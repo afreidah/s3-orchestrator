@@ -24,7 +24,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -34,11 +33,8 @@ import (
 // config it must fall back to the spread-strategy defaults.
 func TestHandleRebalance_HappyPath(t *testing.T) {
 	t.Parallel()
-	stub := &rebalancerStub{moved: 3}
-	fake := newRebalancer(t, stub)
 	h := newTestHandler(t)
-	h.rebalancer = fake
-	h.backendOps = newBackendOps(t, backendOpsStub{})
+	rebalanceWith(t, h, &rebalancerStub{moved: 3})
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -60,62 +56,6 @@ func TestHandleRebalance_HappyPath(t *testing.T) {
 	// Reason is omitted on the ok path so the two outcomes stay distinguishable.
 	if resp.Reason != "" {
 		t.Errorf("reason = %q, want empty on the ok path", resp.Reason)
-	}
-	// Defaults applied when the worker config is nil, mirroring the dashboard.
-	if g := *stub.gotCfg; g.Strategy != defaultRebalanceStrategy || g.BatchSize != defaultRebalanceBatchSize ||
-		g.Threshold != defaultRebalanceThreshold || g.Concurrency != defaultRebalanceConcurrency {
-		t.Errorf("ran with cfg %+v, want spread defaults", g)
-	}
-}
-
-// TestHandleRebalance_PreservesConfiguredStrategy verifies the operator's
-// configured strategy is used verbatim and only zero-value fields are defaulted.
-func TestHandleRebalance_PreservesConfiguredStrategy(t *testing.T) {
-	t.Parallel()
-	stub := &rebalancerStub{
-		cfg:   &config.RebalanceConfig{Strategy: "pack", BatchSize: 50, Threshold: 0.2, Concurrency: 8},
-		moved: 1,
-	}
-	h := newTestHandler(t)
-	h.rebalancer = newRebalancer(t, stub)
-	h.backendOps = newBackendOps(t, backendOpsStub{})
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/rebalance", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
-	mux.ServeHTTP(httptest.NewRecorder(), req)
-
-	if g := *stub.gotCfg; g.Strategy != "pack" || g.BatchSize != 50 || g.Threshold != 0.2 || g.Concurrency != 8 {
-		t.Errorf("ran with cfg %+v, want configured pack values", g)
-	}
-}
-
-// TestHandleRebalance_QuotaMetricsErrorStillOK verifies a post-move quota
-// metrics refresh failure is logged but does not fail the rebalance: the move
-// already happened, so the response is still ok with the move count.
-func TestHandleRebalance_QuotaMetricsErrorStillOK(t *testing.T) {
-	t.Parallel()
-	h := newTestHandler(t)
-	h.rebalancer = newRebalancer(t, &rebalancerStub{moved: 2})
-	h.backendOps = allFailingOps{} // UpdateQuotaMetrics returns an error
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/rebalance", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
-	}
-	var resp adminapi.RebalanceResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.Status != "ok" || resp.Moved != 2 {
-		t.Errorf("got {status=%q moved=%d}, want {ok 2}", resp.Status, resp.Moved)
 	}
 }
 
@@ -155,8 +95,7 @@ func TestHandleRebalance_NotWired(t *testing.T) {
 func TestHandleRebalance_SkippedCycle(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
-	h.rebalancer = newRebalancer(t, &rebalancerStub{skip: worker.SkipReasonWithinThreshold})
-	h.backendOps = newBackendOps(t, backendOpsStub{})
+	rebalanceWith(t, h, &rebalancerStub{skip: worker.SkipReasonWithinThreshold})
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -178,8 +117,7 @@ func TestHandleRebalance_SkippedCycle(t *testing.T) {
 func TestHandleRebalance_Error(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
-	h.rebalancer = newRebalancer(t, &rebalancerStub{err: errors.New("boom")})
-	h.backendOps = newBackendOps(t, backendOpsStub{})
+	rebalanceWith(t, h, &rebalancerStub{err: errors.New("boom")})
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -198,7 +136,7 @@ func TestHandleRebalance_Error(t *testing.T) {
 func TestHandleRebalance_RequiresToken(t *testing.T) {
 	t.Parallel()
 	h := newTestHandler(t)
-	h.rebalancer = newRebalancer(t, &rebalancerStub{})
+	rebalanceWith(t, h, &rebalancerStub{})
 	mux := http.NewServeMux()
 	h.Register(mux)
 

@@ -81,6 +81,7 @@ func openAPIRoutes(rts []route) []openapi.Route {
 			Stream:       rt.Stream,
 			Alt:          rt.Alt,
 			ResponseType: rt.ResponseType,
+			RequestType:  rt.RequestType,
 		}
 		if rt.Stream != nil {
 			r.StreamMediaType = adminstream.ContentType

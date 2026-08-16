@@ -22,9 +22,12 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
+	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
@@ -69,23 +72,52 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
+	svc := testOps(mgr, workers, mock, nil)
 	return &Handler{
 		log:          slog.Default().With(logfmt.Component("admin")),
 		backendOps:   mgr,
 		dashboardOps: dashboard.New(mock, mgr.Runtime().Usage(), nil, mgr.Runtime(), mgr.Drain()),
-		runtimeOps:   mgr.Runtime(),
-		replicator:   workers.Replicator,
-		overRep:      workers.OverReplicationCleaner,
+		objects:      svc.Objects,
+		integrity:    svc.Integrity,
+		replication:  svc.Replication,
+		rebalance:    svc.Rebalance,
+		encryption:   svc.Encryption,
 		drain:        mgr.Drain(),
-		scrubber:     workers.Scrubber,
 		lifecycle:    mock,
 		dbHealthy:    cb.IsHealthy,
-		objects:      mock,
 		cleanup:      mock,
-		encAdmin:     mock,
 		token:        "test-token",
 		logLevel:     &lv,
 	}
+}
+
+// objectsOver builds an object operations service over one store mock, for the
+// handlers that only read object metadata and never move bytes.
+func objectsOver(t *testing.T, store ops.ObjectStore) *ops.Objects {
+	t.Helper()
+	return ops.NewObjects(ops.ObjectsDeps{
+		Objects: opstest.NewMockObjectAPI(gomock.NewController(t)),
+		Store:   store,
+		Config:  ops.NewConfigStore(&config.Config{}),
+	})
+}
+
+// testOps assembles the operations layer over the fixture's real manager and
+// workers, so a handler test drives the same code the process wires.
+func testOps(mgr *proxy.BackendManager, workers *proxytest.Workers, store core.MetadataStore, enc *encryption.Encryptor) *ops.Services {
+	return ops.New(&ops.Deps{
+		Objects:    mgr.Objects(),
+		Store:      store,
+		Encryptor:  enc,
+		EncStore:   store,
+		Runtime:    mgr.Runtime(),
+		BackendOps: mgr,
+		Replicator: workers.Replicator,
+		OverRep:    workers.OverReplicationCleaner,
+		Rebalancer: workers.Rebalancer,
+		Scrubber:   workers.Scrubber,
+		Cfg:        &config.Config{},
+	})
 }
 
 // doAuth builds a request pre-populated with the correct admin token.
@@ -199,7 +231,7 @@ func TestHandleObjectLocations_Happy(t *testing.T) {
 	}}, nil).Times(1)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: mock, token: "test-token", logLevel: &lv}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: objectsOver(t, mock), token: "test-token", logLevel: &lv}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -235,7 +267,7 @@ func TestHandleObjectLocations_NotFound(t *testing.T) {
 	h := newTestHandlerWithManager(t)
 	objects := storetest.NewMockObjectStore(gomock.NewController(t))
 	objects.EXPECT().GetAllObjectLocations(gomock.Any(), "ghost").Return(nil, core.ErrObjectNotFound).Times(1)
-	h.objects = objects
+	h.objects = objectsOver(t, objects)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -480,6 +512,14 @@ func TestHandleRotateEncryptionKey_NoEncryptor(t *testing.T) {
 func newRotateEncryptionKeyHandler(t *testing.T) *Handler {
 	t.Helper()
 	h := newTestHandlerWithManager(t)
+	encryptionWith(t, h, testEncryptor(t), emptyEncryptionStore(t))
+	return h
+}
+
+// testEncryptor builds a real encryptor over the local config-key provider,
+// for the paths that must get past the encryption-disabled guard.
+func testEncryptor(t *testing.T) *encryption.Encryptor {
+	t.Helper()
 	provider, err := encryption.NewConfigKeyProvider(
 		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-key")
 	if err != nil {
@@ -489,9 +529,7 @@ func newRotateEncryptionKeyHandler(t *testing.T) *Handler {
 	if err != nil {
 		t.Fatalf("NewEncryptor: %v", err)
 	}
-	h.encryptor = enc
-	h.encAdmin = emptyEncAdmin{}
-	return h
+	return enc
 }
 
 // TestHandleRotateEncryptionKey_BodyValidation covers the request-body
@@ -611,12 +649,6 @@ func (f *flushUsageFailingOps) FlushUsage(_ context.Context) error {
 func (f *flushUsageFailingOps) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
 	return f.inner.ReconcileUsage(ctx)
 }
-func (f *flushUsageFailingOps) RecordUsage(name string, req, in, out int64) {
-	f.inner.RecordUsage(name, req, in, out)
-}
-func (f *flushUsageFailingOps) IntegrityConfig() *config.IntegrityConfig {
-	return f.inner.IntegrityConfig()
-}
 
 // TestHandleReconcile_UsesContext is a smoke test that the handler threads
 // the request context correctly (reconciler is nil, so we get 503, but the
@@ -640,29 +672,6 @@ func TestHandleReconcile_CancelledContext(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body=%s", w.Code, w.Body.String())
 	}
-}
-
-// allFailingOps wraps the real BackendOps but errors on every method
-// that has an error return. Lets a single test exercise every
-// admin handler's "downstream call failed" branch without writing
-// per-handler error fixtures.
-type allFailingOps struct{}
-
-func (allFailingOps) FlushUsage(_ context.Context) error {
-	return errors.New("flush down")
-}
-func (allFailingOps) UpdateQuotaMetrics(_ context.Context) error {
-	return errors.New("quota down")
-}
-func (allFailingOps) ReconcileUsage(_ context.Context) (map[string]int64, error) {
-	return nil, errors.New("reconcile down")
-}
-func (allFailingOps) RecordUsage(_ string, _, _, _ int64) {}
-func (allFailingOps) GetBackend(_ string) (backend.ObjectBackend, error) {
-	return nil, errors.New("backend not found")
-}
-func (allFailingOps) IntegrityConfig() *config.IntegrityConfig {
-	return nil
 }
 
 // TestHandleStatus_DashboardError covers the error branch where the
@@ -690,7 +699,7 @@ func TestHandleObjectLocations_StoreError(t *testing.T) {
 	mock.EXPECT().GetAllObjectLocations(gomock.Any(), "foo").Return(nil, errors.New("query failed")).Times(1)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: mock, token: "test-token", logLevel: &lv}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: objectsOver(t, mock), token: "test-token", logLevel: &lv}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -854,7 +863,7 @@ func TestHandleStartDrain_AcknowledgementShape(t *testing.T) {
 	storetest.Permissive(mock)
 	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
-			Backends: map[string]backend.ObjectBackend{"b1": &fakeBackend{}},
+			Backends: map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()},
 			Order:    []string{"b1"},
 		},
 		Policies:   proxy.PolicyConfig{RoutingStrategy: config.RoutingPack},
@@ -866,7 +875,6 @@ func TestHandleStartDrain_AcknowledgementShape(t *testing.T) {
 		log:          slog.Default().With(logfmt.Component("admin")),
 		backendOps:   mgr,
 		dashboardOps: dashboard.New(mock, mgr.Runtime().Usage(), nil, mgr.Runtime(), mgr.Drain()),
-		runtimeOps:   mgr.Runtime(),
 		drain:        mgr.Drain(),
 		lifecycle:    mock,
 		token:        "test-token",

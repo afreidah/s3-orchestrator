@@ -38,6 +38,33 @@ Each line is one self-contained JSON object with an `event` field: `start` when 
 
 A `mismatch` is acted on, not just reported: the bad copy is discarded and replication rebuilds it from a good one. The endpoint returns `404` when no copies of the key are recorded and `409` when integrity verification is disabled.
 
+## Reading and writing objects
+
+`/admin/api/objects` covers the object namespace itself: browse a page of it, stream one object down, store one, or remove a key or a whole prefix. These exist so an operator on a terminal can inspect and repair data without a browser session or a second S3 client:
+
+```bash
+# Stream one object to a local file.
+curl -H "X-Admin-Token: $TOKEN" \
+  http://localhost:9000/admin/api/objects/backups/db/2026-08-15.sql -o dump.sql
+
+# Store one. The body is the object bytes; Content-Length is required.
+curl -X PUT -H "X-Admin-Token: $TOKEN" \
+  --data-binary @dump.sql \
+  http://localhost:9000/admin/api/objects/backups/db/2026-08-15.sql
+```
+
+Every key must name a configured virtual bucket, the same requirement the dashboard enforces, so a typo cannot write outside the namespace the orchestrator serves. Uploads are capped at 512 MiB; a larger one is refused before it reaches a backend.
+
+Deletes report how many objects they removed, so a caller can tell a no-op from a mass removal:
+
+```bash
+curl -X DELETE -H "X-Admin-Token: $TOKEN" \
+  "http://localhost:9000/admin/api/objects?prefix=backups/db/2025-"
+# {"deleted":48}
+```
+
+A prefix delete that removes some objects and fails on others answers `500` carrying the counts it did achieve (`deleted`, `failed`, `total`), because the prefix is left half removed and the caller needs to know that rather than to retry blind.
+
 ## Removing a backend
 
 `DELETE /admin/api/backends/{name}` is the one destructive endpoint, and the only one whose response shape depends on how it is called.
@@ -68,15 +95,18 @@ To bring such an object under management, move it under a virtual bucket's prefi
 
 ## Skipped operations
 
-Endpoints that trigger a worker report whether the pass actually ran. A response with `"status": "ok"` did the work; `"status": "skipped"` did not, and carries a `reason` explaining why -- usually that the feature is not configured. Replication endpoints skip when the factor is 1 or replication is unset; integrity endpoints skip when verification is disabled. Rebalance skips when backend utilization is already within the configured threshold, or when the strategy plans no moves.
+Endpoints that trigger a worker report whether the pass actually ran. A response with `"status": "ok"` did the work; `"status": "skipped"` did not, and carries a `reason` explaining why.
+
+An operator who asks for a pass gets one. A worker that was never given a schedule still runs on demand: the endpoint falls back to the running configuration, then to defaults, rather than declining because nothing was configured. What remains skipped is work that would be meaningless: replication endpoints skip at factor 1, integrity endpoints skip when verification is disabled, encryption endpoints skip when no encryptor is configured, and rebalance skips when utilization is already within the threshold or the strategy plans no moves.
 
 This is not an error, so the status code is still `200`. Check `status` rather than the HTTP code when driving these from a script.
 
 ## Deliberate rejections
 
-Two endpoints reject an input that would otherwise be a plausible convenience:
+Three endpoints reject an input that would otherwise be a plausible convenience:
 
 - `DELETE /admin/api/cache/prefix` requires a non-empty `prefix`. An empty one would drop every entry, and a full flush should be a deliberate call to `POST /admin/api/cache/flush` rather than an accidentally-empty parameter.
+- `DELETE /admin/api/objects` requires a non-empty `prefix`. An empty one reads as "every object", which no request should be able to mean by omission.
 - `POST /admin/api/rotate-encryption-key` requires `old_key_id`. Rotating "whatever is current" is ambiguous during a partial rotation.
 
 ## Endpoint reference

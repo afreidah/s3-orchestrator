@@ -80,6 +80,9 @@ type Route struct {
 	Stream       any
 	Alt          any
 	ResponseType string
+	// RequestType is the media type of a non-JSON request body, such as the
+	// raw object bytes an upload carries. Takes precedence over Request.
+	RequestType string
 	// StreamMediaType is the media type of the streamed variant. Required
 	// when Stream is set.
 	StreamMediaType string
@@ -144,7 +147,16 @@ func addRoute(doc *document, rt *Route) error {
 		})
 	}
 
-	if rt.Request != nil {
+	switch {
+	case rt.RequestType != "":
+		// A raw body has no JSON Schema to describe; the media type is the
+		// whole contract.
+		op.RequestBody = &requestBody{
+			Required: true,
+			Content:  map[string]mediaType{rt.RequestType: {Schema: map[string]any{keyType: TypeString, keyFormat: "binary"}}},
+		}
+
+	case rt.Request != nil:
 		schema, err := schemaFor(rt.Request, doc.Components.Schemas)
 		if err != nil {
 			return fmt.Errorf("request body: %w", err)
