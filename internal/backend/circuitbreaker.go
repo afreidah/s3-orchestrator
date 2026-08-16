@@ -32,10 +32,6 @@ type CircuitBreakerBackend struct {
 // Compile-time check.
 var _ ObjectBackend = (*CircuitBreakerBackend)(nil)
 
-// NewCircuitBreakerBackend wraps a backend with per-backend circuit breaker
-// logic. The breaker is wired to the telemetry hook so transitions surface
-// on the standard CircuitBreaker* metrics and the BackendCircuit*
-// notification events.
 // CircuitBreakerConfig configures the circuit breaker wrapping a backend.
 type CircuitBreakerConfig struct {
 	Name      string
@@ -43,6 +39,10 @@ type CircuitBreakerConfig struct {
 	Timeout   time.Duration
 }
 
+// NewCircuitBreakerBackend wraps a backend with per-backend circuit breaker
+// logic. The breaker is wired to the telemetry hook so transitions surface
+// on the standard CircuitBreaker* metrics and the BackendCircuit*
+// notification events.
 func NewCircuitBreakerBackend(real ObjectBackend, cfg CircuitBreakerConfig) *CircuitBreakerBackend {
 	cb := breaker.NewCircuitBreaker(breaker.Config{
 		Name:      cfg.Name,

@@ -24,11 +24,11 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/debug"
-	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
@@ -90,19 +90,51 @@ func ProvideLoginThrottle(_ do.Injector) (*httputil.LoginThrottle, error) {
 	return httputil.NewLoginThrottle(5, 5*time.Minute), nil
 }
 
+// ProvideOps creates the operations layer both transports call.
+func ProvideOps(i do.Injector) (*ops.Services, error) {
+	r := newResolver(i)
+	cfg := resolve[*config.Config](r)
+	manager := resolve[*proxy.BackendManager](r)
+	stores := resolve[core.MetadataStore](r)
+	encAdmin := resolve[core.EncryptionAdmin](r)
+	replicator := resolve[*worker.Replicator](r)
+	overRep := resolve[*worker.OverReplicationCleaner](r)
+	rebalancer := resolve[*worker.Rebalancer](r)
+	scrubber := resolve[*worker.Scrubber](r)
+	if r.err != nil {
+		return nil, r.err
+	}
+
+	enc, err := resolveOptionalEncryptor(i, cfg.Encryption.Enabled)
+	if err != nil {
+		return nil, err
+	}
+
+	return ops.New(&ops.Deps{
+		Objects:    manager.Objects(),
+		Store:      stores,
+		Encryptor:  enc,
+		EncStore:   encAdmin,
+		Runtime:    manager.Runtime(),
+		BackendOps: manager,
+		Replicator: replicator,
+		OverRep:    overRep,
+		Rebalancer: rebalancer,
+		Scrubber:   scrubber,
+		Cfg:        cfg,
+	}), nil
+}
+
 // ProvideUIHandler creates the web dashboard handler.
 func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 	r := newResolver(i)
 	cfg := resolve[*config.Config](r)
-	manager := resolve[*proxy.BackendManager](r)
 	cb := resolve[*breaker.CircuitBreaker](r)
 	logBuffer := resolve[*telemetry.LogBuffer](r)
 	loginThrottle := resolve[*httputil.LoginThrottle](r)
-	adminHandler := resolve[*admin.Handler](r)
-	rebalancer := resolve[*worker.Rebalancer](r)
-	overRep := resolve[*worker.OverReplicationCleaner](r)
 	aggregator := resolve[*dashboard.Aggregator](r)
 	reconciler := resolve[*reconcile.Manager](r)
+	opsSvc := resolve[*ops.Services](r)
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -110,10 +142,11 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 	return ui.New(&ui.Deps{
 		Dashboard:     aggregator,
 		Sync:          reconciler,
-		Objects:       manager.Objects(),
-		Rebalancer:    rebalancer,
-		OverRep:       overRep,
-		AdminHandler:  adminHandler,
+		Objects:       opsSvc.Objects,
+		Integrity:     opsSvc.Integrity,
+		Replication:   opsSvc.Replication,
+		Rebalance:     opsSvc.Rebalance,
+		Encryption:    opsSvc.Encryption,
 		DBHealthy:     cb.IsHealthy,
 		Cfg:           cfg,
 		LogBuffer:     logBuffer,
@@ -125,18 +158,13 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 // resolveAdminHandlerRequiredDeps. Optional deps (encryptor, object
 // cache, reconciler) are resolved separately via Optional[T].
 type adminHandlerRequiredDeps struct {
-	cfg        *config.Config
-	manager    *proxy.BackendManager
-	cb         *breaker.CircuitBreaker
-	encAdmin   core.EncryptionAdmin
-	logLevel   *slog.LevelVar
-	enc        *encryption.Encryptor
-	stores     core.MetadataStore
-	replicator *worker.Replicator
-	rebalancer *worker.Rebalancer
-	overRep    *worker.OverReplicationCleaner
-	scrubber   *worker.Scrubber
-	drain      *drain.Manager
+	cfg      *config.Config
+	manager  *proxy.BackendManager
+	cb       *breaker.CircuitBreaker
+	logLevel *slog.LevelVar
+	stores   core.MetadataStore
+	drain    *drain.Manager
+	ops      *ops.Services
 }
 
 // resolveAdminHandlerRequiredDeps invokes every required dependency the
@@ -144,28 +172,17 @@ type adminHandlerRequiredDeps struct {
 func resolveAdminHandlerRequiredDeps(i do.Injector) (adminHandlerRequiredDeps, error) {
 	r := newResolver(i)
 	d := adminHandlerRequiredDeps{
-		cfg:        resolve[*config.Config](r),
-		manager:    resolve[*proxy.BackendManager](r),
-		cb:         resolve[*breaker.CircuitBreaker](r),
-		encAdmin:   resolve[core.EncryptionAdmin](r),
-		logLevel:   resolve[*slog.LevelVar](r),
-		stores:     resolve[core.MetadataStore](r),
-		replicator: resolve[*worker.Replicator](r),
-		rebalancer: resolve[*worker.Rebalancer](r),
-		overRep:    resolve[*worker.OverReplicationCleaner](r),
-		scrubber:   resolve[*worker.Scrubber](r),
-		drain:      resolve[*drain.Manager](r),
+		cfg:      resolve[*config.Config](r),
+		manager:  resolve[*proxy.BackendManager](r),
+		cb:       resolve[*breaker.CircuitBreaker](r),
+		logLevel: resolve[*slog.LevelVar](r),
+		stores:   resolve[core.MetadataStore](r),
+		drain:    resolve[*drain.Manager](r),
+		ops:      resolve[*ops.Services](r),
 	}
 	if r.err != nil {
 		return d, r.err
 	}
-	// enc needs the resolved cfg and has its own error path, so it stays
-	// outside the batch.
-	enc, err := resolveOptionalEncryptor(i, d.cfg.Encryption.Enabled)
-	if err != nil {
-		return d, err
-	}
-	d.enc = enc
 	return d, nil
 }
 
@@ -222,19 +239,16 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	deps := &admin.Deps{
 		BackendOps:   d.manager,
 		Dashboard:    aggregator,
-		RuntimeOps:   d.manager.Runtime(),
-		Replicator:   d.replicator,
-		Rebalancer:   d.rebalancer,
-		OverRep:      d.overRep,
+		Objects:      d.ops.Objects,
+		Integrity:    d.ops.Integrity,
+		Replication:  d.ops.Replication,
+		Rebalance:    d.ops.Rebalance,
+		Encryption:   d.ops.Encryption,
 		Drain:        d.drain,
-		Scrubber:     d.scrubber,
 		Lifecycle:    d.stores,
 		DBHealthy:    d.cb.IsHealthy,
 		WorkerHealth: workerHealth,
-		Encryption:   d.encAdmin,
-		Objects:      d.stores,
 		Cleanup:      d.stores,
-		Encryptor:    d.enc,
 		ObjectCache:  resolveOptionalCache(i),
 		FlightRec:    frRes.Value.Recorder(),
 		Reconciler:   recRes.Value,
@@ -249,7 +263,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	}
 	// Same guard for the metrics collector behind /admin/api/replication.
 	if mc, err := do.Invoke[*metrics.Collector](i); err == nil && mc != nil {
-		deps.Replication = mc
+		deps.ReplMetrics = mc
 	}
 	return admin.New(deps), nil
 }

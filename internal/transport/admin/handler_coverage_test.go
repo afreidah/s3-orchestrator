@@ -25,8 +25,11 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/mock/gomock"
+
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -42,11 +45,10 @@ func newCoverageHandler(t *testing.T) *Handler {
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	return &Handler{
-		log:        slog.Default().With(logfmt.Component("admin")),
-		runtimeOps: newRuntimeOps(t),
-		token:      "test-token",
-		logLevel:   &lv,
-		dbHealthy:  func() bool { return true },
+		log:       slog.Default().With(logfmt.Component("admin")),
+		token:     "test-token",
+		logLevel:  &lv,
+		dbHealthy: func() bool { return true },
 	}
 }
 
@@ -97,7 +99,7 @@ func TestHandleStatus_PopulatedDashboard(t *testing.T) {
 func TestHandleOverReplicationStatus_Configured(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.overRep = newOverRep(t, overRepStub{cfg: &config.ReplicationConfig{Factor: 2}, count: 7})
+	replicationWith(t, h, replicatorStub{}, overRepStub{cfg: &config.ReplicationConfig{Factor: 2}, count: 7})
 
 	w := httptest.NewRecorder()
 	h.handleOverReplicationStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/over-replication", nil))
@@ -123,7 +125,7 @@ func TestHandleOverReplicationStatus_Configured(t *testing.T) {
 func TestHandleOverReplicationStatus_Unconfigured(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.overRep = newOverRep(t, overRepStub{cfg: &config.ReplicationConfig{Factor: 1}})
+	replicationWith(t, h, replicatorStub{}, overRepStub{cfg: &config.ReplicationConfig{Factor: 1}})
 
 	w := httptest.NewRecorder()
 	h.handleOverReplicationStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/over-replication", nil))
@@ -145,7 +147,7 @@ func TestHandleOverReplicationStatus_Unconfigured(t *testing.T) {
 func TestHandleOverReplicationStatus_CountError(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.overRep = newOverRep(t, overRepStub{cfg: &config.ReplicationConfig{Factor: 2}, countErr: errors.New("db down")})
+	replicationWith(t, h, replicatorStub{}, overRepStub{cfg: &config.ReplicationConfig{Factor: 2}, countErr: errors.New("db down")})
 
 	w := httptest.NewRecorder()
 	h.handleOverReplicationStatus(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/admin/api/over-replication", nil))
@@ -161,7 +163,7 @@ func TestHandleOverReplicationClean_Configured(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
 	h.backendOps = newBackendOps(t, backendOpsStub{})
-	h.overRep = newOverRep(t, overRepStub{cfg: &config.ReplicationConfig{Factor: 2, BatchSize: 5}, cleaned: 3})
+	replicationWith(t, h, replicatorStub{}, overRepStub{cfg: &config.ReplicationConfig{Factor: 2, BatchSize: 5}, cleaned: 3})
 
 	w := httptest.NewRecorder()
 	h.handleOverReplicationClean(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/over-replication?batch_size=100", nil))
@@ -229,7 +231,7 @@ func TestHandleReplicate_Configured(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
 	h.backendOps = newBackendOps(t, backendOpsStub{})
-	h.replicator = newReplicator(t, replicatorStub{cfg: &config.ReplicationConfig{Factor: 2}, created: 4})
+	replicationWith(t, h, replicatorStub{cfg: &config.ReplicationConfig{Factor: 2}, created: 4}, overRepStub{})
 
 	w := httptest.NewRecorder()
 	h.handleReplicate(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/replicate", nil))
@@ -253,8 +255,9 @@ func TestHandleReplicate_Configured(t *testing.T) {
 func TestHandleScrub_IntegrityEnabled(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}})
-	h.scrubber = newScrubber(t, &scrubberStub{scrubChecked: 12, scrubFailed: 1})
+	integrityWith(t, h,
+		backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}},
+		&scrubberStub{scrubChecked: 12, scrubFailed: 1})
 
 	w := httptest.NewRecorder()
 	h.handleScrub(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/scrub?batch_size=10", nil))
@@ -278,8 +281,9 @@ func TestHandleScrub_IntegrityEnabled(t *testing.T) {
 func TestHandleBackfillChecksums_IntegrityEnabled(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}})
-	h.scrubber = newScrubber(t, &scrubberStub{backfillProcessed: 8})
+	integrityWith(t, h,
+		backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}},
+		&scrubberStub{backfillProcessed: 8})
 
 	w := httptest.NewRecorder()
 	h.handleBackfillChecksums(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/backfill-checksums", nil))
@@ -304,10 +308,10 @@ func TestHandleBackfillChecksums_IntegrityEnabled(t *testing.T) {
 func TestHandleBackfillChecksums_BoundedByMax(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}})
 	scrubs := &scrubberStub{backfillProcessed: 10, backfillMore: true}
-	sc := newScrubber(t, scrubs)
-	h.scrubber = sc
+	integrityWith(t, h,
+		backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}},
+		scrubs)
 
 	w := httptest.NewRecorder()
 	h.handleBackfillChecksums(w, httptest.NewRequestWithContext(
@@ -370,26 +374,6 @@ func TestHandleReconcile_Error(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// BULK REWRITE ROW ADAPTERS
-// -------------------------------------------------------------------------
-
-// TestBulkRewriteAdapters exercises the encryptRow / decryptRow
-// adapter methods so the trivial getters are not reported as 0%.
-func TestBulkRewriteAdapters(t *testing.T) {
-	t.Parallel()
-
-	er := &encryptRow{UnencryptedLocation: core.UnencryptedLocation{ObjectKey: "k", BackendName: "b", SizeBytes: 42}}
-	if er.rewriteKey() != "k" || er.rewriteBackend() != "b" || er.rewriteSize() != 42 {
-		t.Errorf("encryptRow accessors wrong: %+v", er)
-	}
-
-	dr := &decryptRow{DecryptableLocation: core.DecryptableLocation{ObjectKey: "x", BackendName: "y", SizeBytes: 7}}
-	if dr.rewriteKey() != "x" || dr.rewriteBackend() != "y" || dr.rewriteSize() != 7 {
-		t.Errorf("decryptRow accessors wrong: %+v", dr)
-	}
-}
-
-// -------------------------------------------------------------------------
 // RELOAD STATUS
 // -------------------------------------------------------------------------
 
@@ -437,24 +421,31 @@ func TestHandleCacheInvalidateKey_EmptyKey(t *testing.T) {
 // KEY ROTATION
 // -------------------------------------------------------------------------
 
-// singleRowEncAdmin is an EncryptionAdmin stub that returns a single
-// EncryptedLocation on the first ListEncryptedLocations call and an
-// empty slice afterwards. Lets the rotation loop exercise rotateBatch
-// + rotateOneLocation through the rotateOne unpack failure branch
-// (the EncryptionKey is intentionally malformed).
-type singleRowEncAdmin struct {
-	emptyEncAdmin
-	sent bool
+// singleRowEncryptionStore returns one encrypted location on the first listing
+// and nothing afterwards, so the rotation loop runs end to end. The malformed
+// key trips the unpack branch, which is enough to drive the loop body.
+func singleRowEncryptionStore(t *testing.T) *opstest.MockEncryptionStore {
+	t.Helper()
+	m := opstest.NewMockEncryptionStore(gomock.NewController(t))
+	first := m.EXPECT().ListEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.EncryptedLocation{
+			{ObjectKey: "k1", BackendName: "b1", EncryptionKey: []byte{0x01}, KeyID: "old"},
+		}, nil).
+		Times(1)
+	m.EXPECT().ListEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, nil).After(first).AnyTimes()
+	return m
 }
 
-func (r *singleRowEncAdmin) ListEncryptedLocations(_ context.Context, _ string, _, _ int) ([]core.EncryptedLocation, error) {
-	if r.sent {
-		return nil, nil
-	}
-	r.sent = true
-	return []core.EncryptedLocation{
-		{ObjectKey: "k1", BackendName: "b1", EncryptionKey: []byte{0x01}, KeyID: "old"},
-	}, nil
+// emptyEncryptionStore reports nothing to rewrite in either direction, so a
+// pass runs to completion with zero counts.
+func emptyEncryptionStore(t *testing.T) *opstest.MockEncryptionStore {
+	t.Helper()
+	m := opstest.NewMockEncryptionStore(gomock.NewController(t))
+	m.EXPECT().ListEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	m.EXPECT().ListAllEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	m.EXPECT().ListUnencryptedLocations(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	return m
 }
 
 // TestHandleDecryptExisting_HappyEmpty wires an encryptor + a stub
@@ -482,6 +473,139 @@ func TestHandleDecryptExisting_HappyEmpty(t *testing.T) {
 	}
 }
 
+// TestReplicationEndpoints_WorkerFailureIs500 asserts a cycle that failed
+// mid-run is reported as a fault, not as a cycle that moved nothing.
+func TestReplicationEndpoints_WorkerFailureIs500(t *testing.T) {
+	t.Parallel()
+
+	t.Run("replicate", func(t *testing.T) {
+		t.Parallel()
+		h := newCoverageHandler(t)
+		replicationWith(t, h,
+			replicatorStub{cfg: &config.ReplicationConfig{Factor: 2}, err: errors.New("boom")},
+			overRepStub{})
+
+		w := httptest.NewRecorder()
+		h.handleReplicate(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/replicate", nil))
+
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want 500; body=%s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("clean excess", func(t *testing.T) {
+		t.Parallel()
+		h := newCoverageHandler(t)
+		replicationWith(t, h, replicatorStub{},
+			overRepStub{cfg: &config.ReplicationConfig{Factor: 2}, cleanErr: errors.New("boom")})
+
+		w := httptest.NewRecorder()
+		h.handleOverReplicationClean(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, pathOverReplication, nil))
+
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want 500; body=%s", w.Code, w.Body.String())
+		}
+	})
+}
+
+// TestReplicationStreams_ReportFailure asserts a failed cycle terminates the
+// NDJSON stream with the error rather than a partial run the caller cannot
+// classify.
+func TestReplicationStreams_ReportFailure(t *testing.T) {
+	t.Parallel()
+
+	t.Run("replicate", func(t *testing.T) {
+		t.Parallel()
+		h := newCoverageHandler(t)
+		replicationWith(t, h,
+			replicatorStub{cfg: &config.ReplicationConfig{Factor: 2}, err: errors.New("boom")},
+			overRepStub{})
+
+		w := httptest.NewRecorder()
+		h.handleReplicate(w, streamReq("/admin/api/replicate"))
+
+		events := decodeEvents(t, w.Body.Bytes())
+		last := events[len(events)-1]
+		if last.Kind != adminstream.KindResult || last.Outcome != adminstream.OutcomeFailed {
+			t.Errorf("last event = %+v, want result/failed", last)
+		}
+	})
+
+	t.Run("over-replication", func(t *testing.T) {
+		t.Parallel()
+		h := newCoverageHandler(t)
+		replicationWith(t, h, replicatorStub{},
+			overRepStub{cfg: &config.ReplicationConfig{Factor: 2}, cleanErr: errors.New("boom")})
+
+		w := httptest.NewRecorder()
+		h.handleOverReplicationClean(w, streamReq(pathOverReplication))
+
+		events := decodeEvents(t, w.Body.Bytes())
+		last := events[len(events)-1]
+		if last.Kind != adminstream.KindResult || last.Outcome != adminstream.OutcomeFailed {
+			t.Errorf("last event = %+v, want result/failed", last)
+		}
+	})
+}
+
+// failingEncryptionStore reports a listing failure in both directions, so the
+// bulk endpoints can be driven through their server-fault arm.
+func failingEncryptionStore(t *testing.T, err error) *opstest.MockEncryptionStore {
+	t.Helper()
+	m := opstest.NewMockEncryptionStore(gomock.NewController(t))
+	m.EXPECT().ListEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, err).AnyTimes()
+	m.EXPECT().ListAllEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, err).AnyTimes()
+	m.EXPECT().ListUnencryptedLocations(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, err).AnyTimes()
+	return m
+}
+
+// TestHandleRotateEncryptionKey_ListFailureIs500 asserts a ledger that cannot
+// be read is a server fault, not a rejected request.
+func TestHandleRotateEncryptionKey_ListFailureIs500(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	encryptionWith(t, h, testEncryptor(t), failingEncryptionStore(t, errors.New("ledger unavailable")))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost,
+		"/admin/api/rotate-encryption-key", strings.NewReader(`{"old_key_id":"old"}`))
+	w := httptest.NewRecorder()
+	h.handleRotateEncryptionKey(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleEncryptExisting_NotConfiguredIs400 asserts an instance started
+// without encryption reports that as the caller's problem to fix in config.
+func TestHandleEncryptExisting_NotConfiguredIs400(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	encryptionWith(t, h, nil, nil)
+
+	w := httptest.NewRecorder()
+	h.handleEncryptExisting(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/encrypt-existing", nil))
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleEncryptExisting_ListFailureIs500 asserts a failed listing answers
+// as a fault rather than as a skipped pass, which is what it used to do.
+func TestHandleEncryptExisting_ListFailureIs500(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	encryptionWith(t, h, testEncryptor(t), failingEncryptionStore(t, errors.New("ledger unavailable")))
+
+	w := httptest.NewRecorder()
+	h.handleEncryptExisting(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/encrypt-existing", nil))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500; body=%s", w.Code, w.Body.String())
+	}
+}
+
 // TestHandleRotateEncryptionKey_DrivesListLoop wires an encryptor +
 // a stub admin that returns one malformed EncryptedLocation so the
 // rotation pipeline runs end-to-end: list -> rotateBatch ->
@@ -492,7 +616,7 @@ func TestHandleDecryptExisting_HappyEmpty(t *testing.T) {
 func TestHandleRotateEncryptionKey_DrivesListLoop(t *testing.T) {
 	t.Parallel()
 	h := newRotateEncryptionKeyHandler(t)
-	h.encAdmin = &singleRowEncAdmin{}
+	encryptionWith(t, h, testEncryptor(t), singleRowEncryptionStore(t))
 
 	body := `{"old_key_id":"old"}`
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/rotate-encryption-key", strings.NewReader(body))
@@ -534,8 +658,9 @@ func TestHandleRotateEncryptionKey_DrivesListLoop(t *testing.T) {
 func TestHandleScrub_ReportsUnreadableCount(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}})
-	h.scrubber = newScrubber(t, &scrubberStub{scrubChecked: 4, scrubFailed: 1, scrubSkipped: 7})
+	integrityWith(t, h,
+		backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}},
+		&scrubberStub{scrubChecked: 4, scrubFailed: 1, scrubSkipped: 7})
 
 	w := httptest.NewRecorder()
 	h.handleScrub(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/scrub", nil))
@@ -560,8 +685,9 @@ func TestHandleScrub_ReportsUnreadableCount(t *testing.T) {
 func TestHandleScrub_StreamSummaryReportsUnreadable(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}})
-	h.scrubber = newScrubber(t, &scrubberStub{scrubChecked: 3, scrubFailed: 2, scrubSkipped: 5, scrubDeferred: 9})
+	integrityWith(t, h,
+		backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}},
+		&scrubberStub{scrubChecked: 3, scrubFailed: 2, scrubSkipped: 5, scrubDeferred: 9})
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/scrub", nil)
 	req.Header.Set("Accept", adminstream.ContentType)
@@ -682,11 +808,12 @@ func scrubKeyRequest(t *testing.T, key string) *http.Request {
 func TestHandleScrubKey_ReportsEachCopy(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true}})
-	h.scrubber = newScrubber(t, &scrubberStub{scrubKeyCopies: []worker.CopyVerification{
-		{Backend: "b1", Outcome: worker.CopyVerified},
-		{Backend: "b2", Outcome: worker.CopyMismatch},
-	}})
+	integrityWith(t, h,
+		backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true}},
+		&scrubberStub{scrubKeyCopies: []worker.CopyVerification{
+			{Backend: "b1", Outcome: worker.CopyVerified},
+			{Backend: "b2", Outcome: worker.CopyMismatch},
+		}})
 
 	w := httptest.NewRecorder()
 	h.handleScrubKey(w, scrubKeyRequest(t, "bucket/k"))
@@ -716,10 +843,11 @@ func TestHandleScrubKey_ReportsEachCopy(t *testing.T) {
 func TestHandleScrubKey_UnknownOutcomeIsNotVerified(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true}})
-	h.scrubber = newScrubber(t, &scrubberStub{scrubKeyCopies: []worker.CopyVerification{
-		{Backend: "b1", Outcome: worker.CopyOutcome(99)},
-	}})
+	integrityWith(t, h,
+		backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true}},
+		&scrubberStub{scrubKeyCopies: []worker.CopyVerification{
+			{Backend: "b1", Outcome: worker.CopyOutcome(99)},
+		}})
 
 	w := httptest.NewRecorder()
 	h.handleScrubKey(w, scrubKeyRequest(t, "bucket/k"))
@@ -741,8 +869,7 @@ func TestHandleScrubKey_UnknownOutcomeIsNotVerified(t *testing.T) {
 func TestHandleScrubKey_UnknownKeyIs404(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true}})
-	h.scrubber = newScrubber(t, &scrubberStub{})
+	integrityWith(t, h, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true}}, &scrubberStub{})
 
 	w := httptest.NewRecorder()
 	h.handleScrubKey(w, scrubKeyRequest(t, "bucket/missing"))
@@ -757,8 +884,7 @@ func TestHandleScrubKey_UnknownKeyIs404(t *testing.T) {
 func TestHandleScrubKey_IntegrityDisabled(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: false}})
-	h.scrubber = newScrubber(t, &scrubberStub{})
+	integrityWith(t, h, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: false}}, &scrubberStub{})
 
 	w := httptest.NewRecorder()
 	h.handleScrubKey(w, scrubKeyRequest(t, "bucket/k"))
@@ -786,8 +912,9 @@ func TestHandleScrubKey_MissingKeyIsBadRequest(t *testing.T) {
 func TestHandleScrubKey_StoreFailureIs500(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true}})
-	h.scrubber = newScrubber(t, &scrubberStub{scrubKeyErr: errors.New("ledger unavailable")})
+	integrityWith(t, h,
+		backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true}},
+		&scrubberStub{scrubKeyErr: errors.New("ledger unavailable")})
 
 	w := httptest.NewRecorder()
 	h.handleScrubKey(w, scrubKeyRequest(t, "bucket/k"))

@@ -6,55 +6,27 @@
 // On-demand counterparts to the scheduled integrity workers: scrub kicks
 // one verification pass, backfill-checksums fills SHA-256 columns for
 // objects predating integrity verification, and reconcile lists each
-// backend, diffs against DB, and imports/removes drift. Scrub and
-// BackfillChecksums are also exposed as typed methods so UI handlers
-// and tests can read the per-pass counts as Go values.
+// backend, diffs against DB, and imports/removes drift. Each handler parses
+// the request, calls the matching operation, and renders the outcome; the
+// passes themselves live in internal/ops.
 // -------------------------------------------------------------------------------
 
 package admin
 
 import (
-	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
-
-// integrityDisabledReason is the skip reason the scrub and backfill endpoints
-// report when integrity verification is turned off in config.
-const integrityDisabledReason = "integrity verification is not enabled"
-
-// Scrub runs one integrity-verification scrub pass synchronously and
-// returns the per-pass counts. batchSize <= 0 means use the configured
-// ScrubberBatchSize. observer, when non-nil, receives a start and end step per
-// object verified. Skips when integrity verification is not enabled.
-func (h *Handler) Scrub(ctx context.Context, batchSize int, observer progress.Observer) adminapi.ScrubResponse {
-	icfg := h.backendOps.IntegrityConfig()
-	if icfg == nil || !icfg.Enabled {
-		return adminapi.ScrubResponse{IntegrityOutcome: adminapi.IntegrityOutcome{
-			Status: "skipped",
-			Reason: integrityDisabledReason,
-		}}
-	}
-	if batchSize <= 0 {
-		batchSize = icfg.ScrubberBatchSize
-	}
-	sum := h.scrubber.Scrub(ctx, batchSize, observer)
-	return adminapi.ScrubResponse{
-		IntegrityOutcome: adminapi.IntegrityOutcome{Status: "ok"},
-		Checked:          sum.Attempted,
-		Failed:           sum.Failed,
-		Unreadable:       sum.Skipped,
-		Deferred:         sum.Deferred,
-	}
-}
 
 // handleScrub triggers an on-demand scrub cycle. Accepts an optional batch_size
 // query parameter. Streams per-object NDJSON progress when the client accepts
@@ -67,7 +39,30 @@ func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, h.Scrub(r.Context(), batchSize, nil))
+	res, err := h.integrity.Scrub(r.Context(), batchSize, nil)
+	if reason, skipped := skipReason(err); skipped {
+		httputil.WriteJSON(w, http.StatusOK, adminapi.ScrubResponse{
+			IntegrityOutcome: adminapi.IntegrityOutcome{Status: statusSkipped, Reason: reason},
+		})
+		return
+	}
+	if err != nil {
+		h.internalError(r.Context(), w, "scrub failed", err)
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, wireScrubResponse(res))
+}
+
+// wireScrubResponse renders one completed pass for the wire.
+func wireScrubResponse(res ops.ScrubResult) adminapi.ScrubResponse {
+	return adminapi.ScrubResponse{
+		IntegrityOutcome: adminapi.IntegrityOutcome{Status: statusOK},
+		Checked:          res.Checked,
+		Failed:           res.Failed,
+		Unreadable:       res.Unreadable,
+		Deferred:         res.Deferred,
+	}
 }
 
 // handleScrubKey verifies every copy of one object immediately.
@@ -77,24 +72,21 @@ func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 // mean a response whose shape depends on whether a parameter was supplied.
 func (h *Handler) handleScrubKey(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
-	if key == "" {
-		httputil.WriteJSONError(w, http.StatusBadRequest, "key is required")
-		return
-	}
 
-	icfg := h.backendOps.IntegrityConfig()
-	if icfg == nil || !icfg.Enabled {
-		httputil.WriteJSONError(w, http.StatusConflict, integrityDisabledReason)
+	copies, err := h.integrity.VerifyKey(r.Context(), key)
+	switch {
+	case errors.Is(err, ops.ErrKeyRequired):
+		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 		return
-	}
-
-	copies, err := h.scrubber.ScrubKey(r.Context(), key)
-	if err != nil {
-		h.internalError(r.Context(), w, "failed to verify object", err, slog.String("key", key))
-		return
-	}
-	if len(copies) == 0 {
+	case errors.Is(err, ops.ErrNotFound):
 		httputil.WriteJSONError(w, http.StatusNotFound, "no copies of that key are recorded")
+		return
+	case err != nil:
+		if reason, skipped := skipReason(err); skipped {
+			httputil.WriteJSONError(w, http.StatusConflict, reason)
+			return
+		}
+		h.internalError(r.Context(), w, "failed to verify object", err, slog.String("key", key))
 		return
 	}
 
@@ -134,9 +126,12 @@ func wireCopyResult(c worker.CopyVerification) adminapi.CopyScrubResult {
 // per object plus a terminal summary of checked/failed counts.
 func (h *Handler) streamScrub(w http.ResponseWriter, r *http.Request, batchSize int) {
 	h.streamSteps(w, "scrub", "verifying", true, func(obs progress.Observer) (stepResult, error) {
-		res := h.Scrub(r.Context(), batchSize, obs)
-		if res.Status == "skipped" {
-			return stepResult{Skipped: res.Reason}, nil
+		res, err := h.integrity.Scrub(r.Context(), batchSize, obs)
+		if reason, skipped := skipReason(err); skipped {
+			return stepResult{Skipped: reason}, nil
+		}
+		if err != nil {
+			return stepResult{}, err
 		}
 		return stepResult{
 			Processed: res.Checked,
@@ -150,85 +145,6 @@ func (h *Handler) streamScrub(w http.ResponseWriter, r *http.Request, batchSize 
 			},
 		}, nil
 	})
-}
-
-// BackfillChecksums computes and stores content hashes for objects that
-// don't have one. It processes batchSize objects per pass, pausing for
-// pause between passes to rate-limit backend reads, and stops after
-// maxObjects objects (maxObjects <= 0 drains the whole backlog). batchSize
-// <= 0 means use 100. Done reports whether the backlog is fully drained.
-// observer, when non-nil, receives a start and end event for each object so a
-// streaming caller can report per-object progress. Skips when integrity
-// verification is not enabled.
-func (h *Handler) BackfillChecksums(ctx context.Context, batchSize, maxObjects int, pause time.Duration, observer progress.Observer) adminapi.BackfillChecksumsResponse {
-	icfg := h.backendOps.IntegrityConfig()
-	if icfg == nil || !icfg.Enabled {
-		return adminapi.BackfillChecksumsResponse{IntegrityOutcome: adminapi.IntegrityOutcome{
-			Status: "skipped",
-			Reason: integrityDisabledReason,
-		}}
-	}
-	if batchSize <= 0 {
-		batchSize = 100
-	}
-
-	h.log.InfoContext(ctx, "Backfill-checksums started",
-		"batch_size", batchSize, "max_objects", maxObjects, "pause", pause)
-
-	var total int
-	done := h.drainBackfill(ctx, batchSize, maxObjects, pause, backfillCounter(observer, &total), &total)
-	return adminapi.BackfillChecksumsResponse{
-		IntegrityOutcome: adminapi.IntegrityOutcome{Status: "ok"},
-		Processed:        total,
-		Done:             done,
-	}
-}
-
-// backfillCounter wraps observer so each successfully hashed object bumps total,
-// keeping the cumulative count in step with the per-object steps the caller
-// renders. The wrapped observer may be nil.
-func backfillCounter(observer progress.Observer, total *int) progress.Observer {
-	return func(s progress.Step) {
-		if s.Phase == progress.PhaseEnd && s.Status == progress.StatusOK {
-			*total++
-		}
-		if observer != nil {
-			observer(s)
-		}
-	}
-}
-
-// drainBackfill runs backfill passes until the backlog drains, the max-objects
-// cap is hit, or the context is cancelled. Returns true only when the backlog
-// was fully drained.
-func (h *Handler) drainBackfill(ctx context.Context, batchSize, maxObjects int, pause time.Duration, observer progress.Observer, total *int) bool {
-	for offset := 0; ; {
-		_, nextOffset := h.scrubber.Backfill(ctx, batchSize, offset, observer)
-		if nextOffset == 0 {
-			return true
-		}
-		offset = nextOffset
-		if maxObjects > 0 && *total >= maxObjects {
-			return false
-		}
-		if ctx.Err() != nil {
-			return false
-		}
-		if pause > 0 && !sleepOrCancel(ctx, pause) {
-			return false
-		}
-	}
-}
-
-// sleepOrCancel waits for d or for ctx to be cancelled, returning false when
-// cancellation wins so the caller stops early.
-func sleepOrCancel(ctx context.Context, d time.Duration) bool {
-	select {
-	case <-ctx.Done():
-		return false
-	case <-time.After(d):
-		return true
-	}
 }
 
 // handleBackfillChecksums triggers a checksum backfill pass. Optional query
@@ -247,16 +163,35 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, h.BackfillChecksums(r.Context(), batchSize, maxObjects, pause, nil))
+	res, err := h.integrity.BackfillChecksums(r.Context(), batchSize, maxObjects, pause, nil)
+	if reason, skipped := skipReason(err); skipped {
+		httputil.WriteJSON(w, http.StatusOK, adminapi.BackfillChecksumsResponse{
+			IntegrityOutcome: adminapi.IntegrityOutcome{Status: statusSkipped, Reason: reason},
+		})
+		return
+	}
+	if err != nil {
+		h.internalError(r.Context(), w, "backfill failed", err)
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, adminapi.BackfillChecksumsResponse{
+		IntegrityOutcome: adminapi.IntegrityOutcome{Status: statusOK},
+		Processed:        res.Processed,
+		Done:             res.Done,
+	})
 }
 
 // streamBackfillChecksums runs a backfill as an NDJSON step stream, one
 // "hashing <key>" line per object plus a terminal result.
 func (h *Handler) streamBackfillChecksums(w http.ResponseWriter, r *http.Request, batchSize, maxObjects int, pause time.Duration) {
 	h.streamSteps(w, "backfill-checksums", "hashing", true, func(obs progress.Observer) (stepResult, error) {
-		res := h.BackfillChecksums(r.Context(), batchSize, maxObjects, pause, obs)
-		if res.Status == "skipped" {
-			return stepResult{Skipped: res.Reason}, nil
+		res, err := h.integrity.BackfillChecksums(r.Context(), batchSize, maxObjects, pause, obs)
+		if reason, skipped := skipReason(err); skipped {
+			return stepResult{Skipped: reason}, nil
+		}
+		if err != nil {
+			return stepResult{}, err
 		}
 		return stepResult{Processed: res.Processed, Fields: map[string]any{"done": res.Done}}, nil
 	})

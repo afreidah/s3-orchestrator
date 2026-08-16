@@ -27,3 +27,17 @@ type ObjectEntry struct {
 	Key  string `json:"key"`
 	Size int64  `json:"size"`
 }
+
+// ObjectUploadResponse reports the ETag a stored object was recorded under.
+type ObjectUploadResponse struct {
+	ETag string `json:"etag"`
+}
+
+// ObjectDeleteResponse reports how many objects a delete removed. A single-key
+// delete reports one; a prefix delete reports the whole count, with Failed and
+// Total present when some copies could not be removed.
+type ObjectDeleteResponse struct {
+	Deleted int `json:"deleted"`
+	Failed  int `json:"failed,omitempty"`
+	Total   int `json:"total,omitempty"`
+}

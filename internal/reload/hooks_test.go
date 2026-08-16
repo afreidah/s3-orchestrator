@@ -38,12 +38,11 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
-	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
-	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
@@ -502,6 +501,7 @@ func TestHookNamesStable(t *testing.T) {
 		&logLevelHook{}:      "log_level",
 		&workerConfigsHook{}: "worker_configs",
 		&managerConfigHook{}: "manager_config",
+		&opsHook{}:           "ops",
 		&uiHandlerHook{}:     "ui_handler",
 	}
 	for h, want := range cases {
@@ -520,7 +520,6 @@ func TestHookNamesStable(t *testing.T) {
 func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 	t.Helper()
 	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
-	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
 		Storage: proxy.StorageDeps{
 			Backends: map[string]backend.ObjectBackend{},
@@ -535,26 +534,25 @@ func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 	})
 	workers := proxytest.BuildWorkers(mgr, mock)
 	t.Cleanup(mgr.Close)
-	var lv slog.LevelVar
-	adminHandler := admin.New(&admin.Deps{
+	svc := ops.New(&ops.Deps{
+		Objects:    mgr.Objects(),
+		Store:      mock,
+		EncStore:   mock,
+		Runtime:    mgr.Runtime(),
 		BackendOps: mgr,
-		RuntimeOps: mgr.Runtime(),
 		Replicator: workers.Replicator,
 		OverRep:    workers.OverReplicationCleaner,
-		Drain:      mgr.Drain(),
+		Rebalancer: workers.Rebalancer,
 		Scrubber:   workers.Scrubber,
-		Lifecycle:  mock,
-		DBHealthy:  cb.IsHealthy,
-		Encryption: mock,
-		Objects:    mock,
-		Cleanup:    mock,
-		Token:      "test-token",
-		LogLevel:   &lv,
+		Cfg:        &config.Config{},
 	})
 	return &ui.Deps{
-		Objects:      mgr.Objects(),
-		AdminHandler: adminHandler,
-		Cfg:          &config.Config{},
+		Objects:     svc.Objects,
+		Integrity:   svc.Integrity,
+		Replication: svc.Replication,
+		Rebalance:   svc.Rebalance,
+		Encryption:  svc.Encryption,
+		Cfg:         &config.Config{},
 	}
 }
 

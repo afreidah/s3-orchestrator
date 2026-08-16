@@ -53,8 +53,9 @@ func streamReq(target string) *http.Request {
 func TestHandleBackfillChecksums_StreamsProgressAndResult(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}})
-	h.scrubber = newScrubber(t, &scrubberStub{backfillProcessed: 10, backfillMore: true})
+	integrityWith(t, h,
+		backendOpsStub{integrity: &config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}},
+		&scrubberStub{backfillProcessed: 10, backfillMore: true})
 
 	w := httptest.NewRecorder()
 	h.handleBackfillChecksums(w, streamReq("/admin/api/backfill-checksums?max=25"))
@@ -118,8 +119,7 @@ func allStepStartsLabeled(events []adminstream.Event) bool {
 func TestHandleBackfillChecksums_StreamsSkippedWhenDisabled(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: false}})
-	h.scrubber = newScrubber(t, &scrubberStub{})
+	integrityWith(t, h, backendOpsStub{integrity: &config.IntegrityConfig{Enabled: false}}, &scrubberStub{})
 
 	w := httptest.NewRecorder()
 	h.handleBackfillChecksums(w, streamReq("/admin/api/backfill-checksums"))
@@ -176,8 +176,7 @@ func TestHandleReconcile_StreamsFailure(t *testing.T) {
 func TestHandleReplicate_StreamsProgressAndResult(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{})
-	h.replicator = newReplicator(t, replicatorStub{cfg: &config.ReplicationConfig{Factor: 2}, created: 3})
+	replicationWith(t, h, replicatorStub{cfg: &config.ReplicationConfig{Factor: 2}, created: 3}, overRepStub{})
 
 	w := httptest.NewRecorder()
 	h.handleReplicate(w, streamReq("/admin/api/replicate"))
@@ -210,8 +209,7 @@ func TestHandleReplicate_StreamsProgressAndResult(t *testing.T) {
 func TestHandleReplicate_StreamsSkippedWhenUnconfigured(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{})
-	h.replicator = newReplicator(t, replicatorStub{cfg: &config.ReplicationConfig{Factor: 1}})
+	replicationWith(t, h, replicatorStub{cfg: &config.ReplicationConfig{Factor: 1}}, overRepStub{})
 
 	w := httptest.NewRecorder()
 	h.handleReplicate(w, streamReq("/admin/api/replicate"))
@@ -226,8 +224,7 @@ func TestHandleReplicate_StreamsSkippedWhenUnconfigured(t *testing.T) {
 func TestHandleOverReplicationClean_StreamsProgressAndResult(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{})
-	h.overRep = newOverRep(t, overRepStub{cfg: &config.ReplicationConfig{Factor: 2}, cleaned: 2})
+	replicationWith(t, h, replicatorStub{}, overRepStub{cfg: &config.ReplicationConfig{Factor: 2}, cleaned: 2})
 
 	w := httptest.NewRecorder()
 	h.handleOverReplicationClean(w, streamReq("/admin/api/over-replication"))
@@ -255,8 +252,7 @@ func TestHandleOverReplicationClean_StreamsProgressAndResult(t *testing.T) {
 func TestHandleRebalance_StreamsMoves(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{})
-	h.rebalancer = newRebalancer(t, &rebalancerStub{moved: 2})
+	rebalanceWith(t, h, &rebalancerStub{moved: 2})
 
 	w := httptest.NewRecorder()
 	h.handleRebalance(w, streamReq("/admin/api/rebalance"))
@@ -284,8 +280,7 @@ func TestHandleRebalance_StreamsMoves(t *testing.T) {
 func TestHandleRebalance_StreamsSkip(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{})
-	h.rebalancer = newRebalancer(t, &rebalancerStub{skip: worker.SkipReasonEmptyPlan})
+	rebalanceWith(t, h, &rebalancerStub{skip: worker.SkipReasonEmptyPlan})
 
 	w := httptest.NewRecorder()
 	h.handleRebalance(w, streamReq("/admin/api/rebalance"))
@@ -302,8 +297,7 @@ func TestHandleRebalance_StreamsSkip(t *testing.T) {
 func TestHandleRebalance_StreamsFailure(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
-	h.backendOps = newBackendOps(t, backendOpsStub{})
-	h.rebalancer = newRebalancer(t, &rebalancerStub{err: errors.New("planning failed")})
+	rebalanceWith(t, h, &rebalancerStub{err: errors.New("planning failed")})
 
 	w := httptest.NewRecorder()
 	h.handleRebalance(w, streamReq("/admin/api/rebalance"))
