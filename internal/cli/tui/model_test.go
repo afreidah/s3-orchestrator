@@ -72,7 +72,7 @@ func (errLister) RequeueCleanupDLQ(_ context.Context, _ string) (*adminapi.Clean
 	return nil, errors.New("nope")
 }
 
-func (errLister) RunOp(_ context.Context, _ opsAction) (adminclient.EventStream, error) {
+func (errLister) RunOp(_ context.Context, _ *opsAction, _ opsRequest) (adminclient.EventStream, error) {
 	return nil, errors.New("nope")
 }
 

@@ -16,14 +16,17 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -32,26 +35,137 @@ import (
 
 // opsAction is one selectable admin operation. result decodes the single JSON
 // summary a short action answers with; the long-running actions leave it nil
-// and stream NDJSON progress instead.
+// and stream NDJSON progress instead. An action that needs a value from the
+// operator sets ask, and resolve turns the typed value into the request that
+// carries it.
 type opsAction struct {
 	label   string
 	method  string
 	path    string
 	result  oneShotDecoder
 	confirm string
+	ask     inputRequest
+	resolve func(value string) opsRequest
 }
 
-// opsActions lists the instance actions in menu order. Drain is intentionally
-// excluded; it is a per-backend flow handled elsewhere.
+// inputRequest is the question an action asks before it can run, and the hint
+// shown in the empty field.
+type inputRequest struct {
+	question    string
+	placeholder string
+}
+
+// opsRequest is where an action sends and what it carries: the path (which a
+// value can extend), the query, and the request body.
+type opsRequest struct {
+	path  string
+	query url.Values
+	body  []byte
+}
+
+// opsActions lists the instance actions in menu order: the maintenance passes
+// first, then cache control, then the encryption transitions. Drain is
+// intentionally excluded; it is a per-backend flow handled elsewhere.
 func opsActions() []opsAction {
+	return append(maintenanceActions(), append(cacheActions(), encryptionActions()...)...)
+}
+
+// opsOption adjusts an action that is not a plain POST-and-run.
+type opsOption func(*opsAction)
+
+// post builds an action that triggers a pass at path. result is nil for the
+// operations that stream their own progress instead of answering with one
+// summary.
+func post(label, path, confirm string, result oneShotDecoder, opts ...opsOption) opsAction {
+	a := opsAction{
+		label:   label,
+		method:  http.MethodPost,
+		path:    path,
+		confirm: confirm,
+		result:  result,
+	}
+	for _, opt := range opts {
+		opt(&a)
+	}
+	return a
+}
+
+// asks attaches an input prompt, so the value the operator types resolves into
+// the request that carries it.
+func asks(question, placeholder string, resolve func(string) opsRequest) opsOption {
+	return func(a *opsAction) {
+		a.ask = inputRequest{question: question, placeholder: placeholder}
+		a.resolve = resolve
+	}
+}
+
+// deletes sends the action as a DELETE, for the endpoints that drop something
+// rather than start a pass.
+func deletes() opsOption {
+	return func(a *opsAction) { a.method = http.MethodDelete }
+}
+
+// maintenanceActions are the passes that keep placement, copy counts and
+// integrity where the configuration says they should be.
+func maintenanceActions() []opsAction {
 	return []opsAction{
-		{"Rebalance backends", http.MethodPost, "/admin/api/rebalance", nil, "Rebalance objects across backends?"},
-		{"Clean over-replicated copies", http.MethodPost, "/admin/api/over-replication", nil, "Remove over-replicated object copies?"},
-		{"Scrub (verify integrity)", http.MethodPost, "/admin/api/scrub", nil, "Scrub every object to verify integrity?"},
-		{"Backfill checksums", http.MethodPost, "/admin/api/backfill-checksums", nil, "Backfill missing object checksums?"},
-		{"Reconcile metadata", http.MethodPost, "/admin/api/reconcile", nil, "Reconcile metadata against backends?"},
-		{"Reconcile usage counters", http.MethodPost, "/admin/api/usage-reconcile", decodeOneShot[usageReconcileResult], "Reconcile usage counters across all backends?"},
-		{"Flush object cache", http.MethodPost, "/admin/api/cache/flush", decodeOneShot[cacheFlushResult], "Flush the in-memory object cache?"},
+		post("Rebalance backends", "/admin/api/rebalance",
+			"Rebalance objects across backends?", nil),
+		post("Replicate under-replicated objects", "/admin/api/replicate",
+			"Create the missing copies of under-replicated objects?", nil),
+		post("Clean over-replicated copies", "/admin/api/over-replication",
+			"Remove over-replicated object copies?", nil),
+		post("Scrub (verify integrity)", "/admin/api/scrub",
+			"Scrub every object to verify integrity?", nil),
+		post("Backfill checksums", "/admin/api/backfill-checksums",
+			"Backfill missing object checksums?", nil),
+		post("Reconcile metadata", "/admin/api/reconcile",
+			"Reconcile metadata against backends?", nil),
+		post("Reconcile usage counters", "/admin/api/usage-reconcile",
+			"Reconcile usage counters across all backends?", decodeOneShot[usageReconcileResult]),
+		post("Flush usage counters to the database", "/admin/api/usage-flush",
+			"Flush buffered usage counters to the database?", decodeOneShot[usageFlushResult]),
+	}
+}
+
+// cacheActions drop cached object data. The two that take a key or a prefix
+// ask for it instead of confirming: nothing is lost but a cached copy, and the
+// value the operator typed is the statement of intent.
+func cacheActions() []opsAction {
+	return []opsAction{
+		post("Flush object cache", "/admin/api/cache/flush",
+			"Flush the in-memory object cache?", decodeOneShot[cacheFlushResult]),
+		post("Invalidate one cached key", "/admin/api/cache/keys",
+			"", decodeOneShot[cacheInvalidateKeyResult],
+			deletes(),
+			asks("Invalidate which key?", "bucket/path/object", func(value string) opsRequest {
+				return opsRequest{path: "/admin/api/cache/keys/" + value}
+			})),
+		post("Invalidate a cached prefix", "/admin/api/cache/prefix",
+			"", decodeOneShot[cacheFlushResult],
+			deletes(),
+			asks("Invalidate which prefix?", "bucket/path/", func(value string) opsRequest {
+				return opsRequest{path: "/admin/api/cache/prefix", query: url.Values{"prefix": {value}}}
+			})),
+	}
+}
+
+// encryptionActions move stored objects between plaintext and ciphertext, or
+// re-wrap the keys that seal them. Each confirmation says what the pass will
+// read and rewrite, since these are metered fleet-wide operations rather than
+// a setting being toggled.
+func encryptionActions() []opsAction {
+	return []opsAction{
+		post("Encrypt existing objects", "/admin/api/encrypt-existing",
+			"Read and rewrite every plaintext copy as ciphertext?", decodeOneShot[encryptExistingResult]),
+		post("Decrypt existing objects", "/admin/api/decrypt-existing",
+			"Read and rewrite every encrypted copy as plaintext?", decodeOneShot[decryptExistingResult]),
+		post("Rotate encryption key", "/admin/api/rotate-encryption-key",
+			"Re-wrap every object key sealed with that key id?", decodeOneShot[rotateKeyResult],
+			asks("Rotate away from which key id?", "old key id", func(value string) opsRequest {
+				body, _ := json.Marshal(adminapi.RotateEncryptionKeyRequest{OldKeyID: value})
+				return opsRequest{path: "/admin/api/rotate-encryption-key", body: body}
+			})),
 	}
 }
 
@@ -87,9 +201,9 @@ type opsDoneMsg struct{ err error }
 
 // openOps returns a command that starts an action off the main loop and reports
 // the opened stream as an opsStreamMsg.
-func openOps(client adminClient, a opsAction) tea.Cmd {
+func openOps(client adminClient, a *opsAction, req opsRequest) tea.Cmd {
 	return func() tea.Msg {
-		s, err := client.RunOp(context.Background(), a)
+		s, err := client.RunOp(context.Background(), a, req)
 		return opsStreamMsg{stream: s, err: err, label: a.label}
 	}
 }
@@ -189,14 +303,26 @@ func (m *model) handleOpsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "enter", "right", "l":
-		a := opsActions()[m.ops.cursor]
-		return m.startAction(adminAction{
-			confirm: a.confirm,
-			before:  func(m *model) { m.enterOpsOutput(a.label) },
-			run:     openOps(m.client, a),
-		})
+		actions := opsActions()
+		a := &actions[m.ops.cursor]
+		if a.ask.question != "" {
+			return m.askFor(a.ask.question, a.ask.placeholder, func(value string) adminAction {
+				return opsAdminAction(m.client, a, a.resolve(value))
+			})
+		}
+		return m.startAction(opsAdminAction(m.client, a, opsRequest{path: a.path}))
 	}
 	return m, nil
+}
+
+// opsAdminAction arms one operation against the request it resolved to, so a
+// prompted action and a bare one reach the same confirm-and-run path.
+func opsAdminAction(client adminClient, a *opsAction, req opsRequest) adminAction {
+	return adminAction{
+		confirm: a.confirm,
+		before:  func(m *model) { m.enterOpsOutput(a.label) },
+		run:     openOps(client, a, req),
+	}
 }
 
 // handleOpsOutputKey drives the output pane: while an action runs only scrolling
@@ -329,7 +455,13 @@ func (m *model) opsMenuView() string {
 		if i == m.ops.cursor {
 			marker, style = "> ", navActiveStyle
 		}
-		b.WriteString(style.Render(marker + a.label))
+		// A trailing ellipsis is the usual signal that a menu entry asks for
+		// something before it acts, rather than acting on the spot.
+		label := a.label
+		if a.ask.question != "" {
+			label += "..."
+		}
+		b.WriteString(style.Render(marker + label))
 		b.WriteString("\n")
 	}
 	return b.String()

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
@@ -155,5 +156,102 @@ func TestOpsActions_EveryActionRenders(t *testing.T) {
 	}
 	if streaming == 0 {
 		t.Error("no streaming actions left in the menu")
+	}
+}
+
+// TestRewriteSummary_WordsThePass asserts a fleet-wide rewrite reports what it
+// achieved, and never reads as clean when objects were left behind.
+func TestRewriteSummary_WordsThePass(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name                     string
+		verb                     string
+		succeeded, failed, total int
+		want                     string
+	}{
+		{"nothing to do", "encrypted", 0, 0, 0, "nothing to encrypt"},
+		{"all succeeded", "encrypted", 1200, 0, 1200, "encrypted 1,200 objects"},
+		{"partial", "decrypted", 900, 100, 1000, "decrypted 900 objects, 100 failed"},
+		{"single object", "rotated", 1, 0, 1, "rotated 1 object"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := rewriteSummary(tc.verb, tc.succeeded, tc.failed, tc.total); got != tc.want {
+				t.Errorf("rewriteSummary = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNewOneShotResults_Describe pins what each newly wired action reports back
+// to the operator.
+func TestNewOneShotResults_Describe(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		res  opsResult
+		want string
+	}{
+		{
+			name: "cache key",
+			res: cacheInvalidateKeyResult{adminapi.CacheInvalidateKeyResponse{
+				Status: "invalidated", Key: "bucket/photos/cat.jpg",
+			}},
+			want: "invalidated bucket/photos/cat.jpg",
+		},
+		{
+			name: "usage flush",
+			res:  usageFlushResult{adminapi.UsageFlushResponse{Status: "ok"}},
+			want: "counters flushed to the database",
+		},
+		{
+			name: "encrypt existing",
+			res: encryptExistingResult{adminapi.EncryptExistingResponse{
+				BulkEncryptionOutcome: adminapi.BulkEncryptionOutcome{Status: "complete", Total: 3},
+				Encrypted:             3,
+			}},
+			want: "encrypted 3 objects",
+		},
+		{
+			name: "decrypt existing",
+			res: decryptExistingResult{adminapi.DecryptExistingResponse{
+				BulkEncryptionOutcome: adminapi.BulkEncryptionOutcome{Status: "complete", Total: 2, Failed: 1},
+				Decrypted:             1,
+			}},
+			want: "decrypted 1 object, 1 failed",
+		},
+		{
+			name: "rotate key",
+			res: rotateKeyResult{adminapi.RotateEncryptionKeyResponse{
+				BulkEncryptionOutcome: adminapi.BulkEncryptionOutcome{Status: "complete", Total: 5},
+				Rotated:               5,
+			}},
+			want: "rotated 5 objects",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.res.describe(); got != tc.want {
+				t.Errorf("describe = %q, want %q", got, tc.want)
+			}
+			if reason := tc.res.skipReason(); reason != "" {
+				t.Errorf("skipReason = %q, want none for a completed pass", reason)
+			}
+		})
+	}
+}
+
+// TestNewOneShotResults_ReportSkips asserts a pass that did not run says so
+// rather than reporting zero work as success.
+func TestNewOneShotResults_ReportSkips(t *testing.T) {
+	t.Parallel()
+	res := encryptExistingResult{adminapi.EncryptExistingResponse{
+		BulkEncryptionOutcome: adminapi.BulkEncryptionOutcome{Status: statusSkipped},
+	}}
+	if got := res.skipReason(); got != statusSkipped {
+		t.Errorf("skipReason = %q, want %q", got, statusSkipped)
 	}
 }

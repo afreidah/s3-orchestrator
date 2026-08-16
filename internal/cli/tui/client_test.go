@@ -212,7 +212,7 @@ func TestAPIClient_RunOp_Streaming(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s, err := newAPIClient(srv.URL, "tok").RunOp(context.Background(), streamingTestAction)
+	s, err := newAPIClient(srv.URL, "tok").RunOp(context.Background(), &streamingTestAction, opsRequest{path: streamingTestAction.path})
 	if err != nil {
 		t.Fatalf("RunOp: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestAPIClient_RunOp_OneShot(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s, err := newAPIClient(srv.URL, "tok").RunOp(context.Background(), oneShotTestAction)
+	s, err := newAPIClient(srv.URL, "tok").RunOp(context.Background(), &oneShotTestAction, opsRequest{path: oneShotTestAction.path})
 	if err != nil {
 		t.Fatalf("RunOp: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestAPIClient_RunOp_ErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := newAPIClient(srv.URL, "tok").RunOp(context.Background(), streamingTestAction); err == nil || !strings.Contains(err.Error(), "403") {
+	if _, err := newAPIClient(srv.URL, "tok").RunOp(context.Background(), &streamingTestAction, opsRequest{path: streamingTestAction.path}); err == nil || !strings.Contains(err.Error(), "403") {
 		t.Errorf("err = %v, want to mention 403", err)
 	}
 }

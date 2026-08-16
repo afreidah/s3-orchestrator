@@ -43,6 +43,7 @@ type fakeLister struct {
 	scrubErr  error               // when set, ScrubKey fails
 	opEvents  []adminstream.Event // canned RunOp stream (nil = single ok result)
 	opErr     error               // when set, RunOp fails to open
+	opRequest opsRequest          // the request the last action resolved to
 }
 
 func (f *fakeLister) ListObjects(_ context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error) {
@@ -126,8 +127,10 @@ func (f *fakeLister) RequeueCleanupDLQ(_ context.Context, backend string) (*admi
 }
 
 // RunOp returns a stream over the canned events (or a single ok result when
-// none are set), or f.opErr when configured to fail.
-func (f *fakeLister) RunOp(_ context.Context, _ opsAction) (adminclient.EventStream, error) {
+// none are set), or f.opErr when configured to fail. The request is recorded
+// so a test can assert what the action resolved to.
+func (f *fakeLister) RunOp(_ context.Context, _ *opsAction, req opsRequest) (adminclient.EventStream, error) {
+	f.opRequest = req
 	if f.opErr != nil {
 		return nil, f.opErr
 	}

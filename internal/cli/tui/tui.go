@@ -54,7 +54,7 @@ type adminClient interface {
 	GetCleanupDLQ(ctx context.Context) (*adminapi.CleanupDLQResponse, error)
 	GetCacheStats(ctx context.Context) (*adminapi.CacheStatsResponse, error)
 	RequeueCleanupDLQ(ctx context.Context, backend string) (*adminapi.CleanupDLQRequeueResponse, error)
-	RunOp(ctx context.Context, act opsAction) (adminclient.EventStream, error)
+	RunOp(ctx context.Context, act *opsAction, req opsRequest) (adminclient.EventStream, error)
 }
 
 // model is the Bubble Tea state for the browser.
@@ -85,6 +85,7 @@ type model struct {
 	err         error           // last load error, if any
 	spinner     spinner.Model   // animated indicator shown while loading
 	confirm     *confirmPrompt  // armed confirmation for a pending write action, if any
+	prompt      *inputPrompt    // armed input prompt for an action that needs a value, if any
 	status      *actionStatus   // result of the last action, shown until the next keypress
 	dbHealthy   *bool           // metadata DB health from the last status fetch (nil = unknown)
 	width       int             // terminal width from the last WindowSizeMsg
@@ -268,8 +269,44 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handleKey applies global keys (quit, nav focus, section jumps) then routes the
 // rest to the focused nav or the active section's view. While the filter input
 // is capturing, the browser gets every key so typing is never intercepted.
+// handleGlobalKey applies the keys that mean the same thing in every pane:
+// quit, the nav toggle, and the single-letter section jumps. Reports whether
+// the key was one of them, so the caller can route on to the active pane.
+func (m *model) handleGlobalKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
+	switch key.String() {
+	case "q", "ctrl+c":
+		return m, tea.Quit, true
+	case "tab":
+		m.navFocus = !m.navFocus
+		if m.navFocus {
+			m.navCursor = int(m.section)
+		}
+		return m, nil, true
+	}
+
+	sections := map[string]section{
+		"f": sectionFiles,
+		"b": sectionBackends,
+		"p": sectionReplication,
+		"w": sectionWorkers,
+		"u": sectionCleanup,
+		"c": sectionCache,
+		"l": sectionLogs,
+		"o": sectionOps,
+	}
+	if s, ok := sections[key.String()]; ok {
+		model, cmd := m.selectSection(s)
+		return model, cmd, true
+	}
+	return m, nil, false
+}
+
 func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// A pending confirmation captures the next key before anything else.
+	// An armed prompt captures the next key before anything else: the input
+	// first, since typing a key or prefix must never reach the pane below.
+	if m.prompt != nil {
+		return m.handleInputKey(key)
+	}
 	if m.confirm != nil {
 		return m.handleConfirmKey(key)
 	}
@@ -280,31 +317,8 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFilterKey(key)
 	}
 
-	switch key.String() {
-	case "q", "ctrl+c":
-		return m, tea.Quit
-	case "tab":
-		m.navFocus = !m.navFocus
-		if m.navFocus {
-			m.navCursor = int(m.section)
-		}
-		return m, nil
-	case "f":
-		return m.selectSection(sectionFiles)
-	case "b":
-		return m.selectSection(sectionBackends)
-	case "p":
-		return m.selectSection(sectionReplication)
-	case "w":
-		return m.selectSection(sectionWorkers)
-	case "u":
-		return m.selectSection(sectionCleanup)
-	case "c":
-		return m.selectSection(sectionCache)
-	case "l":
-		return m.selectSection(sectionLogs)
-	case "o":
-		return m.selectSection(sectionOps)
+	if model, cmd, handled := m.handleGlobalKey(key); handled {
+		return model, cmd
 	}
 
 	if m.navFocus {

@@ -103,6 +103,77 @@ func (r cacheFlushResult) describe() string {
 	return "dropped " + countOf(r.EntriesDropped, "cache entry", "cache entries")
 }
 
+// cacheInvalidateKeyResult reports one key dropped from the cache. The cache
+// treats an unknown key as a no-op, so the answer names the key rather than
+// claiming a count it cannot know.
+type cacheInvalidateKeyResult struct {
+	adminapi.CacheInvalidateKeyResponse
+}
+
+func (r cacheInvalidateKeyResult) skipReason() string { return skippedBecause(r.Status) }
+
+func (r cacheInvalidateKeyResult) describe() string { return "invalidated " + r.Key }
+
+// usageFlushResult reports that the buffered usage counters reached the
+// database. The endpoint answers with a status alone, so there is no count to
+// report back.
+type usageFlushResult struct {
+	adminapi.UsageFlushResponse
+}
+
+func (r usageFlushResult) skipReason() string { return skippedBecause(r.Status) }
+
+func (r usageFlushResult) describe() string { return "counters flushed to the database" }
+
+// encryptExistingResult reports a pass that rewrote plaintext copies as
+// ciphertext.
+type encryptExistingResult struct {
+	adminapi.EncryptExistingResponse
+}
+
+func (r encryptExistingResult) skipReason() string { return skippedBecause(r.Status) }
+
+func (r encryptExistingResult) describe() string {
+	return rewriteSummary("encrypted", r.Encrypted, r.Failed, r.Total)
+}
+
+// decryptExistingResult reports a pass that rewrote encrypted copies as
+// plaintext.
+type decryptExistingResult struct {
+	adminapi.DecryptExistingResponse
+}
+
+func (r decryptExistingResult) skipReason() string { return skippedBecause(r.Status) }
+
+func (r decryptExistingResult) describe() string {
+	return rewriteSummary("decrypted", r.Decrypted, r.Failed, r.Total)
+}
+
+// rotateKeyResult reports a pass that re-wrapped object keys under the current
+// primary key.
+type rotateKeyResult struct {
+	adminapi.RotateEncryptionKeyResponse
+}
+
+func (r rotateKeyResult) skipReason() string { return skippedBecause(r.Status) }
+
+func (r rotateKeyResult) describe() string {
+	return rewriteSummary("rotated", r.Rotated, r.Failed, r.Total)
+}
+
+// rewriteSummary words a fleet-wide rewrite pass. A pass that left objects
+// behind says so, since "encrypted 900" reads as done when 100 failed.
+func rewriteSummary(verb string, succeeded, failed, total int) string {
+	if total == 0 {
+		return "nothing to " + strings.TrimSuffix(verb, "ed")
+	}
+	summary := verb + " " + countOf(succeeded, "object", "objects")
+	if failed > 0 {
+		summary += fmt.Sprintf(", %s failed", grouped(failed))
+	}
+	return summary
+}
+
 // skippedBecause reports why a pass did not run, or "" when it did. Neither
 // one-shot response carries a reason field, so the status is the whole of the
 // explanation the endpoint offers.
