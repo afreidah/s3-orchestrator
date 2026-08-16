@@ -12,6 +12,7 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -119,14 +120,16 @@ func (c *apiClient) RequeueCleanupDLQ(ctx context.Context, backend string) (*adm
 
 // RunOp starts an admin instance action and returns its event stream. A
 // long-running action opts into the server's NDJSON progress stream; a short
-// one POSTs and has its summary decoded into a single result event, so the two
-// render identically.
-func (c *apiClient) RunOp(ctx context.Context, act opsAction) (adminclient.EventStream, error) {
+// one sends its request and has the summary decoded into a single result
+// event, so the two render identically. req carries the path, query and body
+// the action resolved to, which is how the actions that take an operator-typed
+// value reach the endpoint.
+func (c *apiClient) RunOp(ctx context.Context, act *opsAction, req opsRequest) (adminclient.EventStream, error) {
 	if act.result == nil {
-		return c.c.Stream(ctx, act.method, act.path, nil, nil)
+		return c.c.Stream(ctx, act.method, req.path, req.query, bodyReader(req.body))
 	}
 
-	resp, err := c.c.Do(ctx, act.method, act.path, nil, nil)
+	resp, err := c.c.Do(ctx, act.method, req.path, req.query, bodyReader(req.body))
 	if err != nil {
 		return nil, err
 	}
@@ -141,4 +144,13 @@ func (c *apiClient) RunOp(ctx context.Context, act opsAction) (adminclient.Event
 		return nil, err
 	}
 	return adminclient.NewSliceStream(event), nil
+}
+
+// bodyReader wraps a request body, or reports none so the send path stays a
+// single call for both shapes.
+func bodyReader(body []byte) io.Reader {
+	if len(body) == 0 {
+		return nil
+	}
+	return bytes.NewReader(body)
 }
