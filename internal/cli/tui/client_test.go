@@ -345,3 +345,84 @@ func TestAPIClient_RequeueCleanupDLQ_OmitsEmptyBackend(t *testing.T) {
 		t.Errorf("query = %q, want empty", gotQuery)
 	}
 }
+
+// -------------------------------------------------------------------------
+// PER-BACKEND ACTIONS
+// -------------------------------------------------------------------------
+
+// TestAPIClient_DrainVerbs asserts the three drain verbs all address the same
+// per-backend path, so a start, a poll and a cancel cannot drift apart.
+func TestAPIClient_DrainVerbs(t *testing.T) {
+	t.Parallel()
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		_, _ = w.Write([]byte(`{"backend":"minio-a","active":true,"objects_moved":4,"objects_remaining":6}`))
+	}))
+	defer srv.Close()
+	client := newAPIClient(srv.URL, "tok")
+
+	if _, err := client.StartDrain(context.Background(), "minio-a"); err != nil {
+		t.Fatalf("StartDrain: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/admin/api/backends/minio-a/drain" {
+		t.Errorf("start = %s %s, want POST the drain path", gotMethod, gotPath)
+	}
+
+	progress, err := client.DrainProgress(context.Background(), "minio-a")
+	if err != nil {
+		t.Fatalf("DrainProgress: %v", err)
+	}
+	if gotMethod != http.MethodGet {
+		t.Errorf("progress method = %s, want GET", gotMethod)
+	}
+	if !progress.Active || progress.ObjectsMoved != 4 || progress.ObjectsRemaining != 6 {
+		t.Errorf("progress = %+v, want the served counts", progress)
+	}
+
+	if _, err := client.CancelDrain(context.Background(), "minio-a"); err != nil {
+		t.Fatalf("CancelDrain: %v", err)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Errorf("cancel method = %s, want DELETE", gotMethod)
+	}
+}
+
+// TestAPIClient_CancelDrain_ErrorStatus asserts a refused cancel surfaces the
+// status rather than a nil result the caller would misread as success.
+func TestAPIClient_CancelDrain_ErrorStatus(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"no drain in progress"}`))
+	}))
+	defer srv.Close()
+
+	_, err := newAPIClient(srv.URL, "tok").CancelDrain(context.Background(), "minio-a")
+	if err == nil || !strings.Contains(err.Error(), "409") {
+		t.Errorf("err = %v, want the 409 surfaced", err)
+	}
+}
+
+// TestAPIClient_ReconcileBackend_ScopesToBackend asserts the backend travels as
+// the query parameter that scopes an otherwise fleet-wide pass.
+func TestAPIClient_ReconcileBackend_ScopesToBackend(t *testing.T) {
+	t.Parallel()
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"status":"ok","imported":3,"removed":1}`))
+	}))
+	defer srv.Close()
+
+	resp, err := newAPIClient(srv.URL, "tok").ReconcileBackend(context.Background(), "minio-b")
+	if err != nil {
+		t.Fatalf("ReconcileBackend: %v", err)
+	}
+	if gotPath != "/admin/api/reconcile" || gotQuery != "backend=minio-b" {
+		t.Errorf("request = %s?%s, want the reconcile path scoped to minio-b", gotPath, gotQuery)
+	}
+	if resp.Imported != 3 || resp.Removed != 1 {
+		t.Errorf("resp = %+v, want the served counts", resp)
+	}
+}

@@ -14,6 +14,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
@@ -116,6 +117,50 @@ func (c *apiClient) RequeueCleanupDLQ(ctx context.Context, backend string) (*adm
 		q = url.Values{"backend": {backend}}
 	}
 	return adminclient.Post[adminapi.CleanupDLQRequeueResponse](ctx, c.c, "/admin/api/cleanup-dlq/requeue", q, nil)
+}
+
+// StartDrain begins migrating every copy off one backend and routes new writes
+// away from it. Returns as soon as the drain is accepted; progress is polled
+// with DrainProgress.
+func (c *apiClient) StartDrain(ctx context.Context, backend string) (*adminapi.BackendOperationResponse, error) {
+	return adminclient.Post[adminapi.BackendOperationResponse](ctx, c.c, backendDrainPath(backend), nil, nil)
+}
+
+// DrainProgress reports how far an in-flight drain has got. Active is false
+// once the migration finished, was cancelled, or never started.
+func (c *apiClient) DrainProgress(ctx context.Context, backend string) (*adminapi.DrainProgressResponse, error) {
+	return adminclient.Get[adminapi.DrainProgressResponse](ctx, c.c, backendDrainPath(backend), nil)
+}
+
+// CancelDrain aborts an in-flight drain. Copies already migrated stay migrated.
+func (c *apiClient) CancelDrain(ctx context.Context, backend string) (*adminapi.BackendOperationResponse, error) {
+	resp, err := c.c.Do(ctx, http.MethodDelete, backendDrainPath(backend), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, &adminclient.Error{Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+	}
+	var out adminapi.BackendOperationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ReconcileBackend reconciles metadata against one backend's storage rather
+// than the whole fleet.
+func (c *apiClient) ReconcileBackend(ctx context.Context, backend string) (*adminapi.ReconcileResponse, error) {
+	return adminclient.Post[adminapi.ReconcileResponse](ctx, c.c, "/admin/api/reconcile",
+		url.Values{"backend": {backend}}, nil)
+}
+
+// backendDrainPath is the drain endpoint for one backend, shared by the three
+// verbs so the path cannot drift between them.
+func backendDrainPath(backend string) string {
+	return "/admin/api/backends/" + backend + "/drain"
 }
 
 // RunOp starts an admin instance action and returns its event stream. A
