@@ -138,9 +138,7 @@ func (m *model) applyCleanupRequeued(msg cleanupRequeuedMsg) (tea.Model, tea.Cmd
 func (m *model) handleCleanupKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "esc", "left", "h":
-		m.navFocus = true
-		m.navCursor = int(m.section)
-		return m, nil
+		return m.navBack()
 	case "r":
 		m.cleanup.loading = true
 		cmd := m.loadCleanup()
@@ -293,20 +291,16 @@ func (m *model) cleanupFooterView() string {
 // cleanupBodyView renders the current content: an error, the loading indicator,
 // an empty notice, or the active listing.
 func (m *model) cleanupBodyView() string {
-	switch {
-	case m.cleanup.err != nil:
-		return errStyle.Render("error: " + m.cleanup.err.Error())
-	case m.cleanup.loading:
-		return m.spinner.View() + " loading..."
-	case m.cleanupOnDLQ():
-		if len(m.cleanup.dlqRows) == 0 {
-			return statusOKStyle.Render("(no dead-lettered cleanups)")
+	return m.paneBody(m.cleanup.err, "", m.cleanup.loading, func() string {
+		if m.cleanupOnDLQ() {
+			if len(m.cleanup.dlqRows) == 0 {
+				return statusOKStyle.Render("(no dead-lettered cleanups)")
+			}
+			return m.cleanup.dlq.View()
 		}
-		return m.cleanup.dlq.View()
-	default:
 		if len(m.cleanup.queueRows) == 0 {
 			return statusOKStyle.Render("(cleanup queue is empty)")
 		}
 		return m.cleanup.queue.View()
-	}
+	})
 }

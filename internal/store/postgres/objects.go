@@ -43,27 +43,6 @@ func (s *Store) RecordObjectAndClearPending(ctx context.Context, key, backend st
 	return core.RecordObjectAndClearPending(ctx, s, key, backend, size, enc, intentID)
 }
 
-// insertParamsFromEnc builds InsertObjectLocationParams, attaching
-// encryption and content-hash metadata when provided.
-func insertParamsFromEnc(key, backend string, size int64, enc *core.EncryptionMeta) db.InsertObjectLocationParams {
-	params := db.InsertObjectLocationParams{
-		ObjectKey:   key,
-		BackendName: backend,
-		SizeBytes:   size,
-	}
-	if enc == nil {
-		return params
-	}
-	if enc.Encrypted {
-		params.Encrypted = true
-		params.EncryptionKey = enc.EncryptionKey
-		params.KeyID = &enc.KeyID
-		params.PlaintextSize = &enc.PlaintextSize
-	}
-	params.ContentHash = strPtr(enc.ContentHash)
-	return params
-}
-
 // DeleteObject removes all copies of an object and decrements their
 // quotas. Returns all deleted copies, or ErrObjectNotFound if the
 // object doesn't exist. Delegates to core.DeleteObject.

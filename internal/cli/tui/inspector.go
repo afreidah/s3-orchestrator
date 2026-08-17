@@ -247,16 +247,12 @@ func (m *model) inspectFooterView() string {
 // inspectBodyView renders the current content: an error, the loading indicator,
 // an empty notice, or the copy table.
 func (m *model) inspectBodyView() string {
-	switch {
-	case m.insp.err != nil:
-		return errStyle.Render("error: " + m.insp.err.Error())
-	case m.insp.loading:
-		return m.spinner.View() + " loading..."
-	case len(m.insp.locations) == 0:
-		return pathStyle.Render("(no copies found)")
-	default:
+	return m.paneBody(m.insp.err, "", m.insp.loading, func() string {
+		if len(m.insp.locations) == 0 {
+			return pathStyle.Render("(no copies found)")
+		}
 		return m.insp.table.View()
-	}
+	})
 }
 
 // -------------------------------------------------------------------------

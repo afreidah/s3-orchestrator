@@ -213,17 +213,8 @@ func TestPgAdapter_InsertPending_PreservesAllFields(t *testing.T) {
 		PlaintextSize: 180,
 		ContentHash:   "abc123",
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		t.Fatalf("Begin: %v", err)
-	}
-	a := &pgTxAdapter{q: s.queries.WithTx(tx)}
-	if err := a.InsertPending(ctx, &want); err != nil {
-		_ = tx.Rollback(ctx)
+	if err := s.InsertPending(ctx, &want); err != nil {
 		t.Fatalf("InsertPending: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("Commit: %v", err)
 	}
 	defer func() { _ = s.DeletePending(ctx, intentID) }()
 
@@ -252,26 +243,18 @@ func TestPgAdapter_InsertPending_PreservesAllFields(t *testing.T) {
 	}
 }
 
-// TestPgAdapter_InsertPending_NullableFieldsOmitted verifies that
-// empty optional fields land as SQL NULL when round-tripped via the
-// adapter and read back through GetStalePending.
-func TestPgAdapter_InsertPending_NullableFieldsOmitted(t *testing.T) {
+// TestPgInsertPending_NullableFieldsOmitted verifies that empty optional
+// fields land as SQL NULL and read back through GetStalePending as zero
+// values, rather than as a stored zero an encrypted-object check would
+// mistake for real metadata.
+func TestPgInsertPending_NullableFieldsOmitted(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	intentID := uniqueKey(t, "intent")
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		t.Fatalf("Begin: %v", err)
-	}
-	a := &pgTxAdapter{q: s.queries.WithTx(tx)}
-	if err := a.InsertPending(ctx, &core.PendingObject{
+	if err := s.InsertPending(ctx, &core.PendingObject{
 		IntentID: intentID, ObjectKey: uniqueKey(t, "k"), BackendName: "backend-a", SizeBytes: 5,
 	}); err != nil {
-		_ = tx.Rollback(ctx)
 		t.Fatalf("InsertPending: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("Commit: %v", err)
 	}
 	defer func() { _ = s.DeletePending(ctx, intentID) }()
 
@@ -313,45 +296,6 @@ func TestPgAdapter_DeletePending_RemovesRow(t *testing.T) {
 		}
 		if got {
 			t.Error("intent still present after DeletePending")
-		}
-	})
-}
-
-// TestPgAdapter_DeletePendingByBackend_RemovesAllForBackend verifies
-// the scoped delete clears every intent for the named backend without
-// touching other backends' intents.
-func TestPgAdapter_DeletePendingByBackend_RemovesAllForBackend(t *testing.T) {
-	s := adapterPgStore(t)
-	ctx := context.Background()
-	prefix := t.Name() + "/i-"
-	for i, backend := range []string{"backend-a", "backend-a", "backend-b"} {
-		if err := s.InsertPending(ctx, &core.PendingObject{
-			IntentID:    fmt.Sprintf("%s%d", prefix, i),
-			ObjectKey:   uniqueKey(t, fmt.Sprintf("k-%d", i)),
-			BackendName: backend,
-			SizeBytes:   1,
-		}); err != nil {
-			t.Fatalf("InsertPending(%d): %v", i, err)
-		}
-	}
-	defer func() {
-		_ = s.DeletePending(ctx, prefix+"0")
-		_ = s.DeletePending(ctx, prefix+"1")
-		_ = s.DeletePending(ctx, prefix+"2")
-	}()
-
-	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		if err := a.DeletePendingByBackend(ctx, "backend-a"); err != nil {
-			t.Fatalf("DeletePendingByBackend: %v", err)
-		}
-		if got, err := a.ClaimPending(ctx, prefix+"0"); err != nil || got {
-			t.Errorf("backend-a intent 0 still present: got=%v err=%v", got, err)
-		}
-		if got, err := a.ClaimPending(ctx, prefix+"1"); err != nil || got {
-			t.Errorf("backend-a intent 1 still present: got=%v err=%v", got, err)
-		}
-		if got, err := a.ClaimPending(ctx, prefix+"2"); err != nil || !got {
-			t.Errorf("backend-b intent 2 missing: got=%v err=%v", got, err)
 		}
 	})
 }

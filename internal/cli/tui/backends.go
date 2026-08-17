@@ -187,9 +187,7 @@ func (m *model) applyStatus(resp *adminapi.StatusResponse) {
 func (m *model) handleBackendsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "esc", "left", "h":
-		m.navFocus = true
-		m.navCursor = int(m.section)
-		return m, nil
+		return m.navBack()
 	case "r":
 		m.backends.loading = true
 		cmd := m.loadStatus()
@@ -556,14 +554,10 @@ func (m *model) backendsFooterView() string {
 // backendsBodyView renders the current content: an error, the loading
 // indicator, an empty notice, or the backends table.
 func (m *model) backendsBodyView() string {
-	switch {
-	case m.backends.err != nil:
-		return errStyle.Render("error: " + m.backends.err.Error())
-	case m.backends.loading:
-		return m.spinner.View() + " loading..."
-	case len(m.backends.rows) == 0:
-		return pathStyle.Render("(no backends)")
-	default:
+	return m.paneBody(m.backends.err, "", m.backends.loading, func() string {
+		if len(m.backends.rows) == 0 {
+			return pathStyle.Render("(no backends)")
+		}
 		return m.backends.table.View()
-	}
+	})
 }

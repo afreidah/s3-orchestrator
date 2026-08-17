@@ -289,9 +289,7 @@ func (m *model) handleOpsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch key.String() {
 	case "esc", "left", "h":
-		m.navFocus = true
-		m.navCursor = int(m.section)
-		return m, nil
+		return m.navBack()
 	case "up", "k":
 		if m.ops.cursor > 0 {
 			m.ops.cursor--

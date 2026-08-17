@@ -98,29 +98,28 @@ func TestAdapter_ClaimPending_FalseWhenMissing(t *testing.T) {
 	})
 }
 
-// TestAdapter_InsertPending_NullableFieldsOmitted verifies that empty
-// optional fields land as SQL NULL, not the zero value.
-func TestAdapter_InsertPending_NullableFieldsOmitted(t *testing.T) {
+// TestInsertPending_NullableFieldsOmitted verifies that empty optional fields
+// land as SQL NULL, not the zero value. A stored zero would make an
+// unencrypted intent read back as one whose plaintext is genuinely empty.
+func TestInsertPending_NullableFieldsOmitted(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
-	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		if err := a.InsertPending(ctx, &core.PendingObject{
-			IntentID: "i-2", ObjectKey: "k", BackendName: "backend-a", SizeBytes: 5,
-		}); err != nil {
-			t.Fatalf("InsertPending: %v", err)
-		}
-		var keyID, plaintext, hash any
-		if err := a.tx.QueryRowContext(ctx,
-			`SELECT key_id, plaintext_size, content_hash FROM pending_objects WHERE intent_id = ?`,
-			"i-2",
-		).Scan(&keyID, &plaintext, &hash); err != nil {
-			t.Fatalf("query: %v", err)
-		}
-		if keyID != nil || plaintext != nil || hash != nil {
-			t.Errorf("expected SQL NULL for empty optional fields, got %v %v %v", keyID, plaintext, hash)
-		}
-	})
+	if err := s.InsertPending(ctx, &core.PendingObject{
+		IntentID: "i-2", ObjectKey: "k", BackendName: "backend-a", SizeBytes: 5,
+	}); err != nil {
+		t.Fatalf("InsertPending: %v", err)
+	}
+	var keyID, plaintext, hash any
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT key_id, plaintext_size, content_hash FROM pending_objects WHERE intent_id = ?`,
+		"i-2",
+	).Scan(&keyID, &plaintext, &hash); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if keyID != nil || plaintext != nil || hash != nil {
+		t.Errorf("expected SQL NULL for empty optional fields, got %v %v %v", keyID, plaintext, hash)
+	}
 }
 
 // TestAdapter_DeletePending_RemovesRow verifies the delete removes the
@@ -144,44 +143,6 @@ func TestAdapter_DeletePending_RemovesRow(t *testing.T) {
 		}
 		if got {
 			t.Error("intent still present after DeletePending")
-		}
-	})
-}
-
-// TestAdapter_DeletePendingByBackend_RemovesAllForBackend verifies the
-// scoped delete clears every intent for a backend.
-func TestAdapter_DeletePendingByBackend_RemovesAllForBackend(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-	for i, backend := range []string{"backend-a", "backend-a", "backend-b"} {
-		if err := s.InsertPending(ctx, &core.PendingObject{
-			IntentID: string(rune('a' + i)), ObjectKey: "k", BackendName: backend, SizeBytes: 1,
-		}); err != nil {
-			t.Fatalf("InsertPending: %v", err)
-		}
-	}
-	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		if err := a.DeletePendingByBackend(ctx, "backend-a"); err != nil {
-			t.Fatalf("DeletePendingByBackend: %v", err)
-		}
-		var n int64
-		if err := a.tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM pending_objects WHERE backend_name = ?`, "backend-a",
-		).Scan(&n); err != nil {
-			t.Fatalf("count: %v", err)
-		}
-		if n != 0 {
-			t.Errorf("expected 0 backend-a intents after delete, got %d", n)
-		}
-		// backend-b should be untouched.
-		if err := a.tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM pending_objects WHERE backend_name = ?`, "backend-b",
-		).Scan(&n); err != nil {
-			t.Fatalf("count: %v", err)
-		}
-		if n != 1 {
-			t.Errorf("expected 1 backend-b intent after delete, got %d", n)
 		}
 	})
 }

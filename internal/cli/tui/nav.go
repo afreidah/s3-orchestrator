@@ -91,6 +91,15 @@ func fitFirstColumn(contentWidth, fixedSum, cols, maxWidth int) int {
 	return budget
 }
 
+// navBack hands focus back to the nav with the cursor on the section the user
+// is leaving, so stepping out and back in lands where they were. Every content
+// pane binds it to the same keys.
+func (m *model) navBack() (tea.Model, tea.Cmd) {
+	m.navFocus = true
+	m.navCursor = int(m.section)
+	return m, nil
+}
+
 // selectSection switches the active section, drops nav focus, and loads the
 // section's data when entering it needs a fetch.
 func (m *model) selectSection(s section) (tea.Model, tea.Cmd) {
