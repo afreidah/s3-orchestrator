@@ -3156,3 +3156,94 @@ func TestGetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 		t.Error("both copies should carry a content hash for this distinction to matter")
 	}
 }
+
+// quotaBytesUsed reads a backend's current bytes_used counter.
+func quotaBytesUsed(t *testing.T, s *Store, backend string) int64 {
+	t.Helper()
+	var used int64
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT bytes_used FROM backend_quotas WHERE backend_name = ?`, backend,
+	).Scan(&used); err != nil {
+		t.Fatalf("read bytes_used: %v", err)
+	}
+	return used
+}
+
+// TestMarkObjectDecrypted_DoesNotDriveQuotaNegative asserts a shrink larger
+// than the counter holds clamps at zero instead of underflowing. bytes_used is
+// per backend while the delta is per object, so an object whose recorded size
+// outruns the counter - a stale size, or a second pass over an already
+// decrypted copy - would otherwise leave a negative counter that over-admits
+// every later write until ReconcileUsage runs.
+func TestMarkObjectDecrypted_DoesNotDriveQuotaNegative(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mustRecordObject(t, s, "bucket/secret", "backend-a", 100)
+	if err := s.MarkObjectEncrypted(ctx, "bucket/secret", "backend-a",
+		[]byte("dek"), "key-1", 100, 900); err != nil {
+		t.Fatalf("MarkObjectEncrypted: %v", err)
+	}
+
+	// Drop the counter below what decryption is about to subtract, standing in
+	// for a ledger that drifted from the recorded object sizes.
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE backend_quotas SET bytes_used = 50 WHERE backend_name = ?`, "backend-a",
+	); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// 900 -> 100 is a -800 delta against a counter holding 50.
+	if err := s.MarkObjectDecrypted(ctx, "bucket/secret", "backend-a", 100); err != nil {
+		t.Fatalf("MarkObjectDecrypted: %v", err)
+	}
+	if used := quotaBytesUsed(t, s, "backend-a"); used != 0 {
+		t.Errorf("bytes_used = %d, want 0 - a negative counter over-admits later writes", used)
+	}
+}
+
+// TestMarkObjectEncrypted_DoesNotDriveQuotaNegative asserts the encrypt path
+// carries the same clamp. Encryption usually grows a copy, but the delta is
+// signed and nothing in the schema forbids a ciphertext smaller than its
+// plaintext.
+func TestMarkObjectEncrypted_DoesNotDriveQuotaNegative(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mustRecordObject(t, s, "bucket/plain", "backend-a", 900)
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE backend_quotas SET bytes_used = 50 WHERE backend_name = ?`, "backend-a",
+	); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// 900 plaintext -> 100 ciphertext is a -800 delta against a counter of 50.
+	if err := s.MarkObjectEncrypted(ctx, "bucket/plain", "backend-a",
+		[]byte("dek"), "key-1", 900, 100); err != nil {
+		t.Fatalf("MarkObjectEncrypted: %v", err)
+	}
+	if used := quotaBytesUsed(t, s, "backend-a"); used != 0 {
+		t.Errorf("bytes_used = %d, want 0", used)
+	}
+}
+
+// TestMarkObjectEncrypted_ChargesTheCiphertextGrowth pins the ordinary case,
+// so the clamp above cannot be mistaken for permission to lose real bytes.
+func TestMarkObjectEncrypted_ChargesTheCiphertextGrowth(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mustRecordObject(t, s, "bucket/plain", "backend-a", 1000)
+	before := quotaBytesUsed(t, s, "backend-a")
+
+	if err := s.MarkObjectEncrypted(ctx, "bucket/plain", "backend-a",
+		[]byte("dek"), "key-1", 1000, 1100); err != nil {
+		t.Fatalf("MarkObjectEncrypted: %v", err)
+	}
+	if got := quotaBytesUsed(t, s, "backend-a") - before; got != 100 {
+		t.Errorf("bytes_used moved by %d, want the 100 bytes encryption added", got)
+	}
+}

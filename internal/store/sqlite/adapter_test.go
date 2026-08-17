@@ -757,6 +757,33 @@ func TestAdapter_IncrementBackendQuota_ReturnsErrNoSpaceWhenExceeded(t *testing.
 	})
 }
 
+// TestAdapter_IncrementBackendQuota_CountsOrphanBytesTowardCeiling asserts
+// bytes awaiting physical cleanup still occupy the backend. Target selection
+// already declines them, so a ceiling that ignored them would admit a write
+// the placement layer had ruled out, and the backend would pass bytes_limit.
+func TestAdapter_IncrementBackendQuota_CountsOrphanBytesTowardCeiling(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE backend_quotas SET bytes_limit = 1000, bytes_used = 500, orphan_bytes = 400
+		 WHERE backend_name = ?`, "backend-a",
+	); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	withAdapter(t, s, func(a *sqliteTxAdapter) {
+		// 500 used + 400 orphaned + 200 = 1100, past the 1000 limit.
+		if err := a.IncrementBackendQuota(ctx, "backend-a", 200); !errors.Is(err, core.ErrNoSpaceAvailable) {
+			t.Errorf("got %v, want ErrNoSpaceAvailable", err)
+		}
+		// 500 + 400 + 100 = 1000 exactly, which still fits.
+		if err := a.IncrementBackendQuota(ctx, "backend-a", 100); err != nil {
+			t.Errorf("increment to exactly the limit: %v", err)
+		}
+	})
+}
+
 // TestAdapter_DecrementBackendQuota_SubtractsBytesUsed verifies the
 // decrement subtracts and clamps at zero.
 func TestAdapter_DecrementBackendQuota_SubtractsBytesUsed(t *testing.T) {

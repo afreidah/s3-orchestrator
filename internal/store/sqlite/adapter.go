@@ -420,14 +420,17 @@ func (a *sqliteTxAdapter) DeleteCleanupItem(ctx context.Context, id int64) error
 
 // IncrementBackendQuota credits delta bytes to backendName. Returns
 // core.ErrNoSpaceAvailable when the guarded UPDATE touches zero rows
-// (quota ceiling would be exceeded).
+// (quota ceiling would be exceeded). orphan_bytes counts toward the ceiling
+// because those bytes are still on the backend until their cleanup lands, and
+// target selection already declines them; leaving them out here would admit
+// writes the placement layer had already ruled out.
 func (a *sqliteTxAdapter) IncrementBackendQuota(ctx context.Context, backendName string, delta int64) error {
 	now := now()
 	res, err := a.tx.ExecContext(ctx, `
 		UPDATE backend_quotas
 		SET bytes_used = bytes_used + ?, updated_at = ?
 		WHERE backend_name = ?
-		  AND (bytes_limit = 0 OR bytes_used + ? <= bytes_limit)`,
+		  AND (bytes_limit = 0 OR bytes_used + orphan_bytes + ? <= bytes_limit)`,
 		delta, now, backendName, delta)
 	if err != nil {
 		return fmt.Errorf("increment quota: %w", err)
