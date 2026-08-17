@@ -87,6 +87,49 @@ func TestHandleListObjects_Happy(t *testing.T) {
 	}
 }
 
+// TestHandleListObjects_DelimiterDefaultAndFlat asserts an omitted delimiter
+// browses hierarchically while an explicitly empty one lists every key flat,
+// which is what a caller counting or sweeping a subtree needs.
+func TestHandleListObjects_DelimiterDefaultAndFlat(t *testing.T) {
+	t.Parallel()
+	mock := storetest.NewMockObjectStore(gomock.NewController(t))
+	mock.EXPECT().
+		ListObjectsDelimited(gomock.Any(), gomock.Any(), "/", gomock.Any(), gomock.Any()).
+		Return(&core.ListDelimitedResult{CommonPrefixes: []string{"photos/"}}, nil).
+		Times(1)
+	mock.EXPECT().
+		ListObjects(gomock.Any(), "bucket/dir/", gomock.Any(), gomock.Any()).
+		Return(&core.ListObjectsResult{Objects: []core.ObjectLocation{
+			{ObjectKey: "bucket/dir/a"}, {ObjectKey: "bucket/dir/b"},
+		}}, nil).
+		Times(1)
+
+	mux := http.NewServeMux()
+	newObjectsHandler(t, mock).Register(mux)
+
+	// omitted: hierarchical
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/objects?prefix=", ""))
+	var grouped adminapi.ObjectListResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &grouped); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(grouped.CommonPrefixes) != 1 {
+		t.Errorf("omitting the delimiter did not group: %+v", grouped)
+	}
+
+	// present but empty: flat
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/objects?prefix=bucket/dir/&delimiter=", ""))
+	var flat adminapi.ObjectListResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &flat); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(flat.Objects) != 2 || len(flat.CommonPrefixes) != 0 {
+		t.Errorf("an empty delimiter did not list flat: %+v", flat)
+	}
+}
+
 // TestHandleListObjects_StoreError returns 500 when the store fails.
 func TestHandleListObjects_StoreError(t *testing.T) {
 	t.Parallel()

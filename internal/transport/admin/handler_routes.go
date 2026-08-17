@@ -143,7 +143,7 @@ func (h *Handler) routes() []route {
 			Response: adminapi.ObjectListResponse{},
 			Params: []param{
 				{Name: paramPrefix, In: inQuery, Type: typeString, Description: "Restrict the listing to keys under this prefix"},
-				{Name: "delimiter", In: inQuery, Type: typeString, Description: "Grouping delimiter; defaults to /"},
+				{Name: "delimiter", In: inQuery, Type: typeString, Description: "Grouping delimiter; omitted defaults to /, empty lists every key flat"},
 				{Name: "continuation", In: inQuery, Type: typeString, Description: "Continuation token from a previous page"},
 			},
 		},

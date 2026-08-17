@@ -297,6 +297,9 @@ s3-orchestrator tui
 | `d` | In Backends, drain the selected backend (asks to confirm) |
 | `Q` | In Backends, requeue the selected backend's dead-lettered cleanups (asks to confirm) |
 | `x` | In Backends, cancel the drain the pane is following (asks to confirm) |
+| `D` | In Files, download the selected object to a prompted local path |
+| `U` | In Files, upload a local file under a prompted key |
+| `X` | In Files, delete the selected object, or everything under the selected directory (asks to confirm) |
 | `S` | In the inspector, verify every copy of the object now (asks to confirm) |
 | `y` / `n` | Accept / cancel a pending action confirmation |
 | `up` / `down` | Move the selection (or the sidebar highlight when it has focus) |
@@ -335,6 +338,12 @@ The **Cache** section shows the object data cache, sourced from `GET /admin/api/
 The **Logs** section shows recent structured log entries from the instance's in-memory log buffer, sourced from `GET /admin/api/logs` - the same buffer the web dashboard's logs pane reads. Each row is time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs (not raw JSON). The level is colour-coded by severity (WARN and ERROR stand out; INFO stays neutral). Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh.
 
 Beyond browsing, the TUI can trigger a growing set of **admin actions**. Every write action shows a `y/N` confirmation before it runs, and its result (or error) is reported afterwards. Instance-wide actions live on the Ops menu; an action that targets one row, such as the Cleanup pane's requeue, lives on the pane that shows the row.
+
+The **Files** section acts on objects as well as browsing them. `D` downloads the highlighted object to a prompted local path, `U` uploads a local file under a prompted key, and `X` removes the highlighted row. Both prompts start filled with a sensible answer - the object's base name, or the current prefix plus the file's name - so the usual case is a keystroke away and anything else is an edit.
+
+Deleting a directory removes everything under it, so the confirmation states how many objects that is rather than just naming the prefix: the pane counts a page of keys first and asks "Delete 128 objects under bucket/photos/?". A prefix with more objects than one page holds reads as "at least 1,000", since understating what a delete will remove is worse than being vague about the total.
+
+Downloads and uploads move real bytes, so the status line reports the progress (`downloading bucket/db.sql   45.2 MiB / 120.0 MiB (37%)`) while the interface stays responsive. A download writes to a temporary file beside its destination and renames it into place only once the whole body has landed, so an interrupted transfer leaves nothing where a complete file would be - a failure reports what went wrong rather than leaving a truncated file to be discovered later.
 
 The **Ops** section, reached with `o`, is the full menu, grouped by kind: the maintenance passes (rebalance, replicate under-replicated objects, clean over-replicated copies, scrub, backfill checksums, reconcile metadata, reconcile usage counters, flush usage counters to the database), cache control (flush the cache, invalidate one key, invalidate a prefix), and the encryption transitions (encrypt existing, decrypt existing, rotate the encryption key). Accepting the confirmation switches to a scrolling output pane immediately, so an operation that takes minutes reports that it started rather than leaving the menu live until it finishes.
 

@@ -55,14 +55,29 @@ type inputPrompt struct {
 	build func(value string) adminAction
 }
 
-// askFor arms an input prompt. The action is not built until a value is
-// submitted, so the question and the operation stay declared together at the
-// call site.
+// askFor arms an input prompt whose field starts empty, with placeholder shown
+// as a hint. The action is not built until a value is submitted, so the
+// question and the operation stay declared together at the call site.
 func (m *model) askFor(question, placeholder string, build func(string) adminAction) (tea.Model, tea.Cmd) {
 	in := textinput.New()
 	in.Placeholder = placeholder
+	return m.arm(question, &in, build)
+}
+
+// askForValue arms a prompt pre-filled with a value the operator is expected to
+// edit rather than type from nothing, such as a download destination or the key
+// an upload should land under.
+func (m *model) askForValue(question, value string, build func(string) adminAction) (tea.Model, tea.Cmd) {
+	in := textinput.New()
+	in.SetValue(value)
+	in.CursorEnd()
+	return m.arm(question, &in, build)
+}
+
+// arm installs a prepared prompt and gives it focus.
+func (m *model) arm(question string, in *textinput.Model, build func(string) adminAction) (tea.Model, tea.Cmd) {
 	in.Prompt = ""
-	m.prompt = &inputPrompt{text: question, input: in, build: build}
+	m.prompt = &inputPrompt{text: question, input: *in, build: build}
 	return m, m.prompt.input.Focus()
 }
 

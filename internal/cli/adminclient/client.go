@@ -83,6 +83,30 @@ func (c *Client) Stream(ctx context.Context, method, path string, q url.Values, 
 	return newDecoderStream(resp.Body), nil
 }
 
+// Upload issues an authenticated request whose body is raw bytes rather than a
+// JSON document, declaring the length the endpoint needs to accept it. The
+// caller owns and must close the returned response.
+func (c *Client) Upload(
+	ctx context.Context,
+	method, path string,
+	q url.Values,
+	body io.Reader,
+	size int64,
+	contentType string,
+) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.baseAddr+path+queryOf(q), body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set(TokenHeader, c.token)
+	req.Header.Set("Content-Type", contentType)
+	// A streamed body has no length of its own, and the endpoint refuses an
+	// upload it cannot size, so it is declared here.
+	req.ContentLength = size
+	//nolint:gosec // G704: the target address is operator-supplied by design.
+	return c.http.Do(req)
+}
+
 // send builds and dispatches one request. accept, when non-empty, sets the
 // Accept header; a non-nil body is sent as JSON.
 func (c *Client) send(

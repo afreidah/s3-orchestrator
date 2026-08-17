@@ -13,6 +13,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -73,6 +74,26 @@ func (errLister) RequeueCleanupDLQ(_ context.Context, _ string) (*adminapi.Clean
 }
 
 func (errLister) RunOp(_ context.Context, _ *opsAction, _ opsRequest) (adminclient.EventStream, error) {
+	return nil, errors.New("nope")
+}
+
+func (errLister) ListObjectsFlat(_ context.Context, _, _ string) (*adminapi.ObjectListResponse, error) {
+	return nil, errors.New("nope")
+}
+
+func (errLister) DownloadObject(_ context.Context, _ string) (io.ReadCloser, int64, error) {
+	return nil, 0, errors.New("nope")
+}
+
+func (errLister) UploadObject(_ context.Context, _ string, _ io.Reader, _ int64) error {
+	return errors.New("nope")
+}
+
+func (errLister) DeleteObject(_ context.Context, _ string) (*adminapi.ObjectDeleteResponse, error) {
+	return nil, errors.New("nope")
+}
+
+func (errLister) DeletePrefix(_ context.Context, _ string) (*adminapi.ObjectDeleteResponse, error) {
 	return nil, errors.New("nope")
 }
 
