@@ -75,17 +75,30 @@ func NewObjects(d ObjectsDeps) *Objects {
 	}
 }
 
-// List returns one delimiter-grouped page of the namespace under prefix. A
-// non-empty continuation resumes a previously truncated page. maxKeys <= 0
-// falls back to the default page size.
+// List returns one page of the namespace under prefix. A delimiter groups the
+// keys below it into common prefixes; an empty delimiter lists every key flat,
+// which is what a caller counting or sweeping a subtree wants. A non-empty
+// continuation resumes a previously truncated page, and maxKeys <= 0 falls
+// back to the default page size.
 func (o *Objects) List(ctx context.Context, prefix, delimiter, continuation string, maxKeys int) (*core.ListDelimitedResult, error) {
-	if delimiter == "" {
-		delimiter = "/"
-	}
 	if maxKeys <= 0 {
 		maxKeys = defaultListMaxKeys
 	}
-	return o.store.ListObjectsDelimited(ctx, prefix, delimiter, continuation, maxKeys)
+	if delimiter != "" {
+		return o.store.ListObjectsDelimited(ctx, prefix, delimiter, continuation, maxKeys)
+	}
+
+	// A flat listing is a different store call, mapped onto the same page
+	// shape so a caller reads one result type either way.
+	flat, err := o.store.ListObjects(ctx, prefix, continuation, maxKeys)
+	if err != nil {
+		return nil, err
+	}
+	return &core.ListDelimitedResult{
+		Objects:               flat.Objects,
+		IsTruncated:           flat.IsTruncated,
+		NextContinuationToken: flat.NextContinuationToken,
+	}, nil
 }
 
 // Locations reports every backend holding a copy of one key, for callers

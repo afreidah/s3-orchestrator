@@ -55,6 +55,8 @@ curl -X PUT -H "X-Admin-Token: $TOKEN" \
 
 Every key must name a configured virtual bucket, the same requirement the dashboard enforces, so a typo cannot write outside the namespace the orchestrator serves. Uploads are capped at 512 MiB; a larger one is refused before it reaches a backend.
 
+`GET /admin/api/objects` browses hierarchically by default: omit `delimiter` and keys are grouped into directories, which is what a file browser wants. Send `delimiter=` explicitly - present but empty - and the listing is flat, every key under the prefix in one stream. That is what a caller counting or sweeping a subtree needs, and it is how the TUI knows how many objects a prefix delete is about to remove before it asks.
+
 Deletes report how many objects they removed, so a caller can tell a no-op from a mass removal:
 
 ```bash
