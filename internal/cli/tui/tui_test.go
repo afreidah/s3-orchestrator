@@ -44,6 +44,14 @@ type fakeLister struct {
 	opEvents  []adminstream.Event // canned RunOp stream (nil = single ok result)
 	opErr     error               // when set, RunOp fails to open
 	opRequest opsRequest          // the request the last action resolved to
+
+	drainStarted   string                            // backend passed to StartDrain
+	drainCancelled string                            // backend passed to CancelDrain
+	drainProgress  []*adminapi.DrainProgressResponse // readings served in order
+	drainErr       error                             // when set, every drain call fails
+	reconciled     string                            // backend passed to ReconcileBackend
+	reconcileResp  *adminapi.ReconcileResponse       // canned reconcile counts
+	reconcileErr   error                             // when set, ReconcileBackend fails
 }
 
 func (f *fakeLister) ListObjects(_ context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error) {
@@ -124,6 +132,52 @@ func (f *fakeLister) RequeueCleanupDLQ(_ context.Context, backend string) (*admi
 		return f.requeued, nil
 	}
 	return &adminapi.CleanupDLQRequeueResponse{Backend: backend}, nil
+}
+
+// StartDrain records the backend asked to drain and reports f.drainErr.
+func (f *fakeLister) StartDrain(_ context.Context, backend string) (*adminapi.BackendOperationResponse, error) {
+	f.drainStarted = backend
+	if f.drainErr != nil {
+		return nil, f.drainErr
+	}
+	return &adminapi.BackendOperationResponse{Backend: backend}, nil
+}
+
+// DrainProgress serves the canned readings in order, repeating the last one
+// once they run out, so a poll loop settles instead of running dry.
+func (f *fakeLister) DrainProgress(_ context.Context, _ string) (*adminapi.DrainProgressResponse, error) {
+	if f.drainErr != nil {
+		return nil, f.drainErr
+	}
+	if len(f.drainProgress) == 0 {
+		return &adminapi.DrainProgressResponse{}, nil
+	}
+	next := f.drainProgress[0]
+	if len(f.drainProgress) > 1 {
+		f.drainProgress = f.drainProgress[1:]
+	}
+	return next, nil
+}
+
+// CancelDrain records the backend whose drain was cancelled.
+func (f *fakeLister) CancelDrain(_ context.Context, backend string) (*adminapi.BackendOperationResponse, error) {
+	f.drainCancelled = backend
+	if f.drainErr != nil {
+		return nil, f.drainErr
+	}
+	return &adminapi.BackendOperationResponse{Backend: backend}, nil
+}
+
+// ReconcileBackend records the backend reconciled and reports canned counts.
+func (f *fakeLister) ReconcileBackend(_ context.Context, backend string) (*adminapi.ReconcileResponse, error) {
+	f.reconciled = backend
+	if f.reconcileErr != nil {
+		return nil, f.reconcileErr
+	}
+	if f.reconcileResp != nil {
+		return f.reconcileResp, nil
+	}
+	return &adminapi.ReconcileResponse{}, nil
 }
 
 // RunOp returns a stream over the canned events (or a single ok result when

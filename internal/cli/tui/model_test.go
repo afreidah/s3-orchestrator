@@ -76,6 +76,22 @@ func (errLister) RunOp(_ context.Context, _ *opsAction, _ opsRequest) (adminclie
 	return nil, errors.New("nope")
 }
 
+func (errLister) StartDrain(_ context.Context, _ string) (*adminapi.BackendOperationResponse, error) {
+	return nil, errors.New("nope")
+}
+
+func (errLister) DrainProgress(_ context.Context, _ string) (*adminapi.DrainProgressResponse, error) {
+	return nil, errors.New("nope")
+}
+
+func (errLister) CancelDrain(_ context.Context, _ string) (*adminapi.BackendOperationResponse, error) {
+	return nil, errors.New("nope")
+}
+
+func (errLister) ReconcileBackend(_ context.Context, _ string) (*adminapi.ReconcileResponse, error) {
+	return nil, errors.New("nope")
+}
+
 // modelWith builds a model seeded with entries and a table synced to them.
 func modelWith(entries []entry, prefix string, client adminClient) *model {
 	m := initialModel(client)
