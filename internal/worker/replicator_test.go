@@ -519,12 +519,12 @@ func TestReplicate_FactorOne_Noop(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	r := NewReplicator(NewMockOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{})
 
-	created, err := r.Replicate(context.Background(), config.ReplicationConfig{Factor: 1}, nil)
+	sum, err := r.Replicate(context.Background(), config.ReplicationConfig{Factor: 1}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if created != 0 {
-		t.Errorf("created = %d, want 0", created)
+	if sum.CopiesCreated != 0 {
+		t.Errorf("created = %d, want 0", sum.CopiesCreated)
 	}
 }
 
@@ -543,12 +543,12 @@ func TestReplicate_NothingUnderReplicated(t *testing.T) {
 
 	r := NewReplicator(ops, pl, ms)
 	cfg := config.ReplicationConfig{Factor: 2, BatchSize: 10, Concurrency: 1, UnhealthyThreshold: time.Hour}
-	created, err := r.Replicate(context.Background(), cfg, nil)
+	sum, err := r.Replicate(context.Background(), cfg, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if created != 0 {
-		t.Errorf("created = %d, want 0", created)
+	if sum.CopiesCreated != 0 {
+		t.Errorf("created = %d, want 0", sum.CopiesCreated)
 	}
 	if p := promtest.ToFloat64(telemetry.ReplicationPending); p != 0 {
 		t.Errorf("ReplicationPending = %v, want 0", p)

@@ -118,7 +118,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 
 		stats, err := r.store.GetQuotaStats(ctx)
 		if err != nil {
-			telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "error").Inc()
+			telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, OutcomeError).Inc()
 			return RebalanceSummary{}, fmt.Errorf("failed to get quota stats: %w", err)
 		}
 
@@ -139,7 +139,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 			return RebalanceSummary{}, fmt.Errorf("unknown rebalance strategy: %s", cfg.Strategy)
 		}
 		if err != nil {
-			telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "error").Inc()
+			telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, OutcomeError).Inc()
 			return RebalanceSummary{}, fmt.Errorf("failed to plan rebalance: %w", err)
 		}
 
@@ -153,7 +153,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 
 		sum := r.ExecuteMoves(ctx, plan, cfg.Strategy, cfg.Concurrency, observer)
 
-		telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, "success").Inc()
+		telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, sum.Outcome()).Inc()
 		telemetry.RebalanceDuration.WithLabelValues(cfg.Strategy).Observe(time.Since(start).Seconds())
 
 		audit.Log(ctx, "rebalance.complete",

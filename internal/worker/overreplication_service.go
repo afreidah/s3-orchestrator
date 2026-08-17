@@ -45,8 +45,8 @@ func NewOverReplicationService(manager tickrunner.QuotaMetricsRefresher, overRep
 			if rcfg == nil {
 				return nil
 			}
-			removed, err := overRep.Clean(ctx, *rcfg, nil)
-			return tickrunner.HandlePassResult(ctx, log, manager, removed, err, "copies_removed")
+			sum, err := overRep.Clean(ctx, *rcfg, nil)
+			return tickrunner.HandlePassResult(ctx, log, manager, sum.CopiesRemoved, err, "copies_removed")
 		},
 	})
 }

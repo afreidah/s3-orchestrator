@@ -231,7 +231,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_active_multipart_uploads` | Gauge | backend | In-progress uploads |
 | `s3o_rebalance_objects_moved_total` | Counter | strategy, status | Objects moved by rebalancer |
 | `s3o_rebalance_bytes_moved_total` | Counter | strategy | Bytes moved by rebalancer |
-| `s3o_rebalance_runs_total` | Counter | strategy, status | Rebalancer executions |
+| `s3o_rebalance_runs_total` | Counter | strategy, status | Rebalancer executions, by cycle outcome (see below) |
 | `s3o_rebalance_duration_seconds` | Histogram | strategy | Rebalancer execution time |
 | `s3o_rebalance_skipped_total` | Counter | reason | Rebalancer runs skipped |
 | `s3o_rebalance_pending` | Gauge | — | Objects planned for rebalance |
@@ -239,13 +239,13 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_replication_copies_created_total` | Counter | — | Replica copies created |
 | `s3o_replication_errors_total` | Counter | — | Replication errors |
 | `s3o_replication_duration_seconds` | Histogram | — | Replication cycle time |
-| `s3o_replication_runs_total` | Counter | status | Replication worker executions |
+| `s3o_replication_runs_total` | Counter | status | Replication worker executions, by cycle outcome (see below) |
 | `s3o_replication_health_copies_total` | Counter | — | Copies created to replace copies on circuit-broken backends |
 | `s3o_over_replication_pending` | Gauge | — | Objects exceeding the replication factor |
 | `s3o_over_replication_removed_total` | Counter | — | Excess copies removed |
 | `s3o_over_replication_errors_total` | Counter | — | Over-replication cleanup errors |
 | `s3o_over_replication_key_preserved_total` | Counter | — | Copies kept because they held the only usable encryption key for the object |
-| `s3o_over_replication_runs_total` | Counter | status | Over-replication worker executions |
+| `s3o_over_replication_runs_total` | Counter | status | Over-replication worker executions, by cycle outcome (see below) |
 | `s3o_over_replication_duration_seconds` | Histogram | — | Over-replication cleanup cycle time |
 | `s3o_circuit_breaker_state` | Gauge | name | 0=closed, 1=open, 2=half-open (name: "database" or backend name) |
 | `s3o_circuit_breaker_transitions_total` | Counter | name, from, to | State transitions per component |
@@ -321,6 +321,20 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_http_panic_recovered_total` | Counter | route | Handler panics caught by the recovery middleware |
 
 Quota metrics are refreshed from PostgreSQL every 30 seconds (no backend API calls).
+
+#### Worker cycle outcomes
+
+The `*_runs_total` counters for the rebalance, replication and over-replication workers carry a `status` label describing how the cycle finished, taken from the per-item tally rather than from the fact that the cycle returned:
+
+| Value | Meaning |
+|---|---|
+| `success` | Every item the cycle attempted succeeded |
+| `partial` | Some items succeeded and some failed |
+| `failed` | Every item the cycle attempted failed |
+| `empty` | The cycle ran with nothing to do |
+| `error` | The cycle could not start: the query that selects the batch failed |
+
+Alert on `partial` and `failed` to catch a worker that is running on schedule but not achieving anything - a backend that rejects every write, for instance, produces `failed` cycles indefinitely while the process stays healthy. `empty` is the normal steady state for a fleet that is already in shape.
 
 ### OpenTelemetry tracing
 

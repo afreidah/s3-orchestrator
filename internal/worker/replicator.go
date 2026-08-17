@@ -28,7 +28,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
-	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
 
 // -------------------------------------------------------------------------
@@ -75,20 +74,29 @@ func (r *Replicator) Config() *config.ReplicationConfig {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
+// ReplicationSummary is the outcome of one replication cycle: the per-item
+// tally every worker reports, plus the copies those items created. The two
+// counts differ because one under-replicated object can need several copies,
+// so CopiesCreated is not the number of items that succeeded.
+type ReplicationSummary struct {
+	WorkSummary
+	CopiesCreated int
+}
+
 // Replicate finds under-replicated objects and creates additional copies to
-// reach the target replication factor. Returns the number of copies created.
-// observer, when non-nil, receives a start and end step per object replicated.
-func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (int, error) {
-	return runOpsCycle(ctx, "Replicate", "replicate", func(ctx context.Context) (int, error) {
+// reach the target replication factor. observer, when non-nil, receives a
+// start and end step per object replicated.
+func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (ReplicationSummary, error) {
+	return runOpsCycle(ctx, "Replicate", "replicate", func(ctx context.Context) (ReplicationSummary, error) {
 		return r.replicate(ctx, cfg, observer)
 	})
 }
 
 // replicate is the body of Replicate after observe.Run sets up the span.
-func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (int, error) {
+func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (ReplicationSummary, error) {
 	start := time.Now()
 	if cfg.Factor <= 1 {
-		return 0, nil
+		return ReplicationSummary{}, nil
 	}
 
 	audit.Log(ctx, "replication.start",
@@ -108,15 +116,15 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 		locations, err = r.store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
 	}
 	if err != nil {
-		telemetry.ReplicationRunsTotal.WithLabelValues("error").Inc()
-		return 0, fmt.Errorf("failed to query under-replicated objects: %w", err)
+		telemetry.ReplicationRunsTotal.WithLabelValues(OutcomeError).Inc()
+		return ReplicationSummary{}, fmt.Errorf("failed to query under-replicated objects: %w", err)
 	}
 
 	if len(locations) == 0 {
 		telemetry.ReplicationPending.Set(0)
-		telemetry.ReplicationRunsTotal.WithLabelValues("success").Inc()
+		telemetry.ReplicationRunsTotal.WithLabelValues(WorkSummary{}.Outcome()).Inc()
 		telemetry.ReplicationDuration.Observe(time.Since(start).Seconds())
-		return 0, nil
+		return ReplicationSummary{}, nil
 	}
 
 	tasks := planUnderReplicated(locations, cfg.Factor)
@@ -127,37 +135,42 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 	// quota races are caught by the backend layer (RecordReplica returns an
 	// error) so the worst case is a wasted copy that gets cleaned up.
 	telemetry.ReplicationPending.Set(float64(len(tasks)))
-	var created atomic.Int32
-	workerpool.Run(ctx, cfg.Concurrency, tasks, func(ctx context.Context, task replicaTask) {
+	var created atomic.Int64
+	runner := BatchRunner[replicaTask]{
+		Name:        "replication",
+		Log:         r.log,
+		Concurrency: cfg.Concurrency,
+		Observer:    observer,
+		Key:         func(t replicaTask) string { return t.key },
+	}
+	sum := runner.Run(ctx, tasks, func(ctx context.Context, task replicaTask) ItemResult {
 		defer telemetry.ReplicationPending.Dec()
+		var res ItemResult // zero value (ItemSkipped) when admission blocks the work
 		WithAdmission(ctx, r.ops, WorkerNameReplicator, func() {
-			progress.Track(observer, task.key, func() string {
-				outcome := r.ReplicateObject(ctx, task.key, task.copies, task.needed)
-				r.reportObjectOutcome(ctx, &outcome)
-				created.Add(int32(outcome.Created)) //nolint:gosec // G115: Created is small per object
-				if outcome.Failed() > 0 {
-					return progress.StatusFailed
-				}
-				return progress.StatusOK
-			})
+			outcome := r.ReplicateObject(ctx, task.key, task.copies, task.needed)
+			r.reportObjectOutcome(ctx, &outcome)
+			created.Add(int64(outcome.Created))
+			res = replicaOutcomeResult(&outcome)
 		})
+		return res
 	})
 
-	copiesCreated := int(created.Load())
-	telemetry.ReplicationCopiesCreatedTotal.Add(float64(copiesCreated))
-	if len(excluded) > 0 && copiesCreated > 0 {
-		telemetry.ReplicationHealthCopiesTotal.Add(float64(copiesCreated))
+	summary := ReplicationSummary{WorkSummary: sum, CopiesCreated: int(created.Load())}
+	telemetry.ReplicationCopiesCreatedTotal.Add(float64(summary.CopiesCreated))
+	if len(excluded) > 0 && summary.CopiesCreated > 0 {
+		telemetry.ReplicationHealthCopiesTotal.Add(float64(summary.CopiesCreated))
 	}
-	telemetry.ReplicationRunsTotal.WithLabelValues("success").Inc()
+	telemetry.ReplicationRunsTotal.WithLabelValues(sum.Outcome()).Inc()
 	telemetry.ReplicationDuration.Observe(time.Since(start).Seconds())
 
 	audit.Log(ctx, "replication.complete",
-		slog.Int("copies_created", copiesCreated),
+		slog.Int("copies_created", summary.CopiesCreated),
 		slog.Int("objects_checked", len(tasks)),
+		slog.Int("objects_failed", sum.Failed),
 		slog.Duration("duration", time.Since(start)),
 	)
 
-	return copiesCreated, nil
+	return summary, nil
 }
 
 // -------------------------------------------------------------------------
@@ -215,6 +228,22 @@ type ReplicationOutcome struct {
 // object, irrespective of failure stage.
 func (o ReplicationOutcome) Failed() int {
 	return o.CopyErrors + o.RecordErrors + o.Superseded
+}
+
+// replicaOutcomeResult folds one object's copy attempts into the batch tally.
+// Any failed attempt makes the item failed even when other copies of the same
+// object landed, because the object did not reach its factor: reporting it as
+// succeeded would let a cycle that left objects under-replicated read as clean.
+func replicaOutcomeResult(o *ReplicationOutcome) ItemResult {
+	switch {
+	case o.Failed() > 0:
+		return ItemResult{Outcome: ItemFailed, Status: progress.StatusFailed}
+	case o.Created > 0:
+		return ItemResult{Outcome: ItemSucceeded, Status: progress.StatusOK}
+	default:
+		// No copy was attempted: target selection found nowhere to put one.
+		return ItemResult{Outcome: ItemSkipped, Status: progress.StatusOK}
+	}
 }
 
 // ReplicateObject creates up to `needed` additional copies of a single

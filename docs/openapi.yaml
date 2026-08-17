@@ -1184,6 +1184,9 @@ components:
                 copies_removed:
                     format: int64
                     type: integer
+                failed:
+                    format: int64
+                    type: integer
                 reason:
                     type: string
                 status:
@@ -1309,6 +1312,9 @@ components:
         ReplicateResponse:
             properties:
                 copies_created:
+                    format: int64
+                    type: integer
+                failed:
                     format: int64
                     type: integer
                 reason:

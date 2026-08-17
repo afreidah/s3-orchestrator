@@ -47,6 +47,7 @@ func (h *Handler) handleReplicate(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ReplicateResponse{
 		ReplicationOutcome: adminapi.ReplicationOutcome{Status: statusOK},
 		CopiesCreated:      res.CopiesCreated,
+		Failed:             res.Failed,
 	})
 }
 
@@ -66,7 +67,7 @@ func (h *Handler) streamReplicate(w http.ResponseWriter, r *http.Request) {
 		return stepResult{
 			Processed: res.CopiesCreated,
 			Summary:   fmt.Sprintf("created %d copies", res.CopiesCreated),
-			Fields:    map[string]any{"copies_created": res.CopiesCreated},
+			Fields:    map[string]any{"copies_created": res.CopiesCreated, "failed": res.Failed},
 		}, nil
 	})
 }
@@ -118,6 +119,7 @@ func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Requ
 	httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationCleanResponse{
 		ReplicationOutcome: adminapi.ReplicationOutcome{Status: statusOK},
 		CopiesRemoved:      res.CopiesRemoved,
+		Failed:             res.Failed,
 	})
 }
 
@@ -137,7 +139,7 @@ func (h *Handler) streamOverReplication(w http.ResponseWriter, r *http.Request, 
 		return stepResult{
 			Processed: res.CopiesRemoved,
 			Summary:   fmt.Sprintf("removed %d copies", res.CopiesRemoved),
-			Fields:    map[string]any{"copies_removed": res.CopiesRemoved},
+			Fields:    map[string]any{"copies_removed": res.CopiesRemoved, "failed": res.Failed},
 		}, nil
 	})
 }

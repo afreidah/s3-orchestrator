@@ -152,7 +152,7 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 		"b2": {BytesUsed: 100, BytesLimit: 1000}, // 10% -> higher score
 	}
 
-	removed := c.cleanObject(context.Background(), "key1", copies, 1, 1, stats)
+	removed, _ := c.cleanObject(context.Background(), "key1", copies, 1, 1, stats)
 	if removed != 1 {
 		t.Errorf("removed = %d, want 1", removed)
 	}
@@ -192,7 +192,7 @@ func TestCleanObject_DoesNotDoubleCountAPICalls(t *testing.T) {
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
 
-	if removed := c.cleanObject(context.Background(), "key1", copies, 1, 1, stats); removed != 1 {
+	if removed, _ := c.cleanObject(context.Background(), "key1", copies, 1, 1, stats); removed != 1 {
 		t.Errorf("removed = %d, want 1", removed)
 	}
 }
@@ -224,7 +224,7 @@ func TestCleanObject_SkipsBackendDeleteOnRaceNoOp(t *testing.T) {
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
 
-	if removed := c.cleanObject(context.Background(), "key1", copies, 1, 1, stats); removed != 0 {
+	if removed, _ := c.cleanObject(context.Background(), "key1", copies, 1, 1, stats); removed != 0 {
 		t.Errorf("removed = %d, want 0 on benign no-op", removed)
 	}
 }
@@ -236,12 +236,12 @@ func TestClean_FactorOne_Noop(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c := NewOverReplicationCleaner(NewMockOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{})
 
-	removed, err := c.Clean(context.Background(), config.ReplicationConfig{Factor: 1}, nil)
+	sum, err := c.Clean(context.Background(), config.ReplicationConfig{Factor: 1}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if removed != 0 {
-		t.Errorf("removed = %d, want 0", removed)
+	if sum.CopiesRemoved != 0 {
+		t.Errorf("removed = %d, want 0", sum.CopiesRemoved)
 	}
 }
 
@@ -257,12 +257,12 @@ func TestClean_NothingOverReplicated(t *testing.T) {
 	ms := &mockMetadataStore{}
 
 	c := NewOverReplicationCleaner(ops, pl, ms)
-	removed, err := c.Clean(context.Background(), config.ReplicationConfig{Factor: 2, BatchSize: 10, Concurrency: 1}, nil)
+	sum, err := c.Clean(context.Background(), config.ReplicationConfig{Factor: 2, BatchSize: 10, Concurrency: 1}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if removed != 0 {
-		t.Errorf("removed = %d, want 0", removed)
+	if sum.CopiesRemoved != 0 {
+		t.Errorf("removed = %d, want 0", sum.CopiesRemoved)
 	}
 	if p := promtest.ToFloat64(telemetry.OverReplicationPending); p != 0 {
 		t.Errorf("OverReplicationPending = %v, want 0", p)
@@ -295,7 +295,7 @@ func TestCleanObject_SkipsVictimHoldingOnlyKey(t *testing.T) {
 		"b2": {BytesUsed: 100, BytesLimit: 1000},
 	}
 
-	if removed := c.cleanObject(context.Background(), "key1", copies, 1, 1, stats); removed != 0 {
+	if removed, _ := c.cleanObject(context.Background(), "key1", copies, 1, 1, stats); removed != 0 {
 		t.Errorf("removed = %d, want 0 when the victim holds the only key", removed)
 	}
 }
