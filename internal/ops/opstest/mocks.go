@@ -480,10 +480,10 @@ func (mr *MockReplicatorOpsMockRecorder) Config() *gomock.Call {
 }
 
 // Replicate mocks base method.
-func (m *MockReplicatorOps) Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (int, error) {
+func (m *MockReplicatorOps) Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (worker.ReplicationSummary, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Replicate", ctx, cfg, observer)
-	ret0, _ := ret[0].(int)
+	ret0, _ := ret[0].(worker.ReplicationSummary)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -572,10 +572,10 @@ func (m *MockOverReplicationOps) EXPECT() *MockOverReplicationOpsMockRecorder {
 }
 
 // Clean mocks base method.
-func (m *MockOverReplicationOps) Clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (int, error) {
+func (m *MockOverReplicationOps) Clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (worker.OverReplicationSummary, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Clean", ctx, cfg, observer)
-	ret0, _ := ret[0].(int)
+	ret0, _ := ret[0].(worker.OverReplicationSummary)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

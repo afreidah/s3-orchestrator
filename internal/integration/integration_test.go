@@ -1803,12 +1803,12 @@ func TestReplicationBasic(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	created, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
+	replSum, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
-	if created != 1 {
-		t.Errorf("created = %d, want 1", created)
+	if replSum.CopiesCreated != 1 {
+		t.Errorf("created = %d, want 1", replSum.CopiesCreated)
 	}
 
 	// Should have 2 copies on different backends
@@ -1889,12 +1889,12 @@ func TestReplicationOverwrite(t *testing.T) {
 	}
 
 	// Replicate again
-	created, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
+	replSum, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate v2: %v", err)
 	}
-	if created != 1 {
-		t.Errorf("created = %d, want 1", created)
+	if replSum.CopiesCreated != 1 {
+		t.Errorf("created = %d, want 1", replSum.CopiesCreated)
 	}
 
 	// Verify new content on GET
@@ -2059,21 +2059,21 @@ func TestReplicationAlreadyReplicated(t *testing.T) {
 	}
 
 	// First replication
-	created1, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
+	firstSum, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate 1: %v", err)
 	}
-	if created1 != 1 {
-		t.Errorf("first replicate created = %d, want 1", created1)
+	if firstSum.CopiesCreated != 1 {
+		t.Errorf("first replicate created = %d, want 1", firstSum.CopiesCreated)
 	}
 
 	// Second replication  -  should be a no-op
-	created2, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
+	secondSum, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate 2: %v", err)
 	}
-	if created2 != 0 {
-		t.Errorf("second replicate created = %d, want 0", created2)
+	if secondSum.CopiesCreated != 0 {
+		t.Errorf("second replicate created = %d, want 0", secondSum.CopiesCreated)
 	}
 }
 
@@ -2112,12 +2112,12 @@ func TestReplicationNoSpace(t *testing.T) {
 		WorkerInterval: time.Minute,
 		BatchSize:      50,
 	}
-	created, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
+	replSum, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
-	if created != 0 {
-		t.Errorf("created = %d, want 0 (no space for replicas)", created)
+	if replSum.CopiesCreated != 0 {
+		t.Errorf("created = %d, want 0 (no space for replicas)", replSum.CopiesCreated)
 	}
 }
 
@@ -2218,7 +2218,7 @@ func TestOverReplicationBasic(t *testing.T) {
 	}
 
 	// Over-replication cleanup with factor=3 should be a no-op
-	removed, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+	cleanSum, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
 		Factor:      3,
 		BatchSize:   50,
 		Concurrency: 1,
@@ -2226,12 +2226,12 @@ func TestOverReplicationBasic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Clean (at factor): %v", err)
 	}
-	if removed != 0 {
-		t.Errorf("expected 0 removed when at factor, got %d", removed)
+	if cleanSum.CopiesRemoved != 0 {
+		t.Errorf("expected 0 removed when at factor, got %d", cleanSum.CopiesRemoved)
 	}
 
 	// Now lower the factor to 2 -> object is over-replicated
-	removed, err = workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+	cleanSum, err = workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   50,
 		Concurrency: 1,
@@ -2239,8 +2239,8 @@ func TestOverReplicationBasic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Clean (over factor): %v", err)
 	}
-	if removed != 1 {
-		t.Errorf("expected 1 removed, got %d", removed)
+	if cleanSum.CopiesRemoved != 1 {
+		t.Errorf("expected 1 removed, got %d", cleanSum.CopiesRemoved)
 	}
 
 	// Should have exactly 2 copies remaining
@@ -2303,7 +2303,7 @@ func TestOverReplicationMultipleObjects(t *testing.T) {
 	}
 
 	// Clean with factor=2 -> each object loses 1 copy
-	removed, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+	cleanSum, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   50,
 		Concurrency: 2,
@@ -2311,8 +2311,8 @@ func TestOverReplicationMultipleObjects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
-	if removed != 3 {
-		t.Errorf("expected 3 removed, got %d", removed)
+	if cleanSum.CopiesRemoved != 3 {
+		t.Errorf("expected 3 removed, got %d", cleanSum.CopiesRemoved)
 	}
 
 	for i, key := range keys {
@@ -2368,7 +2368,7 @@ func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 	defer mgr.Drain().ClearState()
 
 	// Clean with factor=2 -> should remove 1 copy, preferring the draining backend (score 0)
-	removed, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+	cleanSum, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   50,
 		Concurrency: 1,
@@ -2376,8 +2376,8 @@ func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
-	if removed != 1 {
-		t.Errorf("expected 1 removed, got %d", removed)
+	if cleanSum.CopiesRemoved != 1 {
+		t.Errorf("expected 1 removed, got %d", cleanSum.CopiesRemoved)
 	}
 
 	// The draining backend's copy should have been removed
@@ -2441,7 +2441,7 @@ func TestOverReplicationQuotaFreed(t *testing.T) {
 	}
 
 	// Clean with factor=2 -> remove 1 excess copy
-	removed, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
+	cleanSum, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   50,
 		Concurrency: 1,
@@ -2449,8 +2449,8 @@ func TestOverReplicationQuotaFreed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
-	if removed != 1 {
-		t.Errorf("expected 1 removed, got %d", removed)
+	if cleanSum.CopiesRemoved != 1 {
+		t.Errorf("expected 1 removed, got %d", cleanSum.CopiesRemoved)
 	}
 
 	// Find which backend lost its copy

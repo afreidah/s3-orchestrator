@@ -35,6 +35,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // newOpsForTest builds the operations layer against a mock store and an empty
@@ -283,6 +284,96 @@ func TestHandleAPICleanExcess_ReportsRemovedCount(t *testing.T) {
 	res := waitForResult(t, h, opCleanExcess)
 	if !res.OK || res.Skipped != "" {
 		t.Errorf("result = %+v, want a completed pass with no skip reason", res)
+	}
+}
+
+// partialReplication builds a replication service whose cycles both report
+// work left unfinished, which a real fleet only produces against failing
+// backends.
+func partialReplication(t *testing.T, created, removed, failed int) *ops.Replication {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	cfg := &config.ReplicationConfig{Factor: 2, BatchSize: 10}
+
+	repl := opstest.NewMockReplicatorOps(ctrl)
+	repl.EXPECT().Config().Return(cfg).AnyTimes()
+	repl.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(worker.ReplicationSummary{
+			WorkSummary:   worker.WorkSummary{Succeeded: created, Failed: failed},
+			CopiesCreated: created,
+		}, nil).AnyTimes()
+
+	over := opstest.NewMockOverReplicationOps(ctrl)
+	over.EXPECT().Config().Return(cfg).AnyTimes()
+	over.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(worker.OverReplicationSummary{
+			WorkSummary:   worker.WorkSummary{Succeeded: removed, Failed: failed},
+			CopiesRemoved: removed,
+		}, nil).AnyTimes()
+
+	runtime := opstest.NewMockRuntimeOps(ctrl)
+	runtime.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil).AnyTimes()
+
+	return ops.NewReplication(ops.ReplicationDeps{
+		Replicator: repl,
+		OverRep:    over,
+		Runtime:    runtime,
+		Config:     ops.NewConfigStore(&config.Config{}),
+	})
+}
+
+// TestAdminActions_SurfaceObjectsTheCycleCouldNotFinish asserts the dashboard's
+// status payload carries the objects each cycle left behind alongside the count
+// it completed. The dashboard polls only this endpoint, so a pass that half
+// worked has to say so here or it renders as a clean run.
+func TestAdminActions_SurfaceObjectsTheCycleCouldNotFinish(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		opName    string
+		resultKey string
+		wantCount float64
+		trigger   func(*Handler, http.ResponseWriter, *http.Request)
+		status    func(*Handler, http.ResponseWriter, *http.Request)
+	}{
+		{
+			name: "replicate", opName: "replicate", resultKey: "copies_created", wantCount: 2,
+			trigger: (*Handler).handleAPIReplicate,
+			status:  func(h *Handler, w http.ResponseWriter, r *http.Request) { h.handleAPIReplicateStatus(w, r) },
+		},
+		{
+			name: "clean-excess", opName: opCleanExcess, resultKey: "removed", wantCount: 5,
+			trigger: (*Handler).handleAPICleanExcess,
+			status:  func(h *Handler, w http.ResponseWriter, r *http.Request) { h.handleAPICleanExcessStatus(w, r) },
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := &Handler{log: slog.Default(), replication: partialReplication(t, 2, 5, 3)}
+
+			w := httptest.NewRecorder()
+			tc.trigger(h, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/"+tc.name, nil))
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("trigger status = %d, want 202; body=%s", w.Code, w.Body.String())
+			}
+
+			res := waitForResult(t, h, tc.opName)
+			if !res.OK || res.Skipped != "" {
+				t.Fatalf("result = %+v, want a completed pass with no skip reason", res)
+			}
+
+			statusW := httptest.NewRecorder()
+			tc.status(h, statusW, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/"+tc.name+"/status", nil))
+			body := decodeBody(t, statusW)
+			if body[tc.resultKey] != tc.wantCount {
+				t.Errorf("%s = %v, want %v", tc.resultKey, body[tc.resultKey], tc.wantCount)
+			}
+			if body["failed"] != float64(3) {
+				t.Errorf("failed = %v, want 3", body["failed"])
+			}
+		})
 	}
 }
 

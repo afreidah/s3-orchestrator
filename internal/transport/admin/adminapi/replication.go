@@ -34,17 +34,22 @@ type ReplicationOutcome struct {
 }
 
 // ReplicateResponse reports a one-shot replication pass: how many copies were
-// created to bring objects up to the configured factor.
+// created to bring objects up to the configured factor, and how many objects
+// the pass could not bring up to it. Failed is omitted when the pass left
+// nothing behind, so a clean run reads exactly as it did before.
 type ReplicateResponse struct {
 	ReplicationOutcome
 	CopiesCreated int `json:"copies_created"`
+	Failed        int `json:"failed,omitempty"`
 }
 
 // OverReplicationCleanResponse reports an over-replication cleanup pass: how
-// many surplus copies were removed.
+// many surplus copies were removed, and how many objects still carry surplus
+// the pass could not remove.
 type OverReplicationCleanResponse struct {
 	ReplicationOutcome
 	CopiesRemoved int `json:"copies_removed"`
+	Failed        int `json:"failed,omitempty"`
 }
 
 // OverReplicationStatusResponse is the over-replication backlog: the

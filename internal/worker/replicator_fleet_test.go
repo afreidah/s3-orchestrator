@@ -106,15 +106,15 @@ func TestReplicate_NoUnderReplicatedObjects(t *testing.T) {
 	store := newPermissiveStore(t)
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{})
 
-	created, err := w.Replicate(context.Background(), config.ReplicationConfig{
+	sum, err := w.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
-	if created != 0 {
-		t.Errorf("expected 0 created, got %d", created)
+	if sum.CopiesCreated != 0 {
+		t.Errorf("expected 0 created, got %d", sum.CopiesCreated)
 	}
 }
 
@@ -180,15 +180,15 @@ func TestReplicate_Success(t *testing.T) {
 
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
 
-	created, err := w.Replicate(context.Background(), config.ReplicationConfig{
+	sum, err := w.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
-	if created != 1 {
-		t.Errorf("expected 1 created, got %d", created)
+	if sum.CopiesCreated != 1 {
+		t.Errorf("expected 1 created, got %d", sum.CopiesCreated)
 	}
 	if !b2.Has("key1") {
 		t.Error("expected key1 on b2 after replication")
@@ -392,15 +392,15 @@ func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
 
-	created, err := w.Replicate(context.Background(), config.ReplicationConfig{
+	sum, err := w.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
-	if created != 0 {
-		t.Errorf("expected 0 created (record failed), got %d", created)
+	if sum.CopiesCreated != 0 {
+		t.Errorf("expected 0 created (record failed), got %d", sum.CopiesCreated)
 	}
 	if b2.Has("key1") {
 		t.Error("orphan should have been cleaned up from b2")
@@ -457,15 +457,15 @@ func TestReplicateObject_NoTargetAvailable(t *testing.T) {
 
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1}, &fleetOpts{Order: []string{"b1"}})
 
-	created, err := w.Replicate(context.Background(), config.ReplicationConfig{
+	sum, err := w.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
-	if created != 0 {
-		t.Errorf("expected 0 created (no target), got %d", created)
+	if sum.CopiesCreated != 0 {
+		t.Errorf("expected 0 created (no target), got %d", sum.CopiesCreated)
 	}
 }
 
@@ -487,15 +487,15 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
 
-	created, err := w.Replicate(context.Background(), config.ReplicationConfig{
+	sum, err := w.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
-	if created != 0 {
-		t.Errorf("expected 0 created (source gone), got %d", created)
+	if sum.CopiesCreated != 0 {
+		t.Errorf("expected 0 created (source gone), got %d", sum.CopiesCreated)
 	}
 	if b2.Has("key1") {
 		t.Error("orphan should have been cleaned up from b2")
@@ -530,7 +530,7 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": cbb2, "b3": b3}, &fleetOpts{Order: []string{"b1", "b2", "b3"}})
 
-	created, err := w.Replicate(context.Background(), config.ReplicationConfig{
+	sum, err := w.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             2,
 		BatchSize:          10,
 		UnhealthyThreshold: 0,
@@ -538,8 +538,8 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
-	if created != 1 {
-		t.Errorf("expected 1 created, got %d", created)
+	if sum.CopiesCreated != 1 {
+		t.Errorf("expected 1 created, got %d", sum.CopiesCreated)
 	}
 	if b2.Has("key1") {
 		t.Error("unhealthy b2 should not have received a replica")
@@ -575,7 +575,7 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 		&fleetOpts{Order: []string{"b1", "b2", "b3"}})
 	w := NewReplicator(fleet, coord, store)
 
-	created, err := w.Replicate(context.Background(), config.ReplicationConfig{
+	sum, err := w.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             3,
 		BatchSize:          10,
 		UnhealthyThreshold: 0,
@@ -583,8 +583,8 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
-	if created != 1 {
-		t.Errorf("expected 1 created, got %d", created)
+	if sum.CopiesCreated != 1 {
+		t.Errorf("expected 1 created, got %d", sum.CopiesCreated)
 	}
 
 	if len(rt.calls) != 1 {
@@ -621,7 +621,7 @@ func TestReplicate_UsesRecordedSize_NotFirstCopy(t *testing.T) {
 		&fleetOpts{Order: []string{"b1", "b2", "b3"}})
 	w := NewReplicator(fleet, coord, store)
 
-	created, err := w.Replicate(context.Background(), config.ReplicationConfig{
+	sum, err := w.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             3,
 		BatchSize:          10,
 		UnhealthyThreshold: 0,
@@ -629,8 +629,8 @@ func TestReplicate_UsesRecordedSize_NotFirstCopy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
-	if created != 1 {
-		t.Fatalf("expected 1 created, got %d", created)
+	if sum.CopiesCreated != 1 {
+		t.Fatalf("expected 1 created, got %d", sum.CopiesCreated)
 	}
 
 	if got := fleet.Usage().Backend().Load("b2", counter.FieldEgressBytes); got != 200 {
@@ -651,7 +651,7 @@ func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
 	store := newPermissiveStore(t)
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": cbb2}, &fleetOpts{Order: []string{"b1", "b2"}})
 
-	created, err := w.Replicate(context.Background(), config.ReplicationConfig{
+	sum, err := w.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             2,
 		BatchSize:          10,
 		UnhealthyThreshold: time.Hour,
@@ -659,8 +659,8 @@ func TestReplicate_HealthAware_BelowThreshold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
-	if created != 0 {
-		t.Errorf("expected 0 created (below threshold), got %d", created)
+	if sum.CopiesCreated != 0 {
+		t.Errorf("expected 0 created (below threshold), got %d", sum.CopiesCreated)
 	}
 }
 

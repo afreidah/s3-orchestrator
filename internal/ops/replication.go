@@ -33,14 +33,19 @@ const (
 // request cannot schedule an unbounded pass.
 const maxCleanBatchSize = 10000
 
-// ReplicateResult reports one replication cycle.
+// ReplicateResult reports one replication cycle. Failed counts the objects the
+// cycle could not bring up to factor, so a pass that created nothing because
+// everything failed does not read the same as one with nothing to do.
 type ReplicateResult struct {
 	CopiesCreated int
+	Failed        int
 }
 
-// CleanExcessResult reports one surplus-copy cleanup cycle.
+// CleanExcessResult reports one surplus-copy cleanup cycle. Failed counts the
+// objects whose surplus could not be removed.
 type CleanExcessResult struct {
 	CopiesRemoved int
+	Failed        int
 }
 
 // SurplusCount reports how many objects currently hold more copies than the
@@ -91,7 +96,7 @@ func (r *Replication) Replicate(ctx context.Context, observer progress.Observer)
 		return ReplicateResult{}, err
 	}
 
-	created, err := r.replicator.Replicate(ctx, runCfg, observer)
+	sum, err := r.replicator.Replicate(ctx, runCfg, observer)
 	if err != nil {
 		return ReplicateResult{}, err
 	}
@@ -100,8 +105,9 @@ func (r *Replication) Replicate(ctx context.Context, observer progress.Observer)
 		r.log.WarnContext(ctx, "failed to update quota metrics after replicate", "error", mErr)
 	}
 
-	r.log.InfoContext(ctx, "replication cycle completed", "copies_created", created)
-	return ReplicateResult{CopiesCreated: created}, nil
+	r.log.InfoContext(ctx, "replication cycle completed",
+		"copies_created", sum.CopiesCreated, "objects_failed", sum.Failed)
+	return ReplicateResult{CopiesCreated: sum.CopiesCreated, Failed: sum.Failed}, nil
 }
 
 // CountSurplus reports the current over-replication backlog at the running
@@ -131,7 +137,7 @@ func (r *Replication) CleanExcess(ctx context.Context, batchSize int, observer p
 		runCfg.BatchSize = min(batchSize, maxCleanBatchSize)
 	}
 
-	removed, err := r.overRep.Clean(ctx, runCfg, observer)
+	sum, err := r.overRep.Clean(ctx, runCfg, observer)
 	if err != nil {
 		return CleanExcessResult{}, err
 	}
@@ -140,8 +146,9 @@ func (r *Replication) CleanExcess(ctx context.Context, batchSize int, observer p
 		r.log.WarnContext(ctx, "failed to update quota metrics after surplus cleanup", "error", mErr)
 	}
 
-	r.log.InfoContext(ctx, "surplus cleanup completed", "copies_removed", removed)
-	return CleanExcessResult{CopiesRemoved: removed}, nil
+	r.log.InfoContext(ctx, "surplus cleanup completed",
+		"copies_removed", sum.CopiesRemoved, "objects_failed", sum.Failed)
+	return CleanExcessResult{CopiesRemoved: sum.CopiesRemoved, Failed: sum.Failed}, nil
 }
 
 // runConfig resolves the settings for one manual cycle: whatever the worker

@@ -70,9 +70,12 @@ type mockMetadataStore struct {
 	neverVerified       int64
 	lastUpdatedHash     string
 	underReplicated     []core.ObjectLocation
+	underReplicatedErr  error
 	overReplicated      []core.ObjectLocation
+	overReplicatedErr   error
 	overReplicatedCount int64
 	quotaStats          map[string]core.QuotaStat
+	quotaStatsErr       error
 	recordReplicaOK     bool
 	recordReplicaSize   int64
 	recordReplicaErr    error
@@ -225,19 +228,19 @@ func newTestRecorder() *accounting.Recorder {
 // GetUnderReplicatedObjects is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
 func (m *mockMetadataStore) GetUnderReplicatedObjects(_ context.Context, _, _ int) ([]core.ObjectLocation, error) {
-	return m.underReplicated, nil
+	return m.underReplicated, m.underReplicatedErr
 }
 
 // GetUnderReplicatedObjectsExcluding is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
 func (m *mockMetadataStore) GetUnderReplicatedObjectsExcluding(_ context.Context, _, _ int, _ []string) ([]core.ObjectLocation, error) {
-	return m.underReplicated, nil
+	return m.underReplicated, m.underReplicatedErr
 }
 
 // GetQuotaStats is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
 func (m *mockMetadataStore) GetQuotaStats(_ context.Context) (map[string]core.QuotaStat, error) {
-	return m.quotaStats, nil
+	return m.quotaStats, m.quotaStatsErr
 }
 
 // RecordReplica is a stub on mockMetadataStore; returns either the test-set
@@ -253,7 +256,7 @@ func (m *mockMetadataStore) RecordReplica(_ context.Context, _, _, _ string) (in
 // GetOverReplicatedObjects is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
 func (m *mockMetadataStore) GetOverReplicatedObjects(_ context.Context, _, _ int) ([]core.ObjectLocation, error) {
-	return m.overReplicated, nil
+	return m.overReplicated, m.overReplicatedErr
 }
 
 // CountOverReplicatedObjects is a stub on mockMetadataStore; returns either the test-set

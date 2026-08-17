@@ -67,10 +67,11 @@ type RuntimeOps interface {
 
 // ReplicatorOps is the slice of *worker.Replicator the replication operations
 // use. Config returns nil when the worker is unconfigured; Replicate runs one
-// cycle and returns the count.
+// cycle and returns the copies it created alongside the per-item tally, so a
+// caller can tell a cycle that did its work from one where objects failed.
 type ReplicatorOps interface {
 	Config() *config.ReplicationConfig
-	Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (int, error)
+	Replicate(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (worker.ReplicationSummary, error)
 }
 
 // RebalancerOps is the slice of *worker.Rebalancer the rebalance operation
@@ -82,11 +83,13 @@ type RebalancerOps interface {
 }
 
 // OverReplicationOps is the slice of *worker.OverReplicationCleaner the
-// surplus-copy operations use.
+// surplus-copy operations use. Clean reports the copies it removed alongside
+// the per-item tally, so an object it could not clean is visible rather than
+// hidden behind a smaller count.
 type OverReplicationOps interface {
 	Config() *config.ReplicationConfig
 	CountPending(ctx context.Context, factor int) (int64, error)
-	Clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (int, error)
+	Clean(ctx context.Context, cfg config.ReplicationConfig, observer progress.Observer) (worker.OverReplicationSummary, error)
 }
 
 // ScrubberOps is the slice of *worker.Scrubber the integrity operations use.

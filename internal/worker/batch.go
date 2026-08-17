@@ -62,19 +62,33 @@ type WorkSummary struct {
 	Duration time.Duration // wall-clock time for the cycle
 }
 
-// Outcome classifies the cycle for metric labels: success (work done, no
-// failures), partial (some succeeded, some failed), failed (only failures), or
-// empty (nothing succeeded or failed).
+// The outcome label every worker reports its cycle under. Outcome() picks one
+// of the first four from the item tally; OutcomeError is reported instead when
+// a cycle failed before it had a tally to classify, such as the query that
+// selects the batch.
+const (
+	OutcomeSuccess = "success"
+	OutcomePartial = "partial"
+	OutcomeFailed  = "failed"
+	OutcomeEmpty   = "empty"
+	OutcomeError   = "error"
+)
+
+// Outcome classifies the cycle for its runs-total metric: success (work done,
+// no failures), partial (some succeeded, some failed), failed (only failures),
+// or empty (nothing succeeded or failed). Reporting the tally rather than a
+// hardcoded label is what lets an alert distinguish a cycle that did its work
+// from one where every item failed.
 func (s WorkSummary) Outcome() string {
 	switch {
 	case s.Failed == 0 && s.Succeeded > 0:
-		return "success"
+		return OutcomeSuccess
 	case s.Succeeded > 0 && s.Failed > 0:
-		return "partial"
+		return OutcomePartial
 	case s.Failed > 0:
-		return "failed"
+		return OutcomeFailed
 	default:
-		return "empty"
+		return OutcomeEmpty
 	}
 }
 
