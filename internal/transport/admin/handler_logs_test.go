@@ -78,21 +78,3 @@ func TestHandleLogs_NoBufferReturns503(t *testing.T) {
 		t.Errorf("status = %d, want 503", w.Code)
 	}
 }
-
-// TestParseLogLevel covers the name-to-level mapping and the unknown fallback.
-func TestParseLogLevel(t *testing.T) {
-	t.Parallel()
-	cases := map[string]slog.Level{
-		"debug": slog.LevelDebug,
-		"INFO":  slog.LevelInfo,
-		"Warn":  slog.LevelWarn,
-		"ERROR": slog.LevelError,
-		"":      0,
-		"bogus": 0,
-	}
-	for in, want := range cases {
-		if got := parseLogLevel(in); got != want {
-			t.Errorf("parseLogLevel(%q) = %v, want %v", in, got, want)
-		}
-	}
-}

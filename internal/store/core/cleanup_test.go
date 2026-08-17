@@ -120,20 +120,10 @@ func (t *cleanupTxStub) AcquireKeyLock(context.Context, string) error { return n
 // real test fixtures.
 func (t *cleanupTxStub) ClaimPending(context.Context, string) (bool, error) { return false, nil }
 
-// InsertPending is a no-op stub on cleanupTxStub so the type satisfies the
-// full TxAdapter interface; only the cleanup-touching methods carry
-// real test fixtures.
-func (t *cleanupTxStub) InsertPending(context.Context, *PendingObject) error { return nil }
-
 // DeletePending is a no-op stub on cleanupTxStub so the type satisfies the
 // full TxAdapter interface; only the cleanup-touching methods carry
 // real test fixtures.
 func (t *cleanupTxStub) DeletePending(context.Context, string) error { return nil }
-
-// DeletePendingByBackend is a no-op stub on cleanupTxStub so the type satisfies the
-// full TxAdapter interface; only the cleanup-touching methods carry
-// real test fixtures.
-func (t *cleanupTxStub) DeletePendingByBackend(context.Context, string) error { return nil }
 
 // GetExistingCopiesForUpdate is a no-op stub on cleanupTxStub so the type satisfies the
 // full TxAdapter interface; only the cleanup-touching methods carry

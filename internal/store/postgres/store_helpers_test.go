@@ -18,7 +18,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
@@ -178,90 +177,5 @@ func TestToSlimObjectLocations_PreservesOrder(t *testing.T) {
 	})
 	if len(out) != 3 || out[0].ObjectKey != "a" || out[2].ObjectKey != "c" {
 		t.Errorf("order not preserved: %+v", out)
-	}
-}
-
-// -------------------------------------------------------------------------
-// insertParamsFromEnc: nullable column threading for object insert
-// -------------------------------------------------------------------------
-
-// TestInsertParamsFromEnc_NilMeta covers the "no encryption metadata"
-// path: the returned params carry only the object identity and size.
-func TestInsertParamsFromEnc_NilMeta(t *testing.T) {
-	t.Parallel()
-	params := insertParamsFromEnc("k", "b", 42, nil)
-	if params.ObjectKey != "k" || params.BackendName != "b" || params.SizeBytes != 42 {
-		t.Errorf("identity fields wrong: %+v", params)
-	}
-	if params.Encrypted || params.EncryptionKey != nil ||
-		params.KeyID != nil || params.PlaintextSize != nil || params.ContentHash != nil {
-		t.Errorf("expected all encryption fields zero, got %+v", params)
-	}
-}
-
-// TestInsertParamsFromEnc_PlaintextHashOnly covers the case where the
-// meta is present but Encrypted=false  -  only ContentHash should be set.
-func TestInsertParamsFromEnc_PlaintextHashOnly(t *testing.T) {
-	t.Parallel()
-	params := insertParamsFromEnc("k", "b", 10, &core.EncryptionMeta{
-		Encrypted:   false,
-		ContentHash: "sha256:abc",
-	})
-	if params.Encrypted {
-		t.Errorf("Encrypted should stay false")
-	}
-	if params.KeyID != nil || params.PlaintextSize != nil {
-		t.Errorf("encryption-only fields should be nil")
-	}
-	if params.ContentHash == nil || *params.ContentHash != "sha256:abc" {
-		t.Errorf("ContentHash not propagated: %v", params.ContentHash)
-	}
-}
-
-// TestInsertParamsFromEnc_EncryptedWithHash covers the fully-populated
-// case: every nullable column should be threaded through.
-func TestInsertParamsFromEnc_EncryptedWithHash(t *testing.T) {
-	t.Parallel()
-	meta := &core.EncryptionMeta{
-		Encrypted:     true,
-		EncryptionKey: []byte{0x01, 0x02},
-		KeyID:         "kid-1",
-		PlaintextSize: 100,
-		ContentHash:   "sha256:xyz",
-	}
-	params := insertParamsFromEnc("k", "b", 128, meta)
-	if !params.Encrypted {
-		t.Errorf("Encrypted should be true")
-	}
-	if len(params.EncryptionKey) != 2 || params.EncryptionKey[0] != 0x01 {
-		t.Errorf("EncryptionKey mismatch: %x", params.EncryptionKey)
-	}
-	if params.KeyID == nil || *params.KeyID != "kid-1" {
-		t.Errorf("KeyID mismatch: %v", params.KeyID)
-	}
-	if params.PlaintextSize == nil || *params.PlaintextSize != 100 {
-		t.Errorf("PlaintextSize mismatch: %v", params.PlaintextSize)
-	}
-	if params.ContentHash == nil || *params.ContentHash != "sha256:xyz" {
-		t.Errorf("ContentHash mismatch: %v", params.ContentHash)
-	}
-}
-
-// TestInsertParamsFromEnc_EncryptedNoHash covers the encrypted-but-not-
-// yet-hashed case: KeyID / PlaintextSize are set, ContentHash stays nil.
-func TestInsertParamsFromEnc_EncryptedNoHash(t *testing.T) {
-	t.Parallel()
-	meta := &core.EncryptionMeta{
-		Encrypted:     true,
-		EncryptionKey: []byte{0xff},
-		KeyID:         "kid-2",
-		PlaintextSize: 5,
-	}
-	params := insertParamsFromEnc("k", "b", 8, meta)
-	if !params.Encrypted || params.KeyID == nil || params.PlaintextSize == nil {
-		t.Errorf("expected encryption fields populated: %+v", params)
-	}
-	if params.ContentHash != nil {
-		t.Errorf("ContentHash should stay nil when Hash is empty")
 	}
 }

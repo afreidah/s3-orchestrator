@@ -46,11 +46,30 @@ type LogEntry struct {
 
 // LogQueryOpts controls filtering when reading from the buffer.
 type LogQueryOpts struct {
-	MinLevel  slog.Level // minimum severity (default 0 = DEBUG)
+	MinLevel  slog.Level // minimum severity (zero value is slog.LevelInfo, which excludes DEBUG)
 	Since     time.Time  // only entries after this time
 	Before    time.Time  // only entries before this time
 	Limit     int        // max entries to return (0 = all)
 	Component string     // filter by "component" attribute value
+}
+
+// ParseLevel maps a caller-supplied level name onto the MinLevel a query
+// filters by. An empty or unrecognized name yields slog's zero value, which is
+// LevelInfo and so excludes DEBUG entries; ask for "DEBUG" explicitly to see
+// them. Unlike levelToSlog below, this reads untrusted input, so an unknown
+// name has to land on a usable default rather than the most permissive one.
+func ParseLevel(name string) slog.Level {
+	switch strings.ToUpper(name) {
+	case "DEBUG":
+		return slog.LevelDebug
+	case "INFO":
+		return slog.LevelInfo
+	case "WARN":
+		return slog.LevelWarn
+	case "ERROR":
+		return slog.LevelError
+	}
+	return 0
 }
 
 // -------------------------------------------------------------------------

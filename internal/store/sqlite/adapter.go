@@ -61,45 +61,12 @@ func (a *sqliteTxAdapter) ClaimPending(ctx context.Context, intentID string) (bo
 	return true, nil
 }
 
-// InsertPending records an in-flight PUT intent.
-func (a *sqliteTxAdapter) InsertPending(ctx context.Context, p *core.PendingObject) error {
-	encrypted := 0
-	if p.Encrypted {
-		encrypted = 1
-	}
-	if _, err := a.tx.ExecContext(ctx,
-		// created_at is set here rather than left to the column default: the
-		// default renders milliseconds while every other write renders
-		// nanoseconds, and the reaper's min-age check compares the two as text.
-		`INSERT INTO pending_objects
-		   (intent_id, object_key, backend_name, size_bytes,
-		    encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.IntentID, p.ObjectKey, p.BackendName, p.SizeBytes,
-		encrypted, p.EncryptionKey,
-		nullableString(p.KeyID), nullableInt64(p.PlaintextSize), nullableString(p.ContentHash), now(),
-	); err != nil {
-		return fmt.Errorf("insert pending object: %w", err)
-	}
-	return nil
-}
-
 // DeletePending removes a pending intent.
 func (a *sqliteTxAdapter) DeletePending(ctx context.Context, intentID string) error {
 	if _, err := a.tx.ExecContext(ctx,
 		`DELETE FROM pending_objects WHERE intent_id = ?`, intentID,
 	); err != nil {
 		return fmt.Errorf("delete pending object: %w", err)
-	}
-	return nil
-}
-
-// DeletePendingByBackend removes every pending intent for a backend.
-func (a *sqliteTxAdapter) DeletePendingByBackend(ctx context.Context, backendName string) error {
-	if _, err := a.tx.ExecContext(ctx,
-		`DELETE FROM pending_objects WHERE backend_name = ?`, backendName,
-	); err != nil {
-		return fmt.Errorf("delete pending objects by backend: %w", err)
 	}
 	return nil
 }

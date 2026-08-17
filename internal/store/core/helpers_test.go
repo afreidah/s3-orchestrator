@@ -272,22 +272,10 @@ func (*quotaTxStub) AcquireKeyLock(context.Context, string) error { return nil }
 // real test fixtures.
 func (*quotaTxStub) ClaimPending(context.Context, string) (bool, error) { return false, nil }
 
-// InsertPending is a no-op stub on quotaTxStub so the type satisfies the
-// full TxAdapter interface; only the quota-touching methods carry
-// real test fixtures.
-func (*quotaTxStub) InsertPending(context.Context, *PendingObject) error { return nil }
-
 // DeletePending is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
 func (*quotaTxStub) DeletePending(context.Context, string) error { return nil }
-
-// DeletePendingByBackend is a no-op stub on quotaTxStub so the type satisfies the
-// full TxAdapter interface; only the quota-touching methods carry
-// real test fixtures.
-func (*quotaTxStub) DeletePendingByBackend(context.Context, string) error {
-	return nil
-}
 
 // GetExistingCopiesForUpdate is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry

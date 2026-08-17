@@ -550,6 +550,24 @@ func (m *model) frame(header, footer, body string) string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, rendered, footer)
 }
 
+// paneBody renders the three states every pane reports the same way - a load
+// that failed, a pane this deployment did not wire, and a load still in flight
+// - and defers to content for the pane's own rendering. Panes whose data is
+// always present pass an empty unavailable. Shared so the states a user reads
+// as "something is wrong" cannot drift apart between panes.
+func (m *model) paneBody(err error, unavailable string, loading bool, content func() string) string {
+	switch {
+	case err != nil:
+		return errStyle.Render("error: " + err.Error())
+	case unavailable != "":
+		return pathStyle.Render("(" + unavailable + ")")
+	case loading:
+		return m.spinner.View() + " loading..."
+	default:
+		return content()
+	}
+}
+
 // headerView renders the full-width title bar with the current prefix.
 // contentTitleStyle returns the title-bar style for the content pane: bright
 // when the content has focus, muted while the nav has focus, so the focused

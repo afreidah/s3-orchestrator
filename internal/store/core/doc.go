@@ -1,6 +1,6 @@
 // Package core holds the engine-agnostic transactional logic for the metadata
 // store. It declares the per-feature seams - TxAdapter (transactional
-// primitives), Reader (read-only queries), and Runner (transaction opener) -
+// primitives) and Runner (transaction opener) -
 // that the postgres and sqlite engine packages implement by translating
 // sqlc/driver rows into the canonical domain types defined here. Business
 // logic in this package operates exclusively on those interfaces and never

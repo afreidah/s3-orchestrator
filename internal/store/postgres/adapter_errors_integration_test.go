@@ -64,30 +64,10 @@ func TestPgAdapterErr_ClaimPending(t *testing.T) {
 	}
 }
 
-// TestPgAdapterErr_InsertPending verifies the Exec error is wrapped.
-func TestPgAdapterErr_InsertPending(t *testing.T) {
-	a := closedPgAdapter(t, adapterPgStore(t))
-	err := a.InsertPending(context.Background(), &core.PendingObject{
-		IntentID: "i", ObjectKey: "k", BackendName: "backend-a", SizeBytes: 1,
-	})
-	if err == nil {
-		t.Error("expected error from closed tx")
-	}
-}
-
 // TestPgAdapterErr_DeletePending verifies the Exec error is wrapped.
 func TestPgAdapterErr_DeletePending(t *testing.T) {
 	a := closedPgAdapter(t, adapterPgStore(t))
 	if err := a.DeletePending(context.Background(), "i"); err == nil {
-		t.Error("expected error from closed tx")
-	}
-}
-
-// TestPgAdapterErr_DeletePendingByBackend verifies the Exec error is
-// wrapped.
-func TestPgAdapterErr_DeletePendingByBackend(t *testing.T) {
-	a := closedPgAdapter(t, adapterPgStore(t))
-	if err := a.DeletePendingByBackend(context.Background(), "backend-a"); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }

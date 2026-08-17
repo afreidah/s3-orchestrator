@@ -87,9 +87,7 @@ func (m *model) applyWorkersErr(err error) {
 func (m *model) handleWorkersKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "esc", "left", "h":
-		m.navFocus = true
-		m.navCursor = int(m.section)
-		return m, nil
+		return m.navBack()
 	case "r":
 		m.workers.loading = true
 		cmd := m.loadWorkers()
@@ -186,16 +184,10 @@ func (m *model) workersFooterView() string {
 // workersBodyView renders the current content: an error, a not-wired notice,
 // the loading indicator, or the workers table.
 func (m *model) workersBodyView() string {
-	switch {
-	case m.workers.err != nil:
-		return errStyle.Render("error: " + m.workers.err.Error())
-	case m.workers.unavailable != "":
-		return pathStyle.Render("(" + m.workers.unavailable + ")")
-	case m.workers.loading:
-		return m.spinner.View() + " loading..."
-	case len(m.workers.rows) == 0:
-		return pathStyle.Render("(no workers registered)")
-	default:
+	return m.paneBody(m.workers.err, m.workers.unavailable, m.workers.loading, func() string {
+		if len(m.workers.rows) == 0 {
+			return pathStyle.Render("(no workers registered)")
+		}
 		return m.workers.table.View()
-	}
+	})
 }

@@ -103,9 +103,7 @@ func (m *model) applyLogs(resp *adminapi.LogsResponse) {
 func (m *model) handleLogsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "esc", "left", "h":
-		m.navFocus = true
-		m.navCursor = int(m.section)
-		return m, nil
+		return m.navBack()
 	case "r":
 		m.logs.loading = true
 		cmd := m.loadLogs()
@@ -209,14 +207,10 @@ func (m *model) logsFooterView() string {
 // logsBodyView renders the current content: an error, the loading indicator, an
 // empty notice, or the scrolling log viewport.
 func (m *model) logsBodyView() string {
-	switch {
-	case m.logs.err != nil:
-		return errStyle.Render("error: " + m.logs.err.Error())
-	case m.logs.loading:
-		return m.spinner.View() + " loading..."
-	case len(m.logs.entries) == 0:
-		return pathStyle.Render("(no log entries)")
-	default:
+	return m.paneBody(m.logs.err, "", m.logs.loading, func() string {
+		if len(m.logs.entries) == 0 {
+			return pathStyle.Render("(no log entries)")
+		}
 		return m.logs.vp.View()
-	}
+	})
 }

@@ -59,28 +59,10 @@ func (a *pgTxAdapter) ClaimPending(ctx context.Context, intentID string) (bool, 
 	return true, nil
 }
 
-// InsertPending inserts a new pending intent.
-func (a *pgTxAdapter) InsertPending(ctx context.Context, p *core.PendingObject) error {
-	if err := a.q.InsertPendingObject(ctx, pendingInsertParams(p)); err != nil {
-		return fmt.Errorf("insert pending object: %w", err)
-	}
-	return nil
-}
-
 // DeletePending removes a pending intent.
 func (a *pgTxAdapter) DeletePending(ctx context.Context, intentID string) error {
 	if err := a.q.DeletePendingObject(ctx, intentID); err != nil {
 		return fmt.Errorf("delete pending object: %w", err)
-	}
-	return nil
-}
-
-// DeletePendingByBackend removes every pending intent for a backend.
-// Used during backend drain finalization so abandoned intents do not
-// outlive their backend's row in backend_quotas (FK cascade safety).
-func (a *pgTxAdapter) DeletePendingByBackend(ctx context.Context, backendName string) error {
-	if err := a.q.DeletePendingObjectsByBackend(ctx, backendName); err != nil {
-		return fmt.Errorf("delete pending objects by backend: %w", err)
 	}
 	return nil
 }
