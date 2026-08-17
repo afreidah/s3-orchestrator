@@ -85,7 +85,11 @@ func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 			h.asyncOps.Complete(opCleanExcess, &asyncResult{Error: "cleanup failed"})
 			return
 		}
-		h.asyncOps.Complete(opCleanExcess, &asyncResult{OK: true, Count: res.CopiesRemoved})
+		h.asyncOps.Complete(opCleanExcess, &asyncResult{
+			OK:    true,
+			Count: res.CopiesRemoved,
+			Extra: map[string]any{"failed": res.Failed},
+		})
 	}()
 
 	httputil.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "started"})

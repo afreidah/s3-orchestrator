@@ -133,7 +133,7 @@ func TestClean_QuotaStatsError_StillCleansUp(t *testing.T) {
 		"b3": backendtest.NewInMemory(),
 	}, &fleetOpts{})
 
-	removed, err := w.Clean(context.Background(), config.ReplicationConfig{
+	sum, err := w.Clean(context.Background(), config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
@@ -141,8 +141,8 @@ func TestClean_QuotaStatsError_StillCleansUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
-	if removed != 1 {
-		t.Errorf("expected 1 removed, got %d", removed)
+	if sum.CopiesRemoved != 1 {
+		t.Errorf("expected 1 removed, got %d", sum.CopiesRemoved)
 	}
 }
 
@@ -174,7 +174,7 @@ func TestClean_RemovesExcessCopies(t *testing.T) {
 		"b3": backendtest.NewInMemory(),
 	}, &fleetOpts{})
 
-	removed, err := w.Clean(context.Background(), config.ReplicationConfig{
+	sum, err := w.Clean(context.Background(), config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
@@ -182,8 +182,8 @@ func TestClean_RemovesExcessCopies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
-	if removed != 1 {
-		t.Errorf("expected 1 removed, got %d", removed)
+	if sum.CopiesRemoved != 1 {
+		t.Errorf("expected 1 removed, got %d", sum.CopiesRemoved)
 	}
 	if len(rt.calls) != 1 {
 		t.Fatalf("expected 1 RemoveExcessCopy call, got %d", len(rt.calls))
@@ -215,7 +215,7 @@ func TestClean_RemoveExcessCopyError(t *testing.T) {
 		"b3": backendtest.NewInMemory(),
 	}, &fleetOpts{})
 
-	removed, err := w.Clean(context.Background(), config.ReplicationConfig{
+	sum, err := w.Clean(context.Background(), config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
@@ -223,8 +223,8 @@ func TestClean_RemoveExcessCopyError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Clean should not return error for per-object failures: %v", err)
 	}
-	if removed != 0 {
-		t.Errorf("expected 0 removed (all failed), got %d", removed)
+	if sum.CopiesRemoved != 0 {
+		t.Errorf("expected 0 removed (all failed), got %d", sum.CopiesRemoved)
 	}
 }
 
@@ -250,7 +250,7 @@ func TestClean_MultipleObjects(t *testing.T) {
 		"b3": backendtest.NewInMemory(),
 	}, &fleetOpts{})
 
-	removed, err := w.Clean(context.Background(), config.ReplicationConfig{
+	sum, err := w.Clean(context.Background(), config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
@@ -258,8 +258,8 @@ func TestClean_MultipleObjects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
-	if removed != 2 {
-		t.Errorf("expected 2 removed, got %d", removed)
+	if sum.CopiesRemoved != 2 {
+		t.Errorf("expected 2 removed, got %d", sum.CopiesRemoved)
 	}
 }
 
@@ -281,7 +281,7 @@ func TestClean_BackendNotFoundDuringCleanup(t *testing.T) {
 		"b1": backendtest.NewInMemory(),
 	}, &fleetOpts{})
 
-	removed, err := w.Clean(context.Background(), config.ReplicationConfig{
+	sum, err := w.Clean(context.Background(), config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
@@ -289,8 +289,8 @@ func TestClean_BackendNotFoundDuringCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
-	if removed != 0 {
-		t.Errorf("expected 0 removed (backend not found), got %d", removed)
+	if sum.CopiesRemoved != 0 {
+		t.Errorf("expected 0 removed (backend not found), got %d", sum.CopiesRemoved)
 	}
 }
 
@@ -332,7 +332,7 @@ func TestClean_AdmissionBlocked(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	removed, err := w.Clean(ctx, config.ReplicationConfig{
+	sum, err := w.Clean(ctx, config.ReplicationConfig{
 		Factor:      2,
 		BatchSize:   10,
 		Concurrency: 1,
@@ -340,7 +340,7 @@ func TestClean_AdmissionBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Clean: %v", err)
 	}
-	if removed != 0 {
-		t.Errorf("expected 0 removed when admission blocked, got %d", removed)
+	if sum.CopiesRemoved != 0 {
+		t.Errorf("expected 0 removed when admission blocked, got %d", sum.CopiesRemoved)
 	}
 }

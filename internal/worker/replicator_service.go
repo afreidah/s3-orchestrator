@@ -33,8 +33,8 @@ func NewReplicatorService(manager tickrunner.QuotaMetricsRefresher, replicator *
 		if rcfg == nil {
 			return nil
 		}
-		created, err := replicator.Replicate(ctx, *rcfg, nil)
-		return tickrunner.HandlePassResult(ctx, log, manager, created, err, "copies_created")
+		sum, err := replicator.Replicate(ctx, *rcfg, nil)
+		return tickrunner.HandlePassResult(ctx, log, manager, sum.CopiesCreated, err, "copies_created")
 	}
 
 	interval := DefaultReplicatorTick

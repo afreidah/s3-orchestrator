@@ -974,6 +974,58 @@ func TestCountSurplus_ReportsBacklog(t *testing.T) {
 	}
 }
 
+// TestReplicate_ReportsObjectsItCouldNotCopy asserts the objects a cycle left
+// under-replicated reach the caller. Without the count, a pass that created
+// nothing because every object failed is indistinguishable from one that had
+// nothing to do.
+func TestReplicate_ReportsObjectsItCouldNotCopy(t *testing.T) {
+	t.Parallel()
+	repl := opstest.NewMockReplicatorOps(gomock.NewController(t))
+	repl.EXPECT().Config().Return(&config.ReplicationConfig{Factor: 2}).AnyTimes()
+	repl.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(worker.ReplicationSummary{
+			WorkSummary:   worker.WorkSummary{Succeeded: 1, Failed: 2},
+			CopiesCreated: 3,
+		}, nil).Times(1)
+	svc := replicationOver(t, repl, opstest.NewMockOverReplicationOps(gomock.NewController(t)))
+
+	res, err := svc.Replicate(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+	if res.CopiesCreated != 3 {
+		t.Errorf("CopiesCreated = %d, want 3", res.CopiesCreated)
+	}
+	if res.Failed != 2 {
+		t.Errorf("Failed = %d, want 2", res.Failed)
+	}
+}
+
+// TestCleanExcess_ReportsObjectsItCouldNotClean asserts the objects whose
+// surplus survived the cycle reach the caller.
+func TestCleanExcess_ReportsObjectsItCouldNotClean(t *testing.T) {
+	t.Parallel()
+	over := opstest.NewMockOverReplicationOps(gomock.NewController(t))
+	over.EXPECT().Config().Return(&config.ReplicationConfig{Factor: 2}).AnyTimes()
+	over.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(worker.OverReplicationSummary{
+			WorkSummary:   worker.WorkSummary{Failed: 5},
+			CopiesRemoved: 0,
+		}, nil).Times(1)
+	svc := replicationOver(t, opstest.NewMockReplicatorOps(gomock.NewController(t)), over)
+
+	res, err := svc.CleanExcess(context.Background(), 0, nil)
+	if err != nil {
+		t.Fatalf("CleanExcess: %v", err)
+	}
+	if res.CopiesRemoved != 0 {
+		t.Errorf("CopiesRemoved = %d, want 0", res.CopiesRemoved)
+	}
+	if res.Failed != 5 {
+		t.Errorf("Failed = %d, want 5", res.Failed)
+	}
+}
+
 // TestCleanExcess_CapsBatchSize asserts a caller cannot schedule an unbounded
 // pass by asking for one.
 func TestCleanExcess_CapsBatchSize(t *testing.T) {
@@ -982,9 +1034,12 @@ func TestCleanExcess_CapsBatchSize(t *testing.T) {
 	over := opstest.NewMockOverReplicationOps(gomock.NewController(t))
 	over.EXPECT().Config().Return(&config.ReplicationConfig{Factor: 2}).AnyTimes()
 	over.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, cfg config.ReplicationConfig, _ progress.Observer) (int, error) {
+		DoAndReturn(func(_ context.Context, cfg config.ReplicationConfig, _ progress.Observer) (worker.OverReplicationSummary, error) {
 			ran = cfg
-			return 4, nil
+			return worker.OverReplicationSummary{
+				WorkSummary:   worker.WorkSummary{Succeeded: 4},
+				CopiesRemoved: 4,
+			}, nil
 		}).Times(1)
 	svc := replicationOver(t, opstest.NewMockReplicatorOps(gomock.NewController(t)), over)
 
@@ -1161,7 +1216,8 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 		t.Parallel()
 		repl := opstest.NewMockReplicatorOps(gomock.NewController(t))
 		repl.EXPECT().Config().Return(&config.ReplicationConfig{Factor: 2}).AnyTimes()
-		repl.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).Return(0, errBackend).Times(1)
+		repl.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(worker.ReplicationSummary{}, errBackend).Times(1)
 		svc := replicationOver(t, repl, opstest.NewMockOverReplicationOps(gomock.NewController(t)))
 
 		if _, err := svc.Replicate(context.Background(), nil); !errors.Is(err, errBackend) {
@@ -1173,7 +1229,8 @@ func TestWorkerFailures_Propagate(t *testing.T) {
 		t.Parallel()
 		over := opstest.NewMockOverReplicationOps(gomock.NewController(t))
 		over.EXPECT().Config().Return(&config.ReplicationConfig{Factor: 2}).AnyTimes()
-		over.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).Return(0, errBackend).Times(1)
+		over.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(worker.OverReplicationSummary{}, errBackend).Times(1)
 		svc := replicationOver(t, opstest.NewMockReplicatorOps(gomock.NewController(t)), over)
 
 		if _, err := svc.CleanExcess(context.Background(), 0, nil); !errors.Is(err, errBackend) {

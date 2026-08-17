@@ -135,7 +135,7 @@ func (h *Handler) handleAPIReplicate(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return 0, nil, "", err
 			}
-			return res.CopiesCreated, nil, "", nil
+			return res.CopiesCreated, map[string]any{"failed": res.Failed}, "", nil
 		},
 	})
 }

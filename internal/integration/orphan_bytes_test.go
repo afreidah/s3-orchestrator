@@ -441,13 +441,13 @@ func TestOrphanBytes_ReplicationRespectsOrphanBytes(t *testing.T) {
 		Factor:    2,
 		BatchSize: 10,
 	}
-	created, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
+	replSum, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
 
-	if created != 0 {
-		t.Errorf("expected 0 replicas created (minio-2 full with orphan_bytes), got %d", created)
+	if replSum.CopiesCreated != 0 {
+		t.Errorf("expected 0 replicas created (minio-2 full with orphan_bytes), got %d", replSum.CopiesCreated)
 	}
 
 	copies := queryObjectCopies(t, key)
@@ -482,12 +482,12 @@ func TestOrphanBytes_OverwriteDisplacedCopiesCleanedUp(t *testing.T) {
 		Factor:    2,
 		BatchSize: 10,
 	}
-	created, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
+	replSum, err := testWorkers.Replicator.Replicate(ctx, replCfg, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
-	if created != 1 {
-		t.Fatalf("expected 1 replica created, got %d", created)
+	if replSum.CopiesCreated != 1 {
+		t.Fatalf("expected 1 replica created, got %d", replSum.CopiesCreated)
 	}
 
 	copies := queryObjectCopies(t, key)

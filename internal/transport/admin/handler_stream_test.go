@@ -246,6 +246,59 @@ func TestHandleOverReplicationClean_StreamsProgressAndResult(t *testing.T) {
 	}
 }
 
+// TestReplicationStreams_CarryObjectsTheCycleCouldNotFinish asserts the
+// terminal result of both streaming cycles reports the objects left behind.
+// The stream is what the CLI and the TUI render, so a count missing here is a
+// partial pass that reads as a complete one in every interactive client.
+func TestReplicationStreams_CarryObjectsTheCycleCouldNotFinish(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		field string
+		run   func(*Handler, *httptest.ResponseRecorder)
+	}{
+		{
+			name:  "replicate",
+			field: "copies_created",
+			run: func(h *Handler, w *httptest.ResponseRecorder) {
+				h.handleReplicate(w, streamReq("/admin/api/replicate"))
+			},
+		},
+		{
+			name:  "over-replication",
+			field: "copies_removed",
+			run: func(h *Handler, w *httptest.ResponseRecorder) {
+				h.handleOverReplicationClean(w, streamReq("/admin/api/over-replication"))
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newCoverageHandler(t)
+			replicationWith(t, h,
+				replicatorStub{cfg: &config.ReplicationConfig{Factor: 2}, created: 2, failed: 4},
+				overRepStub{cfg: &config.ReplicationConfig{Factor: 2}, cleaned: 2, failed: 4})
+
+			w := httptest.NewRecorder()
+			tc.run(h, w)
+
+			events := decodeEvents(t, w.Body.Bytes())
+			last := events[len(events)-1]
+			if last.Kind != adminstream.KindResult || last.Outcome != adminstream.OutcomeOK {
+				t.Fatalf("last event = %+v, want result/ok", last)
+			}
+			if n, _ := last.Fields[tc.field].(float64); n != 2 {
+				t.Errorf("result %s = %v, want 2", tc.field, last.Fields[tc.field])
+			}
+			if failed, _ := last.Fields["failed"].(float64); failed != 4 {
+				t.Errorf("result failed = %v, want 4", last.Fields["failed"])
+			}
+		})
+	}
+}
+
 // TestHandleRebalance_StreamsMoves asserts each move renders as its own line
 // naming the object and the backends it travelled between, then a terminal
 // result carrying the move count.

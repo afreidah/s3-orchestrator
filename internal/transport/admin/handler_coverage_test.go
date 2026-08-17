@@ -244,6 +244,63 @@ func TestHandleReplicate_Configured(t *testing.T) {
 	if resp["copies_created"].(float64) != 4 {
 		t.Errorf("copies_created = %v, want 4", resp["copies_created"])
 	}
+	// A clean pass carries no failed key at all, so a client reading the field
+	// as "objects left under-replicated" is not handed a zero it must ignore.
+	if _, present := resp["failed"]; present {
+		t.Errorf("failed present on a clean pass: %v", resp["failed"])
+	}
+}
+
+// TestHandleReplicate_ReportsObjectsItCouldNotCopy asserts a pass that left
+// objects under-replicated says so. Without the field, an operator polling the
+// endpoint sees only the copies that landed and reads a half-done pass as done.
+func TestHandleReplicate_ReportsObjectsItCouldNotCopy(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	h.backendOps = newBackendOps(t, backendOpsStub{})
+	replicationWith(t, h, replicatorStub{cfg: &config.ReplicationConfig{Factor: 2}, created: 1, failed: 3}, overRepStub{})
+
+	w := httptest.NewRecorder()
+	h.handleReplicate(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/replicate", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp adminapi.ReplicateResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.CopiesCreated != 1 || resp.Failed != 3 {
+		t.Errorf("got copies_created=%d failed=%d, want 1/3", resp.CopiesCreated, resp.Failed)
+	}
+	if resp.Status != statusOK {
+		t.Errorf("status = %q, want %q - a partial pass still ran", resp.Status, statusOK)
+	}
+}
+
+// TestHandleOverReplicationClean_ReportsObjectsItCouldNotClean asserts the
+// surplus a cleanup pass could not remove reaches the client.
+func TestHandleOverReplicationClean_ReportsObjectsItCouldNotClean(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	h.backendOps = newBackendOps(t, backendOpsStub{})
+	replicationWith(t, h, replicatorStub{}, overRepStub{
+		cfg: &config.ReplicationConfig{Factor: 2}, cleaned: 2, failed: 1,
+	})
+
+	w := httptest.NewRecorder()
+	h.handleOverReplicationClean(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/api/over-replication", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp adminapi.OverReplicationCleanResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.CopiesRemoved != 2 || resp.Failed != 1 {
+		t.Errorf("got copies_removed=%d failed=%d, want 2/1", resp.CopiesRemoved, resp.Failed)
+	}
 }
 
 // -------------------------------------------------------------------------

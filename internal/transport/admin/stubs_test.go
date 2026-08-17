@@ -146,10 +146,12 @@ func newRuntimeOps(t *testing.T) *opstest.MockRuntimeOps {
 	return m
 }
 
-// replicatorStub configures the ReplicatorOps mock.
+// replicatorStub configures the ReplicatorOps mock. failed stands for the
+// objects the cycle could not bring up to factor.
 type replicatorStub struct {
 	cfg     *config.ReplicationConfig
 	created int
+	failed  int
 	err     error
 }
 
@@ -159,9 +161,12 @@ func newReplicator(t *testing.T, cfg replicatorStub) *opstest.MockReplicatorOps 
 	m := opstest.NewMockReplicatorOps(gomock.NewController(t))
 	m.EXPECT().Config().Return(cfg.cfg).AnyTimes()
 	m.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ config.ReplicationConfig, observer progress.Observer) (int, error) {
+		DoAndReturn(func(_ context.Context, _ config.ReplicationConfig, observer progress.Observer) (worker.ReplicationSummary, error) {
 			trackN(observer, cfg.created, fixedKey(""))
-			return cfg.created, cfg.err
+			return worker.ReplicationSummary{
+				WorkSummary:   worker.WorkSummary{Succeeded: cfg.created, Failed: cfg.failed},
+				CopiesCreated: cfg.created,
+			}, cfg.err
 		}).AnyTimes()
 	return m
 }
@@ -194,12 +199,14 @@ func newRebalancer(t *testing.T, cfg *rebalancerStub) *opstest.MockRebalancerOps
 	return m
 }
 
-// overRepStub configures the OverReplicationOps mock.
+// overRepStub configures the OverReplicationOps mock. failed stands for the
+// objects whose surplus the cycle could not remove.
 type overRepStub struct {
 	cfg      *config.ReplicationConfig
 	count    int64
 	countErr error
 	cleaned  int
+	failed   int
 	cleanErr error
 }
 
@@ -211,9 +218,12 @@ func newOverRep(t *testing.T, cfg overRepStub) *opstest.MockOverReplicationOps {
 	m.EXPECT().Config().Return(cfg.cfg).AnyTimes()
 	m.EXPECT().CountPending(gomock.Any(), gomock.Any()).Return(cfg.count, cfg.countErr).AnyTimes()
 	m.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ config.ReplicationConfig, observer progress.Observer) (int, error) {
+		DoAndReturn(func(_ context.Context, _ config.ReplicationConfig, observer progress.Observer) (worker.OverReplicationSummary, error) {
 			trackN(observer, cfg.cleaned, fixedKey(""))
-			return cfg.cleaned, cfg.cleanErr
+			return worker.OverReplicationSummary{
+				WorkSummary:   worker.WorkSummary{Succeeded: cfg.cleaned, Failed: cfg.failed},
+				CopiesRemoved: cfg.cleaned,
+			}, cfg.cleanErr
 		}).AnyTimes()
 	return m
 }

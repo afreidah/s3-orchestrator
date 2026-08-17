@@ -375,15 +375,15 @@ func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
 
-	created, err := w.Replicate(context.Background(), config.ReplicationConfig{
+	sum, err := w.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,
 		BatchSize: 10,
 	}, nil)
 	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
-	if created != 0 {
-		t.Errorf("expected 0 created (orphan bytes block target), got %d", created)
+	if sum.CopiesCreated != 0 {
+		t.Errorf("expected 0 created (orphan bytes block target), got %d", sum.CopiesCreated)
 	}
 	if b2.Has("key1") {
 		t.Error("b2 should not have received replica - orphan bytes make it too full")
