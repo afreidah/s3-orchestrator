@@ -13,6 +13,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,20 @@ type fakeLister struct {
 	reconciled     string                            // backend passed to ReconcileBackend
 	reconcileResp  *adminapi.ReconcileResponse       // canned reconcile counts
 	reconcileErr   error                             // when set, ReconcileBackend fails
+
+	flatPages     map[string]*adminapi.ObjectListResponse // flat listings keyed by prefix
+	flatErr       error                                   // when set, ListObjectsFlat fails
+	payload       []byte                                  // body DownloadObject serves
+	downloaded    string                                  // key passed to DownloadObject
+	downloadErr   error                                   // when set, DownloadObject fails
+	uploaded      string                                  // key passed to UploadObject
+	uploadedBytes []byte                                  // body UploadObject received
+	uploadedSize  int64                                   // size UploadObject was told
+	uploadErr     error                                   // when set, UploadObject fails
+	deletedKey    string                                  // key passed to DeleteObject
+	deletedPrefix string                                  // prefix passed to DeletePrefix
+	deletedCount  int                                     // count DeletePrefix reports
+	deleteErr     error                                   // when set, both deletes fail
 }
 
 func (f *fakeLister) ListObjects(_ context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error) {
@@ -132,6 +147,58 @@ func (f *fakeLister) RequeueCleanupDLQ(_ context.Context, backend string) (*admi
 		return f.requeued, nil
 	}
 	return &adminapi.CleanupDLQRequeueResponse{Backend: backend}, nil
+}
+
+// ListObjectsFlat serves the canned flat page, for the key counting a prefix
+// delete does before it confirms.
+func (f *fakeLister) ListObjectsFlat(_ context.Context, prefix, _ string) (*adminapi.ObjectListResponse, error) {
+	if f.flatErr != nil {
+		return nil, f.flatErr
+	}
+	if p, ok := f.flatPages[prefix]; ok {
+		return p, nil
+	}
+	return &adminapi.ObjectListResponse{}, nil
+}
+
+// DownloadObject serves the canned payload as the object body.
+func (f *fakeLister) DownloadObject(_ context.Context, key string) (io.ReadCloser, int64, error) {
+	if f.downloadErr != nil {
+		return nil, 0, f.downloadErr
+	}
+	f.downloaded = key
+	return io.NopCloser(bytes.NewReader(f.payload)), int64(len(f.payload)), nil
+}
+
+// UploadObject drains the body and records what was stored where.
+func (f *fakeLister) UploadObject(_ context.Context, key string, body io.Reader, size int64) error {
+	if f.uploadErr != nil {
+		return f.uploadErr
+	}
+	stored, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	f.uploaded, f.uploadedBytes, f.uploadedSize = key, stored, size
+	return nil
+}
+
+// DeleteObject records the key removed.
+func (f *fakeLister) DeleteObject(_ context.Context, key string) (*adminapi.ObjectDeleteResponse, error) {
+	if f.deleteErr != nil {
+		return nil, f.deleteErr
+	}
+	f.deletedKey = key
+	return &adminapi.ObjectDeleteResponse{Deleted: 1}, nil
+}
+
+// DeletePrefix records the prefix removed and reports the canned count.
+func (f *fakeLister) DeletePrefix(_ context.Context, prefix string) (*adminapi.ObjectDeleteResponse, error) {
+	if f.deleteErr != nil {
+		return nil, f.deleteErr
+	}
+	f.deletedPrefix = prefix
+	return &adminapi.ObjectDeleteResponse{Deleted: f.deletedCount}, nil
 }
 
 // StartDrain records the backend asked to drain and reports f.drainErr.

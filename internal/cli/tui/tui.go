@@ -55,6 +55,11 @@ type adminClient interface {
 	GetCacheStats(ctx context.Context) (*adminapi.CacheStatsResponse, error)
 	RequeueCleanupDLQ(ctx context.Context, backend string) (*adminapi.CleanupDLQRequeueResponse, error)
 	RunOp(ctx context.Context, act *opsAction, req opsRequest) (adminclient.EventStream, error)
+	ListObjectsFlat(ctx context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error)
+	DownloadObject(ctx context.Context, key string) (io.ReadCloser, int64, error)
+	UploadObject(ctx context.Context, key string, body io.Reader, size int64) error
+	DeleteObject(ctx context.Context, key string) (*adminapi.ObjectDeleteResponse, error)
+	DeletePrefix(ctx context.Context, prefix string) (*adminapi.ObjectDeleteResponse, error)
 	StartDrain(ctx context.Context, backend string) (*adminapi.BackendOperationResponse, error)
 	DrainProgress(ctx context.Context, backend string) (*adminapi.DrainProgressResponse, error)
 	CancelDrain(ctx context.Context, backend string) (*adminapi.BackendOperationResponse, error)
@@ -76,6 +81,7 @@ type model struct {
 	cleanup     cleanupView     // cleanup pane state, populated when section is sectionCleanup
 	cache       cacheView       // cache pane state, populated when section is sectionCache
 	ops         opsView         // ops pane state, populated when section is sectionOps
+	files       fileAction      // the Files pane's in-flight transfer, if any
 	prefix      string          // the prefix currently listed ("" is the root)
 	entries     []entry         // every loaded row under the current prefix
 	visible     []entry         // entries after filter + sort, indexed by table cursor
@@ -186,6 +192,9 @@ func (m *model) Init() tea.Cmd {
 // lives with the code that reads it rather than swelling this switch.
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if model, cmd, handled := m.updateBackends(msg); handled {
+		return model, cmd
+	}
+	if model, cmd, handled := m.updateFileActions(msg); handled {
 		return model, cmd
 	}
 
@@ -389,6 +398,10 @@ func (m *model) handleBrowseKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	if model, cmd, handled := m.handleFileActionKey(key.String()); handled {
+		return model, cmd
+	}
+
 	var cmd tea.Cmd
 	m.table, cmd = m.table.Update(key)
 	if m.next != "" && !m.more && m.table.Cursor() >= len(m.visible)-1 {
@@ -559,8 +572,14 @@ func (m *model) headerView() string {
 // footerView renders the status line (sort, filter, paging) above the key-hint
 // bar. Both lines are always present so the footer keeps a fixed height.
 func (m *model) footerView() string {
-	matches := pathStyle.Width(m.contentWidth()).Render(m.statusLine())
-	hints := m.footer("up/down move - enter open - / filter - s sort - tab nav - q quit")
+	status := m.statusLine()
+	// A running transfer takes the status line: how far it has got matters
+	// more than the match count while bytes are moving.
+	if line := m.fileTransferLine(); line != "" {
+		status = line
+	}
+	matches := pathStyle.Width(m.contentWidth()).Render(status)
+	hints := m.footer("up/down move - enter open - D download - U upload - X delete - / filter - tab nav - q quit")
 	return lipgloss.JoinVertical(lipgloss.Left, matches, hints)
 }
 

@@ -24,6 +24,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
+// objectsPath is the object namespace endpoint, named so the listing, the
+// prefix delete, and the per-object paths built from it cannot drift.
+const objectsPath = "/admin/api/objects"
+
 // apiClient issues authenticated requests against the admin API and returns
 // decoded responses.
 type apiClient struct {
@@ -44,7 +48,7 @@ func (c *apiClient) ListObjects(ctx context.Context, prefix, continuation string
 	if continuation != "" {
 		q.Set("continuation", continuation)
 	}
-	return adminclient.Get[adminapi.ObjectListResponse](ctx, c.c, "/admin/api/objects", q)
+	return adminclient.Get[adminapi.ObjectListResponse](ctx, c.c, objectsPath, q)
 }
 
 // GetObjectLocations fetches every backend copy of a single object key.
@@ -117,6 +121,85 @@ func (c *apiClient) RequeueCleanupDLQ(ctx context.Context, backend string) (*adm
 		q = url.Values{"backend": {backend}}
 	}
 	return adminclient.Post[adminapi.CleanupDLQRequeueResponse](ctx, c.c, "/admin/api/cleanup-dlq/requeue", q, nil)
+}
+
+// ListObjectsFlat fetches one page of every key under prefix, ungrouped. The
+// empty delimiter is sent explicitly, since omitting it asks for a
+// hierarchical listing instead.
+func (c *apiClient) ListObjectsFlat(ctx context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error) {
+	q := url.Values{}
+	q.Set("prefix", prefix)
+	q.Set("delimiter", "")
+	if continuation != "" {
+		q.Set("continuation", continuation)
+	}
+	return adminclient.Get[adminapi.ObjectListResponse](ctx, c.c, objectsPath, q)
+}
+
+// DownloadObject streams one object and returns the open body alongside its
+// size, so a caller can report progress against a total. The caller closes the
+// body.
+func (c *apiClient) DownloadObject(ctx context.Context, key string) (io.ReadCloser, int64, error) {
+	resp, err := c.c.Do(ctx, http.MethodGet, objectPath(key), nil, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return nil, 0, &adminclient.Error{Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+	}
+	return resp.Body, resp.ContentLength, nil
+}
+
+// UploadObject stores size bytes read from body under key.
+func (c *apiClient) UploadObject(ctx context.Context, key string, body io.Reader, size int64) error {
+	resp, err := c.c.Upload(ctx, http.MethodPut, objectPath(key), nil, body, size, "application/octet-stream")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest {
+		payload, _ := io.ReadAll(resp.Body)
+		return &adminclient.Error{Status: resp.StatusCode, Body: strings.TrimSpace(string(payload))}
+	}
+	return nil
+}
+
+// DeleteObject removes one object and every copy of it.
+func (c *apiClient) DeleteObject(ctx context.Context, key string) (*adminapi.ObjectDeleteResponse, error) {
+	return c.deleteJSON(ctx, objectPath(key), nil)
+}
+
+// DeletePrefix removes every object under prefix and reports how many it
+// removed.
+func (c *apiClient) DeletePrefix(ctx context.Context, prefix string) (*adminapi.ObjectDeleteResponse, error) {
+	return c.deleteJSON(ctx, objectsPath, url.Values{"prefix": {prefix}})
+}
+
+// deleteJSON issues a DELETE and decodes the JSON summary, which the shared
+// helpers do not cover since they only wrap GET and POST.
+func (c *apiClient) deleteJSON(ctx context.Context, path string, q url.Values) (*adminapi.ObjectDeleteResponse, error) {
+	resp, err := c.c.Do(ctx, http.MethodDelete, path, q, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, &adminclient.Error{Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+	}
+	var out adminapi.ObjectDeleteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// objectPath is the per-object endpoint. Keys contain slashes, which the
+// wildcard route accepts verbatim.
+func objectPath(key string) string {
+	return objectsPath + "/" + key
 }
 
 // StartDrain begins migrating every copy off one backend and routes new writes

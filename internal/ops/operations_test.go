@@ -876,9 +876,9 @@ func TestObjectsDelete_RemovesKey(t *testing.T) {
 	}
 }
 
-// TestObjectsList_DefaultsToHierarchical asserts a listing with no delimiter
-// still groups by directory, which is what a browser expects.
-func TestObjectsList_DefaultsToHierarchical(t *testing.T) {
+// TestObjectsList_GroupsOnADelimiter asserts a delimiter listing collapses
+// directories, which is what a browser expects.
+func TestObjectsList_GroupsOnADelimiter(t *testing.T) {
 	t.Parallel()
 	store := storetest.NewMockObjectStore(gomock.NewController(t))
 	store.EXPECT().
@@ -891,12 +891,43 @@ func TestObjectsList_DefaultsToHierarchical(t *testing.T) {
 		Config:  NewConfigStore(&config.Config{}),
 	})
 
-	page, err := objects.List(context.Background(), "", "", "", 0)
+	page, err := objects.List(context.Background(), "", "/", "", 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
 	if len(page.CommonPrefixes) != 1 {
 		t.Errorf("common prefixes = %v, want the bucket root", page.CommonPrefixes)
+	}
+}
+
+// TestObjectsList_FlatWithoutADelimiter asserts an empty delimiter lists every
+// key under the prefix, which is what a caller counting or sweeping a subtree
+// needs. The grouping default belongs to the transport, not here.
+func TestObjectsList_FlatWithoutADelimiter(t *testing.T) {
+	t.Parallel()
+	store := storetest.NewMockObjectStore(gomock.NewController(t))
+	store.EXPECT().
+		ListObjects(gomock.Any(), testBucket+"/dir/", "", defaultListMaxKeys).
+		Return(&core.ListObjectsResult{
+			Objects:     []core.ObjectLocation{{ObjectKey: testBucket + "/dir/a"}, {ObjectKey: testBucket + "/dir/b"}},
+			IsTruncated: true,
+		}, nil).
+		Times(1)
+	objects := NewObjects(ObjectsDeps{
+		Objects: opstest.NewMockObjectAPI(gomock.NewController(t)),
+		Store:   store,
+		Config:  NewConfigStore(&config.Config{}),
+	})
+
+	page, err := objects.List(context.Background(), testBucket+"/dir/", "", "", 0)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(page.Objects) != 2 || len(page.CommonPrefixes) != 0 {
+		t.Errorf("page = %+v, want two flat keys and no grouping", page)
+	}
+	if !page.IsTruncated {
+		t.Error("truncation should carry through, so a caller knows the page is a floor")
 	}
 }
 

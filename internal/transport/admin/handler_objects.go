@@ -29,14 +29,20 @@ import (
 // slashes, so the wildcard is greedy.
 const objectKeyPattern = "{key...}"
 
-// handleListObjects returns one delimiter-grouped page under the given prefix.
-// The delimiter defaults to "/" so listings are hierarchical; continuation
-// resumes a truncated page.
+// handleListObjects returns one page under the given prefix. An omitted
+// delimiter defaults to "/" so browsing is hierarchical; an explicitly empty
+// one lists every key under the prefix flat, which is what a caller counting
+// or sweeping a subtree needs. Continuation resumes a truncated page.
 func (h *Handler) handleListObjects(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	prefix := q.Get("prefix")
 
-	page, err := h.objects.List(r.Context(), prefix, q.Get("delimiter"), q.Get("continuation"), 0)
+	delimiter := q.Get("delimiter")
+	if !q.Has("delimiter") {
+		delimiter = "/"
+	}
+
+	page, err := h.objects.List(r.Context(), prefix, delimiter, q.Get("continuation"), 0)
 	if err != nil {
 		h.internalError(r.Context(), w, "failed to list objects", err, slog.String("prefix", prefix))
 		return

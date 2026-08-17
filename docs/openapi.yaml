@@ -418,7 +418,7 @@ paths:
                     type: string
                 - name: delimiter
                   in: query
-                  description: Grouping delimiter; defaults to /
+                  description: Grouping delimiter; omitted defaults to /, empty lists every key flat
                   required: false
                   schema:
                     type: string

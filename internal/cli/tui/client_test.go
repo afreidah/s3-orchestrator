@@ -11,6 +11,7 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -424,5 +425,170 @@ func TestAPIClient_ReconcileBackend_ScopesToBackend(t *testing.T) {
 	}
 	if resp.Imported != 3 || resp.Removed != 1 {
 		t.Errorf("resp = %+v, want the served counts", resp)
+	}
+}
+
+// -------------------------------------------------------------------------
+// OBJECT ACTIONS
+// -------------------------------------------------------------------------
+
+// TestAPIClient_ListObjectsFlat_SendsEmptyDelimiter asserts the flat listing
+// sends the delimiter explicitly, since omitting it asks the server for a
+// hierarchical page instead.
+func TestAPIClient_ListObjectsFlat_SendsEmptyDelimiter(t *testing.T) {
+	t.Parallel()
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"objects":[{"key":"bucket/a"}],"truncated":true}`))
+	}))
+	defer srv.Close()
+
+	page, err := newAPIClient(srv.URL, "tok").ListObjectsFlat(context.Background(), "bucket/", "")
+	if err != nil {
+		t.Fatalf("ListObjectsFlat: %v", err)
+	}
+	if !strings.Contains(gotQuery, "delimiter=") {
+		t.Errorf("query = %q, want an explicit empty delimiter", gotQuery)
+	}
+	if len(page.Objects) != 1 || !page.Truncated {
+		t.Errorf("page = %+v, want the served page and its truncation", page)
+	}
+}
+
+// TestAPIClient_DownloadObject_ReturnsBodyAndSize asserts the caller gets the
+// open body and the length it needs to report progress against.
+func TestAPIClient_DownloadObject_ReturnsBodyAndSize(t *testing.T) {
+	t.Parallel()
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte("hello world"))
+	}))
+	defer srv.Close()
+
+	body, size, err := newAPIClient(srv.URL, "tok").DownloadObject(context.Background(), "bucket/dir/file.txt")
+	if err != nil {
+		t.Fatalf("DownloadObject: %v", err)
+	}
+	defer body.Close()
+	if gotPath != "/admin/api/objects/bucket/dir/file.txt" {
+		t.Errorf("path = %q, want the key appended verbatim", gotPath)
+	}
+	got, _ := io.ReadAll(body)
+	if string(got) != "hello world" || size != 11 {
+		t.Errorf("body = %q size = %d, want the served object", got, size)
+	}
+}
+
+// TestAPIClient_DownloadObject_ErrorStatus asserts a refused download surfaces
+// the status instead of a body the caller would write to disk.
+func TestAPIClient_DownloadObject_ErrorStatus(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"not found"}`))
+	}))
+	defer srv.Close()
+
+	if _, _, err := newAPIClient(srv.URL, "tok").DownloadObject(context.Background(), "bucket/ghost"); err == nil ||
+		!strings.Contains(err.Error(), "404") {
+		t.Errorf("err = %v, want the 404 surfaced", err)
+	}
+}
+
+// TestAPIClient_UploadObject_SendsRawBytes asserts the body reaches the server
+// verbatim with the declared length and the octet-stream type the endpoint
+// expects, rather than being wrapped as JSON.
+func TestAPIClient_UploadObject_SendsRawBytes(t *testing.T) {
+	t.Parallel()
+	var gotBody []byte
+	var gotType, gotPath string
+	var gotLength int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		gotType, gotPath, gotLength = r.Header.Get("Content-Type"), r.URL.Path, r.ContentLength
+		_, _ = w.Write([]byte(`{"etag":"e1"}`))
+	}))
+	defer srv.Close()
+
+	payload := []byte("raw payload")
+	err := newAPIClient(srv.URL, "tok").
+		UploadObject(context.Background(), "bucket/up.bin", strings.NewReader(string(payload)), int64(len(payload)))
+	if err != nil {
+		t.Fatalf("UploadObject: %v", err)
+	}
+	if !bytes.Equal(gotBody, payload) {
+		t.Errorf("body = %q, want it sent verbatim", gotBody)
+	}
+	if gotType != "application/octet-stream" {
+		t.Errorf("content-type = %q, want octet-stream", gotType)
+	}
+	if gotLength != int64(len(payload)) {
+		t.Errorf("content-length = %d, want %d", gotLength, len(payload))
+	}
+	if gotPath != "/admin/api/objects/bucket/up.bin" {
+		t.Errorf("path = %q, want the key appended", gotPath)
+	}
+}
+
+// TestAPIClient_UploadObject_ErrorStatus asserts a refused upload is reported.
+func TestAPIClient_UploadObject_ErrorStatus(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+	}))
+	defer srv.Close()
+
+	err := newAPIClient(srv.URL, "tok").UploadObject(context.Background(), "bucket/big", strings.NewReader("x"), 1)
+	if err == nil || !strings.Contains(err.Error(), "413") {
+		t.Errorf("err = %v, want the 413 surfaced", err)
+	}
+}
+
+// TestAPIClient_Deletes asserts both delete shapes address their endpoint and
+// decode the count that comes back.
+func TestAPIClient_Deletes(t *testing.T) {
+	t.Parallel()
+	var gotMethod, gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"deleted":7}`))
+	}))
+	defer srv.Close()
+	client := newAPIClient(srv.URL, "tok")
+
+	one, err := client.DeleteObject(context.Background(), "bucket/file.txt")
+	if err != nil {
+		t.Fatalf("DeleteObject: %v", err)
+	}
+	if gotMethod != http.MethodDelete || gotPath != "/admin/api/objects/bucket/file.txt" {
+		t.Errorf("request = %s %s, want DELETE on the key", gotMethod, gotPath)
+	}
+	if one.Deleted != 7 {
+		t.Errorf("deleted = %d, want the served count", one.Deleted)
+	}
+
+	if _, err := client.DeletePrefix(context.Background(), "bucket/dir/"); err != nil {
+		t.Fatalf("DeletePrefix: %v", err)
+	}
+	if gotPath != "/admin/api/objects" || gotQuery != "prefix=bucket%2Fdir%2F" {
+		t.Errorf("request = %s?%s, want the prefix as a query parameter", gotPath, gotQuery)
+	}
+}
+
+// TestAPIClient_DeleteErrorStatus asserts a refused delete surfaces its status
+// rather than a zero count that reads as a no-op.
+func TestAPIClient_DeleteErrorStatus(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"deleted":1,"failed":1}`))
+	}))
+	defer srv.Close()
+
+	if _, err := newAPIClient(srv.URL, "tok").DeletePrefix(context.Background(), "bucket/"); err == nil ||
+		!strings.Contains(err.Error(), "500") {
+		t.Errorf("err = %v, want the 500 surfaced", err)
 	}
 }
