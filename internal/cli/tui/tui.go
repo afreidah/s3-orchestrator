@@ -55,6 +55,10 @@ type adminClient interface {
 	GetCacheStats(ctx context.Context) (*adminapi.CacheStatsResponse, error)
 	RequeueCleanupDLQ(ctx context.Context, backend string) (*adminapi.CleanupDLQRequeueResponse, error)
 	RunOp(ctx context.Context, act *opsAction, req opsRequest) (adminclient.EventStream, error)
+	StartDrain(ctx context.Context, backend string) (*adminapi.BackendOperationResponse, error)
+	DrainProgress(ctx context.Context, backend string) (*adminapi.DrainProgressResponse, error)
+	CancelDrain(ctx context.Context, backend string) (*adminapi.BackendOperationResponse, error)
+	ReconcileBackend(ctx context.Context, backend string) (*adminapi.ReconcileResponse, error)
 }
 
 // model is the Bubble Tea state for the browser.
@@ -177,8 +181,14 @@ func (m *model) Init() tea.Cmd {
 	return tea.Batch(m.loadObjects(m.prefix, ""), m.loadStatus(), m.spinner.Tick)
 }
 
-// Update handles one message and returns the next state.
+// Update handles one message and returns the next state. The backends pane's
+// own messages are dispatched first, by the pane, so its drain bookkeeping
+// lives with the code that reads it rather than swelling this switch.
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if model, cmd, handled := m.updateBackends(msg); handled {
+		return model, cmd
+	}
+
 	switch msg := msg.(type) {
 	case objectsLoadedMsg:
 		m.applyPage(msg)

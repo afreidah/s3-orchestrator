@@ -34,6 +34,17 @@ type backendsView struct {
 	integrity   adminapi.IntegrityStatus // how far behind content verification is
 	loading     bool                     // a status fetch is in flight
 	err         error                    // last fetch error, if any
+	drain       drainWatch               // the drain this pane is following, if any
+}
+
+// drainWatch follows one backend's drain. The endpoints are start, poll and
+// cancel rather than a stream, so the pane polls progress on a ticker for as
+// long as the drain stays active and renders the counts above the table.
+type drainWatch struct {
+	backend  string                          // backend being drained, "" when idle
+	progress *adminapi.DrainProgressResponse // last polled progress, nil until the first poll
+	ticking  bool                            // a poll is scheduled
+	err      error                           // last poll or cancel error, if any
 }
 
 // -------------------------------------------------------------------------
@@ -46,6 +57,48 @@ type statusLoadedMsg struct{ resp *adminapi.StatusResponse }
 // statusErrMsg carries a failed status fetch.
 type statusErrMsg struct{ err error }
 
+// drainPollInterval is how often the pane re-reads an active drain's progress.
+// The drain endpoints are start/poll/cancel rather than a stream, so this is
+// what makes the counts move.
+const drainPollInterval = 2 * time.Second
+
+// drainStartedMsg reports that a drain was accepted (or failed to start).
+type drainStartedMsg struct {
+	backend string
+	err     error
+}
+
+// drainProgressMsg carries one polled progress reading.
+type drainProgressMsg struct {
+	backend  string
+	progress *adminapi.DrainProgressResponse
+	err      error
+}
+
+// drainTickMsg schedules the next progress poll.
+type drainTickMsg struct{}
+
+// drainCancelledMsg reports the outcome of cancelling a drain.
+type drainCancelledMsg struct {
+	backend string
+	err     error
+}
+
+// backendReconciledMsg carries the outcome of reconciling one backend.
+type backendReconciledMsg struct {
+	backend string
+	resp    *adminapi.ReconcileResponse
+	err     error
+}
+
+// backendRequeuedMsg carries the outcome of requeueing one backend's
+// dead-lettered cleanups.
+type backendRequeuedMsg struct {
+	backend string
+	resp    *adminapi.CleanupDLQRequeueResponse
+	err     error
+}
+
 // loadStatus returns a command that fetches the status snapshot off the main
 // loop, delivering the result back as a statusLoadedMsg or statusErrMsg.
 func (m *model) loadStatus() tea.Cmd {
@@ -57,6 +110,58 @@ func (m *model) loadStatus() tea.Cmd {
 		}
 		return statusLoadedMsg{resp}
 	}
+}
+
+// startDrain returns a command that asks the instance to drain one backend.
+func (m *model) startDrain(backend string) tea.Cmd {
+	client := m.client
+	return func() tea.Msg {
+		_, err := client.StartDrain(context.Background(), backend)
+		return drainStartedMsg{backend: backend, err: err}
+	}
+}
+
+// pollDrain returns a command that reads one backend's drain progress.
+func (m *model) pollDrain(backend string) tea.Cmd {
+	client := m.client
+	return func() tea.Msg {
+		resp, err := client.DrainProgress(context.Background(), backend)
+		return drainProgressMsg{backend: backend, progress: resp, err: err}
+	}
+}
+
+// cancelDrain returns a command that aborts the drain on one backend.
+func (m *model) cancelDrain(backend string) tea.Cmd {
+	client := m.client
+	return func() tea.Msg {
+		_, err := client.CancelDrain(context.Background(), backend)
+		return drainCancelledMsg{backend: backend, err: err}
+	}
+}
+
+// reconcileBackend returns a command that reconciles metadata against one
+// backend's storage.
+func (m *model) reconcileBackend(backend string) tea.Cmd {
+	client := m.client
+	return func() tea.Msg {
+		resp, err := client.ReconcileBackend(context.Background(), backend)
+		return backendReconciledMsg{backend: backend, resp: resp, err: err}
+	}
+}
+
+// requeueBackendDLQ returns a command that requeues one backend's
+// dead-lettered cleanup rows.
+func (m *model) requeueBackendDLQ(backend string) tea.Cmd {
+	client := m.client
+	return func() tea.Msg {
+		resp, err := client.RequeueCleanupDLQ(context.Background(), backend)
+		return backendRequeuedMsg{backend: backend, resp: resp, err: err}
+	}
+}
+
+// drainTick schedules the next progress poll.
+func drainTick() tea.Cmd {
+	return tea.Tick(drainPollInterval, func(time.Time) tea.Msg { return drainTickMsg{} })
 }
 
 // -------------------------------------------------------------------------
@@ -89,11 +194,180 @@ func (m *model) handleBackendsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.backends.loading = true
 		cmd := m.loadStatus()
 		return m, cmd
+	case "d", "R", "Q", "x":
+		return m.armBackendAction(key.String())
 	}
 
 	var cmd tea.Cmd
 	m.backends.table, cmd = m.backends.table.Update(key)
 	return m, cmd
+}
+
+// armBackendAction arms the action bound to key against the highlighted row.
+// Every one names the backend in its confirmation, so a keystroke on the wrong
+// row cannot start a drain on it.
+func (m *model) armBackendAction(key string) (tea.Model, tea.Cmd) {
+	name := m.selectedBackend()
+	if name == "" {
+		return m, nil
+	}
+
+	switch key {
+	case "d":
+		return m.startAction(adminAction{
+			confirm: "Drain every copy off " + name + "?",
+			before:  func(m *model) { m.beginDrainWatch(name) },
+			run:     m.startDrain(name),
+		})
+	case "R":
+		return m.startAction(adminAction{
+			confirm: "Reconcile metadata against " + name + "?",
+			run:     m.reconcileBackend(name),
+		})
+	case "Q":
+		return m.startAction(adminAction{
+			confirm: "Requeue dead-lettered cleanups for " + name + "?",
+			run:     m.requeueBackendDLQ(name),
+		})
+	case "x":
+		if m.backends.drain.backend != name {
+			return m, nil
+		}
+		return m.startAction(adminAction{
+			confirm: "Cancel the drain on " + name + "? Copies already moved stay moved.",
+			run:     m.cancelDrain(name),
+		})
+	}
+	return m, nil
+}
+
+// selectedBackend names the highlighted row, or "" when the table is empty.
+func (m *model) selectedBackend() string {
+	cursor := m.backends.table.Cursor()
+	if cursor < 0 || cursor >= len(m.backends.rows) {
+		return ""
+	}
+	return m.backends.rows[cursor].Name
+}
+
+// -------------------------------------------------------------------------
+// DRAIN TRANSITIONS
+// -------------------------------------------------------------------------
+
+// updateBackends handles the messages this pane raises for itself, reporting
+// whether the message was one of them so the model's own switch stays about
+// everything else.
+func (m *model) updateBackends(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	switch msg := msg.(type) {
+	case drainStartedMsg:
+		model, cmd := m.applyDrainStarted(msg)
+		return model, cmd, true
+	case drainProgressMsg:
+		model, cmd := m.applyDrainProgress(msg)
+		return model, cmd, true
+	case drainTickMsg:
+		model, cmd := m.onDrainTick()
+		return model, cmd, true
+	case drainCancelledMsg:
+		model, cmd := m.applyDrainCancelled(msg)
+		return model, cmd, true
+	case backendReconciledMsg:
+		model, cmd := m.applyBackendReconciled(msg)
+		return model, cmd, true
+	case backendRequeuedMsg:
+		model, cmd := m.applyBackendRequeued(msg)
+		return model, cmd, true
+	}
+	return m, nil, false
+}
+
+// beginDrainWatch shows the pane following a drain the moment it is accepted,
+// so a long migration reports that it started rather than looking inert until
+// the first poll lands.
+func (m *model) beginDrainWatch(backend string) {
+	m.backends.drain = drainWatch{backend: backend}
+}
+
+// applyDrainStarted reports whether the drain was accepted and, if so, begins
+// polling its progress.
+func (m *model) applyDrainStarted(msg drainStartedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.backends.drain = drainWatch{}
+		m.status = &actionStatus{ok: false, text: "drain " + msg.backend + ": " + msg.err.Error()}
+		return m, nil
+	}
+	m.status = &actionStatus{ok: true, text: "draining " + msg.backend}
+	m.backends.drain.ticking = true
+	return m, tea.Batch(m.pollDrain(msg.backend), drainTick())
+}
+
+// applyDrainProgress folds one polled reading in. A drain that is no longer
+// active has finished or was cancelled, so the watch ends and the status
+// snapshot is refreshed to clear the row's DRAIN flag.
+func (m *model) applyDrainProgress(msg drainProgressMsg) (tea.Model, tea.Cmd) {
+	if msg.backend != m.backends.drain.backend {
+		return m, nil // a stale reading for a drain the pane already stopped following
+	}
+	if msg.err != nil {
+		m.backends.drain.err = msg.err
+		return m, nil
+	}
+
+	m.backends.drain.progress = msg.progress
+	m.backends.drain.err = nil
+	if msg.progress != nil && !msg.progress.Active {
+		m.backends.drain = drainWatch{}
+		m.status = &actionStatus{ok: true, text: "drain finished on " + msg.backend}
+		refresh := m.loadStatus()
+		return m, refresh
+	}
+	return m, nil
+}
+
+// onDrainTick polls again while a drain is still being followed. The ticker
+// lapses once the drain ends or the operator leaves the pane.
+func (m *model) onDrainTick() (tea.Model, tea.Cmd) {
+	if m.backends.drain.backend == "" || m.section != sectionBackends {
+		m.backends.drain.ticking = false
+		return m, nil
+	}
+	return m, tea.Batch(m.pollDrain(m.backends.drain.backend), drainTick())
+}
+
+// applyDrainCancelled ends the watch and refreshes the snapshot, so the row
+// stops reporting itself as draining.
+func (m *model) applyDrainCancelled(msg drainCancelledMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.status = &actionStatus{ok: false, text: "cancel drain " + msg.backend + ": " + msg.err.Error()}
+		return m, nil
+	}
+	m.backends.drain = drainWatch{}
+	m.status = &actionStatus{ok: true, text: "drain cancelled on " + msg.backend}
+	refresh := m.loadStatus()
+	return m, refresh
+}
+
+// applyBackendReconciled reports what reconciling one backend changed.
+func (m *model) applyBackendReconciled(msg backendReconciledMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.status = &actionStatus{ok: false, text: "reconcile " + msg.backend + ": " + msg.err.Error()}
+		return m, nil
+	}
+	m.status = &actionStatus{ok: true, text: fmt.Sprintf("reconciled %s: imported %d, removed %d",
+		msg.backend, msg.resp.Imported, msg.resp.Removed)}
+	refresh := m.loadStatus()
+	return m, refresh
+}
+
+// applyBackendRequeued reports how many dead-lettered cleanups went back on
+// the queue for one backend.
+func (m *model) applyBackendRequeued(msg backendRequeuedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.status = &actionStatus{ok: false, text: "requeue " + msg.backend + ": " + msg.err.Error()}
+		return m, nil
+	}
+	m.status = &actionStatus{ok: true, text: fmt.Sprintf("requeued %d for %s", msg.resp.Requeued, msg.backend)}
+	return m, nil
 }
 
 // -------------------------------------------------------------------------
@@ -180,7 +454,32 @@ func (m *model) backendsHeaderView() string {
 		title += "   usage period: " + m.backends.usagePeriod
 	}
 	titleLine := m.contentTitleStyle().Width(m.contentWidth()).Render(title)
-	return titleLine + "\n" + m.backendsStatsLine()
+	header := titleLine + "\n" + m.backendsStatsLine()
+	if line := m.drainProgressLine(); line != "" {
+		header += "\n" + line
+	}
+	return header
+}
+
+// drainProgressLine reports the drain the pane is following. The DRAIN column
+// only says whether a backend is draining, so the counts live here, where they
+// can move without redrawing the table.
+func (m *model) drainProgressLine() string {
+	watch := m.backends.drain
+	if watch.backend == "" {
+		return ""
+	}
+	if watch.err != nil {
+		return errStyle.Render("drain " + watch.backend + ": " + watch.err.Error())
+	}
+	if watch.progress == nil {
+		return pathStyle.Render("draining " + watch.backend + "   starting...")
+	}
+	return pathStyle.Render(fmt.Sprintf("draining %s   moved %s   remaining %s (%s)",
+		watch.backend,
+		grouped(int(watch.progress.ObjectsMoved)),
+		grouped(int(watch.progress.ObjectsRemaining)),
+		humanize.Bytes(watch.progress.BytesRemaining)))
 }
 
 // backendsStatsLine renders the coloured DB-health + total-usage line beneath
@@ -243,9 +542,15 @@ func usagePercent(used, limit int64) int {
 	return int(used * 100 / limit)
 }
 
-// backendsFooterView renders the backends key hints.
+// backendsFooterView renders the backends key hints. The cancel key is offered
+// only while this pane is following a drain, so it cannot read as available
+// when there is nothing to stop.
 func (m *model) backendsFooterView() string {
-	return m.footer("up/down move - tab nav - r reload - q quit")
+	hints := "up/down move - d drain - R reconcile - Q requeue dlq - r reload - tab nav - q quit"
+	if m.backends.drain.backend != "" {
+		hints = "x cancel drain - " + hints
+	}
+	return m.footer(hints)
 }
 
 // backendsBodyView renders the current content: an error, the loading

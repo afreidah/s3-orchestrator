@@ -293,7 +293,10 @@ s3-orchestrator tui
 | `o` | Jump to the Ops section |
 | `L` | Cycle the Logs level filter (all / INFO / WARN / ERROR) |
 | `t` | In Cleanup, switch between the pending and dead-letter listings |
-| `R` | In Cleanup's dead-letter listing, requeue the selected row's backend (asks to confirm) |
+| `R` | In Cleanup's dead-letter listing, requeue the selected row's backend; in Backends, reconcile the selected backend (asks to confirm) |
+| `d` | In Backends, drain the selected backend (asks to confirm) |
+| `Q` | In Backends, requeue the selected backend's dead-lettered cleanups (asks to confirm) |
+| `x` | In Backends, cancel the drain the pane is following (asks to confirm) |
 | `S` | In the inspector, verify every copy of the object now (asks to confirm) |
 | `y` / `n` | Accept / cancel a pending action confirmation |
 | `up` / `down` | Move the selection (or the sidebar highlight when it has focus) |
@@ -314,6 +317,10 @@ A copy reading `never` under `VERIFIED` has a recorded hash that nothing has eve
 ![The TUI inspector showing an object's backend copies](/docs/images/tui-file-details.png)
 
 The **Backends** section is the interactive equivalent of `admin status`, sourced from `GET /admin/api/status`. It renders one row per configured backend - circuit-breaker health, drain state, quota used and limit, a `USE%` column (used / limit), object count, and the current period's API request, ingress, and egress counters. A stats line under the title shows the metadata database health (green when healthy, red when not) and the total usage across backends (`used / limit (pct%)`, coloured by fill). Press `r` to refresh the snapshot.
+
+Three admin actions act on the highlighted row, each behind a confirmation naming that backend so a keystroke on the wrong row cannot start work on it: `d` drains every copy off it, `R` reconciles metadata against its storage, and `Q` requeues its dead-lettered cleanups. Backend removal is deliberately not here - it is irreversible with `purge=true` and stays an `admin remove-backend` operation, behind its two-phase confirmation.
+
+A drain runs for as long as it takes, so the pane follows it: once accepted, a line under the stats reports the objects moved and what remains, refreshed every couple of seconds until the drain finishes or is cancelled. Press `x` to cancel the drain the pane is following; copies already moved stay moved. The key is only offered while a drain is in flight.
 
 The metadata database health is also shown persistently at the bottom of the sidebar (`db ok` green / `db DOWN` red), fetched at startup so it is visible from every section.
 
