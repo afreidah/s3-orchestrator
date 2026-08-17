@@ -83,9 +83,7 @@ func (m *model) applyCacheErr(err error) {
 func (m *model) handleCacheKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "esc", "left", "h":
-		m.navFocus = true
-		m.navCursor = int(m.section)
-		return m, nil
+		return m.navBack()
 	case "r":
 		m.cache.loading = m.cache.snap == nil
 		cmd := m.loadCache()
@@ -117,18 +115,12 @@ func (m *model) cacheFooterView() string {
 // cacheBodyView renders the current content: an error, a disabled notice, the
 // loading indicator, or the summary.
 func (m *model) cacheBodyView() string {
-	switch {
-	case m.cache.err != nil:
-		return errStyle.Render("error: " + m.cache.err.Error())
-	case m.cache.unavailable != "":
-		return pathStyle.Render("(" + m.cache.unavailable + ")")
-	case m.cache.loading:
-		return m.spinner.View() + " loading..."
-	case m.cache.snap == nil:
-		return pathStyle.Render("(no cache data)")
-	default:
+	return m.paneBody(m.cache.err, m.cache.unavailable, m.cache.loading, func() string {
+		if m.cache.snap == nil {
+			return pathStyle.Render("(no cache data)")
+		}
 		return m.cacheStats()
-	}
+	})
 }
 
 // cacheStats renders the snapshot as an aligned label/value block: capacity

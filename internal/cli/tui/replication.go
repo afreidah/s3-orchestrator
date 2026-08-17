@@ -119,9 +119,7 @@ func (m *model) applyReplicationErr(err error) {
 func (m *model) handleReplicationKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "esc", "left", "h":
-		m.navFocus = true
-		m.navCursor = int(m.section)
-		return m, nil
+		return m.navBack()
 	case "r":
 		m.replication.loading = m.replication.snap == nil
 		cmd := m.loadReplication()
@@ -153,16 +151,12 @@ func (m *model) replicationFooterView() string {
 // replicationBodyView renders the current content: an error, the first-load
 // indicator, an empty notice, or the snapshot summary.
 func (m *model) replicationBodyView() string {
-	switch {
-	case m.replication.err != nil:
-		return errStyle.Render("error: " + m.replication.err.Error())
-	case m.replication.loading:
-		return m.spinner.View() + " loading..."
-	case m.replication.snap == nil:
-		return pathStyle.Render("(no replication data)")
-	default:
+	return m.paneBody(m.replication.err, "", m.replication.loading, func() string {
+		if m.replication.snap == nil {
+			return pathStyle.Render("(no replication data)")
+		}
 		return m.replicationStats()
-	}
+	})
 }
 
 // replicationStats renders the snapshot as an aligned label/value block, with

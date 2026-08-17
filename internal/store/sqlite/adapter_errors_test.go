@@ -51,32 +51,11 @@ func TestAdapterErr_ClaimPending(t *testing.T) {
 	}
 }
 
-// TestAdapterErr_InsertPending verifies the Exec error is wrapped.
-func TestAdapterErr_InsertPending(t *testing.T) {
-	t.Parallel()
-	a := closedAdapter(t, newTestStore(t))
-	err := a.InsertPending(context.Background(), &core.PendingObject{
-		IntentID: "i", ObjectKey: "k", BackendName: "backend-a", SizeBytes: 1,
-	})
-	if err == nil {
-		t.Error("expected error from closed tx")
-	}
-}
-
 // TestAdapterErr_DeletePending verifies the Exec error is wrapped.
 func TestAdapterErr_DeletePending(t *testing.T) {
 	t.Parallel()
 	a := closedAdapter(t, newTestStore(t))
 	if err := a.DeletePending(context.Background(), "i"); err == nil {
-		t.Error("expected error from closed tx")
-	}
-}
-
-// TestAdapterErr_DeletePendingByBackend verifies the Exec error is wrapped.
-func TestAdapterErr_DeletePendingByBackend(t *testing.T) {
-	t.Parallel()
-	a := closedAdapter(t, newTestStore(t))
-	if err := a.DeletePendingByBackend(context.Background(), "backend-a"); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }

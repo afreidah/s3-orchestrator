@@ -1,9 +1,9 @@
 // -------------------------------------------------------------------------------
-// Core TxAdapter and Reader - Per-Engine Seam
+// Core TxAdapter - Per-Engine Seam
 //
 // Author: Alex Freidah
 //
-// Declares the per-feature transactional adapters and the read-only Reader.
+// Declares the per-feature transactional adapters.
 // Engine packages (postgres, sqlite) provide concrete implementations that
 // translate between sqlc-generated row types and the canonical core domain
 // types. Engine-agnostic business logic in this package never touches a
@@ -19,7 +19,6 @@ package core
 
 import (
 	"context"
-	"time"
 )
 
 // -------------------------------------------------------------------------
@@ -59,9 +58,7 @@ type PendingTxAdapter interface {
 	// guarantee.
 	ClaimPending(ctx context.Context, intentID string) (claimed bool, err error)
 
-	InsertPending(ctx context.Context, p *PendingObject) error
 	DeletePending(ctx context.Context, intentID string) error
-	DeletePendingByBackend(ctx context.Context, backendName string) error
 }
 
 // KeyedExistingCopy is an ExistingCopy that also carries the object_key
@@ -177,34 +174,4 @@ type QuotaTxAdapter interface {
 	// value. Unlike Increment/Decrement it carries no bytes_limit guard:
 	// the recomputed ledger total is reality and the counter must follow.
 	SetBackendBytesUsed(ctx context.Context, backendName string, value int64) error
-}
-
-// -------------------------------------------------------------------------
-// READ-ONLY ADAPTER
-// -------------------------------------------------------------------------
-
-// Reader exposes the engine's read-only operations - those that do not
-// require a transaction or row-level lock. Engine packages return one
-// alongside the Runner so background services can issue queries
-// without paying the cost of a transaction.
-type Reader interface {
-	// Pending reads
-	GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]PendingObject, error)
-	CountPending(ctx context.Context) (int64, error)
-
-	// Object listing reads
-	GetAllObjectLocations(ctx context.Context, key string) ([]ObjectLocation, error)
-	ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]ObjectLocation, error)
-	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]ObjectLocation, error)
-	ListObjectsByPrefix(ctx context.Context, prefix, startAfter string, maxKeys int) ([]ObjectLocation, error)
-	ListExpiredObjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]ObjectLocation, error)
-
-	// Cleanup queue reads
-	GetPendingCleanups(ctx context.Context, limit int) ([]CleanupItem, error)
-	CleanupQueueDepth(ctx context.Context) (int64, error)
-
-	// CleanupDLQDepth returns the number of rows in cleanup_dlq. Used
-	// by the cleanup_dlq_depth gauge so dashboards surface the count
-	// of unrecoverable orphans needing operator attention.
-	CleanupDLQDepth(ctx context.Context) (int64, error)
 }

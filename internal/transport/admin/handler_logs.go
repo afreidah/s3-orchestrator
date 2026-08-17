@@ -11,9 +11,7 @@
 package admin
 
 import (
-	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -42,7 +40,7 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	opts := telemetry.LogQueryOpts{
-		MinLevel: parseLogLevel(r.URL.Query().Get("level")),
+		MinLevel: telemetry.ParseLevel(r.URL.Query().Get("level")),
 		Limit:    parseLimit(r.URL.Query().Get("limit"), defaultLogLimit, maxLogLimit),
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.LogsResponse{
@@ -84,20 +82,4 @@ func attrsExceptComponent(attrs map[string]any) map[string]any {
 		return nil
 	}
 	return out
-}
-
-// parseLogLevel maps a level name to its slog value; an empty or unknown name
-// yields the zero level (no minimum), matching the web UI's behaviour.
-func parseLogLevel(name string) slog.Level {
-	switch strings.ToUpper(name) {
-	case "DEBUG":
-		return slog.LevelDebug
-	case "INFO":
-		return slog.LevelInfo
-	case "WARN":
-		return slog.LevelWarn
-	case "ERROR":
-		return slog.LevelError
-	}
-	return 0
 }
