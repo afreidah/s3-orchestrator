@@ -129,9 +129,13 @@ func (s *Store) MarkObjectEncrypted(ctx context.Context, objectKey, backendName 
 
 		sizeDelta := ciphertextSize - plaintextSize
 		if sizeDelta != 0 {
+			// No bytes_limit guard: the on-disk byte count is reality and the
+			// counter follows it whether or not the limit would be exceeded.
+			// MAX(0, ...) clamps so a stale size cannot leave the counter
+			// negative, which would over-admit every later write.
 			_, err = tx.ExecContext(ctx, `
 				UPDATE backend_quotas
-				SET bytes_used = bytes_used + ?, updated_at = ?
+				SET bytes_used = MAX(0, bytes_used + ?), updated_at = ?
 				WHERE backend_name = ?`,
 				sizeDelta, now(), backendName,
 			)
@@ -202,9 +206,12 @@ func (s *Store) MarkObjectDecrypted(ctx context.Context, objectKey, backendName 
 
 		sizeDelta := plaintextSize - currentSize
 		if sizeDelta != 0 {
+			// Same clamp as the encrypt path, and this is the direction that
+			// needs it: sizeDelta is negative whenever decryption shrinks the
+			// copy, so a stale currentSize underflows the counter.
 			_, err = tx.ExecContext(ctx, `
 				UPDATE backend_quotas
-				SET bytes_used = bytes_used + ?, updated_at = ?
+				SET bytes_used = MAX(0, bytes_used + ?), updated_at = ?
 				WHERE backend_name = ?`,
 				sizeDelta, now(), backendName,
 			)
