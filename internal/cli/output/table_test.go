@@ -69,28 +69,6 @@ func TestTable_EmptyRows(t *testing.T) {
 	}
 }
 
-func TestKeyValues_Alignment(t *testing.T) {
-	t.Parallel()
-	var buf bytes.Buffer
-	err := KeyValues(&buf, [][2]string{
-		{"Snapshot", "snap-1"},
-		{"Disk size", "100 GB"},
-	})
-	if err != nil {
-		t.Fatalf("KeyValues: %v", err)
-	}
-	out := buf.String()
-	if !strings.Contains(out, "Snapshot:") || !strings.Contains(out, "Disk size:") {
-		t.Errorf("keys not rendered with colon:\n%s", out)
-	}
-	// Values align: the shorter key is padded to the longer key's width, so the
-	// column index of each value matches.
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if strings.Index(lines[0], "snap-1") != strings.Index(lines[1], "100 GB") {
-		t.Errorf("values not aligned:\n%s", out)
-	}
-}
-
 func TestPad(t *testing.T) {
 	t.Parallel()
 	if got := pad([]string{"a"}, 3); len(got) != 3 || got[0] != "a" || got[1] != "" || got[2] != "" {

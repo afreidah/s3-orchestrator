@@ -17,7 +17,7 @@ import (
 // BenchmarkAdmission_AcquireRelease measures the cost of a non-blocking
 // acquire + release round-trip on an uncontended semaphore.
 func BenchmarkAdmission_AcquireRelease(b *testing.B) {
-	ac := NewAdmissionController(1000)
+	ac := newAdmissionFor(1000)
 	sem := ac.sem
 
 	for b.Loop() {
@@ -29,7 +29,7 @@ func BenchmarkAdmission_AcquireRelease(b *testing.B) {
 // BenchmarkAdmission_AcquireRelease_Concurrent measures acquire/release
 // throughput under concurrent load where the semaphore is partially filled.
 func BenchmarkAdmission_AcquireRelease_Concurrent(b *testing.B) {
-	ac := NewAdmissionController(1000)
+	ac := newAdmissionFor(1000)
 	sem := ac.sem
 
 	b.RunParallel(func(pb *testing.PB) {
@@ -43,7 +43,7 @@ func BenchmarkAdmission_AcquireRelease_Concurrent(b *testing.B) {
 // BenchmarkAdmission_SplitPool_AcquireRelease measures the split read/write
 // pool acquire + release cost.
 func BenchmarkAdmission_SplitPool_AcquireRelease(b *testing.B) {
-	ac := NewSplitAdmissionController(500, 500)
+	ac := newSplitAdmissionFor(500, 500)
 
 	b.Run("read", func(b *testing.B) {
 		for b.Loop() {

@@ -107,15 +107,6 @@ func findInvalidMetadataByte(s string) (pos int, b byte) {
 	return -1, 0
 }
 
-// validMetadataToken reports whether s contains only printable ASCII
-// characters suitable for use in an HTTP header field (no CR, LF, or
-// other control characters). This prevents HTTP header injection via
-// user-supplied metadata keys and values.
-func validMetadataToken(s string) bool {
-	pos, _ := findInvalidMetadataByte(s)
-	return pos < 0
-}
-
 // validateUserMetadata checks that metadata keys and values contain only
 // safe characters (no CR/LF/control bytes) and that total size does not
 // exceed the S3-specified 2 KB limit. Validation errors include the

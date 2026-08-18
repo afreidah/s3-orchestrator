@@ -46,26 +46,6 @@ func Table(w io.Writer, headers []string, rows [][]string) error {
 	return tw.Flush()
 }
 
-// KeyValues writes a left-aligned key/value block to w, padding keys to a
-// common width so the values line up. Used for single-record summaries where a
-// full table would be noise.
-func KeyValues(w io.Writer, pairs [][2]string) error {
-	labels := make([]string, len(pairs))
-	width := 0
-	for i, p := range pairs {
-		labels[i] = p[0] + ":"
-		if len(labels[i]) > width {
-			width = len(labels[i])
-		}
-	}
-	for i, p := range pairs {
-		if _, err := fmt.Fprintf(w, "%-*s  %s\n", width, labels[i], p[1]); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // pad returns row extended to n columns with empty strings.
 func pad(row []string, n int) []string {
 	if len(row) >= n {

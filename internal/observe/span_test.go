@@ -105,7 +105,7 @@ func TestRun_RecorderFiresOnPanic(t *testing.T) {
 		}
 	}()
 
-	_, _ = Run(context.Background(), Server("op", nil, rec), func(_ context.Context) (int, error) {
+	_, _ = Run(context.Background(), Internal("op", nil, rec), func(_ context.Context) (int, error) {
 		panic("boom")
 	})
 }
@@ -208,9 +208,6 @@ func TestConstructors_AssignSpanKind(t *testing.T) {
 	t.Parallel()
 	if Client("c", nil, nil).Kind.String() != "client" {
 		t.Error("Client kind != client")
-	}
-	if Server("s", nil, nil).Kind.String() != "server" {
-		t.Error("Server kind != server")
 	}
 	if Internal("i", nil, nil).Kind.String() != "internal" {
 		t.Error("Internal kind != internal")

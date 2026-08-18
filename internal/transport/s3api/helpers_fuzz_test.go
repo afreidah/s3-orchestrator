@@ -62,9 +62,9 @@ func FuzzValidMetadataToken(f *testing.F) {
 	f.Add("\t\n\r")
 
 	f.Fuzz(func(t *testing.T, input string) {
-		result := validMetadataToken(input)
-		if result {
-			// validMetadataToken accepts only printable ASCII (0x20-0x7E).
+		pos, _ := findInvalidMetadataByte(input)
+		if pos < 0 {
+			// A clean scan means only printable ASCII (0x20-0x7E) is present.
 			for _, c := range input {
 				if c < 0x20 || c > 0x7E {
 					t.Errorf("accepted char %U in %q", c, input)
