@@ -357,15 +357,6 @@ func (r *decryptReader) Read(p []byte) (int, error) {
 // this derivation must be replaced with random per-chunk nonces or a
 // NIST-compliant counter mode (AES-ECB of the chunk index).
 
-// chunkNonce derives a per-chunk nonce by XORing the chunk index into the
-// last 8 bytes of the base nonce. Each chunk gets a unique nonce without
-// requiring additional random bytes.
-func chunkNonce(base []byte, idx uint64) []byte {
-	nonce := make([]byte, NonceSize)
-	deriveNonce(nonce, base, idx)
-	return nonce
-}
-
 // deriveNonce writes a per-chunk nonce into dst by copying the base nonce
 // and XORing the chunk index into the last 8 bytes. dst must be at least
 // NonceSize bytes. Used by the streaming readers to avoid per-chunk allocation.

@@ -20,22 +20,8 @@
 package logfmt
 
 import (
-	"context"
 	"log/slog"
 )
-
-// requestIDFn is the audit-package accessor for the request ID stored on
-// context. Wired in init via the audit package to avoid an import cycle:
-// audit depends on slog, and operational logs depend on audit. The wiring
-// is one-shot at package init.
-var requestIDFn func(context.Context) string
-
-// SetRequestIDFunc registers the context accessor used by RequestIDFromCtx.
-// Called by the audit package's init so this package does not import audit
-// directly.
-func SetRequestIDFunc(fn func(context.Context) string) {
-	requestIDFn = fn
-}
 
 // Outcome values for the canonical "outcome" attribute. Use these constants
 // rather than ad-hoc strings so dashboards can rely on a closed value set.
@@ -78,30 +64,4 @@ func Outcome(value string) slog.Attr {
 // the same component label, not in the message string.
 func Component(name string) slog.Attr {
 	return slog.String("component", name)
-}
-
-// RequestIDFromCtx returns a slog.Attr under the canonical "request_id"
-// key when one is set on ctx, or an empty Attr otherwise. Lets worker
-// loggers surface the inbound request ID for ops triggered by an admin
-// call without coupling to the audit package's API surface.
-func RequestIDFromCtx(ctx context.Context) slog.Attr {
-	if requestIDFn == nil {
-		return slog.Attr{}
-	}
-	id := requestIDFn(ctx)
-	if id == "" {
-		return slog.Attr{}
-	}
-	return slog.String("request_id", id)
-}
-
-// LoggerFromCtx returns base scoped with the request ID (if any) so all
-// subsequent log calls inherit the correlation key. Constructor-equivalent
-// of dbtools' WithStr chaining.
-func LoggerFromCtx(ctx context.Context, base *slog.Logger) *slog.Logger {
-	attr := RequestIDFromCtx(ctx)
-	if attr.Equal(slog.Attr{}) {
-		return base
-	}
-	return base.With(attr)
 }

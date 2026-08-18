@@ -19,16 +19,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"sync/atomic"
-
-	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
-
-// init registers RequestID with logfmt so operational log helpers can
-// surface the request ID without importing this package directly. Avoids
-// the audit -> logfmt -> audit cycle that a direct import would create.
-func init() {
-	logfmt.SetRequestIDFunc(RequestID)
-}
 
 // onEvent holds an optional callback invoked for each audit event with the
 // event name. Set via SetOnEvent at startup to integrate audit logging with

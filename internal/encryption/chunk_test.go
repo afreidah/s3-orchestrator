@@ -27,17 +27,22 @@ func testDEK() []byte {
 	return dek
 }
 
-// TestChunkNonce_UniquePerIndex verifies the chunk nonce unique per index path by exercising bytes.Equal.
-func TestChunkNonce_UniquePerIndex(t *testing.T) {
+// TestDeriveNonce_UniquePerIndex asserts each chunk index yields a distinct
+// nonce. Reusing a nonce under one DEK is a confidentiality break, so this is
+// the property the whole chunked format rests on.
+func TestDeriveNonce_UniquePerIndex(t *testing.T) {
 	t.Parallel()
 	base := make([]byte, NonceSize)
 	for i := range base {
 		base[i] = 0xff
 	}
 
-	n0 := chunkNonce(base, 0)
-	n1 := chunkNonce(base, 1)
-	n2 := chunkNonce(base, 2)
+	n0 := make([]byte, NonceSize)
+	n1 := make([]byte, NonceSize)
+	n2 := make([]byte, NonceSize)
+	deriveNonce(n0, base, 0)
+	deriveNonce(n1, base, 1)
+	deriveNonce(n2, base, 2)
 
 	if bytes.Equal(n0, n1) {
 		t.Error("nonce 0 and 1 should differ")
@@ -47,18 +52,20 @@ func TestChunkNonce_UniquePerIndex(t *testing.T) {
 	}
 }
 
-// TestChunkNonce_DoesNotMutateBase verifies the chunk nonce does not mutate base path by exercising bytes.Equal.
-func TestChunkNonce_DoesNotMutateBase(t *testing.T) {
+// TestDeriveNonce_DoesNotMutateBase asserts the base nonce survives derivation.
+// The base is reused for every chunk of an object, so mutating it would make
+// each derivation depend on the last and silently repeat nonces.
+func TestDeriveNonce_DoesNotMutateBase(t *testing.T) {
 	t.Parallel()
 	base := make([]byte, NonceSize)
 	copy(base, "base-nonce!!")
 	original := make([]byte, NonceSize)
 	copy(original, base)
 
-	_ = chunkNonce(base, 42)
+	deriveNonce(make([]byte, NonceSize), base, 42)
 
 	if !bytes.Equal(base, original) {
-		t.Error("chunkNonce mutated the base nonce")
+		t.Error("deriveNonce mutated the base nonce")
 	}
 }
 
