@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -3245,5 +3246,95 @@ func TestMarkObjectEncrypted_ChargesTheCiphertextGrowth(t *testing.T) {
 	}
 	if got := quotaBytesUsed(t, s, "backend-a") - before; got != 100 {
 		t.Errorf("bytes_used moved by %d, want the 100 bytes encryption added", got)
+	}
+}
+
+// collationSensitiveKeys sort differently under byte order than under a locale
+// collation: mixed case, punctuation and digits all sit on the boundary a
+// locale ordering reshuffles. Mirrors the set the Postgres collation tests use,
+// so both engines are pinned to one contract.
+var collationSensitiveKeys = []string{
+	"A", "a", "B", "b", "Zoo", "zoo",
+	"a/b", "a-b", "a.b", "a_b",
+	"A1", "a1", "ab", "Ab",
+}
+
+// TestListObjects_ByteOrder asserts the flat listing answers in UTF-8 byte
+// order, which is what S3 ListObjectsV2 specifies. SQLite's BINARY collation
+// gives this for free; the test exists so the contract is stated on both
+// engines rather than only on the one that had to be corrected for it.
+func TestListObjects_ByteOrder(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	for _, k := range collationSensitiveKeys {
+		mustRecordObject(t, s, k, "backend-a", 1)
+	}
+
+	var got []string
+	cursor := ""
+	for {
+		res, err := s.ListObjects(ctx, "", cursor, 3)
+		if err != nil {
+			t.Fatalf("ListObjects(startAfter=%q): %v", cursor, err)
+		}
+		if len(res.Objects) == 0 {
+			break
+		}
+		for i := range res.Objects {
+			got = append(got, res.Objects[i].ObjectKey)
+		}
+		cursor = res.Objects[len(res.Objects)-1].ObjectKey
+		if !res.IsTruncated {
+			break
+		}
+	}
+
+	want := slices.Clone(collationSensitiveKeys)
+	slices.Sort(want) // Go string sort is byte order.
+	if !slices.Equal(got, want) {
+		t.Errorf("listing order mismatch:\n got  %q\n want %q", got, want)
+	}
+}
+
+// TestListObjects_PaginationCoversEveryKeyOnce asserts paging over a
+// collation-sensitive key set neither skips nor repeats.
+func TestListObjects_PaginationCoversEveryKeyOnce(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	for _, k := range collationSensitiveKeys {
+		mustRecordObject(t, s, k, "backend-a", 1)
+	}
+
+	seen := map[string]int{}
+	cursor := ""
+	for {
+		res, err := s.ListObjects(ctx, "", cursor, 2)
+		if err != nil {
+			t.Fatalf("ListObjects(startAfter=%q): %v", cursor, err)
+		}
+		if len(res.Objects) == 0 {
+			break
+		}
+		for i := range res.Objects {
+			seen[res.Objects[i].ObjectKey]++
+		}
+		cursor = res.Objects[len(res.Objects)-1].ObjectKey
+		if !res.IsTruncated {
+			break
+		}
+	}
+
+	for _, k := range collationSensitiveKeys {
+		switch seen[k] {
+		case 1: // covered exactly once, as intended
+		case 0:
+			t.Errorf("key %q was skipped across pages", k)
+		default:
+			t.Errorf("key %q was returned %d times across pages", k, seen[k])
+		}
 	}
 }

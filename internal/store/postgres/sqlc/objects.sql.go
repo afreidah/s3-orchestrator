@@ -704,11 +704,11 @@ func (q *Queries) ListEncryptedLocations(ctx context.Context, arg ListEncryptedL
 }
 
 const listExpiredObjects = `-- name: ListExpiredObjects :many
-SELECT DISTINCT ON (object_key) object_key, backend_name, size_bytes, created_at
+SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, size_bytes, created_at
 FROM object_locations
 WHERE object_key LIKE $1::text || '%' ESCAPE '\'
   AND created_at < $2
-ORDER BY object_key, created_at ASC
+ORDER BY object_key COLLATE "C", created_at ASC
 LIMIT $3
 `
 
@@ -725,6 +725,9 @@ type ListExpiredObjectsRow struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+// Collated for the same reason as ListObjectsByPrefix. The expiry worker does
+// not depend on the order, but a batch that differs by engine is one more thing
+// an operator has to hold in their head when a run is reproduced elsewhere.
 func (q *Queries) ListExpiredObjects(ctx context.Context, arg ListExpiredObjectsParams) ([]ListExpiredObjectsRow, error) {
 	rows, err := q.db.Query(ctx, listExpiredObjects, arg.Prefix, arg.Cutoff, arg.MaxKeys)
 	if err != nil {
@@ -856,11 +859,11 @@ func (q *Queries) ListObjectsByBackendKeyAsc(ctx context.Context, arg ListObject
 }
 
 const listObjectsByPrefix = `-- name: ListObjectsByPrefix :many
-SELECT DISTINCT ON (object_key) object_key, backend_name, size_bytes, created_at
+SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, size_bytes, created_at
 FROM object_locations
 WHERE object_key LIKE $1::text || '%' ESCAPE '\'
-  AND object_key > $2
-ORDER BY object_key, created_at ASC
+  AND object_key COLLATE "C" > $2
+ORDER BY object_key COLLATE "C", created_at ASC
 LIMIT $3
 `
 
@@ -877,6 +880,12 @@ type ListObjectsByPrefixRow struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+// COLLATE "C" is required: S3 ListObjectsV2 returns keys in UTF-8 byte order,
+// and object_key is plain TEXT so it would otherwise sort under the database's
+// LC_COLLATE. The cursor predicate carries the same collation as the ORDER BY -
+// splitting them would page a byte-ordered scan with a locale-ordered cursor and
+// skip or repeat keys. DISTINCT ON must carry it too, or Postgres rejects the
+// query for not matching the leading ORDER BY expression.
 func (q *Queries) ListObjectsByPrefix(ctx context.Context, arg ListObjectsByPrefixParams) ([]ListObjectsByPrefixRow, error) {
 	rows, err := q.db.Query(ctx, listObjectsByPrefix, arg.Prefix, arg.StartAfter, arg.MaxKeys)
 	if err != nil {
