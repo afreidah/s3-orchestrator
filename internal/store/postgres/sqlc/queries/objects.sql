@@ -73,11 +73,17 @@ DELETE FROM object_locations
 WHERE object_key = $1 AND backend_name = $2;
 
 -- name: ListObjectsByPrefix :many
-SELECT DISTINCT ON (object_key) object_key, backend_name, size_bytes, created_at
+-- COLLATE "C" is required: S3 ListObjectsV2 returns keys in UTF-8 byte order,
+-- and object_key is plain TEXT so it would otherwise sort under the database's
+-- LC_COLLATE. The cursor predicate carries the same collation as the ORDER BY -
+-- splitting them would page a byte-ordered scan with a locale-ordered cursor and
+-- skip or repeat keys. DISTINCT ON must carry it too, or Postgres rejects the
+-- query for not matching the leading ORDER BY expression.
+SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, size_bytes, created_at
 FROM object_locations
 WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
-  AND object_key > @start_after
-ORDER BY object_key, created_at ASC
+  AND object_key COLLATE "C" > @start_after
+ORDER BY object_key COLLATE "C", created_at ASC
 LIMIT @max_keys;
 
 -- name: GetAllObjectLocations :many
@@ -119,11 +125,14 @@ GROUP BY name, is_dir
 ORDER BY is_dir DESC, name ASC;
 
 -- name: ListExpiredObjects :many
-SELECT DISTINCT ON (object_key) object_key, backend_name, size_bytes, created_at
+-- Collated for the same reason as ListObjectsByPrefix. The expiry worker does
+-- not depend on the order, but a batch that differs by engine is one more thing
+-- an operator has to hold in their head when a run is reproduced elsewhere.
+SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, size_bytes, created_at
 FROM object_locations
 WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
   AND created_at < @cutoff
-ORDER BY object_key, created_at ASC
+ORDER BY object_key COLLATE "C", created_at ASC
 LIMIT @max_keys;
 
 -- name: BackendObjectStats :one

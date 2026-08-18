@@ -53,8 +53,12 @@ func adapterPgStore(t *testing.T) *Store {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
+		// Debian rather than alpine: musl has no locale data, so every
+		// collation degrades to byte order and a query that forgot its
+		// COLLATE "C" would pass every ordering assertion here. glibc
+		// orders text the way a real deployment does.
 		ctr, err := tcpostgres.Run(ctx,
-			"postgres:16-alpine",
+			"postgres:16",
 			tcpostgres.WithDatabase("adapter_test"),
 			tcpostgres.WithUsername("s3proxy"),
 			tcpostgres.WithPassword("s3proxy"),
