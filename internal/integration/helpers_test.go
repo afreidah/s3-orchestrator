@@ -85,8 +85,11 @@ type minioInstance struct {
 // integration test. Bails the process on any failure because there is
 // no useful test run without a database.
 func mustStartPostgres(ctx context.Context) *tcpostgres.PostgresContainer {
+	// Debian rather than alpine, matching the store package's fixture: musl
+	// has no locale data, so text sorts by byte there whatever collation a
+	// query asks for, and an ordering regression would go unnoticed.
 	c, err := tcpostgres.Run(ctx,
-		"postgres:16-alpine",
+		"postgres:16",
 		tcpostgres.WithDatabase("s3proxy_test"),
 		tcpostgres.WithUsername("s3proxy"),
 		tcpostgres.WithPassword("s3proxy"),
