@@ -321,9 +321,10 @@ func TestValidateUserMetadata_RejectsNullByte(t *testing.T) {
 	}
 }
 
-// TestValidMetadataToken verifies the valid metadata token contract.
-// Asserts that validMetadataToken() = , want.
-func TestValidMetadataToken(t *testing.T) {
+// TestFindInvalidMetadataByte_RejectsHeaderInjection pins the scan that guards
+// user metadata: anything outside printable ASCII must be reported, because a
+// CR or LF reaching a response header is an HTTP header injection.
+func TestFindInvalidMetadataByte_RejectsHeaderInjection(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		input string
@@ -339,8 +340,9 @@ func TestValidMetadataToken(t *testing.T) {
 		{"", true},
 	}
 	for _, tc := range tests {
-		if got := validMetadataToken(tc.input); got != tc.want {
-			t.Errorf("validMetadataToken(%q) = %v, want %v", tc.input, got, tc.want)
+		pos, _ := findInvalidMetadataByte(tc.input)
+		if got := pos < 0; got != tc.want {
+			t.Errorf("findInvalidMetadataByte(%q) clean = %v, want %v", tc.input, got, tc.want)
 		}
 	}
 }

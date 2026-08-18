@@ -42,28 +42,11 @@ type AdmissionController struct {
 // CONSTRUCTORS AND CONFIG
 // -------------------------------------------------------------------------
 
-// NewAdmissionController creates an admission controller with a single
-// global concurrency limit. The limit must be positive.
-func NewAdmissionController(maxConcurrent int) *AdmissionController {
-	return &AdmissionController{
-		sem: make(chan struct{}, maxConcurrent),
-	}
-}
-
 // NewAdmissionControllerFromSem creates an admission controller backed by
 // an externally owned semaphore. Use this when background services should
 // share the same concurrency budget as HTTP requests.
 func NewAdmissionControllerFromSem(sem chan struct{}) *AdmissionController {
 	return &AdmissionController{sem: sem}
-}
-
-// NewSplitAdmissionController creates an admission controller with separate
-// concurrency limits for reads and writes. Both limits must be positive.
-func NewSplitAdmissionController(maxReads, maxWrites int) *AdmissionController {
-	return &AdmissionController{
-		readSem:  make(chan struct{}, maxReads),
-		writeSem: make(chan struct{}, maxWrites),
-	}
 }
 
 // NewSplitAdmissionControllerFromSem creates an admission controller backed

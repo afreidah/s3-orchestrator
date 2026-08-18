@@ -6,8 +6,7 @@
 // VerifyingReader wraps a backend response body with a streaming
 // SHA-256 computation. The GET path enables it on Close when an
 // expected content_hash is known (integrity.VerifyOnRead) so a hash
-// mismatch triggers cleanup of the bad copy via DeleteOrEnqueue. The
-// HashBody helper computes the one-shot digest for in-memory buffers.
+// mismatch triggers cleanup of the bad copy via DeleteOrEnqueue.
 // -------------------------------------------------------------------------------
 
 package object
@@ -19,12 +18,6 @@ import (
 	"hash"
 	"io"
 )
-
-// HashBody computes the SHA-256 hex digest of a byte slice.
-func HashBody(data []byte) string {
-	h := sha256.Sum256(data)
-	return hex.EncodeToString(h[:])
-}
 
 // VerifyingReader wraps an io.ReadCloser and computes SHA-256 as data is read.
 // After the underlying reader returns EOF, call Verify to check the hash.

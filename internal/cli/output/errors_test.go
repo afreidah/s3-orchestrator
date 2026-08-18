@@ -78,13 +78,6 @@ func TestPrettyJSON_WriteError(t *testing.T) {
 	}
 }
 
-func TestKeyValues_WriteError(t *testing.T) {
-	t.Parallel()
-	if err := KeyValues(errWriter{}, [][2]string{{"k", "v"}}); err == nil {
-		t.Error("KeyValues: expected write error, got nil")
-	}
-}
-
 func TestTable_WriteError(t *testing.T) {
 	t.Parallel()
 	// tabwriter buffers, so the failure surfaces at Flush rather than on the

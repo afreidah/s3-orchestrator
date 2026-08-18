@@ -10,6 +10,8 @@ package object
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"strings"
@@ -24,26 +26,12 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
-// TestHashBody verifies the hash body contract.
-// Asserts that HashBody = , want.
-func TestHashBody(t *testing.T) {
-	t.Parallel()
-	hash := HashBody([]byte("hello world"))
-	expected := "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
-	if hash != expected {
-		t.Errorf("HashBody = %s, want %s", hash, expected)
-	}
-}
-
-// TestHashBody_Empty verifies the hash body empty contract.
-// Asserts that HashBody(nil) = , want.
-func TestHashBody_Empty(t *testing.T) {
-	t.Parallel()
-	hash := HashBody(nil)
-	expected := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-	if hash != expected {
-		t.Errorf("HashBody(nil) = %s, want %s", hash, expected)
-	}
+// hashOf is the expected-digest helper these tests compare against. Written
+// out rather than reusing production code so a bug in the hashing under test
+// cannot mask itself by producing the same wrong answer on both sides.
+func hashOf(data []byte) string {
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
 }
 
 // TestVerifyingReader_Match verifies the verifying reader match contract.
@@ -51,7 +39,7 @@ func TestHashBody_Empty(t *testing.T) {
 func TestVerifyingReader_Match(t *testing.T) {
 	t.Parallel()
 	data := "test data for hashing"
-	expected := HashBody([]byte(data))
+	expected := hashOf([]byte(data))
 
 	r := io.NopCloser(strings.NewReader(data))
 	vr := NewVerifyingReader(r)
@@ -110,7 +98,7 @@ func TestVerifyingReader_OnMismatchCallback(t *testing.T) {
 func TestVerifyingReader_OnMatchNoCallback(t *testing.T) {
 	t.Parallel()
 	data := "matching data"
-	expected := HashBody([]byte(data))
+	expected := hashOf([]byte(data))
 
 	r := io.NopCloser(strings.NewReader(data))
 	vr := NewVerifyingReader(r)
@@ -203,7 +191,7 @@ func TestMaybeWrapIntegrityReader_DiscardsCopyOnMismatch(t *testing.T) {
 	loc := &core.ObjectLocation{
 		ObjectKey:   key,
 		BackendName: beName,
-		ContentHash: HashBody([]byte("the bytes that were written")),
+		ContentHash: hashOf([]byte("the bytes that were written")),
 	}
 
 	f.maybeWrapIntegrityReader(context.Background(), r, loc, key, beName, be)

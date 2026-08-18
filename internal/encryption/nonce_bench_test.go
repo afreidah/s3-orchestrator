@@ -45,17 +45,6 @@ func BenchmarkDeriveNonce_Sequential(b *testing.B) {
 	}
 }
 
-// BenchmarkChunkNonce measures chunkNonce which allocates a new nonce slice
-// per call (used in some code paths that cannot reuse a buffer).
-func BenchmarkChunkNonce(b *testing.B) {
-	base := make([]byte, NonceSize)
-	_, _ = rand.Read(base)
-
-	for b.Loop() {
-		_ = chunkNonce(base, 42)
-	}
-}
-
 // drainAll reads r to EOF into a scratch buffer reused across iterations.
 // Used by the streaming benchmarks below so the discard side does not
 // contribute its own allocations to the measured numbers.

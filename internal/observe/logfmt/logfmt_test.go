@@ -20,7 +20,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
@@ -92,47 +91,6 @@ func TestOutcomeAndComponent_KeysAreCanonical(t *testing.T) {
 	}
 	if got := logfmt.Component("rebalancer"); got.Key != "component" {
 		t.Errorf("Component key = %q, want component", got.Key)
-	}
-}
-
-// TestRequestIDFromCtx_PullsFromAudit verifies the audit package's init
-// wired the accessor and that LoggerFromCtx surfaces the request ID as a
-// "request_id" attribute on subsequent log calls.
-func TestRequestIDFromCtx_PullsFromAudit(t *testing.T) {
-	t.Parallel()
-
-	ctx := audit.WithRequestID(context.Background(), "req-123")
-	attr := logfmt.RequestIDFromCtx(ctx)
-	if attr.Key != "request_id" || attr.Value.String() != "req-123" {
-		t.Errorf("RequestIDFromCtx = %+v, want request_id=req-123", attr)
-	}
-
-	var buf bytes.Buffer
-	base := slog.New(slog.NewJSONHandler(&buf, nil))
-	scoped := logfmt.LoggerFromCtx(ctx, base)
-	scoped.LogAttrs(ctx, slog.LevelInfo, "probe")
-
-	if !strings.Contains(buf.String(), `"request_id":"req-123"`) {
-		t.Errorf("log output missing request_id: %s", buf.String())
-	}
-}
-
-// TestRequestIDFromCtx_AbsentReturnsEmpty verifies the no-request-ID
-// path returns an empty Attr so callers can chain unconditionally.
-func TestRequestIDFromCtx_AbsentReturnsEmpty(t *testing.T) {
-	t.Parallel()
-	if got := logfmt.RequestIDFromCtx(context.Background()); !got.Equal(slog.Attr{}) {
-		t.Errorf("RequestIDFromCtx(no id) = %+v, want empty", got)
-	}
-}
-
-// TestLoggerFromCtx_NoRequestIDReturnsBase verifies LoggerFromCtx is a
-// no-op when no request ID is present, so the bare logger reference
-// is preserved (no extra With layer for nothing).
-func TestLoggerFromCtx_NoRequestIDReturnsBase(t *testing.T) {
-	t.Parallel()
-	if logfmt.LoggerFromCtx(context.Background(), slog.Default()) != slog.Default() {
-		t.Error("LoggerFromCtx(no id) returned a new logger; expected the base")
 	}
 }
 
@@ -251,23 +209,5 @@ func TestErrAttrHandler_WithGroupForwards(t *testing.T) {
 	scoped.LogAttrs(context.Background(), slog.LevelInfo, "probe", slog.String("k", "v"))
 	if !strings.Contains(buf.String(), `"ctx":{"k":"v"}`) {
 		t.Errorf("group not applied: %s", buf.String())
-	}
-}
-
-// TestRequestIDFromCtx_UnwiredFuncReturnsEmpty pins the contract for the
-// pre-init path: if no audit accessor has been registered, the helper
-// returns an empty Attr rather than panicking. Audit's package init
-// wires the accessor for the rest of the suite, so this test
-// temporarily clears it and restores it via SetRequestIDFunc.
-//
-// Not parallel: mutates a package-global that other tests read.
-func TestRequestIDFromCtx_UnwiredFuncReturnsEmpty(t *testing.T) {
-	// Capture the current accessor by invoking it with a probe context.
-	// The real accessor lives behind SetRequestIDFunc and we have no
-	// getter, so the safest restore is to re-register audit.RequestID.
-	t.Cleanup(func() { logfmt.SetRequestIDFunc(audit.RequestID) })
-	logfmt.SetRequestIDFunc(nil)
-	if got := logfmt.RequestIDFromCtx(context.Background()); !got.Equal(slog.Attr{}) {
-		t.Errorf("RequestIDFromCtx with unwired func = %+v, want empty", got)
 	}
 }

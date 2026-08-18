@@ -58,11 +58,6 @@ func Client(name string, attrs []attribute.KeyValue, recorder Recorder) Op {
 	return Op{Name: name, Kind: trace.SpanKindClient, Attrs: attrs, Recorder: recorder}
 }
 
-// Server returns an Op for an inbound request (HTTP handler entry point).
-func Server(name string, attrs []attribute.KeyValue, recorder Recorder) Op {
-	return Op{Name: name, Kind: trace.SpanKindServer, Attrs: attrs, Recorder: recorder}
-}
-
 // Internal returns an Op for in-process work (worker passes, internal helpers).
 func Internal(name string, attrs []attribute.KeyValue, recorder Recorder) Op {
 	return Op{Name: name, Kind: trace.SpanKindInternal, Attrs: attrs, Recorder: recorder}

@@ -490,20 +490,6 @@ func writeCanonicalHeadersAndSigned(b *strings.Builder, r *http.Request, signedH
 // HELPERS
 // -------------------------------------------------------------------------
 
-// parseSigV4Fields extracts key=value pairs from the SigV4 auth header.
-// Retained for use by extractAccessKey which only needs the Credential field.
-func parseSigV4Fields(s string) map[string]string {
-	fields := make(map[string]string)
-	for part := range strings.SplitSeq(s, ",") {
-		part = strings.TrimSpace(part)
-		idx := strings.IndexByte(part, '=')
-		if idx > 0 {
-			fields[part[:idx]] = part[idx+1:]
-		}
-	}
-	return fields
-}
-
 // parseSigV4FieldsDirect extracts Credential, SignedHeaders, and Signature
 // from the SigV4 auth header without allocating a map.
 func parseSigV4FieldsDirect(s string) (credential, signedHeaders, signature string) {

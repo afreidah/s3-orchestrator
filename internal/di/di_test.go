@@ -707,29 +707,6 @@ func TestNewInjector_NotifierResolvesWhenEndpointsConfigured(t *testing.T) {
 	}
 }
 
-// TestInvokeOptional_ReturnsZeroWhenAbsent pins the contract that the
-// optional-provider helper swallows ErrServiceNotFound and returns the
-// zero value, so callers can use it for features that may not register.
-func TestInvokeOptional_ReturnsZeroWhenAbsent(t *testing.T) {
-	t.Parallel()
-	v := invokeOptional[*worker.Reconciler](do.New())
-	if v != nil {
-		t.Fatalf("expected nil for absent provider, got %v", v)
-	}
-}
-
-// TestInvokeOptional_ReturnsValueWhenRegistered covers the present-provider
-// branch: the helper returns the registered value unchanged.
-func TestInvokeOptional_ReturnsValueWhenRegistered(t *testing.T) {
-	t.Parallel()
-	inj := do.New()
-	rec := &worker.Reconciler{}
-	do.ProvideValue(inj, rec)
-	if got := invokeOptional[*worker.Reconciler](inj); got != rec {
-		t.Fatalf("expected registered value, got %v", got)
-	}
-}
-
 // TestProvideReconciler_HappyPath drives the reconciler factory end-to-end.
 func TestProvideReconciler_HappyPath(t *testing.T) {
 	t.Parallel()

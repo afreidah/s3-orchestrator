@@ -179,8 +179,3 @@ func (rl *RateLimiter) extractIP(r *http.Request) string {
 func ExtractClientIP(r *http.Request, trustedProxies []*net.IPNet) string {
 	return httputil.ExtractClientIP(r, trustedProxies)
 }
-
-// ParseTrustedProxies delegates to httputil.ParseTrustedProxies.
-func ParseTrustedProxies(cidrs []string) []*net.IPNet {
-	return httputil.ParseTrustedProxies(cidrs)
-}

@@ -91,15 +91,6 @@ func IsRegistered[T any](inj do.Injector) bool {
 	return false
 }
 
-// invokeOptional preserves the legacy "swallow error, return zero" shape
-// for call sites where the caller has already decided not to differentiate
-// Disabled from Failed. New code should prefer Optional[T] and inspect
-// Failed so a broken-but-configured feature does not look the same as a
-// feature intentionally turned off.
-func invokeOptional[T any](inj do.Injector) T {
-	return Optional[T](inj).Value
-}
-
 // resolveOptionalCounterBackend returns the configured Redis counter
 // backend, or nil when Redis is disabled / not registered. The
 // CounterBackend field on BackendManagerConfig accepts nil to mean

@@ -125,11 +125,6 @@ func StartServerSpan(ctx context.Context, name string, attrs ...attribute.KeyVal
 	return Tracer().Start(ctx, name, trace.WithAttributes(attrs...), trace.WithSpanKind(trace.SpanKindServer))
 }
 
-// StartClientSpan creates a span for outbound calls (backend S3 operations).
-func StartClientSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
-	return Tracer().Start(ctx, name, trace.WithAttributes(attrs...), trace.WithSpanKind(trace.SpanKindClient))
-}
-
 // -------------------------------------------------------------------------
 // COMMON ATTRIBUTES
 // -------------------------------------------------------------------------

@@ -97,49 +97,6 @@ func newTestEncryptor(t *testing.T) *encryption.Encryptor {
 	return enc
 }
 
-// TestEncryptBody_Success verifies the encrypt body success contract.
-// Asserts that encryptBody:.
-func TestEncryptBody_Success(t *testing.T) {
-	t.Parallel()
-	enc := newTestEncryptor(t)
-	plain := []byte("hello world encryption test data")
-
-	body, ciphertextSize, meta, err := encryptBody(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)))
-	if err != nil {
-		t.Fatalf("encryptBody: %v", err)
-	}
-	if body == nil {
-		t.Fatal("expected non-nil body")
-	}
-	if ciphertextSize <= int64(len(plain)) {
-		t.Errorf("ciphertext size %d should be larger than plaintext %d", ciphertextSize, len(plain))
-	}
-	if meta == nil {
-		t.Fatal("expected non-nil encryption meta")
-	}
-	if !meta.Encrypted {
-		t.Error("expected Encrypted=true")
-	}
-	if meta.PlaintextSize != int64(len(plain)) {
-		t.Errorf("PlaintextSize = %d, want %d", meta.PlaintextSize, len(plain))
-	}
-	if meta.KeyID == "" {
-		t.Error("expected non-empty KeyID")
-	}
-	if len(meta.EncryptionKey) == 0 {
-		t.Error("expected non-empty EncryptionKey")
-	}
-
-	// Consume the body to verify it's readable
-	ciphertext, err := io.ReadAll(body)
-	if err != nil {
-		t.Fatalf("read encrypted body: %v", err)
-	}
-	if int64(len(ciphertext)) != ciphertextSize {
-		t.Errorf("read %d bytes, expected %d", len(ciphertext), ciphertextSize)
-	}
-}
-
 // TestDecryptResponse_FullRead verifies the decrypt response full read contract.
 // Asserts that encrypt:.
 func TestDecryptResponse_FullRead(t *testing.T) {
@@ -183,49 +140,6 @@ func TestDecryptResponse_FullRead(t *testing.T) {
 	}
 	if r.Size != int64(len(plain)) {
 		t.Errorf("Size = %d, want %d", r.Size, len(plain))
-	}
-}
-
-// TestEncryptBody_ThenDecryptResponse_RoundTrip verifies the encrypt body then decrypt response round trip contract.
-// Asserts that encryptBody:.
-func TestEncryptBody_ThenDecryptResponse_RoundTrip(t *testing.T) {
-	t.Parallel()
-	enc := newTestEncryptor(t)
-	plain := []byte("round trip test with helpers - verifies encrypt and decrypt are compatible")
-
-	// Encrypt via helper
-	body, ciphertextSize, meta, err := encryptBody(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)))
-	if err != nil {
-		t.Fatalf("encryptBody: %v", err)
-	}
-	ciphertext, err := io.ReadAll(body)
-	if err != nil {
-		t.Fatalf("read ciphertext: %v", err)
-	}
-
-	// Decrypt via helper
-	loc := &core.ObjectLocation{
-		Encrypted:     true,
-		EncryptionKey: meta.EncryptionKey,
-		KeyID:         meta.KeyID,
-		PlaintextSize: meta.PlaintextSize,
-	}
-	r := &s3be.GetObjectResult{
-		Body: io.NopCloser(bytes.NewReader(ciphertext)),
-		Size: ciphertextSize,
-	}
-
-	err = decryptResponse(context.Background(), enc, r, loc, nil, 0, 0)
-	if err != nil {
-		t.Fatalf("decryptResponse: %v", err)
-	}
-
-	decrypted, err := io.ReadAll(r.Body)
-	if err != nil {
-		t.Fatalf("read decrypted: %v", err)
-	}
-	if !bytes.Equal(decrypted, plain) {
-		t.Errorf("round-trip mismatch: got %d bytes, want %d", len(decrypted), len(plain))
 	}
 }
 

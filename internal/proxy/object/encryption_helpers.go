@@ -103,27 +103,6 @@ func encryptForPut(
 	}, nil
 }
 
-// encryptBody encrypts a request body for upload. Returns the encrypted body,
-// ciphertext size, and encryption metadata for the store. Used by UploadPart
-// and CompleteMultipartUpload. PutObject uses its own inline path because it
-// caches the DEK across retry attempts.
-func encryptBody(ctx context.Context, enc *encryption.Encryptor, body io.Reader, plaintextSize int64) (io.Reader, int64, *core.EncryptionMeta, error) {
-	result, err := enc.Encrypt(ctx, body, plaintextSize)
-	if err != nil {
-		telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
-		return nil, 0, nil, fmt.Errorf("encrypt: %w", err)
-	}
-	telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
-
-	meta := &core.EncryptionMeta{
-		Encrypted:     true,
-		EncryptionKey: encryption.PackKeyData(result.BaseNonce, result.WrappedDEK),
-		KeyID:         result.KeyID,
-		PlaintextSize: plaintextSize,
-	}
-	return withStreamMetric(result.Body, "encrypt"), result.CiphertextSize, meta, nil
-}
-
 // decryptResponse decrypts a GetObject response body in place. Handles both
 // full reads and range requests. Mutates r.Body, r.Size, and r.ContentRange.
 // Decrypt ops/errors telemetry is owned by Encryptor.DecryptStored; this only
