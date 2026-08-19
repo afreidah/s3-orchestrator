@@ -621,6 +621,41 @@ After updating the config, call the `rotate-encryption-key` admin API to re-wrap
 - The `chunk_size` must stay the same for the lifetime of the data. Changing it after objects are encrypted will make those objects unreadable.
 - Encrypted objects are slightly larger than their plaintext (header + per-chunk overhead). The exact overhead is: 32 bytes (header) + 28 bytes per chunk (nonce + auth tag).
 
+### compression
+
+At-rest compression. When enabled, objects are stored on backends as chunked zstd and served back as the bytes the client wrote: sizes, ETags and content hashes stay those of the logical object.
+
+The block is accepted and validated today but nothing reads it yet, so setting `enabled: true` does not compress anything until the write path lands.
+
+```yaml
+compression:
+  enabled: true
+  level: "default"             # fastest, default, better, or best
+  chunk_size: 1048576          # default: 1MB (range: 16KB-64MB)
+  min_size: 4096               # objects smaller than this are stored uncompressed
+```
+
+**Why the level is a name.** zstd collapses its numeric 1-19 range into four buckets, so levels 10 and 19 produce byte-identical output. A numeric setting would let you express a distinction the encoder discards. The four names are the four levels it actually implements:
+
+| Level | Trades |
+|-------|--------|
+| `fastest` | Highest throughput, largest output |
+| `default` | Compression speed has not yet collapsed and the ratio is within a few percent of the best |
+| `better` | Slower writes for a modestly better ratio |
+| `best` | Substantially slower writes; decompression speed is unaffected |
+
+Decompression speed does not degrade as the level rises, so the trade is entirely on the write side.
+
+**Why chunks.** Compression emits backreferences into earlier data, so decoding can only begin at a frame boundary. One frame per object gives a single entry point, meaning any range read has to fetch the whole stored object and discard the prefix. Splitting the object into independently decodable chunks gives one entry point per chunk, so a range read fetches roughly the bytes it asked for. The cost is a seek table and a small ratio penalty, which at the 1MB default is negligible.
+
+Larger chunks compress marginally better and make a small range read pull more than it needs; smaller chunks do the reverse and grow the seek table. 
+
+**Important notes:**
+- Compression is **not reloadable** — changing any field requires a restart.
+- `chunk_size` and `level` apply to newly written objects only. Existing objects carry their own layout in their seek table and stay readable after either changes.
+- `min_size` exists because a small object can come out larger than it went in: every stored object carries frame headers and a seek table, and below a few kilobytes that overhead can exceed anything compression saves.
+- Compression runs before encryption, because ciphertext does not compress.
+
 ### integrity
 
 SHA-256 content hashing for data integrity verification. When enabled, objects are checksummed on write and the hash is stored alongside the object location in PostgreSQL.
@@ -729,6 +764,7 @@ kill -HUP $(pidof s3-orchestrator)
 | `backend_circuit_breaker` | No | Requires restart |
 | `ui` | No | Requires restart |
 | `encryption` | No | Requires restart |
+| `compression` | No | Requires restart |
 | `cache` | No | Requires restart |
 | `redis` | No | Requires restart |
 | `routing_strategy` | No | Requires restart |

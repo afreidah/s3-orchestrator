@@ -89,6 +89,13 @@ ui:
   # admin_token: "separate-token"     # Separate token for admin API (defaults to admin_key)
   # force_secure_cookies: true        # Always set Secure flag on cookies (use behind TLS proxy)
 
+# --- At-rest compression (disabled by default, not yet wired to the write path) ---
+# compression:
+#   enabled: true
+#   level: "default"                 # fastest, default, better, or best
+#   chunk_size: 1048576              # 16KB-64MB (default: 1MB)
+#   min_size: 4096                   # Skip objects smaller than this
+
 # --- Integrity verification (disabled by default) ---
 # integrity:
 #   enabled: true
