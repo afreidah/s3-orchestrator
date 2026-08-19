@@ -16,6 +16,7 @@ package s3api
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -377,6 +378,18 @@ type objectRouteKey struct {
 // the method/query combination is not supported and the caller emits 405.
 func (s *Server) routeObjectRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, method, bucket, key, internalKey string) (string, int, int64, int64, error, bool) {
 	query := r.URL.Query()
+
+	// Refuse before dispatch. S3 selects the operation from the query string,
+	// so an unrecognised key names an operation this server does not
+	// implement; falling through would run PutObject or DeleteObject against
+	// the key instead, overwriting or removing the object the caller was
+	// asking about.
+	if sub, unsupported := unsupportedObjectQuery(query); unsupported {
+		msg := fmt.Sprintf("object subresource %q is not supported", sub)
+		writeS3Error(w, http.StatusNotImplemented, "NotImplemented", msg)
+		return "UnsupportedSubresource", http.StatusNotImplemented, 0, 0, nil, true
+	}
+
 	_, hasUploads := query["uploads"]
 	uploadID := query.Get("uploadId")
 	rk := &objectRouteKey{method: method, bucket: bucket, key: key, internalKey: internalKey, uploadID: uploadID}
