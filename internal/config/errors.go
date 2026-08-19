@@ -120,6 +120,13 @@ var (
 	ErrVaultKeyNameRequired = errors.New("encryption.vault.key_name is required")
 )
 
+// Compression errors.
+var (
+	ErrInvalidCompressionLevel     = errors.New(`compression.level must be one of "fastest", "default", "better", "best"`)
+	ErrInvalidCompressionChunkSize = errors.New("compression.chunk_size must be between 16384 (16KB) and 67108864 (64MB)")
+	ErrInvalidCompressionMinSize   = errors.New("compression.min_size must be >= 0")
+)
+
 // Redis / counter errors.
 var (
 	ErrRedisAddressRequired        = errors.New("redis.address is required when redis section is present")
