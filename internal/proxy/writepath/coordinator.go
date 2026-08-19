@@ -124,8 +124,8 @@ func (w *Coordinator) SelectWriteTarget(ctx context.Context, span trace.Span, op
 // orphaned object from the backend. On success, enqueues cleanup for any
 // displaced copies on other backends (from overwrites). Updates the
 // tracing span on error.
-func (w *Coordinator) RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, key, backendName string, size int64, enc *core.EncryptionMeta) error {
-	displaced, err := w.stores.RecordObject(ctx, key, backendName, size, enc)
+func (w *Coordinator) RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, key, backendName string, size int64, form *core.StoredForm) error {
+	displaced, err := w.stores.RecordObject(ctx, key, backendName, size, form)
 	if err != nil {
 		w.log.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
 			"key", key, "backend", backendName, "error", err)
@@ -175,7 +175,7 @@ func (w *Coordinator) RecoverFromRecordFailure(ctx context.Context, be backend.O
 // while pending tracking is configured fails the PUT - proceeding without
 // the intent would reintroduce the data-loss window the pattern exists to
 // close.
-func (w *Coordinator) InsertPendingIntent(ctx context.Context, key, backendName string, size int64, enc *core.EncryptionMeta) (string, error) {
+func (w *Coordinator) InsertPendingIntent(ctx context.Context, key, backendName string, size int64, form *core.StoredForm) (string, error) {
 	if !w.pendingEnabled {
 		return "", nil
 	}
@@ -186,12 +186,12 @@ func (w *Coordinator) InsertPendingIntent(ctx context.Context, key, backendName 
 		BackendName: backendName,
 		SizeBytes:   size,
 	}
-	if enc != nil {
-		p.Encrypted = enc.Encrypted
-		p.EncryptionKey = enc.EncryptionKey
-		p.KeyID = enc.KeyID
-		p.PlaintextSize = enc.PlaintextSize
-		p.ContentHash = enc.ContentHash
+	if form != nil {
+		p.Encrypted = form.Encrypted
+		p.EncryptionKey = form.EncryptionKey
+		p.KeyID = form.KeyID
+		p.PlaintextSize = form.PlaintextSize
+		p.ContentHash = form.ContentHash
 	}
 	if err := w.stores.InsertPending(ctx, &p); err != nil {
 		return "", fmt.Errorf("insert pending intent: %w", err)
@@ -210,7 +210,7 @@ func (w *Coordinator) InsertPendingIntent(ctx context.Context, key, backendName 
 // When intentID is empty (no pending store configured) this falls back
 // to the legacy RecordObjectOrCleanup behavior so existing call sites
 // and tests retain their previous semantics.
-func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, key, backendName string, size int64, enc *core.EncryptionMeta, intentID string) error {
+func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, key, backendName string, size int64, form *core.StoredForm, intentID string) error {
 	if intentID == "" {
 		// No pending tracking - caller already wrote bytes, fall back to the
 		// legacy path. The backend is unavailable here, so we cannot use
@@ -220,10 +220,10 @@ func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span tra
 		if !ok {
 			return fmt.Errorf("backend %s not registered", backendName)
 		}
-		return w.RecordObjectOrCleanup(ctx, span, be, key, backendName, size, enc)
+		return w.RecordObjectOrCleanup(ctx, span, be, key, backendName, size, form)
 	}
 
-	displaced, err := w.stores.RecordObjectAndClearPending(ctx, key, backendName, size, enc, intentID)
+	displaced, err := w.stores.RecordObjectAndClearPending(ctx, key, backendName, size, form, intentID)
 	if err == nil {
 		telemetry.PendingIntentsResolvedTotal.WithLabelValues("committed").Inc()
 	}

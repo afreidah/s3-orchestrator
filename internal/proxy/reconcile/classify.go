@@ -39,16 +39,16 @@ type ClassifyDeps struct {
 	Log     *slog.Logger
 }
 
-// ClassifyImport determines the encryption metadata a discovered object should
-// be imported with, by reading its envelope header off the backend and testing
+// ClassifyImport determines the stored form a discovered object should be
+// imported with, by reading its envelope header off the backend and testing
 // that header against the rows the ledger already holds for the key.
 //
 // Import is the only write path that starts from bytes instead of from a
 // client request, so skipping this is what records an encrypted object as
 // plaintext and leaves the read path serving raw ciphertext to clients.
 //
-// A nil return means import the object with no encryption metadata.
-func ClassifyImport(ctx context.Context, deps ClassifyDeps, backendName, key string) (*core.EncryptionMeta, error) {
+// A nil return means the bytes are stored verbatim.
+func ClassifyImport(ctx context.Context, deps ClassifyDeps, backendName, key string) (*core.StoredForm, error) {
 	header, err := backend.FetchEnvelopeHeader(ctx, deps.Backend, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect %s: %w", key, err)
@@ -65,9 +65,9 @@ func ClassifyImport(ctx context.Context, deps ClassifyDeps, backendName, key str
 		return nil, fmt.Errorf("failed to look up existing copies of %s: %w", key, err)
 	}
 
-	decision, enc := core.ClassifyImport(header, siblings)
+	decision, form := core.ClassifyImport(header, siblings)
 	deps.record(ctx, decision, backendName, key)
-	return enc, nil
+	return form, nil
 }
 
 // record emits the metric and audit trail for one decision, and warns on the

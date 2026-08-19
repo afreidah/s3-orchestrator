@@ -64,13 +64,6 @@ func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error
 	return tx.Commit(ctx)
 }
 
-// DeleteObjectLocation removes a single object_locations row for the given key
-// and backend, debiting the backend's bytes_used by the removed copy's size in
-// the same transaction. Delegates to core.DeleteObjectLocation.
-func (s *Store) DeleteObjectLocation(ctx context.Context, key, backendName string) error {
-	return core.DeleteObjectLocation(ctx, s, key, backendName)
-}
-
 // -------------------------------------------------------------------------
 // KEY ROTATION (admin-only, not on MetadataStore interface)
 // -------------------------------------------------------------------------

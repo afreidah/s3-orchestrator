@@ -72,18 +72,18 @@ func (mr *MockStoresMockRecorder) GetAllObjectLocations(ctx, key any) *gomock.Ca
 }
 
 // ImportObject mocks base method.
-func (m *MockStores) ImportObject(ctx context.Context, key, arg2 string, size int64, unmanaged bool, enc *core.EncryptionMeta) (bool, error) {
+func (m *MockStores) ImportObject(ctx context.Context, key, arg2 string, size int64, unmanaged bool, form *core.StoredForm) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ImportObject", ctx, key, arg2, size, unmanaged, enc)
+	ret := m.ctrl.Call(m, "ImportObject", ctx, key, arg2, size, unmanaged, form)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ImportObject indicates an expected call of ImportObject.
-func (mr *MockStoresMockRecorder) ImportObject(ctx, key, arg2, size, unmanaged, enc any) *gomock.Call {
+func (mr *MockStoresMockRecorder) ImportObject(ctx, key, arg2, size, unmanaged, form any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportObject", reflect.TypeOf((*MockStores)(nil).ImportObject), ctx, key, arg2, size, unmanaged, enc)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportObject", reflect.TypeOf((*MockStores)(nil).ImportObject), ctx, key, arg2, size, unmanaged, form)
 }
 
 // ListObjectsByBackendKeyAsc mocks base method.

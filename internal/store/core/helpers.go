@@ -37,15 +37,15 @@ func intentSuperseded(existing []ExistingCopy, intentCreatedAt time.Time) bool {
 	return false
 }
 
-// pendingEncryptionMeta builds an EncryptionMeta from a PendingObject so
-// the promoted object_locations row carries the same encryption + integrity
-// metadata as the original PUT recorded. Returns nil when the pending row
-// carries no encryption or hash metadata.
-func pendingEncryptionMeta(p *PendingObject) *EncryptionMeta {
+// pendingStoredForm builds a StoredForm from a PendingObject so the promoted
+// object_locations row carries the same encryption + integrity metadata as the
+// original PUT recorded. Returns nil when the pending row carries no
+// encryption or hash metadata.
+func pendingStoredForm(p *PendingObject) *StoredForm {
 	if !p.Encrypted && p.ContentHash == "" {
 		return nil
 	}
-	return &EncryptionMeta{
+	return &StoredForm{
 		Encrypted:     p.Encrypted,
 		EncryptionKey: p.EncryptionKey,
 		KeyID:         p.KeyID,
@@ -54,25 +54,26 @@ func pendingEncryptionMeta(p *PendingObject) *EncryptionMeta {
 	}
 }
 
-// objectFromEnc builds an ObjectLocation suitable for InsertObjectLocation
-// from a key/backend/size triple plus optional encryption metadata.
-func objectFromEnc(key, backend string, size int64, enc *EncryptionMeta) *ObjectLocation {
+// objectFromStoredForm builds an ObjectLocation suitable for
+// InsertObjectLocation from a key/backend/size triple plus the optional
+// description of how the bytes are stored.
+func objectFromStoredForm(key, backend string, size int64, form *StoredForm) *ObjectLocation {
 	loc := &ObjectLocation{
 		ObjectKey:   key,
 		BackendName: backend,
 		SizeBytes:   size,
 	}
-	if enc == nil {
+	if form == nil {
 		return loc
 	}
-	if enc.Encrypted {
+	if form.Encrypted {
 		loc.Encrypted = true
-		loc.EncryptionKey = enc.EncryptionKey
-		loc.KeyID = enc.KeyID
-		loc.PlaintextSize = enc.PlaintextSize
+		loc.EncryptionKey = form.EncryptionKey
+		loc.KeyID = form.KeyID
+		loc.PlaintextSize = form.PlaintextSize
 	}
-	if enc.ContentHash != "" {
-		loc.ContentHash = enc.ContentHash
+	if form.ContentHash != "" {
+		loc.ContentHash = form.ContentHash
 	}
 	return loc
 }

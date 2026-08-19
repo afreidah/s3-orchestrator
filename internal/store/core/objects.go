@@ -25,9 +25,9 @@ import (
 // quota. On overwrite, all existing copies (including replicas) are
 // removed and their quotas decremented before inserting the new
 // primary copy. Returns the displaced copies for cleanup.
-func RecordObject(ctx context.Context, runner Runner, key, backend string, size int64, enc *EncryptionMeta) ([]DeletedCopy, error) {
+func RecordObject(ctx context.Context, runner Runner, key, backend string, size int64, form *StoredForm) ([]DeletedCopy, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) ([]DeletedCopy, error) {
-		return recordObjectTx(ctx, tx, key, backend, size, enc, "")
+		return recordObjectTx(ctx, tx, key, backend, size, form, "")
 	})
 }
 
@@ -35,9 +35,9 @@ func RecordObject(ctx context.Context, runner Runner, key, backend string, size 
 // RecordObject and additionally deletes the matching pending_objects
 // intent inside the same transaction. The write path uses this on a
 // successful PUT so the intent never outlives a committed location.
-func RecordObjectAndClearPending(ctx context.Context, runner Runner, key, backend string, size int64, enc *EncryptionMeta, intentID string) ([]DeletedCopy, error) {
+func RecordObjectAndClearPending(ctx context.Context, runner Runner, key, backend string, size int64, form *StoredForm, intentID string) ([]DeletedCopy, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) ([]DeletedCopy, error) {
-		return recordObjectTx(ctx, tx, key, backend, size, enc, intentID)
+		return recordObjectTx(ctx, tx, key, backend, size, form, intentID)
 	})
 }
 
@@ -46,7 +46,7 @@ func RecordObjectAndClearPending(ctx context.Context, runner Runner, key, backen
 // pending row. All per-backend quota deltas are aggregated and applied
 // in stable backend_name order via applyQuotaDeltas so
 // concurrent overwrites can never deadlock on backend_quotas row locks.
-func recordObjectTx(ctx context.Context, tx TxAdapter, key, backend string, size int64, enc *EncryptionMeta, intentID string) ([]DeletedCopy, error) {
+func recordObjectTx(ctx context.Context, tx TxAdapter, key, backend string, size int64, form *StoredForm, intentID string) ([]DeletedCopy, error) {
 	if err := tx.AcquireKeyLock(ctx, key); err != nil {
 		return nil, err
 	}
@@ -59,7 +59,7 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, key, backend string, size
 	if err != nil {
 		return nil, err
 	}
-	if err := tx.InsertObjectLocation(ctx, objectFromEnc(key, backend, size, enc)); err != nil {
+	if err := tx.InsertObjectLocation(ctx, objectFromStoredForm(key, backend, size, form)); err != nil {
 		return nil, fmt.Errorf("insert object location: %w", err)
 	}
 	deltas[backend] += size
@@ -252,12 +252,12 @@ func MoveObjectLocation(ctx context.Context, runner Runner, key, fromBackend, to
 // that placement decisions have to account for, but the workers leave it
 // alone.
 //
-// enc carries what the caller established about the bytes on the backend.
+// form carries what the caller established about the bytes on the backend.
 // Passing nil records the object as plaintext, so callers that import bytes
 // they have not inspected will publish ciphertext as if it were the object.
-func ImportObject(ctx context.Context, runner Runner, key, backend string, size int64, unmanaged bool, enc *EncryptionMeta) (bool, error) {
+func ImportObject(ctx context.Context, runner Runner, key, backend string, size int64, unmanaged bool, form *StoredForm) (bool, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (bool, error) {
-		loc := objectFromEnc(key, backend, size, enc)
+		loc := objectFromStoredForm(key, backend, size, form)
 		loc.Unmanaged = unmanaged
 		inserted, err := tx.InsertObjectLocationIfNotExists(ctx, loc)
 		if err != nil {

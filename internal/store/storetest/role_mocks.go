@@ -118,18 +118,18 @@ func (mr *MockObjectStoreMockRecorder) GetObjectBackendsForKeys(ctx, keys any) *
 }
 
 // ImportObject mocks base method.
-func (m *MockObjectStore) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, enc *core.EncryptionMeta) (bool, error) {
+func (m *MockObjectStore) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *core.StoredForm) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ImportObject", ctx, key, backend, size, unmanaged, enc)
+	ret := m.ctrl.Call(m, "ImportObject", ctx, key, backend, size, unmanaged, form)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ImportObject indicates an expected call of ImportObject.
-func (mr *MockObjectStoreMockRecorder) ImportObject(ctx, key, backend, size, unmanaged, enc any) *gomock.Call {
+func (mr *MockObjectStoreMockRecorder) ImportObject(ctx, key, backend, size, unmanaged, form any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportObject", reflect.TypeOf((*MockObjectStore)(nil).ImportObject), ctx, key, backend, size, unmanaged, enc)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportObject", reflect.TypeOf((*MockObjectStore)(nil).ImportObject), ctx, key, backend, size, unmanaged, form)
 }
 
 // ListObjects mocks base method.
@@ -208,33 +208,33 @@ func (mr *MockObjectStoreMockRecorder) MoveObjectLocation(ctx, key, fromBackend,
 }
 
 // RecordObject mocks base method.
-func (m *MockObjectStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta) ([]core.DeletedCopy, error) {
+func (m *MockObjectStore) RecordObject(ctx context.Context, key, backend string, size int64, form *core.StoredForm) ([]core.DeletedCopy, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordObject", ctx, key, backend, size, enc)
+	ret := m.ctrl.Call(m, "RecordObject", ctx, key, backend, size, form)
 	ret0, _ := ret[0].([]core.DeletedCopy)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RecordObject indicates an expected call of RecordObject.
-func (mr *MockObjectStoreMockRecorder) RecordObject(ctx, key, backend, size, enc any) *gomock.Call {
+func (mr *MockObjectStoreMockRecorder) RecordObject(ctx, key, backend, size, form any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObject", reflect.TypeOf((*MockObjectStore)(nil).RecordObject), ctx, key, backend, size, enc)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObject", reflect.TypeOf((*MockObjectStore)(nil).RecordObject), ctx, key, backend, size, form)
 }
 
 // RecordObjectAndClearPending mocks base method.
-func (m *MockObjectStore) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta, intentID string) ([]core.DeletedCopy, error) {
+func (m *MockObjectStore) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, form *core.StoredForm, intentID string) ([]core.DeletedCopy, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordObjectAndClearPending", ctx, key, backend, size, enc, intentID)
+	ret := m.ctrl.Call(m, "RecordObjectAndClearPending", ctx, key, backend, size, form, intentID)
 	ret0, _ := ret[0].([]core.DeletedCopy)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RecordObjectAndClearPending indicates an expected call of RecordObjectAndClearPending.
-func (mr *MockObjectStoreMockRecorder) RecordObjectAndClearPending(ctx, key, backend, size, enc, intentID any) *gomock.Call {
+func (mr *MockObjectStoreMockRecorder) RecordObjectAndClearPending(ctx, key, backend, size, form, intentID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectAndClearPending", reflect.TypeOf((*MockObjectStore)(nil).RecordObjectAndClearPending), ctx, key, backend, size, enc, intentID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectAndClearPending", reflect.TypeOf((*MockObjectStore)(nil).RecordObjectAndClearPending), ctx, key, backend, size, form, intentID)
 }
 
 // MockQuotaStore is a mock of QuotaStore interface.

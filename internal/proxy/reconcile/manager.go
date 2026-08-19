@@ -31,7 +31,7 @@ import (
 // drop a stale row, walk the ledger in byte order, and sweep cleanup-queue
 // rows belonging to a key that no longer exists.
 type Stores interface {
-	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, enc *core.EncryptionMeta) (bool, error)
+	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *core.StoredForm) (bool, error)
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 	DeleteObjectLocation(ctx context.Context, key, backendName string) error
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error)
@@ -142,7 +142,7 @@ func (m *Manager) importDiscovered(ctx context.Context, key, backendName string,
 	if err != nil {
 		return false, err
 	}
-	enc, err := ClassifyImport(ctx, ClassifyDeps{
+	form, err := ClassifyImport(ctx, ClassifyDeps{
 		Backend: be,
 		Stores:  m.stores,
 		Source:  "reconcile",
@@ -151,7 +151,7 @@ func (m *Manager) importDiscovered(ctx context.Context, key, backendName string,
 	if err != nil {
 		return false, err
 	}
-	return m.stores.ImportObject(ctx, key, backendName, size, unmanaged, enc)
+	return m.stores.ImportObject(ctx, key, backendName, size, unmanaged, form)
 }
 
 // ReconcileBackend reconciles a backend against the ledger using the

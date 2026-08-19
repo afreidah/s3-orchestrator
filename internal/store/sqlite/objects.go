@@ -106,34 +106,6 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.O
 }
 
 // -------------------------------------------------------------------------
-// WRITE OPERATIONS
-// -------------------------------------------------------------------------
-
-// RecordObject delegates to core.RecordObject which composes the
-// engine-agnostic transactional sequence against the SQLite TxAdapter.
-func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta) ([]core.DeletedCopy, error) {
-	return core.RecordObject(ctx, s, key, backend, size, enc)
-}
-
-// RecordObjectAndClearPending delegates to core. Inside the same
-// transaction the pending row is deleted so the intent never outlives
-// a committed location.
-func (s *Store) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta, intentID string) ([]core.DeletedCopy, error) {
-	return core.RecordObjectAndClearPending(ctx, s, key, backend, size, enc, intentID)
-}
-
-// DeleteObject delegates to core.DeleteObject.
-func (s *Store) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, error) {
-	return core.DeleteObject(ctx, s, key)
-}
-
-// DeleteObjectsBatch delegates to core.DeleteObjectsBatch which
-// removes every supplied key in one transaction.
-func (s *Store) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, error) {
-	return core.DeleteObjectsBatch(ctx, s, keys)
-}
-
-// -------------------------------------------------------------------------
 // LISTING
 // -------------------------------------------------------------------------
 
@@ -381,27 +353,6 @@ func scanSlimObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
 		return nil, fmt.Errorf("failed to iterate object locations: %w", err)
 	}
 	return locs, nil
-}
-
-// -------------------------------------------------------------------------
-// LOCATION MUTATIONS
-// -------------------------------------------------------------------------
-
-// MoveObjectLocation delegates to core.MoveObjectLocation.
-func (s *Store) MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error) {
-	return core.MoveObjectLocation(ctx, s, key, fromBackend, toBackend)
-}
-
-// DeleteObjectLocation removes a single object_locations row for the given key
-// and backend, debiting the backend's bytes_used by the removed copy's size in
-// the same transaction. Delegates to core.DeleteObjectLocation.
-func (s *Store) DeleteObjectLocation(ctx context.Context, key, backendName string) error {
-	return core.DeleteObjectLocation(ctx, s, key, backendName)
-}
-
-// ImportObject delegates to core.ImportObject.
-func (s *Store) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, enc *core.EncryptionMeta) (bool, error) {
-	return core.ImportObject(ctx, s, key, backend, size, unmanaged, enc)
 }
 
 // BackendObjectStats returns the object count and total bytes stored on a backend.

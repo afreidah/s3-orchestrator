@@ -30,13 +30,13 @@ import (
 
 // headSourceForCopy walks the source's known locations until one HEAD
 // succeeds (skipping over-limit and unknown backends), and returns its
-// metadata plus optional encryption descriptor. ok=false signals that no
+// metadata plus the stored form of its bytes. ok=false signals that no
 // copy could be reached.
 func (o *Manager) headSourceForCopy(
 	ctx context.Context,
 	sourceKey string,
 	locations []core.ObjectLocation,
-) (int64, string, map[string]string, *core.EncryptionMeta, bool) {
+) (int64, string, map[string]string, *core.StoredForm, bool) {
 	for i := range locations {
 		if !o.core.Usage().WithinLimits(locations[i].BackendName, 1, 0, 0) {
 			continue
@@ -49,9 +49,9 @@ func (o *Manager) headSourceForCopy(
 		if err != nil {
 			continue
 		}
-		var srcEnc *core.EncryptionMeta
+		var srcForm *core.StoredForm
 		if locations[i].Encrypted {
-			srcEnc = &core.EncryptionMeta{
+			srcForm = &core.StoredForm{
 				Encrypted:     true,
 				EncryptionKey: locations[i].EncryptionKey,
 				KeyID:         locations[i].KeyID,
@@ -59,7 +59,7 @@ func (o *Manager) headSourceForCopy(
 				ContentHash:   locations[i].ContentHash,
 			}
 		}
-		return headResult.Size, headResult.ContentType, headResult.Metadata, srcEnc, true
+		return headResult.Size, headResult.ContentType, headResult.Metadata, srcForm, true
 	}
 	return 0, "", nil, nil, false
 }
@@ -92,7 +92,7 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 		return "", o.core.ClassifyWriteError(span, operation, err)
 	}
 
-	size, contentType, metadata, srcEnc, ok := o.headSourceForCopy(ctx, sourceKey, locations)
+	size, contentType, metadata, srcForm, ok := o.headSourceForCopy(ctx, sourceKey, locations)
 	if !ok {
 		err := fmt.Errorf("failed to head source object from any copy")
 		observe.RecordSpanError(span, err)
@@ -127,7 +127,7 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 			size:            size,
 			contentType:     contentType,
 			metadata:        metadata,
-			srcEnc:          srcEnc,
+			srcForm:         srcForm,
 			start:           start,
 		}
 		if etag, handled, nerr := o.tryNativeCopy(ctx, req); handled {
@@ -155,7 +155,7 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 		return "", fmt.Errorf("failed to write destination: %w", err)
 	}
 
-	return o.finalizeMaterializedCopy(ctx, span, destBackend, sourceKey, destKey, src.sourceBackend, destBackendName, size, srcEnc, start, etag)
+	return o.finalizeMaterializedCopy(ctx, span, destBackend, sourceKey, destKey, src.sourceBackend, destBackendName, size, srcForm, start, etag)
 }
 
 // sameBackendCopyEligible reports whether the source has at least one
@@ -185,7 +185,7 @@ type nativeCopyContext struct {
 	size            int64
 	contentType     string
 	metadata        map[string]string
-	srcEnc          *core.EncryptionMeta
+	srcForm         *core.StoredForm
 	start           time.Time
 }
 

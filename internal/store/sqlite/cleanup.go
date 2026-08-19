@@ -221,11 +221,6 @@ func parseNullableTime(s sql.NullString) *time.Time {
 	return &t
 }
 
-// SweepStaleCleanupQueueRows delegates to core.SweepStaleCleanupQueueRows.
-func (s *Store) SweepStaleCleanupQueueRows(ctx context.Context, key, backend string) (int64, error) {
-	return core.SweepStaleCleanupQueueRows(ctx, s, key, backend)
-}
-
 // CleanupQueueDepth returns the number of items still pending in the queue
 // (fewer than 10 attempts).
 func (s *Store) CleanupQueueDepth(ctx context.Context) (int64, error) {
@@ -251,14 +246,6 @@ func (s *Store) CleanupDLQDepth(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("failed to count cleanup DLQ rows: %w", err)
 	}
 	return count, nil
-}
-
-// MoveCleanupToDLQ atomically graduates an exhausted cleanup_queue row
-// to the dead-letter table. Delegates to core.MoveCleanupToDLQ so both
-// engines share the move semantics - notably that orphan_bytes is left
-// untouched because the backend object is still on disk.
-func (s *Store) MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error) {
-	return core.MoveCleanupToDLQ(ctx, s, id, lastError)
 }
 
 // ListCleanupDLQ returns dead-lettered cleanup rows for operator inspection,

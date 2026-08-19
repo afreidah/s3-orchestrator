@@ -133,7 +133,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 
-	uploadBody, uploadSize, enc, err := o.buildPutPayload(ctx, body, size, contentHash, dekState)
+	uploadBody, uploadSize, form, err := o.buildPutPayload(ctx, body, size, contentHash, dekState)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return putAttemptResult{backend: backendName, fatalErr: err}
@@ -143,7 +143,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	// commit failure after the bytes land has a recovery breadcrumb: the
 	// pending reaper promotes the intent on a later tick instead of the
 	// old failure path silently deleting the just-written copy.
-	intentID, err := o.coord.InsertPendingIntent(ctx, key, backendName, uploadSize, enc)
+	intentID, err := o.coord.InsertPendingIntent(ctx, key, backendName, uploadSize, form)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return putAttemptResult{backend: backendName, fatalErr: err}
@@ -177,7 +177,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 		return putAttemptResult{backend: backendName, putErr: errDrainRaceAborted}
 	}
 
-	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, key, backendName, uploadSize, enc, intentID); err != nil {
+	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, key, backendName, uploadSize, form, intentID); err != nil {
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 	return putAttemptResult{backend: backendName, etag: etag}
@@ -189,7 +189,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 // instead of treating the abort as a generic backend failure.
 var errDrainRaceAborted = errors.New("aborted: drain started mid-write")
 
-// buildPutPayload prepares the upload body and EncryptionMeta for a
+// buildPutPayload prepares the upload body and StoredForm for a
 // single attempt. The materialized body's Reader() rewinds on every
 // call so encryption and unencrypted paths both replay from offset 0
 // across failover retries. Encryption layering, when enabled, runs
@@ -200,24 +200,24 @@ func (o *Manager) buildPutPayload(
 	size int64,
 	contentHash string,
 	dekState *putEncryptState,
-) (io.Reader, int64, *core.EncryptionMeta, error) {
+) (io.Reader, int64, *core.StoredForm, error) {
 	plain, err := body.Reader()
 	if err != nil {
 		return nil, 0, nil, err
 	}
 	if o.encryptor != nil {
-		uploadBody, uploadSize, enc, err := encryptForPut(ctx, o.encryptor, plain, size, dekState)
+		uploadBody, uploadSize, form, err := encryptForPut(ctx, o.encryptor, plain, size, dekState)
 		if err != nil {
 			return nil, 0, nil, err
 		}
-		enc.ContentHash = contentHash
-		return uploadBody, uploadSize, enc, nil
+		form.ContentHash = contentHash
+		return uploadBody, uploadSize, form, nil
 	}
-	var enc *core.EncryptionMeta
+	var form *core.StoredForm
 	if contentHash != "" {
-		enc = &core.EncryptionMeta{ContentHash: contentHash}
+		form = &core.StoredForm{ContentHash: contentHash}
 	}
-	return plain, size, enc, nil
+	return plain, size, form, nil
 }
 
 // withoutBackend returns eligible with name removed in original order.

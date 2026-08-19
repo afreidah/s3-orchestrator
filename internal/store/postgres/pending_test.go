@@ -80,5 +80,5 @@ func TestPendingInsertParams_NullableFieldsSetWhenPresent(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// pendingEncryptionMeta
+// pendingStoredForm
 // -------------------------------------------------------------------------

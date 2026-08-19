@@ -160,14 +160,6 @@ func (s *Store) CleanupDLQDepth(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-// MoveCleanupToDLQ atomically graduates an exhausted cleanup_queue row
-// to the dead-letter table. Delegates to core.MoveCleanupToDLQ so both
-// engines share the move semantics - notably that orphan_bytes is left
-// untouched because the backend object is still on disk.
-func (s *Store) MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error) {
-	return core.MoveCleanupToDLQ(ctx, s, id, lastError)
-}
-
 // -------------------------------------------------------------------------
 // ORPHAN BYTES AND SWEEPS
 // -------------------------------------------------------------------------
@@ -197,14 +189,6 @@ func (s *Store) DecrementOrphanBytes(ctx context.Context, backendName string, am
 		return fmt.Errorf("failed to decrement orphan bytes: %w", err)
 	}
 	return nil
-}
-
-// SweepStaleCleanupQueueRows removes every cleanup_queue row matching
-// the (object_key, backend_name) pair and decrements the backend's
-// orphan_bytes counter by the sum of their size_bytes. Delegates to
-// core.SweepStaleCleanupQueueRows.
-func (s *Store) SweepStaleCleanupQueueRows(ctx context.Context, key, backend string) (int64, error) {
-	return core.SweepStaleCleanupQueueRows(ctx, s, key, backend)
 }
 
 // -------------------------------------------------------------------------

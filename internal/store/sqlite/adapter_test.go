@@ -276,13 +276,13 @@ func TestAdapter_LockObjectOnBackend_ReturnsRow(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
-	enc := &core.EncryptionMeta{
+	form := &core.StoredForm{
 		Encrypted:     true,
 		EncryptionKey: []byte("packed"),
 		KeyID:         "kid-1",
 		PlaintextSize: 50,
 	}
-	if _, err := s.RecordObject(ctx, "bucket/k", "backend-a", 75, enc); err != nil {
+	if _, err := s.RecordObject(ctx, "bucket/k", "backend-a", 75, form); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -900,13 +900,13 @@ func TestAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState(t *testing.T)
 	ctx := context.Background()
 	key := "bucket/mixed"
 
-	enc := &core.EncryptionMeta{
+	form := &core.StoredForm{
 		Encrypted:     true,
 		EncryptionKey: []byte("wrapped-dek"),
 		KeyID:         "key-1",
 		PlaintextSize: 1024,
 	}
-	if _, err := s.RecordObject(ctx, key, "backend-a", 1100, enc); err != nil {
+	if _, err := s.RecordObject(ctx, key, "backend-a", 1100, form); err != nil {
 		t.Fatalf("RecordObject encrypted: %v", err)
 	}
 	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {

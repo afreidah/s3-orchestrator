@@ -51,7 +51,7 @@ type errorObjectStore struct {
 // ImportObject records the import call so the test can assert it
 // happened. The first return value mirrors the real store's
 // inserted=true semantics for a fresh row.
-func (e errorObjectStore) ImportObject(context.Context, string, string, int64, bool, *core.EncryptionMeta) (bool, error) {
+func (e errorObjectStore) ImportObject(context.Context, string, string, int64, bool, *core.StoredForm) (bool, error) {
 	return false, e.err
 }
 
