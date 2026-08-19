@@ -60,6 +60,7 @@ type Config struct {
 	CircuitBreaker        CircuitBreakerConfig        `yaml:"circuit_breaker"`
 	BackendCircuitBreaker BackendCircuitBreakerConfig `yaml:"backend_circuit_breaker"`
 	Encryption            EncryptionConfig            `yaml:"encryption"`
+	Compression           CompressionConfig           `yaml:"compression"`
 	UI                    UIConfig                    `yaml:"ui"`
 	CleanupQueue          CleanupQueueConfig          `yaml:"cleanup_queue"`
 	WritePath             WritePathConfig             `yaml:"write_path"`
@@ -130,6 +131,7 @@ func (c *Config) validatePerTypeSections() []error {
 	errs = append(errs, c.Replication.setDefaultsAndValidate(len(c.Backends))...)
 	errs = append(errs, c.RateLimit.setDefaultsAndValidate()...)
 	errs = append(errs, c.Encryption.setDefaultsAndValidate()...)
+	errs = append(errs, c.Compression.setDefaultsAndValidate()...)
 	errs = append(errs, c.UI.setDefaultsAndValidate()...)
 	errs = append(errs, c.UsageFlush.setDefaultsAndValidate()...)
 	errs = append(errs, validateLifecycleRules(c.Lifecycle.Rules)...)
@@ -281,6 +283,12 @@ func topLevelFieldsChanged(old, new *Config) []string {
 		old.Encryption.MasterKeyFile != new.Encryption.MasterKeyFile ||
 		old.Encryption.ChunkSize != new.Encryption.ChunkSize {
 		changed = append(changed, "encryption")
+	}
+	// The codec is built once at startup from level and chunk_size, and
+	// enabling compression mid-flight would leave the write path without one,
+	// so the whole block follows encryption in requiring a restart.
+	if old.Compression != new.Compression {
+		changed = append(changed, "compression")
 	}
 	if old.RoutingStrategy != new.RoutingStrategy {
 		changed = append(changed, "routing_strategy")
