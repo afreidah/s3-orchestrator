@@ -80,7 +80,7 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*core.
 
 // RecordPart records a completed part for a multipart upload. Re-uploading the
 // same part number updates the existing row (ON CONFLICT DO UPDATE).
-func (s *Store) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *core.EncryptionMeta) error {
+func (s *Store) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, form *core.StoredForm) error {
 	if partNumber < 1 || partNumber > 10000 {
 		return fmt.Errorf("invalid part number %d: must be between 1 and 10000", partNumber)
 	}
@@ -93,11 +93,11 @@ func (s *Store) RecordPart(ctx context.Context, uploadID string, partNumber int,
 		keyID         *string
 		plaintextSize *int64
 	)
-	if enc != nil && enc.Encrypted {
+	if form != nil && form.Encrypted {
 		encrypted = true
-		encryptionKey = enc.EncryptionKey
-		keyID = &enc.KeyID
-		plaintextSize = &enc.PlaintextSize
+		encryptionKey = form.EncryptionKey
+		keyID = &form.KeyID
+		plaintextSize = &form.PlaintextSize
 	}
 
 	_, err := s.db.ExecContext(ctx,

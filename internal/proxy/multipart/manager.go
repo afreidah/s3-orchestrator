@@ -242,7 +242,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 		return "", core.ErrInsufficientStorage
 	}
 
-	uploadBody, uploadSize, enc, err := mp.prepareUploadPartBody(ctx, mu, body, size)
+	uploadBody, uploadSize, form, err := mp.prepareUploadPartBody(ctx, mu, body, size)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return "", err
@@ -259,7 +259,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 		return "", fmt.Errorf("failed to upload part: %w", err)
 	}
 
-	if err := mp.stores.RecordPart(ctx, uploadID, partNumber, etag, uploadSize, enc); err != nil {
+	if err := mp.stores.RecordPart(ctx, uploadID, partNumber, etag, uploadSize, form); err != nil {
 		mp.log.ErrorContext(ctx, "recordPart failed, cleaning up part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
 		mp.coord.RecoverFromRecordFailure(ctx, be, mu.BackendName, partKey, "orphan_part_record_failed", uploadSize)
@@ -342,14 +342,14 @@ func (mp *Manager) forgetUploadDEK(uploadID string) {
 
 // encryptWithUploadDEK wraps body in EncryptWithDEK using the
 // upload-level DEK from mu and returns the ciphertext reader, its
-// ciphertext size, and the EncryptionMeta the caller should persist on
+// ciphertext size, and the StoredForm the caller should persist on
 // the resulting part or object row. The caller is responsible for
 // deciding whether to encrypt at all (the upload row may have been
 // created unencrypted, or the encryptor may be unconfigured) and for
 // wrapping the returned error with a call-site-specific context.
 // Counters are incremented here so every successful encrypt and every
 // failure path is observable from one place.
-func (mp *Manager) encryptWithUploadDEK(ctx context.Context, mu *core.MultipartUpload, body io.Reader, size int64) (io.Reader, int64, *core.EncryptionMeta, error) {
+func (mp *Manager) encryptWithUploadDEK(ctx context.Context, mu *core.MultipartUpload, body io.Reader, size int64) (io.Reader, int64, *core.StoredForm, error) {
 	dek, wrappedDEK, _, err := mp.UnwrapUploadDEK(ctx, mu)
 	if err != nil {
 		return nil, 0, nil, err
@@ -360,7 +360,7 @@ func (mp *Manager) encryptWithUploadDEK(ctx context.Context, mu *core.MultipartU
 		return nil, 0, nil, err
 	}
 	telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
-	return result.Body, result.CiphertextSize, &core.EncryptionMeta{
+	return result.Body, result.CiphertextSize, &core.StoredForm{
 		Encrypted:     true,
 		EncryptionKey: encryption.PackKeyData(result.BaseNonce, result.WrappedDEK),
 		KeyID:         result.KeyID,
@@ -368,7 +368,7 @@ func (mp *Manager) encryptWithUploadDEK(ctx context.Context, mu *core.MultipartU
 	}, nil
 }
 
-// prepareUploadPartBody returns the body, size, and encryption metadata
+// prepareUploadPartBody returns the body, size, and stored form
 // the backend PUT should use for one part. When the upload row is flagged
 // as encrypted and the manager has an encryptor configured, the per-part
 // body is wrapped with EncryptWithDEK using the upload-level DEK from the
@@ -376,16 +376,16 @@ func (mp *Manager) encryptWithUploadDEK(ctx context.Context, mu *core.MultipartU
 // AES-GCM (key, nonce) uniqueness invariant holds across every part
 // because EncryptWithDEK generates a fresh per-part base nonce internally.
 // When encryption is disabled or the upload was created unencrypted, the
-// inputs are returned unchanged with a nil EncryptionMeta.
-func (mp *Manager) prepareUploadPartBody(ctx context.Context, mu *core.MultipartUpload, body io.Reader, size int64) (io.Reader, int64, *core.EncryptionMeta, error) {
+// inputs are returned unchanged with a nil StoredForm.
+func (mp *Manager) prepareUploadPartBody(ctx context.Context, mu *core.MultipartUpload, body io.Reader, size int64) (io.Reader, int64, *core.StoredForm, error) {
 	if mp.encryptor == nil || !mu.Encrypted {
 		return body, size, nil, nil
 	}
-	out, ciphertextSize, enc, err := mp.encryptWithUploadDEK(ctx, mu, body, size)
+	out, ciphertextSize, form, err := mp.encryptWithUploadDEK(ctx, mu, body, size)
 	if err != nil {
 		return nil, 0, nil, fmt.Errorf("encrypt part: %w", err)
 	}
-	return out, ciphertextSize, enc, nil
+	return out, ciphertextSize, form, nil
 }
 
 // multipartPartKey returns the temporary object key for a multipart part.
@@ -697,7 +697,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 		assembleReader = io.TeeReader(pr, hasher)
 	}
 
-	uploadBody, uploadSize, enc, err := mp.buildAssembledUpload(ctx, span, mu, assembleReader, totalPlaintextSize)
+	uploadBody, uploadSize, form, err := mp.buildAssembledUpload(ctx, span, mu, assembleReader, totalPlaintextSize)
 	if err != nil {
 		return "", err
 	}
@@ -709,11 +709,11 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// a failure. The intent gives the pending reaper the breadcrumb it needs to
 	// either finish the commit or remove the orphan.
 	//
-	// enc has no content hash yet: the plaintext digest is only known once the
+	// form has no content hash yet: the plaintext digest is only known once the
 	// stream has drained, so an intent resolved by the reaper commits without
 	// one and the scrubber backfills it later. That matches every other
 	// reaper-promoted object.
-	intentID, err := mp.coord.InsertPendingIntent(ctx, mu.ObjectKey, mu.BackendName, uploadSize, enc)
+	intentID, err := mp.coord.InsertPendingIntent(ctx, mu.ObjectKey, mu.BackendName, uploadSize, form)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return "", err
@@ -738,9 +738,9 @@ func (mp *Manager) completeMultipartUploadLocked(
 	}
 	pr.Close()
 
-	enc = stampContentHash(enc, hasher)
+	form = stampContentHash(form, hasher)
 
-	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, mu.ObjectKey, mu.BackendName, uploadSize, enc, intentID); err != nil {
+	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, mu.ObjectKey, mu.BackendName, uploadSize, form, intentID); err != nil {
 		return "", err
 	}
 
@@ -795,20 +795,20 @@ func (mp *Manager) newIntegrityHasher() hash.Hash {
 }
 
 // stampContentHash finalises the hasher (when one was used) and writes
-// the resulting hex digest onto enc. When integrity is disabled hasher
-// is nil and the original enc is returned unchanged; when enc is nil
-// and a hash was computed, a fresh EncryptionMeta is allocated so the
+// the resulting hex digest onto form. When integrity is disabled hasher
+// is nil and the original form is returned unchanged; when form is nil
+// and a hash was computed, a fresh StoredForm is allocated so the
 // store layer receives the hash.
-func stampContentHash(enc *core.EncryptionMeta, hasher hash.Hash) *core.EncryptionMeta {
+func stampContentHash(form *core.StoredForm, hasher hash.Hash) *core.StoredForm {
 	if hasher == nil {
-		return enc
+		return form
 	}
 	digest := hex.EncodeToString(hasher.Sum(nil))
-	if enc == nil {
-		return &core.EncryptionMeta{ContentHash: digest}
+	if form == nil {
+		return &core.StoredForm{ContentHash: digest}
 	}
-	enc.ContentHash = digest
-	return enc
+	form.ContentHash = digest
+	return form
 }
 
 // sumPlaintextSize returns the total plaintext byte count across parts.
@@ -841,16 +841,16 @@ func (mp *Manager) buildAssembledUpload(
 	mu *core.MultipartUpload,
 	pr io.Reader,
 	totalPlaintextSize int64,
-) (io.Reader, int64, *core.EncryptionMeta, error) {
+) (io.Reader, int64, *core.StoredForm, error) {
 	if mp.encryptor == nil {
 		return pr, totalPlaintextSize, nil, nil
 	}
-	out, ciphertextSize, enc, err := mp.encryptWithUploadDEK(ctx, mu, pr, totalPlaintextSize)
+	out, ciphertextSize, form, err := mp.encryptWithUploadDEK(ctx, mu, pr, totalPlaintextSize)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return nil, 0, nil, fmt.Errorf("encrypt final object: %w", err)
 	}
-	return out, ciphertextSize, enc, nil
+	return out, ciphertextSize, form, nil
 }
 
 // -------------------------------------------------------------------------

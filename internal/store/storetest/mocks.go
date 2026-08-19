@@ -676,18 +676,18 @@ func (mr *MockMetadataStoreMockRecorder) GetUsageForPeriod(ctx, period any) *gom
 }
 
 // ImportObject mocks base method.
-func (m *MockMetadataStore) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, enc *core.EncryptionMeta) (bool, error) {
+func (m *MockMetadataStore) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *core.StoredForm) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ImportObject", ctx, key, backend, size, unmanaged, enc)
+	ret := m.ctrl.Call(m, "ImportObject", ctx, key, backend, size, unmanaged, form)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ImportObject indicates an expected call of ImportObject.
-func (mr *MockMetadataStoreMockRecorder) ImportObject(ctx, key, backend, size, unmanaged, enc any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) ImportObject(ctx, key, backend, size, unmanaged, form any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportObject", reflect.TypeOf((*MockMetadataStore)(nil).ImportObject), ctx, key, backend, size, unmanaged, enc)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportObject", reflect.TypeOf((*MockMetadataStore)(nil).ImportObject), ctx, key, backend, size, unmanaged, form)
 }
 
 // IncrementOrphanBytes mocks base method.
@@ -1032,47 +1032,47 @@ func (mr *MockMetadataStoreMockRecorder) ReconcileUsage(ctx any) *gomock.Call {
 }
 
 // RecordObject mocks base method.
-func (m *MockMetadataStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta) ([]core.DeletedCopy, error) {
+func (m *MockMetadataStore) RecordObject(ctx context.Context, key, backend string, size int64, form *core.StoredForm) ([]core.DeletedCopy, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordObject", ctx, key, backend, size, enc)
+	ret := m.ctrl.Call(m, "RecordObject", ctx, key, backend, size, form)
 	ret0, _ := ret[0].([]core.DeletedCopy)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RecordObject indicates an expected call of RecordObject.
-func (mr *MockMetadataStoreMockRecorder) RecordObject(ctx, key, backend, size, enc any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) RecordObject(ctx, key, backend, size, form any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObject", reflect.TypeOf((*MockMetadataStore)(nil).RecordObject), ctx, key, backend, size, enc)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObject", reflect.TypeOf((*MockMetadataStore)(nil).RecordObject), ctx, key, backend, size, form)
 }
 
 // RecordObjectAndClearPending mocks base method.
-func (m *MockMetadataStore) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta, intentID string) ([]core.DeletedCopy, error) {
+func (m *MockMetadataStore) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, form *core.StoredForm, intentID string) ([]core.DeletedCopy, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordObjectAndClearPending", ctx, key, backend, size, enc, intentID)
+	ret := m.ctrl.Call(m, "RecordObjectAndClearPending", ctx, key, backend, size, form, intentID)
 	ret0, _ := ret[0].([]core.DeletedCopy)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RecordObjectAndClearPending indicates an expected call of RecordObjectAndClearPending.
-func (mr *MockMetadataStoreMockRecorder) RecordObjectAndClearPending(ctx, key, backend, size, enc, intentID any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) RecordObjectAndClearPending(ctx, key, backend, size, form, intentID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectAndClearPending", reflect.TypeOf((*MockMetadataStore)(nil).RecordObjectAndClearPending), ctx, key, backend, size, enc, intentID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectAndClearPending", reflect.TypeOf((*MockMetadataStore)(nil).RecordObjectAndClearPending), ctx, key, backend, size, form, intentID)
 }
 
 // RecordPart mocks base method.
-func (m *MockMetadataStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *core.EncryptionMeta) error {
+func (m *MockMetadataStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, form *core.StoredForm) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordPart", ctx, uploadID, partNumber, etag, size, enc)
+	ret := m.ctrl.Call(m, "RecordPart", ctx, uploadID, partNumber, etag, size, form)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RecordPart indicates an expected call of RecordPart.
-func (mr *MockMetadataStoreMockRecorder) RecordPart(ctx, uploadID, partNumber, etag, size, enc any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) RecordPart(ctx, uploadID, partNumber, etag, size, form any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordPart", reflect.TypeOf((*MockMetadataStore)(nil).RecordPart), ctx, uploadID, partNumber, etag, size, enc)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordPart", reflect.TypeOf((*MockMetadataStore)(nil).RecordPart), ctx, uploadID, partNumber, etag, size, form)
 }
 
 // RecordReplica mocks base method.

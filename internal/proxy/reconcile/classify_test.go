@@ -72,7 +72,7 @@ func encryptInto(t *testing.T, enc *encryption.Encryptor, be *backendtest.InMemo
 }
 
 // classify runs ClassifyImport against a backend and copy set.
-func classify(t *testing.T, be *backendtest.InMemory, key string, locs []core.ObjectLocation) (*core.EncryptionMeta, error) {
+func classify(t *testing.T, be *backendtest.InMemory, key string, locs []core.ObjectLocation) (*core.StoredForm, error) {
 	t.Helper()
 	return ClassifyImport(context.Background(), ClassifyDeps{
 		Backend: be,

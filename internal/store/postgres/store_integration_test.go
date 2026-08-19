@@ -457,10 +457,10 @@ func TestStoreInt_RecordPart_PreservesEncryptionFields(t *testing.T) {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
 	defer func() { _ = s.DeleteMultipartUpload(ctx, uploadID) }()
-	enc := &core.EncryptionMeta{
+	form := &core.StoredForm{
 		Encrypted: true, EncryptionKey: []byte("packed"), KeyID: "kid-1", PlaintextSize: 50,
 	}
-	if err := s.RecordPart(ctx, uploadID, 1, "etag", 1024, enc); err != nil {
+	if err := s.RecordPart(ctx, uploadID, 1, "etag", 1024, form); err != nil {
 		t.Fatalf("RecordPart: %v", err)
 	}
 	parts, err := s.GetParts(ctx, uploadID)

@@ -50,8 +50,13 @@ var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 // TYPES
 // -------------------------------------------------------------------------
 
-// Store manages quota and object location data in PostgreSQL.
+// Store manages quota and object location data in PostgreSQL. The embedded
+// core.TxOps supplies the methods whose whole body is a core transaction over
+// this store as Runner; the methods declared here are the postgres-specific
+// queries.
 type Store struct {
+	core.TxOps
+
 	pool    *pgxpool.Pool
 	queries *db.Queries
 	cb      *breaker.CircuitBreaker
@@ -97,12 +102,14 @@ func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.Cir
 			host, dbCfg.Database, err)
 	}
 
-	return &Store{
+	s := &Store{
 		pool:    pool,
 		queries: db.New(wrapDBTX(pool, cb)),
 		cb:      cb,
 		connStr: connStr,
-	}, nil
+	}
+	s.TxOps = core.NewTxOps(s)
+	return s, nil
 }
 
 // Close closes the connection pool.

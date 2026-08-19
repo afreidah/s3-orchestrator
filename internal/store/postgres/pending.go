@@ -82,13 +82,6 @@ func (s *Store) DeletePendingByBackend(ctx context.Context, backendName string) 
 	return nil
 }
 
-// PromotePending resolves a pending intent transactionally. Delegates to
-// core.PromotePending which composes the lock, supersession check,
-// commit, and same-tx pending delete against the per-engine TxAdapter.
-func (s *Store) PromotePending(ctx context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.DeletedCopy, error) {
-	return core.PromotePending(ctx, s, p)
-}
-
 // -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------

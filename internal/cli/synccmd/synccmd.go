@@ -140,7 +140,7 @@ func loadConfig(path, backendName string) (*config.Config, *config.BackendConfig
 // to: a single ImportObject per backend row. Declared locally so the
 // command owns its own dependency contract.
 type importer interface {
-	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, enc *core.EncryptionMeta) (bool, error)
+	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *core.StoredForm) (bool, error)
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 }
 
@@ -258,7 +258,7 @@ func importPage(ctx context.Context, s3b backend.ObjectBackend, metaDB importer,
 			bytes += obj.SizeBytes
 			continue
 		}
-		enc, err := reconcile.ClassifyImport(ctx, reconcile.ClassifyDeps{
+		form, err := reconcile.ClassifyImport(ctx, reconcile.ClassifyDeps{
 			Backend: s3b,
 			Stores:  metaDB,
 			Source:  "sync",
@@ -267,7 +267,7 @@ func importPage(ctx context.Context, s3b backend.ObjectBackend, metaDB importer,
 		if err != nil {
 			return imported, skipped, bytes, err
 		}
-		ok, err := metaDB.ImportObject(ctx, obj.Key, backendName, obj.SizeBytes, unmanaged, enc)
+		ok, err := metaDB.ImportObject(ctx, obj.Key, backendName, obj.SizeBytes, unmanaged, form)
 		if err != nil {
 			return imported, skipped, bytes, fmt.Errorf("failed to import %s: %w", obj.Key, err)
 		}

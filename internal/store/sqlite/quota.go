@@ -154,13 +154,6 @@ func (s *Store) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, e
 	return stats, nil
 }
 
-// ReconcileUsage recomputes bytes_used from the object_locations ledger.
-// Delegates to core.ReconcileUsage so both engines share the diff-and-correct
-// logic inside a single transaction.
-func (s *Store) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
-	return core.ReconcileUsage(ctx, s)
-}
-
 // GetObjectCounts returns the number of objects stored on each backend.
 func (s *Store) GetObjectCounts(ctx context.Context) (map[string]int64, error) {
 	return s.countObjectsByBackend(ctx, "", "object counts")

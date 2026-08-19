@@ -720,11 +720,11 @@ func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) (
 
 // RecordObject is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) RecordObject(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta) ([]core.DeletedCopy, error) {
+func (f *FailableStore) RecordObject(ctx context.Context, key, backend string, size int64, form *core.StoredForm) ([]core.DeletedCopy, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBOutage
 	}
-	return f.inner.RecordObject(ctx, key, backend, size, enc)
+	return f.inner.RecordObject(ctx, key, backend, size, form)
 }
 
 // SetFailCommitOnce arms a one-shot failure on RecordObjectAndClearPending
@@ -756,14 +756,14 @@ func (f *FailableStore) consumeFailCommitOnce() bool {
 // fallbacks); the one-shot blip surfaces as errSimulatedCommitFailure
 // (plain) so the caller fails the PUT instead of treating the error as
 // a degraded-mode signal.
-func (f *FailableStore) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta, intentID string) ([]core.DeletedCopy, error) {
+func (f *FailableStore) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, form *core.StoredForm, intentID string) ([]core.DeletedCopy, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBOutage
 	}
 	if f.consumeFailCommitOnce() {
 		return nil, errSimulatedCommitFailure
 	}
-	return f.inner.RecordObjectAndClearPending(ctx, key, backend, size, enc, intentID)
+	return f.inner.RecordObjectAndClearPending(ctx, key, backend, size, form, intentID)
 }
 
 // DeleteObject is an integration-test fixture helper; see file header for
@@ -822,11 +822,11 @@ func (f *FailableStore) GetMultipartUpload(ctx context.Context, uploadID string)
 
 // RecordPart is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *core.EncryptionMeta) error {
+func (f *FailableStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, form *core.StoredForm) error {
 	if f.isFailing() {
 		return errSimulatedDBOutage
 	}
-	return f.inner.RecordPart(ctx, uploadID, partNumber, etag, size, enc)
+	return f.inner.RecordPart(ctx, uploadID, partNumber, etag, size, form)
 }
 
 // GetParts is an integration-test fixture helper; see file header for

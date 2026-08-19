@@ -52,8 +52,8 @@ type MetadataStore interface {
 type ObjectStore interface {
 	GetAllObjectLocations(ctx context.Context, key string) ([]ObjectLocation, error)
 	GetObjectBackendsForKeys(ctx context.Context, keys []string) (map[string][]string, error)
-	RecordObject(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta) ([]DeletedCopy, error)
-	RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *EncryptionMeta, intentID string) ([]DeletedCopy, error)
+	RecordObject(ctx context.Context, key, backend string, size int64, form *StoredForm) ([]DeletedCopy, error)
+	RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, form *StoredForm, intentID string) ([]DeletedCopy, error)
 	DeleteObject(ctx context.Context, key string) ([]DeletedCopy, error)
 	DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]DeletedCopy, error)
 	ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error)
@@ -61,7 +61,7 @@ type ObjectStore interface {
 	ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]ObjectLocation, error)
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]ObjectLocation, error)
 	MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error)
-	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, enc *EncryptionMeta) (bool, error)
+	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *StoredForm) (bool, error)
 	DeleteObjectLocation(ctx context.Context, key, backendName string) error
 }
 
@@ -82,7 +82,7 @@ type QuotaStore interface {
 type MultipartStore interface {
 	CreateMultipartUpload(ctx context.Context, params *CreateMultipartUploadParams) error
 	GetMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, error)
-	RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, enc *EncryptionMeta) error
+	RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, form *StoredForm) error
 	GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error)
 	DeleteMultipartUpload(ctx context.Context, uploadID string) error
 	ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error)

@@ -48,9 +48,9 @@ func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, opera
 // stream-through copy path. Differs from finalizeNativeCopy by adding
 // the egress/ingress tick because the bytes physically traversed the
 // orchestrator.
-func (o *Manager) finalizeMaterializedCopy(ctx context.Context, span trace.Span, destBackend s3be.ObjectBackend, sourceKey, destKey, srcBackendName, destBackendName string, size int64, srcEnc *core.EncryptionMeta, start time.Time, etag string) (string, error) {
+func (o *Manager) finalizeMaterializedCopy(ctx context.Context, span trace.Span, destBackend s3be.ObjectBackend, sourceKey, destKey, srcBackendName, destBackendName string, size int64, srcForm *core.StoredForm, start time.Time, etag string) (string, error) {
 	const operation = "CopyObject"
-	if err := o.coord.RecordObjectOrCleanup(ctx, span, destBackend, destKey, destBackendName, size, srcEnc); err != nil {
+	if err := o.coord.RecordObjectOrCleanup(ctx, span, destBackend, destKey, destBackendName, size, srcForm); err != nil {
 		return "", err
 	}
 	o.core.Acct().Operation(operation, destBackendName, start, nil)
@@ -69,7 +69,7 @@ func (o *Manager) finalizeMaterializedCopy(ctx context.Context, span trace.Span,
 // already on the destination so the caller MUST NOT fall back.
 func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyContext, etag string) (string, bool, error) {
 	const operation = "CopyObject"
-	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, req.destKey, req.destBackendName, req.size, req.srcEnc); err != nil {
+	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, req.destKey, req.destBackendName, req.size, req.srcForm); err != nil {
 		return "", true, err
 	}
 	o.core.Acct().Operation(operation, req.destBackendName, req.start, nil)

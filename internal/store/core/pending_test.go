@@ -3,7 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Engine-agnostic coverage for intentSuperseded and pendingEncryptionMeta.
+// Engine-agnostic coverage for intentSuperseded and pendingStoredForm.
 // Both helpers are exercised exhaustively here; the per-engine adapter layers
 // only need integration coverage that the right values reach these helpers.
 // -------------------------------------------------------------------------------
@@ -16,23 +16,23 @@ import (
 )
 
 // -------------------------------------------------------------------------
-// pendingEncryptionMeta
+// pendingStoredForm
 // -------------------------------------------------------------------------
 
-// TestPendingEncryptionMeta_ReturnsNilWhenUnencryptedAndNoHash verifies
+// TestPendingStoredForm_ReturnsNilWhenUnencryptedAndNoHash verifies
 // the helper returns nil for plain unencrypted PUTs with no content hash,
 // so the promoted object_locations row mirrors the unencrypted shape.
-func TestPendingEncryptionMeta_ReturnsNilWhenUnencryptedAndNoHash(t *testing.T) {
+func TestPendingStoredForm_ReturnsNilWhenUnencryptedAndNoHash(t *testing.T) {
 	t.Parallel()
-	if got := pendingEncryptionMeta(&PendingObject{}); got != nil {
+	if got := pendingStoredForm(&PendingObject{}); got != nil {
 		t.Errorf("expected nil for unencrypted no-hash pending, got %+v", got)
 	}
 }
 
-// TestPendingEncryptionMeta_PreservesEncryptionFields verifies that an
+// TestPendingStoredForm_PreservesEncryptionFields verifies that an
 // encrypted pending intent projects every encryption attribute onto the
-// EncryptionMeta the promote path hands to RecordObject.
-func TestPendingEncryptionMeta_PreservesEncryptionFields(t *testing.T) {
+// StoredForm the promote path hands to RecordObject.
+func TestPendingStoredForm_PreservesEncryptionFields(t *testing.T) {
 	t.Parallel()
 	p := PendingObject{
 		Encrypted:     true,
@@ -41,7 +41,7 @@ func TestPendingEncryptionMeta_PreservesEncryptionFields(t *testing.T) {
 		PlaintextSize: 90,
 		ContentHash:   "hash",
 	}
-	got := pendingEncryptionMeta(&p)
+	got := pendingStoredForm(&p)
 	if got == nil {
 		t.Fatal("expected non-nil meta")
 	}
@@ -53,12 +53,12 @@ func TestPendingEncryptionMeta_PreservesEncryptionFields(t *testing.T) {
 	}
 }
 
-// TestPendingEncryptionMeta_HashOnlyReturnsMeta verifies that an
+// TestPendingStoredForm_HashOnlyReturnsForm verifies that an
 // integrity-only PUT (encryption disabled, content hash present) still
-// produces a non-nil EncryptionMeta so the hash survives promotion.
-func TestPendingEncryptionMeta_HashOnlyReturnsMeta(t *testing.T) {
+// produces a non-nil StoredForm so the hash survives promotion.
+func TestPendingStoredForm_HashOnlyReturnsForm(t *testing.T) {
 	t.Parallel()
-	got := pendingEncryptionMeta(&PendingObject{ContentHash: "hash"})
+	got := pendingStoredForm(&PendingObject{ContentHash: "hash"})
 	if got == nil {
 		t.Fatal("expected non-nil meta when hash is set")
 	}

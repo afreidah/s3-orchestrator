@@ -63,8 +63,8 @@ type putEncryptState struct {
 // a fresh DEK via the KeyProvider and stores it in state; subsequent calls
 // reuse the cached DEK with a new base nonce, so retry storms do not
 // hammer the KeyProvider. Returns the ciphertext stream, its size, and the
-// storage-side encryption metadata. The caller layers integrity fields
-// (e.g. ContentHash) onto the returned EncryptionMeta.
+// stored form of those bytes. The caller layers integrity fields
+// (e.g. ContentHash) onto the returned StoredForm.
 //
 // plaintext must be a reader positioned at offset 0; callers replaying
 // across failover attempts pass a fresh reader (or a rewound seeker) per
@@ -75,7 +75,7 @@ func encryptForPut(
 	plaintext io.Reader,
 	plaintextSize int64,
 	state *putEncryptState,
-) (io.Reader, int64, *core.EncryptionMeta, error) {
+) (io.Reader, int64, *core.StoredForm, error) {
 	var (
 		result *encryption.EncryptResult
 		err    error
@@ -95,7 +95,7 @@ func encryptForPut(
 		return nil, 0, nil, fmt.Errorf("encrypt: %w", err)
 	}
 	telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
-	return withStreamMetric(result.Body, "encrypt"), result.CiphertextSize, &core.EncryptionMeta{
+	return withStreamMetric(result.Body, "encrypt"), result.CiphertextSize, &core.StoredForm{
 		Encrypted:     true,
 		EncryptionKey: encryption.PackKeyData(result.BaseNonce, result.WrappedDEK),
 		KeyID:         result.KeyID,

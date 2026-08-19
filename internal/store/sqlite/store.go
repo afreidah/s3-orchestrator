@@ -36,7 +36,12 @@ import (
 // rawDB is the same handle without the wrapper; transactional code
 // paths begin tx through cbBeginTx so the rollback defer can live at
 // the same call site as the begin.
+// The embedded core.TxOps supplies the methods whose whole body is a core
+// transaction over this store as Runner; the methods declared here are the
+// SQLite-specific queries.
 type Store struct {
+	core.TxOps
+
 	db    dbAPI
 	rawDB *sql.DB
 	cb    *breaker.CircuitBreaker
@@ -76,6 +81,7 @@ func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.Cir
 	}
 
 	s := &Store{db: wrapDB(db, cb), rawDB: db, cb: cb}
+	s.TxOps = core.NewTxOps(s)
 	if err := s.RunMigrations(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)

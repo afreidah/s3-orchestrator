@@ -173,10 +173,10 @@ func moveReq(src, dest s3be.ObjectBackend) *MoveRequest {
 	}
 }
 
-// TestInsertPendingIntent_CopiesEncryptionMeta drives the enc != nil
+// TestInsertPendingIntent_CopiesStoredForm drives the form != nil
 // branch so the PendingObject is populated with the wrapped DEK,
 // keyID, plaintext size, and content hash.
-func TestInsertPendingIntent_CopiesEncryptionMeta(t *testing.T) {
+func TestInsertPendingIntent_CopiesStoredForm(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockCoordinatorStores(ctrl)
@@ -189,7 +189,7 @@ func TestInsertPendingIntent_CopiesEncryptionMeta(t *testing.T) {
 		}).Times(1)
 
 	coord := newCoordinatorWithStore(store, true)
-	enc := &core.EncryptionMeta{
+	form := &core.StoredForm{
 		Encrypted:     true,
 		EncryptionKey: []byte("wrapped-dek-bytes"),
 		KeyID:         "kid-1",
@@ -197,7 +197,7 @@ func TestInsertPendingIntent_CopiesEncryptionMeta(t *testing.T) {
 		ContentHash:   "deadbeef",
 	}
 
-	intentID, err := coord.InsertPendingIntent(context.Background(), "k", "b1", 4096, enc)
+	intentID, err := coord.InsertPendingIntent(context.Background(), "k", "b1", 4096, form)
 	if err != nil {
 		t.Fatalf("InsertPendingIntent: %v", err)
 	}
