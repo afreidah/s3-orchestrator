@@ -89,12 +89,6 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 	return toFatObjectLocations(rows), nil
 }
 
-// RecordReplica inserts a replica copy of an object, but only if the
-// source copy still exists. Delegates to core.RecordReplica.
-func (s *Store) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string) (int64, bool, error) {
-	return core.RecordReplica(ctx, s, key, targetBackend, sourceBackend)
-}
-
 // GetOverReplicatedObjects finds objects with more copies than the target
 // replication factor. Returns all rows for those objects so callers can
 // score each copy and decide which to remove.
@@ -128,11 +122,4 @@ func (s *Store) CountOverReplicatedObjects(ctx context.Context, factor int) (int
 		return 0, fmt.Errorf("failed to count over-replicated objects: %w", err)
 	}
 	return count, nil
-}
-
-// RemoveExcessCopy delegates to core.RemoveExcessCopy, which acquires
-// the key-scoped FOR-UPDATE lock and only deletes when the live copy
-// count still exceeds factor.
-func (s *Store) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (bool, error) {
-	return core.RemoveExcessCopy(ctx, s, key, backendName, factor)
 }

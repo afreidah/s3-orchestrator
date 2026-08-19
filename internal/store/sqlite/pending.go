@@ -135,22 +135,3 @@ func (s *Store) DeletePendingByBackend(ctx context.Context, backendName string) 
 	}
 	return nil
 }
-
-// PromotePending resolves a pending intent transactionally. SQLite serializes
-// writers so no row-level lock is needed. The destination is inspected:
-//
-//   - If any object_locations row for the key was created after this intent
-//     was inserted, the intent is provably stale and is dropped (Superseded):
-//     the authoritative state is the newer row, and the intent's bytes are
-//     either overwritten or stranded orphans.
-//   - Otherwise the intent is promoted: any prior copies are cleared, the
-//     new row is inserted, quotas are adjusted, and the pending row is
-//     deleted in the same transaction.
-//   - If the pending row is already gone, the call is a benign no-op.
-//
-// PromotePending delegates to core.PromotePending which composes the
-// engine-agnostic claim, supersession check, commit, and same-tx
-// delete of the pending row against the SQLite TxAdapter.
-func (s *Store) PromotePending(ctx context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.DeletedCopy, error) {
-	return core.PromotePending(ctx, s, p)
-}

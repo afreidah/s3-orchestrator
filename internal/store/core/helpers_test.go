@@ -3,7 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Pure-function coverage for objectFromEnc and displacedFromExisting.
+// Pure-function coverage for objectFromStoredForm and displacedFromExisting.
 // Engine adapters lean on these helpers when translating between the
 // canonical core domain types and the engine-specific row shapes; the
 // behaviors must hold for every code path independently of the engine.
@@ -19,15 +19,15 @@ import (
 )
 
 // -------------------------------------------------------------------------
-// objectFromEnc
+// objectFromStoredForm
 // -------------------------------------------------------------------------
 
-// TestObjectFromEnc_NilEnc verifies a nil EncryptionMeta yields an
+// TestObjectFromStoredForm_NilForm verifies a nil StoredForm yields an
 // ObjectLocation with the zero value for every encryption-related
 // field.
-func TestObjectFromEnc_NilEnc(t *testing.T) {
+func TestObjectFromStoredForm_NilForm(t *testing.T) {
 	t.Parallel()
-	loc := objectFromEnc("k", "b1", 100, nil)
+	loc := objectFromStoredForm("k", "b1", 100, nil)
 	if loc == nil {
 		t.Fatal("expected non-nil ObjectLocation")
 	}
@@ -35,22 +35,22 @@ func TestObjectFromEnc_NilEnc(t *testing.T) {
 		t.Errorf("required fields not preserved: %+v", loc)
 	}
 	if loc.Encrypted || loc.EncryptionKey != nil || loc.KeyID != "" || loc.PlaintextSize != 0 || loc.ContentHash != "" {
-		t.Errorf("encryption fields not zeroed for nil enc: %+v", loc)
+		t.Errorf("encryption fields not zeroed for nil form: %+v", loc)
 	}
 }
 
-// TestObjectFromEnc_EncryptedFields verifies an encrypted location
+// TestObjectFromStoredForm_EncryptedFields verifies an encrypted location
 // carries every encryption attribute end-to-end.
-func TestObjectFromEnc_EncryptedFields(t *testing.T) {
+func TestObjectFromStoredForm_EncryptedFields(t *testing.T) {
 	t.Parallel()
-	enc := &EncryptionMeta{
+	form := &StoredForm{
 		Encrypted:     true,
 		EncryptionKey: []byte("packed"),
 		KeyID:         "kid-1",
 		PlaintextSize: 90,
 		ContentHash:   "abc",
 	}
-	loc := objectFromEnc("k", "b1", 100, enc)
+	loc := objectFromStoredForm("k", "b1", 100, form)
 	if !loc.Encrypted || loc.KeyID != "kid-1" || loc.PlaintextSize != 90 || loc.ContentHash != "abc" {
 		t.Errorf("encryption fields not preserved: %+v", loc)
 	}
@@ -59,15 +59,15 @@ func TestObjectFromEnc_EncryptedFields(t *testing.T) {
 	}
 }
 
-// TestObjectFromEnc_HashOnly verifies that an integrity-only PUT
+// TestObjectFromStoredForm_HashOnly verifies that an integrity-only PUT
 // (encryption disabled, content hash present) still copies the hash
 // across is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
-func TestObjectFromEnc_HashOnly(t *testing.T) {
+func TestObjectFromStoredForm_HashOnly(t *testing.T) {
 	t.Parallel()
-	enc := &EncryptionMeta{ContentHash: "abc123"}
-	loc := objectFromEnc("k", "b1", 100, enc)
+	form := &StoredForm{ContentHash: "abc123"}
+	loc := objectFromStoredForm("k", "b1", 100, form)
 	if loc.Encrypted {
 		t.Error("Encrypted = true, want false")
 	}
@@ -76,14 +76,14 @@ func TestObjectFromEnc_HashOnly(t *testing.T) {
 	}
 }
 
-// TestObjectFromEnc_PlaintextOnlyEncMetaWithoutEncryption verifies
-// that a non-nil EncryptionMeta with Encrypted=false and no hash
-// produces the same shape as a nil EncryptionMeta.
-func TestObjectFromEnc_PlaintextOnlyEncMetaWithoutEncryption(t *testing.T) {
+// TestObjectFromStoredForm_PlaintextFormWithoutEncryption verifies
+// that a non-nil StoredForm with Encrypted=false and no hash
+// produces the same shape as a nil StoredForm.
+func TestObjectFromStoredForm_PlaintextFormWithoutEncryption(t *testing.T) {
 	t.Parallel()
-	loc := objectFromEnc("k", "b1", 100, &EncryptionMeta{})
+	loc := objectFromStoredForm("k", "b1", 100, &StoredForm{})
 	if loc.Encrypted || loc.EncryptionKey != nil || loc.ContentHash != "" {
-		t.Errorf("plaintext meta did not yield zero encryption fields: %+v", loc)
+		t.Errorf("plaintext form did not yield zero encryption fields: %+v", loc)
 	}
 }
 

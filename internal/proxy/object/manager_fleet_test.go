@@ -76,8 +76,8 @@ func stubObjGetLeastUtilized(c *objectsCalls, resp string, err error) func(conte
 	}
 }
 
-func stubObjRecord(c *objectsCalls, err error) func(context.Context, string, string, int64, *core.EncryptionMeta) ([]core.DeletedCopy, error) {
-	return func(_ context.Context, key, backend string, size int64, _ *core.EncryptionMeta) ([]core.DeletedCopy, error) {
+func stubObjRecord(c *objectsCalls, err error) func(context.Context, string, string, int64, *core.StoredForm) ([]core.DeletedCopy, error) {
+	return func(_ context.Context, key, backend string, size int64, _ *core.StoredForm) ([]core.DeletedCopy, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.recordObject = append(c.recordObject, objRecordCall{Key: key, Backend: backend, Size: size})
@@ -85,8 +85,8 @@ func stubObjRecord(c *objectsCalls, err error) func(context.Context, string, str
 	}
 }
 
-func stubObjRecordAndClear(c *objectsCalls, err error) func(context.Context, string, string, int64, *core.EncryptionMeta, string) ([]core.DeletedCopy, error) {
-	return func(_ context.Context, key, backend string, size int64, _ *core.EncryptionMeta, _ string) ([]core.DeletedCopy, error) {
+func stubObjRecordAndClear(c *objectsCalls, err error) func(context.Context, string, string, int64, *core.StoredForm, string) ([]core.DeletedCopy, error) {
+	return func(_ context.Context, key, backend string, size int64, _ *core.StoredForm, _ string) ([]core.DeletedCopy, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.recordObject = append(c.recordObject, objRecordCall{Key: key, Backend: backend, Size: size})
@@ -1491,8 +1491,8 @@ func copyObjectStore(t *testing.T, locs []core.ObjectLocation, locsErr error, ge
 // TestPutObject_IntegrityEnabled_PersistsContentHash drives the
 // integrity-enabled branches: bufferPutBody allocates a SHA-256 hasher
 // (the if icfg.Enabled branch) and buildPutPayload populates
-// EncryptionMeta with the resulting ContentHash on the unencrypted
-// path (the enc = &core.EncryptionMeta{ContentHash: contentHash}
+// StoredForm with the resulting ContentHash on the unencrypted
+// path (the form = &core.StoredForm{ContentHash: contentHash}
 // branch). Both lines were uncovered before.
 func TestPutObject_IntegrityEnabled_PersistsContentHash(t *testing.T) {
 	t.Parallel()
@@ -1509,10 +1509,10 @@ func TestPutObject_IntegrityEnabled_PersistsContentHash(t *testing.T) {
 	if len(c.recordObject) != 1 {
 		t.Fatalf("expected 1 RecordObject call, got %d", len(c.recordObject))
 	}
-	// The recordObject capture does not include the enc value but
+	// The recordObject capture does not include the form value but
 	// reaching this point already proves bufferPutBody allocated the
 	// hasher and buildPutPayload took the unencrypted+ContentHash
-	// branch (the only path that returns enc=&EncryptionMeta{...} with
+	// branch (the only path that returns form=&StoredForm{...} with
 	// no encryptor configured).
 }
 

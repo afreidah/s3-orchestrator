@@ -307,18 +307,18 @@ func (mr *MockCoordinatorStoresMockRecorder) GetStalePending(ctx, olderThan, lim
 }
 
 // ImportObject mocks base method.
-func (m *MockCoordinatorStores) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, enc *core.EncryptionMeta) (bool, error) {
+func (m *MockCoordinatorStores) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *core.StoredForm) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ImportObject", ctx, key, backend, size, unmanaged, enc)
+	ret := m.ctrl.Call(m, "ImportObject", ctx, key, backend, size, unmanaged, form)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ImportObject indicates an expected call of ImportObject.
-func (mr *MockCoordinatorStoresMockRecorder) ImportObject(ctx, key, backend, size, unmanaged, enc any) *gomock.Call {
+func (mr *MockCoordinatorStoresMockRecorder) ImportObject(ctx, key, backend, size, unmanaged, form any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportObject", reflect.TypeOf((*MockCoordinatorStores)(nil).ImportObject), ctx, key, backend, size, unmanaged, enc)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportObject", reflect.TypeOf((*MockCoordinatorStores)(nil).ImportObject), ctx, key, backend, size, unmanaged, form)
 }
 
 // IncrementOrphanBytes mocks base method.
@@ -501,33 +501,33 @@ func (mr *MockCoordinatorStoresMockRecorder) ReconcileUsage(ctx any) *gomock.Cal
 }
 
 // RecordObject mocks base method.
-func (m *MockCoordinatorStores) RecordObject(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta) ([]core.DeletedCopy, error) {
+func (m *MockCoordinatorStores) RecordObject(ctx context.Context, key, backend string, size int64, form *core.StoredForm) ([]core.DeletedCopy, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordObject", ctx, key, backend, size, enc)
+	ret := m.ctrl.Call(m, "RecordObject", ctx, key, backend, size, form)
 	ret0, _ := ret[0].([]core.DeletedCopy)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RecordObject indicates an expected call of RecordObject.
-func (mr *MockCoordinatorStoresMockRecorder) RecordObject(ctx, key, backend, size, enc any) *gomock.Call {
+func (mr *MockCoordinatorStoresMockRecorder) RecordObject(ctx, key, backend, size, form any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObject", reflect.TypeOf((*MockCoordinatorStores)(nil).RecordObject), ctx, key, backend, size, enc)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObject", reflect.TypeOf((*MockCoordinatorStores)(nil).RecordObject), ctx, key, backend, size, form)
 }
 
 // RecordObjectAndClearPending mocks base method.
-func (m *MockCoordinatorStores) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta, intentID string) ([]core.DeletedCopy, error) {
+func (m *MockCoordinatorStores) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, form *core.StoredForm, intentID string) ([]core.DeletedCopy, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordObjectAndClearPending", ctx, key, backend, size, enc, intentID)
+	ret := m.ctrl.Call(m, "RecordObjectAndClearPending", ctx, key, backend, size, form, intentID)
 	ret0, _ := ret[0].([]core.DeletedCopy)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RecordObjectAndClearPending indicates an expected call of RecordObjectAndClearPending.
-func (mr *MockCoordinatorStoresMockRecorder) RecordObjectAndClearPending(ctx, key, backend, size, enc, intentID any) *gomock.Call {
+func (mr *MockCoordinatorStoresMockRecorder) RecordObjectAndClearPending(ctx, key, backend, size, form, intentID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectAndClearPending", reflect.TypeOf((*MockCoordinatorStores)(nil).RecordObjectAndClearPending), ctx, key, backend, size, enc, intentID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectAndClearPending", reflect.TypeOf((*MockCoordinatorStores)(nil).RecordObjectAndClearPending), ctx, key, backend, size, form, intentID)
 }
 
 // RequeueCleanupDLQ mocks base method.

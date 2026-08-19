@@ -17,9 +17,14 @@ import "time"
 // OBJECT METADATA
 // -------------------------------------------------------------------------
 
-// EncryptionMeta carries envelope-encryption metadata stored alongside an
-// object location. The zero value represents an unencrypted object.
-type EncryptionMeta struct {
+// StoredForm describes how the bytes on a backend differ from the logical
+// object a client sees: whether they are an encryption envelope, the key
+// needed to read them back, and the logical size and hash they reduce to. The
+// write path produces one per stored copy and the store records it; the read
+// path needs it to serve the object correctly.
+//
+// The zero value describes bytes stored verbatim.
+type StoredForm struct {
 	Encrypted     bool
 	EncryptionKey []byte
 	KeyID         string

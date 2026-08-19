@@ -367,14 +367,14 @@ func TestPgAdapter_InsertObjectLocation_PreservesEncryptionFields(t *testing.T) 
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	enc := &core.EncryptionMeta{
+	form := &core.StoredForm{
 		Encrypted:     true,
 		EncryptionKey: []byte("packed"),
 		KeyID:         "kid-1",
 		PlaintextSize: 50,
 		ContentHash:   "abc123",
 	}
-	if _, err := s.RecordObject(ctx, key, "backend-a", 75, enc); err != nil {
+	if _, err := s.RecordObject(ctx, key, "backend-a", 75, form); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
@@ -470,14 +470,14 @@ func TestPgAdapter_LockObjectOnBackend_ReturnsRow(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	enc := &core.EncryptionMeta{
+	form := &core.StoredForm{
 		Encrypted:     true,
 		EncryptionKey: []byte("packed"),
 		KeyID:         "kid-1",
 		PlaintextSize: 50,
 		ContentHash:   "hash",
 	}
-	if _, err := s.RecordObject(ctx, key, "backend-a", 75, enc); err != nil {
+	if _, err := s.RecordObject(ctx, key, "backend-a", 75, form); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
@@ -722,13 +722,13 @@ func TestPgAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState(t *testing.
 	ctx := context.Background()
 	key := uniqueKey(t, "enc")
 
-	enc := &core.EncryptionMeta{
+	form := &core.StoredForm{
 		Encrypted:     true,
 		EncryptionKey: []byte("wrapped-dek"),
 		KeyID:         "key-1",
 		PlaintextSize: 1024,
 	}
-	if _, err := s.RecordObject(ctx, key, "backend-a", 1100, enc); err != nil {
+	if _, err := s.RecordObject(ctx, key, "backend-a", 1100, form); err != nil {
 		t.Fatalf("RecordObject encrypted: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
@@ -795,14 +795,14 @@ func TestPgAdapter_ImportObject_PreservesEncryptionMetadata(t *testing.T) {
 	ctx := context.Background()
 	key := uniqueKey(t, "enc-import")
 
-	enc := &core.EncryptionMeta{
+	form := &core.StoredForm{
 		Encrypted:     true,
 		EncryptionKey: []byte("packed-nonce-and-wrapped-dek"),
 		KeyID:         "key-1",
 		PlaintextSize: 1024,
 		ContentHash:   "abc123",
 	}
-	inserted, err := s.ImportObject(ctx, key, "backend-a", 1100, false, enc)
+	inserted, err := s.ImportObject(ctx, key, "backend-a", 1100, false, form)
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
@@ -823,17 +823,17 @@ func TestPgAdapter_ImportObject_PreservesEncryptionMetadata(t *testing.T) {
 	if !got.Encrypted {
 		t.Error("Encrypted = false, want true")
 	}
-	if !bytes.Equal(got.EncryptionKey, enc.EncryptionKey) {
-		t.Errorf("EncryptionKey = %q, want %q", got.EncryptionKey, enc.EncryptionKey)
+	if !bytes.Equal(got.EncryptionKey, form.EncryptionKey) {
+		t.Errorf("EncryptionKey = %q, want %q", got.EncryptionKey, form.EncryptionKey)
 	}
-	if got.KeyID != enc.KeyID {
-		t.Errorf("KeyID = %q, want %q", got.KeyID, enc.KeyID)
+	if got.KeyID != form.KeyID {
+		t.Errorf("KeyID = %q, want %q", got.KeyID, form.KeyID)
 	}
-	if got.PlaintextSize != enc.PlaintextSize {
-		t.Errorf("PlaintextSize = %d, want %d", got.PlaintextSize, enc.PlaintextSize)
+	if got.PlaintextSize != form.PlaintextSize {
+		t.Errorf("PlaintextSize = %d, want %d", got.PlaintextSize, form.PlaintextSize)
 	}
-	if got.ContentHash != enc.ContentHash {
-		t.Errorf("ContentHash = %q, want %q", got.ContentHash, enc.ContentHash)
+	if got.ContentHash != form.ContentHash {
+		t.Errorf("ContentHash = %q, want %q", got.ContentHash, form.ContentHash)
 	}
 }
 
@@ -847,7 +847,7 @@ func TestPgAdapter_ImportObject_KeylessEncryptedRow(t *testing.T) {
 	key := uniqueKey(t, "unreadable")
 
 	inserted, err := s.ImportObject(ctx, key, "backend-a", 508, false,
-		&core.EncryptionMeta{Encrypted: true})
+		&core.StoredForm{Encrypted: true})
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}

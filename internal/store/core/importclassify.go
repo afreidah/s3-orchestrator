@@ -57,7 +57,7 @@ func (d ImportDecision) String() string {
 // reproduce it byte for byte.
 //
 // A nil return means record no encryption metadata at all.
-func ClassifyImport(header []byte, siblings []ObjectLocation) (ImportDecision, *EncryptionMeta) {
+func ClassifyImport(header []byte, siblings []ObjectLocation) (ImportDecision, *StoredForm) {
 	if !encryption.HasEnvelopeMagic(header) {
 		return ImportPlaintext, nil
 	}
@@ -69,7 +69,7 @@ func ClassifyImport(header []byte, siblings []ObjectLocation) (ImportDecision, *
 		if !encryption.SameEncryptionOperation(header, s.EncryptionKey) {
 			continue
 		}
-		return ImportAdoptKey, &EncryptionMeta{
+		return ImportAdoptKey, &StoredForm{
 			Encrypted:     true,
 			EncryptionKey: s.EncryptionKey,
 			KeyID:         s.KeyID,
@@ -81,5 +81,5 @@ func ClassifyImport(header []byte, siblings []ObjectLocation) (ImportDecision, *
 	// though it were the object, so an envelope with no matching key is
 	// recorded as encrypted-and-keyless instead: unreadable, but honest, and
 	// the read path refuses it rather than serving it.
-	return ImportUnreadable, &EncryptionMeta{Encrypted: true}
+	return ImportUnreadable, &StoredForm{Encrypted: true}
 }

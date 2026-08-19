@@ -551,14 +551,14 @@ func TestRecordObject_WithEncryption(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	enc := &core.EncryptionMeta{
+	form := &core.StoredForm{
 		Encrypted:     true,
 		EncryptionKey: []byte("wrapped-dek"),
 		KeyID:         "key-1",
 		PlaintextSize: 1024,
 		ContentHash:   "abc123",
 	}
-	_, err := s.RecordObject(ctx, "bucket/encrypted", "backend-a", 1100, enc)
+	_, err := s.RecordObject(ctx, "bucket/encrypted", "backend-a", 1100, form)
 	if err != nil {
 		t.Fatalf("RecordObject with encryption: %v", err)
 	}
@@ -2127,7 +2127,7 @@ func TestGetUnverifiedObjectCounts(t *testing.T) {
 
 	// One object on backend-a has no content hash (NULL); one does.
 	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
-	hashed := &core.EncryptionMeta{ContentHash: "deadbeef"}
+	hashed := &core.StoredForm{ContentHash: "deadbeef"}
 	if _, err := s.RecordObject(ctx, "bucket/b", "backend-a", 200, hashed); err != nil {
 		t.Fatalf("RecordObject hashed: %v", err)
 	}
@@ -2356,13 +2356,13 @@ func TestListAllEncryptedLocations(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	enc := &core.EncryptionMeta{
+	form := &core.StoredForm{
 		Encrypted:     true,
 		EncryptionKey: []byte("dek"),
 		KeyID:         "key-1",
 		PlaintextSize: 1024,
 	}
-	if _, err := s.RecordObject(ctx, "bucket/enc", "backend-a", 1100, enc); err != nil {
+	if _, err := s.RecordObject(ctx, "bucket/enc", "backend-a", 1100, form); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 

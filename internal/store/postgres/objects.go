@@ -28,35 +28,6 @@ import (
 // OBJECT LOCATION OPERATIONS
 // -------------------------------------------------------------------------
 
-// RecordObject atomically inserts or updates an object location, handling
-// overwrites by returning displaced copies for cleanup. Delegates to
-// core.RecordObject which composes lock, displacement, insert, and
-// quota update against the postgres TxAdapter.
-func (s *Store) RecordObject(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta) ([]core.DeletedCopy, error) {
-	return core.RecordObject(ctx, s, key, backend, size, enc)
-}
-
-// RecordObjectAndClearPending performs the same atomic commit as
-// RecordObject and additionally deletes the matching pending_objects
-// intent inside the same transaction. Delegates to core.
-func (s *Store) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, enc *core.EncryptionMeta, intentID string) ([]core.DeletedCopy, error) {
-	return core.RecordObjectAndClearPending(ctx, s, key, backend, size, enc, intentID)
-}
-
-// DeleteObject removes all copies of an object and decrements their
-// quotas. Returns all deleted copies, or ErrObjectNotFound if the
-// object doesn't exist. Delegates to core.DeleteObject.
-func (s *Store) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, error) {
-	return core.DeleteObject(ctx, s, key)
-}
-
-// DeleteObjectsBatch delegates to core.DeleteObjectsBatch which
-// removes every supplied key in one transaction and returns per-key
-// displaced copies for backend cleanup.
-func (s *Store) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, error) {
-	return core.DeleteObjectsBatch(ctx, s, keys)
-}
-
 // ListObjectsByBackend returns objects stored on a specific backend, ordered by
 // size ascending (smallest first). Used by the rebalancer to find movable objects.
 func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]core.ObjectLocation, error) {
@@ -85,13 +56,6 @@ func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, aft
 		return nil, fmt.Errorf("failed to page objects by backend: %w", err)
 	}
 	return toSlimObjectLocations(rows), nil
-}
-
-// MoveObjectLocation atomically moves a copy of an object from one
-// backend to another. Returns (0, nil) if the source copy is gone or
-// the target already has a copy. Delegates to core.MoveObjectLocation.
-func (s *Store) MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error) {
-	return core.MoveObjectLocation(ctx, s, key, fromBackend, toBackend)
 }
 
 // ListObjects returns objects matching the given prefix, sorted by key.
@@ -267,15 +231,4 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 	}
 
 	return result, nil
-}
-
-// -------------------------------------------------------------------------
-// SYNC OPERATIONS
-// -------------------------------------------------------------------------
-
-// ImportObject records a pre-existing object in the database without
-// overwriting. Returns true if the object was imported, false if it
-// already existed for this backend. Delegates to core.ImportObject.
-func (s *Store) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, enc *core.EncryptionMeta) (bool, error) {
-	return core.ImportObject(ctx, s, key, backend, size, unmanaged, enc)
 }
