@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -185,6 +186,53 @@ func parseQueryInt(r *http.Request, param string, defaultVal, max int) int {
 		return defaultVal
 	}
 	return v
+}
+
+// Query keys an object request may carry. S3 selects the operation from the
+// query string, not just the method, so a key absent from this set names an
+// operation this server does not implement.
+//
+// Allow-listed rather than deny-listed on purpose. Enumerating the
+// subresources we reject means a missed one keeps falling through to the data
+// path, and AWS keeps adding them; enumerating what we understand means a
+// missed one is a rejected request instead of a destroyed object.
+var supportedObjectQueryKeys = map[string]bool{
+	"uploads":    true, // CreateMultipartUpload / ListMultipartUploads
+	"uploadId":   true, // per-upload multipart operations
+	"partNumber": true, // UploadPart
+
+	// x-id names the SDK operation that built the request (x-id=PutObject).
+	// Added by the AWS SDKs, carries no meaning for the server, and appears on
+	// ordinary data-path calls, so refusing it rejects normal traffic.
+	"x-id": true,
+}
+
+// Query key prefixes an object request may carry. Matched as prefixes so a
+// parameter within either family that is not named individually still passes.
+//
+// X-Amz- covers presigned URL credentials, which travel in the query string;
+// rejecting them would break every presigned URL. response- covers S3's
+// response-header overrides, of which response-content-disposition appears on
+// most presigned download links.
+var supportedObjectQueryPrefixes = []string{"X-Amz-", "response-"}
+
+// unsupportedObjectQuery returns the first query key naming an operation this
+// server does not implement, so the caller can refuse before dispatch rather
+// than fall through to PutObject or DeleteObject. Returns ok=false when every
+// key is recognised.
+func unsupportedObjectQuery(query url.Values) (string, bool) {
+	for key := range query {
+		if supportedObjectQueryKeys[key] {
+			continue
+		}
+		if slices.ContainsFunc(supportedObjectQueryPrefixes, func(p string) bool {
+			return strings.HasPrefix(key, p)
+		}) {
+			continue
+		}
+		return key, true
+	}
+	return "", false
 }
 
 // -------------------------------------------------------------------------
