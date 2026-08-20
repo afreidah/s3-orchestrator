@@ -44,7 +44,8 @@ func (q *Queries) DeletePendingObjectsByBackend(ctx context.Context, backendName
 
 const getStalePendingObjects = `-- name: GetStalePendingObjects :many
 SELECT intent_id, object_key, backend_name, size_bytes,
-       encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
+       encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at,
+       compression_algorithm, compression_level, compression_format_version, logical_size
 FROM pending_objects
 WHERE created_at <= $1
 ORDER BY created_at ASC
@@ -78,6 +79,10 @@ func (q *Queries) GetStalePendingObjects(ctx context.Context, arg GetStalePendin
 			&i.PlaintextSize,
 			&i.ContentHash,
 			&i.CreatedAt,
+			&i.CompressionAlgorithm,
+			&i.CompressionLevel,
+			&i.CompressionFormatVersion,
+			&i.LogicalSize,
 		); err != nil {
 			return nil, err
 		}
@@ -93,20 +98,25 @@ const insertPendingObject = `-- name: InsertPendingObject :exec
 
 INSERT INTO pending_objects (
     intent_id, object_key, backend_name, size_bytes,
-    encrypted, encryption_key, key_id, plaintext_size, content_hash
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    encrypted, encryption_key, key_id, plaintext_size, content_hash,
+    compression_algorithm, compression_level, compression_format_version, logical_size
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 `
 
 type InsertPendingObjectParams struct {
-	IntentID      string
-	ObjectKey     string
-	BackendName   string
-	SizeBytes     int64
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         *string
-	PlaintextSize *int64
-	ContentHash   *string
+	IntentID                 string
+	ObjectKey                string
+	BackendName              string
+	SizeBytes                int64
+	Encrypted                bool
+	EncryptionKey            []byte
+	KeyID                    *string
+	PlaintextSize            *int64
+	ContentHash              *string
+	CompressionAlgorithm     *string
+	CompressionLevel         *string
+	CompressionFormatVersion *int16
+	LogicalSize              *int64
 }
 
 // -----------------------------------------------------------------------------
@@ -131,13 +141,18 @@ func (q *Queries) InsertPendingObject(ctx context.Context, arg InsertPendingObje
 		arg.KeyID,
 		arg.PlaintextSize,
 		arg.ContentHash,
+		arg.CompressionAlgorithm,
+		arg.CompressionLevel,
+		arg.CompressionFormatVersion,
+		arg.LogicalSize,
 	)
 	return err
 }
 
 const lockPendingForUpdate = `-- name: LockPendingForUpdate :one
 SELECT intent_id, object_key, backend_name, size_bytes,
-       encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
+       encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at,
+       compression_algorithm, compression_level, compression_format_version, logical_size
 FROM pending_objects
 WHERE intent_id = $1
 FOR UPDATE
@@ -161,6 +176,10 @@ func (q *Queries) LockPendingForUpdate(ctx context.Context, intentID string) (Pe
 		&i.PlaintextSize,
 		&i.ContentHash,
 		&i.CreatedAt,
+		&i.CompressionAlgorithm,
+		&i.CompressionLevel,
+		&i.CompressionFormatVersion,
+		&i.LogicalSize,
 	)
 	return i, err
 }

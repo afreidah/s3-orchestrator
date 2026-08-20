@@ -25,8 +25,8 @@ DELETE FROM object_locations
 WHERE object_key = $1;
 
 -- name: InsertObjectLocation :exec
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW());
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW());
 
 -- ListObjectsByBackend backs the rebalance, placement and drain candidate
 -- scans, so it returns managed rows only. Objects outside every configured
@@ -87,14 +87,14 @@ ORDER BY object_key COLLATE "C", created_at ASC
 LIMIT @max_keys;
 
 -- name: GetAllObjectLocations :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at, last_scrubbed_at
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at, last_scrubbed_at
 FROM object_locations
 WHERE object_key = $1
 ORDER BY created_at ASC;
 
 -- name: InsertObjectLocationIfNotExists :one
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, managed, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, managed, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING true AS inserted;
 
@@ -208,7 +208,7 @@ WHERE object_key = $1 AND backend_name = $2;
 -- a backend is over its usage limit: a copy the scrubber would decline never
 -- occupies a slot, so it is neither stamped as examined nor left at the head of
 -- the queue to be re-selected every cycle.
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at, last_scrubbed_at
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at, last_scrubbed_at
 FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
   AND backend_name = ANY(@backend_names::text[])
@@ -246,7 +246,7 @@ WHERE content_hash IS NOT NULL AND managed;
 -- Return object locations that have no content hash, for backfill. Hashing
 -- reads the whole body, so unmanaged rows are left alone rather than spending
 -- egress on data the orchestrator does not manage.
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at
 FROM object_locations
 WHERE content_hash IS NULL AND managed
 ORDER BY created_at ASC
