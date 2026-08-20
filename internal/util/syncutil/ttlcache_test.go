@@ -153,9 +153,10 @@ func TestTTLCache_ZeroTTL(t *testing.T) {
 
 	c.Set("key1", "value1")
 
-	// TTL=0 means expiry is in the past, so Get should return false
+	// A zero TTL disables the cache outright rather than granting an entry a
+	// lifetime so short that whether it is served depends on the clock.
 	if _, ok := c.Get("key1"); ok {
-		t.Error("expected expired with zero TTL")
+		t.Error("Get served an entry from a zero-TTL cache")
 	}
 }
 

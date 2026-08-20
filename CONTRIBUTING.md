@@ -4,7 +4,7 @@ Thanks for your interest in contributing. This document covers everything you ne
 
 ## Prerequisites
 
-- **Go 1.26+** (version pinned in `go.mod`)
+- **Go 1.27+** (version pinned in `go.mod`)
 - **Docker** (for integration tests and local development)
 - **Make** (all common tasks have Makefile targets)
 - **sqlc** (installed automatically via `make tools`)

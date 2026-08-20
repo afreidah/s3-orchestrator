@@ -301,11 +301,13 @@ func TestStoreInt_RetryCleanupItem_ClearsClaim(t *testing.T) {
 		t.Fatalf("row for %s not claimed", key)
 	}
 
-	if err := s.RetryCleanupItem(ctx, id, time.Microsecond, "transient"); err != nil {
+	// A backoff already in the past makes the row unambiguously due, so the
+	// assertion below is about the claim being cleared rather than about
+	// whether NOW() advanced past a sub-millisecond retry stamp.
+	if err := s.RetryCleanupItem(ctx, id, -time.Second, "transient"); err != nil {
 		t.Fatalf("RetryCleanupItem: %v", err)
 	}
 
-	time.Sleep(10 * time.Millisecond) // let next_retry come due
 	again, err := s.ClaimPendingCleanups(ctx, 100, "instance-B", time.Now())
 	if err != nil {
 		t.Fatalf("claim again: %v", err)

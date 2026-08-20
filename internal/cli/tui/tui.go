@@ -498,8 +498,8 @@ func rowsFromEntries(entries []entry) []table.Row {
 // already at the root.
 func parentPrefix(prefix string) string {
 	p := strings.TrimSuffix(prefix, "/")
-	if i := strings.LastIndex(p, "/"); i >= 0 {
-		return p[:i+1]
+	if parent, _, ok := strings.CutLast(p, "/"); ok {
+		return parent + "/"
 	}
 	return ""
 }

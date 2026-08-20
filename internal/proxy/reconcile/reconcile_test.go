@@ -26,6 +26,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -519,7 +520,7 @@ func TestS3KeyStream_EmitsEveryKeyUntouched(t *testing.T) {
 		{{Key: "other/x", SizeBytes: 9}, {Key: "test.txt", SizeBytes: 2}},
 		{{Key: "vb/a", SizeBytes: 1}, {Key: "vb/z", SizeBytes: 3}},
 	}
-	var apiPages int64
+	var apiPages atomic.Int64
 	s3 := NewS3KeyStream(context.Background(),
 		&fakeLister2{pages: pages}, []string{"vb/", "other/"}, &apiPages)
 	defer s3.Stop()
@@ -529,8 +530,8 @@ func TestS3KeyStream_EmitsEveryKeyUntouched(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	if apiPages != 2 {
-		t.Errorf("apiPages = %d, want 2", apiPages)
+	if got := apiPages.Load(); got != 2 {
+		t.Errorf("apiPages = %d, want 2", got)
 	}
 }
 

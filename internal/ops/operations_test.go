@@ -333,7 +333,7 @@ func TestRebalance_QuotaMetricsFailureStillReports(t *testing.T) {
 	m := opstest.NewMockRebalancerOps(gomock.NewController(t))
 	m.EXPECT().Config().Return(nil).AnyTimes()
 	m.EXPECT().Rebalance(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(worker.RebalanceSummary{WorkSummary: worker.WorkSummary{Succeeded: 2}}, nil).Times(1)
+		Return(worker.RebalanceSummary{Succeeded: 2}, nil).Times(1)
 	runtime := opstest.NewMockRuntimeOps(gomock.NewController(t))
 	runtime.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(errors.New("metrics down")).Times(1)
 
@@ -491,12 +491,12 @@ func TestEncryptExisting_OneRow(t *testing.T) {
 func TestBulkRewriteAdapters(t *testing.T) {
 	t.Parallel()
 
-	er := &encryptRow{UnencryptedLocation: core.UnencryptedLocation{ObjectKey: "k", BackendName: "b", SizeBytes: 42}}
+	er := &encryptRow{ObjectKey: "k", BackendName: "b", SizeBytes: 42}
 	if er.rewriteKey() != "k" || er.rewriteBackend() != "b" || er.rewriteSize() != 42 {
 		t.Errorf("encryptRow accessors wrong: %+v", er)
 	}
 
-	dr := &decryptRow{DecryptableLocation: core.DecryptableLocation{ObjectKey: "x", BackendName: "y", SizeBytes: 7}}
+	dr := &decryptRow{ObjectKey: "x", BackendName: "y", SizeBytes: 7}
 	if dr.rewriteKey() != "x" || dr.rewriteBackend() != "y" || dr.rewriteSize() != 7 {
 		t.Errorf("decryptRow accessors wrong: %+v", dr)
 	}
@@ -984,7 +984,7 @@ func TestReplicate_ReportsObjectsItCouldNotCopy(t *testing.T) {
 	repl.EXPECT().Config().Return(&config.ReplicationConfig{Factor: 2}).AnyTimes()
 	repl.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(worker.ReplicationSummary{
-			WorkSummary:   worker.WorkSummary{Succeeded: 1, Failed: 2},
+			Succeeded: 1, Failed: 2,
 			CopiesCreated: 3,
 		}, nil).Times(1)
 	svc := replicationOver(t, repl, opstest.NewMockOverReplicationOps(gomock.NewController(t)))
@@ -1009,7 +1009,7 @@ func TestCleanExcess_ReportsObjectsItCouldNotClean(t *testing.T) {
 	over.EXPECT().Config().Return(&config.ReplicationConfig{Factor: 2}).AnyTimes()
 	over.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(worker.OverReplicationSummary{
-			WorkSummary:   worker.WorkSummary{Failed: 5},
+			Failed:        5,
 			CopiesRemoved: 0,
 		}, nil).Times(1)
 	svc := replicationOver(t, opstest.NewMockReplicatorOps(gomock.NewController(t)), over)
@@ -1037,7 +1037,7 @@ func TestCleanExcess_CapsBatchSize(t *testing.T) {
 		DoAndReturn(func(_ context.Context, cfg config.ReplicationConfig, _ progress.Observer) (worker.OverReplicationSummary, error) {
 			ran = cfg
 			return worker.OverReplicationSummary{
-				WorkSummary:   worker.WorkSummary{Succeeded: 4},
+				Succeeded:     4,
 				CopiesRemoved: 4,
 			}, nil
 		}).Times(1)

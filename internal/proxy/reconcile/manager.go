@@ -173,7 +173,7 @@ func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, know
 		return nil, err
 	}
 
-	var apiPages int64
+	var apiPages atomic.Int64
 	s3 := NewS3KeyStream(ctx, s3b, BucketPrefixes(knownBuckets), &apiPages)
 	defer s3.Stop()
 
@@ -187,7 +187,7 @@ func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, know
 		DeleteHandler(m.logger(), backendName, m.deleter(), res),
 	)
 
-	if pages := atomic.LoadInt64(&apiPages); pages > 0 {
+	if pages := apiPages.Load(); pages > 0 {
 		m.usage.APICalls(backendName, pages)
 	}
 	if mergeErr != nil {
