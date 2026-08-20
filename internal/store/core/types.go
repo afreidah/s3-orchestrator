@@ -18,18 +18,30 @@ import "time"
 // -------------------------------------------------------------------------
 
 // StoredForm describes how the bytes on a backend differ from the logical
-// object a client sees: whether they are an encryption envelope, the key
-// needed to read them back, and the logical size and hash they reduce to. The
-// write path produces one per stored copy and the store records it; the read
-// path needs it to serve the object correctly.
+// object a client sees: whether they are compressed, whether they are an
+// encryption envelope, the key needed to read them back, and the sizes and
+// hash they reduce to. The write path produces one per stored copy and the
+// store records it; the read path needs it to serve the object correctly.
+//
+// An empty CompressionAlgorithm means the bytes are not compressed, so there
+// is no separate flag that could drift out of step with it. LogicalSize is the
+// size of the object the client wrote and differs from PlaintextSize once both
+// features are on: the stored bytes are then ciphertext of compressed data, so
+// PlaintextSize is the pre-encryption (compressed) size while LogicalSize is
+// the original. CompressionLevel does not affect decoding and is carried for
+// diagnostics and for rewrite passes.
 //
 // The zero value describes bytes stored verbatim.
 type StoredForm struct {
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         string
-	PlaintextSize int64
-	ContentHash   string
+	Encrypted                bool
+	EncryptionKey            []byte
+	KeyID                    string
+	PlaintextSize            int64
+	ContentHash              string
+	CompressionAlgorithm     string
+	CompressionLevel         string
+	CompressionFormatVersion int
+	LogicalSize              int64
 
 	// Unmanaged marks an object that exists on the backend but outside every
 	// configured virtual bucket prefix: real bytes the orchestrator did not
@@ -52,18 +64,25 @@ type StoredForm struct {
 // and does not act on. It is stored as the negated `managed` column, so the
 // zero value means managed and a construction site that omits it cannot
 // accidentally produce a row the workers ignore.
+// The compression columns follow StoredForm: an empty algorithm means the
+// bytes are stored verbatim, and they are zero on rows from queries that do
+// not select them.
 type ObjectLocation struct {
-	ObjectKey      string
-	BackendName    string
-	SizeBytes      int64
-	CreatedAt      time.Time
-	Encrypted      bool
-	EncryptionKey  []byte
-	KeyID          string
-	PlaintextSize  int64
-	ContentHash    string
-	LastScrubbedAt *time.Time
-	Unmanaged      bool
+	ObjectKey                string
+	BackendName              string
+	SizeBytes                int64
+	CreatedAt                time.Time
+	Encrypted                bool
+	EncryptionKey            []byte
+	KeyID                    string
+	PlaintextSize            int64
+	ContentHash              string
+	CompressionAlgorithm     string
+	CompressionLevel         string
+	CompressionFormatVersion int
+	LogicalSize              int64
+	LastScrubbedAt           *time.Time
+	Unmanaged                bool
 }
 
 // ExistingCopy is the projection of an object_locations row that promotion
@@ -96,16 +115,20 @@ type DeletedCopy struct {
 // commit so a DB outage between PUT and RecordObject cannot silently
 // destroy the prior copy of an overwritten key.
 type PendingObject struct {
-	IntentID      string
-	ObjectKey     string
-	BackendName   string
-	SizeBytes     int64
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         string
-	PlaintextSize int64
-	ContentHash   string
-	CreatedAt     time.Time
+	IntentID                 string
+	ObjectKey                string
+	BackendName              string
+	SizeBytes                int64
+	Encrypted                bool
+	EncryptionKey            []byte
+	KeyID                    string
+	PlaintextSize            int64
+	ContentHash              string
+	CompressionAlgorithm     string
+	CompressionLevel         string
+	CompressionFormatVersion int
+	LogicalSize              int64
+	CreatedAt                time.Time
 }
 
 // PendingPromoteResult describes how PromotePending resolved an intent.

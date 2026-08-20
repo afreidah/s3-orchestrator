@@ -25,7 +25,9 @@ import (
 func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted,
-		        ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
+		        ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash,
+		        ol.compression_algorithm, ol.compression_level, ol.compression_format_version,
+		        ol.logical_size, ol.created_at
 		 FROM object_locations ol
 		 JOIN (
 		     SELECT object_key
@@ -64,7 +66,9 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 
 	const query = `
 		SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted,
-		       ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
+		       ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash,
+		       ol.compression_algorithm, ol.compression_level, ol.compression_format_version,
+		       ol.logical_size, ol.created_at
 		FROM object_locations ol
 		JOIN (
 		    SELECT object_key
@@ -91,7 +95,9 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 func (s *Store) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted,
-		        ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
+		        ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash,
+		        ol.compression_algorithm, ol.compression_level, ol.compression_format_version,
+		        ol.logical_size, ol.created_at
 		 FROM object_locations ol
 		 JOIN (
 		     SELECT object_key
@@ -137,21 +143,30 @@ func scanObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
 	var locs []core.ObjectLocation
 	for rows.Next() {
 		var (
-			loc         core.ObjectLocation
-			keyID       sql.NullString
-			ptSize      sql.NullInt64
-			contentHash sql.NullString
-			createdAt   string
+			loc           core.ObjectLocation
+			keyID         sql.NullString
+			ptSize        sql.NullInt64
+			contentHash   sql.NullString
+			compAlgorithm sql.NullString
+			compLevel     sql.NullString
+			compVersion   sql.NullInt64
+			logicalSize   sql.NullInt64
+			createdAt     string
 		)
 		if err := rows.Scan(
 			&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &loc.Encrypted,
-			&loc.EncryptionKey, &keyID, &ptSize, &contentHash, &createdAt,
+			&loc.EncryptionKey, &keyID, &ptSize, &contentHash,
+			&compAlgorithm, &compLevel, &compVersion, &logicalSize, &createdAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan object location: %w", err)
 		}
 		loc.KeyID = nullStringValue(keyID)
 		loc.PlaintextSize = nullInt64Value(ptSize)
 		loc.ContentHash = nullStringValue(contentHash)
+		loc.CompressionAlgorithm = nullStringValue(compAlgorithm)
+		loc.CompressionLevel = nullStringValue(compLevel)
+		loc.CompressionFormatVersion = int(nullInt64Value(compVersion))
+		loc.LogicalSize = nullInt64Value(logicalSize)
 		var parseErr error
 		loc.CreatedAt, parseErr = parseTime(createdAt)
 		if parseErr != nil {

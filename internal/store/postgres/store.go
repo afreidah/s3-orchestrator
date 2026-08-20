@@ -152,7 +152,7 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 
 // ExpectedSchemaVersion is the migration version this binary expects.
 // Updated when new migration files are added.
-const ExpectedSchemaVersion = 16
+const ExpectedSchemaVersion = 17
 
 // VerifySchemaVersion checks that the database schema version matches
 // what this binary expects. Returns an error if the schema is older
@@ -234,8 +234,9 @@ type slimObjectRow interface {
 	GetCreatedAt() pgtype.Timestamptz
 }
 
-// fatObjectRow extends slimObjectRow with the encryption + content-hash
-// columns the seven encryption-aware queries return.
+// fatObjectRow extends slimObjectRow with the representation columns the
+// encryption-aware queries return: how the stored bytes were encrypted and
+// compressed, and the sizes and hash they reduce to.
 type fatObjectRow interface {
 	slimObjectRow
 	GetEncrypted() bool
@@ -243,6 +244,10 @@ type fatObjectRow interface {
 	GetKeyID() *string
 	GetPlaintextSize() *int64
 	GetContentHash() *string
+	GetCompressionAlgorithm() *string
+	GetCompressionLevel() *string
+	GetCompressionFormatVersion() *int16
+	GetLogicalSize() *int64
 }
 
 // verifiableObjectRow extends fatObjectRow with the last-verified timestamp,
@@ -290,6 +295,18 @@ func toFatObjectLocations[T fatObjectRow](rows []T) []core.ObjectLocation {
 		}
 		if h := r.GetContentHash(); h != nil {
 			loc.ContentHash = *h
+		}
+		if a := r.GetCompressionAlgorithm(); a != nil {
+			loc.CompressionAlgorithm = *a
+		}
+		if l := r.GetCompressionLevel(); l != nil {
+			loc.CompressionLevel = *l
+		}
+		if v := r.GetCompressionFormatVersion(); v != nil {
+			loc.CompressionFormatVersion = int(*v)
+		}
+		if s := r.GetLogicalSize(); s != nil {
+			loc.LogicalSize = *s
 		}
 		out[i] = loc
 	}

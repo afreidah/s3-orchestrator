@@ -38,19 +38,23 @@ func intentSuperseded(existing []ExistingCopy, intentCreatedAt time.Time) bool {
 }
 
 // pendingStoredForm builds a StoredForm from a PendingObject so the promoted
-// object_locations row carries the same encryption + integrity metadata as the
-// original PUT recorded. Returns nil when the pending row carries no
-// encryption or hash metadata.
+// object_locations row carries the same representation metadata as the
+// original PUT recorded. Returns nil when the pending row describes bytes
+// stored verbatim with no hash.
 func pendingStoredForm(p *PendingObject) *StoredForm {
-	if !p.Encrypted && p.ContentHash == "" {
+	if !p.Encrypted && p.ContentHash == "" && p.CompressionAlgorithm == "" {
 		return nil
 	}
 	return &StoredForm{
-		Encrypted:     p.Encrypted,
-		EncryptionKey: p.EncryptionKey,
-		KeyID:         p.KeyID,
-		PlaintextSize: p.PlaintextSize,
-		ContentHash:   p.ContentHash,
+		Encrypted:                p.Encrypted,
+		EncryptionKey:            p.EncryptionKey,
+		KeyID:                    p.KeyID,
+		PlaintextSize:            p.PlaintextSize,
+		ContentHash:              p.ContentHash,
+		CompressionAlgorithm:     p.CompressionAlgorithm,
+		CompressionLevel:         p.CompressionLevel,
+		CompressionFormatVersion: p.CompressionFormatVersion,
+		LogicalSize:              p.LogicalSize,
 	}
 }
 
@@ -74,6 +78,12 @@ func objectFromStoredForm(key, backend string, size int64, form *StoredForm) *Ob
 	}
 	if form.ContentHash != "" {
 		loc.ContentHash = form.ContentHash
+	}
+	if form.CompressionAlgorithm != "" {
+		loc.CompressionAlgorithm = form.CompressionAlgorithm
+		loc.CompressionLevel = form.CompressionLevel
+		loc.CompressionFormatVersion = form.CompressionFormatVersion
+		loc.LogicalSize = form.LogicalSize
 	}
 	return loc
 }
