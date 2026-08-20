@@ -26,7 +26,7 @@ import (
 const testChunk = MinChunkSize
 
 // newTestCodec builds a codec at the test chunk size and closes it with the test.
-func newTestCodec(t *testing.T) *Codec {
+func newTestCodec(t testing.TB) *Codec {
 	t.Helper()
 	c, err := NewCodec(DefaultLevel, testChunk)
 	if err != nil {

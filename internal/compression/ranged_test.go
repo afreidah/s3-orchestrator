@@ -71,7 +71,7 @@ func (f *countingFetcher) stats() (calls int, fetched int64) {
 
 // storeCompressed compresses src and returns the stored bytes with a fetcher
 // over them.
-func storeCompressed(t *testing.T, c *Codec, src []byte) *countingFetcher {
+func storeCompressed(t testing.TB, c *Codec, src []byte) *countingFetcher {
 	t.Helper()
 	var stored bytes.Buffer
 	if _, err := c.Compress(&stored, bytes.NewReader(src)); err != nil {
@@ -82,7 +82,7 @@ func storeCompressed(t *testing.T, c *Codec, src []byte) *countingFetcher {
 
 // incompressible returns n bytes zstd cannot shrink, so the stored object is
 // large enough that the tail prefetch has not already covered all of it.
-func incompressible(t *testing.T, n int) []byte {
+func incompressible(t testing.TB, n int) []byte {
 	t.Helper()
 	b := make([]byte, n)
 	rnd := rand.New(rand.NewSource(99)) //nolint:gosec // G404: test fixture, not security material
@@ -329,5 +329,85 @@ func TestDecompressRanged_SmallObjectServedFromTail(t *testing.T) {
 	}
 	if calls, _ := f.stats(); calls != 1 {
 		t.Errorf("reading a wholly prefetched object took %d fetches, want 1", calls)
+	}
+}
+
+// TestDecompressRanged_CorruptFrameFailsRead pins the issue's headline
+// requirement: a read over damaged bytes errors rather than returning fewer or
+// different bytes. A short read with no error becomes a 200 carrying a
+// truncated body, which nothing downstream can detect.
+func TestDecompressRanged_CorruptFrameFailsRead(t *testing.T) {
+	t.Parallel()
+	c := newTestCodec(t)
+	src := incompressible(t, testChunk*4)
+	f := storeCompressed(t, c, src)
+
+	// Damage the first frame past its zstd header, so the seek table still
+	// parses and the failure has to land on the decode.
+	for i := 64; i < 512 && i < len(f.data); i++ {
+		f.data[i] ^= 0xFF
+	}
+	r := openRanged(t, c, f)
+
+	buf := make([]byte, 4096)
+	n, err := r.ReadAt(buf, 0)
+	if err == nil {
+		t.Fatalf("ReadAt over a corrupt frame returned %d bytes and no error", n)
+	}
+	if !errors.Is(err, ErrCorruptObject) {
+		t.Errorf("ReadAt err = %v, want ErrCorruptObject", err)
+	}
+	if n > 0 && bytes.Equal(buf[:n], src[:n]) {
+		t.Error("corrupt frame decoded to the original bytes")
+	}
+}
+
+// TestDecompressRanged_TruncatedObjectFails covers a stored copy that lost its
+// tail, which takes the seek table with it. The failure has to arrive when the
+// reader is built, before any byte is served.
+func TestDecompressRanged_TruncatedObjectFails(t *testing.T) {
+	t.Parallel()
+	c := newTestCodec(t)
+	f := storeCompressed(t, c, incompressible(t, testChunk*2))
+	f.data = f.data[:len(f.data)/2]
+
+	_, err := c.DecompressRanged(t.Context(), f, int64(len(f.data)))
+	if !errors.Is(err, ErrCorruptObject) {
+		t.Errorf("DecompressRanged over a truncated object err = %v, want ErrCorruptObject", err)
+	}
+}
+
+// TestDecode_ClassifiesGarbage checks that both decode entry points name what
+// went wrong. The read path fails over on corrupt bytes and retries on a
+// backend that did not deliver, so an unclassified error picks neither.
+func TestDecode_ClassifiesGarbage(t *testing.T) {
+	t.Parallel()
+	c := newTestCodec(t)
+	garbage := []byte("this is not a seekable zstd object at all, not even close")
+
+	if _, err := c.Decompress(bytes.NewReader(garbage)); !errors.Is(err, ErrCorruptObject) {
+		t.Errorf("Decompress err = %v, want ErrCorruptObject", err)
+	}
+	_, err := c.DecompressRanged(t.Context(), &countingFetcher{data: garbage}, int64(len(garbage)))
+	if !errors.Is(err, ErrCorruptObject) {
+		t.Errorf("DecompressRanged err = %v, want ErrCorruptObject", err)
+	}
+}
+
+// TestDecompressRanged_FetchFailureIsNotCorruption separates the two failure
+// modes: a backend that never answered says nothing about the bytes it holds,
+// so reporting it as corruption would send a healthy copy to the scrubber.
+func TestDecompressRanged_FetchFailureIsNotCorruption(t *testing.T) {
+	t.Parallel()
+	c := newTestCodec(t)
+	f := storeCompressed(t, c, incompressible(t, testChunk))
+	f.err = errors.New("backend unreachable")
+
+	_, err := c.DecompressRanged(t.Context(), f, int64(len(f.data)))
+	if !errors.Is(err, ErrFetchFailed) {
+		t.Errorf("err = %v, want ErrFetchFailed", err)
+	}
+	if errors.Is(err, ErrCorruptObject) {
+		t.Error("a failed fetch was reported as a corrupt object")
 	}
 }

@@ -28,11 +28,18 @@ import (
 // costs one extra fetch. It is a fixed cost on every read, hence this small.
 const tailPrefetchSize = 8 << 10
 
-// ErrRangeBounds reports a read addressed outside the compressed object.
-// ErrShortRange reports a RangeFetcher returning other than the bytes asked for.
+// Failure modes a ranged read distinguishes, so a caller can tell stored bytes
+// that are wrong from a backend that failed to deliver them: the first calls for
+// another copy and a scrub, the second for a retry.
+//
+// ErrRangeBounds reports metadata the object cannot match, which is the caller's
+// input rather than the object's content. ErrShortRange reports a RangeFetcher
+// answering with other than the bytes it was asked for, and ErrFetchFailed a
+// fetch that did not answer at all.
 var (
 	ErrRangeBounds = errors.New("range outside object")
 	ErrShortRange  = errors.New("range fetch returned wrong length")
+	ErrFetchFailed = errors.New("range fetch failed")
 )
 
 // RangeFetcher supplies arbitrary byte ranges of one stored compressed object.
@@ -76,9 +83,9 @@ func (c *Codec) DecompressRanged(ctx context.Context, f RangeFetcher, compressed
 		seekable.WithReaderEnvironment(env),
 		seekable.WithReaderLogger(c.log))
 	if err != nil {
-		return nil, fmt.Errorf("open ranged seekable reader: %w", err)
+		return nil, classifyDecode(fmt.Errorf("open ranged seekable reader: %w", err))
 	}
-	return r, nil
+	return &decodeGuard{inner: r}, nil
 }
 
 // rangeEnv adapts a RangeFetcher to seekable.ReaderEnvironment.
@@ -141,19 +148,69 @@ func (e *rangeEnv) GetFrameByIndex(index seekable.FrameOffsetEntry) ([]byte, err
 // fetchAt pulls exactly n bytes at off. A backend answering with the wrong
 // number of bytes is rejected here rather than downstream, where it would
 // surface as frame corruption instead of a transport fault.
+//
+// Bounds are checked against the object rather than trusted, because the only
+// thing that asks for a range outside it is a seek table that disagrees with
+// the size the caller supplied.
 func (e *rangeEnv) fetchAt(off, n int64) ([]byte, error) {
 	if off < 0 || n <= 0 || off > e.size-n {
-		return nil, fmt.Errorf("%w: %d bytes at %d in a %d byte object", ErrRangeBounds, n, off, e.size)
+		return nil, fmt.Errorf("%w: seek table asks for %d bytes at %d in a %d byte object",
+			ErrCorruptObject, n, off, e.size)
 	}
 	buf, err := e.fetch(off, off+n-1)
 	if err != nil {
-		return nil, fmt.Errorf("fetch %d bytes at %d: %w", n, off, err)
+		return nil, fmt.Errorf("%w: %d bytes at %d: %w", ErrFetchFailed, n, off, err)
 	}
 	if int64(len(buf)) != n {
 		return nil, fmt.Errorf("%w: asked %d bytes at %d, got %d", ErrShortRange, n, off, len(buf))
 	}
 	return buf, nil
 }
+
+// classifyDecode names the failure behind an error leaving the seekable reader.
+// Anything the codec did not raise itself came from parsing or decoding the
+// stored bytes, so corruption is the answer by elimination - the library fails
+// only on bytes it cannot make sense of.
+func classifyDecode(err error) error {
+	switch {
+	case err == nil, errors.Is(err, io.EOF):
+		return err
+	case errors.Is(err, ErrCorruptObject), errors.Is(err, ErrShortRange),
+		errors.Is(err, ErrFetchFailed), errors.Is(err, ErrRangeBounds):
+		return err
+	default:
+		return fmt.Errorf("%w: %w", ErrCorruptObject, err)
+	}
+}
+
+// decodeGuard classifies the errors the seekable reader raises while decoding,
+// so a decode failure reaches the read path as ErrCorruptObject rather than as
+// whatever shape the library happened to produce.
+type decodeGuard struct {
+	inner RangedReader
+}
+
+// Read implements io.Reader.
+func (g *decodeGuard) Read(p []byte) (int, error) {
+	n, err := g.inner.Read(p)
+	return n, classifyDecode(err)
+}
+
+// ReadAt implements io.ReaderAt.
+func (g *decodeGuard) ReadAt(p []byte, off int64) (int, error) {
+	n, err := g.inner.ReadAt(p, off)
+	return n, classifyDecode(err)
+}
+
+// Seek implements io.Seeker. Its errors pass through unclassified: seeking
+// moves an offset against the parsed seek table and never decodes a frame, so a
+// failure here is a bad argument rather than a bad object.
+func (g *decodeGuard) Seek(offset int64, whence int) (int64, error) {
+	return g.inner.Seek(offset, whence)
+}
+
+// Close implements io.Closer.
+func (g *decodeGuard) Close() error { return g.inner.Close() }
 
 // fromTail serves n bytes at off out of the prefetched tail when it covers
 // them. The caller has already bounded off and n against the object size.
