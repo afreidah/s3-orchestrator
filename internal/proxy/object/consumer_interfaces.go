@@ -35,18 +35,25 @@ type ObjectWriteRuntime interface {
 	Acct() *accounting.Recorder
 }
 
+// RangeFetchRuntime is what a single ranged GET needs: the timed call plus the
+// two meters it is charged against. Split out because a compressed read issues
+// one per frame it touches, and the fetcher doing so needs nothing else.
+type RangeFetchRuntime interface {
+	GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error)
+	Usage() *counter.UsageTracker
+	Acct() *accounting.Recorder
+}
+
 // ObjectReadRuntime is the subset of *infra.BackendRuntime the read-path Manager
 // methods (get, head, list, materialize) reach for. Usage() is still
 // needed for WithinLimits pre-flight checks; per-backend Record calls
 // flow through Acct.
 type ObjectReadRuntime interface {
+	RangeFetchRuntime
 	Backends() map[string]backend.ObjectBackend
 	GetBackend(name string) (backend.ObjectBackend, error)
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
-	GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error)
 	HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error)
-	Usage() *counter.UsageTracker
-	Acct() *accounting.Recorder
 }
 
 // ObjectRuntime composes the read and write role interfaces above into the
