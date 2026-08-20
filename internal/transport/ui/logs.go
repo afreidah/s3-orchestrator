@@ -56,11 +56,11 @@ func (h *Handler) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 // unset). The Limit on opts is the client limit plus one so the handler
 // can detect whether more entries exist.
 func buildLogQueryOpts(q url.Values) (telemetry.LogQueryOpts, int) {
-	opts := telemetry.LogQueryOpts{}
-	opts.MinLevel = telemetry.ParseLevel(q.Get("level"))
-	opts.Since = parseLogTimestamp(q.Get("since"))
-	opts.Before = parseLogTimestamp(q.Get("before"))
-	opts.Component = q.Get("component")
+	opts := telemetry.LogQueryOpts{
+		MinLevel:  telemetry.ParseLevel(q.Get("level")),
+		Since:     parseLogTimestamp(q.Get("since")),
+		Before:    parseLogTimestamp(q.Get("before")),
+		Component: q.Get("component")}
 
 	requestedLimit := parseLogLimit(q.Get("limit"))
 	if requestedLimit > 0 {

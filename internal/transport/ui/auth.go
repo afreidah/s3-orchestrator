@@ -168,11 +168,11 @@ func (h *Handler) validSession(r *http.Request) bool {
 		return false
 	}
 
-	pipeIdx := strings.LastIndex(payload, "|")
-	if pipeIdx < 0 {
+	_, rawExpiry, ok := strings.CutLast(payload, "|")
+	if !ok {
 		return false
 	}
-	expiry, err := strconv.ParseInt(payload[pipeIdx+1:], 10, 64)
+	expiry, err := strconv.ParseInt(rawExpiry, 10, 64)
 	if err != nil {
 		return false
 	}

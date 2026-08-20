@@ -164,7 +164,7 @@ func newReplicator(t *testing.T, cfg replicatorStub) *opstest.MockReplicatorOps 
 		DoAndReturn(func(_ context.Context, _ config.ReplicationConfig, observer progress.Observer) (worker.ReplicationSummary, error) {
 			trackN(observer, cfg.created, fixedKey(""))
 			return worker.ReplicationSummary{
-				WorkSummary:   worker.WorkSummary{Succeeded: cfg.created, Failed: cfg.failed},
+				Succeeded: cfg.created, Failed: cfg.failed,
 				CopiesCreated: cfg.created,
 			}, cfg.err
 		}).AnyTimes()
@@ -194,7 +194,7 @@ func newRebalancer(t *testing.T, cfg *rebalancerStub) *opstest.MockRebalancerOps
 				return worker.RebalanceSummary{SkipReason: cfg.skip}, cfg.err
 			}
 			trackN(observer, cfg.moved, func(i int) string { return fmt.Sprintf("obj-%d  src -> dst", i) })
-			return worker.RebalanceSummary{WorkSummary: worker.WorkSummary{Succeeded: cfg.moved}}, cfg.err
+			return worker.RebalanceSummary{Succeeded: cfg.moved}, cfg.err
 		}).AnyTimes()
 	return m
 }
@@ -221,7 +221,7 @@ func newOverRep(t *testing.T, cfg overRepStub) *opstest.MockOverReplicationOps {
 		DoAndReturn(func(_ context.Context, _ config.ReplicationConfig, observer progress.Observer) (worker.OverReplicationSummary, error) {
 			trackN(observer, cfg.cleaned, fixedKey(""))
 			return worker.OverReplicationSummary{
-				WorkSummary:   worker.WorkSummary{Succeeded: cfg.cleaned, Failed: cfg.failed},
+				Succeeded: cfg.cleaned, Failed: cfg.failed,
 				CopiesRemoved: cfg.cleaned,
 			}, cfg.cleanErr
 		}).AnyTimes()

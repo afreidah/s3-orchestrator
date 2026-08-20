@@ -230,7 +230,7 @@ func NewS3KeyStream(
 	ctx context.Context,
 	s3b ObjectLister,
 	bucketPrefixes []string,
-	apiPages *int64,
+	apiPages *atomic.Int64,
 ) *S3KeyStream {
 	streamCtx, cancel := context.WithCancel(ctx)
 	s := &S3KeyStream{
@@ -246,7 +246,7 @@ func NewS3KeyStream(
 
 // run drives the backing ListObjects walk on the stream goroutine, forwarding
 // each page through emitPage and surfacing any non-cancellation error on errCh.
-func (s *S3KeyStream) run(ctx context.Context, s3b ObjectLister, bucketPrefixes []string, apiPages *int64) {
+func (s *S3KeyStream) run(ctx context.Context, s3b ObjectLister, bucketPrefixes []string, apiPages *atomic.Int64) {
 	defer close(s.ch)
 	err := s3b.ListObjects(ctx, "", func(objects []backend.ListedObject) error {
 		return s.emitPage(ctx, objects, bucketPrefixes, apiPages)
@@ -260,9 +260,9 @@ func (s *S3KeyStream) run(ctx context.Context, s3b ObjectLister, bucketPrefixes 
 // emitPage sends one ListObjects page onto the channel, counting the page and
 // bailing out when the stream is cancelled. Keys pass through untouched, so the
 // emitted sequence preserves the backend's byte ordering.
-func (s *S3KeyStream) emitPage(ctx context.Context, objects []backend.ListedObject, bucketPrefixes []string, apiPages *int64) error {
+func (s *S3KeyStream) emitPage(ctx context.Context, objects []backend.ListedObject, bucketPrefixes []string, apiPages *atomic.Int64) error {
 	if apiPages != nil {
-		atomic.AddInt64(apiPages, 1)
+		apiPages.Add(1)
 	}
 	for i := range objects {
 		obj := &objects[i]

@@ -299,7 +299,7 @@ func partialReplication(t *testing.T, created, removed, failed int) *ops.Replica
 	repl.EXPECT().Config().Return(cfg).AnyTimes()
 	repl.EXPECT().Replicate(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(worker.ReplicationSummary{
-			WorkSummary:   worker.WorkSummary{Succeeded: created, Failed: failed},
+			Succeeded: created, Failed: failed,
 			CopiesCreated: created,
 		}, nil).AnyTimes()
 
@@ -307,7 +307,7 @@ func partialReplication(t *testing.T, created, removed, failed int) *ops.Replica
 	over.EXPECT().Config().Return(cfg).AnyTimes()
 	over.EXPECT().Clean(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(worker.OverReplicationSummary{
-			WorkSummary:   worker.WorkSummary{Succeeded: removed, Failed: failed},
+			Succeeded: removed, Failed: failed,
 			CopiesRemoved: removed,
 		}, nil).AnyTimes()
 
