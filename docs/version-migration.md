@@ -37,7 +37,7 @@ s3-orchestrator version
 |-----------|----------------|------------|-------|
 | PostgreSQL | 16, 18 | 10+ (pgx driver) | Required. Connection pooling via pgxpool. |
 | Redis | 7, 8 | 6+ (go-redis driver) | Optional. Shared usage counters for multi-instance deployments. |
-| Go | 1.26 | 1.26+ | For building from source. Version set in `go.mod`. |
+| Go | 1.27 | 1.27+ | For building from source. Version set in `go.mod`. |
 | S3 backends | MinIO, OCI, R2 | Any S3-compatible API | GCS requires `disable_checksum`, `unsigned_payload`, `strip_sdk_headers`. |
 | Container runtime | Docker | Docker, containerd, Podman | Multi-arch images (amd64, arm64) published to ghcr.io. |
 | Orchestrators | Nomad, Kubernetes | Nomad, Kubernetes, systemd | Deploy manifests and demo scripts provided. |

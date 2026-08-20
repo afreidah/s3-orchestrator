@@ -33,7 +33,9 @@ type TTLCache[K comparable, V any] struct {
 }
 
 // NewTTLCache creates a cache with the given default TTL. If ttl > 0, a
-// background goroutine sweeps expired entries at the TTL interval.
+// background goroutine sweeps expired entries at the TTL interval. A ttl of
+// zero or less disables the cache: Set still records an entry but Get never
+// serves one, and no sweeper runs.
 func NewTTLCache[K comparable, V any](ttl time.Duration) *TTLCache[K, V] {
 	c := &TTLCache[K, V]{
 		entries: make(map[K]cacheEntry[V]),
@@ -52,11 +54,16 @@ func NewTTLCache[K comparable, V any](ttl time.Duration) *TTLCache[K, V] {
 
 // Get returns the cached value for the key, or the zero value and false if
 // the key is missing or expired.
+//
+// An entry is live only while its expiry is strictly in the future, so a TTL of
+// zero is never served. Asking instead whether the expiry has passed leaves the
+// zero-TTL case resting on the clock advancing between the Set and the Get,
+// which is a race rather than a policy.
 func (c *TTLCache[K, V]) Get(key K) (V, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	entry, ok := c.entries[key]
-	if !ok || time.Now().After(entry.expiry) {
+	if !ok || !entry.expiry.After(time.Now()) {
 		var zero V
 		return zero, false
 	}
@@ -131,13 +138,15 @@ func (c *TTLCache[K, V]) evictLoop(interval time.Duration) {
 	}
 }
 
-// evict removes all entries whose expiry has passed.
+// evict removes every entry Get would no longer serve. It shares Get's
+// boundary so a swept cache and a read-through cache never disagree about
+// which entries are still live.
 func (c *TTLCache[K, V]) evict() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := time.Now()
 	for key, entry := range c.entries {
-		if now.After(entry.expiry) {
+		if !entry.expiry.After(now) {
 			delete(c.entries, key)
 		}
 	}

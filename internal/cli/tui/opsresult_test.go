@@ -208,24 +208,24 @@ func TestNewOneShotResults_Describe(t *testing.T) {
 		{
 			name: "encrypt existing",
 			res: encryptExistingResult{adminapi.EncryptExistingResponse{
-				BulkEncryptionOutcome: adminapi.BulkEncryptionOutcome{Status: "complete", Total: 3},
-				Encrypted:             3,
+				Status: "complete", Total: 3,
+				Encrypted: 3,
 			}},
 			want: "encrypted 3 objects",
 		},
 		{
 			name: "decrypt existing",
 			res: decryptExistingResult{adminapi.DecryptExistingResponse{
-				BulkEncryptionOutcome: adminapi.BulkEncryptionOutcome{Status: "complete", Total: 2, Failed: 1},
-				Decrypted:             1,
+				Status: "complete", Total: 2, Failed: 1,
+				Decrypted: 1,
 			}},
 			want: "decrypted 1 object, 1 failed",
 		},
 		{
 			name: "rotate key",
 			res: rotateKeyResult{adminapi.RotateEncryptionKeyResponse{
-				BulkEncryptionOutcome: adminapi.BulkEncryptionOutcome{Status: "complete", Total: 5},
-				Rotated:               5,
+				Status: "complete", Total: 5,
+				Rotated: 5,
 			}},
 			want: "rotated 5 objects",
 		},
@@ -249,7 +249,7 @@ func TestNewOneShotResults_Describe(t *testing.T) {
 func TestNewOneShotResults_ReportSkips(t *testing.T) {
 	t.Parallel()
 	res := encryptExistingResult{adminapi.EncryptExistingResponse{
-		BulkEncryptionOutcome: adminapi.BulkEncryptionOutcome{Status: statusSkipped},
+		Status: statusSkipped,
 	}}
 	if got := res.skipReason(); got != statusSkipped {
 		t.Errorf("skipReason = %q, want %q", got, statusSkipped)

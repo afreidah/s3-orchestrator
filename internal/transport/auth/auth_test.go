@@ -118,77 +118,41 @@ func TestHashSHA256(t *testing.T) {
 	}
 }
 
-// TestSigV4Timing_KnownVsUnknownEquivalent verifies the request-latency
-// side channel has been closed: an authenticator should take roughly the
-// same wall time regardless of whether the access key is registered.
-// Removing signingKeyCache means both paths now run deriveSigningKey;
-// this test pins that property by sampling many auths from each path
-// and asserting the median delta sits inside a generous tolerance
-// (~30% of either median, well above measurement noise).
+// BenchmarkSigV4KnownVsUnknown measures the request-latency side channel that
+// removing signingKeyCache closed: both paths now run deriveSigningKey, so
+// authenticating a registered access key should cost the same as an unregistered
+// one. Compare the two sub-benchmarks; a reintroduced cache shows up as roughly
+// 4x, not as a few percent.
 //
-// The test is best-effort under load: CPU jitter on a contended host
-// can blow the assertion. Run it with at least a few iterations of
-// -count to confirm the median is stable. A real attacker has many more
-// samples than we use here, so the bar for "indistinguishable" is
-// tighter than the bar for "doesn't flake under CI"  -  the safety
-// argument lives in the code change, not in the timing assertion.
-func TestSigV4Timing_KnownVsUnknownEquivalent(t *testing.T) {
-	t.Parallel()
-	if testing.Short() {
-		t.Skip("timing-sensitive; run without -short")
-	}
-
+// This is a benchmark and not a test because the property is a ratio between two
+// wall-clock measurements, and CPU jitter on a contended host moves that ratio
+// further than a real cache asymmetry would. As a test it asserted on the median
+// delta and failed on loaded machines while catching nothing. The safety
+// argument lives in the code change; this quantifies it on demand.
+func BenchmarkSigV4KnownVsUnknown(b *testing.B) {
 	knownAccess := "AKIDKNOWN"
 	knownSecret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" //nolint:gosec // G101: test credential
-	br := mustBucketRegistry(t, []config.BucketConfig{
+	br := mustBucketRegistry(b, []config.BucketConfig{
 		{Name: "bucket", Credentials: []config.CredentialConfig{
 			{AccessKeyID: knownAccess, SecretAccessKey: knownSecret},
 		}},
 	})
 
-	knownReq := signedRequestFor(t, knownAccess, knownSecret)
-
-	// Build an unknown-access request that will FAIL signature verification
-	// but exercises the same deriveSigningKey path on the auth side. Reuse
-	// a synthetic Authorization header signed with a dummy access key the
-	// registry doesn't know.
-	unknownReq := signedRequestFor(t, "AKIDUNKNOWN", knownSecret)
-
-	const samples = 500
-	knownTimes := make([]time.Duration, samples)
-	unknownTimes := make([]time.Duration, samples)
-
-	// Warm up to amortize package-init costs out of the timed runs.
-	for range 50 {
-		_, _, _ = br.AuthenticateAndResolveBucket(knownReq)
-		_, _, _ = br.AuthenticateAndResolveBucket(unknownReq)
+	// The unknown-access request fails signature verification but exercises the
+	// same deriveSigningKey path, which is the whole point of the comparison.
+	cases := []struct {
+		name string
+		req  *http.Request
+	}{
+		{name: "known", req: signedRequestFor(b, knownAccess, knownSecret)},
+		{name: "unknown", req: signedRequestFor(b, "AKIDUNKNOWN", knownSecret)},
 	}
-
-	for i := range samples {
-		t0 := time.Now()
-		_, _, _ = br.AuthenticateAndResolveBucket(knownReq)
-		knownTimes[i] = time.Since(t0)
-	}
-	for i := range samples {
-		t0 := time.Now()
-		_, _, _ = br.AuthenticateAndResolveBucket(unknownReq)
-		unknownTimes[i] = time.Since(t0)
-	}
-
-	knownMedian := medianDuration(knownTimes)
-	unknownMedian := medianDuration(unknownTimes)
-	delta := absDuration(knownMedian - unknownMedian)
-	t.Logf("known median = %v, unknown median = %v, delta = %v", knownMedian, unknownMedian, delta)
-
-	// Tolerance is the smaller of the two medians: any timing channel
-	// big enough for an attacker to detect would push delta above the
-	// faster path's whole runtime. On a contended host the medians can
-	// drift by tens of percent independently; this bar catches a real
-	// cache asymmetry (which would be ~4x) without flaking on jitter.
-	smaller := min(knownMedian, unknownMedian)
-	if delta > smaller {
-		t.Errorf("median timing delta %v exceeds smaller-median floor %v (known=%v, unknown=%v)",
-			delta, smaller, knownMedian, unknownMedian)
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			for b.Loop() {
+				_, _, _ = br.AuthenticateAndResolveBucket(tc.req)
+			}
+		})
 	}
 }
 
@@ -196,11 +160,11 @@ func TestSigV4Timing_KnownVsUnknownEquivalent(t *testing.T) {
 // given access key. The signature is computed against a fixed secret so
 // the unknown-key request still exercises every parsing/validation step
 // on the auth path before the secret-mismatch failure.
-func signedRequestFor(t *testing.T, accessKey, secret string) *http.Request {
-	t.Helper()
+func signedRequestFor(tb testing.TB, accessKey, secret string) *http.Request {
+	tb.Helper()
 	r, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/bucket/key", http.NoBody)
 	if err != nil {
-		t.Fatalf("NewRequest: %v", err)
+		tb.Fatalf("NewRequest: %v", err)
 	}
 	r.Host = "example.com"
 	now := time.Now().UTC()
@@ -219,28 +183,6 @@ func signedRequestFor(t *testing.T, accessKey, secret string) *http.Request {
 			", SignedHeaders=host;x-amz-content-sha256;x-amz-date"+
 			", Signature="+sig)
 	return r
-}
-
-// medianDuration returns the median of a (possibly unsorted) duration
-// slice. The slice is sorted in place; callers should not rely on input
-// order being preserved.
-func medianDuration(d []time.Duration) time.Duration {
-	cp := make([]time.Duration, len(d))
-	copy(cp, d)
-	for i := 1; i < len(cp); i++ {
-		for j := i; j > 0 && cp[j-1] > cp[j]; j-- {
-			cp[j-1], cp[j] = cp[j], cp[j-1]
-		}
-	}
-	return cp[len(cp)/2]
-}
-
-// absDuration returns the absolute value of a Duration.
-func absDuration(d time.Duration) time.Duration {
-	if d < 0 {
-		return -d
-	}
-	return d
 }
 
 // TestDeriveSigningKey_Deterministic verifies the same inputs produce

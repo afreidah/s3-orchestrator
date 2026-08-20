@@ -112,7 +112,7 @@ check: ## Run fast local checks for contributor iteration
 	$(MAKE) doc-stub-check
 
 # Keep in sync with the version pinned in .github/workflows/ci.yml.
-GOLANGCI_VERSION ?= v2.12.2
+GOLANGCI_VERSION ?= v2.13.0
 GOLANGCI := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
 
 # Which modernizers exist is decided by this pin; which ones apply is decided

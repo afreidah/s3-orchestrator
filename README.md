@@ -45,7 +45,7 @@ If you've gone looking for a tool that does something similar, there don't appea
 
 ## Quickstart
 
-**Prerequisites:** Go 1.26+, Docker, Make.
+**Prerequisites:** Go 1.27+, Docker, Make.
 
 ```bash
 git clone https://github.com/afreidah/s3-orchestrator.git

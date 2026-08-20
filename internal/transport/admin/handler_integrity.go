@@ -42,7 +42,7 @@ func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 	res, err := h.integrity.Scrub(r.Context(), batchSize, nil)
 	if reason, skipped := skipReason(err); skipped {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.ScrubResponse{
-			IntegrityOutcome: adminapi.IntegrityOutcome{Status: statusSkipped, Reason: reason},
+			Status: statusSkipped, Reason: reason,
 		})
 		return
 	}
@@ -57,11 +57,11 @@ func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 // wireScrubResponse renders one completed pass for the wire.
 func wireScrubResponse(res ops.ScrubResult) adminapi.ScrubResponse {
 	return adminapi.ScrubResponse{
-		IntegrityOutcome: adminapi.IntegrityOutcome{Status: statusOK},
-		Checked:          res.Checked,
-		Failed:           res.Failed,
-		Unreadable:       res.Unreadable,
-		Deferred:         res.Deferred,
+		Status:     statusOK,
+		Checked:    res.Checked,
+		Failed:     res.Failed,
+		Unreadable: res.Unreadable,
+		Deferred:   res.Deferred,
 	}
 }
 
@@ -166,7 +166,7 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 	res, err := h.integrity.BackfillChecksums(r.Context(), batchSize, maxObjects, pause, nil)
 	if reason, skipped := skipReason(err); skipped {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.BackfillChecksumsResponse{
-			IntegrityOutcome: adminapi.IntegrityOutcome{Status: statusSkipped, Reason: reason},
+			Status: statusSkipped, Reason: reason,
 		})
 		return
 	}
@@ -176,9 +176,9 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, adminapi.BackfillChecksumsResponse{
-		IntegrityOutcome: adminapi.IntegrityOutcome{Status: statusOK},
-		Processed:        res.Processed,
-		Done:             res.Done,
+		Status:    statusOK,
+		Processed: res.Processed,
+		Done:      res.Done,
 	})
 }
 
@@ -236,10 +236,10 @@ func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {
 		"backends_scanned", result.BackendsScanned)
 
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ReconcileResponse{
-		IntegrityOutcome: adminapi.IntegrityOutcome{Status: "ok"},
-		Imported:         result.Imported,
-		Removed:          result.Removed,
-		BackendsScanned:  result.BackendsScanned,
+		Status:          "ok",
+		Imported:        result.Imported,
+		Removed:         result.Removed,
+		BackendsScanned: result.BackendsScanned,
 	})
 }
 

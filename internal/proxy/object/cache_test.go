@@ -99,11 +99,11 @@ func TestLocationCache_ZeroTTL_NoEvictionGoroutine(t *testing.T) {
 	c := NewLocationCache(0)
 	defer c.Close()
 
-	// With TTL=0, Set still works but entries never expire via Get
+	// A zero TTL disables the cache outright rather than granting an entry a
+	// lifetime so short that whether it is served depends on the clock.
 	c.Set("key1", "backend-a")
 	if _, ok := c.Get("key1"); ok {
-		// TTL=0 means expiry is in the past, so Get should return false
-		t.Error("expected expired with zero TTL")
+		t.Error("Get served an entry from a zero-TTL cache")
 	}
 }
 

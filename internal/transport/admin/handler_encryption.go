@@ -44,11 +44,9 @@ func (h *Handler) handleRotateEncryptionKey(w http.ResponseWriter, r *http.Reque
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, adminapi.RotateEncryptionKeyResponse{
-		BulkEncryptionOutcome: adminapi.BulkEncryptionOutcome{
-			Status: statusComplete,
-			Failed: res.Failed,
-			Total:  res.Total,
-		},
+		Status:  statusComplete,
+		Failed:  res.Failed,
+		Total:   res.Total,
 		Rotated: res.Rotated,
 	})
 }
@@ -61,11 +59,9 @@ func (h *Handler) handleEncryptExisting(w http.ResponseWriter, r *http.Request) 
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, adminapi.EncryptExistingResponse{
-		BulkEncryptionOutcome: adminapi.BulkEncryptionOutcome{
-			Status: statusComplete,
-			Failed: res.Failed,
-			Total:  res.Total,
-		},
+		Status:    statusComplete,
+		Failed:    res.Failed,
+		Total:     res.Total,
 		Encrypted: res.Succeeded,
 	})
 }
@@ -79,11 +75,9 @@ func (h *Handler) handleDecryptExisting(w http.ResponseWriter, r *http.Request) 
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, adminapi.DecryptExistingResponse{
-		BulkEncryptionOutcome: adminapi.BulkEncryptionOutcome{
-			Status: statusComplete,
-			Failed: res.Failed,
-			Total:  res.Total,
-		},
+		Status:    statusComplete,
+		Failed:    res.Failed,
+		Total:     res.Total,
 		Decrypted: res.Succeeded,
 	})
 }
