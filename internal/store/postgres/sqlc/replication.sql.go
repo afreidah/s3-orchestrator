@@ -38,7 +38,7 @@ WITH over_replicated AS (
     HAVING COUNT(*) > $1::bigint
     LIMIT $2
 )
-SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
+SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
 FROM object_locations ol
 JOIN over_replicated orep ON ol.object_key = orep.object_key
 ORDER BY ol.object_key ASC, ol.created_at ASC
@@ -50,15 +50,19 @@ type GetOverReplicatedObjectsParams struct {
 }
 
 type GetOverReplicatedObjectsRow struct {
-	ObjectKey     string
-	BackendName   string
-	SizeBytes     int64
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         *string
-	PlaintextSize *int64
-	ContentHash   *string
-	CreatedAt     pgtype.Timestamptz
+	ObjectKey                string
+	BackendName              string
+	SizeBytes                int64
+	Encrypted                bool
+	EncryptionKey            []byte
+	KeyID                    *string
+	PlaintextSize            *int64
+	ContentHash              *string
+	CompressionAlgorithm     *string
+	CompressionLevel         *string
+	CompressionFormatVersion *int16
+	LogicalSize              *int64
+	CreatedAt                pgtype.Timestamptz
 }
 
 func (q *Queries) GetOverReplicatedObjects(ctx context.Context, arg GetOverReplicatedObjectsParams) ([]GetOverReplicatedObjectsRow, error) {
@@ -79,6 +83,10 @@ func (q *Queries) GetOverReplicatedObjects(ctx context.Context, arg GetOverRepli
 			&i.KeyID,
 			&i.PlaintextSize,
 			&i.ContentHash,
+			&i.CompressionAlgorithm,
+			&i.CompressionLevel,
+			&i.CompressionFormatVersion,
+			&i.LogicalSize,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -101,7 +109,7 @@ WITH under_replicated AS (
     HAVING COUNT(*) < $1::bigint
     LIMIT $2
 )
-SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
+SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
 FROM object_locations ol
 JOIN under_replicated ur ON ol.object_key = ur.object_key
 ORDER BY ol.object_key ASC, ol.created_at ASC
@@ -113,15 +121,19 @@ type GetUnderReplicatedObjectsParams struct {
 }
 
 type GetUnderReplicatedObjectsRow struct {
-	ObjectKey     string
-	BackendName   string
-	SizeBytes     int64
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         *string
-	PlaintextSize *int64
-	ContentHash   *string
-	CreatedAt     pgtype.Timestamptz
+	ObjectKey                string
+	BackendName              string
+	SizeBytes                int64
+	Encrypted                bool
+	EncryptionKey            []byte
+	KeyID                    *string
+	PlaintextSize            *int64
+	ContentHash              *string
+	CompressionAlgorithm     *string
+	CompressionLevel         *string
+	CompressionFormatVersion *int16
+	LogicalSize              *int64
+	CreatedAt                pgtype.Timestamptz
 }
 
 // -----------------------------------------------------------------------------
@@ -153,6 +165,10 @@ func (q *Queries) GetUnderReplicatedObjects(ctx context.Context, arg GetUnderRep
 			&i.KeyID,
 			&i.PlaintextSize,
 			&i.ContentHash,
+			&i.CompressionAlgorithm,
+			&i.CompressionLevel,
+			&i.CompressionFormatVersion,
+			&i.LogicalSize,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -174,7 +190,7 @@ WITH under_replicated AS (
     HAVING COUNT(*) < $2::bigint
     LIMIT $3
 )
-SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.created_at
+SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
 FROM object_locations ol
 JOIN under_replicated ur ON ol.object_key = ur.object_key
 ORDER BY ol.object_key ASC, ol.created_at ASC
@@ -187,15 +203,19 @@ type GetUnderReplicatedObjectsExcludingParams struct {
 }
 
 type GetUnderReplicatedObjectsExcludingRow struct {
-	ObjectKey     string
-	BackendName   string
-	SizeBytes     int64
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         *string
-	PlaintextSize *int64
-	ContentHash   *string
-	CreatedAt     pgtype.Timestamptz
+	ObjectKey                string
+	BackendName              string
+	SizeBytes                int64
+	Encrypted                bool
+	EncryptionKey            []byte
+	KeyID                    *string
+	PlaintextSize            *int64
+	ContentHash              *string
+	CompressionAlgorithm     *string
+	CompressionLevel         *string
+	CompressionFormatVersion *int16
+	LogicalSize              *int64
+	CreatedAt                pgtype.Timestamptz
 }
 
 func (q *Queries) GetUnderReplicatedObjectsExcluding(ctx context.Context, arg GetUnderReplicatedObjectsExcludingParams) ([]GetUnderReplicatedObjectsExcludingRow, error) {
@@ -216,6 +236,10 @@ func (q *Queries) GetUnderReplicatedObjectsExcluding(ctx context.Context, arg Ge
 			&i.KeyID,
 			&i.PlaintextSize,
 			&i.ContentHash,
+			&i.CompressionAlgorithm,
+			&i.CompressionLevel,
+			&i.CompressionFormatVersion,
+			&i.LogicalSize,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -229,8 +253,8 @@ func (q *Queries) GetUnderReplicatedObjectsExcluding(ctx context.Context, arg Ge
 }
 
 const insertReplicaConditional = `-- name: InsertReplicaConditional :one
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at)
-SELECT $1, $2, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, NOW()
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at)
+SELECT $1, $2, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, NOW()
 FROM object_locations ol
 WHERE ol.object_key = $1 AND ol.backend_name = $3
 ON CONFLICT (object_key, backend_name) DO NOTHING

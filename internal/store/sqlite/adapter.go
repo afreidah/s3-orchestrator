@@ -175,11 +175,15 @@ func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.Ob
 	if _, err := a.tx.ExecContext(ctx,
 		`INSERT INTO object_locations
 		   (object_key, backend_name, size_bytes, encrypted, encryption_key,
-		    key_id, plaintext_size, content_hash, managed, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    key_id, plaintext_size, content_hash,
+		    compression_algorithm, compression_level, compression_format_version, logical_size,
+		    managed, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		loc.ObjectKey, loc.BackendName, loc.SizeBytes, boolToInt(loc.Encrypted),
 		loc.EncryptionKey,
 		nullableString(loc.KeyID), nullableInt64(loc.PlaintextSize), nullableString(loc.ContentHash),
+		nullableString(loc.CompressionAlgorithm), nullableString(loc.CompressionLevel),
+		nullableInt64(int64(loc.CompressionFormatVersion)), nullableInt64(loc.LogicalSize),
 		boolToInt(!loc.Unmanaged),
 		now,
 	); err != nil {
@@ -226,14 +230,20 @@ func (a *sqliteTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, ba
 		keyID         sql.NullString
 		plaintextSize sql.NullInt64
 		contentHash   sql.NullString
+		compAlgorithm sql.NullString
+		compLevel     sql.NullString
+		compVersion   sql.NullInt64
+		logicalSize   sql.NullInt64
 	)
 	err := a.tx.QueryRowContext(ctx,
 		`SELECT size_bytes, encrypted, encryption_key,
-		        key_id, plaintext_size, content_hash
+		        key_id, plaintext_size, content_hash,
+		        compression_algorithm, compression_level, compression_format_version, logical_size
 		 FROM object_locations
 		 WHERE object_key = ? AND backend_name = ?`,
 		objectKey, backend,
-	).Scan(&size, &encrypted, &encryptionKey, &keyID, &plaintextSize, &contentHash)
+	).Scan(&size, &encrypted, &encryptionKey, &keyID, &plaintextSize, &contentHash,
+		&compAlgorithm, &compLevel, &compVersion, &logicalSize)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -241,14 +251,18 @@ func (a *sqliteTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, ba
 		return nil, false, fmt.Errorf("lock object on backend: %w", err)
 	}
 	loc := &core.ObjectLocation{
-		ObjectKey:     objectKey,
-		BackendName:   backend,
-		SizeBytes:     size,
-		Encrypted:     encrypted != 0,
-		EncryptionKey: encryptionKey,
-		KeyID:         nullStringValue(keyID),
-		PlaintextSize: nullInt64Value(plaintextSize),
-		ContentHash:   nullStringValue(contentHash),
+		ObjectKey:                objectKey,
+		BackendName:              backend,
+		SizeBytes:                size,
+		Encrypted:                encrypted != 0,
+		EncryptionKey:            encryptionKey,
+		KeyID:                    nullStringValue(keyID),
+		PlaintextSize:            nullInt64Value(plaintextSize),
+		ContentHash:              nullStringValue(contentHash),
+		CompressionAlgorithm:     nullStringValue(compAlgorithm),
+		CompressionLevel:         nullStringValue(compLevel),
+		CompressionFormatVersion: int(nullInt64Value(compVersion)),
+		LogicalSize:              nullInt64Value(logicalSize),
 	}
 	return loc, true, nil
 }
@@ -302,17 +316,14 @@ func (a *sqliteTxAdapter) InsertReplicaConditional(ctx context.Context, objectKe
 	if targetExists {
 		return 0, false, nil
 	}
-	dest := &core.ObjectLocation{
-		ObjectKey:     objectKey,
-		BackendName:   targetBackend,
-		SizeBytes:     srcLoc.SizeBytes,
-		Encrypted:     srcLoc.Encrypted,
-		EncryptionKey: srcLoc.EncryptionKey,
-		KeyID:         srcLoc.KeyID,
-		PlaintextSize: srcLoc.PlaintextSize,
-		ContentHash:   srcLoc.ContentHash,
-	}
-	if err := a.InsertObjectLocation(ctx, dest); err != nil {
+	// The whole source row is carried over rather than a hand-listed subset of
+	// its fields: the replica holds the same stored bytes, so anything omitted
+	// here is a column describing bytes that the copy then contradicts. That is
+	// how the conditional insert came to drop every encryption field.
+	dest := *srcLoc
+	dest.ObjectKey = objectKey
+	dest.BackendName = targetBackend
+	if err := a.InsertObjectLocation(ctx, &dest); err != nil {
 		return 0, false, err
 	}
 	return srcLoc.SizeBytes, true, nil

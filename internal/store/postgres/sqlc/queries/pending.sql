@@ -13,8 +13,9 @@
 -- name: InsertPendingObject :exec
 INSERT INTO pending_objects (
     intent_id, object_key, backend_name, size_bytes,
-    encrypted, encryption_key, key_id, plaintext_size, content_hash
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+    encrypted, encryption_key, key_id, plaintext_size, content_hash,
+    compression_algorithm, compression_level, compression_format_version, logical_size
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
 
 -- name: DeletePendingObject :exec
 DELETE FROM pending_objects WHERE intent_id = $1;
@@ -23,7 +24,8 @@ DELETE FROM pending_objects WHERE intent_id = $1;
 -- Return pending intents older than @older_than for reaper resolution.
 -- Bounded by @max_keys per call so a backlog cannot starve other queries.
 SELECT intent_id, object_key, backend_name, size_bytes,
-       encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
+       encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at,
+       compression_algorithm, compression_level, compression_format_version, logical_size
 FROM pending_objects
 WHERE created_at <= @older_than
 ORDER BY created_at ASC
@@ -43,7 +45,8 @@ DELETE FROM pending_objects WHERE backend_name = $1;
 -- instance already resolved this intent (deleted the row); the caller
 -- treats that as a benign no-op.
 SELECT intent_id, object_key, backend_name, size_bytes,
-       encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at
+       encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at,
+       compression_algorithm, compression_level, compression_format_version, logical_size
 FROM pending_objects
 WHERE intent_id = $1
 FOR UPDATE;

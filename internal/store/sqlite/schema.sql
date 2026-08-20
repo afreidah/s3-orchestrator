@@ -41,6 +41,13 @@ CREATE TABLE IF NOT EXISTS object_locations (
     managed        INTEGER NOT NULL DEFAULT 1,
     -- NULL means never verified; the scrub queue falls back to created_at.
     last_scrubbed_at TEXT,
+    -- NULL algorithm means the bytes are stored verbatim. logical_size is the
+    -- size the client wrote, which differs from plaintext_size once the stored
+    -- bytes are ciphertext of compressed data.
+    compression_algorithm      TEXT,
+    compression_level          TEXT,
+    compression_format_version INTEGER,
+    logical_size               INTEGER,
     created_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (object_key, backend_name)
 );
@@ -181,6 +188,10 @@ CREATE TABLE IF NOT EXISTS pending_objects (
     key_id         TEXT,
     plaintext_size INTEGER,
     content_hash   TEXT,
+    compression_algorithm      TEXT,
+    compression_level          TEXT,
+    compression_format_version INTEGER,
+    logical_size               INTEGER,
     created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -191,4 +202,4 @@ CREATE INDEX IF NOT EXISTS idx_pending_objects_backend
     ON pending_objects(backend_name);
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (6);
+INSERT INTO schema_version (version) VALUES (7);

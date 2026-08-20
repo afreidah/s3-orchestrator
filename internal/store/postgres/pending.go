@@ -91,15 +91,19 @@ func (s *Store) DeletePendingByBackend(ctx context.Context, backendName string) 
 // so the database stores SQL NULL rather than the zero value.
 func pendingInsertParams(p *core.PendingObject) db.InsertPendingObjectParams {
 	return db.InsertPendingObjectParams{
-		IntentID:      p.IntentID,
-		ObjectKey:     p.ObjectKey,
-		BackendName:   p.BackendName,
-		SizeBytes:     p.SizeBytes,
-		Encrypted:     p.Encrypted,
-		EncryptionKey: p.EncryptionKey,
-		KeyID:         strPtr(p.KeyID),
-		PlaintextSize: int64Ptr(p.PlaintextSize),
-		ContentHash:   strPtr(p.ContentHash),
+		IntentID:                 p.IntentID,
+		ObjectKey:                p.ObjectKey,
+		BackendName:              p.BackendName,
+		SizeBytes:                p.SizeBytes,
+		Encrypted:                p.Encrypted,
+		EncryptionKey:            p.EncryptionKey,
+		KeyID:                    strPtr(p.KeyID),
+		PlaintextSize:            int64Ptr(p.PlaintextSize),
+		ContentHash:              strPtr(p.ContentHash),
+		CompressionAlgorithm:     strPtr(p.CompressionAlgorithm),
+		CompressionLevel:         strPtr(p.CompressionLevel),
+		CompressionFormatVersion: int16Ptr(p.CompressionFormatVersion),
+		LogicalSize:              int64Ptr(p.LogicalSize),
 	}
 }
 
@@ -107,15 +111,19 @@ func pendingInsertParams(p *core.PendingObject) db.InsertPendingObjectParams {
 // dereferencing nullable columns to their zero value when SQL NULL.
 func pendingFromRow(row *db.PendingObject) core.PendingObject {
 	return core.PendingObject{
-		IntentID:      row.IntentID,
-		ObjectKey:     row.ObjectKey,
-		BackendName:   row.BackendName,
-		SizeBytes:     row.SizeBytes,
-		Encrypted:     row.Encrypted,
-		EncryptionKey: row.EncryptionKey,
-		CreatedAt:     row.CreatedAt.Time,
-		KeyID:         derefStr(row.KeyID),
-		PlaintextSize: derefInt64(row.PlaintextSize),
-		ContentHash:   derefStr(row.ContentHash),
+		IntentID:                 row.IntentID,
+		ObjectKey:                row.ObjectKey,
+		BackendName:              row.BackendName,
+		SizeBytes:                row.SizeBytes,
+		Encrypted:                row.Encrypted,
+		EncryptionKey:            row.EncryptionKey,
+		CreatedAt:                row.CreatedAt.Time,
+		KeyID:                    derefStr(row.KeyID),
+		PlaintextSize:            derefInt64(row.PlaintextSize),
+		ContentHash:              derefStr(row.ContentHash),
+		CompressionAlgorithm:     derefStr(row.CompressionAlgorithm),
+		CompressionLevel:         derefStr(row.CompressionLevel),
+		CompressionFormatVersion: int(derefInt16(row.CompressionFormatVersion)),
+		LogicalSize:              derefInt64(row.LogicalSize),
 	}
 }

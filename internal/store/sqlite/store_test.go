@@ -52,6 +52,43 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
+// rewindToSchemaVersion returns a test database to the shape it had at an
+// earlier schema version, so the migration runner can be exercised against a
+// database that genuinely predates a migration.
+//
+// Stamping the version alone is not enough. newTestStore builds the database
+// from schema.sql, which carries every column the current version defines, so
+// a rewound-but-unaltered database is a state no deployment ever reaches: an
+// old version number over a current schema. Re-running an additive migration
+// against it fails on a column that is already there.
+//
+// Each additive migration therefore needs its columns undone here to be
+// rewound past.
+func rewindToSchemaVersion(t *testing.T, s *Store, version int) {
+	t.Helper()
+	ctx := context.Background()
+
+	if version < 7 {
+		for _, table := range []string{"object_locations", "pending_objects"} {
+			for _, column := range []string{
+				"compression_algorithm", "compression_level",
+				"compression_format_version", "logical_size",
+			} {
+				if _, err := s.db.ExecContext(ctx,
+					`ALTER TABLE `+table+` DROP COLUMN `+column); err != nil {
+					t.Fatalf("drop %s.%s: %v", table, column, err)
+				}
+			}
+		}
+	}
+
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM schema_version; INSERT INTO schema_version (version) VALUES (?)`,
+		version); err != nil {
+		t.Fatalf("rewind schema version to %d: %v", version, err)
+	}
+}
+
 // mustRecordObject records an object, failing the test on error.
 func mustRecordObject(t *testing.T, s *Store, key, backend string, size int64) {
 	t.Helper()
@@ -1979,13 +2016,9 @@ func TestRunMigrations_UpgradesAnOlderDatabase(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	// Rewind to the version before the first numbered migration, as an
-	// installation predating it would be.
-	if _, err := s.db.ExecContext(ctx,
-		`DELETE FROM schema_version; INSERT INTO schema_version (version) VALUES (?)`,
-		expectedSchemaVersion-1); err != nil {
-		t.Fatalf("rewind schema version: %v", err)
-	}
+	// Rewind to the version before the newest migration, as an installation
+	// predating it would be.
+	rewindToSchemaVersion(t, s, expectedSchemaVersion-1)
 
 	if err := s.RunMigrations(ctx); err != nil {
 		t.Fatalf("RunMigrations on an older database: %v", err)
@@ -2905,12 +2938,10 @@ func TestMigration0006_NormalizesLegacyTimestamps(t *testing.T) {
 		}
 	}
 
-	// Rewind and re-run so migration 0006 applies to the seeded rows.
-	if _, err := s.db.ExecContext(ctx,
-		`DELETE FROM schema_version; INSERT INTO schema_version (version) VALUES (?)`,
-		expectedSchemaVersion-1); err != nil {
-		t.Fatalf("rewind schema version: %v", err)
-	}
+	// Rewind past 0006 and re-run so it applies to the seeded rows. Pinned to
+	// the version before that migration rather than to whatever is newest, so
+	// this keeps testing 0006 as later migrations land.
+	rewindToSchemaVersion(t, s, 5)
 	if err := s.RunMigrations(ctx); err != nil {
 		t.Fatalf("RunMigrations: %v", err)
 	}
