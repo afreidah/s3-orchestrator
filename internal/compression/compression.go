@@ -55,6 +55,13 @@ const decoderMaxMemory = 64 << 20 // 64 MiB
 // ErrChunkSizeRange reports a chunk size outside the supported bounds.
 var ErrChunkSizeRange = errors.New("chunk size out of range")
 
+// ErrCorruptObject reports stored bytes the codec could not decode: a seek table
+// that will not parse, one describing frames the object does not contain, or a
+// frame zstd rejects. It is the codec's answer to "these bytes are not what the
+// metadata says they are", and it is never the result of a read that merely
+// failed to arrive.
+var ErrCorruptObject = errors.New("corrupt compressed object")
+
 // Codec compresses and decompresses objects in the chunked seekable format.
 // Safe for concurrent use: the encoder and decoder it holds are, and it carries
 // no per-stream state.
@@ -182,9 +189,9 @@ func (c *Codec) Compress(dst io.Writer, src io.Reader) (int64, error) {
 func (c *Codec) Decompress(rs io.ReadSeeker) (io.ReadCloser, error) {
 	r, err := seekable.NewReader(rs, c.dec, seekable.WithReaderLogger(c.log))
 	if err != nil {
-		return nil, fmt.Errorf("open seekable reader: %w", err)
+		return nil, classifyDecode(fmt.Errorf("open seekable reader: %w", err))
 	}
-	return r, nil
+	return &decodeGuard{inner: r}, nil
 }
 
 // countingWriter totals the bytes written through it, which is the object's

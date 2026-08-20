@@ -58,6 +58,14 @@ jobs:
             package: ./internal/encryption/
           - target: FuzzUnpackKeyData
             package: ./internal/encryption/
+          - target: FuzzDecompress
+            package: ./internal/compression/
+          - target: FuzzDecompressRanged
+            package: ./internal/compression/
+          - target: FuzzRangedSeekRead
+            package: ./internal/compression/
+          - target: FuzzRangedFetcherMisbehaves
+            package: ./internal/compression/
 
     steps:
       - uses: actions/checkout@v7.0.1
