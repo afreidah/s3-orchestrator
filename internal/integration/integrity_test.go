@@ -494,3 +494,91 @@ func TestIntegrity_RemoveBackendKeepsSurvivingCopies(t *testing.T) {
 	}
 	ws.assertIntact(ctx, "after backend removal")
 }
+
+// TestIntegrity_RangedReadKeepsHealthyCopy is the end-to-end guard for a
+// data-loss bug: with verify-on-read enabled, a ranged GET of a healthy object
+// used to destroy the copy it read. The stored hash covers the whole object, so
+// the slice that was served could never match it, and the mismatch handler
+// deleted both the backend bytes and the ledger row while the client received
+// exactly the bytes it asked for.
+//
+// The unit test in internal/proxy/object proves the orchestration no longer
+// calls delete. This one proves the bytes and the row are still there
+// afterwards, against a real backend and a real database, which is where the
+// loss actually happened.
+func TestIntegrity_RangedReadKeepsHealthyCopy(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+	resetState(t)
+
+	restore := enableVerifyOnRead(t)
+	defer restore()
+
+	key := uniqueKey(t, "verify-range")
+	body := bytes.Repeat([]byte("R"), 400)
+
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
+	}); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	if hashed := queryHashedCopies(t, key); hashed != 1 {
+		t.Fatalf("expected the written copy to carry a hash, got %d hashed copies", hashed)
+	}
+	before := queryObjectBackends(t, key)
+	if len(before) != 1 {
+		t.Fatalf("expected a single copy so a read cannot fail over, got %v", before)
+	}
+
+	// Read a slice and close it, which is what drives verification.
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+		Range:  aws.String("bytes=0-99"),
+	})
+	if err != nil {
+		t.Fatalf("ranged GetObject: %v", err)
+	}
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read ranged body: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if !bytes.Equal(got, body[:100]) {
+		t.Errorf("ranged GET returned %d bytes that do not match the source", len(got))
+	}
+
+	// Deletion is asynchronous on the failure path, so a passing assertion has
+	// to survive the window in which it would have happened.
+	time.Sleep(2 * time.Second)
+
+	victim := before[0]
+	if _, err := allBackends[victim].GetObject(ctx, internalKey(key), ""); err != nil {
+		t.Errorf("a healthy ranged read destroyed the bytes on %s: %v", victim, err)
+	}
+	if after := queryObjectBackends(t, key); len(after) != 1 {
+		t.Errorf("ledger lists %v after a healthy ranged read, want the single original copy", after)
+	}
+
+	// The object must still be wholly readable, which is the property the
+	// deletion silently took away.
+	full, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(virtualBucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("whole-object GetObject after a ranged read: %v", err)
+	}
+	whole, err := io.ReadAll(full.Body)
+	if err != nil {
+		t.Fatalf("read whole body: %v", err)
+	}
+	_ = full.Body.Close()
+	if !bytes.Equal(whole, body) {
+		t.Error("the object no longer reads back as written after a ranged read")
+	}
+}
