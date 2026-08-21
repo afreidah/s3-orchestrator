@@ -129,6 +129,7 @@ Deeper details: [docs/architecture.md](docs/architecture.md).
 | Replication, over-replication, orphan reconciliation | [docs/replication.md](docs/replication.md) |
 | Cleanup queue, lifecycle expiry, pending intents | [docs/cleanup-and-lifecycle.md](docs/cleanup-and-lifecycle.md) |
 | Envelope encryption, Vault Transit | [docs/encryption.md](docs/encryption.md) |
+| At-rest compression (chunked zstd) | [docs/compression.md](docs/compression.md) |
 | Operations (drain, rebalance, scrub, cache, trace) | [docs/operations.md](docs/operations.md) |
 | Monitoring (Prometheus, OTel, audit log) | [docs/monitoring.md](docs/monitoring.md) |
 | Background services reference | [docs/background-services.md](docs/background-services.md) |

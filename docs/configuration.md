@@ -625,7 +625,7 @@ After updating the config, call the `rotate-encryption-key` admin API to re-wrap
 
 At-rest compression. When enabled, objects are stored on backends as chunked zstd and served back as the bytes the client wrote: sizes, ETags and content hashes stay those of the logical object.
 
-The block is accepted and validated today but nothing reads it yet, so setting `enabled: true` does not compress anything until the write path lands.
+Uploads honour this today: with `enabled: true`, PUT stores objects as chunked zstd and records how they were encoded. GET does not decode them yet, so an object written while this is on comes back compressed. Leave it off until the read path lands.
 
 ```yaml
 compression:

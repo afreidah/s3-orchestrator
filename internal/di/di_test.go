@@ -906,3 +906,32 @@ func TestProvideAdminHandler_ReconcilerFailedLogsAndContinues(t *testing.T) {
 		t.Fatal("ProvideAdminHandler returned nil")
 	}
 }
+
+// TestProvideCodec_RejectsUnknownLevel covers the branch where a config that
+// passed validation still cannot build a codec, which is why the provider is
+// resolved strictly rather than treated as optional.
+func TestProvideCodec_RejectsUnknownLevel(t *testing.T) {
+	inj := do.New()
+	do.ProvideValue(inj, &config.Config{
+		Compression: config.CompressionConfig{Enabled: true, Level: "turbo", ChunkSize: 1 << 20},
+	})
+	if _, err := ProvideCodec(inj); err == nil {
+		t.Fatal("expected an error for an unknown compression level, got nil")
+	}
+}
+
+// TestProvideCodec_DefaultsWhenBlockOmitted checks that a config with no
+// compression block still yields a codec, since objects already stored
+// compressed have to stay readable whether or not the feature is on.
+func TestProvideCodec_DefaultsWhenBlockOmitted(t *testing.T) {
+	inj := do.New()
+	do.ProvideValue(inj, &config.Config{})
+	c, err := ProvideCodec(inj)
+	if err != nil {
+		t.Fatalf("ProvideCodec: %v", err)
+	}
+	defer c.Close()
+	if c.ChunkSize() != config.DefaultCompressionChunkSize {
+		t.Errorf("ChunkSize = %d, want the %d default", c.ChunkSize(), config.DefaultCompressionChunkSize)
+	}
+}

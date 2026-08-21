@@ -375,3 +375,41 @@ type errWriter struct{ err error }
 
 // Write implements io.Writer.
 func (w errWriter) Write([]byte) (int, error) { return 0, w.err }
+
+// TestNewCodecForLevel_AcceptsEveryConfiguredName pins the mapping between the
+// names the config exposes and the levels zstd actually implements. A name the
+// encoder does not know would otherwise fall back to a default silently.
+func TestNewCodecForLevel_AcceptsEveryConfiguredName(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"fastest", "default", "better", "best"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			c, err := NewCodecForLevel(name, testChunk)
+			if err != nil {
+				t.Fatalf("NewCodecForLevel(%q): %v", name, err)
+			}
+			defer c.Close()
+			if got := roundTrip(t, c, compressible(testChunk+7)); !bytes.Equal(got, compressible(testChunk+7)) {
+				t.Errorf("level %q did not round trip", name)
+			}
+		})
+	}
+}
+
+// TestNewCodecForLevel_RejectsUnknownName covers the branch that keeps a
+// mistyped level from silently becoming the default.
+func TestNewCodecForLevel_RejectsUnknownName(t *testing.T) {
+	t.Parallel()
+	if _, err := NewCodecForLevel("turbo", testChunk); !errors.Is(err, ErrUnknownLevel) {
+		t.Errorf("NewCodecForLevel(\"turbo\") err = %v, want ErrUnknownLevel", err)
+	}
+}
+
+// TestNewCodecForLevel_RejectsChunkSizeOutOfRange checks the name form applies
+// the same bounds the numeric form does.
+func TestNewCodecForLevel_RejectsChunkSizeOutOfRange(t *testing.T) {
+	t.Parallel()
+	if _, err := NewCodecForLevel("default", MinChunkSize-1); !errors.Is(err, ErrChunkSizeRange) {
+		t.Errorf("err = %v, want ErrChunkSizeRange", err)
+	}
+}

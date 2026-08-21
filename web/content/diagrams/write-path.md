@@ -59,8 +59,13 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     '',
     '    BUFFER --> HASH{Integrity<br>Enabled?}:::decision',
     '    HASH -->|yes| COMPUTE[Compute SHA-256<br>Content Hash]:::process',
-    '    HASH -->|no| SELECT',
-    '    COMPUTE --> SELECT',
+    '    HASH -->|no| COMP',
+    '    COMPUTE --> COMP',
+    '',
+    '    COMP{Compression<br>Enabled?}:::decision',
+    '    COMP -->|yes, size >= min_size| COMPRESS[Encode Chunked zstd<br>Seek Table]:::process',
+    '    COMP -->|no| SELECT',
+    '    COMPRESS --> SELECT',
     '',
     '    SELECT{Select<br>Backend}:::decision',
     '    SELECT -->|spread| LEAST[Least Utilized<br>Backend]:::storage',
@@ -134,7 +139,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     FILTER: {
       title: 'Filter Eligible Backends',
       badge: 'filter', badgeText: 'three-stage filter',
-      body: '<p>Three nested filters applied in order: <code>excludeUnhealthy(excludeDraining(BackendsWithinLimits(order, 1, 0, size)))</code></p><p>Starts with the full backend order list and progressively narrows to only backends that can accept this write.</p>'
+      body: '<p>Three nested filters applied in order: <code>excludeUnhealthy(excludeDraining(BackendsWithinLimits(order, 1, 0, size)))</code></p><p>Starts with the full backend order list and progressively narrows to only backends that can accept this write.</p><p>For a <b>compressed</b> write this runs after the body is encoded, on the size that will actually land, because that size is not known until then and filtering on the logical size would turn away a write that fits. An uncompressed write keeps this ordering and still rejects before buffering anything, so a full cluster does not spend a tempfile per rejection.</p>'
     },
     USAGE: {
       title: 'Usage Limits Check',
@@ -185,6 +190,16 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
       title: 'First With Space',
       badge: 'storage', badgeText: 'DB query',
       body: '<p>PostgreSQL query: returns the first backend in the configured order that has at least <code>size</code> bytes of free quota.</p><p>Favors filling backends in order, which is useful for setups where you want to exhaust cheap/local storage before spilling to cloud backends.</p>'
+    },
+    COMP: {
+      title: 'Compression Enabled?',
+      badge: 'decision', badgeText: 'branch',
+      body: '<p>Checks <code>compression.enabled: true</code> and that the object is at least <code>min_size</code>. A seek table and per-frame headers cost more than a small object saves, so the floor avoids paying for no return.</p><p>Objects already stored compressed stay readable whether or not this is on, so the codec is built either way.</p>'
+    },
+    COMPRESS: {
+      title: 'Encode Chunked zstd',
+      badge: 'process', badgeText: 'compression',
+      body: '<p>Encodes the buffered body into a second materialized body as one independently decodable zstd frame per <code>chunk_size</code> of input, with a seek table in a trailing skippable frame.</p><p>Runs once, ahead of the failover loop: an attempt replays already-encoded bytes and rebuilds only the encryption layer. Ordering is compress then encrypt, because ciphertext does not compress.</p><p>Both bodies are held until the upload settles, since the encoded copy has to replay on every attempt.</p><p>Records <code>compression_algorithm</code>, <code>compression_level</code>, <code>compression_format_version</code> and <code>logical_size</code> on the object row. <code>logical_size</code> is the only place the client-visible size survives, since <code>size_bytes</code> counts what landed on the backend.</p>'
     },
     ENC: {
       title: 'Encryption Enabled?',

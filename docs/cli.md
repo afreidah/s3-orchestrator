@@ -1,7 +1,7 @@
 ---
 title: "CLI Subcommands"
 linkTitle: "CLI Subcommands"
-weight: 32
+weight: 33
 ---
 
 # CLI Subcommands

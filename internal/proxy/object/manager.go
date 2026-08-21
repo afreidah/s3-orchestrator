@@ -52,6 +52,8 @@ type Manager struct {
 	coord             ObjectCoordinator // write-path helpers shared with BackendManager and MultipartManager
 	stores            ObjectStores      // direct store access for read paths and quota inspection
 	encryptor         *encryption.Encryptor
+	compressor        Compressor
+	compression       config.CompressionConfig
 	cache             *LocationCache
 	objectCache       objcache.ObjectCache // nil when object data caching is disabled
 	parallelBroadcast bool
@@ -66,11 +68,16 @@ type Manager struct {
 // *writepath.Coordinator that BackendManager builds satisfy them
 // implicitly.
 type Deps struct {
-	Core              ObjectRuntime
-	BroadcastCore     readpath.ReadRuntime // narrow consumer interface for the failover broadcaster; satisfied by the same *infra.BackendRuntime that backs Core
-	Coord             ObjectCoordinator
-	Stores            ObjectStores
-	Encryptor         *encryption.Encryptor
+	Core          ObjectRuntime
+	BroadcastCore readpath.ReadRuntime // narrow consumer interface for the failover broadcaster; satisfied by the same *infra.BackendRuntime that backs Core
+	Coord         ObjectCoordinator
+	Stores        ObjectStores
+	Encryptor     *encryption.Encryptor
+	// Compressor encodes new objects when Compression.Enabled. It is supplied
+	// whether or not compression is enabled for writes, because objects already
+	// written compressed still have to be read back. Nil disables encoding.
+	Compressor        Compressor
+	Compression       config.CompressionConfig
 	LocationCache     *LocationCache
 	ObjectCache       objcache.ObjectCache
 	ParallelBroadcast bool
@@ -104,6 +111,8 @@ func New(d *Deps) *Manager {
 		coord:             d.Coord,
 		stores:            d.Stores,
 		encryptor:         d.Encryptor,
+		compressor:        d.Compressor,
+		compression:       d.Compression,
 		cache:             d.LocationCache,
 		objectCache:       d.ObjectCache,
 		parallelBroadcast: d.ParallelBroadcast,

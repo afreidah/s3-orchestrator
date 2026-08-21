@@ -89,7 +89,7 @@ ui:
   # admin_token: "separate-token"     # Separate token for admin API (defaults to admin_key)
   # force_secure_cookies: true        # Always set Secure flag on cookies (use behind TLS proxy)
 
-# --- At-rest compression (disabled by default, not yet wired to the write path) ---
+# --- At-rest compression (disabled by default; reads do not decode yet) ---
 # compression:
 #   enabled: true
 #   level: "default"                 # fastest, default, better, or best
