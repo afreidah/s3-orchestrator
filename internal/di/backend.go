@@ -410,7 +410,7 @@ func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
 		Coord:                        d.coord,
 		Stores:                       d.stores,
 		Encryptor:                    d.enc,
-		Compressor:                   codec,
+		Codec:                        codec,
 		Compression:                  d.cfg.Compression,
 		LocationCache:                object.NewLocationCache(cb.CacheTTL),
 		ObjectCache:                  resolveOptionalCache(i),
@@ -495,6 +495,10 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 	if err != nil {
 		return nil, err
 	}
+	codec, err := do.Invoke[*compression.Codec](i)
+	if err != nil {
+		return nil, err
+	}
 
 	mgr := proxy.NewBackendManager(&proxy.BackendManagerConfig{
 		Runtime: runtime,
@@ -518,6 +522,8 @@ func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {
 			Encryptor:      enc,
 			ObjectCache:    resolveOptionalCache(i),
 			CounterBackend: resolveOptionalCounterBackend(i),
+			Codec:          codec,
+			Compression:    cfg.Compression,
 		},
 		Operations: proxy.OperationalDeps{
 			Metrics:           metricsDeps,

@@ -92,10 +92,15 @@ type PolicyConfig struct {
 
 // FeatureDeps groups optional capabilities. Each field is nil-able and
 // disables the corresponding feature when left zero.
+// Codec is supplied whether or not Compression.Enabled, because objects
+// already stored compressed have to stay readable after the feature is turned
+// off; Compression governs only whether new writes are encoded.
 type FeatureDeps struct {
 	Encryptor      *encryption.Encryptor  // nil when encryption is disabled
 	CounterBackend counter.CounterBackend // nil uses LocalCounterBackend
 	ObjectCache    objcache.ObjectCache   // nil when object data caching is disabled
+	Codec          object.ObjectCodec     // nil when compression is not wired
+	Compression    config.CompressionConfig
 }
 
 // OperationalDeps groups telemetry, concurrency, and observability

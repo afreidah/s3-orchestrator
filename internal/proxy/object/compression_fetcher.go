@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
@@ -28,8 +29,13 @@ import (
 // That compressed stream is exactly the encryptor's plaintext domain -
 // compress-then-encrypt is what makes PlaintextSize the post-compression size -
 // so encryption.CiphertextRange translates a compressed-domain range into a
-// backend range with no new offset math. It holds no per-fetch state, so
-// FetchRange is safe to call concurrently as a seekable reader will.
+// backend range with no new offset math.
+//
+// attrs records the object metadata off the first response. A compressed read
+// issues no whole-object GET, so this is the only place the content type, ETag
+// and user metadata arrive; capturing them from a fetch the read already makes
+// avoids paying for a HEAD to learn them. Guarded because the seekable reader
+// may fetch frames concurrently.
 type storedRangeFetcher struct {
 	rt     RangeFetchRuntime
 	be     s3be.ObjectBackend
@@ -37,6 +43,9 @@ type storedRangeFetcher struct {
 	loc    *core.ObjectLocation
 	key    string
 	beName string
+
+	mu    sync.Mutex
+	attrs *s3be.GetObjectResult
 }
 
 // newStoredRangeFetcher builds a fetcher for one copy. enc may be nil only when
@@ -82,6 +91,7 @@ func (f *storedRangeFetcher) FetchRange(ctx context.Context, start, end int64) (
 		return nil, fmt.Errorf("backend %s egress: %w", f.beName, readpath.ErrUsageLimitSkip)
 	}
 	f.rt.Acct().Egress(f.beName, r.Size)
+	f.recordAttrs(r)
 
 	body, err := f.compressedBody(ctx, r, rng)
 	if err != nil {
@@ -92,6 +102,31 @@ func (f *storedRangeFetcher) FetchRange(ctx context.Context, start, end int64) (
 		return nil, fmt.Errorf("backend %s: read %s: %w", f.beName, header, err)
 	}
 	return buf, nil
+}
+
+// recordAttrs keeps the object metadata off the first response that carries it.
+// Every fetch returns the same values, so the first one wins and the rest are
+// dropped rather than churning the field under the lock.
+func (f *storedRangeFetcher) recordAttrs(r *s3be.GetObjectResult) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.attrs != nil {
+		return
+	}
+	f.attrs = &s3be.GetObjectResult{
+		ContentType:  r.ContentType,
+		ETag:         r.ETag,
+		LastModified: r.LastModified,
+		Metadata:     r.Metadata,
+	}
+}
+
+// objectAttrs returns the metadata captured from the backend, or nil when no
+// fetch has completed yet.
+func (f *storedRangeFetcher) objectAttrs() *s3be.GetObjectResult {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.attrs
 }
 
 // backendRangeFor translates a compressed-domain range into the Range header to

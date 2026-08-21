@@ -52,7 +52,7 @@ type Manager struct {
 	coord             ObjectCoordinator // write-path helpers shared with BackendManager and MultipartManager
 	stores            ObjectStores      // direct store access for read paths and quota inspection
 	encryptor         *encryption.Encryptor
-	compressor        Compressor
+	codec             ObjectCodec
 	compression       config.CompressionConfig
 	cache             *LocationCache
 	objectCache       objcache.ObjectCache // nil when object data caching is disabled
@@ -73,10 +73,11 @@ type Deps struct {
 	Coord         ObjectCoordinator
 	Stores        ObjectStores
 	Encryptor     *encryption.Encryptor
-	// Compressor encodes new objects when Compression.Enabled. It is supplied
-	// whether or not compression is enabled for writes, because objects already
-	// written compressed still have to be read back. Nil disables encoding.
-	Compressor        Compressor
+	// Codec encodes new objects when Compression.Enabled and decodes stored
+	// ones on read. It is supplied whether or not compression is enabled for
+	// writes, because objects already written compressed still have to be read
+	// back. Nil disables both.
+	Codec             ObjectCodec
 	Compression       config.CompressionConfig
 	LocationCache     *LocationCache
 	ObjectCache       objcache.ObjectCache
@@ -111,7 +112,7 @@ func New(d *Deps) *Manager {
 		coord:             d.Coord,
 		stores:            d.Stores,
 		encryptor:         d.Encryptor,
-		compressor:        d.Compressor,
+		codec:             d.Codec,
 		compression:       d.Compression,
 		cache:             d.LocationCache,
 		objectCache:       d.ObjectCache,

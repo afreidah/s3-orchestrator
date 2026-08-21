@@ -46,9 +46,12 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*s3be.HeadObjectR
 				return fail, err
 			}
 
-			// Return plaintext size for encrypted objects
-			if loc != nil && loc.Encrypted {
-				r.Size = loc.PlaintextSize
+			// Report the size the client wrote, not the size on the backend.
+			// Those differ once the bytes were encrypted, compressed, or both,
+			// and a HEAD that reports the stored size sends clients ranging
+			// against coordinates the object does not have.
+			if loc != nil && (loc.Encrypted || isCompressed(loc)) {
+				r.Size = logicalSize(loc)
 			}
 
 			// Backends that report no modification time leave LastModified zero,

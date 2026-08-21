@@ -114,7 +114,7 @@ func TestPut_CompressesAndRecordsRepresentation(t *testing.T) {
 	codec := newPutCodec(t)
 	src := compressibleBody(putCompressChunk * 3)
 
-	res := putThroughFleet(t, &fleetOpts{Compressor: codec, Compression: compressionOn(0)}, "key", src)
+	res := putThroughFleet(t, &fleetOpts{Codec: codec, Compression: compressionOn(0)}, "key", src)
 
 	if len(res.stored) >= len(src) {
 		t.Fatalf("stored %d bytes for a %d byte object; compression did not apply", len(res.stored), len(src))
@@ -160,7 +160,7 @@ func TestPut_SkipsObjectsBelowMinSize(t *testing.T) {
 	src := compressibleBody(512)
 
 	res := putThroughFleet(t, &fleetOpts{
-		Compressor:  newPutCodec(t),
+		Codec:       newPutCodec(t),
 		Compression: compressionOn(4096),
 	}, "small", src)
 
@@ -179,7 +179,7 @@ func TestPut_DisabledLeavesBytesVerbatim(t *testing.T) {
 	src := compressibleBody(putCompressChunk * 2)
 
 	res := putThroughFleet(t, &fleetOpts{
-		Compressor:  newPutCodec(t),
+		Codec:       newPutCodec(t),
 		Compression: config.CompressionConfig{},
 	}, "plain", src)
 
@@ -200,7 +200,7 @@ func TestPut_CompressedAndEncryptedSizes(t *testing.T) {
 	src := compressibleBody(putCompressChunk * 2)
 
 	res := putThroughFleet(t, &fleetOpts{
-		Compressor:  newPutCodec(t),
+		Codec:       newPutCodec(t),
 		Compression: compressionOn(0),
 		Encryptor:   newTestEncryptor(t),
 	}, "both", src)
@@ -229,7 +229,7 @@ func TestPut_EligibilityUsesStoredSize(t *testing.T) {
 	limit := int64(len(src)) / 2
 
 	res := putThroughFleet(t, &fleetOpts{
-		Compressor:  newPutCodec(t),
+		Codec:       newPutCodec(t),
 		Compression: compressionOn(0),
 		UsageLimits: map[string]core.UsageLimits{"b1": {IngressByteLimit: limit}},
 	}, "tight", src)
@@ -242,19 +242,35 @@ func TestPut_EligibilityUsesStoredSize(t *testing.T) {
 	}
 }
 
-// failingCodec fails every encode. It is why Compressor is an interface: the
+// noDecode supplies the decode half of ObjectCodec for write-path fakes, which
+// never reach it. Embedded rather than repeated so a fake states only the
+// behaviour its test is about.
+type noDecode struct{}
+
+// DecompressRanged implements ObjectCodec.
+func (noDecode) DecompressRanged(context.Context, compression.RangeFetcher, int64) (compression.RangedReader, error) {
+	return nil, errors.New("decode is not reached on the write path")
+}
+
+// failingCodec fails every encode. It is why ObjectCodec is an interface: the
 // concrete codec only fails on inputs the write path cannot produce, so the
 // mid-upload failure branch is unreachable without a fake.
-type failingCodec struct{ err error }
+type failingCodec struct {
+	noDecode
+	err error
+}
 
-// Compress implements Compressor by consuming nothing and failing.
+// Compress implements ObjectCodec by consuming nothing and failing.
 func (f failingCodec) Compress(io.Writer, io.Reader) (int64, error) { return 0, f.err }
 
 // shortCodec reports having written more bytes than it did, standing in for a
 // codec whose byte count and output disagree.
-type shortCodec struct{ claim int64 }
+type shortCodec struct {
+	noDecode
+	claim int64
+}
 
-// Compress implements Compressor.
+// Compress implements ObjectCodec.
 func (s shortCodec) Compress(dst io.Writer, _ io.Reader) (int64, error) {
 	_, err := dst.Write([]byte("short"))
 	return s.claim, err
@@ -277,7 +293,7 @@ func TestPut_CompressFailureAbortsWrite(t *testing.T) {
 	boom := errors.New("encoder exploded")
 	f := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, &fleetOpts{
 		Order:       []string{"b1"},
-		Compressor:  failingCodec{err: boom},
+		Codec:       failingCodec{err: boom},
 		Compression: compressionOn(0),
 	})
 
@@ -300,7 +316,7 @@ func TestPut_CompressedSizeComesFromTheCodec(t *testing.T) {
 	src := compressibleBody(4096)
 
 	res := putThroughFleet(t, &fleetOpts{
-		Compressor:  shortCodec{claim: 5},
+		Codec:       shortCodec{claim: 5},
 		Compression: compressionOn(0),
 	}, "claim", src)
 
