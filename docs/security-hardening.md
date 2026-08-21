@@ -180,7 +180,7 @@ integrity:
 ### How it protects your data
 
 - **Write path:** SHA-256 is computed on plaintext before encryption and stored in the database.
-- **Read path:** When `verify_on_read` is enabled, a `VerifyingReader` computes the hash as data streams to the client. On mismatch, the corrupted copy is automatically enqueued for cleanup.
+- **Read path:** When `verify_on_read` is enabled, a `VerifyingReader` computes the hash as data streams to the client. On mismatch, the corrupted copy is automatically enqueued for cleanup. Range requests are not verified, since the stored hash covers the whole object and no slice of it can match; the scrubber covers those objects instead.
 - **Background scrubber:** Works through the copies least recently verified, reads them from their backend, decrypts if needed, and checks the hash. A copy that fails is discarded, both its bytes and its ledger row, so the replicator re-creates it from a healthy copy when replication is configured.
 - **Backfill:** Objects written before integrity was enabled can be brought under hash management via `admin backfill-checksums`.
 
