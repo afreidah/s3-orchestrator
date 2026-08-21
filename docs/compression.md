@@ -20,7 +20,7 @@ compression:
 
 ## Current status
 
-Uploads honour this configuration today. GET does not decode yet, so an object written while compression is on comes back compressed. Leave `enabled: false` until the read path lands.
+PUT compresses, and GET, HEAD and server-side copy all serve the object the client wrote, at the size it wrote. Multipart uploads and the background workers do not handle the compressed form yet: the scrubber hashes stored bytes without decoding them, so it reads a compressed object as corrupt. Leave `enabled: false` until those land.
 
 ## Why the format is chunked
 
@@ -84,6 +84,12 @@ Four nullable columns on `object_locations` and `pending_objects`:
 | `logical_size` | The size the client wrote, needed to size a response and bound range math. |
 
 Every row that predates the feature has a NULL algorithm and is therefore correctly described as verbatim, so no backfill is required.
+
+## Copying an object
+
+A server-side copy moves the stored bytes as they are and writes the source's representation metadata onto the destination. Nothing is decoded or re-encoded, so a copy stays a metadata operation and an object stored verbatim stays verbatim.
+
+The destination therefore inherits the chunk size and level its source was written at rather than the ones configured now. A change to either reaches an existing object only when something rewrites that object.
 
 ## Skipping objects that will not benefit
 

@@ -58,6 +58,28 @@ func pendingStoredForm(p *PendingObject) *StoredForm {
 	}
 }
 
+// StoredFormFromLocation describes how a recorded copy's bytes are stored, so a
+// path that moves those bytes verbatim can repeat that description on the row it
+// writes for the destination. Returns nil when the row describes plaintext,
+// unencoded, unhashed bytes, which is the same "nothing to carry" signal the
+// write path uses.
+func StoredFormFromLocation(loc *ObjectLocation) *StoredForm {
+	if loc == nil || (!loc.Encrypted && loc.ContentHash == "" && loc.CompressionAlgorithm == "") {
+		return nil
+	}
+	return &StoredForm{
+		Encrypted:                loc.Encrypted,
+		EncryptionKey:            loc.EncryptionKey,
+		KeyID:                    loc.KeyID,
+		PlaintextSize:            loc.PlaintextSize,
+		ContentHash:              loc.ContentHash,
+		CompressionAlgorithm:     loc.CompressionAlgorithm,
+		CompressionLevel:         loc.CompressionLevel,
+		CompressionFormatVersion: loc.CompressionFormatVersion,
+		LogicalSize:              loc.LogicalSize,
+	}
+}
+
 // objectFromStoredForm builds an ObjectLocation suitable for
 // InsertObjectLocation from a key/backend/size triple plus the optional
 // description of how the bytes are stored.

@@ -32,6 +32,11 @@ import (
 // succeeds (skipping over-limit and unknown backends), and returns its
 // metadata plus the stored form of its bytes. ok=false signals that no
 // copy could be reached.
+//
+// The stored form comes off the location row that answered rather than being
+// re-derived, because both copy paths move the stored bytes verbatim: the
+// destination holds an envelope or an encoded stream exactly when the source
+// did, and a row that failed to say so would describe bytes nothing can read.
 func (o *Manager) headSourceForCopy(
 	ctx context.Context,
 	sourceKey string,
@@ -49,17 +54,8 @@ func (o *Manager) headSourceForCopy(
 		if err != nil {
 			continue
 		}
-		var srcForm *core.StoredForm
-		if locations[i].Encrypted {
-			srcForm = &core.StoredForm{
-				Encrypted:     true,
-				EncryptionKey: locations[i].EncryptionKey,
-				KeyID:         locations[i].KeyID,
-				PlaintextSize: locations[i].PlaintextSize,
-				ContentHash:   locations[i].ContentHash,
-			}
-		}
-		return headResult.Size, headResult.ContentType, headResult.Metadata, srcForm, true
+		return headResult.Size, headResult.ContentType, headResult.Metadata,
+			core.StoredFormFromLocation(&locations[i]), true
 	}
 	return 0, "", nil, nil, false
 }

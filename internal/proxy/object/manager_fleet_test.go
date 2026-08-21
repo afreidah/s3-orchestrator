@@ -1472,19 +1472,19 @@ func TestDeleteObjects_RecordsOneAPICallPerCopy(t *testing.T) {
 }
 
 // copyObjectStore wires a CopyObject success path: locations + a chosen
-// destination backend.
+// destination backend. Placement and record calls land in one accumulator so a
+// caller can assert on the row the copy wrote, not just on where it went.
 func copyObjectStore(t *testing.T, locs []core.ObjectLocation, locsErr error, getBackend string, getBackendErr error) (*storetest.MockMetadataStore, *objectsCalls) {
 	t.Helper()
-	c := &objectsCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
+	c := objectsStubs(store)
 	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
 		Return(locs, locsErr).AnyTimes()
 	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjGetBackend(c, getBackend, getBackendErr)).AnyTimes()
 	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjGetLeastUtilized(c, getBackend, getBackendErr)).AnyTimes()
-	objectsStubs(store)
 	storetest.Permissive(store)
 	return store, c
 }
