@@ -14,6 +14,7 @@
 package di
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"log/slog"
@@ -25,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
+	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
@@ -163,6 +165,24 @@ func ProvideEncryptor(i do.Injector) (*encryption.Encryptor, error) {
 		"key_id", provider.KeyID(),
 	)
 	return enc, nil
+}
+
+// ProvideCodec creates the compression codec. It is built whether or not
+// compression is enabled for writes, because objects already stored compressed
+// have to stay readable after an operator turns the feature off.
+func ProvideCodec(i do.Injector) (*compression.Codec, error) {
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	c, err := compression.NewCodecForLevel(
+		cmp.Or(cfg.Compression.Level, config.DefaultCompressionLevel),
+		cmp.Or(cfg.Compression.ChunkSize, config.DefaultCompressionChunkSize),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 // ProvideEncryptionProvider creates the key provider for admin key rotation
@@ -379,6 +399,10 @@ func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
+	codec, err := do.Invoke[*compression.Codec](i)
+	if err != nil {
+		return nil, err
+	}
 	cb := &d.cfg.CircuitBreaker
 	return object.New(&object.Deps{
 		Core:                         d.rt,
@@ -386,6 +410,8 @@ func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
 		Coord:                        d.coord,
 		Stores:                       d.stores,
 		Encryptor:                    d.enc,
+		Compressor:                   codec,
+		Compression:                  d.cfg.Compression,
 		LocationCache:                object.NewLocationCache(cb.CacheTTL),
 		ObjectCache:                  resolveOptionalCache(i),
 		ParallelBroadcast:            cb.ParallelBroadcast,

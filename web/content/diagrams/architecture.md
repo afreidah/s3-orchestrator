@@ -62,7 +62,8 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     '    ROUTE -->|/ui/| WEBUI[Web<br>Dashboard]:::handler',
     '',
     '    OBJMGR --> DCACHE[Object Data<br>Cache]:::storage',
-    '    DCACHE -->|miss| ENC{Encryption}:::storage',
+    '    DCACHE -->|miss| COMP{Compression}:::storage',
+    '    COMP --> ENC{Encryption}:::storage',
     '    MPMGR --> ENC',
     '    ENC -->|enabled| VAULT[Key Provider<br>Vault / KMS]:::data',
     '    ENC --> SELECT[Backend Selection<br>& Failover]:::storage',
@@ -179,6 +180,11 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
       title: 'Object Data Cache',
       badge: 'storage', badgeText: 'optional',
       body: '<p>Optional in-memory LRU cache for object data. When enabled (<code>cache.enabled: true</code>), full GET responses are cached to avoid repeated backend fetches.</p><p>On <b>cache hit</b>: returns the cached body immediately &mdash; no backend API call, no egress, no decryption overhead.</p><p>On <b>cache miss</b>: proceeds through the normal path, then stores the response for future reads. Range requests always bypass the cache.</p><p>Automatically invalidated on PutObject, DeleteObject, CopyObject, and CompleteMultipartUpload.</p><p class="ac-metric">Config: cache.max_size, cache.max_object_size, cache.ttl</p>'
+    },
+    COMP: {
+      title: 'Compression Layer',
+      badge: 'storage', badgeText: 'optional',
+      body: '<p>At-rest compression when <code>compression.enabled: true</code>, storing objects as chunked zstd in the Zstandard seekable format: one independently decodable frame per <code>chunk_size</code> of input, seek table in a trailing skippable frame.</p><p>Sits inside encryption, because ciphertext does not compress. Write order is compress then encrypt; read order is decrypt, decompress, slice.</p><p>The chunking is what keeps a partial read cheap. A single-frame object has one entry point, byte zero, so any range read would fetch the whole stored object and discard the prefix, at a cost proportional to object size rather than to the bytes asked for.</p><p>Objects below <code>min_size</code> are stored verbatim. A stored object is a valid Zstandard stream, so <code>zstd -d</code> decodes it without knowing about the seek table.</p><p><a href="../../docs/compression/">Compression reference &rarr;</a></p>'
     },
     ENC: {
       title: 'Encryption Layer',

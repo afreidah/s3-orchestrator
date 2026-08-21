@@ -63,6 +63,10 @@ type fleetOpts struct {
 	AdmissionSem chan struct{}
 	// Encryptor turns on at-rest encryption.
 	Encryptor *encryption.Encryptor
+	// Compressor and Compression turn on at-rest compression. Compression is
+	// applied only when both are set, mirroring production wiring.
+	Compressor  Compressor
+	Compression config.CompressionConfig
 	// ObjectCache attaches a cache so read-through and invalidation run.
 	ObjectCache objcache.ObjectCache
 	// ParallelBroadcast fans degraded-mode reads out concurrently.
@@ -145,6 +149,8 @@ func newFleet(
 		Coord:                        coord,
 		Stores:                       store,
 		Encryptor:                    opts.Encryptor,
+		Compressor:                   opts.Compressor,
+		Compression:                  opts.Compression,
 		LocationCache:                NewLocationCache(cmp.Or(opts.CacheTTL, fleetCacheTTL)),
 		ObjectCache:                  opts.ObjectCache,
 		ParallelBroadcast:            opts.ParallelBroadcast,

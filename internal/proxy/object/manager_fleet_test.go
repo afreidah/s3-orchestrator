@@ -50,6 +50,7 @@ type objectsCalls struct {
 type objRecordCall struct {
 	Key, Backend string
 	Size         int64
+	Form         *core.StoredForm
 }
 
 func stubObjGetBackend(c *objectsCalls, resp string, err error) func(context.Context, int64, []string) (string, error) {
@@ -77,19 +78,19 @@ func stubObjGetLeastUtilized(c *objectsCalls, resp string, err error) func(conte
 }
 
 func stubObjRecord(c *objectsCalls, err error) func(context.Context, string, string, int64, *core.StoredForm) ([]core.DeletedCopy, error) {
-	return func(_ context.Context, key, backend string, size int64, _ *core.StoredForm) ([]core.DeletedCopy, error) {
+	return func(_ context.Context, key, backend string, size int64, form *core.StoredForm) ([]core.DeletedCopy, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		c.recordObject = append(c.recordObject, objRecordCall{Key: key, Backend: backend, Size: size})
+		c.recordObject = append(c.recordObject, objRecordCall{Key: key, Backend: backend, Size: size, Form: form})
 		return nil, err
 	}
 }
 
 func stubObjRecordAndClear(c *objectsCalls, err error) func(context.Context, string, string, int64, *core.StoredForm, string) ([]core.DeletedCopy, error) {
-	return func(_ context.Context, key, backend string, size int64, _ *core.StoredForm, _ string) ([]core.DeletedCopy, error) {
+	return func(_ context.Context, key, backend string, size int64, form *core.StoredForm, _ string) ([]core.DeletedCopy, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		c.recordObject = append(c.recordObject, objRecordCall{Key: key, Backend: backend, Size: size})
+		c.recordObject = append(c.recordObject, objRecordCall{Key: key, Backend: backend, Size: size, Form: form})
 		return nil, err
 	}
 }

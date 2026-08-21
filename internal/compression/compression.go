@@ -42,6 +42,17 @@ const (
 	MaxChunkSize     = 1 << 26 // 64 MiB
 )
 
+// Algorithm and FormatVersion are what a stored object records about how it was
+// encoded. Algorithm is the value a metadata row carries in
+// compression_algorithm, and an empty one there means the bytes are verbatim.
+// FormatVersion moves only if the on-disk layout changes in a way a reader has
+// to branch on; the chunk size does not, since each object carries its own in
+// its seek table.
+const (
+	Algorithm     = "zstd"
+	FormatVersion = 1
+)
+
 // DefaultLevel is zstd level 3. Measured against levels 1, 7 and 11, it sits at
 // the point where compression speed has not yet collapsed (177 MB/s against
 // 22 MB/s at level 11) for a ratio within 3% of the best. Decompression speed
@@ -53,7 +64,11 @@ const DefaultLevel = 3
 const decoderMaxMemory = 64 << 20 // 64 MiB
 
 // ErrChunkSizeRange reports a chunk size outside the supported bounds.
-var ErrChunkSizeRange = errors.New("chunk size out of range")
+// ErrUnknownLevel reports a level name zstd does not recognize.
+var (
+	ErrChunkSizeRange = errors.New("chunk size out of range")
+	ErrUnknownLevel   = errors.New("unknown compression level")
+)
 
 // ErrCorruptObject reports stored bytes the codec could not decode: a seek table
 // that will not parse, one describing frames the object does not contain, or a
@@ -88,6 +103,23 @@ type Codec struct {
 // affects new objects only; existing ones carry their own layout in their seek
 // table and stay readable.
 func NewCodec(level, chunkSize int) (*Codec, error) {
+	return newCodec(zstd.EncoderLevelFromZstd(level), chunkSize)
+}
+
+// NewCodecForLevel builds a codec from the level name the config exposes.
+// Naming the levels is the only honest way to offer the choice: zstd collapses
+// its numeric range into four buckets, so a config taking 1 to 19 would present
+// fifteen settings that change nothing.
+func NewCodecForLevel(name string, chunkSize int) (*Codec, error) {
+	ok, level := zstd.EncoderLevelFromString(name)
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrUnknownLevel, name)
+	}
+	return newCodec(level, chunkSize)
+}
+
+// newCodec is the shared constructor body behind both level forms.
+func newCodec(level zstd.EncoderLevel, chunkSize int) (*Codec, error) {
 	if chunkSize < MinChunkSize || chunkSize > MaxChunkSize {
 		return nil, fmt.Errorf("%w: %d not in [%d, %d]",
 			ErrChunkSizeRange, chunkSize, MinChunkSize, MaxChunkSize)
@@ -97,7 +129,7 @@ func NewCodec(level, chunkSize int) (*Codec, error) {
 	// cores on requests rather than fanning one object across all of them.
 	enc, err := zstd.NewWriter(
 		nil,
-		zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(level)),
+		zstd.WithEncoderLevel(level),
 		zstd.WithEncoderConcurrency(1),
 	)
 	if err != nil {
