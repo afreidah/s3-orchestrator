@@ -65,6 +65,10 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        TEXT key_id',
     '        BIGINT plaintext_size',
     '        TEXT content_hash',
+    '        TEXT compression_algorithm',
+    '        TEXT compression_level',
+    '        SMALLINT compression_format_version',
+    '        BIGINT logical_size',
     '        BOOLEAN managed',
     '        TIMESTAMPTZ last_scrubbed_at',
     '        TIMESTAMPTZ created_at',
@@ -139,6 +143,10 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        TEXT key_id',
     '        BIGINT plaintext_size',
     '        TEXT content_hash',
+    '        TEXT compression_algorithm',
+    '        TEXT compression_level',
+    '        SMALLINT compression_format_version',
+    '        BIGINT logical_size',
     '        TIMESTAMPTZ created_at',
     '    }',
     '',
@@ -201,6 +209,10 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>key_id</td><td>TEXT</td><td>KMS/Vault key version identifier</td></tr>' +
         '<tr><td>plaintext_size</td><td>BIGINT</td><td>Original size before encryption</td></tr>' +
         '<tr><td>content_hash</td><td>TEXT</td><td>SHA-256 hex digest of plaintext (nullable)</td></tr>' +
+        '<tr><td>compression_algorithm</td><td>TEXT</td><td>Codec the stored bytes were encoded with. NULL means stored verbatim, so no separate flag can drift out of step with it (nullable)</td></tr>' +
+        '<tr><td>compression_level</td><td>TEXT</td><td>Level the object was written at. Diagnostic only, since decoding does not need it, but a rewrite pass does (nullable)</td></tr>' +
+        '<tr><td>compression_format_version</td><td>SMALLINT</td><td>On-disk layout version, so a later change is detectable rather than silently misread (nullable)</td></tr>' +
+        '<tr><td>logical_size</td><td>BIGINT</td><td>Size of the object the client wrote. Distinct from plaintext_size: with both features on the stored bytes are ciphertext of compressed data, so plaintext_size is the pre-encryption (compressed) size and this is the original (nullable)</td></tr>' +
         '<tr><td>managed</td><td>BOOLEAN</td><td>False for objects reconcile found outside every virtual bucket prefix &mdash; they count toward quota but replication, rebalance, integrity and drain ignore them (default true)</td></tr>' +
         '<tr><td>last_scrubbed_at</td><td>TIMESTAMPTZ</td><td>When the scrubber last verified this copy. NULL means never verified; the scrub queue falls back to created_at so a fresh write sorts behind older unverified data (nullable)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Insert timestamp</td></tr></table>' +
@@ -314,6 +326,10 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>key_id</td><td>TEXT</td><td>Master key identifier for unwrap</td></tr>' +
         '<tr><td>plaintext_size</td><td>BIGINT</td><td>Logical object size (pre-encryption)</td></tr>' +
         '<tr><td>content_hash</td><td>TEXT</td><td>SHA-256 of the plaintext (when integrity is enabled)</td></tr>' +
+        '<tr><td>compression_algorithm</td><td>TEXT</td><td>Codec the stored bytes were encoded with. NULL means stored verbatim, so no separate flag can drift out of step with it (nullable)</td></tr>' +
+        '<tr><td>compression_level</td><td>TEXT</td><td>Level the object was written at. Diagnostic only, since decoding does not need it, but a rewrite pass does (nullable)</td></tr>' +
+        '<tr><td>compression_format_version</td><td>SMALLINT</td><td>On-disk layout version, so a later change is detectable rather than silently misread (nullable)</td></tr>' +
+        '<tr><td>logical_size</td><td>BIGINT</td><td>Size of the object the client wrote. Distinct from plaintext_size: with both features on the stored bytes are ciphertext of compressed data, so plaintext_size is the pre-encryption (compressed) size and this is the original (nullable)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Intent creation time; reaper only considers rows older than <code>write_path.pending_pattern.min_age</code> (default 5m)</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK on intent_id &bull; idx_pending_objects_created (created_at) for the reaper\'s age-cursored scan &bull; idx_pending_objects_backend (backend_name)</p>' +
         '<p>Used by: <code>writepath.Coordinator.InsertPendingIntent</code> (inserts on PUT entry) &bull; <code>RecordObjectAndPromoteIntent</code> (delete on successful commit) &bull; <code>RecoverFromRecordFailure</code> (delete on drain race / commit failure) &bull; <a href="../background-services/">PendingReaper</a> (HEAD-probes the backend and promotes / drops stale intents). The reaper claims rows individually with <code>SELECT ... FOR UPDATE SKIP LOCKED</code>; no advisory lock is required because two reapers ticking concurrently always pick disjoint sets.</p>' +
@@ -450,3 +466,4 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | `00014_object_managed_flag` | Add `managed` to `object_locations` (default true) plus `idx_object_locations_managed (backend_name) WHERE managed`, so reconcile can import objects that sit outside every virtual bucket prefix for quota accounting without the workers acting on them |
 | `00015_object_last_scrubbed_at` | Add `last_scrubbed_at` to `object_locations` (nullable) plus a partial index for the scrub queue. Replaces random sampling, which on Postgres could not reach past the front of the table: `TABLESAMPLE` walks the heap in physical order and `LIMIT` halts the scan, so most of the fleet was never verified |
 | `00016_scrub_queue_last_touched` | Re-index the scrub queue on `COALESCE(last_scrubbed_at, created_at)` so a freshly written copy sorts behind an old unverified one. Ordering on the verified timestamp alone put every new write at the head, and a write rate above the scrub rate meant older data was never reached |
+| `00017_compression_columns` | Add `compression_algorithm`, `compression_level`, `compression_format_version` and `logical_size` to `object_locations` and `pending_objects`. Nullable throughout, and a NULL algorithm means the bytes are stored verbatim, which is what every pre-existing row is, so no backfill is needed |

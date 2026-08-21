@@ -140,7 +140,7 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 		return fail, fmt.Errorf("backend %s: %w", beName, err)
 	}
 
-	if err := o.buildPlaintextReader(ctx, r, loc, key, beName, backend, br.rng, br.ptStart, br.ptEnd); err != nil {
+	if err := o.buildPlaintextReader(ctx, r, loc, key, beName, backend, br); err != nil {
 		_ = r.Body.Close()
 		cancel()
 		return fail, err
@@ -208,15 +208,14 @@ func (o *Manager) buildPlaintextReader(
 	loc *core.ObjectLocation,
 	key, beName string,
 	backend s3be.ObjectBackend,
-	rng *encryption.RangeResult,
-	ptStart, ptEnd int64,
+	br backendRange,
 ) error {
 	if loc != nil && loc.Encrypted && o.encryptor != nil {
-		if err := decryptResponse(ctx, o.encryptor, r, loc, rng, ptStart, ptEnd); err != nil {
+		if err := decryptResponse(ctx, o.encryptor, r, loc, br.rng, br.ptStart, br.ptEnd); err != nil {
 			return err
 		}
 	}
-	o.maybeWrapIntegrityReader(ctx, r, loc, key, beName, backend)
+	o.maybeWrapIntegrityReader(ctx, r, loc, key, beName, backend, br.header != "")
 	return nil
 }
 
@@ -224,15 +223,22 @@ func (o *Manager) buildPlaintextReader(
 // integrity verification is enabled and an expected content hash is
 // available. A hash mismatch logs, increments telemetry, and enqueues the
 // bad copy for cleanup.
+//
+// A partial response is never verified. The stored hash covers the whole
+// object, so a slice of it cannot match, and the mismatch handler destroys the
+// copy: without this guard a healthy object loses one copy per ranged read.
+// Verifying a range would need per-chunk digests, which the schema does not
+// carry, so range coverage belongs to the scrubber, which reads whole objects.
 func (o *Manager) maybeWrapIntegrityReader(
 	ctx context.Context,
 	r *s3be.GetObjectResult,
 	loc *core.ObjectLocation,
 	key, beName string,
 	backend s3be.ObjectBackend,
+	partial bool,
 ) {
 	icfg := o.integrityCfg.Load()
-	if icfg == nil || !icfg.Enabled || !icfg.VerifyOnRead {
+	if icfg == nil || !icfg.Enabled || !icfg.VerifyOnRead || partial {
 		return
 	}
 	expectedHash := ""
