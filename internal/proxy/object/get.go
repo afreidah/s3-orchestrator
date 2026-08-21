@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 
 	"go.opentelemetry.io/otel/trace"
 
@@ -42,14 +43,27 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 		return cached, nil
 	}
 
+	// A compressed read meters itself, one charge per frame fetched, on the
+	// bytes that actually left the backend. Every copy of a key agrees on
+	// whether it is compressed, so whichever attempt wins reports the same
+	// thing here.
+	var selfMetered atomic.Bool
 	result, backendName, err := readpath.Read(ctx, o.failover, "GetObject", key,
 		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.GetObjectResult], error) {
+			if isCompressed(loc) {
+				selfMetered.Store(true)
+			}
 			return o.getObjectAttempt(ctx, key, rangeHeader, beName, backend, loc)
 		})
 	if err != nil {
 		return nil, err
 	}
-	o.core.Acct().Egress(backendName, result.Size)
+	// Charging result.Size on a compressed read would add the logical size on
+	// top of the physical bytes already counted, and the logical size is the
+	// larger of the two.
+	if !selfMetered.Load() {
+		o.core.Acct().Egress(backendName, result.Size)
+	}
 
 	pobserve.GetCompleted(ctx, key, backendName, result.Size)
 
@@ -95,6 +109,12 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 	// (degraded broadcast with the DB unreachable) we cannot decrypt.
 	if o.encryptor != nil && loc == nil {
 		return fail, core.ErrServiceUnavailable
+	}
+
+	// A compressed copy is read by decoding it, which is driven by the codec
+	// rather than by a GET of the whole object.
+	if isCompressed(loc) {
+		return o.compressedGetAttempt(ctx, key, rangeHeader, beName, backend, loc)
 	}
 
 	// Reject a copy whose row contradicts itself before doing range math on

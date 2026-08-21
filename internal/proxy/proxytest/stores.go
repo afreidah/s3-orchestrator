@@ -66,6 +66,8 @@ func BuildManager(store core.MetadataStore, cfg *proxy.BackendManagerConfig) *pr
 		Coord:                        coord,
 		Stores:                       stores,
 		Encryptor:                    cfg.Features.Encryptor,
+		Codec:                        cfg.Features.Codec,
+		Compression:                  cfg.Features.Compression,
 		LocationCache:                object.NewLocationCache(cfg.Policies.CacheTTL),
 		ObjectCache:                  cfg.Features.ObjectCache,
 		ParallelBroadcast:            cfg.Policies.ParallelBroadcast,

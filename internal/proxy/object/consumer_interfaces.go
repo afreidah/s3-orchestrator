@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -36,15 +37,17 @@ type ObjectWriteRuntime interface {
 	Acct() *accounting.Recorder
 }
 
-// Compressor encodes an object into its stored form. The write path calls
-// Compress and nothing else, so that is all this names; the read path declares
-// its own decode surface when it starts using one.
+// ObjectCodec is the compression surface the Manager uses: encode on write,
+// decode on read. A role rather than a single action, so it takes a role name;
+// while it held Compress alone the -er form applied and it was Compressor.
 //
-// Declared rather than taking *compression.Codec because encoding is a step
-// that can fail mid-upload, and the concrete codec offers no way to make it.
-// A fake here is what lets the failure path be tested at all.
-type Compressor interface {
+// Declared rather than taking *compression.Codec because both halves fail on
+// inputs the concrete codec cannot be made to produce - a mid-upload encode
+// failure, a stored object that will not decode. A fake here is what lets
+// those paths be tested at all.
+type ObjectCodec interface {
 	Compress(dst io.Writer, src io.Reader) (int64, error)
+	DecompressRanged(ctx context.Context, f compression.RangeFetcher, compressedSize int64) (compression.RangedReader, error)
 }
 
 // RangeFetchRuntime is what a single ranged GET needs: the timed call plus the

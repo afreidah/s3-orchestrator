@@ -123,7 +123,7 @@ type putPlan struct {
 // under the configured minimum are stored verbatim: a seek table and frame
 // headers cost more than a small object saves.
 func (o *Manager) compressOnWrite(size int64) bool {
-	return o.compressor != nil && o.compression.Enabled && size >= o.compression.MinSize
+	return o.codec != nil && o.compression.Enabled && size >= o.compression.MinSize
 }
 
 // preparePutBody materializes the request body and, when compression applies,
@@ -174,7 +174,7 @@ func (o *Manager) compressPutBody(src *materialize.Body, size int64) (*materiali
 	if err != nil {
 		return nil, 0, err
 	}
-	n, err := o.compressor.Compress(dst.Writer(), plain)
+	n, err := o.codec.Compress(dst.Writer(), plain)
 	if err != nil {
 		dst.Cleanup()
 		return nil, 0, fmt.Errorf("compress body: %w", err)
