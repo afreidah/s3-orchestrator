@@ -12,6 +12,7 @@ package object
 
 import (
 	"context"
+	"io"
 
 	"go.opentelemetry.io/otel/trace"
 
@@ -33,6 +34,17 @@ type ObjectWriteRuntime interface {
 	EligibleForWrite(apiCalls, egress, ingress int64) []string
 	ClassifyWriteError(span trace.Span, operation string, err error) error
 	Acct() *accounting.Recorder
+}
+
+// Compressor encodes an object into its stored form. The write path calls
+// Compress and nothing else, so that is all this names; the read path declares
+// its own decode surface when it starts using one.
+//
+// Declared rather than taking *compression.Codec because encoding is a step
+// that can fail mid-upload, and the concrete codec offers no way to make it.
+// A fake here is what lets the failure path be tested at all.
+type Compressor interface {
+	Compress(dst io.Writer, src io.Reader) (int64, error)
 }
 
 // RangeFetchRuntime is what a single ranged GET needs: the timed call plus the

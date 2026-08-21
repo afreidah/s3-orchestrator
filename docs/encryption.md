@@ -97,7 +97,7 @@ SHA-256 content hashing for data integrity verification. When enabled, objects a
 ```yaml
 integrity:
   enabled: true
-  verify_on_read: true               # Hash-check every GET response as it streams
+  verify_on_read: true               # Hash-check whole-object GET responses as they stream
   verify_on_replicate: true          # Verify hash when creating replicas (default: true)
   scrubber_interval: "6h"            # Background verification interval (0 = disabled)
   scrubber_batch_size: 100           # Objects per scrub cycle
@@ -106,7 +106,7 @@ integrity:
 **How it works:**
 
 - **Write path:** SHA-256 is computed on the plaintext body (before encryption) and stored in `object_locations.content_hash`.
-- **Read path (`verify_on_read`):** A `VerifyingReader` wraps the response body and computes the hash as data streams to the client. On mismatch at EOF, the corrupted copy is enqueued for cleanup.
+- **Read path (`verify_on_read`):** A `VerifyingReader` wraps the response body and computes the hash as data streams to the client. On mismatch at EOF, the corrupted copy is enqueued for cleanup. Range requests are not verified: the stored hash covers the whole object, so a slice of it could never match. The scrubber, which reads whole objects, is what covers data only ever read in ranges.
 - **Scrubber:** A background worker works through the copies least recently verified, reads them from their backend, decrypts if needed, and checks the hash. A copy that fails has its bytes discarded and its ledger row removed, so the replicator rebuilds it from a healthy copy. Each read counts against the backend's usage quota.
 - **Backfill:** Objects written before integrity was enabled have no stored hash. Use `admin backfill-checksums` to read those objects and compute their hashes.
 

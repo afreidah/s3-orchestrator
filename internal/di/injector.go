@@ -146,6 +146,7 @@ func provideIf[T any](inj do.Injector, enabled bool, provider func(do.Injector) 
 // registerOptionalFeatures wires every provider whose registration is gated on
 // a config flag. Reads top to bottom as "provide X when its flag is set".
 func registerOptionalFeatures(inj do.Injector, cfg *config.Config) {
+	do.Provide(inj, ProvideCodec)
 	provideIf(inj, cfg.Encryption.Enabled, ProvideEncryptor)
 	provideIf(inj, cfg.Encryption.Enabled, ProvideEncryptionProvider)
 	provideIf(inj, cfg.Redis != nil, ProvideRedisCounterBackend)

@@ -16,7 +16,7 @@ require (
 	github.com/exaring/otelpgx v0.11.1
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/klauspost/compress v1.19.1
+	github.com/klauspost/compress v1.19.2
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.2
