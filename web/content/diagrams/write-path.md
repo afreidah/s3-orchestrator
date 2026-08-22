@@ -65,7 +65,9 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     '    COMP{Compression<br>Enabled?}:::decision',
     '    COMP -->|yes, size >= min_size| COMPRESS[Encode Chunked zstd<br>Seek Table]:::process',
     '    COMP -->|no| SELECT',
-    '    COMPRESS --> SELECT',
+    '    COMPRESS --> RATIO{Shrank Past<br>min_ratio?}:::decision',
+    '    RATIO -->|yes, keep encoding| SELECT',
+    '    RATIO -->|no, discard encoding| SELECT',
     '',
     '    SELECT{Select<br>Backend}:::decision',
     '    SELECT -->|spread| LEAST[Least Utilized<br>Backend]:::storage',
@@ -195,6 +197,11 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
       title: 'Compression Enabled?',
       badge: 'decision', badgeText: 'branch',
       body: '<p>Checks <code>compression.enabled: true</code> and that the object is at least <code>min_size</code>. A seek table and per-frame headers cost more than a small object saves, so the floor avoids paying for no return.</p><p>Objects already stored compressed stay readable whether or not this is on, so the codec is built either way.</p>'
+    },
+    RATIO: {
+      title: 'Shrank Past min_ratio?',
+      badge: 'decision', badgeText: 'branch',
+      body: '<p>Compares the finished encoding against the original. An object that did not shrink to <code>min_ratio</code> of its original size is stored as the client sent it and the encoded copy is dropped, so the row carries no algorithm and no later read of it pays a decode.</p><p>This is what <code>min_size</code> cannot catch: media, archives and already-compressed content fail on entropy rather than size. Random data compresses to a ratio of exactly 1.000.</p><p>The decision is made on the finished encoding rather than a sample, because entropy is not uniform across an object and a sample is wrong in the direction that costs bytes for the life of the object. Encoding an object that turns out to be incompressible is the encoder\'s cheapest case: it detects unshrinkable blocks and stores them raw.</p>'
     },
     COMPRESS: {
       title: 'Encode Chunked zstd',

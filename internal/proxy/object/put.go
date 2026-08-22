@@ -152,12 +152,35 @@ func (o *Manager) preparePutBody(span trace.Span, src io.Reader, size int64) (*p
 		observe.RecordSpanError(span, err)
 		return nil, err
 	}
+	// Encoding an object that did not shrink buys nothing and costs a decode on
+	// every later read of it, so the encoded copy is dropped and the plan keeps
+	// describing the plaintext it was made from.
+	if !worthCompressing(size, storedSize, o.compression.MinRatio) {
+		cbody.Cleanup()
+		return plan, nil
+	}
 	plan.body, plan.storedSize, plan.compressed = cbody, storedSize, true
 	plan.cleanup = func() {
 		cbody.Cleanup()
 		mbody.Cleanup()
 	}
 	return plan, nil
+}
+
+// worthCompressing reports whether an encoded object shrank enough to be stored
+// in place of the original. The decision is made on the finished encoding rather
+// than a sample of it: entropy is not uniform across an object, and a sample is
+// wrong in the direction that costs bytes for the life of the object, while
+// encoding an object that turns out to be incompressible costs only the encode
+// itself - which is the cheapest case the encoder has, since it detects
+// unshrinkable blocks and stores them raw.
+//
+// A logical size of zero cannot shrink, and the ratio is meaningless there.
+func worthCompressing(logicalSize, encodedSize int64, minRatio float64) bool {
+	if logicalSize <= 0 {
+		return false
+	}
+	return float64(encodedSize) <= float64(logicalSize)*minRatio
 }
 
 // compressPutBody encodes the materialized plaintext into a second materialized

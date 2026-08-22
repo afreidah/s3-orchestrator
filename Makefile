@@ -239,6 +239,9 @@ bench-auth: ## Run auth hot-path benchmarks (SigV4, signing key cache, token aut
 bench-crypto: ## Run encryption throughput benchmarks (encrypt, decrypt, round-trip)
 	go test -bench=Benchmark -benchmem -count=$(BENCH_COUNT) -benchtime=$(BENCH_TIME) -run='^$$' -timeout=10m ./internal/encryption/
 
+bench-compression: ## Run compression throughput benchmarks (encode, decode, incompressible vs compressible)
+	go test -bench=Benchmark -benchmem -count=$(BENCH_COUNT) -benchtime=$(BENCH_TIME) -run='^$$' -timeout=10m ./internal/compression/
+
 bench-cache: ## Run cache and buffer pool benchmarks (LocationCache, TTLCache, bufpool)
 	go test -bench=Benchmark -benchmem -count=$(BENCH_COUNT) -benchtime=$(BENCH_TIME) -run='^$$' -timeout=10m ./internal/proxy/ ./internal/util/syncutil/ ./internal/util/bufpool/
 

@@ -16,6 +16,7 @@ compression:
   level: "default"             # fastest, default, better, or best
   chunk_size: 1048576          # default: 1MB (range: 16KB-64MB)
   min_size: 4096               # objects smaller than this are stored uncompressed
+  min_ratio: 0.95              # encoded objects above this fraction of the original are discarded
 ```
 
 ## Current status
@@ -93,9 +94,13 @@ The destination therefore inherits the chunk size and level its source was writt
 
 ## Skipping objects that will not benefit
 
+Two thresholds, because an object can fail to benefit for two different reasons.
+
 `min_size` stores small objects verbatim. A seek table and per-frame headers cost more than a small object saves, and the floor avoids paying that for no return.
 
-Random data compresses to a ratio of exactly 1.000, so already-compressed content, media and archives gain nothing from a second pass over them.
+`min_ratio` handles the other reason: entropy rather than size. Random data compresses to a ratio of exactly 1.000, so already-compressed content, media and archives gain nothing from a second pass, at any size. An object that encodes to more than `min_ratio` of its original size is stored as the client sent it, and its row carries no algorithm - the same way a small object's does. Nothing distinguishes the two cases on read, because nothing needs to.
+
+The decision is made by encoding the object and measuring the result, not by sampling its first chunk. Entropy is not uniform across an object, so a sample can be wrong in the direction that costs bytes for the whole life of that object, whereas encoding an object that turns out to be incompressible costs only the encode. That is the cheapest case the encoder has: zstd detects blocks it cannot shrink and stores them raw, which runs about five times faster than compressing data it can shrink - 1360 MB/s against 245 MB/s on structured text it takes to a ratio of 0.19. `BenchmarkCompressIncompressible` and `BenchmarkCompressLogLike` in `internal/compression` are those measurements; `make bench-compression` runs them.
 
 ## Interoperability
 

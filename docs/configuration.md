@@ -633,6 +633,7 @@ compression:
   level: "default"             # fastest, default, better, or best
   chunk_size: 1048576          # default: 1MB (range: 16KB-64MB)
   min_size: 4096               # objects smaller than this are stored uncompressed
+  min_ratio: 0.95              # encoded objects above this fraction of the original are discarded
 ```
 
 **Why the level is a name.** zstd collapses its numeric 1-19 range into four buckets, so levels 10 and 19 produce byte-identical output. A numeric setting would let you express a distinction the encoder discards. The four names are the four levels it actually implements:
@@ -654,6 +655,7 @@ Larger chunks compress marginally better and make a small range read pull more t
 - Compression is **not reloadable** — changing any field requires a restart.
 - `chunk_size` and `level` apply to newly written objects only. Existing objects carry their own layout in their seek table and stay readable after either changes.
 - `min_size` exists because a small object can come out larger than it went in: every stored object carries frame headers and a seek table, and below a few kilobytes that overhead can exceed anything compression saves.
+- `min_ratio` catches what `min_size` cannot: an object of any size whose content will not compress. The object is encoded, measured, and stored raw when the result is not at least this much smaller. Lower the value to demand a bigger saving before paying for a decode on every read; `1.0` keeps any saving at all.
 - Compression runs before encryption, because ciphertext does not compress.
 
 ### integrity
