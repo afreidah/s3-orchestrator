@@ -14,6 +14,7 @@ package object
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"io"
 	"testing"
@@ -55,14 +56,30 @@ func compressibleBody(n int) []byte {
 }
 
 // compressionOn returns a config with compression enabled at the given
-// minimum size.
+// minimum size. MinRatio is set explicitly because the fleet builds this
+// struct directly: config validation, which is what applies the default in
+// production, does not run here, and a zero ratio would store every object
+// verbatim.
 func compressionOn(minSize int64) config.CompressionConfig {
 	return config.CompressionConfig{
 		Enabled:   true,
 		Level:     "default",
 		ChunkSize: putCompressChunk,
 		MinSize:   minSize,
+		MinRatio:  config.DefaultCompressionMinRatio,
 	}
+}
+
+// incompressibleBody returns n bytes zstd cannot shrink. The encoder detects
+// the unshrinkable blocks and stores them raw, so the encoded form comes back
+// the same size as the original plus frame and seek-table overhead.
+func incompressibleBody(t *testing.T, n int) []byte {
+	t.Helper()
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatalf("read random body: %v", err)
+	}
+	return b
 }
 
 // putResult is what one PUT through the fleet leaves behind: the bytes on the
@@ -169,6 +186,82 @@ func TestPut_SkipsObjectsBelowMinSize(t *testing.T) {
 	}
 	if res.form != nil && res.form.CompressionAlgorithm != "" {
 		t.Errorf("CompressionAlgorithm = %q, want empty for an uncompressed object", res.form.CompressionAlgorithm)
+	}
+}
+
+// TestPut_SkipsIncompressibleObject checks the entropy floor: an object the
+// encoder cannot shrink is stored as the client sent it, and the row says so by
+// carrying no algorithm. Without this the orchestrator would pay encode CPU on
+// every such write and decode CPU on every read of it, forever, for no bytes
+// saved.
+func TestPut_SkipsIncompressibleObject(t *testing.T) {
+	t.Parallel()
+	src := incompressibleBody(t, putCompressChunk*3)
+
+	res := putThroughFleet(t, &fleetOpts{
+		Codec:       newPutCodec(t),
+		Compression: compressionOn(0),
+	}, "random", src)
+
+	if !bytes.Equal(res.stored, src) {
+		t.Error("an incompressible object was not stored verbatim")
+	}
+	if res.form != nil && res.form.CompressionAlgorithm != "" {
+		t.Errorf("CompressionAlgorithm = %q, want empty for an object stored raw", res.form.CompressionAlgorithm)
+	}
+	if res.size != int64(len(src)) {
+		t.Errorf("recorded size %d, want the %d bytes the client sent", res.size, len(src))
+	}
+}
+
+// TestPut_HonoursMinRatio checks that the threshold is what decides, not merely
+// whether the object shrank at all. An unreachable ratio stores a highly
+// compressible object verbatim.
+func TestPut_HonoursMinRatio(t *testing.T) {
+	t.Parallel()
+	src := compressibleBody(putCompressChunk * 3)
+	cfg := compressionOn(0)
+	cfg.MinRatio = 0.000001
+
+	res := putThroughFleet(t, &fleetOpts{Codec: newPutCodec(t), Compression: cfg}, "key", src)
+
+	if !bytes.Equal(res.stored, src) {
+		t.Error("an object that missed min_ratio was still stored compressed")
+	}
+	if res.form != nil && res.form.CompressionAlgorithm != "" {
+		t.Errorf("CompressionAlgorithm = %q, want empty", res.form.CompressionAlgorithm)
+	}
+}
+
+// TestWorthCompressing pins the comparison itself, where the boundary cases
+// live: an object exactly at the threshold qualifies, one byte over does not,
+// and a zero-length object cannot shrink at all.
+func TestWorthCompressing(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		logical  int64
+		encoded  int64
+		minRatio float64
+		want     bool
+	}{
+		{"halved", 1000, 500, 0.95, true},
+		{"exactly at the threshold", 1000, 950, 0.95, true},
+		{"one byte over", 1000, 951, 0.95, false},
+		{"grew", 1000, 1004, 0.95, false},
+		{"any saving accepted", 1000, 999, 1, true},
+		{"no saving at ratio 1", 1000, 1000, 1, true},
+		{"empty object", 0, 12, 0.95, false},
+		{"negative size", -1, 0, 0.95, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := worthCompressing(tt.logical, tt.encoded, tt.minRatio); got != tt.want {
+				t.Errorf("worthCompressing(%d, %d, %v) = %v, want %v",
+					tt.logical, tt.encoded, tt.minRatio, got, tt.want)
+			}
+		})
 	}
 }
 

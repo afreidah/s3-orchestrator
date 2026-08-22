@@ -55,6 +55,42 @@ func TestCompressionConfig_Defaults(t *testing.T) {
 	if cfg.Compression.MinSize != 4096 {
 		t.Errorf("MinSize = %d, want 4096", cfg.Compression.MinSize)
 	}
+	if cfg.Compression.MinRatio != DefaultCompressionMinRatio {
+		t.Errorf("MinRatio = %v, want %v", cfg.Compression.MinRatio, DefaultCompressionMinRatio)
+	}
+}
+
+// TestCompressionConfig_MinRatioBounds verifies the ratio is held to (0, 1].
+// An unset field takes the default rather than the zero value, which would
+// otherwise disable compression by making no object qualify.
+func TestCompressionConfig_MinRatioBounds(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		minRatio float64
+		wantErr  bool
+	}{
+		{"unset takes the default", 0, false},
+		{"negative", -0.5, true},
+		{"a real saving", 0.5, false},
+		{"any saving at all", 1, false},
+		{"larger than the original", 1.01, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := validBaseConfig()
+			cfg.Compression = CompressionConfig{Enabled: true, MinRatio: tt.minRatio}
+
+			err := cfg.SetDefaultsAndValidate()
+			if tt.wantErr && !errors.Is(err, ErrInvalidCompressionMinRatio) {
+				t.Errorf("min_ratio %v: want ErrInvalidCompressionMinRatio, got %v", tt.minRatio, err)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("min_ratio %v: want no error, got %v", tt.minRatio, err)
+			}
+		})
+	}
 }
 
 // TestCompressionConfig_AcceptsEveryLevel verifies each supported name passes
@@ -136,17 +172,18 @@ func TestCompressionConfig_NegativeMinSize(t *testing.T) {
 // restart-required, and that an unchanged block reports nothing.
 func TestCompressionConfig_RequiresRestart(t *testing.T) {
 	t.Parallel()
-	base := CompressionConfig{Enabled: true, Level: "default", ChunkSize: 1 << 20, MinSize: 4096}
+	base := CompressionConfig{Enabled: true, Level: "default", ChunkSize: 1 << 20, MinSize: 4096, MinRatio: 0.95}
 	tests := []struct {
 		name string
 		next CompressionConfig
 		want bool
 	}{
 		{"unchanged", base, false},
-		{"enabled", CompressionConfig{Enabled: false, Level: "default", ChunkSize: 1 << 20, MinSize: 4096}, true},
-		{"level", CompressionConfig{Enabled: true, Level: "best", ChunkSize: 1 << 20, MinSize: 4096}, true},
-		{"chunk size", CompressionConfig{Enabled: true, Level: "default", ChunkSize: 1 << 21, MinSize: 4096}, true},
-		{"min size", CompressionConfig{Enabled: true, Level: "default", ChunkSize: 1 << 20, MinSize: 8192}, true},
+		{"enabled", CompressionConfig{Enabled: false, Level: "default", ChunkSize: 1 << 20, MinSize: 4096, MinRatio: 0.95}, true},
+		{"level", CompressionConfig{Enabled: true, Level: "best", ChunkSize: 1 << 20, MinSize: 4096, MinRatio: 0.95}, true},
+		{"chunk size", CompressionConfig{Enabled: true, Level: "default", ChunkSize: 1 << 21, MinSize: 4096, MinRatio: 0.95}, true},
+		{"min size", CompressionConfig{Enabled: true, Level: "default", ChunkSize: 1 << 20, MinSize: 8192, MinRatio: 0.95}, true},
+		{"min ratio", CompressionConfig{Enabled: true, Level: "default", ChunkSize: 1 << 20, MinSize: 4096, MinRatio: 0.5}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

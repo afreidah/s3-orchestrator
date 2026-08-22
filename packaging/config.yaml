@@ -106,13 +106,14 @@ backends:
 # Objects are stored as chunked zstd and served back as the bytes the client
 # wrote. The chunking is what keeps a range read cheap: one independently
 # decodable frame per chunk means a partial read fetches roughly the bytes it
-# asked for rather than the whole object. Accepted and validated today, but
-# nothing reads it yet - enabling it does not compress anything.
+# asked for rather than the whole object. PUT, GET, HEAD and server-side copy
+# honour it today; multipart uploads and the background workers do not yet.
 # compression:
 #   enabled: false
 #   level: "default"                 # fastest, default, better, or best
 #   chunk_size: 1048576              # 16KB-64MB (default: 1MB)
 #   min_size: 4096                   # Objects below this are stored uncompressed
+#   min_ratio: 0.95                  # Objects that do not shrink this far are stored uncompressed
 
 # --- Integrity verification (disabled by default, recommended for production) ---
 # SHA-256 content hashing for data integrity. When enabled, objects are
