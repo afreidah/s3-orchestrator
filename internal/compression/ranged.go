@@ -88,6 +88,31 @@ func (c *Codec) DecompressRanged(ctx context.Context, f RangeFetcher, compressed
 	return &decodeGuard{inner: r}, nil
 }
 
+// InspectStored reports whether stored bytes are in the seekable format this
+// codec writes and, if so, the logical size their seek table declares.
+//
+// This is how an object rediscovered on a backend is recognised. It is a weaker
+// claim than the encryption envelope's: a stored object is a standard Zstandard
+// stream by design, so the frame magic alone cannot separate an object this
+// codec wrote from a .zst file a client uploaded. The trailing seek table can,
+// since a plain zstd encoder never writes one.
+//
+// The size comes from the seek table rather than from decoding, so the cost is
+// the one ranged fetch of the tail that opening the reader already makes.
+func (c *Codec) InspectStored(ctx context.Context, f RangeFetcher, storedSize int64) (int64, bool) {
+	r, err := c.DecompressRanged(ctx, f, storedSize)
+	if err != nil {
+		return 0, false
+	}
+	defer func() { _ = r.Close() }()
+
+	logicalSize, err := r.Seek(0, io.SeekEnd)
+	if err != nil || logicalSize <= 0 {
+		return 0, false
+	}
+	return logicalSize, true
+}
+
 // rangeEnv adapts a RangeFetcher to seekable.ReaderEnvironment.
 //
 // fetch is the caller's RangeFetcher with the request context already bound.

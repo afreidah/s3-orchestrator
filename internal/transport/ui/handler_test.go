@@ -55,7 +55,9 @@ const (
 // same mock store and live fleet the manager under test uses.
 // testSync builds the reconcile manager the UI's sync action invokes.
 func testSync(mgr *proxy.BackendManager, store reconcile.Stores) *reconcile.Manager {
-	return reconcile.NewManager(mgr.Runtime(), store, mgr.Runtime().Acct(), nil)
+	return reconcile.NewManager(&reconcile.Deps{
+		Backends: mgr.Runtime(), Stores: store, Usage: mgr.Runtime().Acct(),
+	})
 }
 
 func testDashboard(mgr *proxy.BackendManager, store core.DashboardStore) *dashboard.Aggregator {

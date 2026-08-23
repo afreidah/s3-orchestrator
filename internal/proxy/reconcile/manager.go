@@ -23,6 +23,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
 //go:generate mockgen -destination=mock_manager_test.go -package=reconcile github.com/afreidah/s3-orchestrator/internal/proxy/reconcile Stores,BackendResolver,UsageRecorder
@@ -55,13 +56,29 @@ type Manager struct {
 	backends BackendResolver
 	stores   Stores
 	usage    UsageRecorder
+	codec    StoredInspector
 	log      *slog.Logger
 }
 
-// NewManager builds a Manager. log may be nil, in which case the default
-// logger is used at call time.
-func NewManager(backends BackendResolver, stores Stores, usage UsageRecorder, log *slog.Logger) *Manager {
-	return &Manager{backends: backends, stores: stores, usage: usage, log: log}
+// Deps groups the reconcile manager's constructor parameters. Codec and Log are
+// optional: without a codec a rediscovered compressed object is imported as the
+// verbatim bytes it appears to be, and a nil logger resolves to the default at
+// call time.
+type Deps struct {
+	Backends BackendResolver
+	Stores   Stores
+	Usage    UsageRecorder
+	Codec    StoredInspector
+	Log      *slog.Logger
+}
+
+// NewManager builds a Manager.
+func NewManager(d *Deps) *Manager {
+	must.NotNil("d", d)
+	must.NotNil("d.Backends", d.Backends)
+	must.NotNil("d.Stores", d.Stores)
+	must.NotNil("d.Usage", d.Usage)
+	return &Manager{backends: d.Backends, stores: d.Stores, usage: d.Usage, codec: d.Codec, log: d.Log}
 }
 
 // logger returns the configured logger or the default.
@@ -145,9 +162,10 @@ func (m *Manager) importDiscovered(ctx context.Context, key, backendName string,
 	form, err := ClassifyImport(ctx, ClassifyDeps{
 		Backend: be,
 		Stores:  m.stores,
+		Codec:   m.codec,
 		Source:  "reconcile",
 		Log:     m.logger(),
-	}, backendName, key)
+	}, backendName, key, size)
 	if err != nil {
 		return false, err
 	}

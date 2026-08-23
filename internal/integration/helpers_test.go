@@ -347,7 +347,9 @@ func TestMain(m *testing.M) {
 	workers := proxytest.BuildWorkers(manager, stores)
 	testManager = manager
 	testCoord = writepath.New(manager.Runtime(), db, false)
-	testReconciler = reconcile.NewManager(manager.Runtime(), db, manager.Runtime().Acct(), nil)
+	testReconciler = reconcile.NewManager(&reconcile.Deps{
+		Backends: manager.Runtime(), Stores: db, Usage: manager.Runtime().Acct(),
+	})
 	testWorkers = workers
 
 	srv := &s3api.Server{
