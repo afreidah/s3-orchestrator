@@ -79,9 +79,9 @@
       {{if .Config.EncryptionEnabled}}
       <button id="encrypt-existing-btn" class="btn-action" title="Walk every unencrypted object, encrypt it with the configured key, re-upload the ciphertext, and update its metadata. Long-running.">Encrypt Existing</button>
       {{end}}
-      {{if .Config.CompressionEnabled}}
-      <button id="compress-existing-btn" class="btn-action" title="Walk every object stored verbatim, encode it as chunked zstd, re-upload it, and update its metadata. Objects too small or too incompressible to benefit are skipped. Long-running.">Compress Existing</button>
-      <button id="decompress-existing-btn" class="btn-action" title="Rewrite every compressed object back to the bytes the client wrote. Long-running.">Decompress Existing</button>
+      <button id="compress-existing-btn" class="btn-action" title="Walk every object stored verbatim, encode it as chunked zstd, re-upload it, and update its metadata. Objects too small or too incompressible to benefit are skipped. Works whether or not compression is enabled for new writes, so an existing fleet can be converted before the write path is switched over. Long-running.">Compress Existing</button>
+      {{if .Data.HasCompressedData}}
+      <button id="decompress-existing-btn" class="btn-action" title="Rewrite every compressed object back to the bytes the client wrote. Offered whenever compressed objects exist, including after compression has been turned off, since that is when you would unwind them. Long-running.">Decompress Existing</button>
       {{end}}
       <span id="admin-action-status" class="admin-action-status"></span>
     </h2>
@@ -96,6 +96,7 @@
           <th style="width:20%"></th>
           <th class="num">Objects</th>
           <th class="num">Multipart</th>
+          {{if .Data.HasCompressedData}}<th class="num" title="Bytes this backend is not storing because the objects on it are compressed: what those objects are, less what they occupy. Objects stored verbatim contribute nothing.">Saved</th>{{end}}
           {{if .Config.IntegrityEnabled}}<th class="num" title="Objects without a stored SHA-256 content hash. Run Backfill Checksums to populate. Having a hash is not the same as having been verified against it - see Integrity Coverage below.">No Hash</th>{{end}}
         </tr>
       </thead>
@@ -129,6 +130,10 @@
             </td>
             <td class="num">{{formatNumber $objects}}</td>
             <td class="num">{{formatNumber $multipart}}</td>
+            {{if $.Data.HasCompressedData}}
+              {{$saved := $.Data.CompressionSaved .}}
+              <td class="num">{{if ne $saved 0}}{{formatBytes $saved}}{{else}}&mdash;{{end}}</td>
+            {{end}}
             {{if $.Config.IntegrityEnabled}}<td class="num">{{if ne $unverified 0}}<span class="orphan-value">{{formatNumber $unverified}}</span>{{else}}&mdash;{{end}}</td>{{end}}
           </tr>
         {{end}}
@@ -181,6 +186,40 @@
           <td>Plaintext copies</td>
           <td class="num">{{if ne .Data.PlaintextCopies 0}}<span class="orphan-value">{{formatNumber .Data.PlaintextCopies}}</span>{{else}}&mdash;{{end}}</td>
           <td>Copies still stored unencrypted. Enabling encryption applies to new writes only, so anything already on a backend stays as it is until you run Encrypt Existing. A non-zero value means the fleet is only partly encrypted despite the setting being on.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  {{end}}
+
+  {{if .Data.HasCompressedData}}
+  {{$comp := .Data.CompressionTotals}}
+  <!-- Compression Savings -->
+  <section>
+    <h2>Compression Savings</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th class="num">Value</th>
+          <th>Meaning</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Bytes saved</td>
+          <td class="num">{{formatBytes (sub $comp.LogicalBytes $comp.StoredBytes)}}</td>
+          <td>What the compressed objects are, less what they occupy. This is storage you are not paying for.</td>
+        </tr>
+        <tr>
+          <td>Ratio</td>
+          <td class="num">{{ratio $comp.StoredBytes $comp.LogicalBytes}}</td>
+          <td>Stored size as a fraction of the objects' own size, across everything stored compressed. Objects stored verbatim are excluded, so this is the ratio the encoder achieved rather than a fleet-wide average diluted by what it declined.</td>
+        </tr>
+        <tr>
+          <td>Compressed copies</td>
+          <td class="num">{{formatNumber $comp.Objects}}</td>
+          <td>Copies stored as chunked zstd. Compression covers new writes only, so anything written before it was enabled stays verbatim until you run Compress Existing.</td>
         </tr>
       </tbody>
     </table>

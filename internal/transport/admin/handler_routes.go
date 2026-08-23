@@ -310,11 +310,13 @@ func (h *Handler) routes() []route {
 			Method: http.MethodPost, Pattern: "/admin/api/compress-existing", Handler: h.handleCompressExisting,
 			Summary:  "Store every uncompressed object as chunked zstd",
 			Response: adminapi.CompressExistingResponse{},
+			Stream:   adminstream.Event{},
 		},
 		{
 			Method: http.MethodPost, Pattern: "/admin/api/decompress-existing", Handler: h.handleDecompressExisting,
 			Summary:  "Rewrite every compressed object back to its stored bytes",
 			Response: adminapi.DecompressExistingResponse{},
+			Stream:   adminstream.Event{},
 		},
 		{
 			Method: http.MethodPost, Pattern: "/admin/api/scrub", Handler: h.handleScrub,

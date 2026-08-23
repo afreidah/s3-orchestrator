@@ -30,28 +30,34 @@ const rewritableColumns = `object_key, backend_name, size_bytes, encrypted, encr
 
 // ListUncompressedLocations returns a page of copies whose bytes carry no
 // encoding, which is what compress-existing rewrites.
-func (s *Store) ListUncompressedLocations(ctx context.Context, limit, offset int) ([]core.RewritableLocation, error) {
-	return s.listRewritable(ctx, "compression_algorithm IS NULL", limit, offset)
+func (s *Store) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.RewritableLocation, error) {
+	return s.listRewritable(ctx, "compression_algorithm IS NULL", limit, after)
 }
 
 // ListCompressedLocations returns a page of copies whose bytes are an encoding,
 // which is what decompress-existing rewrites.
-func (s *Store) ListCompressedLocations(ctx context.Context, limit, offset int) ([]core.RewritableLocation, error) {
-	return s.listRewritable(ctx, "compression_algorithm IS NOT NULL", limit, offset)
+func (s *Store) ListCompressedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.RewritableLocation, error) {
+	return s.listRewritable(ctx, "compression_algorithm IS NOT NULL", limit, after)
 }
 
 // listRewritable runs one page of either listing. The predicate is the only
 // difference between them, and it is a constant at both call sites rather than
 // anything a caller supplies.
-func (s *Store) listRewritable(ctx context.Context, predicate string, limit, offset int) ([]core.RewritableLocation, error) {
+//
+// Paging is by cursor because the passes that walk these listings rewrite the
+// rows they read: each one processed leaves the predicate that selected it, so
+// an offset would advance into a set that shrank and skip the rows that moved
+// up to fill the gap.
+func (s *Store) listRewritable(ctx context.Context, predicate string, limit int, after core.Cursor) ([]core.RewritableLocation, error) {
 	//nolint:gosec // G202: predicate is one of two package constants, never caller input
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+rewritableColumns+`
 		FROM object_locations
 		WHERE `+predicate+`
+		  AND (object_key, backend_name) > (?, ?)
 		ORDER BY object_key, backend_name
-		LIMIT ? OFFSET ?`,
-		limit, offset,
+		LIMIT ?`,
+		after.ObjectKey, after.BackendName, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list rewritable locations: %w", err)
@@ -93,6 +99,35 @@ func scanRewritable(rows *sql.Rows) (core.RewritableLocation, error) {
 	loc.CompressionFormatVersion = int(formatVersion.Int64)
 	loc.LogicalSize = logicalSize.Int64
 	return loc, nil
+}
+
+// CompressionStats reports per-backend compression totals for the dashboard.
+// Backends holding no encoded copies are absent rather than present as zeroes,
+// so a caller can tell "nothing compressed here" from "compressed to nothing".
+func (s *Store) CompressionStats(ctx context.Context) (map[string]core.CompressionStat, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT backend_name, COUNT(*),
+		       COALESCE(SUM(logical_size), 0), COALESCE(SUM(size_bytes), 0)
+		FROM object_locations
+		WHERE compression_algorithm IS NOT NULL
+		GROUP BY backend_name`)
+	if err != nil {
+		return nil, fmt.Errorf("compression stats: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]core.CompressionStat)
+	for rows.Next() {
+		var (
+			name string
+			stat core.CompressionStat
+		)
+		if err := rows.Scan(&name, &stat.Objects, &stat.LogicalBytes, &stat.StoredBytes); err != nil {
+			return nil, fmt.Errorf("scan compression stats: %w", err)
+		}
+		out[name] = stat
+	}
+	return out, rows.Err()
 }
 
 // MarkObjectCompressed records the new stored form of a rewritten copy and

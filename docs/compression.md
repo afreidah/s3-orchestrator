@@ -23,6 +23,12 @@ compression:
 
 Every path handles compression: PUT and multipart completion write it, GET and HEAD serve through it, server-side copy and the replication workers carry it, the scrubber decodes before hashing, reconcile recognises it, and a crash-recovered write keeps it. Still off by default, and still worth enabling on a test fleet before a production one.
 
+## Seeing it per object and per backend
+
+The object inspector shows how each copy is stored: a `COMP` column naming the encoding, and a `LOGICAL` column with the size the client wrote. Both read as a dash for a copy stored verbatim, where the stored size already is the object's size. That is the view that answers "is this particular object compressed, and by how much" - the copies of one key can differ, since a rewrite pass works one copy at a time.
+
+The dashboard and the TUI backends pane carry a `Saved` column per backend: what the compressed objects on it are, less what they occupy. The dashboard also has a Compression Savings section with the fleet totals and the ratio achieved. That ratio covers only objects stored encoded, so it is what the encoder managed rather than an average diluted by everything it declined.
+
 ## What to watch
 
 Two ratios say whether the feature is doing its job, and both are a pair of counters rather than a single figure so nothing has to be kept in step:

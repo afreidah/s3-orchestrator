@@ -42,10 +42,26 @@ func loadTemplates() *template.Template {
 		"pctFloat":       pctFloat,
 		"barColor":       barColor,
 		"joinStrings":    strings.Join,
+		"sub":            sub,
+		"ratio":          ratio,
 	}
 	return template.Must(
 		template.New("").Funcs(funcMap).ParseFS(embeddedFS, "templates/*.html"),
 	)
+}
+
+// sub subtracts b from a. Templates cannot do arithmetic, and the alternative
+// is precomputing every difference the page shows into its own view field.
+func sub(a, b int64) int64 { return a - b }
+
+// ratio renders a as a fraction of b, to two decimals. A zero denominator has
+// no ratio to report, which is a dash rather than a zero: nothing was measured,
+// as opposed to something measuring nothing.
+func ratio(a, b int64) string {
+	if b == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.2f", float64(a)/float64(b))
 }
 
 // formatNumber formats an integer with comma separators.

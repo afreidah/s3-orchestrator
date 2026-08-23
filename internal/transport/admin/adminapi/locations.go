@@ -36,4 +36,10 @@ type ObjectLocation struct {
 	PlaintextSize  int64      `json:"plaintext_size"`
 	ContentHash    string     `json:"content_hash,omitempty"`
 	LastScrubbedAt *time.Time `json:"last_scrubbed_at,omitempty"`
+
+	// CompressionAlgorithm is empty when the copy is stored verbatim, which is
+	// what tells the two cases apart: LogicalSize is only meaningful next to it,
+	// since SizeBytes is the object's own size when nothing was encoded.
+	CompressionAlgorithm string `json:"compression_algorithm,omitempty"`
+	LogicalSize          int64  `json:"logical_size,omitempty"`
 }

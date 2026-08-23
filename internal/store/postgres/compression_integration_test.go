@@ -17,6 +17,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -91,11 +92,11 @@ func TestStoreInt_CompressionListings_AreComplements(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	uncompressed, err := s.ListUncompressedLocations(ctx, 1000, 0)
+	uncompressed, err := s.ListUncompressedLocations(ctx, 1000, core.Cursor{})
 	if err != nil {
 		t.Fatalf("ListUncompressedLocations: %v", err)
 	}
-	compressed, err := s.ListCompressedLocations(ctx, 1000, 0)
+	compressed, err := s.ListCompressedLocations(ctx, 1000, core.Cursor{})
 	if err != nil {
 		t.Fatalf("ListCompressedLocations: %v", err)
 	}
@@ -107,6 +108,82 @@ func TestStoreInt_CompressionListings_AreComplements(t *testing.T) {
 	// The encryption columns ride along because a rewrite has to unwrap the
 	// copy before it can touch the bytes.
 	assertEnvelopeCarried(t, findRewritable(t, compressed, encodedKey))
+}
+
+// TestStoreInt_CompressionListings_PageByCursor asserts the listing resumes
+// after the row it is handed rather than at an offset. decompress-existing
+// rewrites the rows it reads, so each page it finishes leaves the predicate
+// before the next page is asked for; an offset would land past the rows that
+// moved up, and the pass would report a clean run having skipped them.
+func TestStoreInt_CompressionListings_PageByCursor(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+
+	const total = 6
+	want := seedEncodedCopies(t, s, ctx, total)
+	seen := walkCompressedByCursor(t, s, ctx, want, total)
+	assertWalkedEachOnce(t, seen, total)
+}
+
+// seedEncodedCopies records total encoded copies under this test's key prefix
+// and reports the keys it wrote.
+func seedEncodedCopies(t *testing.T, s *Store, ctx context.Context, total int) map[string]bool {
+	t.Helper()
+	want := map[string]bool{}
+	for i := range total {
+		key := uniqueKey(t, fmt.Sprintf("obj-%d", i))
+		if _, err := s.RecordObject(ctx, key, "backend-a", 300, encodedForm()); err != nil {
+			t.Fatalf("RecordObject %s: %v", key, err)
+		}
+		want[key] = true
+	}
+	return want
+}
+
+// walkCompressedByCursor pages the compressed listing two rows at a time,
+// carrying the cursor forward exactly as the bulk passes do, and counts how
+// often each wanted key came back. Other tests share this table, so the walk
+// starts at this test's own key prefix and ignores rows it did not seed.
+func walkCompressedByCursor(t *testing.T, s *Store, ctx context.Context, want map[string]bool, total int) map[string]int {
+	t.Helper()
+	seen := map[string]int{}
+	after := core.Cursor{ObjectKey: t.Name() + "/"}
+	for range 4 * total {
+		page, err := s.ListCompressedLocations(ctx, 2, after)
+		if err != nil {
+			t.Fatalf("ListCompressedLocations: %v", err)
+		}
+		if len(page) == 0 || len(seen) == total {
+			return seen
+		}
+		countWanted(page, want, seen)
+		last := page[len(page)-1]
+		after = core.Cursor{ObjectKey: last.ObjectKey, BackendName: last.BackendName}
+	}
+	return seen
+}
+
+// countWanted folds one page into the tally, ignoring rows other tests seeded.
+func countWanted(page []core.RewritableLocation, want map[string]bool, seen map[string]int) {
+	for i := range page {
+		if want[page[i].ObjectKey] {
+			seen[page[i].ObjectKey]++
+		}
+	}
+}
+
+// assertWalkedEachOnce fails unless the walk returned every seeded row exactly
+// once, which is the whole point of a cursor: no row skipped, none repeated.
+func assertWalkedEachOnce(t *testing.T, seen map[string]int, total int) {
+	t.Helper()
+	if len(seen) != total {
+		t.Errorf("walked %d of this test's %d rows: %v", len(seen), total, seen)
+	}
+	for key, n := range seen {
+		if n != 1 {
+			t.Errorf("%s returned %d times, want once", key, n)
+		}
+	}
 }
 
 // TestStoreInt_MarkObjectCompressed_MovesQuotaAndEnvelope asserts the update
@@ -204,5 +281,44 @@ func TestStoreInt_MarkObjectCompressed_ClearsEncoding(t *testing.T) {
 	}
 	if got.SizeBytes != 1000 {
 		t.Errorf("SizeBytes = %d, want the 1000 decoded bytes", got.SizeBytes)
+	}
+}
+
+// TestStoreInt_CompressionStats_PerBackendTotals covers the dashboard read
+// against a real Postgres. Only encoded copies count, and a backend holding
+// none is absent rather than present as zero.
+func TestStoreInt_CompressionStats_PerBackendTotals(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+
+	encodedKey := uniqueKey(t, "stats-encoded")
+	verbatimKey := uniqueKey(t, "stats-verbatim")
+	if _, err := s.RecordObject(ctx, encodedKey, "backend-a", 300, encodedForm()); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if _, err := s.RecordObject(ctx, verbatimKey, "backend-a", 900, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	stats, err := s.CompressionStats(ctx)
+	if err != nil {
+		t.Fatalf("CompressionStats: %v", err)
+	}
+	got, ok := stats["backend-a"]
+	if !ok {
+		t.Fatalf("backend-a missing from %+v", stats)
+	}
+	// Other tests in this package seed rows too, so assert the shape rather
+	// than exact totals: the verbatim copy must not have been counted.
+	if got.Objects < 1 {
+		t.Errorf("Objects = %d, want at least the one encoded copy", got.Objects)
+	}
+	if got.LogicalBytes < got.StoredBytes {
+		t.Errorf("logical %d < stored %d; the totals cannot describe a saving",
+			got.LogicalBytes, got.StoredBytes)
+	}
+	if got.StoredBytes >= got.LogicalBytes {
+		t.Errorf("stored %d >= logical %d; a verbatim copy was counted in",
+			got.StoredBytes, got.LogicalBytes)
 	}
 }

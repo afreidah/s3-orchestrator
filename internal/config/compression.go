@@ -57,18 +57,26 @@ type CompressionConfig struct {
 }
 
 // setDefaultsAndValidate applies defaults and checks the level, chunk size,
-// minimum size and minimum ratio. It is a no-op when compression is disabled,
-// so an operator can leave a half-filled block in place without failing
-// startup.
+// minimum size and minimum ratio.
+//
+// The defaults apply whether or not compression is enabled, because things
+// other than the write path read them: the codec is built either way so stored
+// objects stay readable, and compress-existing is a legitimate thing to run on
+// a fleet that has not turned the feature on for writes yet. Leaving the zero
+// values in place there made that pass decline every object, since no encoding
+// can beat a minimum ratio of zero.
+//
+// Validation is what stays gated: a half-filled block on a disabled feature
+// must not fail startup.
 func (c *CompressionConfig) setDefaultsAndValidate() []error {
-	if !c.Enabled {
-		return nil
-	}
-
 	c.Level = cmp.Or(c.Level, DefaultCompressionLevel)
 	c.ChunkSize = cmp.Or(c.ChunkSize, DefaultCompressionChunkSize)
 	c.MinSize = cmp.Or(c.MinSize, DefaultCompressionMinSize)
 	c.MinRatio = cmp.Or(c.MinRatio, DefaultCompressionMinRatio)
+
+	if !c.Enabled {
+		return nil
+	}
 
 	var errs []error
 	if !slices.Contains(compressionLevels, c.Level) {

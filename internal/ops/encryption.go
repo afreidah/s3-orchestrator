@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
@@ -96,12 +97,12 @@ func (e *Encryption) EncryptExisting(ctx context.Context) (BulkRewriteResult, er
 	if e.encryptor == nil || e.store == nil {
 		return BulkRewriteResult{}, ErrEncryptionDisabled
 	}
-	return runBulkRewrite(e.rewriteEnv(), ctx, bulkRewriteOp[*encryptRow]{
+	return runBulkRewrite(e.rewriteEnv(), ctx, nil, bulkRewriteOp[*encryptRow]{
 		opName:      "encrypt-existing",
 		resultLabel: "encrypted",
 		counter:     telemetry.EncryptExistingObjectsTotal,
-		listFn: func(ctx context.Context, batchSize, offset int) ([]*encryptRow, error) {
-			rows, err := e.store.ListUnencryptedLocations(ctx, batchSize, offset)
+		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]*encryptRow, error) {
+			rows, err := e.store.ListUnencryptedLocations(ctx, batchSize, after)
 			if err != nil {
 				return nil, err
 			}
@@ -135,12 +136,12 @@ func (e *Encryption) DecryptExisting(ctx context.Context) (BulkRewriteResult, er
 	if e.encryptor == nil || e.store == nil {
 		return BulkRewriteResult{}, ErrEncryptionDisabled
 	}
-	return runBulkRewrite(e.rewriteEnv(), ctx, bulkRewriteOp[*decryptRow]{
+	return runBulkRewrite(e.rewriteEnv(), ctx, nil, bulkRewriteOp[*decryptRow]{
 		opName:      "decrypt-existing",
 		resultLabel: "decrypted",
 		counter:     telemetry.DecryptExistingObjectsTotal,
-		listFn: func(ctx context.Context, batchSize, offset int) ([]*decryptRow, error) {
-			rows, err := e.store.ListAllEncryptedLocations(ctx, batchSize, offset)
+		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]*decryptRow, error) {
+			rows, err := e.store.ListAllEncryptedLocations(ctx, batchSize, after)
 			if err != nil {
 				return nil, err
 			}
@@ -281,7 +282,7 @@ type bulkRewriteOp[L bulkRewriteRow] struct {
 	opName      string
 	resultLabel string
 	counter     *prometheus.CounterVec
-	listFn      func(ctx context.Context, batchSize, offset int) ([]L, error)
+	listFn      func(ctx context.Context, batchSize int, after core.Cursor) ([]L, error)
 	// declines reports a row the pass will not rewrite, before anything is
 	// downloaded for it. Only what the row itself says can be judged here; a
 	// question about the bytes has to wait for the transform. Nil means every
@@ -336,13 +337,39 @@ const (
 	rewriteErrored
 )
 
+// status renders one outcome for a progress step, in the vocabulary the other
+// streaming passes already use.
+func (o rewriteOutcome) status() string {
+	switch o {
+	case rewriteDone:
+		return progress.StatusOK
+	case rewriteSkipped:
+		return progress.StatusSkipped
+	default:
+		return progress.StatusFailed
+	}
+}
+
 // runBulkRewrite is the shared driver for every bulk rewrite pass. A listing
 // failure stops the run and returns the counts gathered so far alongside the
 // error, so a caller can report partial progress.
-func runBulkRewrite[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Context, op bulkRewriteOp[L]) (BulkRewriteResult, error) {
+//
+// obs reports each object as it is processed and may be nil, which is what a
+// caller wanting only the summary passes. These passes read and rewrite every
+// object in a fleet, so a caller watching one needs to see it move rather than
+// wait on a spinner.
+//
+// Paging is by cursor, and it has to be: a rewritten object stops matching the
+// listing that selected it, so the set shrinks as the pass walks it. An offset
+// advanced against that steps clean over the rows that moved up to fill the
+// gap - a full fleet decompress skips every other page and stops early, having
+// reported success. The cursor names the last row seen, so rows leaving the set
+// behind it move nothing.
+func runBulkRewrite[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Context, obs progress.Observer, op bulkRewriteOp[L]) (BulkRewriteResult, error) {
 	var res BulkRewriteResult
-	for offset := 0; ; offset += bulkRewriteBatchSize {
-		rows, err := op.listFn(ctx, bulkRewriteBatchSize, offset)
+	var after core.Cursor
+	for {
+		rows, err := op.listFn(ctx, bulkRewriteBatchSize, after)
 		if err != nil {
 			env.log.ErrorContext(ctx, op.opName+" list failed", "error", err)
 			return res, err
@@ -353,7 +380,12 @@ func runBulkRewrite[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Context, o
 
 		for _, row := range rows {
 			res.Total++
-			switch processBulkLocation(env, ctx, op, row) {
+			outcome := rewriteErrored
+			progress.Track(obs, row.rewriteKey(), func() string {
+				outcome = processBulkLocation(env, ctx, op, row)
+				return outcome.status()
+			})
+			switch outcome {
 			case rewriteDone:
 				res.Succeeded++
 			case rewriteSkipped:
@@ -361,6 +393,7 @@ func runBulkRewrite[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Context, o
 			case rewriteErrored:
 				res.Failed++
 			}
+			after = core.Cursor{ObjectKey: row.rewriteKey(), BackendName: row.rewriteBackend()}
 		}
 
 		if len(rows) < bulkRewriteBatchSize {

@@ -162,12 +162,29 @@ WHERE object_key = $1 AND backend_name = $2;
 -- it.
 SELECT count(*) FROM object_locations WHERE encrypted = FALSE;
 
+-- name: CompressionStats :many
+-- What compression is worth, per backend. Only encoded copies are counted:
+-- including the verbatim ones would report a ratio no encoder produced. The
+-- saving is logical - stored, left to the caller so it cannot disagree with the
+-- two figures it comes from.
+SELECT backend_name,
+       count(*) AS objects,
+       COALESCE(SUM(logical_size), 0)::bigint AS logical_bytes,
+       COALESCE(SUM(size_bytes), 0)::bigint AS stored_bytes
+FROM object_locations
+WHERE compression_algorithm IS NOT NULL
+GROUP BY backend_name;
+
 -- name: ListUnencryptedLocations :many
+-- Paged by cursor rather than offset. Encrypting a copy takes it out of this
+-- predicate, so the set shrinks as encrypt-existing walks it and an offset
+-- would step over the rows that moved up.
 SELECT object_key, backend_name, size_bytes
 FROM object_locations
 WHERE encrypted = FALSE
+  AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
 ORDER BY object_key, backend_name
-LIMIT $1 OFFSET $2;
+LIMIT sqlc.arg(row_limit);
 
 -- name: MarkObjectEncrypted :exec
 UPDATE object_locations
@@ -179,35 +196,45 @@ SET encrypted = TRUE,
 WHERE object_key = $1 AND backend_name = $2;
 
 -- name: ListAllEncryptedLocations :many
+-- Cursor-paged for the same reason as ListUnencryptedLocations: decrypting a
+-- copy removes it from this set mid-walk.
 SELECT object_key, backend_name, size_bytes, encryption_key, key_id, plaintext_size
 FROM object_locations
 WHERE encrypted = TRUE
+  AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
 ORDER BY object_key, backend_name
-LIMIT $1 OFFSET $2;
+LIMIT sqlc.arg(row_limit);
 
 -- name: ListUncompressedLocations :many
 -- Copies whose stored bytes carry no encoding, which is what compress-existing
 -- rewrites. The encryption columns come along because compression sits inside
 -- encryption: an encrypted copy is decrypted, encoded, and re-encrypted under
 -- the key it already had.
+--
+-- Paged by cursor, not offset: an encoded copy leaves this predicate, so the
+-- set shrinks under the pass walking it.
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
        plaintext_size, compression_algorithm, compression_level,
        compression_format_version, logical_size
 FROM object_locations
 WHERE compression_algorithm IS NULL
+  AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
 ORDER BY object_key, backend_name
-LIMIT $1 OFFSET $2;
+LIMIT sqlc.arg(row_limit);
 
 -- name: ListCompressedLocations :many
 -- The complement of ListUncompressedLocations, which is what
--- decompress-existing rewrites.
+-- decompress-existing rewrites. Cursor-paged for the same reason, and the case
+-- that makes it matter most: every object this pass succeeds on leaves the
+-- predicate, so an offset walk would skip whole pages and stop early.
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
        plaintext_size, compression_algorithm, compression_level,
        compression_format_version, logical_size
 FROM object_locations
 WHERE compression_algorithm IS NOT NULL
+  AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
 ORDER BY object_key, backend_name
-LIMIT $1 OFFSET $2;
+LIMIT sqlc.arg(row_limit);
 
 -- name: MarkObjectCompressed :exec
 -- Records how a rewritten copy is now stored. A NULL algorithm is the

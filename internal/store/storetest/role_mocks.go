@@ -652,6 +652,21 @@ func (m *MockDashboardStore) EXPECT() *MockDashboardStoreMockRecorder {
 	return m.recorder
 }
 
+// CompressionStats mocks base method.
+func (m *MockDashboardStore) CompressionStats(ctx context.Context) (map[string]core.CompressionStat, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CompressionStats", ctx)
+	ret0, _ := ret[0].(map[string]core.CompressionStat)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CompressionStats indicates an expected call of CompressionStats.
+func (mr *MockDashboardStoreMockRecorder) CompressionStats(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompressionStats", reflect.TypeOf((*MockDashboardStore)(nil).CompressionStats), ctx)
+}
+
 // CountUnencryptedLocations mocks base method.
 func (m *MockDashboardStore) CountUnencryptedLocations(ctx context.Context) (int64, error) {
 	m.ctrl.T.Helper()

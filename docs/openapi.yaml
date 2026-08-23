@@ -274,6 +274,10 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/CompressExistingResponse'
+                        application/x-ndjson:
+                            description: One JSON object per line while the operation runs
+                            schema:
+                                $ref: '#/components/schemas/Event'
                 "401":
                     description: Missing or invalid admin token
     /admin/api/decompress-existing:
@@ -287,6 +291,10 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/DecompressExistingResponse'
+                        application/x-ndjson:
+                            description: One JSON object per line while the operation runs
+                            schema:
+                                $ref: '#/components/schemas/Event'
                 "401":
                     description: Missing or invalid admin token
     /admin/api/decrypt-existing:
@@ -781,6 +789,9 @@ components:
                 bytes_used:
                     format: int64
                     type: integer
+                compression_saved_bytes:
+                    format: int64
+                    type: integer
                 draining:
                     type: boolean
                 egress_bytes:
@@ -806,6 +817,7 @@ components:
                 - api_requests
                 - egress_bytes
                 - ingress_bytes
+                - compression_saved_bytes
             type: object
         BackfillChecksumsResponse:
             properties:
@@ -1207,6 +1219,8 @@ components:
             properties:
                 backend:
                     type: string
+                compression_algorithm:
+                    type: string
                 content_hash:
                     type: string
                 created_at:
@@ -1219,6 +1233,9 @@ components:
                 last_scrubbed_at:
                     format: date-time
                     type: string
+                logical_size:
+                    format: int64
+                    type: integer
                 plaintext_size:
                     format: int64
                     type: integer

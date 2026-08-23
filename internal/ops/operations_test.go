@@ -101,7 +101,7 @@ func (emptyEncAdmin) UpdateEncryptionKey(_ context.Context, _, _ string, _ []byt
 func (emptyEncAdmin) CountUnencryptedLocations(_ context.Context) (int64, error) { return 0, nil }
 
 // ListUnencryptedLocations lists no plaintext locations.
-func (emptyEncAdmin) ListUnencryptedLocations(_ context.Context, _, _ int) ([]core.UnencryptedLocation, error) {
+func (emptyEncAdmin) ListUnencryptedLocations(_ context.Context, _ int, _ core.Cursor) ([]core.UnencryptedLocation, error) {
 	return nil, nil
 }
 
@@ -111,7 +111,7 @@ func (emptyEncAdmin) MarkObjectEncrypted(_ context.Context, _, _ string, _ []byt
 }
 
 // ListAllEncryptedLocations lists no encrypted locations.
-func (emptyEncAdmin) ListAllEncryptedLocations(_ context.Context, _, _ int) ([]core.DecryptableLocation, error) {
+func (emptyEncAdmin) ListAllEncryptedLocations(_ context.Context, _ int, _ core.Cursor) ([]core.DecryptableLocation, error) {
 	return nil, nil
 }
 
@@ -129,7 +129,7 @@ type rowEncAdmin struct {
 }
 
 // ListUnencryptedLocations serves the single row once.
-func (r *rowEncAdmin) ListUnencryptedLocations(_ context.Context, _, _ int) ([]core.UnencryptedLocation, error) {
+func (r *rowEncAdmin) ListUnencryptedLocations(_ context.Context, _ int, _ core.Cursor) ([]core.UnencryptedLocation, error) {
 	if r.served.Swap(true) {
 		return nil, nil
 	}
@@ -519,7 +519,7 @@ type decryptRowStore struct {
 }
 
 // ListAllEncryptedLocations serves the single row once.
-func (d *decryptRowStore) ListAllEncryptedLocations(_ context.Context, _, _ int) ([]core.DecryptableLocation, error) {
+func (d *decryptRowStore) ListAllEncryptedLocations(_ context.Context, _ int, _ core.Cursor) ([]core.DecryptableLocation, error) {
 	if d.served.Swap(true) {
 		return nil, nil
 	}

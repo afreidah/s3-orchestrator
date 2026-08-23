@@ -1488,7 +1488,7 @@ func TestEncryptionAdmin_MarkAndList(t *testing.T) {
 	mustRecordObject(t, s, "bucket/plain", "backend-a", 1024)
 
 	// List unencrypted
-	unenc, err := s.ListUnencryptedLocations(ctx, 10, 0)
+	unenc, err := s.ListUnencryptedLocations(ctx, 10, core.Cursor{})
 	if err != nil {
 		t.Fatalf("ListUnencryptedLocations: %v", err)
 	}
@@ -2399,7 +2399,7 @@ func TestListAllEncryptedLocations(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	locs, err := s.ListAllEncryptedLocations(ctx, 10, 0)
+	locs, err := s.ListAllEncryptedLocations(ctx, 10, core.Cursor{})
 	if err != nil {
 		t.Fatalf("ListAllEncryptedLocations: %v", err)
 	}
@@ -3125,7 +3125,7 @@ func TestCountUnencryptedLocations(t *testing.T) {
 
 	// The count and the list agree, so the dashboard figure and the work
 	// encrypt-existing performs cannot drift apart.
-	listed, err := s.ListUnencryptedLocations(ctx, 100, 0)
+	listed, err := s.ListUnencryptedLocations(ctx, 100, core.Cursor{})
 	if err != nil {
 		t.Fatalf("ListUnencryptedLocations: %v", err)
 	}

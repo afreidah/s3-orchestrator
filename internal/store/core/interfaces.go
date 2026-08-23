@@ -239,6 +239,7 @@ type DashboardStore interface {
 	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error)
 	OldestUnverifiedAge(ctx context.Context) (age time.Duration, neverVerified int64, err error)
 	CountUnencryptedLocations(ctx context.Context) (int64, error)
+	CompressionStats(ctx context.Context) (map[string]CompressionStat, error)
 }
 
 // -------------------------------------------------------------------------
@@ -262,10 +263,10 @@ type LifecycleAdmin interface {
 type EncryptionAdmin interface {
 	ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]EncryptedLocation, error)
 	UpdateEncryptionKey(ctx context.Context, objectKey, backendName string, newEncryptionKey []byte, newKeyID string) error
-	ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]UnencryptedLocation, error)
+	ListUnencryptedLocations(ctx context.Context, limit int, after Cursor) ([]UnencryptedLocation, error)
 	CountUnencryptedLocations(ctx context.Context) (int64, error)
 	MarkObjectEncrypted(ctx context.Context, objectKey, backendName string, encryptionKey []byte, keyID string, plaintextSize, ciphertextSize int64) error
-	ListAllEncryptedLocations(ctx context.Context, limit, offset int) ([]DecryptableLocation, error)
+	ListAllEncryptedLocations(ctx context.Context, limit int, after Cursor) ([]DecryptableLocation, error)
 	MarkObjectDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error
 }
 
@@ -275,9 +276,16 @@ type EncryptionAdmin interface {
 //
 // The two listings are complements: one selects copies with no encoding, the
 // other copies that have one.
+//
+// Both page by cursor rather than offset, and that is load-bearing. A pass
+// rewrites the rows it is walking, so each one it processes leaves the
+// predicate its listing selects on; an offset advanced against a set that just
+// shrank underneath it steps straight over the rows that moved up, and the run
+// reports success having never looked at them. The cursor is the last row seen,
+// so a row leaving the set moves nothing.
 type CompressionAdmin interface {
-	ListUncompressedLocations(ctx context.Context, limit, offset int) ([]RewritableLocation, error)
-	ListCompressedLocations(ctx context.Context, limit, offset int) ([]RewritableLocation, error)
+	ListUncompressedLocations(ctx context.Context, limit int, after Cursor) ([]RewritableLocation, error)
+	ListCompressedLocations(ctx context.Context, limit int, after Cursor) ([]RewritableLocation, error)
 	MarkObjectCompressed(ctx context.Context, u *CompressedUpdate, previousSize int64) error
 }
 

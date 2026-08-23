@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
@@ -85,11 +86,11 @@ func (c *Compression) rewriteEnv() bulkRewriteEnv {
 // encoder cannot shrink past the configured ratio, are left exactly as they are
 // and counted as skipped: the pass applies the same thresholds a PUT does, so
 // it cannot write an encoding a fresh write would have rejected.
-func (c *Compression) CompressExisting(ctx context.Context) (BulkRewriteResult, error) {
+func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observer) (BulkRewriteResult, error) {
 	if c.codec == nil || c.store == nil {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
-	return runBulkRewrite(c.rewriteEnv(), ctx, bulkRewriteOp[*rewriteRow]{
+	return runBulkRewrite(c.rewriteEnv(), ctx, obs, bulkRewriteOp[*rewriteRow]{
 		opName:      "compress-existing",
 		resultLabel: "compressed",
 		counter:     telemetry.CompressExistingObjectsTotal,
@@ -109,11 +110,11 @@ func (c *Compression) CompressExisting(ctx context.Context) (BulkRewriteResult, 
 
 // DecompressExisting decodes every encoded copy and records it as stored
 // verbatim, which is what an operator runs to take the feature back out.
-func (c *Compression) DecompressExisting(ctx context.Context) (BulkRewriteResult, error) {
+func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Observer) (BulkRewriteResult, error) {
 	if c.codec == nil || c.store == nil {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
-	return runBulkRewrite(c.rewriteEnv(), ctx, bulkRewriteOp[*rewriteRow]{
+	return runBulkRewrite(c.rewriteEnv(), ctx, obs, bulkRewriteOp[*rewriteRow]{
 		opName:      "decompress-existing",
 		resultLabel: "decompressed",
 		counter:     telemetry.DecompressExistingObjectsTotal,
@@ -301,9 +302,9 @@ func (r *rewriteRow) LogicalSizeOfSource() int64 {
 }
 
 // rewriteListFn adapts a store listing to the driver's paging callback.
-func rewriteListFn(list func(context.Context, int, int) ([]core.RewritableLocation, error)) func(context.Context, int, int) ([]*rewriteRow, error) {
-	return func(ctx context.Context, batchSize, offset int) ([]*rewriteRow, error) {
-		rows, err := list(ctx, batchSize, offset)
+func rewriteListFn(list func(context.Context, int, core.Cursor) ([]core.RewritableLocation, error)) func(context.Context, int, core.Cursor) ([]*rewriteRow, error) {
+	return func(ctx context.Context, batchSize int, after core.Cursor) ([]*rewriteRow, error) {
+		rows, err := list(ctx, batchSize, after)
 		if err != nil {
 			return nil, err
 		}
