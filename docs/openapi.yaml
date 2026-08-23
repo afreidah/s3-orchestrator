@@ -263,6 +263,32 @@ paths:
                                 $ref: '#/components/schemas/CleanupQueueResponse'
                 "401":
                     description: Missing or invalid admin token
+    /admin/api/compress-existing:
+        post:
+            summary: Store every uncompressed object as chunked zstd
+            operationId: postCompressExisting
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/CompressExistingResponse'
+                "401":
+                    description: Missing or invalid admin token
+    /admin/api/decompress-existing:
+        post:
+            summary: Rewrite every compressed object back to its stored bytes
+            operationId: postDecompressExisting
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/DecompressExistingResponse'
+                "401":
+                    description: Missing or invalid admin token
     /admin/api/decrypt-existing:
         post:
             summary: Rewrite every encrypted object back to plaintext
@@ -941,6 +967,29 @@ components:
                 - depth
                 - items
             type: object
+        CompressExistingResponse:
+            properties:
+                compressed:
+                    format: int64
+                    type: integer
+                failed:
+                    format: int64
+                    type: integer
+                skipped:
+                    format: int64
+                    type: integer
+                status:
+                    type: string
+                total:
+                    format: int64
+                    type: integer
+            required:
+                - status
+                - skipped
+                - failed
+                - total
+                - compressed
+            type: object
         CopyScrubResult:
             properties:
                 backend:
@@ -952,6 +1001,29 @@ components:
             required:
                 - backend
                 - outcome
+            type: object
+        DecompressExistingResponse:
+            properties:
+                decompressed:
+                    format: int64
+                    type: integer
+                failed:
+                    format: int64
+                    type: integer
+                skipped:
+                    format: int64
+                    type: integer
+                status:
+                    type: string
+                total:
+                    format: int64
+                    type: integer
+            required:
+                - status
+                - skipped
+                - failed
+                - total
+                - decompressed
             type: object
         DecryptExistingResponse:
             properties:

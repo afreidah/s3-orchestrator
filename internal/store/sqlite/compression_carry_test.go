@@ -198,3 +198,122 @@ func TestRecordReplica_CarriesRepresentation(t *testing.T) {
 
 	assertCarried(t, locationOn(t, s, "bucket/replicated", "backend-b"), 4096)
 }
+
+// TestListUncompressedLocations_SelectsOnlyVerbatim checks the listing that
+// drives compress-existing: it must offer copies with no encoding and skip the
+// ones that already have one, or a pass would re-encode what it just wrote.
+func TestListUncompressedLocations_SelectsOnlyVerbatim(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := s.RecordObject(ctx, "bucket/plain", "backend-a", 100, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if _, err := s.RecordObject(ctx, "bucket/encoded", "backend-a", 40, compressedForm()); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	verbatim, err := s.ListUncompressedLocations(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("ListUncompressedLocations: %v", err)
+	}
+	if len(verbatim) != 1 || verbatim[0].ObjectKey != "bucket/plain" {
+		t.Fatalf("uncompressed listing = %+v, want only bucket/plain", verbatim)
+	}
+
+	encoded, err := s.ListCompressedLocations(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("ListCompressedLocations: %v", err)
+	}
+	if len(encoded) != 1 || encoded[0].ObjectKey != "bucket/encoded" {
+		t.Fatalf("compressed listing = %+v, want only bucket/encoded", encoded)
+	}
+	// The encryption columns ride along because a rewrite has to unwrap them
+	// before it can touch the bytes.
+	if !encoded[0].Encrypted || encoded[0].KeyID != "key-1" {
+		t.Errorf("encryption metadata missing from the listing: %+v", encoded[0])
+	}
+	if encoded[0].LogicalSize != 8192 {
+		t.Errorf("LogicalSize = %d, want 8192", encoded[0].LogicalSize)
+	}
+}
+
+// TestMarkObjectCompressed_MovesQuota pins the half that is easy to get wrong:
+// a rewrite changes how many bytes the copy occupies, and the backend counter
+// has to follow it or quota drifts by the compression ratio on every object.
+func TestMarkObjectCompressed_MovesQuota(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := s.RecordObject(ctx, "bucket/shrinking", "backend-a", 1000, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	before, err := s.GetQuotaStats(ctx)
+	if err != nil {
+		t.Fatalf("GetQuotaStats: %v", err)
+	}
+
+	update := &core.CompressedUpdate{
+		ObjectKey:     "bucket/shrinking",
+		BackendName:   "backend-a",
+		Algorithm:     "zstd",
+		Level:         "default",
+		FormatVersion: 1,
+		SizeBytes:     250,
+		LogicalSize:   1000,
+	}
+	if err := s.MarkObjectCompressed(ctx, update, 1000); err != nil {
+		t.Fatalf("MarkObjectCompressed: %v", err)
+	}
+
+	loc := locationOn(t, s, "bucket/shrinking", "backend-a")
+	if loc.SizeBytes != 250 {
+		t.Errorf("SizeBytes = %d, want the 250 now stored", loc.SizeBytes)
+	}
+	if loc.CompressionAlgorithm != "zstd" || loc.LogicalSize != 1000 {
+		t.Errorf("row does not describe the encoding: %+v", loc)
+	}
+
+	after, err := s.GetQuotaStats(ctx)
+	if err != nil {
+		t.Fatalf("GetQuotaStats: %v", err)
+	}
+	if got, want := after["backend-a"].BytesUsed, before["backend-a"].BytesUsed-750; got != want {
+		t.Errorf("bytes_used = %d, want %d after a 1000 byte object became 250", got, want)
+	}
+}
+
+// TestMarkObjectCompressed_ClearsOnDecompress checks the reverse update: the
+// row stops claiming an encoding, so nothing downstream tries to decode bytes
+// that are no longer encoded.
+func TestMarkObjectCompressed_ClearsOnDecompress(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := s.RecordObject(ctx, "bucket/expanding", "backend-a", 250, compressedForm()); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	update := &core.CompressedUpdate{
+		ObjectKey:   "bucket/expanding",
+		BackendName: "backend-a",
+		SizeBytes:   1000,
+	}
+	if err := s.MarkObjectCompressed(ctx, update, 250); err != nil {
+		t.Fatalf("MarkObjectCompressed: %v", err)
+	}
+
+	loc := locationOn(t, s, "bucket/expanding", "backend-a")
+	if loc.CompressionAlgorithm != "" {
+		t.Errorf("CompressionAlgorithm = %q, want empty", loc.CompressionAlgorithm)
+	}
+	if loc.LogicalSize != 0 {
+		t.Errorf("LogicalSize = %d, want 0 once the row is verbatim again", loc.LogicalSize)
+	}
+	if loc.SizeBytes != 1000 {
+		t.Errorf("SizeBytes = %d, want the 1000 decoded bytes", loc.SizeBytes)
+	}
+}

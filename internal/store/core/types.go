@@ -333,6 +333,53 @@ type DecryptableLocation struct {
 	PlaintextSize int64
 }
 
+// RewritableLocation is one copy a bulk compression pass may rewrite. It
+// carries the encryption metadata as well, because compression sits inside
+// encryption: an encrypted copy has to be decrypted before its bytes can be
+// encoded, and re-encrypted afterwards under the same key.
+//
+// An empty CompressionAlgorithm means the stored bytes are not encoded, which
+// is what the compress direction selects on and the decompress direction
+// excludes.
+type RewritableLocation struct {
+	ObjectKey                string
+	BackendName              string
+	SizeBytes                int64
+	Encrypted                bool
+	EncryptionKey            []byte
+	KeyID                    string
+	PlaintextSize            int64
+	CompressionAlgorithm     string
+	CompressionLevel         string
+	CompressionFormatVersion int
+	LogicalSize              int64
+}
+
+// CompressedUpdate is the new description of a copy a compression pass has
+// rewritten. SizeBytes is what now occupies the backend, PlaintextSize is what
+// the encryptor was handed (the encoded stream, when the copy is encrypted),
+// and LogicalSize is the object the client wrote.
+//
+// A zero Algorithm records the copy as no longer encoded, which is what the
+// decompress direction writes.
+//
+// EncryptionKey and KeyID are set when the rewrite re-encrypted the copy, and
+// they are not optional there: re-encryption produces a new base nonce and a
+// new wrapped key, so a row still holding the old ones describes bytes nothing
+// can decrypt. They are empty for a copy that was never encrypted.
+type CompressedUpdate struct {
+	ObjectKey     string
+	BackendName   string
+	Algorithm     string
+	Level         string
+	FormatVersion int
+	SizeBytes     int64
+	PlaintextSize int64
+	LogicalSize   int64
+	EncryptionKey []byte
+	KeyID         string
+}
+
 // -------------------------------------------------------------------------
 // LISTING RESULTS
 // -------------------------------------------------------------------------

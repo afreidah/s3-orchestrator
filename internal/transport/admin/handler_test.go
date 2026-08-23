@@ -613,6 +613,7 @@ func newTestHandler(t *testing.T) *Handler {
 	replicationWith(t, h, replicatorStub{}, overRepStub{})
 	rebalanceWith(t, h, nil)
 	encryptionWith(t, h, nil, nil)
+	compressionWith(t, h, nil, nil)
 	return h
 }
 

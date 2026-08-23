@@ -41,5 +41,6 @@ type MetadataStore interface {
 	core.DashboardStore
 	core.LifecycleAdmin
 	core.EncryptionAdmin
+	core.CompressionAdmin
 	core.NotificationOutbox
 }

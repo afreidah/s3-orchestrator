@@ -552,6 +552,7 @@ func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 		Replication: svc.Replication,
 		Rebalance:   svc.Rebalance,
 		Encryption:  svc.Encryption,
+		Compression: svc.Compression,
 		Cfg:         &config.Config{},
 	}
 }

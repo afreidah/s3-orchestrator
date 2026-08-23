@@ -72,6 +72,7 @@ type configSummary struct {
 	RebalanceStrategy         string
 	RateLimitEnabled          bool
 	EncryptionEnabled         bool
+	CompressionEnabled        bool
 	IntegrityEnabled          bool
 	IntegrityVerifyOnRead     bool
 	IntegrityScrubberInterval time.Duration
@@ -147,6 +148,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			RebalanceStrategy:         cfg.Rebalance.Strategy,
 			RateLimitEnabled:          cfg.RateLimit.Enabled,
 			EncryptionEnabled:         cfg.Encryption.Enabled,
+			CompressionEnabled:        cfg.Compression.Enabled,
 			IntegrityEnabled:          cfg.Integrity.Enabled,
 			IntegrityVerifyOnRead:     cfg.Integrity.VerifyOnRead,
 			IntegrityScrubberInterval: cfg.Integrity.ScrubberInterval,

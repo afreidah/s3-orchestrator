@@ -25,6 +25,7 @@ import (
 
 	"go.uber.org/mock/gomock"
 
+	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
@@ -121,6 +122,20 @@ func encryptionWith(t *testing.T, h *Handler, enc *encryption.Encryptor, store o
 	t.Helper()
 	h.encryption = ops.NewEncryption(ops.EncryptionDeps{
 		Encryptor:  enc,
+		Store:      store,
+		Runtime:    newRuntimeOps(t),
+		BackendOps: newOpsBackendOps(t, backendOpsStub{}),
+	})
+}
+
+// compressionWith installs a compression service over the given codec and
+// store, so a test drives one branch of the bulk passes without standing up the
+// rest of the operations layer.
+func compressionWith(t *testing.T, h *Handler, codec *compression.Codec, store ops.CompressionStore) {
+	t.Helper()
+	h.compression = ops.NewCompression(&ops.CompressionDeps{
+		Codec:      codec,
+		Config:     config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
 		Store:      store,
 		Runtime:    newRuntimeOps(t),
 		BackendOps: newOpsBackendOps(t, backendOpsStub{}),

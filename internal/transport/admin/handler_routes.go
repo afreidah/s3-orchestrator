@@ -307,6 +307,16 @@ func (h *Handler) routes() []route {
 			Response: adminapi.DecryptExistingResponse{},
 		},
 		{
+			Method: http.MethodPost, Pattern: "/admin/api/compress-existing", Handler: h.handleCompressExisting,
+			Summary:  "Store every uncompressed object as chunked zstd",
+			Response: adminapi.CompressExistingResponse{},
+		},
+		{
+			Method: http.MethodPost, Pattern: "/admin/api/decompress-existing", Handler: h.handleDecompressExisting,
+			Summary:  "Rewrite every compressed object back to its stored bytes",
+			Response: adminapi.DecompressExistingResponse{},
+		},
+		{
 			Method: http.MethodPost, Pattern: "/admin/api/scrub", Handler: h.handleScrub,
 			Summary:  "Verify stored content hashes against backend data",
 			Response: adminapi.ScrubResponse{},

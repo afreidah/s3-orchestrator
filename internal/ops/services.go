@@ -17,14 +17,17 @@ import (
 )
 
 // Deps holds every collaborator the operations layer needs. Encryptor and
-// EncryptionStore are nil when the orchestrator runs without encryption, and
-// Rebalancer is nil when the worker pool is not wired; the operations that
-// depend on them report that rather than failing.
+// EncStore are nil when the orchestrator runs without encryption, Codec and
+// CompStore when it runs without a compression codec, and Rebalancer when the
+// worker pool is not wired; the operations that depend on them report that
+// rather than failing.
 type Deps struct {
 	Objects    ObjectAPI
 	Store      ObjectStore
 	Encryptor  *encryption.Encryptor
 	EncStore   EncryptionStore
+	Codec      CompressionCodec
+	CompStore  CompressionStore
 	Runtime    RuntimeOps
 	BackendOps BackendOps
 	Replicator ReplicatorOps
@@ -43,6 +46,7 @@ type Services struct {
 	Replication *Replication
 	Rebalance   *Rebalance
 	Encryption  *Encryption
+	Compression *Compression
 }
 
 // New builds every operation service from one dependency bag.
@@ -73,6 +77,14 @@ func New(d *Deps) *Services {
 		Encryption: NewEncryption(EncryptionDeps{
 			Encryptor:  d.Encryptor,
 			Store:      d.EncStore,
+			Runtime:    d.Runtime,
+			BackendOps: d.BackendOps,
+		}),
+		Compression: NewCompression(&CompressionDeps{
+			Codec:      d.Codec,
+			Config:     d.Cfg.Compression,
+			Encryptor:  d.Encryptor,
+			Store:      d.CompStore,
 			Runtime:    d.Runtime,
 			BackendOps: d.BackendOps,
 		}),

@@ -39,6 +39,11 @@ var (
 	ErrReplicationDisabled   = &SkipError{Reason: "replication not configured or factor <= 1"}
 	ErrEncryptionDisabled    = &SkipError{Reason: "encryption not enabled"}
 	ErrRebalancerUnavailable = &SkipError{Reason: "rebalancer not available"}
+
+	// ErrCompressionUnavailable reports no codec, which is a different state
+	// from compression being disabled for writes: a codec is built either way
+	// so stored objects stay readable, and only its absence stops a rewrite.
+	ErrCompressionUnavailable = &SkipError{Reason: "compression codec not available"}
 )
 
 // Rejections an object operation raises before it reaches a backend. Each maps

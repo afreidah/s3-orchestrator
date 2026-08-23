@@ -79,6 +79,10 @@
       {{if .Config.EncryptionEnabled}}
       <button id="encrypt-existing-btn" class="btn-action" title="Walk every unencrypted object, encrypt it with the configured key, re-upload the ciphertext, and update its metadata. Long-running.">Encrypt Existing</button>
       {{end}}
+      {{if .Config.CompressionEnabled}}
+      <button id="compress-existing-btn" class="btn-action" title="Walk every object stored verbatim, encode it as chunked zstd, re-upload it, and update its metadata. Objects too small or too incompressible to benefit are skipped. Long-running.">Compress Existing</button>
+      <button id="decompress-existing-btn" class="btn-action" title="Rewrite every compressed object back to the bytes the client wrote. Long-running.">Decompress Existing</button>
+      {{end}}
       <span id="admin-action-status" class="admin-action-status"></span>
     </h2>
     <table>

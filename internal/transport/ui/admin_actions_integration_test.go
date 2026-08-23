@@ -27,6 +27,7 @@ import (
 	"log/slog"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
@@ -89,6 +90,7 @@ func testOps(mgr *proxy.BackendManager, workers *proxytest.Workers, store core.M
 		Objects:    mgr.Objects(),
 		Store:      store,
 		EncStore:   store,
+		CompStore:  store,
 		Runtime:    mgr.Runtime(),
 		BackendOps: mgr,
 		Replicator: workers.Replicator,
@@ -112,6 +114,7 @@ func newActionsHandler(t testing.TB, opts ...func(*proxy.BackendManager, *proxyt
 		replication: svc.Replication,
 		rebalance:   svc.Rebalance,
 		encryption:  svc.Encryption,
+		compression: svc.Compression,
 	}
 }
 
@@ -401,6 +404,10 @@ func TestAdminActionWrappers_RouteIntoAdmin(t *testing.T) {
 			(*Handler).handleAPIBackfillChecksums, (*Handler).handleAPIBackfillChecksumsStatus},
 		{"encrypt-existing", "/api/encrypt-existing", "/api/encrypt-existing/status",
 			(*Handler).handleAPIEncryptExisting, (*Handler).handleAPIEncryptExistingStatus},
+		{"compress-existing", "/api/compress-existing", "/api/compress-existing/status",
+			(*Handler).handleAPICompressExisting, (*Handler).handleAPICompressExistingStatus},
+		{"decompress-existing", "/api/decompress-existing", "/api/decompress-existing/status",
+			(*Handler).handleAPIDecompressExisting, (*Handler).handleAPIDecompressExistingStatus},
 	}
 
 	for _, tc := range cases {
@@ -427,6 +434,57 @@ func TestAdminActionWrappers_RouteIntoAdmin(t *testing.T) {
 			body := decodeBody(t, statusW)
 			if body["status"] != "skipped" {
 				t.Errorf("op %q status body = %v, want status=skipped", tc.opName, body)
+			}
+		})
+	}
+}
+
+// TestHandleAPICompressExisting_ReportsCounts asserts the compression wrappers
+// surface a completed pass once a codec is configured, rather than only the
+// skipped reason the default fixture produces. Both directions are covered
+// because each names its own result key, and a mismatch there shows as a
+// dashboard that reports nothing.
+func TestHandleAPICompressExisting_ReportsCounts(t *testing.T) {
+	t.Parallel()
+	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	storetest.Permissive(store)
+	codec, err := compression.NewCodec(compression.DefaultLevel, compression.MinChunkSize)
+	if err != nil {
+		t.Fatalf("NewCodec: %v", err)
+	}
+	t.Cleanup(codec.Close)
+
+	cases := []struct {
+		opName  string
+		path    string
+		trigger func(*Handler, http.ResponseWriter, *http.Request)
+	}{
+		{"compress-existing", "/api/compress-existing", (*Handler).handleAPICompressExisting},
+		{"decompress-existing", "/api/decompress-existing", (*Handler).handleAPIDecompressExisting},
+	}
+	for _, tc := range cases {
+		t.Run(tc.opName, func(t *testing.T) {
+			t.Parallel()
+			h := &Handler{
+				log: slog.Default(),
+				compression: ops.NewCompression(&ops.CompressionDeps{
+					Codec:      codec,
+					Config:     config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
+					Store:      store,
+					Runtime:    opstest.NewMockRuntimeOps(gomock.NewController(t)),
+					BackendOps: opstest.NewMockBackendOps(gomock.NewController(t)),
+				}),
+			}
+
+			w := httptest.NewRecorder()
+			tc.trigger(h, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, tc.path, nil))
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, want 202; body=%s", w.Code, w.Body.String())
+			}
+
+			res := waitForResult(t, h, tc.opName)
+			if !res.OK || res.Skipped != "" {
+				t.Errorf("result = %+v, want a completed pass with no skip reason", res)
 			}
 		})
 	}

@@ -294,6 +294,8 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_encryption_flag_mismatch_total` | Counter | component | Copies whose stored bytes disagreed with their recorded encryption flag |
 | `s3o_import_classified_total` | Counter | source, decision | Discovered objects imported, by what their bytes were classified as (`plaintext`, `adopted_key`, `unreadable`, `compressed`) |
 | `s3o_encrypt_existing_objects_total` | Counter | status | Objects processed by encrypt-existing |
+| `s3o_compress_existing_objects_total` | Counter | status | Objects processed by compress-existing. `status="skipped"` counts objects deliberately left alone, which is the expected outcome for media and archives |
+| `s3o_decompress_existing_objects_total` | Counter | status | Objects processed by decompress-existing |
 | `s3o_encryption_plaintext_copies` | Gauge | — | Copies still stored unencrypted; falls only when encrypt-existing is run |
 | `s3o_decrypt_existing_objects_total` | Counter | status | Objects processed by decrypt-existing |
 | `s3o_key_rotation_objects_total` | Counter | status | DEKs re-wrapped by key rotation |

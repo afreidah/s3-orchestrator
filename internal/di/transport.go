@@ -22,6 +22,7 @@ import (
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
+	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/debug"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
@@ -109,12 +110,21 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The codec is resolved whether or not compression is enabled for writes,
+	// so decompress-existing can undo a fleet an operator has already turned the
+	// feature off for.
+	codec, err := do.Invoke[*compression.Codec](i)
+	if err != nil {
+		return nil, err
+	}
 
 	return ops.New(&ops.Deps{
 		Objects:    manager.Objects(),
 		Store:      stores,
 		Encryptor:  enc,
 		EncStore:   encAdmin,
+		Codec:      codec,
+		CompStore:  stores,
 		Runtime:    manager.Runtime(),
 		BackendOps: manager,
 		Replicator: replicator,
@@ -147,6 +157,7 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 		Replication:   opsSvc.Replication,
 		Rebalance:     opsSvc.Rebalance,
 		Encryption:    opsSvc.Encryption,
+		Compression:   opsSvc.Compression,
 		DBHealthy:     cb.IsHealthy,
 		Cfg:           cfg,
 		LogBuffer:     logBuffer,
@@ -244,6 +255,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		Replication:  d.ops.Replication,
 		Rebalance:    d.ops.Rebalance,
 		Encryption:   d.ops.Encryption,
+		Compression:  d.ops.Compression,
 		Drain:        d.drain,
 		Lifecycle:    d.stores,
 		DBHealthy:    d.cb.IsHealthy,

@@ -14,6 +14,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 
@@ -35,12 +36,18 @@ const bulkRewriteBatchSize = 100
 // collects.
 const rotateBatchSize = 500
 
-// BulkRewriteResult reports one encrypt-existing or decrypt-existing pass.
-// Total counts every object considered, so Total - Succeeded - Failed is
-// always zero for a run that completed.
+// BulkRewriteResult reports one bulk rewrite pass. Total counts every copy
+// considered, so Total - Succeeded - Failed - Skipped is zero for a run that
+// completed.
+//
+// Skipped is separate from Failed because a copy can be left alone on purpose:
+// a compression pass declines objects too small or too incompressible to be
+// worth encoding, and reporting those as failures would make a healthy run look
+// broken.
 type BulkRewriteResult struct {
 	Succeeded int
 	Failed    int
+	Skipped   int
 	Total     int
 }
 
@@ -86,7 +93,10 @@ func NewEncryption(d EncryptionDeps) *Encryption {
 // EncryptExisting reads every plaintext copy, encrypts it, re-uploads the
 // ciphertext, and records the new encryption metadata.
 func (e *Encryption) EncryptExisting(ctx context.Context) (BulkRewriteResult, error) {
-	return runBulkRewrite(e, ctx, bulkRewriteOp[*encryptRow]{
+	if e.encryptor == nil || e.store == nil {
+		return BulkRewriteResult{}, ErrEncryptionDisabled
+	}
+	return runBulkRewrite(e.rewriteEnv(), ctx, bulkRewriteOp[*encryptRow]{
 		opName:      "encrypt-existing",
 		resultLabel: "encrypted",
 		counter:     telemetry.EncryptExistingObjectsTotal,
@@ -101,16 +111,19 @@ func (e *Encryption) EncryptExisting(ctx context.Context) (BulkRewriteResult, er
 			}
 			return out, nil
 		},
-		rewrite: func(ctx context.Context, src *s3be.GetObjectResult, loc *encryptRow) (io.Reader, int64, func() error, error) {
+		rewrite: func(ctx context.Context, src *s3be.GetObjectResult, loc *encryptRow) (rewritten, error) {
 			encResult, err := e.encryptor.Encrypt(ctx, src.Body, loc.SizeBytes)
 			if err != nil {
-				return nil, 0, nil, err
+				return rewritten{}, err
 			}
-			dbUpdate := func() error {
-				keyData := encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK)
-				return e.store.MarkObjectEncrypted(ctx, loc.ObjectKey, loc.BackendName, keyData, encResult.KeyID, loc.SizeBytes, encResult.CiphertextSize)
-			}
-			return encResult.Body, encResult.CiphertextSize, dbUpdate, nil
+			return rewritten{
+				body: encResult.Body,
+				size: encResult.CiphertextSize,
+				commit: func() error {
+					keyData := encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK)
+					return e.store.MarkObjectEncrypted(ctx, loc.ObjectKey, loc.BackendName, keyData, encResult.KeyID, loc.SizeBytes, encResult.CiphertextSize)
+				},
+			}, nil
 		},
 	})
 }
@@ -119,7 +132,10 @@ func (e *Encryption) EncryptExisting(ctx context.Context) (BulkRewriteResult, er
 // plaintext, and clears the encryption metadata. Encryption must still be
 // configured, since the key provider is what unwraps each DEK.
 func (e *Encryption) DecryptExisting(ctx context.Context) (BulkRewriteResult, error) {
-	return runBulkRewrite(e, ctx, bulkRewriteOp[*decryptRow]{
+	if e.encryptor == nil || e.store == nil {
+		return BulkRewriteResult{}, ErrEncryptionDisabled
+	}
+	return runBulkRewrite(e.rewriteEnv(), ctx, bulkRewriteOp[*decryptRow]{
 		opName:      "decrypt-existing",
 		resultLabel: "decrypted",
 		counter:     telemetry.DecryptExistingObjectsTotal,
@@ -134,15 +150,18 @@ func (e *Encryption) DecryptExisting(ctx context.Context) (BulkRewriteResult, er
 			}
 			return out, nil
 		},
-		rewrite: func(ctx context.Context, src *s3be.GetObjectResult, loc *decryptRow) (io.Reader, int64, func() error, error) {
+		rewrite: func(ctx context.Context, src *s3be.GetObjectResult, loc *decryptRow) (rewritten, error) {
 			plainReader, plainLen, err := e.encryptor.DecryptStored(ctx, src.Body, loc.EncryptionKey, loc.KeyID, loc.PlaintextSize, nil)
 			if err != nil {
-				return nil, 0, nil, err
+				return rewritten{}, err
 			}
-			dbUpdate := func() error {
-				return e.store.MarkObjectDecrypted(ctx, loc.ObjectKey, loc.BackendName, loc.PlaintextSize)
-			}
-			return plainReader, plainLen, dbUpdate, nil
+			return rewritten{
+				body: plainReader,
+				size: plainLen,
+				commit: func() error {
+					return e.store.MarkObjectDecrypted(ctx, loc.ObjectKey, loc.BackendName, loc.PlaintextSize)
+				},
+			}, nil
 		},
 	})
 }
@@ -263,26 +282,69 @@ type bulkRewriteOp[L bulkRewriteRow] struct {
 	resultLabel string
 	counter     *prometheus.CounterVec
 	listFn      func(ctx context.Context, batchSize, offset int) ([]L, error)
-	// rewrite consumes a downloaded object and returns the bytes to re-upload,
-	// the size to record as PUT ingress, and a closure that performs the
-	// metadata update on success. Implementations close the source body if
-	// they fail before returning the new reader.
-	rewrite func(ctx context.Context, src *s3be.GetObjectResult, loc L) (io.Reader, int64, func() error, error)
+	// declines reports a row the pass will not rewrite, before anything is
+	// downloaded for it. Only what the row itself says can be judged here; a
+	// question about the bytes has to wait for the transform. Nil means every
+	// listed row is attempted.
+	declines func(loc L) bool
+	// rewrite consumes a downloaded object and produces what to upload in its
+	// place. Implementations close the source body if they fail before
+	// returning. Returning errSkipRewrite leaves the object exactly as it is
+	// and counts it as skipped.
+	rewrite func(ctx context.Context, src *s3be.GetObjectResult, loc L) (rewritten, error)
 }
 
-// runBulkRewrite is the shared driver for the encrypt and decrypt passes. A
-// listing failure stops the run and returns the counts gathered so far
-// alongside the error, so a caller can report partial progress.
-func runBulkRewrite[L bulkRewriteRow](e *Encryption, ctx context.Context, op bulkRewriteOp[L]) (BulkRewriteResult, error) {
-	if e.encryptor == nil || e.store == nil {
-		return BulkRewriteResult{}, ErrEncryptionDisabled
-	}
+// rewritten is one transformed object: the bytes to upload, the size to declare
+// for them, the metadata update to run once they are durable, and the release
+// for anything the transform had to buffer.
+//
+// release is nil for a transform that streams. It runs whatever the upload
+// does, because a pass that leaks a buffer per failed object is a pass that
+// fills a disk partway through a fleet.
+type rewritten struct {
+	body    io.Reader
+	size    int64
+	commit  func() error
+	release func()
+}
 
+// errSkipRewrite reports an object a pass declines to rewrite, as opposed to
+// one it tried and could not. Only the transform can raise it, because whether
+// a rewrite is worth doing is a question about the object's own bytes.
+var errSkipRewrite = errors.New("rewrite declined")
+
+// bulkRewriteEnv is what the shared driver needs from whichever service is
+// running the pass. Declared so the driver serves the compression passes as
+// well as the encryption ones rather than being tied to either.
+type bulkRewriteEnv struct {
+	log        *slog.Logger
+	runtime    RuntimeOps
+	backendOps BackendOps
+}
+
+// rewriteEnv exposes this service's collaborators to the shared driver.
+func (e *Encryption) rewriteEnv() bulkRewriteEnv {
+	return bulkRewriteEnv{log: e.log, runtime: e.runtime, backendOps: e.backendOps}
+}
+
+// rewriteOutcome is what one object's rewrite attempt produced.
+type rewriteOutcome int
+
+const (
+	rewriteDone rewriteOutcome = iota
+	rewriteSkipped
+	rewriteErrored
+)
+
+// runBulkRewrite is the shared driver for every bulk rewrite pass. A listing
+// failure stops the run and returns the counts gathered so far alongside the
+// error, so a caller can report partial progress.
+func runBulkRewrite[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Context, op bulkRewriteOp[L]) (BulkRewriteResult, error) {
 	var res BulkRewriteResult
 	for offset := 0; ; offset += bulkRewriteBatchSize {
 		rows, err := op.listFn(ctx, bulkRewriteBatchSize, offset)
 		if err != nil {
-			e.log.ErrorContext(ctx, op.opName+" list failed", "error", err)
+			env.log.ErrorContext(ctx, op.opName+" list failed", "error", err)
 			return res, err
 		}
 		if len(rows) == 0 {
@@ -291,9 +353,12 @@ func runBulkRewrite[L bulkRewriteRow](e *Encryption, ctx context.Context, op bul
 
 		for _, row := range rows {
 			res.Total++
-			if processBulkLocation(e, ctx, op, row) {
+			switch processBulkLocation(env, ctx, op, row) {
+			case rewriteDone:
 				res.Succeeded++
-			} else {
+			case rewriteSkipped:
+				res.Skipped++
+			case rewriteErrored:
 				res.Failed++
 			}
 		}
@@ -303,55 +368,68 @@ func runBulkRewrite[L bulkRewriteRow](e *Encryption, ctx context.Context, op bul
 		}
 	}
 
-	e.log.InfoContext(ctx, op.opName+" complete", op.resultLabel, res.Succeeded, "failed", res.Failed, "total", res.Total)
+	env.log.InfoContext(ctx, op.opName+" complete",
+		op.resultLabel, res.Succeeded, "skipped", res.Skipped, "failed", res.Failed, "total", res.Total)
 	return res, nil
 }
 
 // processBulkLocation runs one rewrite step for a single location: download
 // from the backend, transform, re-upload, record usage, then update metadata.
-// Reports success; failures are logged and counted rather than returned, so
-// one bad object does not end the pass.
-func processBulkLocation[L bulkRewriteRow](e *Encryption, ctx context.Context, op bulkRewriteOp[L], loc L) bool {
+// Failures are logged and counted rather than returned, so one bad object does
+// not end the pass.
+func processBulkLocation[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Context, op bulkRewriteOp[L], loc L) rewriteOutcome {
 	key, backendName, sizeBytes := loc.rewriteKey(), loc.rewriteBackend(), loc.rewriteSize()
 
-	be, err := e.runtime.GetBackend(backendName)
+	if op.declines != nil && op.declines(loc) {
+		op.counter.WithLabelValues("skipped").Inc()
+		return rewriteSkipped
+	}
+
+	be, err := env.runtime.GetBackend(backendName)
 	if err != nil {
-		return rewriteFailed(e, ctx, op, "backend not found", key, backendName, err)
+		return rewriteFailed(env, ctx, op, "backend not found", key, backendName, err)
 	}
 
 	src, err := be.GetObject(ctx, key, "")
 	if err != nil {
-		e.backendOps.RecordUsage(backendName, 1, 0, 0)
-		return rewriteFailed(e, ctx, op, "download failed", key, backendName, err)
+		env.backendOps.RecordUsage(backendName, 1, 0, 0)
+		return rewriteFailed(env, ctx, op, "download failed", key, backendName, err)
 	}
-	e.backendOps.RecordUsage(backendName, 1, sizeBytes, 0)
+	env.backendOps.RecordUsage(backendName, 1, sizeBytes, 0)
 
-	body, putSize, dbUpdate, err := op.rewrite(ctx, src, loc)
+	out, err := op.rewrite(ctx, src, loc)
 	if err != nil {
 		src.Body.Close()
-		return rewriteFailed(e, ctx, op, "transform failed", key, backendName, err)
+		if errors.Is(err, errSkipRewrite) {
+			op.counter.WithLabelValues("skipped").Inc()
+			return rewriteSkipped
+		}
+		return rewriteFailed(env, ctx, op, "transform failed", key, backendName, err)
+	}
+	if out.release != nil {
+		defer out.release()
 	}
 
-	_, err = be.PutObject(ctx, key, body, putSize, src.ContentType, src.Metadata)
+	_, err = be.PutObject(ctx, key, out.body, out.size, src.ContentType, src.Metadata)
 	src.Body.Close()
 	if err != nil {
-		e.backendOps.RecordUsage(backendName, 1, 0, 0)
-		return rewriteFailed(e, ctx, op, "re-upload failed", key, backendName, err)
+		env.backendOps.RecordUsage(backendName, 1, 0, 0)
+		return rewriteFailed(env, ctx, op, "re-upload failed", key, backendName, err)
 	}
-	e.backendOps.RecordUsage(backendName, 1, 0, putSize)
+	env.backendOps.RecordUsage(backendName, 1, 0, out.size)
 
-	if err := dbUpdate(); err != nil {
-		return rewriteFailed(e, ctx, op, "metadata update failed", key, backendName, err)
+	if err := out.commit(); err != nil {
+		return rewriteFailed(env, ctx, op, "metadata update failed", key, backendName, err)
 	}
 
 	op.counter.WithLabelValues("success").Inc()
-	return true
+	return rewriteDone
 }
 
-// rewriteFailed records one non-fatal rewrite failure and reports false. A
-// free function rather than a method, since it is parameterised by row type.
-func rewriteFailed[L bulkRewriteRow](e *Encryption, ctx context.Context, op bulkRewriteOp[L], msg, key, backendName string, err error) bool {
-	e.log.WarnContext(ctx, op.opName+": "+msg, "key", key, "backend", backendName, "error", err)
+// rewriteFailed records one non-fatal rewrite failure. A free function rather
+// than a method, since it is parameterised by row type.
+func rewriteFailed[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Context, op bulkRewriteOp[L], msg, key, backendName string, err error) rewriteOutcome {
+	env.log.WarnContext(ctx, op.opName+": "+msg, "key", key, "backend", backendName, "error", err)
 	op.counter.WithLabelValues("error").Inc()
-	return false
+	return rewriteErrored
 }

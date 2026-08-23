@@ -23,7 +23,26 @@ compression:
 
 Every path handles compression: PUT and multipart completion write it, GET and HEAD serve through it, server-side copy and the replication workers carry it, the scrubber decodes before hashing, reconcile recognises it, and a crash-recovered write keeps it. Still off by default, and still worth enabling on a test fleet before a production one.
 
-Two things are not built yet, neither of which affects correctness: there is no way to compress objects already stored (#1264), so enabling this affects new writes only, and the metrics and dashboards for it are outstanding (#1265).
+Per-request metrics and dashboards are outstanding (#1265).
+
+## Bringing an existing fleet under compression
+
+Enabling `compression` affects objects written afterwards. Everything already stored stays exactly as it is until something rewrites it, which is what `compress-existing` does:
+
+```bash
+s3-orchestrator admin compress-existing
+s3-orchestrator admin decompress-existing   # and back out again
+```
+
+Both are available in the web UI as well, and as `POST /admin/api/compress-existing` and `/admin/api/decompress-existing`.
+
+The pass reads each copy, encodes it, writes it back in place and updates the row, moving the backend's quota by the difference in one transaction with it. `min_size` and `min_ratio` apply exactly as they do to a PUT, so the pass cannot store an encoding a fresh write would have rejected.
+
+Objects it declines are reported as **skipped**, separately from failures. On a fleet of media or archives most of it will be skipped, and that is a healthy run rather than a broken one. Only objects below `min_size` are free to skip: deciding on the ratio means encoding the object first, since nothing else answers the question.
+
+An encrypted object is decrypted, encoded, and re-encrypted, because compression sits inside encryption. That mints a fresh data key for the rewritten copy - re-encrypting changes the base nonce whatever key is used, so keeping the old one preserves nothing, and the new one is wrapped under whichever key is primary now.
+
+The pass rewrites one copy at a time, so a replicated object is brought over one copy per pass rather than atomically. Copies that differ in stored form are not a problem: every row describes its own bytes.
 
 ## Why the format is chunked
 
