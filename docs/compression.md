@@ -21,7 +21,7 @@ compression:
 
 ## Current status
 
-PUT compresses, and GET, HEAD and server-side copy all serve the object the client wrote, at the size it wrote. Multipart uploads and the background workers do not handle the compressed form yet: the scrubber hashes stored bytes without decoding them, so it reads a compressed object as corrupt. Leave `enabled: false` until those land.
+PUT, multipart completion, GET, HEAD and server-side copy all honour compression, and every one of them serves the object the client wrote at the size it wrote. The background workers do not: the scrubber hashes stored bytes without decoding them, so it reads a compressed object as corrupt. Leave `enabled: false` until those land.
 
 ## Why the format is chunked
 
@@ -85,6 +85,14 @@ Four nullable columns on `object_locations` and `pending_objects`:
 | `logical_size` | The size the client wrote, needed to size a response and bound range math. |
 
 Every row that predates the feature has a NULL algorithm and is therefore correctly described as verbatim, so no backfill is required.
+
+## Multipart uploads
+
+An object uploaded in parts is compressed once, when the parts are assembled, not part by part as they arrive. Its chunk layout is therefore the same as any other object's and owes nothing to the part sizes the client chose, which matters because those are arbitrary: a client picking 8 MiB parts and one picking 500 MiB parts produce identically seekable objects.
+
+Assembly already rewrites the object rather than concatenating stored bytes - encrypted parts are decrypted as they stream so the assembled object is a single envelope - so compression costs no extra pass over the data. It does mean the encoded object is buffered before it is sent, because a backend PUT declares its size up front and an encoder only knows that size once it has finished. Objects above 32 MiB spill to a temporary file rather than being held in memory.
+
+`min_ratio` applies here as it does to a single PUT. The parts stream past exactly once, so an encoding that fails to earn its place is decoded back out of that same buffer rather than re-read from the backend, which would cost a second egress charge on every part.
 
 ## Copying an object
 

@@ -413,3 +413,35 @@ func TestNewCodecForLevel_RejectsChunkSizeOutOfRange(t *testing.T) {
 		t.Errorf("err = %v, want ErrChunkSizeRange", err)
 	}
 }
+
+// TestWorthStoring pins the comparison itself, where the boundary cases live:
+// an object exactly at the threshold qualifies, one byte over does not, and a
+// zero-length object cannot shrink at all.
+func TestWorthStoring(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		logical  int64
+		encoded  int64
+		minRatio float64
+		want     bool
+	}{
+		{"halved", 1000, 500, 0.95, true},
+		{"exactly at the threshold", 1000, 950, 0.95, true},
+		{"one byte over", 1000, 951, 0.95, false},
+		{"grew", 1000, 1004, 0.95, false},
+		{"any saving accepted", 1000, 999, 1, true},
+		{"no saving at ratio 1", 1000, 1000, 1, true},
+		{"empty object", 0, 12, 0.95, false},
+		{"negative size", -1, 0, 0.95, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := WorthStoring(tt.logical, tt.encoded, tt.minRatio); got != tt.want {
+				t.Errorf("WorthStoring(%d, %d, %v) = %v, want %v",
+					tt.logical, tt.encoded, tt.minRatio, got, tt.want)
+			}
+		})
+	}
+}

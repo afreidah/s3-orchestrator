@@ -319,6 +319,10 @@ func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
+	codec, err := do.Invoke[*compression.Codec](i)
+	if err != nil {
+		return nil, err
+	}
 	// dekCacheTTL pegs how long cached unwrapped DEKs live so UploadPart
 	// need not re-unwrap the upload-level DEK on every part.
 	const dekCacheTTL = time.Hour
@@ -327,6 +331,8 @@ func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
 		Coord:              d.coord,
 		Stores:             d.stores,
 		Encryptor:          d.enc,
+		Codec:              codec,
+		Compression:        d.cfg.Compression,
 		ObjectCache:        resolveOptionalCache(i),
 		DEKCacheTTL:        dekCacheTTL,
 		IntegrityCfg:       d.integrityCfg,
