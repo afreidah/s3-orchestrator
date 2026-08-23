@@ -50,6 +50,11 @@ type fleetOpts struct {
 	Order []string
 	// Encryptor turns on at-rest encryption for the upload.
 	Encryptor *encryption.Encryptor
+	// Codec and Compression turn on at-rest compression of the assembled
+	// object. It is encoded only when both are set, mirroring production
+	// wiring.
+	Codec       MultipartCodec
+	Compression config.CompressionConfig
 	// ObjectCache attaches a cache so completion-time invalidation runs.
 	ObjectCache objcache.ObjectCache
 	// PendingEnabled turns on the coordinator's pending-write pattern.
@@ -113,6 +118,8 @@ func newFleet(
 		Coord:              writepath.New(rt, store, opts.PendingEnabled),
 		Stores:             store,
 		Encryptor:          opts.Encryptor,
+		Codec:              opts.Codec,
+		Compression:        opts.Compression,
 		ObjectCache:        opts.ObjectCache,
 		DEKCacheTTL:        fleetDEKTTL,
 		IntegrityCfg:       integrity,

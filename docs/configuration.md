@@ -625,7 +625,7 @@ After updating the config, call the `rotate-encryption-key` admin API to re-wrap
 
 At-rest compression. When enabled, objects are stored on backends as chunked zstd and served back as the bytes the client wrote: sizes, ETags and content hashes stay those of the logical object.
 
-PUT, GET, HEAD and server-side copy honour this today. Multipart uploads and the background workers do not: the scrubber hashes stored bytes without decoding them, so it reads a compressed object as corrupt. Leave it off until those land.
+PUT, multipart completion, GET, HEAD and server-side copy honour this today. The background workers do not: the scrubber hashes stored bytes without decoding them, so it reads a compressed object as corrupt. Leave it off until those land.
 
 ```yaml
 compression:

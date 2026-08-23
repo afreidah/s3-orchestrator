@@ -159,6 +159,25 @@ func newCodec(level zstd.EncoderLevel, chunkSize int) (*Codec, error) {
 	return c, nil
 }
 
+// WorthStoring reports whether an encoded object shrank enough to be stored in
+// place of the original. Both write paths ask this, so the rule lives with the
+// codec rather than with either of them.
+//
+// The decision is made on the finished encoding rather than a sample of it:
+// entropy is not uniform across an object, and a sample is wrong in the
+// direction that costs bytes for the life of the object, while encoding an
+// object that turns out to be incompressible costs only the encode itself -
+// the cheapest case the encoder has, since it detects unshrinkable blocks and
+// stores them raw.
+//
+// A logical size of zero cannot shrink, and the ratio is meaningless there.
+func WorthStoring(logicalSize, encodedSize int64, minRatio float64) bool {
+	if logicalSize <= 0 {
+		return false
+	}
+	return float64(encodedSize) <= float64(logicalSize)*minRatio
+}
+
 // ChunkSize reports the logical chunk size new objects are written at.
 func (c *Codec) ChunkSize() int { return c.chunkSize }
 
