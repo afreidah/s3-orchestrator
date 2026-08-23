@@ -96,8 +96,14 @@ func (c *Compression) CompressExisting(ctx context.Context) (BulkRewriteResult, 
 		listFn:      rewriteListFn(c.store.ListUncompressedLocations),
 		// The size floor is answerable from the row, so an object below it
 		// costs no backend read at all.
-		declines: func(loc *rewriteRow) bool { return loc.LogicalSizeOfSource() < c.cfg.MinSize },
-		rewrite:  c.compressOne,
+		declines: func(loc *rewriteRow) bool {
+			if loc.LogicalSizeOfSource() >= c.cfg.MinSize {
+				return false
+			}
+			telemetry.CompressionSkippedTotal.WithLabelValues(telemetry.CompressionSkipMinSize).Inc()
+			return true
+		},
+		rewrite: c.compressOne,
 	})
 }
 
@@ -133,12 +139,15 @@ func (c *Compression) compressOne(ctx context.Context, src *s3be.GetObjectResult
 	encodedSize, err := c.codec.Compress(encoded.Writer(), plain)
 	if err != nil {
 		encoded.Cleanup()
+		telemetry.CompressionErrorsTotal.WithLabelValues(telemetry.CompressionOpEncode).Inc()
 		return rewritten{}, fmt.Errorf("compress: %w", err)
 	}
 	if !compression.WorthStoring(logical, encodedSize, c.cfg.MinRatio) {
 		encoded.Cleanup()
+		telemetry.CompressionSkippedTotal.WithLabelValues(telemetry.CompressionSkipMinRatio).Inc()
 		return rewritten{}, errSkipRewrite
 	}
+	telemetry.RecordCompressed(logical, encodedSize)
 	body, err := encoded.Reader()
 	if err != nil {
 		encoded.Cleanup()
@@ -181,6 +190,7 @@ func (c *Compression) decompressOne(ctx context.Context, src *s3be.GetObjectResu
 	}
 	decoded, err := c.codec.DecompressStream(stored)
 	if err != nil {
+		telemetry.CompressionErrorsTotal.WithLabelValues(telemetry.CompressionOpDecode).Inc()
 		return rewritten{}, fmt.Errorf("decompress: %w", err)
 	}
 
