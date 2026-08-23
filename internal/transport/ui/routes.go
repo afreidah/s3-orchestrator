@@ -81,6 +81,12 @@ var uiAPIRoutes = []uiAPIRoute{
 	{"/api/encrypt-existing", func(h *Handler) http.HandlerFunc { return h.handleAPIEncryptExisting }, quotaTrackingTracked,
 		"ops.Encryption.EncryptExisting -> processBulkLocation backendOps.RecordUsage (Get + Put per object)"},
 	{"/api/encrypt-existing/status", func(h *Handler) http.HandlerFunc { return h.handleAPIEncryptExistingStatus }, quotaTrackingNone, ""},
+	{"/api/compress-existing", func(h *Handler) http.HandlerFunc { return h.handleAPICompressExisting }, quotaTrackingTracked,
+		"ops.Compression.CompressExisting -> processBulkLocation backendOps.RecordUsage (Get + Put per object)"},
+	{"/api/compress-existing/status", func(h *Handler) http.HandlerFunc { return h.handleAPICompressExistingStatus }, quotaTrackingNone, ""},
+	{"/api/decompress-existing", func(h *Handler) http.HandlerFunc { return h.handleAPIDecompressExisting }, quotaTrackingTracked,
+		"ops.Compression.DecompressExisting -> processBulkLocation backendOps.RecordUsage (Get + Put per object)"},
+	{"/api/decompress-existing/status", func(h *Handler) http.HandlerFunc { return h.handleAPIDecompressExistingStatus }, quotaTrackingNone, ""},
 }
 
 // Register mounts the UI routes on the given mux under the configured prefix.

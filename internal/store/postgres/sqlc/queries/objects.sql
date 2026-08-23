@@ -185,6 +185,47 @@ WHERE encrypted = TRUE
 ORDER BY object_key, backend_name
 LIMIT $1 OFFSET $2;
 
+-- name: ListUncompressedLocations :many
+-- Copies whose stored bytes carry no encoding, which is what compress-existing
+-- rewrites. The encryption columns come along because compression sits inside
+-- encryption: an encrypted copy is decrypted, encoded, and re-encrypted under
+-- the key it already had.
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
+       plaintext_size, compression_algorithm, compression_level,
+       compression_format_version, logical_size
+FROM object_locations
+WHERE compression_algorithm IS NULL
+ORDER BY object_key, backend_name
+LIMIT $1 OFFSET $2;
+
+-- name: ListCompressedLocations :many
+-- The complement of ListUncompressedLocations, which is what
+-- decompress-existing rewrites.
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
+       plaintext_size, compression_algorithm, compression_level,
+       compression_format_version, logical_size
+FROM object_locations
+WHERE compression_algorithm IS NOT NULL
+ORDER BY object_key, backend_name
+LIMIT $1 OFFSET $2;
+
+-- name: MarkObjectCompressed :exec
+-- Records how a rewritten copy is now stored. A NULL algorithm is the
+-- decompress direction, which also clears the columns that only describe an
+-- encoding. The envelope columns are rewritten too: re-encrypting an object
+-- mints a new base nonce and wrapped key, so leaving the old ones would
+-- describe bytes nothing can decrypt.
+UPDATE object_locations
+SET compression_algorithm = $3,
+    compression_level = $4,
+    compression_format_version = $5,
+    logical_size = $6,
+    size_bytes = $7,
+    plaintext_size = $8,
+    encryption_key = $9,
+    key_id = $10
+WHERE object_key = $1 AND backend_name = $2;
+
 -- name: MarkObjectDecrypted :exec
 UPDATE object_locations
 SET encrypted = FALSE,

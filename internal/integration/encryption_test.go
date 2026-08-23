@@ -138,6 +138,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		Replication: opsSvc.Replication,
 		Rebalance:   opsSvc.Rebalance,
 		Encryption:  opsSvc.Encryption,
+		Compression: opsSvc.Compression,
 		Drain:       mgr.Drain(),
 		Lifecycle:   testStore,
 		DBHealthy:   testDatabaseCB.IsHealthy,

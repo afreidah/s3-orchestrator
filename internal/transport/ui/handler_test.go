@@ -129,7 +129,7 @@ func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataSt
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
@@ -505,7 +505,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 
@@ -578,8 +578,8 @@ func TestCrossInstanceSession(t *testing.T) {
 		},
 	}
 
-	h1 := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
-	h2 := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h1 := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h2 := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux1 := http.NewServeMux()
 	mux2 := http.NewServeMux()
 	h1.Register(mux1, "/ui")
@@ -1982,7 +1982,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 

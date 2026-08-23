@@ -47,10 +47,15 @@ const testBucket = "bucket"
 type fakeBackend struct {
 	payload []byte
 	puts    atomic.Int64
+	gets    atomic.Int64
+	// lastPut is what the most recent upload carried, so a test can assert on
+	// the bytes a rewrite produced rather than only on the call count.
+	lastPut []byte
 }
 
 // GetObject returns the fixed payload.
 func (f *fakeBackend) GetObject(_ context.Context, _, _ string) (*s3be.GetObjectResult, error) {
+	f.gets.Add(1)
 	return &s3be.GetObjectResult{
 		Body:        io.NopCloser(bytes.NewReader(f.payload)),
 		Size:        int64(len(f.payload)),
@@ -61,9 +66,11 @@ func (f *fakeBackend) GetObject(_ context.Context, _, _ string) (*s3be.GetObject
 // PutObject drains the body so the upload-side reader hits EOF, and counts the
 // call.
 func (f *fakeBackend) PutObject(_ context.Context, _ string, body io.Reader, _ int64, _ string, _ map[string]string) (string, error) {
-	if _, err := io.Copy(io.Discard, body); err != nil {
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, body); err != nil {
 		return "", err
 	}
+	f.lastPut = buf.Bytes()
 	f.puts.Add(1)
 	return "etag", nil
 }

@@ -43,6 +43,7 @@ type Handler struct {
 	replication  *ops.Replication
 	rebalance    *ops.Rebalance
 	encryption   *ops.Encryption
+	compression  *ops.Compression
 	drain        *drain.Manager
 	lifecycle    core.BackendLifecycleStore
 	reconciler   Reconciler
@@ -75,6 +76,7 @@ type Deps struct {
 	Replication  *ops.Replication
 	Rebalance    *ops.Rebalance
 	Encryption   *ops.Encryption
+	Compression  *ops.Compression
 	Drain        *drain.Manager
 	Lifecycle    core.BackendLifecycleStore
 	DBHealthy    func() bool                    // typically *breaker.CircuitBreaker.IsHealthy
@@ -98,6 +100,7 @@ func New(d *Deps) *Handler {
 	must.NotNil("d.Replication", d.Replication)
 	must.NotNil("d.Rebalance", d.Rebalance)
 	must.NotNil("d.Encryption", d.Encryption)
+	must.NotNil("d.Compression", d.Compression)
 	must.NotNil("d.Drain", d.Drain)
 	must.NotNil("d.Lifecycle", d.Lifecycle)
 	must.NotNil("d.Cleanup", d.Cleanup)
@@ -111,6 +114,7 @@ func New(d *Deps) *Handler {
 		replication:  d.Replication,
 		rebalance:    d.Rebalance,
 		encryption:   d.Encryption,
+		compression:  d.Compression,
 		drain:        d.Drain,
 		lifecycle:    d.Lifecycle,
 		reconciler:   d.Reconciler,

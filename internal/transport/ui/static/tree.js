@@ -530,60 +530,48 @@
     setTimeout(function () { banner.textContent = ''; banner.className = 'admin-action-status'; }, 6000);
   }
 
-  // --- Rebalance flow ---
-  let rebalanceBtn = document.getElementById('rebalance-btn');
+  // --- Admin action buttons ---
+  //
+  // Every one of these is the same flow: a button that kicks off a long-running
+  // pass and then polls its status endpoint. They are a table rather than eight
+  // copies of the same block so that adding one is a row, and so this setup
+  // function stays readable.
+  //
+  // reload re-renders the page when the pass finishes, which only the ones that
+  // move objects between backends need. confirm is set for the passes that
+  // rewrite every object in the fleet.
+  let adminActions = [
+    { id: 'rebalance-btn', path: 'api/rebalance', label: 'Rebalance', countKey: 'moved', noun: 'moved', reload: true },
+    { id: 'clean-excess-btn', path: 'api/clean-excess', label: 'Clean Excess', countKey: 'removed', noun: 'removed', reload: true },
+    { id: 'replicate-btn', path: 'api/replicate', label: 'Replicate Now', countKey: 'copies_created', noun: 'copies created', reload: true },
+    { id: 'scrub-btn', path: 'api/scrub', label: 'Scrub', countKey: 'checked', noun: 'checked' },
+    { id: 'backfill-checksums-btn', path: 'api/backfill-checksums', label: 'Backfill Checksums', countKey: 'processed', noun: 'processed' },
+    {
+      id: 'encrypt-existing-btn', path: 'api/encrypt-existing', label: 'Encrypt Existing',
+      countKey: 'encrypted', noun: 'encrypted',
+      confirm: 'Encrypt every existing unencrypted object? This can take a long time.'
+    },
+    {
+      id: 'compress-existing-btn', path: 'api/compress-existing', label: 'Compress Existing',
+      countKey: 'compressed', noun: 'compressed',
+      confirm: 'Compress every object currently stored verbatim? This can take a long time.'
+    },
+    {
+      id: 'decompress-existing-btn', path: 'api/decompress-existing', label: 'Decompress Existing',
+      countKey: 'decompressed', noun: 'decompressed',
+      confirm: 'Rewrite every compressed object back to its original bytes? This can take a long time.'
+    }
+  ];
 
-  if (rebalanceBtn) {
-    rebalanceBtn.addEventListener('click', function () {
-      runAsyncOp(rebalanceBtn, 'api/rebalance', 'api/rebalance/status', 'Rebalance', 'moved', 'moved');
+  adminActions.forEach(function (action) {
+    let btn = document.getElementById(action.id);
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      if (action.confirm && !confirm(action.confirm)) return;
+      runAsyncOp(btn, action.path, action.path + '/status', action.label, action.countKey, action.noun,
+        action.reload ? undefined : { skipReload: true });
     });
-  }
-
-  // --- Clean excess flow ---
-  let cleanExcessBtn = document.getElementById('clean-excess-btn');
-
-  if (cleanExcessBtn) {
-    cleanExcessBtn.addEventListener('click', function () {
-      runAsyncOp(cleanExcessBtn, 'api/clean-excess', 'api/clean-excess/status', 'Clean Excess', 'removed', 'removed');
-    });
-  }
-
-  // --- Replicate Now flow ---
-  let replicateBtn = document.getElementById('replicate-btn');
-
-  if (replicateBtn) {
-    replicateBtn.addEventListener('click', function () {
-      runAsyncOp(replicateBtn, 'api/replicate', 'api/replicate/status', 'Replicate Now', 'copies_created', 'copies created');
-    });
-  }
-
-  // --- Scrub flow ---
-  let scrubBtn = document.getElementById('scrub-btn');
-
-  if (scrubBtn) {
-    scrubBtn.addEventListener('click', function () {
-      runAsyncOp(scrubBtn, 'api/scrub', 'api/scrub/status', 'Scrub', 'checked', 'checked', { skipReload: true });
-    });
-  }
-
-  // --- Backfill checksums flow ---
-  let backfillBtn = document.getElementById('backfill-checksums-btn');
-
-  if (backfillBtn) {
-    backfillBtn.addEventListener('click', function () {
-      runAsyncOp(backfillBtn, 'api/backfill-checksums', 'api/backfill-checksums/status', 'Backfill Checksums', 'processed', 'processed', { skipReload: true });
-    });
-  }
-
-  // --- Encrypt existing flow ---
-  let encryptExistingBtn = document.getElementById('encrypt-existing-btn');
-
-  if (encryptExistingBtn) {
-    encryptExistingBtn.addEventListener('click', function () {
-      if (!confirm('Encrypt every existing unencrypted object? This can take a long time.')) return;
-      runAsyncOp(encryptExistingBtn, 'api/encrypt-existing', 'api/encrypt-existing/status', 'Encrypt Existing', 'encrypted', 'encrypted', { skipReload: true });
-    });
-  }
+  });
 
   // --- Sync flow ---
   let syncBtn = document.getElementById('sync-btn');

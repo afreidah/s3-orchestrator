@@ -76,6 +76,8 @@ Commands:
   encrypt-existing    Encrypt all unencrypted objects in place (requires encryption enabled)
   decrypt-existing    Decrypt all encrypted objects back to plaintext (requires encryption enabled)
   rotate-encryption-key  Re-wrap all DEKs sealed with -old-key-id under the current primary key
+  compress-existing   Store every uncompressed object as chunked zstd (requires a compression codec)
+  decompress-existing Rewrite every compressed object back to the bytes the client wrote
   workers             Show background worker last-tick health
   reload-status       Show the outcome of the last SIGHUP config reload
   trace-snapshot      Download the flight-recorder trace ring buffer to a file (use -o)
@@ -149,6 +151,8 @@ var handlers = map[string]handler{
 	"encrypt-existing":        cmdEncryptExisting,
 	"decrypt-existing":        cmdDecryptExisting,
 	"rotate-encryption-key":   cmdRotateEncryptionKey,
+	"compress-existing":       cmdCompressExisting,
+	"decompress-existing":     cmdDecompressExisting,
 	"workers":                 cmdWorkers,
 	"reload-status":           cmdReloadStatus,
 	"trace-snapshot":          cmdTraceSnapshot,
