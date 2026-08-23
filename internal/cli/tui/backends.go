@@ -376,8 +376,8 @@ func (m *model) applyBackendRequeued(msg backendRequeuedMsg) (tea.Model, tea.Cmd
 // the name column so short backend names don't sprawl on a wide terminal.
 func (m *model) resizeBackends() {
 	const (
-		fixed   = 9 + 8 + 12 + 12 + 6 + 10 + 10 + 12 + 12 // health..egress incl use%
-		cols    = 10
+		fixed   = 9 + 8 + 12 + 12 + 6 + 10 + 10 + 12 + 12 + 12 // health..saved incl use%
+		cols    = 11
 		nameCap = 24
 	)
 	nameWidth := fitFirstColumn(m.contentWidth(), fixed, cols, nameCap)
@@ -392,6 +392,7 @@ func (m *model) resizeBackends() {
 		{Title: "API", Width: 10},
 		{Title: "INGRESS", Width: 12},
 		{Title: "EGRESS", Width: 12},
+		{Title: "SAVED", Width: 12},
 	})
 	m.backends.table.SetWidth(m.contentWidth())
 	m.backends.table.SetHeight(max(m.height-3, 3)) // 2-line header + 1-line footer
@@ -419,9 +420,20 @@ func rowsFromBackends(backends []adminapi.BackendStatus) []table.Row {
 			strconv.FormatInt(b.APIRequests, 10),
 			humanize.Bytes(b.IngressBytes),
 			humanize.Bytes(b.EgressBytes),
+			savedBytes(b.CompressionSavedBytes),
 		})
 	}
 	return rows
+}
+
+// savedBytes renders what compression saved on a backend. A dash rather than
+// "0 B" for nothing, since on a fleet with compression off that is every row
+// and a column of zeroes reads as a broken figure.
+func savedBytes(saved int64) string {
+	if saved <= 0 {
+		return "-"
+	}
+	return humanize.Bytes(saved)
 }
 
 // backendHealth renders a backend's circuit-breaker state.
@@ -502,7 +514,24 @@ func (m *model) backendsStatsLine() string {
 		total = fmt.Sprintf("total: %s / %s (%s)",
 			humanize.Bytes(used), humanize.Bytes(limit), usageStyle(pct).Render(fmt.Sprintf("%d%%", pct)))
 	}
-	return fmt.Sprintf("db: %s   %s   %s%s", db, total, m.integrityCoverage(), m.encryptionCoverage())
+	return fmt.Sprintf("db: %s   %s   %s%s%s",
+		db, total, m.integrityCoverage(), m.encryptionCoverage(), m.compressionCoverage())
+}
+
+// compressionCoverage renders what compression is saving across the fleet, and
+// nothing at all when nothing is stored encoded. It keys off the saving rather
+// than the setting: a fleet that has just enabled compression has nothing to
+// report yet, and one that has just disabled it still holds everything it
+// compressed.
+func (m *model) compressionCoverage() string {
+	var saved int64
+	for i := range m.backends.rows {
+		saved += m.backends.rows[i].CompressionSavedBytes
+	}
+	if saved <= 0 {
+		return ""
+	}
+	return "   compression saved: " + statusOKStyle.Render(humanize.Bytes(saved))
 }
 
 // encryptionCoverage renders how much of the fleet is still plaintext, and

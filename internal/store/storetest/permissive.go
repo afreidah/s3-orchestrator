@@ -85,6 +85,7 @@ func Permissive(m *MockMetadataStore) {
 	r.ListObjectsByBackend(a, a, a).Return(nil, nil).AnyTimes()
 	r.ListObjectsByBackendKeyAsc(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.ListUnencryptedLocations(a, a, a).Return(nil, nil).AnyTimes()
+	r.CompressionStats(a).Return(nil, nil).AnyTimes()
 	r.ListCompressedLocations(a, a, a).Return(nil, nil).AnyTimes()
 	r.ListUncompressedLocations(a, a, a).Return(nil, nil).AnyTimes()
 	r.MarkObjectCompressed(a, a, a).Return(nil).AnyTimes()

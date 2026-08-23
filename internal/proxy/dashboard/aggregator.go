@@ -36,6 +36,9 @@ const maxDirectoryChildren = 200
 // content_hash, which drives the "needs backfill" column. PlaintextCopies is
 // how many copies are still stored unencrypted: encryption covers new writes
 // only, so a non-zero value means existing objects were never rewritten.
+//
+// CompressionStats holds only backends that hold an encoded copy, so a missing
+// entry means nothing there is compressed rather than compressed to nothing.
 type Data struct {
 	BackendOrder           []string
 	QuotaStats             map[string]core.QuotaStat
@@ -44,6 +47,7 @@ type Data struct {
 	NeverVerifiedCopies    int64
 	OldestUnverifiedAge    time.Duration
 	PlaintextCopies        int64
+	CompressionStats       map[string]core.CompressionStat
 	ActiveMultipartCounts  map[string]int64
 	UsageStats             map[string]core.UsageStat
 	UsageLimits            map[string]core.UsageLimits
@@ -164,6 +168,11 @@ func (da *Aggregator) GetData(ctx context.Context) (*Data, error) {
 		return nil, err
 	}
 
+	data.CompressionStats, err = da.store.CompressionStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	data.ActiveMultipartCounts, err = da.store.GetActiveMultipartCounts(ctx)
 	if err != nil {
 		return nil, err
@@ -182,6 +191,41 @@ func (da *Aggregator) GetData(ctx context.Context) (*Data, error) {
 
 	da.decorateLiveState(ctx, data)
 	return data, nil
+}
+
+// CompressionTotals sums the per-backend stats into one fleet figure, which is
+// what the dashboard reports. Summing in the view would mean the template doing
+// arithmetic, and this is the number an operator reads first.
+func (d *Data) CompressionTotals() core.CompressionStat {
+	var total core.CompressionStat
+	for _, s := range d.CompressionStats {
+		total.Objects += s.Objects
+		total.LogicalBytes += s.LogicalBytes
+		total.StoredBytes += s.StoredBytes
+	}
+	return total
+}
+
+// HasCompressedData reports whether any copy is stored encoded, which is what
+// the views gate on rather than on the config flag.
+//
+// The two answer different questions. The flag says whether new writes will be
+// encoded; this says whether anything already is. They disagree in both
+// directions that matter: a fleet with the feature freshly enabled has nothing
+// to show yet, and one with it freshly disabled still holds everything it
+// compressed - including the objects an operator now wants to unwind.
+func (d *Data) HasCompressedData() bool {
+	return d.CompressionTotals().Objects > 0
+}
+
+// CompressionSaved reports the bytes compression saved on one backend, or zero
+// when nothing there is stored encoded.
+func (d *Data) CompressionSaved(backend string) int64 {
+	s, ok := d.CompressionStats[backend]
+	if !ok {
+		return 0
+	}
+	return s.LogicalBytes - s.StoredBytes
 }
 
 // GetDirectoryChildren returns the immediate children of a directory path

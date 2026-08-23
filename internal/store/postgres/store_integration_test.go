@@ -594,7 +594,7 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
 	// Initially unencrypted.
-	rows, err := s.ListUnencryptedLocations(ctx, 1000, 0)
+	rows, err := s.ListUnencryptedLocations(ctx, 1000, core.Cursor{})
 	if err != nil {
 		t.Fatalf("ListUnencryptedLocations: %v", err)
 	}
@@ -636,7 +636,7 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	}
 
 	// ListAllEncryptedLocations sees the row regardless of key ID.
-	if _, err := s.ListAllEncryptedLocations(ctx, 1000, 0); err != nil {
+	if _, err := s.ListAllEncryptedLocations(ctx, 1000, core.Cursor{}); err != nil {
 		t.Fatalf("ListAllEncryptedLocations: %v", err)
 	}
 
@@ -1149,7 +1149,7 @@ func TestStoreInt_CountUnencryptedLocations(t *testing.T) {
 	}
 
 	// The count and the list describe the same set.
-	listed, err := s.ListUnencryptedLocations(ctx, 10000, 0)
+	listed, err := s.ListUnencryptedLocations(ctx, 10000, core.Cursor{})
 	if err != nil {
 		t.Fatalf("ListUnencryptedLocations: %v", err)
 	}

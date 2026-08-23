@@ -121,20 +121,22 @@ func TestRegister_AppliesAuthToEveryEntry(t *testing.T) {
 	}
 }
 
-// TestRoutes_StreamingEntriesDeclareTheEventType pins the six dual-mode
-// endpoints. They answer with their JSON response by default and with an
+// TestRoutes_StreamingEntriesDeclareTheEventType pins the dual-mode endpoints.
+// They answer with their JSON response by default and with an
 // NDJSON event stream when the caller asks for one, so both shapes have to be
 // declared or the generated description would describe only half of each.
 func TestRoutes_StreamingEntriesDeclareTheEventType(t *testing.T) {
 	t.Parallel()
 	want := map[string]bool{
-		"POST /admin/api/rebalance":          true,
-		"POST /admin/api/replicate":          true,
-		"POST /admin/api/over-replication":   true,
-		"POST /admin/api/scrub":              true,
-		"POST /admin/api/backfill-checksums": true,
-		"POST /admin/api/reconcile":          true,
-		"DELETE /admin/api/backends/{name}":  true,
+		"POST /admin/api/rebalance":           true,
+		"POST /admin/api/replicate":           true,
+		"POST /admin/api/over-replication":    true,
+		"POST /admin/api/scrub":               true,
+		"POST /admin/api/backfill-checksums":  true,
+		"POST /admin/api/reconcile":           true,
+		"POST /admin/api/compress-existing":   true,
+		"POST /admin/api/decompress-existing": true,
+		"DELETE /admin/api/backends/{name}":   true,
 	}
 	for _, rt := range newTestHandler(t).routes() {
 		key := rt.Method + " " + rt.Pattern

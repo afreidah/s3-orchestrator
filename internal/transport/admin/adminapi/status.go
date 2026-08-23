@@ -44,6 +44,11 @@ type BackendStatus struct {
 	APIRequests  int64  `json:"api_requests"`
 	EgressBytes  int64  `json:"egress_bytes"`
 	IngressBytes int64  `json:"ingress_bytes"`
+
+	// CompressionSavedBytes is what the compressed objects on this backend are,
+	// less what they occupy. Zero when nothing there is stored encoded, which is
+	// also what an operator sees before compression is turned on.
+	CompressionSavedBytes int64 `json:"compression_saved_bytes"`
 }
 
 // UsageReconcileResponse reports the per-backend byte corrections a reconcile
