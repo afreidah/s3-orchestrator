@@ -19,6 +19,7 @@ import (
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -91,6 +92,10 @@ func (f *storedRangeFetcher) FetchRange(ctx context.Context, start, end int64) (
 		return nil, fmt.Errorf("backend %s egress: %w", f.beName, readpath.ErrUsageLimitSkip)
 	}
 	f.rt.Acct().Egress(f.beName, r.Size)
+	// Counted here rather than per client request: a compressed read makes one
+	// fetch per frame it touches, and read amplification is exactly the sum of
+	// those against what the client was served.
+	telemetry.CompressionFetchedBytesTotal.Add(float64(r.Size))
 	f.recordAttrs(r)
 
 	body, err := f.compressedBody(ctx, r, rng)

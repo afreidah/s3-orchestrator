@@ -909,6 +909,9 @@ func (mp *Manager) compressOnComplete(size int64) bool {
 // a second egress charge per part.
 func (mp *Manager) compressAssembly(src io.Reader, totalPlaintextSize int64) (*assembledBody, error) {
 	if !mp.compressOnComplete(totalPlaintextSize) {
+		if mp.codec != nil && mp.compression.Enabled {
+			telemetry.CompressionSkippedTotal.WithLabelValues(telemetry.CompressionSkipMinSize).Inc()
+		}
 		return &assembledBody{body: src, size: totalPlaintextSize}, nil
 	}
 
@@ -921,6 +924,7 @@ func (mp *Manager) compressAssembly(src io.Reader, totalPlaintextSize int64) (*a
 	encodedSize, err := mp.codec.Compress(buf.Writer(), src)
 	if err != nil {
 		a.cleanup()
+		telemetry.CompressionErrorsTotal.WithLabelValues(telemetry.CompressionOpEncode).Inc()
 		return nil, fmt.Errorf("compress assembled object: %w", err)
 	}
 	reader, err := buf.Reader()
@@ -930,9 +934,11 @@ func (mp *Manager) compressAssembly(src io.Reader, totalPlaintextSize int64) (*a
 	}
 
 	if compression.WorthStoring(totalPlaintextSize, encodedSize, mp.compression.MinRatio) {
+		telemetry.RecordCompressed(totalPlaintextSize, encodedSize)
 		a.body, a.size, a.compressed = reader, encodedSize, true
 		return a, nil
 	}
+	telemetry.CompressionSkippedTotal.WithLabelValues(telemetry.CompressionSkipMinRatio).Inc()
 
 	plain, err := mp.codec.Decompress(reader)
 	if err != nil {
