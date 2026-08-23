@@ -31,6 +31,7 @@ import (
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
+	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
@@ -42,6 +43,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
+	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
@@ -75,6 +77,8 @@ type Manager struct {
 	coord              *writepath.Coordinator // write-path helpers shared with BackendManager and ObjectManager
 	stores             MultipartStores        // multipart row/part operations and WithAdvisoryLock
 	encryptor          *encryption.Encryptor
+	codec              MultipartCodec
+	compression        config.CompressionConfig
 	objectCache        objcache.ObjectCache
 	dekCache           *syncutil.TTLCache[string, []byte]
 	integrityCfg       *syncutil.AtomicConfig[config.IntegrityConfig] // nil-safe; controls plaintext SHA-256 on Complete
@@ -99,6 +103,8 @@ func New(deps *Deps) *Manager {
 		coord:              deps.Coord,
 		stores:             deps.Stores,
 		encryptor:          deps.Encryptor,
+		codec:              deps.Codec,
+		compression:        deps.Compression,
 		objectCache:        deps.ObjectCache,
 		dekCache:           syncutil.NewTTLCache[string, []byte](deps.DEKCacheTTL),
 		integrityCfg:       deps.IntegrityCfg,
@@ -109,13 +115,17 @@ func New(deps *Deps) *Manager {
 
 // Deps groups the multipart manager's constructor parameters: backend
 // runtime, shared write coordinator, store surface, optional encryption /
-// object cache, the DEK-cache TTL, and the shared integrity config.
+// compression / object cache, the DEK-cache TTL, and the shared integrity
+// config. Codec is supplied whether or not Compression.Enabled, matching the
+// object manager: an assembled object is encoded only when both are set.
 type Deps struct {
 	Core         MultipartRuntime
 	Coord        *writepath.Coordinator
 	Stores       MultipartStores
 	Encryptor    *encryption.Encryptor // nil when encryption is disabled
-	ObjectCache  objcache.ObjectCache  // nil when object caching is disabled
+	Codec        MultipartCodec        // nil when no codec is configured
+	Compression  config.CompressionConfig
+	ObjectCache  objcache.ObjectCache // nil when object caching is disabled
 	DEKCacheTTL  time.Duration
 	IntegrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]
 	// EnforceMinPartSize requires every non-final part to meet the S3 5 MiB
@@ -697,10 +707,21 @@ func (mp *Manager) completeMultipartUploadLocked(
 		assembleReader = io.TeeReader(pr, hasher)
 	}
 
-	uploadBody, uploadSize, form, err := mp.buildAssembledUpload(ctx, span, mu, assembleReader, totalPlaintextSize)
+	// Compression runs between the part pipe and the encryptor, the order the
+	// single-object path uses and the only one that works: ciphertext does not
+	// compress.
+	stored, err := mp.compressAssembly(assembleReader, totalPlaintextSize)
+	if err != nil {
+		observe.RecordSpanError(span, err)
+		return "", err
+	}
+	defer stored.cleanup()
+
+	uploadBody, uploadSize, form, err := mp.buildAssembledUpload(ctx, span, mu, stored.body, stored.size)
 	if err != nil {
 		return "", err
 	}
+	form = stored.applyMeta(form, mp.compression.Level, totalPlaintextSize)
 
 	// Record the intent before the assembly PUT, the same way the single-object
 	// write path does. Without it, a crash between the PUT and the commit below
@@ -824,6 +845,102 @@ func sumPlaintextSize(parts []core.MultipartPart) int64 {
 		}
 	}
 	return total
+}
+
+// assembledBody is the stream the assembly PUT sends, plus what has to be said
+// about it: size is what will land on the backend, and compressed reports
+// whether those bytes are an encoding of the object or the object itself.
+//
+// encoded and decoded are the resources behind that stream, held so cleanup can
+// release exactly the ones a given path opened.
+type assembledBody struct {
+	body       io.Reader
+	size       int64
+	compressed bool
+	encoded    *materialize.Body
+	decoded    io.Closer
+}
+
+// cleanup releases whatever the assembly buffered. Safe on every path,
+// including the one that buffered nothing.
+func (a *assembledBody) cleanup() {
+	if a.decoded != nil {
+		_ = a.decoded.Close()
+	}
+	if a.encoded != nil {
+		a.encoded.Cleanup()
+	}
+}
+
+// applyMeta records how the assembled bytes were encoded, allocating a form when
+// nothing upstream needed one. LogicalSize is the size the client uploaded
+// across all parts, which is the only place that number survives once the row's
+// SizeBytes counts the encoding instead.
+func (a *assembledBody) applyMeta(form *core.StoredForm, level string, logicalSize int64) *core.StoredForm {
+	if !a.compressed {
+		return form
+	}
+	if form == nil {
+		form = &core.StoredForm{}
+	}
+	form.CompressionAlgorithm = compression.Algorithm
+	form.CompressionLevel = level
+	form.CompressionFormatVersion = compression.FormatVersion
+	form.LogicalSize = logicalSize
+	return form
+}
+
+// compressOnComplete reports whether an assembled object of this size should be
+// encoded. Mirrors the single-object gate: no codec or a disabled feature means
+// no, and an object below the floor would spend more on a seek table and frame
+// headers than encoding could save it.
+func (mp *Manager) compressOnComplete(size int64) bool {
+	return mp.codec != nil && mp.compression.Enabled && size >= mp.compression.MinSize
+}
+
+// compressAssembly encodes the assembled plaintext when compression applies and
+// reports what the PUT should send.
+//
+// The encoding is materialized because a backend PUT declares its size up front
+// and an encoder only knows that size once it has finished. The same buffer is
+// what makes the min_ratio decision affordable here: the part pipe delivers the
+// plaintext exactly once, so an encoding that fails to earn its place is decoded
+// back out of the buffer rather than re-read from the backends, which would cost
+// a second egress charge per part.
+func (mp *Manager) compressAssembly(src io.Reader, totalPlaintextSize int64) (*assembledBody, error) {
+	if !mp.compressOnComplete(totalPlaintextSize) {
+		return &assembledBody{body: src, size: totalPlaintextSize}, nil
+	}
+
+	buf, err := materialize.NewEmpty(totalPlaintextSize)
+	if err != nil {
+		return nil, fmt.Errorf("buffer assembled object: %w", err)
+	}
+	a := &assembledBody{encoded: buf}
+
+	encodedSize, err := mp.codec.Compress(buf.Writer(), src)
+	if err != nil {
+		a.cleanup()
+		return nil, fmt.Errorf("compress assembled object: %w", err)
+	}
+	reader, err := buf.Reader()
+	if err != nil {
+		a.cleanup()
+		return nil, fmt.Errorf("read back assembled object: %w", err)
+	}
+
+	if compression.WorthStoring(totalPlaintextSize, encodedSize, mp.compression.MinRatio) {
+		a.body, a.size, a.compressed = reader, encodedSize, true
+		return a, nil
+	}
+
+	plain, err := mp.codec.Decompress(reader)
+	if err != nil {
+		a.cleanup()
+		return nil, fmt.Errorf("decode discarded encoding: %w", err)
+	}
+	a.body, a.size, a.decoded = plain, totalPlaintextSize, plain
+	return a, nil
 }
 
 // buildAssembledUpload prepares the request body sent to the backend
