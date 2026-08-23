@@ -180,19 +180,15 @@ func (w *Coordinator) InsertPendingIntent(ctx context.Context, key, backendName 
 		return "", nil
 	}
 	intentID := audit.NewID()
+	// size is what will land on the backend, which is what quota is reconciled
+	// against if this intent is recovered rather than committed.
 	p := core.PendingObject{
 		IntentID:    intentID,
 		ObjectKey:   key,
 		BackendName: backendName,
 		SizeBytes:   size,
 	}
-	if form != nil {
-		p.Encrypted = form.Encrypted
-		p.EncryptionKey = form.EncryptionKey
-		p.KeyID = form.KeyID
-		p.PlaintextSize = form.PlaintextSize
-		p.ContentHash = form.ContentHash
-	}
+	p.ApplyStoredForm(form)
 	if err := w.stores.InsertPending(ctx, &p); err != nil {
 		return "", fmt.Errorf("insert pending intent: %w", err)
 	}
