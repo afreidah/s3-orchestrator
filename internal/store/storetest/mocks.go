@@ -762,6 +762,21 @@ func (mr *MockMetadataStoreMockRecorder) ListCleanupDLQ(ctx, backend, limit any)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCleanupDLQ", reflect.TypeOf((*MockMetadataStore)(nil).ListCleanupDLQ), ctx, backend, limit)
 }
 
+// ListCompressedLocations mocks base method.
+func (m *MockMetadataStore) ListCompressedLocations(ctx context.Context, limit, offset int) ([]core.RewritableLocation, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListCompressedLocations", ctx, limit, offset)
+	ret0, _ := ret[0].([]core.RewritableLocation)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListCompressedLocations indicates an expected call of ListCompressedLocations.
+func (mr *MockMetadataStoreMockRecorder) ListCompressedLocations(ctx, limit, offset any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCompressedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListCompressedLocations), ctx, limit, offset)
+}
+
 // ListDirectoryChildren mocks base method.
 func (m *MockMetadataStore) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
 	m.ctrl.T.Helper()
@@ -882,6 +897,21 @@ func (mr *MockMetadataStoreMockRecorder) ListObjectsDelimited(ctx, prefix, delim
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjectsDelimited", reflect.TypeOf((*MockMetadataStore)(nil).ListObjectsDelimited), ctx, prefix, delimiter, startAfter, maxKeys)
 }
 
+// ListUncompressedLocations mocks base method.
+func (m *MockMetadataStore) ListUncompressedLocations(ctx context.Context, limit, offset int) ([]core.RewritableLocation, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListUncompressedLocations", ctx, limit, offset)
+	ret0, _ := ret[0].([]core.RewritableLocation)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListUncompressedLocations indicates an expected call of ListUncompressedLocations.
+func (mr *MockMetadataStoreMockRecorder) ListUncompressedLocations(ctx, limit, offset any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUncompressedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListUncompressedLocations), ctx, limit, offset)
+}
+
 // ListUnencryptedLocations mocks base method.
 func (m *MockMetadataStore) ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]core.UnencryptedLocation, error) {
 	m.ctrl.T.Helper()
@@ -895,6 +925,20 @@ func (m *MockMetadataStore) ListUnencryptedLocations(ctx context.Context, limit,
 func (mr *MockMetadataStoreMockRecorder) ListUnencryptedLocations(ctx, limit, offset any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUnencryptedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListUnencryptedLocations), ctx, limit, offset)
+}
+
+// MarkObjectCompressed mocks base method.
+func (m *MockMetadataStore) MarkObjectCompressed(ctx context.Context, u *core.CompressedUpdate, previousSize int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkObjectCompressed", ctx, u, previousSize)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// MarkObjectCompressed indicates an expected call of MarkObjectCompressed.
+func (mr *MockMetadataStoreMockRecorder) MarkObjectCompressed(ctx, u, previousSize any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkObjectCompressed", reflect.TypeOf((*MockMetadataStore)(nil).MarkObjectCompressed), ctx, u, previousSize)
 }
 
 // MarkObjectDecrypted mocks base method.

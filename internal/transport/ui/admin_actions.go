@@ -235,3 +235,65 @@ func (h *Handler) handleAPIEncryptExisting(w http.ResponseWriter, r *http.Reques
 func (h *Handler) handleAPIEncryptExistingStatus(w http.ResponseWriter, _ *http.Request) {
 	h.writeAdminActionStatus(w, "encrypt-existing", "encrypted")
 }
+
+// -------------------------------------------------------------------------
+// COMPRESS EXISTING
+// -------------------------------------------------------------------------
+
+// handleAPICompressExisting walks every object stored verbatim, encodes it,
+// re-uploads the encoding, and updates the DB record. Long-running.
+//
+// The payload reports skipped alongside failed because this pass declines
+// objects on purpose - too small, or too incompressible to be worth encoding -
+// and a run that skipped most of a fleet is a healthy one.
+func (h *Handler) handleAPICompressExisting(w http.ResponseWriter, r *http.Request) {
+	h.startAdminAction(w, r, adminActionOp{
+		name:      "compress-existing",
+		resultKey: "compressed",
+		run: func(ctx context.Context) (int, map[string]any, string, error) {
+			res, err := h.compression.CompressExisting(ctx)
+			if reason, skipped := skipReason(err); skipped {
+				return 0, nil, reason, nil
+			}
+			if err != nil {
+				return 0, nil, "", err
+			}
+			return res.Succeeded, map[string]any{
+				"skipped": res.Skipped, "failed": res.Failed, "total": res.Total,
+			}, "", nil
+		},
+	})
+}
+
+// handleAPICompressExistingStatus returns the latest progress payload for the
+// compress-existing admin action.
+func (h *Handler) handleAPICompressExistingStatus(w http.ResponseWriter, _ *http.Request) {
+	h.writeAdminActionStatus(w, "compress-existing", "compressed")
+}
+
+// handleAPIDecompressExisting rewrites every encoded object back to the bytes
+// the client wrote, which is how an operator takes the feature back out.
+func (h *Handler) handleAPIDecompressExisting(w http.ResponseWriter, r *http.Request) {
+	h.startAdminAction(w, r, adminActionOp{
+		name:      "decompress-existing",
+		resultKey: "decompressed",
+		run: func(ctx context.Context) (int, map[string]any, string, error) {
+			res, err := h.compression.DecompressExisting(ctx)
+			if reason, skipped := skipReason(err); skipped {
+				return 0, nil, reason, nil
+			}
+			if err != nil {
+				return 0, nil, "", err
+			}
+			return res.Succeeded, map[string]any{
+				"skipped": res.Skipped, "failed": res.Failed, "total": res.Total,
+			}, "", nil
+		},
+	})
+}
+
+// handleAPIDecompressExistingStatus returns the latest progress payload for the
+// decompress-existing admin action.
+func (h *Handler) handleAPIDecompressExistingStatus(w http.ResponseWriter, _ *http.Request) {
+	h.writeAdminActionStatus(w, "decompress-existing", "decompressed")
+}

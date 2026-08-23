@@ -201,6 +201,12 @@ Failed objects are logged individually and can be retried by calling `decrypt-ex
 
 Both `encrypt-existing` and `decrypt-existing` keep `backend_quotas.bytes_used` consistent with the on-disk byte count: each object is rewritten at a different size (encryption inflates by per-chunk overhead, decryption removes it), and the per-backend counter advances by the size delta inside the same transaction as the metadata update. No manual reconciliation against `SUM(object_locations.size_bytes)` is needed after a run.
 
+### Compressing existing data
+
+Enabling compression affects new writes only, exactly as enabling encryption does. `s3-orchestrator admin compress-existing` brings what is already stored under it, and `decompress-existing` takes it back out. Both keep quota consistent the same way, moving the counter by the size difference in the same transaction as the row update.
+
+Unlike the encryption passes, these decline objects on purpose: anything below `min_size`, and anything the encoder cannot shrink past `min_ratio`, is left alone and counted as skipped. Watch `s3o_compress_existing_objects_total{status="skipped"}` alongside the success count - on media or backup data most of a fleet will be skipped, and that is the pass working. See [Compression](compression.md) for what the thresholds mean.
+
 ### Rotating encryption keys
 
 Key rotation re-wraps DEKs with a new master key without re-encrypting object data. This is a metadata-only operation and is fast regardless of object sizes.

@@ -49,6 +49,25 @@ type EncryptionStore interface {
 	core.EncryptionAdmin
 }
 
+// CompressionStore is the admin surface the bulk compression passes read and
+// write as they move objects between stored-verbatim and stored-encoded.
+type CompressionStore interface {
+	core.CompressionAdmin
+}
+
+// CompressionCodec is the encode and decode surface the bulk passes use. Both
+// halves are needed: one pass encodes, the other decodes, and neither is a
+// single-action role.
+//
+// Declared rather than taking *compression.Codec because a mid-pass encode
+// failure is a path worth testing - it decides whether one bad object ends the
+// run or is counted against itself - and the concrete codec cannot be made to
+// produce one.
+type CompressionCodec interface {
+	Compress(dst io.Writer, src io.Reader) (int64, error)
+	DecompressStream(r io.Reader) (io.ReadCloser, error)
+}
+
 // BackendOps is the store-coupled backend surface the operations layer uses
 // for usage accounting and the integrity settings that gate a scrub.
 // *proxy.BackendManager satisfies it.

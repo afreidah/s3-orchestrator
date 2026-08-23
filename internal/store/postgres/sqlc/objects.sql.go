@@ -640,6 +640,69 @@ func (q *Queries) ListAllEncryptedLocations(ctx context.Context, arg ListAllEncr
 	return items, nil
 }
 
+const listCompressedLocations = `-- name: ListCompressedLocations :many
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
+       plaintext_size, compression_algorithm, compression_level,
+       compression_format_version, logical_size
+FROM object_locations
+WHERE compression_algorithm IS NOT NULL
+ORDER BY object_key, backend_name
+LIMIT $1 OFFSET $2
+`
+
+type ListCompressedLocationsParams struct {
+	Limit  int32
+	Offset int32
+}
+
+type ListCompressedLocationsRow struct {
+	ObjectKey                string
+	BackendName              string
+	SizeBytes                int64
+	Encrypted                bool
+	EncryptionKey            []byte
+	KeyID                    *string
+	PlaintextSize            *int64
+	CompressionAlgorithm     *string
+	CompressionLevel         *string
+	CompressionFormatVersion *int16
+	LogicalSize              *int64
+}
+
+// The complement of ListUncompressedLocations, which is what
+// decompress-existing rewrites.
+func (q *Queries) ListCompressedLocations(ctx context.Context, arg ListCompressedLocationsParams) ([]ListCompressedLocationsRow, error) {
+	rows, err := q.db.Query(ctx, listCompressedLocations, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCompressedLocationsRow{}
+	for rows.Next() {
+		var i ListCompressedLocationsRow
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.SizeBytes,
+			&i.Encrypted,
+			&i.EncryptionKey,
+			&i.KeyID,
+			&i.PlaintextSize,
+			&i.CompressionAlgorithm,
+			&i.CompressionLevel,
+			&i.CompressionFormatVersion,
+			&i.LogicalSize,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDirectChildren = `-- name: ListDirectChildren :many
 SELECT
     object_key,
@@ -1058,6 +1121,71 @@ func (q *Queries) ListObjectsDelimited(ctx context.Context, arg ListObjectsDelim
 	return items, nil
 }
 
+const listUncompressedLocations = `-- name: ListUncompressedLocations :many
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
+       plaintext_size, compression_algorithm, compression_level,
+       compression_format_version, logical_size
+FROM object_locations
+WHERE compression_algorithm IS NULL
+ORDER BY object_key, backend_name
+LIMIT $1 OFFSET $2
+`
+
+type ListUncompressedLocationsParams struct {
+	Limit  int32
+	Offset int32
+}
+
+type ListUncompressedLocationsRow struct {
+	ObjectKey                string
+	BackendName              string
+	SizeBytes                int64
+	Encrypted                bool
+	EncryptionKey            []byte
+	KeyID                    *string
+	PlaintextSize            *int64
+	CompressionAlgorithm     *string
+	CompressionLevel         *string
+	CompressionFormatVersion *int16
+	LogicalSize              *int64
+}
+
+// Copies whose stored bytes carry no encoding, which is what compress-existing
+// rewrites. The encryption columns come along because compression sits inside
+// encryption: an encrypted copy is decrypted, encoded, and re-encrypted under
+// the key it already had.
+func (q *Queries) ListUncompressedLocations(ctx context.Context, arg ListUncompressedLocationsParams) ([]ListUncompressedLocationsRow, error) {
+	rows, err := q.db.Query(ctx, listUncompressedLocations, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUncompressedLocationsRow{}
+	for rows.Next() {
+		var i ListUncompressedLocationsRow
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.SizeBytes,
+			&i.Encrypted,
+			&i.EncryptionKey,
+			&i.KeyID,
+			&i.PlaintextSize,
+			&i.CompressionAlgorithm,
+			&i.CompressionLevel,
+			&i.CompressionFormatVersion,
+			&i.LogicalSize,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnencryptedLocations = `-- name: ListUnencryptedLocations :many
 SELECT object_key, backend_name, size_bytes
 FROM object_locations
@@ -1151,6 +1279,53 @@ func (q *Queries) LockObjectOnBackend(ctx context.Context, arg LockObjectOnBacke
 		&i.ContentHash,
 	)
 	return i, err
+}
+
+const markObjectCompressed = `-- name: MarkObjectCompressed :exec
+UPDATE object_locations
+SET compression_algorithm = $3,
+    compression_level = $4,
+    compression_format_version = $5,
+    logical_size = $6,
+    size_bytes = $7,
+    plaintext_size = $8,
+    encryption_key = $9,
+    key_id = $10
+WHERE object_key = $1 AND backend_name = $2
+`
+
+type MarkObjectCompressedParams struct {
+	ObjectKey                string
+	BackendName              string
+	CompressionAlgorithm     *string
+	CompressionLevel         *string
+	CompressionFormatVersion *int16
+	LogicalSize              *int64
+	SizeBytes                int64
+	PlaintextSize            *int64
+	EncryptionKey            []byte
+	KeyID                    *string
+}
+
+// Records how a rewritten copy is now stored. A NULL algorithm is the
+// decompress direction, which also clears the columns that only describe an
+// encoding. The envelope columns are rewritten too: re-encrypting an object
+// mints a new base nonce and wrapped key, so leaving the old ones would
+// describe bytes nothing can decrypt.
+func (q *Queries) MarkObjectCompressed(ctx context.Context, arg MarkObjectCompressedParams) error {
+	_, err := q.db.Exec(ctx, markObjectCompressed,
+		arg.ObjectKey,
+		arg.BackendName,
+		arg.CompressionAlgorithm,
+		arg.CompressionLevel,
+		arg.CompressionFormatVersion,
+		arg.LogicalSize,
+		arg.SizeBytes,
+		arg.PlaintextSize,
+		arg.EncryptionKey,
+		arg.KeyID,
+	)
+	return err
 }
 
 const markObjectDecrypted = `-- name: MarkObjectDecrypted :exec

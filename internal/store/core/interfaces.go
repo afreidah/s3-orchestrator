@@ -41,6 +41,7 @@ type MetadataStore interface {
 	DashboardStore
 	LifecycleAdmin
 	EncryptionAdmin
+	CompressionAdmin
 	NotificationOutbox
 }
 
@@ -266,6 +267,18 @@ type EncryptionAdmin interface {
 	MarkObjectEncrypted(ctx context.Context, objectKey, backendName string, encryptionKey []byte, keyID string, plaintextSize, ciphertextSize int64) error
 	ListAllEncryptedLocations(ctx context.Context, limit, offset int) ([]DecryptableLocation, error)
 	MarkObjectDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error
+}
+
+// CompressionAdmin defines the admin-only bulk compression operations used by
+// the admin HTTP handler, the web UI and adminctl. Like EncryptionAdmin these
+// are off the request hot path, so they bypass the circuit breaker.
+//
+// The two listings are complements: one selects copies with no encoding, the
+// other copies that have one.
+type CompressionAdmin interface {
+	ListUncompressedLocations(ctx context.Context, limit, offset int) ([]RewritableLocation, error)
+	ListCompressedLocations(ctx context.Context, limit, offset int) ([]RewritableLocation, error)
+	MarkObjectCompressed(ctx context.Context, u *CompressedUpdate, previousSize int64) error
 }
 
 // NotificationOutbox defines the durable notification outbox operations
