@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"testing"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -107,6 +108,75 @@ func TestMoveObjectLocation_CarriesRepresentation(t *testing.T) {
 	}
 
 	assertCarried(t, locationOn(t, s, "bucket/moved", "backend-b"), 4096)
+}
+
+// TestPromotePending_CarriesRepresentation covers crash recovery. A PUT that
+// died between the upload and the commit leaves an intent the reaper promotes
+// on a later tick, and the promoted row has to describe the bytes the way the
+// PUT would have; anything less and the recovered object is one nothing can
+// decode.
+func TestPromotePending_CarriesRepresentation(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	intent := core.PendingObject{
+		IntentID:    "intent-z",
+		ObjectKey:   "bucket/recovered",
+		BackendName: "backend-a",
+		SizeBytes:   4096,
+	}
+	intent.ApplyStoredForm(compressedForm())
+	if err := s.InsertPending(ctx, &intent); err != nil {
+		t.Fatalf("InsertPending: %v", err)
+	}
+	stale, _ := s.GetStalePending(ctx, time.Now().Add(time.Hour), 10)
+	if len(stale) != 1 {
+		t.Fatal("seed: pending row missing")
+	}
+
+	if _, _, err := s.PromotePending(ctx, &stale[0]); err != nil {
+		t.Fatalf("PromotePending: %v", err)
+	}
+
+	assertCarried(t, locationOn(t, s, "bucket/recovered", "backend-a"), 4096)
+}
+
+// TestPromotePending_ChargesStoredSize pins the sizing half: quota counts what
+// occupies the backend. Charging the logical size instead would drift every
+// recovered object by its compression ratio, and the drift is silent.
+func TestPromotePending_ChargesStoredSize(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	intent := core.PendingObject{
+		IntentID:    "intent-q",
+		ObjectKey:   "bucket/sized",
+		BackendName: "backend-a",
+		SizeBytes:   4096,
+	}
+	// LogicalSize is twice what landed, so a charge against the wrong one shows.
+	intent.ApplyStoredForm(compressedForm())
+	if err := s.InsertPending(ctx, &intent); err != nil {
+		t.Fatalf("InsertPending: %v", err)
+	}
+	stale, _ := s.GetStalePending(ctx, time.Now().Add(time.Hour), 10)
+	if len(stale) != 1 {
+		t.Fatal("seed: pending row missing")
+	}
+
+	if _, _, err := s.PromotePending(ctx, &stale[0]); err != nil {
+		t.Fatalf("PromotePending: %v", err)
+	}
+
+	stats, err := s.GetQuotaStats(ctx)
+	if err != nil {
+		t.Fatalf("GetQuotaStats: %v", err)
+	}
+	if got := stats["backend-a"].BytesUsed; got != 4096 {
+		t.Errorf("bytes_used = %d, want the 4096 that landed on the backend", got)
+	}
 }
 
 // TestRecordReplica_CarriesRepresentation covers the replicator. The replica is

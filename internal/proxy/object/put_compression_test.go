@@ -233,6 +233,53 @@ func TestPut_HonoursMinRatio(t *testing.T) {
 	}
 }
 
+// TestPut_CleanupSizedByStoredBytes pins what an orphan is worth. A PUT whose
+// metadata commit fails leaves bytes on the backend and a cleanup row that
+// credits orphan_bytes back when it runs, so the row has to carry what actually
+// landed. Sizing it by the object the client sent would drift quota by the
+// compression ratio on every failed write.
+func TestPut_CleanupSizedByStoredBytes(t *testing.T) {
+	t.Parallel()
+	codec := newPutCodec(t)
+	src := compressibleBody(putCompressChunk * 3)
+
+	be := backendtest.NewInMemory()
+	be.DeleteErr = errors.New("backend down") // force the enqueue rather than a delete
+	calls := &orphanCalls{}
+	store := storetest.NewMockMetadataStore(gomock.NewController(t))
+	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("b1", nil).AnyTimes()
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("commit failed")).AnyTimes()
+	store.EXPECT().RecordObjectAndClearPending(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("commit failed")).AnyTimes()
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(stubOrphanEnqueue(calls, nil)).AnyTimes()
+	storetest.Permissive(store)
+
+	f := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, &fleetOpts{
+		Order:           []string{"b1"},
+		Codec:           codec,
+		Compression:     compressionOn(0),
+		PendingDisabled: true,
+	})
+
+	if _, err := f.PutObject(context.Background(), "key", bytes.NewReader(src), int64(len(src)), "text/plain", nil); err == nil {
+		t.Fatal("expected the PUT to fail when the commit does")
+	}
+	if len(calls.enqueue) != 1 {
+		t.Fatalf("enqueued %d cleanup rows, want 1", len(calls.enqueue))
+	}
+
+	stored := be.Objects["key"].Data
+	if len(stored) >= len(src) {
+		t.Fatalf("stored %d bytes for a %d byte object; compression did not apply", len(stored), len(src))
+	}
+	if got := calls.enqueue[0].SizeBytes; got != int64(len(stored)) {
+		t.Errorf("cleanup size = %d, want the %d bytes on the backend (client sent %d)",
+			got, len(stored), len(src))
+	}
+}
+
 // TestPut_DisabledLeavesBytesVerbatim checks that a wired codec does nothing
 // while the config says compression is off, so the feature is genuinely opt-in.
 func TestPut_DisabledLeavesBytesVerbatim(t *testing.T) {

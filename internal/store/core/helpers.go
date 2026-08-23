@@ -37,6 +37,25 @@ func intentSuperseded(existing []ExistingCopy, intentCreatedAt time.Time) bool {
 	return false
 }
 
+// ApplyStoredForm writes a description of an object's stored bytes onto a
+// pending row. The inverse of pendingStoredForm: what an intent records here is
+// what its promotion reads back, so a field missing from either side is a
+// recovered object whose row contradicts its bytes.
+func (p *PendingObject) ApplyStoredForm(form *StoredForm) {
+	if form == nil {
+		return
+	}
+	p.Encrypted = form.Encrypted
+	p.EncryptionKey = form.EncryptionKey
+	p.KeyID = form.KeyID
+	p.PlaintextSize = form.PlaintextSize
+	p.ContentHash = form.ContentHash
+	p.CompressionAlgorithm = form.CompressionAlgorithm
+	p.CompressionLevel = form.CompressionLevel
+	p.CompressionFormatVersion = form.CompressionFormatVersion
+	p.LogicalSize = form.LogicalSize
+}
+
 // pendingStoredForm builds a StoredForm from a PendingObject so the promoted
 // object_locations row carries the same representation metadata as the
 // original PUT recorded. Returns nil when the pending row describes bytes

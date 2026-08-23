@@ -21,7 +21,9 @@ compression:
 
 ## Current status
 
-PUT, multipart completion, GET, HEAD, server-side copy, the scrubber, the workers that move copies between backends, and reconcile all handle compression. What remains is pending-intent recovery. Leave `enabled: false` until that lands.
+Every path handles compression: PUT and multipart completion write it, GET and HEAD serve through it, server-side copy and the replication workers carry it, the scrubber decodes before hashing, reconcile recognises it, and a crash-recovered write keeps it. Still off by default, and still worth enabling on a test fleet before a production one.
+
+Two things are not built yet, neither of which affects correctness: there is no way to compress objects already stored (#1264), so enabling this affects new writes only, and the metrics and dashboards for it are outstanding (#1265).
 
 ## Why the format is chunked
 
@@ -109,6 +111,12 @@ An encoding is recognised by its seek table. The frame magic cannot decide it: t
 Recognised objects are imported with the logical size their seek table declares, which is the number nothing else could supply for an object whose rows are all gone. Anything unrecognised is imported as the verbatim bytes it appears to be.
 
 A compressed object that is also encrypted cannot be recognised from outside, since it was compressed before it was encrypted. Those inherit their description from a surviving copy's row instead, along with the key.
+
+## Quota and recovery
+
+Quota counts what occupies a backend, so every size the write path records is the stored size: the encoded, encrypted bytes that landed, not the object they decode to. `logical_size` exists to answer the client and never to charge the operator.
+
+That holds through failure too. A PUT records its intent before the upload, so a crash between the two leaves a row the reaper resolves later; the intent carries the same description of the bytes the commit would have, so a recovered object is decodable rather than merely present. A write whose commit fails leaves a cleanup row sized by what landed, which is what credits the backend back when the orphan is removed.
 
 ## Verification
 

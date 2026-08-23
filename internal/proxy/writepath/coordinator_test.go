@@ -212,6 +212,55 @@ func TestInsertPendingIntent_CopiesStoredForm(t *testing.T) {
 	}
 }
 
+// TestInsertPendingIntent_CopiesCompression pins the rest of the description an
+// intent has to carry. The intent is the only record of how the bytes were
+// written until the commit lands, so a field missing here is a crash-recovered
+// object whose row says verbatim over an encoding nothing then decodes.
+//
+// SizeBytes is asserted alongside because it is what quota is reconciled
+// against on recovery: the bytes that occupy the backend, not the larger object
+// they decode to.
+func TestInsertPendingIntent_CopiesCompression(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := NewMockCoordinatorStores(ctrl)
+
+	var got core.PendingObject
+	store.EXPECT().InsertPending(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, p *core.PendingObject) error {
+			got = *p
+			return nil
+		}).Times(1)
+
+	coord := newCoordinatorWithStore(store, true)
+	form := &core.StoredForm{
+		ContentHash:              "deadbeef",
+		CompressionAlgorithm:     "zstd",
+		CompressionLevel:         "default",
+		CompressionFormatVersion: 1,
+		LogicalSize:              8192,
+	}
+
+	if _, err := coord.InsertPendingIntent(context.Background(), "k", "b1", 4096, form); err != nil {
+		t.Fatalf("InsertPendingIntent: %v", err)
+	}
+	if got.CompressionAlgorithm != "zstd" {
+		t.Errorf("CompressionAlgorithm = %q, want %q", got.CompressionAlgorithm, "zstd")
+	}
+	if got.CompressionLevel != "default" {
+		t.Errorf("CompressionLevel = %q, want %q", got.CompressionLevel, "default")
+	}
+	if got.CompressionFormatVersion != 1 {
+		t.Errorf("CompressionFormatVersion = %d, want 1", got.CompressionFormatVersion)
+	}
+	if got.LogicalSize != 8192 {
+		t.Errorf("LogicalSize = %d, want 8192", got.LogicalSize)
+	}
+	if got.SizeBytes != 4096 {
+		t.Errorf("SizeBytes = %d, want the 4096 landing on the backend", got.SizeBytes)
+	}
+}
+
 // TestInsertPendingIntent_StoreError covers the InsertPending failure
 // branch: the wrapped error is returned and the intent ID is empty.
 func TestInsertPendingIntent_StoreError(t *testing.T) {
