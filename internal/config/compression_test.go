@@ -60,6 +60,38 @@ func TestCompressionConfig_Defaults(t *testing.T) {
 	}
 }
 
+// TestCompressionConfig_DisabledStillTakesDefaults pins what a disabled block
+// leaves behind. The thresholds are read by things other than the write path -
+// compress-existing is a legitimate thing to run on a fleet that has not
+// switched writes over yet - and a zero MinRatio makes that pass decline every
+// object, since no encoding beats a ratio of zero.
+func TestCompressionConfig_DisabledStillTakesDefaults(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	cfg.Compression = CompressionConfig{Enabled: false}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("disabled compression should not fail validation: %v", err)
+	}
+	got := cfg.Compression
+	if got.MinRatio != DefaultCompressionMinRatio {
+		t.Errorf("MinRatio = %v, want %v; a zero ratio silently declines every object",
+			got.MinRatio, DefaultCompressionMinRatio)
+	}
+	if got.Level != DefaultCompressionLevel {
+		t.Errorf("Level = %q, want %q", got.Level, DefaultCompressionLevel)
+	}
+	if got.ChunkSize != DefaultCompressionChunkSize {
+		t.Errorf("ChunkSize = %d, want %d", got.ChunkSize, DefaultCompressionChunkSize)
+	}
+	if got.MinSize != DefaultCompressionMinSize {
+		t.Errorf("MinSize = %d, want %d", got.MinSize, DefaultCompressionMinSize)
+	}
+	if got.Enabled {
+		t.Error("defaults must not turn the feature on")
+	}
+}
+
 // TestCompressionConfig_MinRatioBounds verifies the ratio is held to (0, 1].
 // An unset field takes the default rather than the zero value, which would
 // otherwise disable compression by making no object qualify.

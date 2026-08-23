@@ -38,6 +38,8 @@ func TestAggregator_Success(t *testing.T) {
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{"b1": 1}, nil)
 	store.EXPECT().OldestUnverifiedAge(gomock.Any()).Return(2*time.Hour, int64(3), nil)
 	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(7), nil)
+	store.EXPECT().CompressionStats(gomock.Any()).
+		Return(map[string]core.CompressionStat{"b1": {Objects: 2, LogicalBytes: 1000, StoredBytes: 250}}, nil)
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
 		Return(map[string]core.UsageStat{"b1": {APIRequests: 10}}, nil)
 	store.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -106,6 +108,13 @@ func dashboardReads() []dashboardRead {
 			},
 			func(m *storetest.MockDashboardStore, err error) {
 				m.EXPECT().CountUnencryptedLocations(a).Return(int64(0), err)
+			}},
+		{"compression stats",
+			func(m *storetest.MockDashboardStore) {
+				m.EXPECT().CompressionStats(a).Return(map[string]core.CompressionStat{}, nil)
+			},
+			func(m *storetest.MockDashboardStore, err error) {
+				m.EXPECT().CompressionStats(a).Return(nil, err)
 			}},
 		{"multipart counts",
 			func(m *storetest.MockDashboardStore) {
@@ -198,5 +207,74 @@ func TestAggregator_GetDirectoryChildren_PassesThroughInRange(t *testing.T) {
 	da := New(store, stubUsage(ctrl), nil, nil, nil)
 	if _, err := da.GetDirectoryChildren(t.Context(), "photos/", "cat.jpg", 25); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestData_CompressionViews covers what the dashboard gates on. The config flag
+// says whether new writes will be encoded; these say whether anything already
+// is, and the two disagree in both directions that matter. A fleet that has
+// just turned compression off still holds everything it compressed, and that is
+// exactly when an operator wants to see the savings and reach the unwind.
+func TestData_CompressionViews(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		stats     map[string]core.CompressionStat
+		wantAny   bool
+		wantSaved int64
+		wantTotal core.CompressionStat
+	}{
+		{
+			name:    "nothing compressed",
+			stats:   map[string]core.CompressionStat{},
+			wantAny: false,
+		},
+		{
+			name: "one backend",
+			stats: map[string]core.CompressionStat{
+				"b1": {Objects: 2, LogicalBytes: 1000, StoredBytes: 250},
+			},
+			wantAny:   true,
+			wantSaved: 750,
+			wantTotal: core.CompressionStat{Objects: 2, LogicalBytes: 1000, StoredBytes: 250},
+		},
+		{
+			name: "summed across backends",
+			stats: map[string]core.CompressionStat{
+				"b1": {Objects: 2, LogicalBytes: 1000, StoredBytes: 250},
+				"b2": {Objects: 1, LogicalBytes: 500, StoredBytes: 400},
+			},
+			wantAny:   true,
+			wantSaved: 750,
+			wantTotal: core.CompressionStat{Objects: 3, LogicalBytes: 1500, StoredBytes: 650},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			d := &Data{CompressionStats: tt.stats}
+
+			if got := d.HasCompressedData(); got != tt.wantAny {
+				t.Errorf("HasCompressedData() = %v, want %v", got, tt.wantAny)
+			}
+			if got := d.CompressionSaved("b1"); got != tt.wantSaved {
+				t.Errorf("CompressionSaved(b1) = %d, want %d", got, tt.wantSaved)
+			}
+			if got := d.CompressionTotals(); got != tt.wantTotal {
+				t.Errorf("CompressionTotals() = %+v, want %+v", got, tt.wantTotal)
+			}
+		})
+	}
+}
+
+// TestData_CompressionSavedUnknownBackend checks a backend holding nothing
+// encoded reports zero rather than a stale figure from another backend.
+func TestData_CompressionSavedUnknownBackend(t *testing.T) {
+	t.Parallel()
+	d := &Data{CompressionStats: map[string]core.CompressionStat{
+		"b1": {Objects: 1, LogicalBytes: 900, StoredBytes: 100},
+	}}
+	if got := d.CompressionSaved("b2"); got != 0 {
+		t.Errorf("CompressionSaved(b2) = %d, want 0", got)
 	}
 }

@@ -92,6 +92,7 @@ func backendStatuses(data *dashboard.Data) []adminapi.BackendStatus {
 			bs.EgressBytes = us.EgressBytes
 			bs.IngressBytes = us.IngressBytes
 		}
+		bs.CompressionSavedBytes = data.CompressionSaved(name)
 		backends = append(backends, bs)
 	}
 	return backends
@@ -129,6 +130,9 @@ func objectLocationsResponse(key string, locations []core.ObjectLocation) admina
 			PlaintextSize:  locations[i].PlaintextSize,
 			ContentHash:    locations[i].ContentHash,
 			LastScrubbedAt: locations[i].LastScrubbedAt,
+
+			CompressionAlgorithm: locations[i].CompressionAlgorithm,
+			LogicalSize:          locations[i].LogicalSize,
 		})
 	}
 	return resp

@@ -149,6 +149,10 @@ func (r decryptExistingResult) describe() string {
 	return rewriteSummary("decrypted", r.Decrypted, r.Failed, r.Total)
 }
 
+// The compression passes have no one-shot result type here: both stream their
+// progress, so the TUI renders the step events and the terminal summary the
+// server sends rather than decoding a final JSON body.
+
 // rotateKeyResult reports a pass that re-wrapped object keys under the current
 // primary key.
 type rotateKeyResult struct {

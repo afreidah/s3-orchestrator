@@ -117,10 +117,11 @@ func (s *Store) CountUnencryptedLocations(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
-func (s *Store) ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]core.UnencryptedLocation, error) {
+func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.UnencryptedLocation, error) {
 	rows, err := s.queries.ListUnencryptedLocations(ctx, db.ListUnencryptedLocationsParams{
-		Limit:  int32(limit),  //nolint:gosec // G115: limit is a small caller-controlled batch size
-		Offset: int32(offset), //nolint:gosec // G115: offset is a small caller-controlled value
+		AfterKey:     after.ObjectKey,
+		AfterBackend: after.BackendName,
+		RowLimit:     int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list unencrypted locations: %w", err)
@@ -172,10 +173,11 @@ func (s *Store) MarkObjectEncrypted(ctx context.Context, objectKey, backendName 
 
 // ListAllEncryptedLocations returns a page of all encrypted object locations.
 // Used by the decrypt-existing admin endpoint to find objects that need decryption.
-func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit, offset int) ([]core.DecryptableLocation, error) {
+func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.DecryptableLocation, error) {
 	rows, err := s.queries.ListAllEncryptedLocations(ctx, db.ListAllEncryptedLocationsParams{
-		Limit:  int32(limit),  //nolint:gosec // G115: limit is a small caller-controlled batch size
-		Offset: int32(offset), //nolint:gosec // G115: offset is a small caller-controlled value
+		AfterKey:     after.ObjectKey,
+		AfterBackend: after.BackendName,
+		RowLimit:     int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list all encrypted locations: %w", err)

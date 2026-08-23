@@ -25,10 +25,11 @@ import (
 
 // ListUncompressedLocations returns a page of copies whose bytes carry no
 // encoding.
-func (s *Store) ListUncompressedLocations(ctx context.Context, limit, offset int) ([]core.RewritableLocation, error) {
+func (s *Store) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.RewritableLocation, error) {
 	rows, err := s.queries.ListUncompressedLocations(ctx, db.ListUncompressedLocationsParams{
-		Limit:  int32(limit),  //nolint:gosec // G115: limit is a small caller-controlled batch size
-		Offset: int32(offset), //nolint:gosec // G115: offset is a small caller-controlled value
+		AfterKey:     after.ObjectKey,
+		AfterBackend: after.BackendName,
+		RowLimit:     int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list uncompressed locations: %w", err)
@@ -41,10 +42,11 @@ func (s *Store) ListUncompressedLocations(ctx context.Context, limit, offset int
 }
 
 // ListCompressedLocations returns a page of copies whose bytes are an encoding.
-func (s *Store) ListCompressedLocations(ctx context.Context, limit, offset int) ([]core.RewritableLocation, error) {
+func (s *Store) ListCompressedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.RewritableLocation, error) {
 	rows, err := s.queries.ListCompressedLocations(ctx, db.ListCompressedLocationsParams{
-		Limit:  int32(limit),  //nolint:gosec // G115: limit is a small caller-controlled batch size
-		Offset: int32(offset), //nolint:gosec // G115: offset is a small caller-controlled value
+		AfterKey:     after.ObjectKey,
+		AfterBackend: after.BackendName,
+		RowLimit:     int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list compressed locations: %w", err)
@@ -52,6 +54,25 @@ func (s *Store) ListCompressedLocations(ctx context.Context, limit, offset int) 
 	out := make([]core.RewritableLocation, len(rows))
 	for i := range rows {
 		out[i] = rewritableFromRow((*rewritableRow)(&rows[i]))
+	}
+	return out, nil
+}
+
+// CompressionStats reports per-backend compression totals for the dashboard.
+// Backends holding no encoded copies are absent rather than present as zeroes,
+// so a caller can tell "nothing compressed here" from "compressed to nothing".
+func (s *Store) CompressionStats(ctx context.Context) (map[string]core.CompressionStat, error) {
+	rows, err := s.queries.CompressionStats(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("compression stats: %w", err)
+	}
+	out := make(map[string]core.CompressionStat, len(rows))
+	for i := range rows {
+		out[rows[i].BackendName] = core.CompressionStat{
+			Objects:      rows[i].Objects,
+			LogicalBytes: rows[i].LogicalBytes,
+			StoredBytes:  rows[i].StoredBytes,
+		}
 	}
 	return out, nil
 }

@@ -188,14 +188,17 @@ func scrubSummary(copies []adminapi.CopyScrubResult) (bool, string) {
 // the backend column so short names don't sprawl on a wide terminal.
 func (m *model) resizeInspector() {
 	const (
-		fixed   = 12 + 14 + 5 + 12 + 18 + 10 // size + created + enc + key id + hash + verified
-		cols    = 7
+		// size + logical + comp + created + enc + key id + hash + verified
+		fixed   = 12 + 12 + 6 + 14 + 5 + 12 + 18 + 10
+		cols    = 9
 		nameCap = 24
 	)
 	backendWidth := fitFirstColumn(m.contentWidth(), fixed, cols, nameCap)
 	m.insp.table.SetColumns([]table.Column{
 		{Title: "BACKEND", Width: backendWidth},
 		{Title: "SIZE", Width: 12},
+		{Title: "LOGICAL", Width: 12},
+		{Title: "COMP", Width: 6},
 		{Title: "CREATED", Width: 14},
 		{Title: "ENC", Width: 5},
 		{Title: "KEY ID", Width: 12},
@@ -211,10 +214,12 @@ func (m *model) resizeInspector() {
 func rowsFromLocations(locations []adminapi.ObjectLocation) []table.Row {
 	rows := make([]table.Row, 0, len(locations))
 	for i := range locations {
-		l := locations[i]
+		l := &locations[i]
 		rows = append(rows, table.Row{
 			l.Backend,
 			humanize.Bytes(l.SizeBytes),
+			logicalSize(l),
+			compressionMark(l),
 			relativeAge(l.CreatedAt),
 			yesNo(l.Encrypted),
 			truncate(l.KeyID, 10),
@@ -223,6 +228,25 @@ func rowsFromLocations(locations []adminapi.ObjectLocation) []table.Row {
 		})
 	}
 	return rows
+}
+
+// logicalSize renders the size the client wrote, which differs from the stored
+// size only for an encoded copy. A dash for the rest says "same as SIZE"
+// without repeating the number and inviting the reader to compare them.
+func logicalSize(l *adminapi.ObjectLocation) string {
+	if l.CompressionAlgorithm == "" {
+		return "-"
+	}
+	return humanize.Bytes(l.LogicalSize)
+}
+
+// compressionMark renders how a copy is encoded, or a dash when it is stored
+// verbatim.
+func compressionMark(l *adminapi.ObjectLocation) string {
+	if l.CompressionAlgorithm == "" {
+		return "-"
+	}
+	return l.CompressionAlgorithm
 }
 
 // inspectView composes the inspector's full-screen layout.

@@ -16,6 +16,7 @@ package sqlite
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -214,7 +215,7 @@ func TestListUncompressedLocations_SelectsOnlyVerbatim(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	verbatim, err := s.ListUncompressedLocations(ctx, 10, 0)
+	verbatim, err := s.ListUncompressedLocations(ctx, 10, core.Cursor{})
 	if err != nil {
 		t.Fatalf("ListUncompressedLocations: %v", err)
 	}
@@ -222,7 +223,7 @@ func TestListUncompressedLocations_SelectsOnlyVerbatim(t *testing.T) {
 		t.Fatalf("uncompressed listing = %+v, want only bucket/plain", verbatim)
 	}
 
-	encoded, err := s.ListCompressedLocations(ctx, 10, 0)
+	encoded, err := s.ListCompressedLocations(ctx, 10, core.Cursor{})
 	if err != nil {
 		t.Fatalf("ListCompressedLocations: %v", err)
 	}
@@ -236,6 +237,51 @@ func TestListUncompressedLocations_SelectsOnlyVerbatim(t *testing.T) {
 	}
 	if encoded[0].LogicalSize != 8192 {
 		t.Errorf("LogicalSize = %d, want 8192", encoded[0].LogicalSize)
+	}
+}
+
+// TestListUncompressedLocations_PagesByCursor checks the listing resumes after
+// the row it is given rather than at an offset. The pass that drives it rewrites
+// the rows it reads, so by the time it asks for the next page the earlier ones
+// have left the predicate; an offset would land past the rows that moved up and
+// the walk would skip them.
+func TestListUncompressedLocations_PagesByCursor(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	const total = 5
+	for i := range total {
+		key := fmt.Sprintf("bucket/obj-%d", i)
+		if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+			t.Fatalf("RecordObject %s: %v", key, err)
+		}
+	}
+
+	seen := map[string]int{}
+	var after core.Cursor
+	for range total {
+		page, err := s.ListUncompressedLocations(ctx, 2, after)
+		if err != nil {
+			t.Fatalf("ListUncompressedLocations: %v", err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		for _, loc := range page {
+			seen[loc.ObjectKey]++
+		}
+		last := page[len(page)-1]
+		after = core.Cursor{ObjectKey: last.ObjectKey, BackendName: last.BackendName}
+	}
+
+	if len(seen) != total {
+		t.Errorf("walked %d distinct rows, want %d: %v", len(seen), total, seen)
+	}
+	for key, n := range seen {
+		if n != 1 {
+			t.Errorf("%s returned %d times, want once", key, n)
+		}
 	}
 }
 
@@ -315,5 +361,48 @@ func TestMarkObjectCompressed_ClearsOnDecompress(t *testing.T) {
 	}
 	if loc.SizeBytes != 1000 {
 		t.Errorf("SizeBytes = %d, want the 1000 decoded bytes", loc.SizeBytes)
+	}
+}
+
+// TestCompressionStats_ReportsPerBackendTotals covers what the dashboard reads.
+// Only encoded copies count: including the verbatim ones would report a ratio
+// no encoder produced, and a backend holding none is absent rather than zero so
+// "nothing compressed here" stays distinguishable from "compressed to nothing".
+func TestCompressionStats_ReportsPerBackendTotals(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := s.RecordObject(ctx, "bucket/encoded-a", "backend-a", 250, compressedForm()); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if _, err := s.RecordObject(ctx, "bucket/encoded-b", "backend-a", 150, compressedForm()); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if _, err := s.RecordObject(ctx, "bucket/verbatim", "backend-b", 900, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	stats, err := s.CompressionStats(ctx)
+	if err != nil {
+		t.Fatalf("CompressionStats: %v", err)
+	}
+
+	got, ok := stats["backend-a"]
+	if !ok {
+		t.Fatalf("backend-a missing from %+v", stats)
+	}
+	if got.Objects != 2 {
+		t.Errorf("Objects = %d, want 2", got.Objects)
+	}
+	// compressedForm carries a logical size of 8192 per copy.
+	if got.LogicalBytes != 16384 {
+		t.Errorf("LogicalBytes = %d, want 16384", got.LogicalBytes)
+	}
+	if got.StoredBytes != 400 {
+		t.Errorf("StoredBytes = %d, want 400", got.StoredBytes)
+	}
+	if _, ok := stats["backend-b"]; ok {
+		t.Error("backend-b holds nothing encoded and must be absent, not zero")
 	}
 }

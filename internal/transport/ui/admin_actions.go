@@ -251,7 +251,7 @@ func (h *Handler) handleAPICompressExisting(w http.ResponseWriter, r *http.Reque
 		name:      "compress-existing",
 		resultKey: "compressed",
 		run: func(ctx context.Context) (int, map[string]any, string, error) {
-			res, err := h.compression.CompressExisting(ctx)
+			res, err := h.compression.CompressExisting(ctx, nil)
 			if reason, skipped := skipReason(err); skipped {
 				return 0, nil, reason, nil
 			}
@@ -278,7 +278,7 @@ func (h *Handler) handleAPIDecompressExisting(w http.ResponseWriter, r *http.Req
 		name:      "decompress-existing",
 		resultKey: "decompressed",
 		run: func(ctx context.Context) (int, map[string]any, string, error) {
-			res, err := h.compression.DecompressExisting(ctx)
+			res, err := h.compression.DecompressExisting(ctx, nil)
 			if reason, skipped := skipReason(err); skipped {
 				return 0, nil, reason, nil
 			}

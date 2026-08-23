@@ -16,11 +16,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
 // emptyCompressionStore serves no rows, so a pass completes having considered
@@ -28,12 +30,12 @@ import (
 type emptyCompressionStore struct{}
 
 // ListUncompressedLocations returns no rows.
-func (emptyCompressionStore) ListUncompressedLocations(context.Context, int, int) ([]core.RewritableLocation, error) {
+func (emptyCompressionStore) ListUncompressedLocations(context.Context, int, core.Cursor) ([]core.RewritableLocation, error) {
 	return nil, nil
 }
 
 // ListCompressedLocations returns no rows.
-func (emptyCompressionStore) ListCompressedLocations(context.Context, int, int) ([]core.RewritableLocation, error) {
+func (emptyCompressionStore) ListCompressedLocations(context.Context, int, core.Cursor) ([]core.RewritableLocation, error) {
 	return nil, nil
 }
 
@@ -123,5 +125,52 @@ func TestDecompressExisting_EmptyFleet(t *testing.T) {
 	}
 	if got.Status != statusComplete || got.Decompressed != 0 {
 		t.Errorf("response = %+v, want a complete run of zero", got)
+	}
+}
+
+// TestCompressExisting_StreamsProgress checks the endpoint answers with an
+// NDJSON event stream when the caller asks for one. These passes read and
+// rewrite an entire fleet, so a caller watching one has to see it move; a
+// single JSON body at the end is indistinguishable from a hung request until
+// it arrives.
+func TestCompressExisting_StreamsProgress(t *testing.T) {
+	t.Parallel()
+	h := newTestHandler(t)
+	codec, err := compression.NewCodec(compression.DefaultLevel, compression.MinChunkSize)
+	if err != nil {
+		t.Fatalf("NewCodec: %v", err)
+	}
+	t.Cleanup(codec.Close)
+	compressionWith(t, h, codec, emptyCompressionStore{})
+
+	for _, path := range []string{"/admin/api/compress-existing", "/admin/api/decompress-existing"} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			mux := http.NewServeMux()
+			h.Register(mux)
+
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, nil)
+			req.Header.Set("X-Admin-Token", "test-token")
+			req.Header.Set("Accept", adminstream.ContentType)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+			}
+			if got := w.Header().Get("Content-Type"); got != adminstream.ContentType {
+				t.Errorf("Content-Type = %q, want %q", got, adminstream.ContentType)
+			}
+			// A completed pass brackets its work with a start and a result
+			// event, which is what the TUI renders around the per-object steps.
+			// The summary names skipped objects separately, since a pass over
+			// media declines almost everything.
+			body := w.Body.String()
+			for _, want := range []string{`"event":"start"`, `"event":"result"`, "skipped"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("stream body %q does not contain %s", body, want)
+				}
+			}
+		})
 	}
 }

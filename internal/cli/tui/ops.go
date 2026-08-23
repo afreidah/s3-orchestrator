@@ -64,10 +64,13 @@ type opsRequest struct {
 }
 
 // opsActions lists the instance actions in menu order: the maintenance passes
-// first, then cache control, then the encryption transitions. Drain is
-// intentionally excluded; it is a per-backend flow handled elsewhere.
+// first, then cache control, then the encryption and compression transitions.
+// Drain is intentionally excluded; it is a per-backend flow handled elsewhere.
 func opsActions() []opsAction {
-	return append(maintenanceActions(), append(cacheActions(), encryptionActions()...)...)
+	actions := maintenanceActions()
+	actions = append(actions, cacheActions()...)
+	actions = append(actions, encryptionActions()...)
+	return append(actions, compressionActions()...)
 }
 
 // opsOption adjusts an action that is not a plain POST-and-run.
@@ -166,6 +169,23 @@ func encryptionActions() []opsAction {
 				body, _ := json.Marshal(adminapi.RotateEncryptionKeyRequest{OldKeyID: value})
 				return opsRequest{path: "/admin/api/rotate-encryption-key", body: body}
 			})),
+	}
+}
+
+// compressionActions move stored objects between verbatim and encoded. Both are
+// offered whatever the write path is configured to do: converting a fleet before
+// switching writes over is a legitimate order to do it in, and unwinding one is
+// something an operator reaches for after turning the feature off.
+//
+// Both stream their progress rather than answering with one summary: they read
+// and rewrite every object in the fleet, so a caller watching one needs to see
+// it move rather than wait on a spinner that is indistinguishable from a hang.
+func compressionActions() []opsAction {
+	return []opsAction{
+		post("Compress existing objects", "/admin/api/compress-existing",
+			"Read and rewrite every uncompressed copy as chunked zstd?", nil),
+		post("Decompress existing objects", "/admin/api/decompress-existing",
+			"Read and rewrite every compressed copy back to its stored bytes?", nil),
 	}
 }
 

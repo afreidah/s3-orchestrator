@@ -86,14 +86,18 @@ func (s *Store) CountUnencryptedLocations(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
-func (s *Store) ListUnencryptedLocations(ctx context.Context, limit, offset int) ([]core.UnencryptedLocation, error) {
+// Cursor-paged: encrypting a copy takes it out of this predicate, so the set
+// shrinks as encrypt-existing walks it and an offset would step over the rows
+// that moved up.
+func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.UnencryptedLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes
 		FROM object_locations
 		WHERE encrypted = 0
+		  AND (object_key, backend_name) > (?, ?)
 		ORDER BY object_key, backend_name
-		LIMIT ? OFFSET ?`,
-		limit, offset,
+		LIMIT ?`,
+		after.ObjectKey, after.BackendName, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list unencrypted locations: %w", err)
@@ -153,14 +157,17 @@ func (s *Store) MarkObjectEncrypted(ctx context.Context, objectKey, backendName 
 
 // ListAllEncryptedLocations returns a page of all encrypted object locations
 // with decryption metadata. Used by the decrypt-existing admin endpoint.
-func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit, offset int) ([]core.DecryptableLocation, error) {
+// Cursor-paged for the same reason as ListUnencryptedLocations: decrypting a
+// copy removes it from this set mid-walk.
+func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.DecryptableLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes, encryption_key, key_id, plaintext_size
 		FROM object_locations
 		WHERE encrypted = 1
+		  AND (object_key, backend_name) > (?, ?)
 		ORDER BY object_key, backend_name
-		LIMIT ? OFFSET ?`,
-		limit, offset,
+		LIMIT ?`,
+		after.ObjectKey, after.BackendName, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list all encrypted locations: %w", err)

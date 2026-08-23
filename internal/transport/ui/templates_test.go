@@ -146,3 +146,53 @@ func TestBarColor(t *testing.T) {
 		}
 	}
 }
+
+// TestSub covers the subtraction the savings figures rely on, including the
+// negative case: an encoding that grew is a real state on a fleet where the
+// ratio floor was widened after the fact, and the page must show it rather than
+// clamp it to zero.
+func TestSub(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		a, b int64
+		want int64
+	}{
+		{"a saving", 1000, 250, 750},
+		{"nothing saved", 500, 500, 0},
+		{"grew", 500, 600, -100},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := sub(tt.a, tt.b); got != tt.want {
+				t.Errorf("sub(%d, %d) = %d, want %d", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRatio covers the compression ratio cell, whose interesting case is an
+// empty fleet: nothing measured is a dash, not a zero, since a zero there reads
+// as an encoder achieving perfect compression.
+func TestRatio(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		a, b int64
+		want string
+	}{
+		{"quarter", 250, 1000, "0.25"},
+		{"no saving", 1000, 1000, "1.00"},
+		{"nothing measured", 0, 0, "-"},
+		{"stored without logical", 100, 0, "-"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ratio(tt.a, tt.b); got != tt.want {
+				t.Errorf("ratio(%d, %d) = %q, want %q", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}

@@ -333,6 +333,33 @@ type DecryptableLocation struct {
 	PlaintextSize int64
 }
 
+// Cursor is the position a paged admin listing resumes from: the last
+// (object_key, backend_name) it returned. The zero value starts at the
+// beginning.
+//
+// It exists because the bulk rewrite passes mutate the rows they walk. Each
+// object a pass rewrites leaves the predicate its listing selects on, so the
+// set shrinks mid-walk; an offset advanced against that steps over the rows
+// that moved up and the run reports success having skipped them. A cursor names
+// a row rather than a position, so rows leaving the set behind it change
+// nothing.
+type Cursor struct {
+	ObjectKey   string
+	BackendName string
+}
+
+// CompressionStat reports what compression is worth on one backend: how many
+// copies are stored encoded, what those objects are, and what they occupy.
+//
+// The saving is LogicalBytes - StoredBytes, derived rather than stored so it
+// cannot disagree with the two figures it comes from. Copies stored verbatim
+// are excluded: counting them would report a ratio no encoder produced.
+type CompressionStat struct {
+	Objects      int64
+	LogicalBytes int64
+	StoredBytes  int64
+}
+
 // RewritableLocation is one copy a bulk compression pass may rewrite. It
 // carries the encryption metadata as well, because compression sits inside
 // encryption: an encrypted copy has to be decrypted before its bytes can be
