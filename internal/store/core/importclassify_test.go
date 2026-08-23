@@ -47,7 +47,7 @@ func encryptedSibling(backendName string, baseNonce []byte) ObjectLocation {
 func TestClassifyImport_Plaintext(t *testing.T) {
 	t.Parallel()
 	siblings := []ObjectLocation{encryptedSibling("b1", nonce(0xAA))}
-	decision, enc := ClassifyImport([]byte("just a plain object body"), siblings)
+	decision, enc := ClassifyImport(DiscoveredBytes{Header: []byte("just a plain object body")}, siblings)
 	if decision != ImportPlaintext {
 		t.Errorf("decision = %v, want ImportPlaintext", decision)
 	}
@@ -62,7 +62,7 @@ func TestClassifyImport_AdoptsMatchingSibling(t *testing.T) {
 	t.Parallel()
 	n := nonce(0xAA)
 	sib := encryptedSibling("b1", n)
-	decision, enc := ClassifyImport(envelopeHeader(n), []ObjectLocation{sib})
+	decision, enc := ClassifyImport(DiscoveredBytes{Header: envelopeHeader(n)}, []ObjectLocation{sib})
 	if decision != ImportAdoptKey {
 		t.Fatalf("decision = %v, want ImportAdoptKey", decision)
 	}
@@ -81,7 +81,7 @@ func TestClassifyImport_AdoptsMatchingSibling(t *testing.T) {
 func TestClassifyImport_RefusesSiblingFromDifferentWrite(t *testing.T) {
 	t.Parallel()
 	sib := encryptedSibling("b1", nonce(0xAA))
-	decision, enc := ClassifyImport(envelopeHeader(nonce(0xBB)), []ObjectLocation{sib})
+	decision, enc := ClassifyImport(DiscoveredBytes{Header: envelopeHeader(nonce(0xBB))}, []ObjectLocation{sib})
 	if decision != ImportUnreadable {
 		t.Fatalf("decision = %v, want ImportUnreadable", decision)
 	}
@@ -97,7 +97,7 @@ func TestClassifyImport_RefusesSiblingFromDifferentWrite(t *testing.T) {
 // as encrypted and keyless rather than as plaintext.
 func TestClassifyImport_NoSibling(t *testing.T) {
 	t.Parallel()
-	decision, enc := ClassifyImport(envelopeHeader(nonce(0xAA)), nil)
+	decision, enc := ClassifyImport(DiscoveredBytes{Header: envelopeHeader(nonce(0xAA))}, nil)
 	if decision != ImportUnreadable {
 		t.Fatalf("decision = %v, want ImportUnreadable", decision)
 	}
@@ -117,7 +117,7 @@ func TestClassifyImport_SkipsUnusableSiblings(t *testing.T) {
 		{BackendName: "b2", Encrypted: true},
 		encryptedSibling("b3", n),
 	}
-	decision, enc := ClassifyImport(envelopeHeader(n), siblings)
+	decision, enc := ClassifyImport(DiscoveredBytes{Header: envelopeHeader(n)}, siblings)
 	if decision != ImportAdoptKey {
 		t.Fatalf("decision = %v, want ImportAdoptKey from the one usable sibling", decision)
 	}
@@ -131,7 +131,7 @@ func TestClassifyImport_SkipsUnusableSiblings(t *testing.T) {
 func TestImportDecision_String(t *testing.T) {
 	t.Parallel()
 	seen := map[string]bool{}
-	for _, d := range []ImportDecision{ImportPlaintext, ImportAdoptKey, ImportUnreadable} {
+	for _, d := range []ImportDecision{ImportPlaintext, ImportAdoptKey, ImportUnreadable, ImportCompressed} {
 		s := d.String()
 		if s == "" || s == "unknown" || seen[s] {
 			t.Errorf("decision %d rendered %q, want a distinct label", d, s)

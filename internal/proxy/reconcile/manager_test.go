@@ -84,7 +84,7 @@ func newTestManager(t *testing.T, ctrl *gomock.Controller) (*Manager, *MockStore
 	stores := NewMockStores(ctrl)
 	backends := NewMockBackendResolver(ctrl)
 	usage := NewMockUsageRecorder(ctrl)
-	return NewManager(backends, stores, usage, nil), stores, backends, usage
+	return NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage}), stores, backends, usage
 }
 
 // ledgerRows returns a ListObjectsByBackendKeyAsc stub yielding one page then

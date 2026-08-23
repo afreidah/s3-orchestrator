@@ -219,8 +219,8 @@ func TestImportPage_DryRun(t *testing.T) {
 		{Key: "b.txt", SizeBytes: 20},
 	}
 	imp, skip, bytesIn, err := importPage(
-		context.Background(), syncTestBackend(page), objects, page, "b1", []string{"vb"},
-		&Options{BucketName: "vb", DryRun: true},
+		context.Background(), syncTestBackend(page),
+		testImportRun(objects, &Options{BucketName: "vb", DryRun: true}), page,
 	)
 	if err != nil {
 		t.Fatalf("importPage: %v", err)
@@ -241,8 +241,8 @@ func TestImportPage_RealImportSkipsExisting(t *testing.T) {
 
 	// First pass: both rows are created.
 	imp, skip, bytesIn, err := importPage(
-		context.Background(), syncTestBackend(page), objects, page, "b1", []string{"vb"},
-		&Options{BucketName: "vb"},
+		context.Background(), syncTestBackend(page),
+		testImportRun(objects, &Options{BucketName: "vb"}), page,
 	)
 	if err != nil {
 		t.Fatalf("importPage first pass: %v", err)
@@ -253,8 +253,8 @@ func TestImportPage_RealImportSkipsExisting(t *testing.T) {
 
 	// Second pass: both already exist, so ImportObject returns (false, nil).
 	imp, skip, bytesIn, err = importPage(
-		context.Background(), syncTestBackend(page), objects, page, "b1", []string{"vb"},
-		&Options{BucketName: "vb"},
+		context.Background(), syncTestBackend(page),
+		testImportRun(objects, &Options{BucketName: "vb"}), page,
 	)
 	if err != nil {
 		t.Fatalf("importPage second pass: %v", err)
@@ -271,8 +271,8 @@ func TestImportPage_PropagatesError(t *testing.T) {
 	wrapped := errorObjectStore{err: os.ErrPermission}
 	page := []backend.ListedObject{{Key: "x", SizeBytes: 1}}
 	_, _, _, err := importPage(
-		context.Background(), syncTestBackend(page), wrapped, page,
-		"b1", []string{"vb"}, &Options{BucketName: "vb"},
+		context.Background(), syncTestBackend(page),
+		testImportRun(wrapped, &Options{BucketName: "vb"}), page,
 	)
 	if err == nil {
 		t.Fatal("expected error to propagate")
@@ -304,6 +304,17 @@ func TestRun_FailsWithoutLiveBackend(t *testing.T) {
 // syncTestBackend returns an in-memory backend holding plaintext bytes for
 // every key in a listing page, so the import path's envelope inspection has
 // something real to read.
+// testImportRun builds the per-run state importPage reads, with no codec: these
+// cases seed plaintext bodies, which nothing tries to recognise.
+func testImportRun(store importer, opts *Options) *importRun {
+	return &importRun{
+		Store:      store,
+		BackendCfg: &config.BackendConfig{Name: "b1"},
+		Buckets:    []string{"vb"},
+		Opts:       opts,
+	}
+}
+
 func syncTestBackend(page []backend.ListedObject) *backendtest.InMemory {
 	be := backendtest.NewInMemory()
 	for _, o := range page {

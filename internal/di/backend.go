@@ -475,7 +475,17 @@ func ProvideReconcileManager(i do.Injector) (*reconcile.Manager, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
-	return reconcile.NewManager(rt, stores, rt.Acct(), slog.Default().With(logfmt.Component("reconcile"))), nil
+	codec, err := do.Invoke[*compression.Codec](i)
+	if err != nil {
+		return nil, err
+	}
+	return reconcile.NewManager(&reconcile.Deps{
+		Backends: rt,
+		Stores:   stores,
+		Usage:    rt.Acct(),
+		Codec:    codec,
+		Log:      slog.Default().With(logfmt.Component("reconcile")),
+	}), nil
 }
 
 func ProvideBackendManager(i do.Injector) (*proxy.BackendManager, error) {

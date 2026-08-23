@@ -14,6 +14,7 @@
 package synccmd
 
 import (
+	"cmp"
 	"context"
 	"flag"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"os"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -74,7 +76,27 @@ func Run(args []string, stderr io.Writer) int { // codecov:ignore -- CLI entry p
 		return 1
 	}
 
-	if err := runImport(ctx, s3b, metaDB, backendCfg, bucketNames(cfg), opts); err != nil {
+	// Built whether or not compression is enabled for writes: this scan has to
+	// recognise objects an earlier run of it wrote, however the feature is set
+	// now.
+	codec, err := compression.NewCodecForLevel(
+		cmp.Or(cfg.Compression.Level, config.DefaultCompressionLevel),
+		cmp.Or(cfg.Compression.ChunkSize, config.DefaultCompressionChunkSize),
+	)
+	if err != nil {
+		synccmdLogger().ErrorContext(ctx, "failed to initialize compression codec", "error", err)
+		return 1
+	}
+	defer codec.Close()
+
+	run := &importRun{
+		Store:      metaDB,
+		Codec:      codec,
+		BackendCfg: backendCfg,
+		Buckets:    bucketNames(cfg),
+		Opts:       opts,
+	}
+	if err := runImport(ctx, s3b, run); err != nil {
 		synccmdLogger().ErrorContext(ctx, "sync failed", "error", err)
 		return 1
 	}
@@ -194,17 +216,29 @@ func initStore(ctx context.Context, cfg *config.Config) (importer, adminStore, i
 	return objects, adminDB, 0
 }
 
+// importRun is the per-run state every imported page is measured against: where
+// the rows go, what recognises an encoded object, and which virtual buckets the
+// keys are matched to.
+type importRun struct {
+	Store      importer
+	Codec      reconcile.StoredInspector
+	BackendCfg *config.BackendConfig
+	Buckets    []string
+	Opts       *Options
+}
+
 // runImport walks the backend, importing each page into the metadata store.
 // Accumulates and logs totals per page.
-func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB importer, backendCfg *config.BackendConfig, buckets []string, opts *Options) error {
+func runImport(ctx context.Context, s3b *backend.S3Backend, run *importRun) error {
+	opts := run.Opts
 	mode := "sync"
 	if opts.DryRun {
 		mode = "dry-run"
 	}
 	synccmdLogger().InfoContext(ctx, "starting sync",
-		"backend", backendCfg.Name,
+		"backend", run.BackendCfg.Name,
 		"virtual_bucket", opts.BucketName,
-		"backend_bucket", backendCfg.Bucket,
+		"backend_bucket", run.BackendCfg.Bucket,
 		"prefix", opts.Prefix,
 		"mode", mode,
 	)
@@ -215,7 +249,7 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB importer, bac
 
 	err := s3b.ListObjects(ctx, opts.Prefix, func(objects []backend.ListedObject) error {
 		pageNum++
-		imported, skipped, bytes, err := importPage(ctx, s3b, metaDB, objects, backendCfg.Name, buckets, opts)
+		imported, skipped, bytes, err := importPage(ctx, s3b, run, objects)
 		if err != nil {
 			return err
 		}
@@ -233,7 +267,7 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB importer, bac
 	}
 
 	synccmdLogger().InfoContext(ctx, "sync complete",
-		"backend", backendCfg.Name,
+		"backend", run.BackendCfg.Name,
 		"imported", totalImported,
 		"skipped", totalSkipped,
 		"bytes_imported", totalBytes,
@@ -247,11 +281,12 @@ func runImport(ctx context.Context, s3b *backend.S3Backend, metaDB importer, bac
 // exactly as the backend holds them; an object outside every configured bucket
 // prefix is recorded as unmanaged so it counts toward quota without any worker
 // acting on it.
-func importPage(ctx context.Context, s3b backend.ObjectBackend, metaDB importer, objects []backend.ListedObject, backendName string, buckets []string, opts *Options) (imported, skipped int, bytes int64, err error) {
-	prefixes := bucketPrefixes(buckets)
+func importPage(ctx context.Context, s3b backend.ObjectBackend, run *importRun, objects []backend.ListedObject) (imported, skipped int, bytes int64, err error) {
+	backendName := run.BackendCfg.Name
+	prefixes := bucketPrefixes(run.Buckets)
 	for _, obj := range objects {
 		unmanaged := reconcile.Unmanaged(obj.Key, prefixes)
-		if opts.DryRun {
+		if run.Opts.DryRun {
 			synccmdLogger().InfoContext(ctx, "would import",
 				"key", obj.Key, "size", obj.SizeBytes, "unmanaged", unmanaged)
 			imported++
@@ -260,14 +295,15 @@ func importPage(ctx context.Context, s3b backend.ObjectBackend, metaDB importer,
 		}
 		form, err := reconcile.ClassifyImport(ctx, reconcile.ClassifyDeps{
 			Backend: s3b,
-			Stores:  metaDB,
+			Stores:  run.Store,
+			Codec:   run.Codec,
 			Source:  "sync",
 			Log:     synccmdLogger(),
-		}, backendName, obj.Key)
+		}, backendName, obj.Key, obj.SizeBytes)
 		if err != nil {
 			return imported, skipped, bytes, err
 		}
-		ok, err := metaDB.ImportObject(ctx, obj.Key, backendName, obj.SizeBytes, unmanaged, form)
+		ok, err := run.Store.ImportObject(ctx, obj.Key, backendName, obj.SizeBytes, unmanaged, form)
 		if err != nil {
 			return imported, skipped, bytes, fmt.Errorf("failed to import %s: %w", obj.Key, err)
 		}
