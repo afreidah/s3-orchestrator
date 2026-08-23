@@ -21,7 +21,7 @@ compression:
 
 ## Current status
 
-PUT, multipart completion, GET, HEAD, server-side copy and the scrubber all handle compression. Replication does not yet carry the representation metadata to the copies it creates, so a replica of a compressed object is recorded as though its bytes were verbatim. Leave `enabled: false` until that lands.
+PUT, multipart completion, GET, HEAD, server-side copy, the scrubber, and the workers that move copies between backends all handle compression. What remains is the reconciler, which would import a compressed object it finds on a backend as though its bytes were verbatim, and pending-intent recovery. Leave `enabled: false` until those land.
 
 ## Why the format is chunked
 
@@ -93,6 +93,12 @@ An object uploaded in parts is compressed once, when the parts are assembled, no
 Assembly already rewrites the object rather than concatenating stored bytes - encrypted parts are decrypted as they stream so the assembled object is a single envelope - so compression costs no extra pass over the data. It does mean the encoded object is buffered before it is sent, because a backend PUT declares its size up front and an encoder only knows that size once it has finished. Objects above 32 MiB spill to a temporary file rather than being held in memory.
 
 `min_ratio` applies here as it does to a single PUT. The parts stream past exactly once, so an encoding that fails to earn its place is decoded back out of that same buffer rather than re-read from the backend, which would cost a second egress charge on every part.
+
+## Copies made by the workers
+
+Replication, rebalance and drain move stored bytes verbatim - they never decode - so the row each one writes for the new copy repeats what the source row said. That description is produced by one conversion shared with the write and copy paths, rather than by each path listing the columns it happens to remember.
+
+A copy recorded without it is not a degraded copy but an unreadable one: the bytes are chunked zstd and the row says they are not, so the read path serves them raw at the wrong size. The replicator would then spread that row to further backends.
 
 ## Verification
 

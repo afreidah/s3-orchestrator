@@ -212,16 +212,12 @@ func MoveObjectLocation(ctx context.Context, runner Runner, key, fromBackend, to
 		if err := tx.DeleteObjectFromBackend(ctx, key, fromBackend); err != nil {
 			return 0, err
 		}
-		dest := &ObjectLocation{
-			ObjectKey:     key,
-			BackendName:   toBackend,
-			SizeBytes:     src.SizeBytes,
-			Encrypted:     src.Encrypted,
-			EncryptionKey: src.EncryptionKey,
-			KeyID:         src.KeyID,
-			PlaintextSize: src.PlaintextSize,
-			ContentHash:   src.ContentHash,
-		}
+		// The description of the bytes is carried through the same conversion
+		// every other path that moves them verbatim uses, rather than a
+		// hand-listed subset of the source row's fields. A field omitted here is
+		// a column describing bytes the moved copy then contradicts, which is
+		// how this path came to drop the compression columns.
+		dest := objectFromStoredForm(key, toBackend, src.SizeBytes, StoredFormFromLocation(src))
 		if err := tx.InsertObjectLocation(ctx, dest); err != nil {
 			return 0, err
 		}
