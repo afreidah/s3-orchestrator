@@ -21,7 +21,7 @@ compression:
 
 ## Current status
 
-PUT, multipart completion, GET, HEAD, server-side copy, the scrubber, and the workers that move copies between backends all handle compression. What remains is the reconciler, which would import a compressed object it finds on a backend as though its bytes were verbatim, and pending-intent recovery. Leave `enabled: false` until those land.
+PUT, multipart completion, GET, HEAD, server-side copy, the scrubber, the workers that move copies between backends, and reconcile all handle compression. What remains is pending-intent recovery. Leave `enabled: false` until that lands.
 
 ## Why the format is chunked
 
@@ -99,6 +99,16 @@ Assembly already rewrites the object rather than concatenating stored bytes - en
 Replication, rebalance and drain move stored bytes verbatim - they never decode - so the row each one writes for the new copy repeats what the source row said. That description is produced by one conversion shared with the write and copy paths, rather than by each path listing the columns it happens to remember.
 
 A copy recorded without it is not a degraded copy but an unreadable one: the bytes are chunked zstd and the row says they are not, so the read path serves them raw at the wrong size. The replicator would then spread that row to further backends.
+
+## Objects rediscovered on a backend
+
+Reconcile and `sync` are the only paths that start from bytes rather than from a client request, so they are the only place the orchestrator has to work out how an object is stored instead of being told.
+
+An encoding is recognised by its seek table. The frame magic cannot decide it: the stored form is a valid Zstandard stream on purpose, so the magic matches a `.zst` file a client uploaded just as well, and decoding one of those on read would return bytes the client never sent. A plain zstd encoder writes no seek table, which is what separates the two.
+
+Recognised objects are imported with the logical size their seek table declares, which is the number nothing else could supply for an object whose rows are all gone. Anything unrecognised is imported as the verbatim bytes it appears to be.
+
+A compressed object that is also encrypted cannot be recognised from outside, since it was compressed before it was encrypted. Those inherit their description from a surviving copy's row instead, along with the key.
 
 ## Verification
 

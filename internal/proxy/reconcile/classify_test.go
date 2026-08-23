@@ -71,14 +71,22 @@ func encryptInto(t *testing.T, enc *encryption.Encryptor, be *backendtest.InMemo
 	}
 }
 
-// classify runs ClassifyImport against a backend and copy set.
+// classify runs ClassifyImport against a backend and copy set, with no codec:
+// these cases are about the encryption envelope, which is read from the head of
+// the object and needs nothing else.
 func classify(t *testing.T, be *backendtest.InMemory, key string, locs []core.ObjectLocation) (*core.StoredForm, error) {
 	t.Helper()
+	// A key with nothing behind it is size 0, which is what the caller would
+	// have observed listing a backend that lost the object mid-pass.
+	var size int64
+	if obj, ok := be.Get(key); ok {
+		size = int64(len(obj.Data))
+	}
 	return ClassifyImport(context.Background(), ClassifyDeps{
 		Backend: be,
 		Stores:  siblingStub{locs: locs},
 		Source:  "test",
-	}, "b1", key)
+	}, "b1", key, size)
 }
 
 // TestClassifyImport_AdoptsKeyFromSurvivingReplica is the recovery the

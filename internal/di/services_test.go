@@ -111,7 +111,9 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 	sc := worker.NewScrubber(worker.ScrubberDeps{Ops: mgr.Runtime(), Placement: coord, Store: mock})
 	sc.SetConfig(&config.IntegrityConfig{})
 
-	rec := reconcile.NewManager(mgr.Runtime(), mock, mgr.Runtime().Acct(), nil)
+	rec := reconcile.NewManager(&reconcile.Deps{
+		Backends: mgr.Runtime(), Stores: mock, Usage: mgr.Runtime().Acct(),
+	})
 	exp := expiry.New(mock, mgr.Objects(), nil)
 	exp.SetConfig(&config.LifecycleConfig{})
 	mgr.SetIntegrityConfig(&config.IntegrityConfig{})

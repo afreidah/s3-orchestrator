@@ -18,6 +18,7 @@
 package compression
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -157,6 +158,20 @@ func newCodec(level zstd.EncoderLevel, chunkSize int) (*Codec, error) {
 		return &b
 	}
 	return c, nil
+}
+
+// frameMagic is the four bytes every Zstandard data frame starts with.
+var frameMagic = []byte{0x28, 0xB5, 0x2F, 0xFD}
+
+// HasFrameMagic reports whether bytes begin a Zstandard frame.
+//
+// This is a filter, not an answer: the magic is Zstandard's, not this project's,
+// so it is equally true of a .zst file a client uploaded. What it rules out is
+// everything else, cheaply, from a head that has already been read - which is
+// what keeps InspectStored's tail fetch off the plaintext objects that make up
+// most of a backend.
+func HasFrameMagic(b []byte) bool {
+	return len(b) >= len(frameMagic) && bytes.Equal(b[:len(frameMagic)], frameMagic)
 }
 
 // WorthStoring reports whether an encoded object shrank enough to be stored in

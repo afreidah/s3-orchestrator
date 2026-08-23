@@ -371,6 +371,16 @@ An envelope needs the key that encrypted it. Every write mints its own key, so a
 
 An envelope no surviving row can decrypt is recorded as encrypted with no key. It counts toward quota, but reads of that copy fail rather than returning ciphertext, and it is counted under `s3o_import_classified_total{decision="unreadable"}`. Restore those objects from another source or delete them; the key is gone.
 
+### Compressed objects
+
+An object stored compressed is recognised by its seek table, not by the Zstandard frame magic. The stored form is a valid Zstandard stream by design, so the magic alone would equally match a `.zst` file uploaded as ordinary content, and decoding one of those on read would hand the client back something they never uploaded. A plain zstd encoder never writes a seek table, so its presence is what separates the two.
+
+Recognised objects are imported with the logical size their seek table declares and counted under `s3o_import_classified_total{decision="compressed"}`. Anything not recognised is imported as the verbatim bytes it appears to be.
+
+The frame magic is checked against the object header the import already reads, so only an object that could plausibly be an encoding pays the extra read of its tail. Importing a backend of ordinary objects costs exactly what it did before.
+
+A compressed object that is also encrypted cannot be recognised this way, since compression runs first and its encoding is inside the ciphertext. Those are covered by the same key adoption described above, which carries the compression columns along with the key.
+
 
 ### Dry run first
 
