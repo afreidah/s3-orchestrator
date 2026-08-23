@@ -625,7 +625,7 @@ After updating the config, call the `rotate-encryption-key` admin API to re-wrap
 
 At-rest compression. When enabled, objects are stored on backends as chunked zstd and served back as the bytes the client wrote: sizes, ETags and content hashes stay those of the logical object.
 
-PUT, multipart completion, GET, HEAD, server-side copy and the scrubber honour this today. Replication does not yet carry the representation metadata to the copies it creates. Leave it off until that lands.
+PUT, multipart completion, GET, HEAD, server-side copy, the scrubber and the workers that move copies between backends honour this today. The reconciler and pending-intent recovery do not. Leave it off until those land.
 
 ```yaml
 compression:
