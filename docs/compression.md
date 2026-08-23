@@ -23,7 +23,23 @@ compression:
 
 Every path handles compression: PUT and multipart completion write it, GET and HEAD serve through it, server-side copy and the replication workers carry it, the scrubber decodes before hashing, reconcile recognises it, and a crash-recovered write keeps it. Still off by default, and still worth enabling on a test fleet before a production one.
 
-Per-request metrics and dashboards are outstanding (#1265).
+## What to watch
+
+Two ratios say whether the feature is doing its job, and both are a pair of counters rather than a single figure so nothing has to be kept in step:
+
+| Question | Expression |
+|----------|------------|
+| What ratio is the fleet achieving? | `s3o_compression_stored_bytes_total / s3o_compression_logical_bytes_total` |
+| How many bytes has it saved? | `s3o_compression_logical_bytes_total - s3o_compression_stored_bytes_total` |
+| Are ranged reads still ranged? | `s3o_compression_fetched_bytes_total / s3o_compression_served_bytes_total` |
+
+The last one is read amplification, and it is the number that proves the chunked format is earning its ratio penalty. A range read fetches the frames it covers, so the figure is bounded by the chunk size against the ranges clients ask for. If it climbs towards the average object size, reads have regressed to fetching whole objects and decoding them - a change nothing else would surface except the backend bill.
+
+`s3o_compression_skipped_total` separates the two floors, which matters when a fleet compresses less than expected: `min_size` means the objects are small, `min_ratio` means they are already compressed, and the two call for different responses. `s3o_compression_ratio` gives the per-object distribution, since a fleet averaging 0.4 behaves differently depending on whether that is every object or half of them at 0.05.
+
+`s3o_compression_errors_total{operation="decode"}` deserves an alert on any value. An encode failure fails one write; a decode failure means bytes already stored cannot be read back.
+
+The Grafana dashboard carries all of these in a Compression row.
 
 ## Bringing an existing fleet under compression
 

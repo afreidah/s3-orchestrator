@@ -76,14 +76,19 @@ func (o *Manager) compressedGetAttempt(ctx context.Context, key, rangeHeader, be
 	fetcher := newStoredRangeFetcher(o.core, backend, o.encryptor, loc, key, beName)
 	reader, err := o.codec.DecompressRanged(ctx, fetcher, fetcher.compressedSize())
 	if err != nil {
+		telemetry.CompressionErrorsTotal.WithLabelValues(telemetry.CompressionOpDecode).Inc()
 		return fail, fmt.Errorf("backend %s: %w", beName, err)
 	}
 
 	r, err := o.compressedResult(reader, fetcher, loc, rangeHeader)
 	if err != nil {
+		telemetry.CompressionErrorsTotal.WithLabelValues(telemetry.CompressionOpDecode).Inc()
 		_ = reader.Close()
 		return fail, fmt.Errorf("backend %s: %w", beName, err)
 	}
+	// The response size is what the client was promised, which is the
+	// denominator read amplification is measured against.
+	telemetry.CompressionServedBytesTotal.Add(float64(r.Size))
 
 	o.maybeWrapIntegrityReader(ctx, r, loc, key, beName, backend, r.ContentRange != "")
 	return readpath.ProbeResult[*s3be.GetObjectResult]{

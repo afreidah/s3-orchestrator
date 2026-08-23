@@ -143,12 +143,16 @@ func (o *Manager) preparePutBody(span trace.Span, src io.Reader, size int64) (*p
 		cleanup:     mbody.Cleanup,
 	}
 	if !o.compressOnWrite(size) {
+		if o.codec != nil && o.compression.Enabled {
+			telemetry.CompressionSkippedTotal.WithLabelValues(telemetry.CompressionSkipMinSize).Inc()
+		}
 		return plan, nil
 	}
 
 	cbody, storedSize, err := o.compressPutBody(mbody, size)
 	if err != nil {
 		mbody.Cleanup()
+		telemetry.CompressionErrorsTotal.WithLabelValues(telemetry.CompressionOpEncode).Inc()
 		observe.RecordSpanError(span, err)
 		return nil, err
 	}
@@ -157,8 +161,10 @@ func (o *Manager) preparePutBody(span trace.Span, src io.Reader, size int64) (*p
 	// describing the plaintext it was made from.
 	if !compression.WorthStoring(size, storedSize, o.compression.MinRatio) {
 		cbody.Cleanup()
+		telemetry.CompressionSkippedTotal.WithLabelValues(telemetry.CompressionSkipMinRatio).Inc()
 		return plan, nil
 	}
+	telemetry.RecordCompressed(size, storedSize)
 	plan.body, plan.storedSize, plan.compressed = cbody, storedSize, true
 	plan.cleanup = func() {
 		cbody.Cleanup()

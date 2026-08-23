@@ -172,6 +172,8 @@ Key metrics to alert on:
 | `s3o_import_classified_total{decision="unreadable"}` | Reconcile or sync found an encrypted object whose key is gone. It is recorded so its space is accounted for, but nothing can serve it. Restore it from elsewhere or delete it |
 | `s3o_integrity_oldest_unverified_seconds` | Alert when it climbs steadily. The scrubber is not completing a sweep. It should settle around the sweep period implied by `scrubber_interval` and `scrubber_batch_size`; a rising value means the batch is too small or the interval too long for the fleet |
 | `s3o_integrity_never_verified_copies` | Stays non-zero on a fleet being written to, since new copies queue behind older data by design. Alert on a climbing value, not on it being above zero |
+| `s3o_compression_errors_total{operation="decode"}` | Any non-zero rate is an alert: bytes already stored cannot be read back. An `encode` failure only fails the write that caused it, but a decode failure means an object is unreadable now |
+| `s3o_compression_fetched_bytes_total / s3o_compression_served_bytes_total` | Read amplification. Bounded by chunk size relative to the ranges clients ask for, so it should be flat. A climb towards the average object size means reads have stopped being ranged, which is visible nowhere else except the backend bill |
 | `s3o_requests_total{status_code="5xx"}` | Alert on elevated 5xx rates |
 | `s3o_http_panic_recovered_total{route}` | Any non-zero rate is an alert: a handler panicked and the recovery middleware returned a 500. Pivot via the matching `http.PanicRecovered` audit entry for the captured stack and request id |
 | `s3o_degraded_write_rejections_total` | Writes being rejected due to degraded mode |
@@ -296,6 +298,13 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_encrypt_existing_objects_total` | Counter | status | Objects processed by encrypt-existing |
 | `s3o_compress_existing_objects_total` | Counter | status | Objects processed by compress-existing. `status="skipped"` counts objects deliberately left alone, which is the expected outcome for media and archives |
 | `s3o_decompress_existing_objects_total` | Counter | status | Objects processed by decompress-existing |
+| `s3o_compression_logical_bytes_total` | Counter | — | Bytes clients wrote for objects that were then stored compressed |
+| `s3o_compression_stored_bytes_total` | Counter | — | What those objects occupy after encoding. Divide by the above for the fleet's ratio; subtract for bytes saved |
+| `s3o_compression_ratio` | Histogram | — | Encoded size as a fraction of logical size, per object |
+| `s3o_compression_fetched_bytes_total` | Counter | — | Stored bytes fetched from backends while serving compressed objects |
+| `s3o_compression_served_bytes_total` | Counter | — | Logical bytes served to clients from those reads. Divide the above by this for read amplification |
+| `s3o_compression_skipped_total` | Counter | reason | Objects stored verbatim despite compression being on (`min_size`, `min_ratio`) |
+| `s3o_compression_errors_total` | Counter | operation | Codec failures (`encode`, `decode`) |
 | `s3o_encryption_plaintext_copies` | Gauge | — | Copies still stored unencrypted; falls only when encrypt-existing is run |
 | `s3o_decrypt_existing_objects_total` | Counter | status | Objects processed by decrypt-existing |
 | `s3o_key_rotation_objects_total` | Counter | status | DEKs re-wrapped by key rotation |
