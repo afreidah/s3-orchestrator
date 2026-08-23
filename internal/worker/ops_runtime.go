@@ -15,6 +15,7 @@ package worker
 
 import (
 	"context"
+	"io"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
@@ -102,4 +103,12 @@ type ScrubberOps interface {
 	DataMover
 	UsageAccessor
 	RecorderProvider
+}
+
+// StreamDecompressor decodes a stored object front to back, which is all the
+// scrubber needs: it reads whole objects and never seeks within one. Declared
+// here rather than taking *compression.Codec so a test can present bytes that
+// will not decode without hand-building a corrupt object.
+type StreamDecompressor interface {
+	DecompressStream(r io.Reader) (io.ReadCloser, error)
 }

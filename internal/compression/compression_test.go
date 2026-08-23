@@ -414,6 +414,53 @@ func TestNewCodecForLevel_RejectsChunkSizeOutOfRange(t *testing.T) {
 	}
 }
 
+// TestDecompressStream_RoundTrips pins the property the whole-object decode
+// rests on: a stored object decodes front to back without its seek table, so a
+// caller holding only a stream does not have to buffer the object to read it.
+func TestDecompressStream_RoundTrips(t *testing.T) {
+	t.Parallel()
+	c := newTestCodec(t)
+	src := compressible(testChunk * 3)
+
+	var stored bytes.Buffer
+	if _, err := c.Compress(&stored, bytes.NewReader(src)); err != nil {
+		t.Fatalf("Compress: %v", err)
+	}
+
+	r, err := c.DecompressStream(bytes.NewReader(stored.Bytes()))
+	if err != nil {
+		t.Fatalf("DecompressStream: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	got, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read decoded: %v", err)
+	}
+	if !bytes.Equal(got, src) {
+		t.Error("the stream decode did not return what was encoded")
+	}
+}
+
+// TestDecompressStream_CorruptObject checks a stream decode reports damage as
+// ErrCorruptObject, the same as the seekable path, rather than leaking whatever
+// shape the library produced.
+func TestDecompressStream_CorruptObject(t *testing.T) {
+	t.Parallel()
+	c := newTestCodec(t)
+
+	r, err := c.DecompressStream(bytes.NewReader([]byte("not a zstd frame at all")))
+	if err != nil {
+		if !errors.Is(err, ErrCorruptObject) {
+			t.Fatalf("DecompressStream err = %v, want ErrCorruptObject", err)
+		}
+		return
+	}
+	defer func() { _ = r.Close() }()
+	if _, err := io.ReadAll(r); !errors.Is(err, ErrCorruptObject) {
+		t.Errorf("read err = %v, want ErrCorruptObject", err)
+	}
+}
+
 // TestWorthStoring pins the comparison itself, where the boundary cases live:
 // an object exactly at the threshold qualifies, one byte over does not, and a
 // zero-length object cannot shrink at all.

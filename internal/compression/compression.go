@@ -245,6 +245,47 @@ func (c *Codec) Decompress(rs io.ReadSeeker) (io.ReadCloser, error) {
 	return &decodeGuard{inner: r}, nil
 }
 
+// DecompressStream returns a reader over the logical bytes of a stored object
+// read front to back, for a caller that has a stream rather than something it
+// can seek.
+//
+// The seek table is not consulted: a stored object is a plain sequence of zstd
+// frames followed by a skippable one, so decoding it in order needs no index.
+// That makes this the right shape for whole-object work like scrubbing, which
+// would otherwise have to buffer an entire object locally just to hand
+// Decompress something seekable.
+//
+// Unlike the rest of the Codec this allocates, since a streaming decoder holds
+// per-stream state and the shared one cannot be rebound while other callers are
+// using it. Whole-object reads are rare and already dominated by the network, so
+// the allocation is not worth pooling around.
+func (c *Codec) DecompressStream(r io.Reader) (io.ReadCloser, error) {
+	dec, err := zstd.NewReader(r,
+		zstd.WithDecoderMaxMemory(decoderMaxMemory),
+		zstd.WithDecoderConcurrency(1),
+	)
+	if err != nil {
+		return nil, classifyDecode(fmt.Errorf("open zstd reader: %w", err))
+	}
+	return &streamGuard{inner: dec.IOReadCloser()}, nil
+}
+
+// streamGuard classifies decode errors from a front-to-back read the way
+// decodeGuard does for a seekable one. Separate because a stream has no ReadAt
+// or Seek to carry.
+type streamGuard struct {
+	inner io.ReadCloser
+}
+
+// Read implements io.Reader.
+func (g *streamGuard) Read(p []byte) (int, error) {
+	n, err := g.inner.Read(p)
+	return n, classifyDecode(err)
+}
+
+// Close implements io.Closer.
+func (g *streamGuard) Close() error { return g.inner.Close() }
+
 // countingWriter totals the bytes written through it, which is the object's
 // physical size: what the backend stores and what quota is charged for.
 type countingWriter struct {

@@ -21,6 +21,7 @@ import (
 
 	"github.com/samber/do/v2"
 
+	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/instanceid"
@@ -163,11 +164,19 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 			enc = e
 		}
 	}
+	// The codec is resolved whether or not compression is enabled for writes:
+	// objects already stored compressed still have to be verifiable after an
+	// operator turns the feature off.
+	codec, err := do.Invoke[*compression.Codec](i)
+	if err != nil {
+		return nil, err
+	}
 	return worker.NewScrubber(worker.ScrubberDeps{
 		Ops:       c.Mgr.Runtime(),
 		Placement: c.Coord,
 		Store:     c.Stores,
 		Encryptor: enc,
+		Codec:     codec,
 	}), nil
 }
 

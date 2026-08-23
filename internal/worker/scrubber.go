@@ -11,9 +11,10 @@
 // Backfill reads objects that have no stored hash, computes the hash, and
 // stores it in the database so future scrub and read-time checks cover them.
 //
-// Both operations decrypt encrypted objects before hashing so the comparison
-// is always against the original plaintext. Each backend read is tracked
-// against the backend's usage quota (API calls + egress).
+// Both operations undo the stored form before hashing - decrypt, then
+// decompress - so the comparison is always against the bytes the client wrote.
+// Each backend read is tracked against the backend's usage quota (API calls +
+// egress).
 // -------------------------------------------------------------------------------
 
 package worker
@@ -22,6 +23,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -47,6 +49,12 @@ type ScrubberStore interface {
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 }
 
+// errNoCodec reports a compressed copy this orchestrator cannot decode, which
+// is a copy it cannot judge. It surfaces as an unreadable copy rather than a
+// failed one, because a scrubber that treats "cannot read" as "corrupt" deletes
+// objects that were never damaged.
+var errNoCodec = errors.New("object is compressed but no codec is configured")
+
 // Scrubber periodically verifies stored object integrity by reading objects
 // from backends, computing their SHA-256 hash, and comparing against the
 // stored content hash. Also supports backfilling hashes for objects that
@@ -57,16 +65,20 @@ type Scrubber struct {
 	placement Placement
 	store     ScrubberStore
 	encryptor *encryption.Encryptor
+	codec     StreamDecompressor
 	cfg       syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
-// ScrubberDeps groups the scrubber's constructor dependencies. Encryptor
-// is optional (nil when encryption is disabled).
+// ScrubberDeps groups the scrubber's constructor dependencies. Encryptor and
+// Codec are optional, and are what the stored form has to be undone through
+// before hashing; a copy recorded as encrypted or compressed cannot be verified
+// without the matching one.
 type ScrubberDeps struct {
 	Ops       ScrubberOps
 	Placement Placement
 	Store     ScrubberStore
 	Encryptor *encryption.Encryptor
+	Codec     StreamDecompressor
 }
 
 // NewScrubber creates a Scrubber with the given dependencies.
@@ -74,7 +86,7 @@ func NewScrubber(deps ScrubberDeps) *Scrubber {
 	must.NotNil("Ops", deps.Ops)
 	must.NotNil("Placement", deps.Placement)
 	must.NotNil("Store", deps.Store)
-	return &Scrubber{deps: deps.Ops, placement: deps.Placement, store: deps.Store, encryptor: deps.Encryptor, log: slog.Default().With(logfmt.Component("scrubber"))}
+	return &Scrubber{deps: deps.Ops, placement: deps.Placement, store: deps.Store, encryptor: deps.Encryptor, codec: deps.Codec, log: slog.Default().With(logfmt.Component("scrubber"))}
 }
 
 // SetConfig atomically stores the integrity configuration.
@@ -427,9 +439,9 @@ func (s *Scrubber) hashOne(ctx context.Context, loc *core.ObjectLocation) ItemRe
 // SHARED  -  read object from backend, decrypt if needed, compute SHA-256
 // -------------------------------------------------------------------------
 
-// readAndHash reads an object from its backend, decrypts if encrypted, and
-// returns the SHA-256 hex digest of the plaintext. Records API call and
-// egress against the backend's usage quota.
+// readAndHash reads an object from its backend, undoes whatever the row says
+// was done to it, and returns the SHA-256 hex digest of the bytes the client
+// wrote. Records API call and egress against the backend's usage quota.
 func (s *Scrubber) readAndHash(ctx context.Context, loc *core.ObjectLocation) (string, error) {
 	// A row that contradicts itself about encryption cannot produce a
 	// meaningful plaintext hash, so it is rejected before a backend read is
@@ -468,7 +480,10 @@ func (s *Scrubber) readAndHash(ctx context.Context, loc *core.ObjectLocation) (s
 			core.ErrEncryptionFlagMismatch, loc.Encrypted, isEnvelope)
 	}
 
-	// Decrypt if the object is encrypted  -  hash is computed on plaintext
+	// Undo the stored form in the order it was applied, so the hash covers the
+	// bytes the client wrote: decrypt, then decompress. Hashing either layer as
+	// if it were plaintext writes a digest of the wrong bytes into content_hash,
+	// which every later verification then reads as corruption.
 	reader := body
 	if loc.Encrypted && s.encryptor != nil {
 		decrypted, _, decErr := s.encryptor.DecryptStored(ctx, body, loc.EncryptionKey, loc.KeyID, loc.PlaintextSize, nil)
@@ -476,6 +491,20 @@ func (s *Scrubber) readAndHash(ctx context.Context, loc *core.ObjectLocation) (s
 			return "", fmt.Errorf("decrypt: %w", decErr)
 		}
 		reader = decrypted
+	}
+	if loc.CompressionAlgorithm != "" {
+		if s.codec == nil {
+			return "", errNoCodec
+		}
+		// Decoded front to back rather than through the seek table: the whole
+		// object is read anyway, and a streaming decode avoids buffering it
+		// locally just to have something seekable.
+		decoded, decErr := s.codec.DecompressStream(reader)
+		if decErr != nil {
+			return "", fmt.Errorf("decompress: %w", decErr)
+		}
+		defer func() { _ = decoded.Close() }()
+		reader = decoded
 	}
 
 	// Compute SHA-256 of the (plaintext) body

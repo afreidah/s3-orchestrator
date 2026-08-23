@@ -21,7 +21,7 @@ compression:
 
 ## Current status
 
-PUT, multipart completion, GET, HEAD and server-side copy all honour compression, and every one of them serves the object the client wrote at the size it wrote. The background workers do not: the scrubber hashes stored bytes without decoding them, so it reads a compressed object as corrupt. Leave `enabled: false` until those land.
+PUT, multipart completion, GET, HEAD, server-side copy and the scrubber all handle compression. Replication does not yet carry the representation metadata to the copies it creates, so a replica of a compressed object is recorded as though its bytes were verbatim. Leave `enabled: false` until that lands.
 
 ## Why the format is chunked
 
@@ -93,6 +93,14 @@ An object uploaded in parts is compressed once, when the parts are assembled, no
 Assembly already rewrites the object rather than concatenating stored bytes - encrypted parts are decrypted as they stream so the assembled object is a single envelope - so compression costs no extra pass over the data. It does mean the encoded object is buffered before it is sent, because a backend PUT declares its size up front and an encoder only knows that size once it has finished. Objects above 32 MiB spill to a temporary file rather than being held in memory.
 
 `min_ratio` applies here as it does to a single PUT. The parts stream past exactly once, so an encoding that fails to earn its place is decoded back out of that same buffer rather than re-read from the backend, which would cost a second egress charge on every part.
+
+## Verification
+
+`content_hash` covers the bytes the client wrote, so the scrubber undoes the stored form before hashing: decrypt, then decompress, the reverse of the order they were applied in. Anything else writes a digest of the wrong bytes, which every later verification reads as corruption.
+
+It decodes front to back rather than through the seek table, since it reads the whole object anyway and would otherwise have to buffer it locally to have something seekable.
+
+A copy this orchestrator cannot decode - a compressed object with no codec configured, or bytes the codec rejects - is reported as unreadable rather than corrupt, and is left alone. The distinction matters because the scrubber deletes what it judges corrupt, and a copy it could not read has not been judged.
 
 ## Copying an object
 
