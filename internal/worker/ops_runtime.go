@@ -43,7 +43,7 @@ type DataMover interface {
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
 	GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error)
 	HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error)
-	StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error
+	StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, key string, sizeEstimate int64) (int64, error)
 	DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error
 }
 

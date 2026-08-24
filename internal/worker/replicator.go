@@ -330,6 +330,9 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 				"key", key, "source", source, "transferred", transferredSize, "recorded", recordedSize)
 		}
 
+		// Charged at the size the metadata commit settled on, not the size
+		// that crossed the wire. StreamCopy admitted the transfer against
+		// both backends' limits; it does not account for it.
 		r.ops.Acct().Egress(source, recordedSize)
 		r.ops.Acct().Ingress(target, recordedSize)
 
@@ -473,7 +476,13 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, target
 	if !ok {
 		return "", 0, false, nil
 	}
-	err := r.ops.StreamCopy(ctx, srcBackend, targetBackend, key)
+	src := backend.CopyEndpoint{Name: loc.BackendName, Backend: srcBackend}
+	dst := backend.CopyEndpoint{Name: target, Backend: targetBackend}
+	// StreamCopy admits the transfer against both backends' limits and tags a
+	// refusal with the leg that had no headroom, so a source out of egress
+	// falls through to the next candidate and a full destination is terminal,
+	// exactly as an I/O failure on either leg would be.
+	_, err := r.ops.StreamCopy(ctx, src, dst, key, loc.SizeBytes)
 	if err == nil {
 		return loc.BackendName, loc.SizeBytes, true, nil
 	}

@@ -190,3 +190,17 @@ func (mr *MockUsageRecorderMockRecorder) APICalls(backendName, n any) *gomock.Ca
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "APICalls", reflect.TypeOf((*MockUsageRecorder)(nil).APICalls), backendName, n)
 }
+
+// Allow mocks base method.
+func (m *MockUsageRecorder) Allow(backendName string, apiCalls, egress, ingress int64) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Allow", backendName, apiCalls, egress, ingress)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// Allow indicates an expected call of Allow.
+func (mr *MockUsageRecorderMockRecorder) Allow(backendName, apiCalls, egress, ingress any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Allow", reflect.TypeOf((*MockUsageRecorder)(nil).Allow), backendName, apiCalls, egress, ingress)
+}

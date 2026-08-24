@@ -45,9 +45,16 @@ type BackendResolver interface {
 	GetBackend(name string) (backend.ObjectBackend, error)
 }
 
-// UsageRecorder accounts backend API calls against the usage quota, so a
-// listing pass shows up in the same counters a client request would.
+// UsageRecorder admits and accounts backend API calls against the usage
+// quota, so a listing pass shows up in the same counters a client request
+// would and is held to the same limits.
+//
+// Allow is asked before a walk starts rather than per page: a reconcile of a
+// large bucket is thousands of list requests, and a pass that runs the
+// provider past its monthly request quota leaves client traffic to be refused
+// on the budget it consumed.
 type UsageRecorder interface {
+	Allow(backendName string, apiCalls, egress, ingress int64) bool
 	APICalls(backendName string, n int64)
 }
 
@@ -99,6 +106,13 @@ func (m *Manager) SyncBackend(ctx context.Context, backendName, bucket string, k
 	s3b, err := m.resolveLister(backendName)
 	if err != nil {
 		return 0, 0, err
+	}
+
+	// One page of headroom is the entry price. The walk is unbounded, so the
+	// per-page charges below are what actually hold it to the limit; this only
+	// keeps a pass from starting against a backend that is already spent.
+	if !m.usage.Allow(backendName, 1, 0, 0) {
+		return 0, 0, fmt.Errorf("backend %s: %w", backendName, core.ErrUsageLimitExceeded)
 	}
 
 	m.logger().InfoContext(ctx, "starting backend sync", "backend", backendName, "bucket", bucket)

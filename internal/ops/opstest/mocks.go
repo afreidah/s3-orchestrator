@@ -362,6 +362,20 @@ func (m *MockBackendOps) EXPECT() *MockBackendOpsMockRecorder {
 	return m.recorder
 }
 
+// AllowUsage mocks base method.
+func (m *MockBackendOps) AllowUsage(backendName string, apiCalls, egress, ingress int64) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AllowUsage", backendName, apiCalls, egress, ingress)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// AllowUsage indicates an expected call of AllowUsage.
+func (mr *MockBackendOpsMockRecorder) AllowUsage(backendName, apiCalls, egress, ingress any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AllowUsage", reflect.TypeOf((*MockBackendOps)(nil).AllowUsage), backendName, apiCalls, egress, ingress)
+}
+
 // IntegrityConfig mocks base method.
 func (m *MockBackendOps) IntegrityConfig() *config.IntegrityConfig {
 	m.ctrl.T.Helper()
@@ -377,15 +391,15 @@ func (mr *MockBackendOpsMockRecorder) IntegrityConfig() *gomock.Call {
 }
 
 // RecordUsage mocks base method.
-func (m *MockBackendOps) RecordUsage(backendName string, requests, ingressBytes, egressBytes int64) {
+func (m *MockBackendOps) RecordUsage(backendName string, apiCalls, egress, ingress int64) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "RecordUsage", backendName, requests, ingressBytes, egressBytes)
+	m.ctrl.Call(m, "RecordUsage", backendName, apiCalls, egress, ingress)
 }
 
 // RecordUsage indicates an expected call of RecordUsage.
-func (mr *MockBackendOpsMockRecorder) RecordUsage(backendName, requests, ingressBytes, egressBytes any) *gomock.Call {
+func (mr *MockBackendOpsMockRecorder) RecordUsage(backendName, apiCalls, egress, ingress any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordUsage", reflect.TypeOf((*MockBackendOps)(nil).RecordUsage), backendName, requests, ingressBytes, egressBytes)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordUsage", reflect.TypeOf((*MockBackendOps)(nil).RecordUsage), backendName, apiCalls, egress, ingress)
 }
 
 // MockRuntimeOps is a mock of RuntimeOps interface.

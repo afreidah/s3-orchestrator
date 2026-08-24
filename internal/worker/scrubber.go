@@ -309,6 +309,21 @@ func (s *Scrubber) reportCoverage(ctx context.Context) {
 // skipped (not counted as checked). The returned Status feeds the progress
 // stream the BatchRunner brackets each item with.
 func (s *Scrubber) verifyOne(ctx context.Context, loc *core.ObjectLocation) ItemResult {
+	// The batch-level split only asked whether the backend had any headroom
+	// at all, before any object was known. A sweep reads every copy in the
+	// fleet, so the object's own size is admitted too, or a batch admitted on
+	// a sliver of remaining budget reads straight through it.
+	//
+	// Declined ahead of the scrub stamp below: a copy that was never read has
+	// not been verified, and recording it as scrubbed would send it to the
+	// back of the queue claiming an integrity check that never happened.
+	if !s.deps.Usage().WithinLimits(loc.BackendName, 1, loc.SizeBytes, 0) {
+		telemetry.IntegrityUsageDeclinedTotal.Inc()
+		s.log.WarnContext(ctx, "scrub declined by usage limits",
+			"key", loc.ObjectKey, "backend", loc.BackendName, "size", loc.SizeBytes)
+		return ItemResult{Outcome: ItemSkipped, Status: progress.StatusSkipped}
+	}
+
 	match, verifyErr := s.verifyObject(ctx, loc)
 
 	// Stamped even when the read failed: a copy that always fails would

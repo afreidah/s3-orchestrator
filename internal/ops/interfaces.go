@@ -69,10 +69,22 @@ type CompressionCodec interface {
 }
 
 // BackendOps is the store-coupled backend surface the operations layer uses
-// for usage accounting and the integrity settings that gate a scrub.
-// *proxy.BackendManager satisfies it.
+// for usage admission and accounting, and the integrity settings that gate a
+// scrub. *proxy.BackendManager satisfies it.
+//
+// AllowUsage sits alongside RecordUsage because the two were split across
+// layers: everything here recorded what it spent and nothing asked first, so a
+// fleet-wide pass could burn a backend's monthly egress budget and leave
+// client reads to be refused on the counter it had run up. A caller that can
+// record can now also ask.
+//
+// The byte parameters are ordered egress then ingress, matching the tracker
+// they reach. The previous declaration named them the other way round while
+// the implementation did not, so the names described the opposite of what the
+// arguments meant.
 type BackendOps interface {
-	RecordUsage(backendName string, requests, ingressBytes, egressBytes int64)
+	AllowUsage(backendName string, apiCalls, egress, ingress int64) bool
+	RecordUsage(backendName string, apiCalls, egress, ingress int64)
 	IntegrityConfig() *config.IntegrityConfig
 }
 
