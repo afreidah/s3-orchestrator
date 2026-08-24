@@ -47,22 +47,30 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 	// bytes that actually left the backend. Every copy of a key agrees on
 	// whether it is compressed, so whichever attempt wins reports the same
 	// thing here.
+	//
+	// Every other read is charged here, on the bytes the winning attempt pulled
+	// off the backend. That is not result.Size: decryption happens on this side
+	// of the backend link, so an encrypted object is served as a smaller
+	// plaintext than the ciphertext that crossed it, and a ranged read of one
+	// crosses whole chunks to serve a slice.
 	var selfMetered atomic.Bool
+	var wireBytes atomic.Int64
 	result, backendName, err := readpath.Read(ctx, o.failover, "GetObject", key,
 		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.GetObjectResult], error) {
 			if isCompressed(loc) {
 				selfMetered.Store(true)
 			}
-			return o.getObjectAttempt(ctx, key, rangeHeader, beName, backend, loc)
+			res, wire, err := o.getObjectAttempt(ctx, key, rangeHeader, beName, backend, loc)
+			if err == nil {
+				wireBytes.Store(wire)
+			}
+			return res, err
 		})
 	if err != nil {
 		return nil, err
 	}
-	// Charging result.Size on a compressed read would add the logical size on
-	// top of the physical bytes already counted, and the logical size is the
-	// larger of the two.
 	if !selfMetered.Load() {
-		o.core.Acct().Egress(backendName, result.Size)
+		o.core.Acct().Egress(backendName, wireBytes.Load())
 	}
 
 	pobserve.GetCompleted(ctx, key, backendName, result.Size)
@@ -99,22 +107,28 @@ func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string
 // for GetObject. It owns the per-attempt timeout, applies usage limits,
 // translates encrypted ranges, decrypts and verifies the body, and records
 // the winning result via once. loc is nil in degraded-mode broadcasts.
-func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName string, backend s3be.ObjectBackend, loc *core.ObjectLocation) (readpath.ProbeResult[*s3be.GetObjectResult], error) {
+//
+// The second return is how many bytes the backend served, which the caller
+// charges as egress. It is read before the body is turned into plaintext,
+// because that step rewrites the result's size to what the client will be
+// given. Zero for a compressed copy, which meters itself per frame.
+func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName string, backend s3be.ObjectBackend, loc *core.ObjectLocation) (readpath.ProbeResult[*s3be.GetObjectResult], int64, error) {
 	var fail readpath.ProbeResult[*s3be.GetObjectResult]
 
 	if !o.core.Usage().WithinLimits(beName, 1, 0, 0) {
-		return fail, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
+		return fail, 0, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 	}
 	// Encrypted reads need the location row to unwrap the DEK; without it
 	// (degraded broadcast with the DB unreachable) we cannot decrypt.
 	if o.encryptor != nil && loc == nil {
-		return fail, core.ErrServiceUnavailable
+		return fail, 0, core.ErrServiceUnavailable
 	}
 
 	// A compressed copy is read by decoding it, which is driven by the codec
 	// rather than by a GET of the whole object.
 	if isCompressed(loc) {
-		return o.compressedGetAttempt(ctx, key, rangeHeader, beName, backend, loc)
+		res, err := o.compressedGetAttempt(ctx, key, rangeHeader, beName, backend, loc)
+		return res, 0, err
 	}
 
 	// Reject a copy whose row contradicts itself before doing range math on
@@ -122,7 +136,7 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 	// costs a retry rather than a wrong response body.
 	if err := core.ValidateEncryptionMetadata(loc); err != nil {
 		telemetry.EncryptionFlagMismatchTotal.WithLabelValues("get").Inc()
-		return fail, fmt.Errorf("backend %s: %w", beName, err)
+		return fail, 0, fmt.Errorf("backend %s: %w", beName, err)
 	}
 
 	br, err := o.resolveBackendRange(rangeHeader, loc)
@@ -130,20 +144,21 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 		observe.RecordSpanError(trace.SpanFromContext(ctx), err)
 		o.log.WarnContext(ctx, "range translation failed",
 			"key", key, "backend", beName, "range", rangeHeader, "error", err)
-		return fail, err
+		return fail, 0, err
 	}
 	actualRange := br.header
 
 	r, cancel, err := o.core.GetWithTimeout(ctx, backend, key, actualRange)
 	if err != nil {
 		o.core.Acct().APICall(beName)
-		return fail, err
+		return fail, 0, err
 	}
-	if !o.core.Usage().WithinLimits(beName, 1, r.Size, 0) {
+	wire := r.Size
+	if !o.core.Usage().WithinLimits(beName, 1, wire, 0) {
 		_ = r.Body.Close()
 		cancel()
 		o.core.Acct().APICall(beName)
-		return fail, fmt.Errorf("backend %s egress: %w", beName, readpath.ErrUsageLimitSkip)
+		return fail, 0, fmt.Errorf("backend %s egress: %w", beName, readpath.ErrUsageLimitSkip)
 	}
 
 	// Backends that report no modification time leave LastModified zero, which
@@ -157,13 +172,13 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 		telemetry.EncryptionFlagMismatchTotal.WithLabelValues("get").Inc()
 		_ = r.Body.Close()
 		cancel()
-		return fail, fmt.Errorf("backend %s: %w", beName, err)
+		return fail, 0, fmt.Errorf("backend %s: %w", beName, err)
 	}
 
 	if err := o.buildPlaintextReader(ctx, r, loc, key, beName, backend, br); err != nil {
 		_ = r.Body.Close()
 		cancel()
-		return fail, err
+		return fail, 0, err
 	}
 
 	// The body owns the timeout cancel via Close. The winner's body streams to
@@ -174,7 +189,7 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 		Value:   r,
 		Size:    r.Size,
 		Cleanup: func() { _ = r.Body.Close() },
-	}, nil
+	}, wire, nil
 }
 
 // backendRange is a client Range header translated into what the backend

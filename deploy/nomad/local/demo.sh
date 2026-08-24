@@ -20,9 +20,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 IMAGE="s3-orchestrator:local"
 PORT=9000
 
-# Force all Nomad commands to target the local dev agent, not any remote
-# cluster that may be configured in the user's shell environment.
+# Pin every Nomad AND Consul endpoint/credential to the local dev agent so a
+# sourced prod profile (e.g. munchbox-env.sh) can never redirect us at a real
+# cluster. The Nomad dev agent's Consul integration falls back to CONSUL_HTTP_*
+# env vars, so leaving those set makes the dev agent self-register nomad/
+# nomad-client services into the real Consul -- clear them too. The demo uses
+# Nomad-native service discovery (provider="nomad"), so no Consul is needed.
 unset NOMAD_TOKEN NOMAD_CACERT NOMAD_CLIENT_CERT NOMAD_CLIENT_KEY NOMAD_TLS_SERVER_NAME NOMAD_NAMESPACE NOMAD_REGION
+unset CONSUL_HTTP_TOKEN CONSUL_CACERT CONSUL_CLIENT_CERT CONSUL_CLIENT_KEY CONSUL_TLS_SERVER_NAME CONSUL_HTTP_SSL CONSUL_HTTP_SSL_VERIFY CONSUL_NAMESPACE
+export NOMAD_ADDR="http://127.0.0.1:4646"
+export CONSUL_HTTP_ADDR="http://127.0.0.1:8500"
 nomad() { NOMAD_ADDR="http://127.0.0.1:4646" command nomad "$@"; }
 
 cd "$REPO_ROOT"

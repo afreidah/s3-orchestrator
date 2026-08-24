@@ -10,6 +10,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
@@ -143,12 +144,36 @@ type Workers struct {
 	Drain                  *drain.Manager
 }
 
+// WorkerFeatures carries the stored-form layers a worker has to undo to read an
+// object back. Only the scrubber needs them: it hashes the bytes the client
+// wrote, so it has to decrypt and decode a copy before hashing it.
+//
+// A fixture that leaves these zero builds a scrubber that cannot read an
+// encrypted or compressed copy at all. It does not fail loudly - the read
+// errors, the copy is counted as skipped, and the sweep reports a clean pass
+// having verified nothing.
+type WorkerFeatures struct {
+	Encryptor *encryption.Encryptor
+	Codec     worker.StreamDecompressor
+}
+
 // BuildWorkers constructs every worker backed by the supplied metadata
 // store. Production code resolves workers through DI; this helper exists
 // so mock-based cross-package tests can construct an equivalent set
 // without re-implementing each worker's narrow ops surface. Drain is the
 // manager's own drain.Manager.
+//
+// The workers are built with no stored-form features, which suits a fixture
+// whose objects are stored verbatim. A fixture that writes encrypted or
+// compressed objects wants BuildWorkersWithFeatures instead.
 func BuildWorkers(mgr *proxy.BackendManager, m core.MetadataStore) *Workers {
+	return BuildWorkersWithFeatures(mgr, m, WorkerFeatures{})
+}
+
+// BuildWorkersWithFeatures is BuildWorkers for a fixture whose objects are
+// encrypted, compressed, or both, mirroring what di.ProvideScrubber wires in
+// production.
+func BuildWorkersWithFeatures(mgr *proxy.BackendManager, m core.MetadataStore, features WorkerFeatures) *Workers {
 	// The manager's own coordinator, so a worker's placement decisions run
 	// against the same write-path state the manager writes through.
 	coord := mgr.Coordinator()
@@ -158,7 +183,13 @@ func BuildWorkers(mgr *proxy.BackendManager, m core.MetadataStore) *Workers {
 	w.OverReplicationCleaner = worker.NewOverReplicationCleaner(mgr.Runtime(), coord, m)
 	w.CleanupWorker = worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: mgr.Runtime(), Store: m, Concurrency: 10, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	w.PendingReaper = worker.NewPendingReaper(worker.PendingReaperDeps{Ops: mgr.Runtime(), Placement: coord, Store: m})
-	w.Scrubber = worker.NewScrubber(worker.ScrubberDeps{Ops: mgr.Runtime(), Placement: coord, Store: m})
+	w.Scrubber = worker.NewScrubber(worker.ScrubberDeps{
+		Ops:       mgr.Runtime(),
+		Placement: coord,
+		Store:     m,
+		Encryptor: features.Encryptor,
+		Codec:     features.Codec,
+	})
 	w.Drain = mgr.Drain()
 	return w
 }
