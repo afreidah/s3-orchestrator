@@ -406,15 +406,31 @@ func runBulkRewrite[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Context, o
 	return res, nil
 }
 
-// processBulkLocation runs one rewrite step for a single location: download
-// from the backend, transform, re-upload, record usage, then update metadata.
-// Failures are logged and counted rather than returned, so one bad object does
-// not end the pass.
+// processBulkLocation runs one rewrite step for a single location: admit the
+// work against the backend's usage limits, download, transform, re-upload,
+// account for what it spent, then update metadata. Failures are logged and
+// counted rather than returned, so one bad object does not end the pass.
+//
+// A pass reads and rewrites an entire fleet, so it is the largest consumer of
+// egress in the system and the one most able to exhaust a metered backend. It
+// is admitted per object rather than once per run because the budget is spent
+// as it goes: a run that fits when it starts can stop fitting halfway through.
 func processBulkLocation[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Context, op bulkRewriteOp[L], loc L) rewriteOutcome {
 	key, backendName, sizeBytes := loc.rewriteKey(), loc.rewriteBackend(), loc.rewriteSize()
 
 	if op.declines != nil && op.declines(loc) {
 		op.counter.WithLabelValues("skipped").Inc()
+		return rewriteSkipped
+	}
+
+	// The read is charged at the row's size and the write at the same figure
+	// as an estimate, since the transform's output is not known yet. Both are
+	// re-charged with the real numbers once they are.
+	if !env.backendOps.AllowUsage(backendName, 2, sizeBytes, sizeBytes) {
+		op.counter.WithLabelValues("skipped").Inc()
+		telemetry.BulkRewriteUsageDeclinedTotal.WithLabelValues(op.opName).Inc()
+		env.log.WarnContext(ctx, op.opName+": object declined by usage limits",
+			"key", key, "backend", backendName, "size", sizeBytes)
 		return rewriteSkipped
 	}
 
@@ -428,7 +444,7 @@ func processBulkLocation[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Conte
 		env.backendOps.RecordUsage(backendName, 1, 0, 0)
 		return rewriteFailed(env, ctx, op, "download failed", key, backendName, err)
 	}
-	env.backendOps.RecordUsage(backendName, 1, sizeBytes, 0)
+	env.backendOps.RecordUsage(backendName, 1, src.Size, 0)
 
 	out, err := op.rewrite(ctx, src, loc)
 	if err != nil {

@@ -33,6 +33,7 @@ package infra
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -43,6 +44,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // DrainChecker reports whether a named backend is currently being drained.
@@ -255,11 +257,40 @@ func (c *BackendRuntime) DeleteWithTimeout(ctx context.Context, be backend.Objec
 	return c.timeouts.DeleteWithTimeout(ctx, be, key)
 }
 
-// StreamCopy reads an object from src and writes it to dst with
-// timeouts applied to each leg. Returns a *backend.CopyError tagged
-// with the failing phase.
-func (c *BackendRuntime) StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error {
-	return c.timeouts.StreamCopy(ctx, src, dst, key)
+// StreamCopy reads an object from src and writes it to dst with timeouts
+// applied to each leg, admitting the transfer against both backends' usage
+// limits first. Returns the bytes moved, or a *backend.CopyError tagged with
+// the failing phase.
+//
+// Admission lives here rather than at the call sites because this is the one
+// place every backend-to-backend copy passes through. The replicator used to
+// check only its destination and read from whichever source was healthy,
+// which let a fleet-wide repair drain a source backend's monthly egress
+// budget; the rebalancer checked both sides. Enforcing here makes the two
+// agree by construction and leaves a caller nothing to forget.
+//
+// Accounting stays with the caller. Both callers charge the size their
+// metadata commit settled on rather than the size that crossed the wire, and
+// the two disagree only when an overwrite lands mid-copy, which each of them
+// reports in its own terms. sizeEstimate is what admission is judged on.
+func (c *BackendRuntime) StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, key string, sizeEstimate int64) (int64, error) {
+	// Refusals are tagged with the leg that had no headroom, so callers get
+	// the same structural retry answer they already act on for I/O failures:
+	// another source may have egress left, but a destination that is full
+	// ends the attempt.
+	if !c.Acct().Allow(src.Name, 1, sizeEstimate, 0) {
+		return 0, &backend.CopyError{
+			Phase: backend.CopyPhaseRead,
+			Err:   fmt.Errorf("source %s: %w", src.Name, core.ErrUsageLimitExceeded),
+		}
+	}
+	if !c.Acct().Allow(dst.Name, 1, 0, sizeEstimate) {
+		return 0, &backend.CopyError{
+			Phase: backend.CopyPhaseWrite,
+			Err:   fmt.Errorf("destination %s: %w", dst.Name, core.ErrUsageLimitExceeded),
+		}
+	}
+	return c.timeouts.StreamCopy(ctx, src.Backend, dst.Backend, key)
 }
 
 // GetWithTimeout issues a GET against be using the configured backend

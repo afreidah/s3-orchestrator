@@ -270,6 +270,11 @@ func (w *Coordinator) cleanupDisplacedCopies(ctx context.Context, key, newBacken
 // backend's usage counter, regardless of success or failure (the HTTP
 // call to the backend was made either way).
 func (w *Coordinator) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
+	// Deliberately not gated on usage limits. A delete is the one operation
+	// that reduces what a backend holds, so refusing it over budget would
+	// leave an operator unable to get back under one, and a client DELETE
+	// that returns without removing the object is simply wrong. The API call
+	// is still charged below.
 	err := w.core.DeleteWithTimeout(ctx, be, key)
 	w.core.Acct().APICall(backendName)
 	if err == nil {
@@ -405,20 +410,25 @@ var (
 // semantics that drain and rebalance share: StreamCopy the source body
 // to dest, atomic MoveObjectLocation CAS, orphan cleanup on dest if
 // the CAS errors, stale-orphan cleanup on dest if the CAS reports a
-// raced row, and on success a source-side DeleteOrEnqueue plus the
-// canonical accounting (Egress on src + Ingress on dest).
+// raced row, and on success a source-side DeleteOrEnqueue plus the canonical
+// accounting (Egress on src + Ingress on dest).
 //
-// DeleteOrEnqueue owns the per-backend DELETE API-call tick, so this
-// method does NOT call Acct().APICall(...) on the destination cleanup
+// StreamCopy admits the transfer against both backends' usage limits before
+// any bytes move; the bytes themselves are accounted for here, at the size the
+// move committed. DeleteOrEnqueue owns the per-backend DELETE API-call tick,
+// so this method does NOT call Acct().APICall(...) on the destination cleanup
 // or the source delete.
 //
 // Returns:
 //   - (movedSize, nil) on success
 //   - (0, ErrMoveStale) when MoveObjectLocation returned movedSize=0
 //   - (0, err) wrapping the underlying StreamCopy / MoveObjectLocation
-//     failure for every other failure mode
+//     failure for every other failure mode, including a transfer either
+//     backend had no usage headroom for
 func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, error) {
-	if err := w.core.StreamCopy(ctx, req.SrcBackend, req.DestBackend, req.Key); err != nil {
+	src := backend.CopyEndpoint{Name: req.SrcName, Backend: req.SrcBackend}
+	dst := backend.CopyEndpoint{Name: req.DestName, Backend: req.DestBackend}
+	if _, err := w.core.StreamCopy(ctx, src, dst, req.Key, req.SizeBytes); err != nil {
 		return 0, fmt.Errorf("stream copy %s -> %s: %w", req.SrcName, req.DestName, err)
 	}
 
@@ -437,10 +447,11 @@ func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, 
 		return 0, ErrMoveStale
 	}
 
-	// Success path: source delete + canonical accounting. Egress and
-	// Ingress include their own single API-call tick (one for the
-	// source GET, one for the dest PUT); DeleteOrEnqueue includes the
-	// source DELETE tick. No additional Acct().APICall calls.
+	// Success path: source delete + canonical accounting, charged at the size
+	// the move committed rather than the size that crossed the wire. Egress
+	// and Ingress include their own single API-call tick (one for the source
+	// GET, one for the dest PUT); DeleteOrEnqueue includes the source DELETE
+	// tick. No additional Acct().APICall calls.
 	w.DeleteOrEnqueue(ctx, req.SrcBackend, req.SrcName, req.Key, req.Reasons.SourceDelete, movedSize)
 	w.core.Acct().Egress(req.SrcName, movedSize)
 	w.core.Acct().Ingress(req.DestName, movedSize)

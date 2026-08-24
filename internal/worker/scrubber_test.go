@@ -907,3 +907,46 @@ func TestScrubKey_LookupFailureIsAnError(t *testing.T) {
 		t.Fatal("ScrubKey succeeded despite a failed lookup")
 	}
 }
+
+// TestScrub_DeclinesCopyWithoutEgressHeadroom pins the per-object usage check.
+// The batch-level split only asks whether a backend has any headroom at all,
+// before any object is known, so without this a batch admitted on a sliver of
+// remaining budget reads whole objects straight through it. A scrub sweep
+// reads every copy in the fleet, so that is not a small overshoot.
+//
+// The copy must also be left unstamped: it was never read, so recording it as
+// scrubbed would send it to the back of the queue claiming an integrity check
+// that never happened, and it would not be looked at again for a full cycle.
+func TestScrub_DeclinesCopyWithoutEgressHeadroom(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := NewMockScrubberOps(ctrl)
+	pl := NewMockPlacement(ctrl)
+	ms := &mockMetadataStore{}
+
+	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
+	tracker.UpdateLimits(map[string]core.UsageLimits{"b1": {EgressByteLimit: 100}})
+	tracker.SetBaseline("b1", core.UsageStat{EgressBytes: 99})
+	ops.EXPECT().Usage().Return(tracker).AnyTimes()
+	ops.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+
+	// Neither the backend nor a read is ever reached for a declined copy.
+	ops.EXPECT().GetBackend(gomock.Any()).Times(0)
+	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	ms.randomHashedObjects = []core.ObjectLocation{
+		{ObjectKey: "bucket/big", BackendName: "b1", SizeBytes: 4096, ContentHash: hashString("x")},
+	}
+
+	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: pl, Store: ms})
+	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
+
+	sum := s.Scrub(context.Background(), 10, nil)
+	if sum.Failed != 0 {
+		t.Errorf("failed = %d, want 0; a copy left unread is not a corrupt copy", sum.Failed)
+	}
+	if len(ms.scrubbed) > 0 {
+		t.Errorf("marked %v scrubbed; a copy that was never read was not verified", ms.scrubbed)
+	}
+}

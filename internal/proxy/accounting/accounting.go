@@ -49,6 +49,21 @@ func New(usage *counter.UsageTracker, recordOp OperationRecordFunc) *Recorder {
 }
 
 // -------------------------------------------------------------------------
+// ADMISSION
+// -------------------------------------------------------------------------
+
+// Allow reports whether the backend can absorb the proposed operation
+// within its configured monthly API-call, egress and ingress limits.
+//
+// Recording and admission live on the same type deliberately. They were
+// separate surfaces, and every path recorded what it spent while only some
+// asked first, so the counters stayed truthful while the budget was spent
+// unchecked. A caller holding a Recorder can now always ask.
+func (r *Recorder) Allow(backend string, apiCalls, egress, ingress int64) bool {
+	return r.usage.WithinLimits(backend, apiCalls, egress, ingress)
+}
+
+// -------------------------------------------------------------------------
 // API-CALL CHARGES
 // -------------------------------------------------------------------------
 

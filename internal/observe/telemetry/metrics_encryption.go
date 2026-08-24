@@ -57,6 +57,17 @@ var (
 		[]string{"operation"},
 	)
 
+	// IntegrityUsageDeclinedTotal counts copies a scrub left unverified
+	// because the backend had no egress headroom for them. A sweep that
+	// declines is not finding corruption it cannot see; the copies are simply
+	// unchecked, and stay unchecked until the budget allows.
+	IntegrityUsageDeclinedTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3o_integrity_usage_declined_total",
+			Help: "Copies left unverified for lack of backend egress headroom",
+		},
+	)
+
 	// IntegrityChecksTotal counts hash verifications performed.
 	IntegrityChecksTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
@@ -101,6 +112,19 @@ var (
 			Help: "Total objects processed during key rotation",
 		},
 		[]string{"status"},
+	)
+
+	// BulkRewriteUsageDeclinedTotal counts objects a bulk rewrite pass left
+	// alone because the backend had no usage headroom for them, labelled by
+	// the pass that declined. Separate from the per-pass skipped status: a
+	// threshold skip is the feature working, this one means a fleet-wide pass
+	// is being throttled by a monthly limit and will not finish its sweep.
+	BulkRewriteUsageDeclinedTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3o_bulk_rewrite_usage_declined_total",
+			Help: "Objects skipped by a bulk rewrite pass for lack of backend usage headroom",
+		},
+		[]string{"operation"},
 	)
 
 	// EncryptExistingObjectsTotal counts objects processed during encrypt-existing.

@@ -236,12 +236,19 @@ func (r *byteSliceReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+// ep names a backend for a stream copy. These tests exercise the copy legs
+// rather than the accounting, so the names only have to be distinct and carry
+// no configured limits, which is what leaves every transfer admitted.
+func ep(name string, be backend.ObjectBackend) backend.CopyEndpoint {
+	return backend.CopyEndpoint{Name: name, Backend: be}
+}
+
 func TestCore_StreamCopy_ReadSuccessThenWriteSuccess(t *testing.T) {
 	t.Parallel()
 	src := &readableBackend{payload: []byte("hello")}
 	dst := &recordingBackend{}
 	c := newTestCore(t)
-	if err := c.StreamCopy(context.Background(), src, dst, "k"); err != nil {
+	if _, err := c.StreamCopy(context.Background(), ep("src", src), ep("dst", dst), "k", 0); err != nil {
 		t.Fatalf("StreamCopy: %v", err)
 	}
 	if dst.putBodyLen != 5 {
@@ -254,7 +261,7 @@ func TestCore_StreamCopy_TagsReadPhaseOnGetError(t *testing.T) {
 	src := &readableBackend{getErr: errors.New("upstream gone")}
 	dst := &recordingBackend{}
 	c := newTestCore(t)
-	err := c.StreamCopy(context.Background(), src, dst, "k")
+	_, err := c.StreamCopy(context.Background(), ep("src", src), ep("dst", dst), "k", 0)
 	ce, ok := errors.AsType[*backend.CopyError](err)
 	if !ok {
 		t.Fatalf("err = %v, want *backend.CopyError", err)
@@ -325,7 +332,7 @@ func TestCore_StreamCopy_SourceStallTaggedReadPhase(t *testing.T) {
 	src := &stallingSourceBackend{err: context.DeadlineExceeded}
 	dst := propagatingDstBackend{}
 	c := newTestCore(t)
-	err := c.StreamCopy(context.Background(), src, dst, "k")
+	_, err := c.StreamCopy(context.Background(), ep("src", src), ep("dst", dst), "k", 0)
 	ce, ok := errors.AsType[*backend.CopyError](err)
 	if !ok {
 		t.Fatalf("err = %v, want *backend.CopyError", err)
@@ -344,13 +351,112 @@ func TestCore_StreamCopy_GenuineWriteErrorTaggedWritePhase(t *testing.T) {
 	src := &readableBackend{payload: []byte("hello")}
 	dst := writeRejectingBackend{}
 	c := newTestCore(t)
-	err := c.StreamCopy(context.Background(), src, dst, "k")
+	_, err := c.StreamCopy(context.Background(), ep("src", src), ep("dst", dst), "k", 0)
 	ce, ok := errors.AsType[*backend.CopyError](err)
 	if !ok {
 		t.Fatalf("err = %v, want *backend.CopyError", err)
 	}
 	if ce.Phase != backend.CopyPhaseWrite {
 		t.Errorf("phase = %v, want CopyPhaseWrite (a real target rejection stays terminal)", ce.Phase)
+	}
+}
+
+// limitedCore builds a runtime where b1 and b2 carry the given usage limits,
+// so a copy between them can be pushed past one side's budget.
+func limitedCore(t *testing.T, limits map[string]core.UsageLimits, spent map[string]core.UsageStat) *BackendRuntime {
+	t.Helper()
+	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
+	tracker.UpdateLimits(limits)
+	for name, stat := range spent {
+		tracker.SetBaseline(name, stat)
+	}
+	return New(&Config{
+		Backends:        map[string]backend.ObjectBackend{"b1": fakeBackend{}, "b2": fakeBackend{}},
+		Order:           []string{"b1", "b2"},
+		BackendTimeout:  100 * time.Millisecond,
+		Usage:           tracker,
+		RoutingStrategy: config.RoutingPack,
+		AdmissionSem:    make(chan struct{}, 2),
+		Log:             slog.Default(),
+	})
+}
+
+// TestCore_StreamCopy_RefusesSourceOutOfEgress is the regression test for the
+// gap this admission closes. The replicator picked its source by health alone
+// and only ever checked the destination, so a fleet-wide repair could read a
+// source backend straight through its monthly egress budget and leave client
+// reads to be refused on the counter it had run up.
+//
+// The refusal is tagged read-phase because another source may still have
+// egress left, which is the same answer the copier already acts on when a
+// source read fails.
+func TestCore_StreamCopy_RefusesSourceOutOfEgress(t *testing.T) {
+	t.Parallel()
+	src := &readableBackend{payload: []byte("hello")}
+	dst := &recordingBackend{}
+	c := limitedCore(t,
+		map[string]core.UsageLimits{"b1": {EgressByteLimit: 100}},
+		map[string]core.UsageStat{"b1": {EgressBytes: 99}})
+
+	_, err := c.StreamCopy(context.Background(), ep("b1", src), ep("b2", dst), "k", 50)
+	if !errors.Is(err, core.ErrUsageLimitExceeded) {
+		t.Fatalf("err = %v, want core.ErrUsageLimitExceeded", err)
+	}
+	ce, ok := errors.AsType[*backend.CopyError](err)
+	if !ok {
+		t.Fatalf("err = %v, want *backend.CopyError", err)
+	}
+	if ce.Phase != backend.CopyPhaseRead {
+		t.Errorf("phase = %v, want CopyPhaseRead so another source is still tried", ce.Phase)
+	}
+	if dst.putBodyLen != 0 {
+		t.Errorf("destination received %d bytes; a refused copy must not touch either backend", dst.putBodyLen)
+	}
+}
+
+// TestCore_StreamCopy_RefusesDestinationOutOfIngress covers the other leg. A
+// full destination is terminal: no other source improves it, so the refusal is
+// tagged write-phase and the copier stops rather than working through every
+// remaining source.
+func TestCore_StreamCopy_RefusesDestinationOutOfIngress(t *testing.T) {
+	t.Parallel()
+	src := &readableBackend{payload: []byte("hello")}
+	dst := &recordingBackend{}
+	c := limitedCore(t,
+		map[string]core.UsageLimits{"b2": {IngressByteLimit: 100}},
+		map[string]core.UsageStat{"b2": {IngressBytes: 99}})
+
+	_, err := c.StreamCopy(context.Background(), ep("b1", src), ep("b2", dst), "k", 50)
+	if !errors.Is(err, core.ErrUsageLimitExceeded) {
+		t.Fatalf("err = %v, want core.ErrUsageLimitExceeded", err)
+	}
+	ce, ok := errors.AsType[*backend.CopyError](err)
+	if !ok {
+		t.Fatalf("err = %v, want *backend.CopyError", err)
+	}
+	if ce.Phase != backend.CopyPhaseWrite {
+		t.Errorf("phase = %v, want CopyPhaseWrite so the attempt ends", ce.Phase)
+	}
+}
+
+// TestCore_StreamCopy_AdmitsWithinLimits pins that admission does not refuse a
+// copy that fits, which is the case every healthy fleet is in.
+func TestCore_StreamCopy_AdmitsWithinLimits(t *testing.T) {
+	t.Parallel()
+	src := &readableBackend{payload: []byte("hello")}
+	dst := &recordingBackend{}
+	c := limitedCore(t,
+		map[string]core.UsageLimits{
+			"b1": {EgressByteLimit: 1 << 20},
+			"b2": {IngressByteLimit: 1 << 20},
+		}, nil)
+
+	moved, err := c.StreamCopy(context.Background(), ep("b1", src), ep("b2", dst), "k", 5)
+	if err != nil {
+		t.Fatalf("StreamCopy: %v", err)
+	}
+	if moved != 5 || dst.putBodyLen != 5 {
+		t.Errorf("moved = %d, destination got %d bytes, want 5 and 5", moved, dst.putBodyLen)
 	}
 }
 

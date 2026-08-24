@@ -150,14 +150,14 @@ func (f *replicaFleet) replicator() *Replicator {
 // copyFails makes the streaming copy of key fail, standing in for a source
 // backend that dies partway through the transfer.
 func (f *replicaFleet) copyFails(key string) {
-	f.ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), key).
-		Return(errors.New("stream copy: connection reset")).AnyTimes()
+	f.ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), key, gomock.Any()).
+		Return(int64(0), errors.New("stream copy: connection reset")).AnyTimes()
 }
 
 // copySucceeds lets every remaining copy through.
 func (f *replicaFleet) copySucceeds() {
-	f.ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil).AnyTimes()
+	f.ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(int64(100), nil).AnyTimes()
 }
 
 // copyOn returns one existing copy row for key, the shape
