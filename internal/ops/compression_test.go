@@ -105,6 +105,7 @@ func newCompression(t *testing.T, store CompressionStore, cfg config.Compression
 	runtime := opstest.NewMockRuntimeOps(ctrl)
 	runtime.EXPECT().GetBackend(gomock.Any()).Return(be, nil).AnyTimes()
 	backendOps := opstest.NewMockBackendOps(ctrl)
+	backendOps.EXPECT().AllowUsage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
 	backendOps.EXPECT().RecordUsage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	return NewCompression(&CompressionDeps{
@@ -358,6 +359,7 @@ func TestCompressExisting_EncryptedObject(t *testing.T) {
 	runtime := opstest.NewMockRuntimeOps(ctrl)
 	runtime.EXPECT().GetBackend(gomock.Any()).Return(be, nil).AnyTimes()
 	backendOps := opstest.NewMockBackendOps(ctrl)
+	backendOps.EXPECT().AllowUsage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
 	backendOps.EXPECT().RecordUsage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 	codec := testCodec(t)
 
@@ -529,6 +531,7 @@ func TestCompressExisting_EncodeFailureCountsAgainstObject(t *testing.T) {
 	runtime := opstest.NewMockRuntimeOps(ctrl)
 	runtime.EXPECT().GetBackend(gomock.Any()).Return(be, nil).AnyTimes()
 	backendOps := opstest.NewMockBackendOps(ctrl)
+	backendOps.EXPECT().AllowUsage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
 	backendOps.EXPECT().RecordUsage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	svc := NewCompression(&CompressionDeps{

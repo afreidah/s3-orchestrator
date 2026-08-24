@@ -84,6 +84,9 @@ func newTestManager(t *testing.T, ctrl *gomock.Controller) (*Manager, *MockStore
 	stores := NewMockStores(ctrl)
 	backends := NewMockBackendResolver(ctrl)
 	usage := NewMockUsageRecorder(ctrl)
+	// Admitted by default so each test states only the accounting it cares
+	// about; the refusal path has its own test.
+	usage.EXPECT().Allow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
 	return NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage}), stores, backends, usage
 }
 
@@ -443,6 +446,30 @@ func TestSyncBackend_AccountsListingPages(t *testing.T) {
 
 	if _, _, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"}); err != nil {
 		t.Fatalf("SyncBackend: %v", err)
+	}
+}
+
+// TestSyncBackend_RefusedWhenOutOfAPIBudget asserts a sync will not start
+// against a backend with no request headroom. A reconcile of a large bucket is
+// thousands of list calls, so a pass that ran anyway would spend a monthly
+// quota that client traffic is then refused on.
+func TestSyncBackend_RefusedWhenOutOfAPIBudget(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	stores := NewMockStores(ctrl)
+	backends := NewMockBackendResolver(ctrl)
+	usage := NewMockUsageRecorder(ctrl)
+	usage.EXPECT().Allow("b1", int64(1), int64(0), int64(0)).Return(false)
+	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage})
+
+	// The backend is never resolved and no page is ever charged: the refusal
+	// has to land before any of that, or it has not saved anything.
+	backends.EXPECT().GetBackend(gomock.Any()).Return(&pagedLister{InMemory: backendtest.NewInMemory()}, nil).AnyTimes()
+	usage.EXPECT().APICalls(gomock.Any(), gomock.Any()).Times(0)
+
+	_, _, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"})
+	if !errors.Is(err, core.ErrUsageLimitExceeded) {
+		t.Fatalf("SyncBackend error = %v, want core.ErrUsageLimitExceeded", err)
 	}
 }
 

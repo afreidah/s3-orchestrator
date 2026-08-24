@@ -18,6 +18,17 @@ import (
 	"fmt"
 )
 
+// CopyEndpoint pairs a backend client with the name its usage is charged to.
+//
+// A stream copy spends egress on one backend and ingress on another, so it
+// cannot admit or account for itself from the clients alone. Carrying the name
+// alongside the client is what lets the copy be checked against both backends'
+// limits at the point the bytes actually move, rather than at each call site.
+type CopyEndpoint struct {
+	Name    string
+	Backend ObjectBackend
+}
+
 // CopyPhase identifies which leg of a stream copy failed.
 type CopyPhase string
 

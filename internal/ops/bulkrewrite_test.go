@@ -146,6 +146,7 @@ func pagingEnv(t *testing.T) bulkRewriteEnv {
 	runtime := opstest.NewMockRuntimeOps(ctrl)
 	runtime.EXPECT().GetBackend(gomock.Any()).Return(&fakeBackend{payload: []byte("payload")}, nil).AnyTimes()
 	backendOps := opstest.NewMockBackendOps(ctrl)
+	backendOps.EXPECT().AllowUsage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
 	backendOps.EXPECT().RecordUsage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	return bulkRewriteEnv{
@@ -286,4 +287,55 @@ func TestRunBulkRewrite_MixedOutcomesStillCoverTheSet(t *testing.T) {
 		t.Errorf("counts = %+v, want both outcomes represented", res)
 	}
 	set.assertVisitedAll(t, pagingRows)
+}
+
+// TestRunBulkRewrite_DeclinesObjectsWithoutUsageHeadroom is the regression
+// test for the bypass this admission closes. These passes read and rewrite an
+// entire fleet, which makes them the largest consumer of egress in the system,
+// and they used to drive backends directly with no limit check at all: a run
+// could spend a backend's whole monthly budget and leave client reads to be
+// refused on the counter it had run up.
+//
+// A declined object is skipped rather than failed, since nothing is wrong with
+// it, and the backend must not be touched on its behalf.
+func TestRunBulkRewrite_DeclinesObjectsWithoutUsageHeadroom(t *testing.T) {
+	t.Parallel()
+	set := newShrinkingSet(3)
+	ctrl := gomock.NewController(t)
+
+	runtime := opstest.NewMockRuntimeOps(ctrl)
+	be := &fakeBackend{payload: []byte("payload")}
+	// GetBackend is allowed but must never be reached: admission comes first,
+	// so a declined object costs no backend call.
+	runtime.EXPECT().GetBackend(gomock.Any()).Return(be, nil).AnyTimes()
+	backendOps := opstest.NewMockBackendOps(ctrl)
+	backendOps.EXPECT().AllowUsage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(false).AnyTimes()
+	backendOps.EXPECT().RecordUsage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	env := bulkRewriteEnv{
+		log:        slog.New(slog.DiscardHandler),
+		runtime:    runtime,
+		backendOps: backendOps,
+	}
+
+	res, err := runBulkRewrite(env, context.Background(), nil, bulkRewriteOp[*rewriteRow]{
+		opName:      "paging-test",
+		resultLabel: "rewritten",
+		counter:     pagingCounter(),
+		listFn:      rewriteListFn(set.page),
+		rewrite: func(context.Context, *s3be.GetObjectResult, *rewriteRow) (rewritten, error) {
+			t.Error("an object with no usage headroom must not be downloaded or rewritten")
+			return rewritten{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("runBulkRewrite: %v", err)
+	}
+
+	if res.Skipped != 3 || res.Succeeded != 0 || res.Failed != 0 {
+		t.Errorf("counts = %+v, want 3 skipped and nothing attempted", res)
+	}
+	if be.gets.Load() != 0 || be.puts.Load() != 0 {
+		t.Errorf("backend saw %d gets and %d puts, want none", be.gets.Load(), be.puts.Load())
+	}
 }

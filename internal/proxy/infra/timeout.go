@@ -94,12 +94,16 @@ func (p *timeoutPolicy) HeadWithTimeout(ctx context.Context, be backend.ObjectBa
 // read phase (retry another source) rather than the write phase (blame the
 // target), preventing a degraded source from tripping a healthy target's
 // breaker.
-func (p *timeoutPolicy) StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) error {
+// Reports the number of bytes the copy moved, which is what the caller
+// charges against both backends' usage. It is the source's declared size
+// rather than the caller's estimate, since an overwrite can land between the
+// two.
+func (p *timeoutPolicy) StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) (int64, error) {
 	rctx, rcancel := p.WithTimeout(ctx)
 	defer rcancel()
 	result, err := src.GetObject(rctx, key, "")
 	if err != nil {
-		return &backend.CopyError{Phase: backend.CopyPhaseRead, Err: err}
+		return 0, &backend.CopyError{Phase: backend.CopyPhaseRead, Err: err}
 	}
 	defer func() { _ = result.Body.Close() }()
 
@@ -112,9 +116,9 @@ func (p *timeoutPolicy) StreamCopy(ctx context.Context, src, dst backend.ObjectB
 		if tracked.readErr != nil {
 			phase = backend.CopyPhaseRead
 		}
-		return &backend.CopyError{Phase: phase, Err: err}
+		return 0, &backend.CopyError{Phase: phase, Err: err}
 	}
-	return nil
+	return result.Size, nil
 }
 
 // readTracker wraps the source body so StreamCopy can tell whether a copy

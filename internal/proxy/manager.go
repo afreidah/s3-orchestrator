@@ -263,8 +263,17 @@ func (m *BackendManager) Close() {
 	}
 }
 
+// AllowUsage reports whether a backend has headroom for a proposed operation
+// within its configured monthly limits. Paired with RecordUsage for the admin
+// operations that drive backends directly, so a fleet-wide pass asks before it
+// spends rather than only reporting afterwards.
+func (m *BackendManager) AllowUsage(backendName string, apiCalls, egress, ingress int64) bool {
+	return m.runtime.Usage().WithinLimits(backendName, apiCalls, egress, ingress)
+}
+
 // RecordUsage increments the in-memory usage counters for a backend.
-// Exposed for admin operations that bypass the normal manager request path.
+// Exposed for admin operations that drive backends directly; pair it with
+// AllowUsage, which is what admits the work in the first place.
 func (m *BackendManager) RecordUsage(backendName string, apiCalls, egress, ingress int64) {
 	m.runtime.Usage().Record(backendName, apiCalls, egress, ingress)
 }

@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 )
@@ -81,8 +82,10 @@ func BenchmarkStreamCopy(b *testing.B) {
 
 			b.SetBytes(int64(tc.size))
 			b.ResetTimer()
+			srcEP := backend.CopyEndpoint{Name: "bench-src", Backend: src}
+			dstEP := backend.CopyEndpoint{Name: "bench-dst", Backend: dst}
 			for b.Loop() {
-				_ = core.StreamCopy(context.Background(), src, dst, "bench-key")
+				_, _ = core.StreamCopy(context.Background(), srcEP, dstEP, "bench-key", int64(tc.size))
 			}
 		})
 	}
