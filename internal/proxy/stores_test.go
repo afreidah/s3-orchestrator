@@ -49,7 +49,7 @@ type testWorkers struct {
 func wireWorkersForTest(m *BackendManager, stores core.MetadataStore) *testWorkers {
 	w := &testWorkers{}
 	w.Rebalancer = worker.NewRebalancer(m.Runtime(), m.coord, stores)
-	w.Replicator = worker.NewReplicator(m.Runtime(), m.coord, stores)
+	w.Replicator = worker.NewReplicator(worker.ReplicatorDeps{Ops: m.Runtime(), Placement: m.coord, Store: stores})
 	w.OverReplicationCleaner = worker.NewOverReplicationCleaner(m.Runtime(), m.coord, stores)
 	w.CleanupWorker = worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: m.Runtime(), Store: stores, Concurrency: 10, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	w.PendingReaper = worker.NewPendingReaper(worker.PendingReaperDeps{Ops: m.Runtime(), Placement: m.coord, Store: stores})

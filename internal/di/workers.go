@@ -85,13 +85,45 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
 	return worker.NewRebalancer(c.Mgr.Runtime(), c.Coord, c.Stores), nil
 }
 
-// ProvideReplicator constructs the replication worker.
+// ProvideReplicator constructs the replication worker. It takes the encryptor
+// and codec because integrity.verify_on_replicate reads a new copy back, and
+// undoing its stored form is what makes the digest comparable to content_hash.
 func ProvideReplicator(i do.Injector) (*worker.Replicator, error) {
-	c, err := resolveWorkerCore(i)
+	c, err := resolveWorkerCoreWithCfg(i)
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewReplicator(c.Mgr.Runtime(), c.Coord, c.Stores), nil
+	enc, codec, err := resolveStoredForm(i, c.Cfg)
+	if err != nil {
+		return nil, err
+	}
+	return worker.NewReplicator(worker.ReplicatorDeps{
+		Ops:       c.Mgr.Runtime(),
+		Placement: c.Coord,
+		Store:     c.Stores,
+		Encryptor: enc,
+		Codec:     codec,
+	}), nil
+}
+
+// resolveStoredForm resolves the two optional decoders a worker needs to turn
+// stored bytes back into the plaintext a content hash covers.
+//
+// The codec is resolved whether or not compression is enabled for writes:
+// objects already stored compressed still have to be readable after an operator
+// turns the feature off.
+func resolveStoredForm(i do.Injector, cfg *config.Config) (*encryption.Encryptor, *compression.Codec, error) {
+	var enc *encryption.Encryptor
+	if cfg.Encryption.Enabled {
+		if e, err := do.Invoke[*encryption.Encryptor](i); err == nil {
+			enc = e
+		}
+	}
+	codec, err := do.Invoke[*compression.Codec](i)
+	if err != nil {
+		return nil, nil, err
+	}
+	return enc, codec, nil
 }
 
 // ProvideOverReplicationCleaner constructs the over-replication cleanup worker.
@@ -158,16 +190,7 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 	if err != nil {
 		return nil, err
 	}
-	var enc *encryption.Encryptor
-	if c.Cfg.Encryption.Enabled {
-		if e, err := do.Invoke[*encryption.Encryptor](i); err == nil {
-			enc = e
-		}
-	}
-	// The codec is resolved whether or not compression is enabled for writes:
-	// objects already stored compressed still have to be verifiable after an
-	// operator turns the feature off.
-	codec, err := do.Invoke[*compression.Codec](i)
+	enc, codec, err := resolveStoredForm(i, c.Cfg)
 	if err != nil {
 		return nil, err
 	}

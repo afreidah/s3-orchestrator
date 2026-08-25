@@ -95,6 +95,7 @@ func applyWorkerConfigs(inj do.Injector, rebalance *config.RebalanceConfig, repl
 	}
 	if rp, err := do.Invoke[*worker.Replicator](inj); err == nil {
 		rp.SetConfig(replication)
+		rp.SetIntegrityConfig(integrity)
 	}
 	if or, err := do.Invoke[*worker.OverReplicationCleaner](inj); err == nil {
 		or.SetConfig(replication)

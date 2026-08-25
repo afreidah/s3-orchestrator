@@ -13,19 +13,15 @@
 //
 // Both operations undo the stored form before hashing - decrypt, then
 // decompress - so the comparison is always against the bytes the client wrote.
-// Each backend read is tracked against the backend's usage quota (API calls +
-// egress).
+// That work lives in storedhash.go, shared with the replicator, and tracks each
+// backend read against the backend's usage quota (API calls + egress).
 // -------------------------------------------------------------------------------
 
 package worker
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -49,12 +45,6 @@ type ScrubberStore interface {
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 }
 
-// errNoCodec reports a compressed copy this orchestrator cannot decode, which
-// is a copy it cannot judge. It surfaces as an unreadable copy rather than a
-// failed one, because a scrubber that treats "cannot read" as "corrupt" deletes
-// objects that were never damaged.
-var errNoCodec = errors.New("object is compressed but no codec is configured")
-
 // Scrubber periodically verifies stored object integrity by reading objects
 // from backends, computing their SHA-256 hash, and comparing against the
 // stored content hash. Also supports backfilling hashes for objects that
@@ -64,8 +54,7 @@ type Scrubber struct {
 	deps      ScrubberOps
 	placement Placement
 	store     ScrubberStore
-	encryptor *encryption.Encryptor
-	codec     StreamDecompressor
+	hasher    *storedHasher
 	cfg       syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
@@ -86,7 +75,13 @@ func NewScrubber(deps ScrubberDeps) *Scrubber {
 	must.NotNil("Ops", deps.Ops)
 	must.NotNil("Placement", deps.Placement)
 	must.NotNil("Store", deps.Store)
-	return &Scrubber{deps: deps.Ops, placement: deps.Placement, store: deps.Store, encryptor: deps.Encryptor, codec: deps.Codec, log: slog.Default().With(logfmt.Component("scrubber"))}
+	return &Scrubber{
+		deps:      deps.Ops,
+		placement: deps.Placement,
+		store:     deps.Store,
+		hasher:    newStoredHasher(deps.Ops, deps.Encryptor, deps.Codec, "scrubber"),
+		log:       slog.Default().With(logfmt.Component("scrubber")),
+	}
 }
 
 // SetConfig atomically stores the integrity configuration.
@@ -454,78 +449,9 @@ func (s *Scrubber) hashOne(ctx context.Context, loc *core.ObjectLocation) ItemRe
 // SHARED  -  read object from backend, decrypt if needed, compute SHA-256
 // -------------------------------------------------------------------------
 
-// readAndHash reads an object from its backend, undoes whatever the row says
-// was done to it, and returns the SHA-256 hex digest of the bytes the client
-// wrote. Records API call and egress against the backend's usage quota.
+// readAndHash returns the SHA-256 hex digest of the bytes the client wrote for
+// this copy. The digest has to match what the replicator computes for the same
+// copy, so the work lives in storedHasher rather than here.
 func (s *Scrubber) readAndHash(ctx context.Context, loc *core.ObjectLocation) (string, error) {
-	// A row that contradicts itself about encryption cannot produce a
-	// meaningful plaintext hash, so it is rejected before a backend read is
-	// spent on it.
-	if err := core.ValidateEncryptionMetadata(loc); err != nil {
-		telemetry.EncryptionFlagMismatchTotal.WithLabelValues("scrubber").Inc()
-		return "", err
-	}
-
-	be, err := s.deps.GetBackend(loc.BackendName)
-	if err != nil {
-		return "", err
-	}
-
-	result, cancel, err := s.deps.GetWithTimeout(ctx, be, loc.ObjectKey, "")
-	if err != nil {
-		s.deps.Acct().APICall(loc.BackendName)
-		return "", fmt.Errorf("get object: %w", err)
-	}
-	defer cancel()
-	defer result.Body.Close()
-
-	s.deps.Acct().Egress(loc.BackendName, result.Size)
-
-	// Check the stored bytes against what the row claims before hashing.
-	// Hashing an envelope as if it were plaintext writes a ciphertext digest
-	// into content_hash, which makes the mismatch look verified forever and
-	// turns any later repair of the flag into a false integrity failure.
-	isEnvelope, body, err := encryption.PeekEnvelope(result.Body)
-	if err != nil {
-		return "", fmt.Errorf("inspect object header: %w", err)
-	}
-	if isEnvelope != loc.Encrypted {
-		telemetry.EncryptionFlagMismatchTotal.WithLabelValues("scrubber").Inc()
-		return "", fmt.Errorf("%w: row says encrypted=%t but stored bytes say encrypted=%t",
-			core.ErrEncryptionFlagMismatch, loc.Encrypted, isEnvelope)
-	}
-
-	// Undo the stored form in the order it was applied, so the hash covers the
-	// bytes the client wrote: decrypt, then decompress. Hashing either layer as
-	// if it were plaintext writes a digest of the wrong bytes into content_hash,
-	// which every later verification then reads as corruption.
-	reader := body
-	if loc.Encrypted && s.encryptor != nil {
-		decrypted, _, decErr := s.encryptor.DecryptStored(ctx, body, loc.EncryptionKey, loc.KeyID, loc.PlaintextSize, nil)
-		if decErr != nil {
-			return "", fmt.Errorf("decrypt: %w", decErr)
-		}
-		reader = decrypted
-	}
-	if loc.CompressionAlgorithm != "" {
-		if s.codec == nil {
-			return "", errNoCodec
-		}
-		// Decoded front to back rather than through the seek table: the whole
-		// object is read anyway, and a streaming decode avoids buffering it
-		// locally just to have something seekable.
-		decoded, decErr := s.codec.DecompressStream(reader)
-		if decErr != nil {
-			return "", fmt.Errorf("decompress: %w", decErr)
-		}
-		defer func() { _ = decoded.Close() }()
-		reader = decoded
-	}
-
-	// Compute SHA-256 of the (plaintext) body
-	h := sha256.New()
-	if _, err := io.Copy(h, reader); err != nil {
-		return "", fmt.Errorf("read body: %w", err)
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return s.hasher.hashStored(ctx, loc)
 }

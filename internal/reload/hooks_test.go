@@ -400,6 +400,46 @@ func TestWorkerConfigsHook_FailedScrubber(t *testing.T) {
 	}
 }
 
+// TestWorkerConfigsHook_PushesIntegrityOntoTheReplicator covers the section the
+// replicator gained with verify_on_replicate. The replicator reads two config
+// sections now, and a reload that refreshed only Replication would leave replica
+// verification pinned to whatever it was at startup while the operator watched
+// SIGHUP report success.
+func TestWorkerConfigsHook_PushesIntegrityOntoTheReplicator(t *testing.T) {
+	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
+	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
+		Storage: proxy.StorageDeps{
+			Backends: map[string]backend.ObjectBackend{},
+			Order:    []string{},
+		},
+		Policies:   proxy.PolicyConfig{RoutingStrategy: config.RoutingPack},
+		Operations: proxy.OperationalDeps{Metrics: mock},
+	})
+	t.Cleanup(mgr.Close)
+	workers := proxytest.BuildWorkers(mgr, mock)
+
+	inj := do.New()
+	do.ProvideValue(inj, workers.Replicator)
+
+	newCfg := &config.Config{
+		Replication: config.ReplicationConfig{Factor: 3},
+		Integrity:   config.IntegrityConfig{Enabled: true, VerifyOnReplicate: true},
+	}
+	h := &workerConfigsHook{inj: inj}
+	status, err := h.Apply(context.Background(), nil, newCfg)
+	if status != HookApplied || err != nil {
+		t.Fatalf("Apply = (%s, %v), want (applied, nil)", status, err)
+	}
+
+	if got := workers.Replicator.Config().Factor; got != 3 {
+		t.Errorf("replication factor = %d, want 3", got)
+	}
+	icfg := workers.Replicator.IntegrityConfig()
+	if icfg == nil || !icfg.ShouldVerifyOnReplicate() {
+		t.Errorf("integrity config = %+v, want replica verification on", icfg)
+	}
+}
+
 // TestWorkerConfigsHook_AllDisabledSkipped is the run-mode case where
 // none of the workers are wired in: the hook reports Skipped because
 // there is nothing to push config onto.
