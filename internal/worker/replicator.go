@@ -7,6 +7,9 @@
 // are written to one backend on PUT; this worker asynchronously ensures each
 // object reaches the configured replication factor. Uses conditional DB inserts
 // to safely handle concurrent overwrites and deletes.
+//
+// When integrity.verify_on_replicate is on, each new copy is read back and
+// hash-checked before it is recorded; replicator_verify.go holds that path.
 // -------------------------------------------------------------------------------
 
 package worker
@@ -21,6 +24,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -48,16 +52,35 @@ type Replicator struct {
 	ops       Ops
 	placement Placement
 	store     ReplicatorStore
+	hasher    *storedHasher
 	cfg       syncutil.AtomicConfig[config.ReplicationConfig]
+	integrity syncutil.AtomicConfig[config.IntegrityConfig]
 }
 
-// NewReplicator creates a Replicator with fleet operations, write-path
-// placement, and a metadata store.
-func NewReplicator(ops Ops, placement Placement, store ReplicatorStore) *Replicator {
-	must.NotNil("ops", ops)
-	must.NotNil("placement", placement)
-	must.NotNil("store", store)
-	return &Replicator{ops: ops, placement: placement, store: store, log: slog.Default().With(logfmt.Component("replicator"))}
+// ReplicatorDeps groups the replicator's constructor dependencies. Encryptor
+// and Codec are optional and are only consulted when integrity.verify_on_replicate
+// is on: verifying a copy means undoing its stored form before hashing, so a
+// deployment that stores encrypted or compressed objects needs the matching one.
+type ReplicatorDeps struct {
+	Ops       Ops
+	Placement Placement
+	Store     ReplicatorStore
+	Encryptor *encryption.Encryptor
+	Codec     StreamDecompressor
+}
+
+// NewReplicator creates a Replicator with the given dependencies.
+func NewReplicator(deps ReplicatorDeps) *Replicator {
+	must.NotNil("Ops", deps.Ops)
+	must.NotNil("Placement", deps.Placement)
+	must.NotNil("Store", deps.Store)
+	return &Replicator{
+		ops:       deps.Ops,
+		placement: deps.Placement,
+		store:     deps.Store,
+		hasher:    newStoredHasher(deps.Ops, deps.Encryptor, deps.Codec, "replicator"),
+		log:       slog.Default().With(logfmt.Component("replicator")),
+	}
 }
 
 // SetConfig atomically stores the replication configuration.
@@ -68,6 +91,18 @@ func (r *Replicator) SetConfig(cfg *config.ReplicationConfig) {
 // Config returns the current replication configuration.
 func (r *Replicator) Config() *config.ReplicationConfig {
 	return r.cfg.Load()
+}
+
+// SetIntegrityConfig atomically stores the integrity configuration, which
+// decides whether a new copy is read back and hash-checked before it is
+// recorded.
+func (r *Replicator) SetIntegrityConfig(cfg *config.IntegrityConfig) {
+	r.integrity.Store(cfg)
+}
+
+// IntegrityConfig returns the current integrity configuration.
+func (r *Replicator) IntegrityConfig() *config.IntegrityConfig {
+	return r.integrity.Load()
 }
 
 // -------------------------------------------------------------------------
@@ -216,18 +251,21 @@ func planUnderReplicated(locations []core.ObjectLocation, factor int) []replicaT
 // loop exited because target selection ran out, not whether any
 // individual attempt failed.
 type ReplicationOutcome struct {
-	Key          string // object key
-	Created      int    // copies successfully recorded
-	CopyErrors   int    // source -> target stream copies that errored
-	RecordErrors int    // RecordReplica failures (after the copy succeeded)
-	Superseded   int    // RecordReplica returned inserted=false (source row gone)
-	NoTarget     bool   // selection failed before `needed` was reached
+	Key             string // object key
+	Created         int    // copies successfully recorded
+	CopyErrors      int    // source -> target stream copies that errored
+	RecordErrors    int    // RecordReplica failures (after the copy succeeded)
+	Superseded      int    // RecordReplica returned inserted=false (source row gone)
+	VerifyMismatch  int    // copies discarded because their hash disagreed with the source
+	VerifyUnchecked int    // copies recorded without a hash check that was asked for
+	NoTarget        bool   // selection failed before `needed` was reached
 }
 
 // Failed reports the total number of failed copy attempts for this
-// object, irrespective of failure stage.
+// object, irrespective of failure stage. VerifyUnchecked is not a failure: the
+// copy was written and recorded, it simply could not be checked.
 func (o ReplicationOutcome) Failed() int {
-	return o.CopyErrors + o.RecordErrors + o.Superseded
+	return o.CopyErrors + o.RecordErrors + o.Superseded + o.VerifyMismatch
 }
 
 // replicaOutcomeResult folds one object's copy attempts into the batch tally.
@@ -283,20 +321,27 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 			break
 		}
 
-		// CopyToReplica returns the source's size from the in-memory
-		// ObjectLocation slice. transferredSize is the bytes the
-		// streaming copy moved; recordedSize is what RecordReplica
-		// actually wrote into both object_locations.size_bytes and
-		// backend_quotas.bytes_used (read from the source row inside
-		// the conditional INSERT). They equal each other unless an
-		// overwrite landed mid-replication.
-		source, transferredSize, err := r.CopyToReplica(ctx, key, existingCopies, target)
+		// CopyToReplica returns the source row it read from. Its SizeBytes is
+		// the bytes the streaming copy moved; recordedSize is what
+		// RecordReplica actually wrote into both object_locations.size_bytes
+		// and backend_quotas.bytes_used (read from the source row inside the
+		// conditional INSERT). They equal each other unless an overwrite
+		// landed mid-replication.
+		sourceLoc, err := r.CopyToReplica(ctx, key, existingCopies, target)
 		if err != nil {
 			r.log.WarnContext(ctx, "failed to copy object data",
 				"key", key, "target", target, "error", err)
 			telemetry.ReplicationErrorsTotal.Inc()
 			exclusion[target] = true
 			out.CopyErrors++
+			continue
+		}
+		source, transferredSize := sourceLoc.BackendName, sourceLoc.SizeBytes
+
+		// Checked before the row exists, so a copy that disagrees with its
+		// source never counts toward the replication factor.
+		if !r.admitVerifiedReplica(ctx, key, target, sourceLoc, &out) {
+			exclusion[target] = true
 			continue
 		}
 
@@ -367,6 +412,7 @@ func (r *Replicator) reportObjectOutcome(ctx context.Context, o *ReplicationOutc
 		"copy_errors", o.CopyErrors,
 		"record_errors", o.RecordErrors,
 		"superseded", o.Superseded,
+		"verify_mismatch", o.VerifyMismatch,
 		"no_target", o.NoTarget,
 	)
 }
@@ -397,18 +443,18 @@ func (r *Replicator) FindReplicaTarget(ctx context.Context, key string, size int
 	return name
 }
 
-// copyToReplica reads the object from an existing copy and writes it to the
+// CopyToReplica reads the object from an existing copy and writes it to the
 // target backend. Tries each existing copy in order for failover. Returns the
-// source backend name that was successfully read from and the size_bytes
-// recorded on that source's ObjectLocation row (the size of the bytes that
-// were actually transferred). The input slice is cloned before sorting so
-// callers retain their original ordering — without the clone, sort.Slice
-// reorders the caller's slice in place and the caller's later reads see
-// a different element at each index.
-func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []core.ObjectLocation, target string) (string, int64, error) {
+// source row it read from: its BackendName is the source that answered, its
+// SizeBytes the bytes actually transferred, and its stored-form columns
+// describe the target too, because StreamCopy moves the bytes verbatim. The
+// input slice is cloned before sorting so callers retain their original
+// ordering — without the clone, sort.Slice reorders the caller's slice in
+// place and the caller's later reads see a different element at each index.
+func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []core.ObjectLocation, target string) (*core.ObjectLocation, error) {
 	targetBackend, err := r.ops.GetBackend(target)
 	if err != nil {
-		return "", 0, err
+		return nil, err
 	}
 
 	// Prefer healthy sources to avoid circuit breaker latency/failures.
@@ -439,15 +485,15 @@ func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []cor
 
 	for i := range candidates {
 		if ctx.Err() != nil {
-			return "", 0, ctx.Err()
+			return nil, ctx.Err()
 		}
-		sourceName, sourceSize, terminal, err := r.tryCopyFrom(ctx, key, target, targetBackend, &candidates[i])
+		source, terminal, err := r.tryCopyFrom(ctx, key, target, targetBackend, &candidates[i])
 		if terminal {
-			return sourceName, sourceSize, err
+			return source, err
 		}
 	}
 
-	return "", 0, fmt.Errorf("all source copies failed for key %s", key)
+	return nil, fmt.Errorf("all source copies failed for key %s", key)
 }
 
 // cmpHealthFirst orders two health flags so true (healthy) sorts
@@ -464,17 +510,17 @@ func cmpHealthFirst(aOK, bOK bool) int {
 }
 
 // tryCopyFrom attempts a stream-copy from one source location to the
-// target. Returns terminal=true with (sourceName, sourceSize, nil) on
-// success or with ("", 0, err) when the failure mode means no other
-// source could help (a write-side error). Returns terminal=false to
-// signal the caller should move on to the next source. Failure
-// classification is structural: a *backend.CopyError with
-// CopyPhaseWrite is terminal, anything else (CopyPhaseRead or an
-// untyped error) retries the next source.
-func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, targetBackend backend.ObjectBackend, loc *core.ObjectLocation) (string, int64, bool, error) {
+// target. Returns terminal=true with (loc, nil) on success or with
+// (nil, err) when the failure mode means no other source could help
+// (a write-side error). Returns terminal=false to signal the caller
+// should move on to the next source. Failure classification is
+// structural: a *backend.CopyError with CopyPhaseWrite is terminal,
+// anything else (CopyPhaseRead or an untyped error) retries the next
+// source.
+func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, targetBackend backend.ObjectBackend, loc *core.ObjectLocation) (*core.ObjectLocation, bool, error) {
 	srcBackend, ok := r.ops.Backends()[loc.BackendName]
 	if !ok {
-		return "", 0, false, nil
+		return nil, false, nil
 	}
 	src := backend.CopyEndpoint{Name: loc.BackendName, Backend: srcBackend}
 	dst := backend.CopyEndpoint{Name: target, Backend: targetBackend}
@@ -484,18 +530,18 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, target
 	// exactly as an I/O failure on either leg would be.
 	_, err := r.ops.StreamCopy(ctx, src, dst, key, loc.SizeBytes)
 	if err == nil {
-		return loc.BackendName, loc.SizeBytes, true, nil
+		return loc, true, nil
 	}
 	// Write failures won't improve with a different source - fail immediately.
 	if backend.IsCopyPhase(err, backend.CopyPhaseWrite) {
-		return "", 0, true, fmt.Errorf("failed to write to target %s: %w", target, err)
+		return nil, true, fmt.Errorf("failed to write to target %s: %w", target, err)
 	}
 	r.log.WarnContext(ctx, "source read failed, trying next copy",
 		"key", key, "source", loc.BackendName, "error", err)
 	if backend.IsNotFound(err) {
 		r.pruneStaleSource(ctx, key, loc.BackendName)
 	}
-	return "", 0, false, nil
+	return nil, false, nil
 }
 
 // pruneStaleSource removes a source-side ObjectLocation row when the

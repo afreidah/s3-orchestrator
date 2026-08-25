@@ -23,28 +23,22 @@ import (
 type IntegrityConfig struct {
 	Enabled           bool          `yaml:"enabled"`             // Enable integrity verification (default: false)
 	VerifyOnRead      bool          `yaml:"verify_on_read"`      // Hash-check every GET response (default: false)
-	VerifyOnReplicate *bool         `yaml:"verify_on_replicate"` // Hash-check before recording a replica (default: true when enabled)
+	VerifyOnReplicate bool          `yaml:"verify_on_replicate"` // Hash-check a new replica before recording it (default: false)
 	ScrubberInterval  time.Duration `yaml:"scrubber_interval"`   // Background verification interval (0 = disabled)
 	ScrubberBatchSize int           `yaml:"scrubber_batch_size"` // Objects per scrub cycle (default: 100)
 }
 
-// ShouldVerifyOnReplicate returns whether replication copies should be
-// hash-verified. Defaults to true when integrity is enabled.
+// ShouldVerifyOnReplicate reports whether a new replica must be read back and
+// hash-checked before its ledger row is written.
+//
+// Off by default, like every other integrity check that costs a backend read:
+// verifying a replica doubles the egress replication spends on it, and that is
+// an operator's decision to make rather than a side effect of enabling hashing.
 func (ic *IntegrityConfig) ShouldVerifyOnReplicate() bool {
-	if !ic.Enabled {
-		return false
-	}
-	if ic.VerifyOnReplicate == nil {
-		return true // default when enabled
-	}
-	return *ic.VerifyOnReplicate
+	return ic.Enabled && ic.VerifyOnReplicate
 }
 
 // setDefaultsAndValidate is a no-op when integrity is disabled.
-// When enabled, VerifyOnReplicate defaults to true unless explicitly
-// set to false in the YAML (Go's zero-value for bool is false, so we
-// use a pointer internally during parsing  -  but since the config is
-// simple YAML, we just default it here and document the behavior).
 func (ic *IntegrityConfig) setDefaultsAndValidate() []error {
 	if !ic.Enabled {
 		return nil

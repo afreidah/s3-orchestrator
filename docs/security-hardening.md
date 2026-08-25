@@ -173,6 +173,7 @@ Integrity verification detects silent data corruption (bit rot, backend-side cor
 integrity:
   enabled: true
   verify_on_read: true
+  verify_on_replicate: false
   scrubber_interval: "6h"
   scrubber_batch_size: 100
 ```
@@ -181,6 +182,7 @@ integrity:
 
 - **Write path:** SHA-256 is computed on plaintext before encryption and stored in the database.
 - **Read path:** When `verify_on_read` is enabled, a `VerifyingReader` computes the hash as data streams to the client. On mismatch, the corrupted copy is automatically enqueued for cleanup. Range requests are not verified, since the stored hash covers the whole object and no slice of it can match; the scrubber covers those objects instead.
+- **Replication:** When `verify_on_replicate` is enabled, each new copy is read back from its target and hash-checked before it is recorded. A copy that disagrees with its source is deleted and another target is tried, so a corrupt copy never counts toward the replication factor.
 - **Background scrubber:** Works through the copies least recently verified, reads them from their backend, decrypts if needed, and checks the hash. A copy that fails is discarded, both its bytes and its ledger row, so the replicator re-creates it from a healthy copy when replication is configured.
 - **Backfill:** Objects written before integrity was enabled can be brought under hash management via `admin backfill-checksums`.
 
@@ -188,15 +190,17 @@ integrity:
 
 - **Enable `verify_on_read`** for production deployments. The overhead is minimal — SHA-256 is computed inline during streaming with no additional buffering.
 - **Enable the scrubber** to catch corruption in objects that haven't been read recently. A 6-hour interval with 100 objects per batch provides steady coverage without excessive backend API usage.
-- **Run backfill** after enabling integrity on an existing deployment. Unhashed objects are invisible to read-time verification and the scrubber.
+- **Weigh `verify_on_replicate` against your egress bill.** Unlike the other checks it is not close to free: reading each new copy back doubles what a replica costs to create. It is worth it where a silently corrupt replica counting toward the replication factor is the risk you care about, and hard to justify where the scrubber already reaches every copy often enough.
+- **Run backfill** after enabling integrity on an existing deployment. Unhashed objects are invisible to read-time verification, to replica verification, and to the scrubber.
 - **Monitor integrity metrics** for any non-zero `s3o_integrity_errors_total` rate, which indicates data corruption.
 
 ### Integrity Metrics
 
 | Metric | What to watch |
 |--------|---------------|
-| `s3o_integrity_checks_total{operation}` | Verification count by operation (read, scrub) |
+| `s3o_integrity_checks_total{operation}` | Verification count by operation (read, replicate, scrub) |
 | `s3o_integrity_errors_total{operation}` | Any non-zero rate indicates data corruption |
+| `s3o_integrity_usage_declined_total` | Copies left unverified for lack of backend egress headroom |
 
 ## Configuration File Security
 

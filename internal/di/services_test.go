@@ -100,7 +100,7 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 	rb := worker.NewRebalancer(mgr.Runtime(), coord, mock)
 	rb.SetConfig(&config.RebalanceConfig{})
 
-	rp := worker.NewReplicator(mgr.Runtime(), coord, mock)
+	rp := worker.NewReplicator(worker.ReplicatorDeps{Ops: mgr.Runtime(), Placement: coord, Store: mock})
 	rp.SetConfig(&config.ReplicationConfig{Factor: 1})
 
 	or := worker.NewOverReplicationCleaner(mgr.Runtime(), coord, mock)

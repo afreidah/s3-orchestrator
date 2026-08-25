@@ -264,6 +264,7 @@ func (h *workerConfigsHook) Apply(_ context.Context, _, newCfg *config.Config) (
 	}
 	if rpRes.Value != nil {
 		rpRes.Value.SetConfig(&newCfg.Replication)
+		rpRes.Value.SetIntegrityConfig(&newCfg.Integrity)
 		applied++
 	}
 	if orRes.Value != nil {

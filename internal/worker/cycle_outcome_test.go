@@ -144,7 +144,7 @@ func newReplicaFleet(t *testing.T, store *mockMetadataStore, source string, targ
 
 // replicator builds the worker under test from the fleet.
 func (f *replicaFleet) replicator() *Replicator {
-	return NewReplicator(f.ops, f.pl, f.store)
+	return newTestReplicator(f.ops, f.pl, f.store)
 }
 
 // copyFails makes the streaming copy of key fail, standing in for a source
@@ -254,7 +254,7 @@ func TestReplicate_AdmissionBlockedCycleIsNotSuccess(t *testing.T) {
 	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(false).AnyTimes()
 	store := &mockMetadataStore{underReplicated: []core.ObjectLocation{copyOn("key1", "b1")}}
 
-	r := NewReplicator(ops, NewMockPlacement(ctrl), store)
+	r := newTestReplicator(ops, NewMockPlacement(ctrl), store)
 	wantCycleLabel(t, telemetry.ReplicationRunsTotal, OutcomeEmpty, func() {
 		sum, err := r.Replicate(context.Background(), replicationConfig(2), nil)
 		if err != nil {

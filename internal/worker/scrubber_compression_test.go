@@ -78,7 +78,7 @@ func TestScrub_CompressedObjectVerifies(t *testing.T) {
 	t.Parallel()
 	s, ops, pl, be, ms := setupScrubber(t)
 	codec := newScrubCodec(t)
-	s.codec = codec
+	s.hasher.codec = codec
 
 	plain, stored := encodeForScrub(t, codec)
 	ms.randomHashedObjects = []core.ObjectLocation{compressedRow(hashString(string(plain)), len(stored))}
@@ -110,7 +110,7 @@ func TestScrub_CompressedObjectHashBackfill(t *testing.T) {
 	t.Parallel()
 	s, ops, _, be, ms := setupScrubber(t)
 	codec := newScrubCodec(t)
-	s.codec = codec
+	s.hasher.codec = codec
 
 	plain, stored := encodeForScrub(t, codec)
 	row := compressedRow("", len(stored))
@@ -141,7 +141,7 @@ func TestScrub_CompressedWithoutCodecDoesNotJudge(t *testing.T) {
 	s, ops, pl, be, ms := setupScrubber(t)
 	codec := newScrubCodec(t)
 	plain, stored := encodeForScrub(t, codec)
-	s.codec = nil
+	s.hasher.codec = nil
 
 	ms.randomHashedObjects = []core.ObjectLocation{compressedRow(hashString(string(plain)), len(stored))}
 
@@ -177,7 +177,7 @@ func (f failingDecoder) DecompressStream(_ io.Reader) (io.ReadCloser, error) { r
 func TestScrub_UndecodableCopyIsNotCorrupt(t *testing.T) {
 	t.Parallel()
 	s, ops, pl, be, ms := setupScrubber(t)
-	s.codec = failingDecoder{err: errors.New("frame will not decode")}
+	s.hasher.codec = failingDecoder{err: errors.New("frame will not decode")}
 
 	ms.randomHashedObjects = []core.ObjectLocation{compressedRow(hashString("whatever"), 64)}
 
@@ -205,7 +205,7 @@ func TestScrub_CompressedConfigDisabledStillVerifies(t *testing.T) {
 	t.Parallel()
 	s, ops, pl, be, ms := setupScrubber(t)
 	codec := newScrubCodec(t)
-	s.codec = codec
+	s.hasher.codec = codec
 	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
 
 	plain, stored := encodeForScrub(t, codec)

@@ -280,12 +280,12 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
 	}
-	source, _, err := w.CopyToReplica(context.Background(), "key1", copies, "b3")
+	source, err := w.CopyToReplica(context.Background(), "key1", copies, "b3")
 	if err != nil {
 		t.Fatalf("copyToReplica should failover: %v", err)
 	}
-	if source != "b2" {
-		t.Errorf("expected source=b2 (failover), got %q", source)
+	if source.BackendName != "b2" {
+		t.Errorf("expected source=b2 (failover), got %q", source.BackendName)
 	}
 	if !b3.Has("key1") {
 		t.Error("expected key1 on target b3")
@@ -315,7 +315,7 @@ func TestCopyToReplica_DoesNotMutateInputSlice(t *testing.T) {
 	}
 	before := []string{copies[0].BackendName, copies[1].BackendName}
 
-	if _, _, err := w.CopyToReplica(context.Background(), "key1", copies, "b3"); err != nil {
+	if _, err := w.CopyToReplica(context.Background(), "key1", copies, "b3"); err != nil {
 		t.Fatalf("CopyToReplica: %v", err)
 	}
 
@@ -417,7 +417,7 @@ func TestCopyToReplica_TargetBackendNotFound(t *testing.T) {
 	w := newReplicatorFor(t, newPermissiveStore(t), map[string]backend.ObjectBackend{"b1": b1}, &fleetOpts{})
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	if _, _, err := w.CopyToReplica(context.Background(), "key1", copies, "nonexistent"); err == nil {
+	if _, err := w.CopyToReplica(context.Background(), "key1", copies, "nonexistent"); err == nil {
 		t.Fatal("expected error when target backend not found")
 	}
 }
@@ -435,7 +435,7 @@ func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	if _, _, err := w.CopyToReplica(context.Background(), "key1", copies, "b2"); err == nil {
+	if _, err := w.CopyToReplica(context.Background(), "key1", copies, "b2"); err == nil {
 		t.Fatal("expected error when target PutObject fails")
 	}
 }
@@ -573,7 +573,7 @@ func TestReplicate_HealthAware_PrefersHealthySource(t *testing.T) {
 
 	fleet, coord := newFleet(t, store, map[string]backend.ObjectBackend{"b1": cbb1, "b2": b2, "b3": b3},
 		&fleetOpts{Order: []string{"b1", "b2", "b3"}})
-	w := NewReplicator(fleet, coord, store)
+	w := newTestReplicator(fleet, coord, store)
 
 	sum, err := w.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             3,
@@ -619,7 +619,7 @@ func TestReplicate_UsesRecordedSize_NotFirstCopy(t *testing.T) {
 
 	fleet, coord := newFleet(t, store, map[string]backend.ObjectBackend{"b1": cbb1, "b2": b2, "b3": b3},
 		&fleetOpts{Order: []string{"b1", "b2", "b3"}})
-	w := NewReplicator(fleet, coord, store)
+	w := newTestReplicator(fleet, coord, store)
 
 	sum, err := w.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:             3,

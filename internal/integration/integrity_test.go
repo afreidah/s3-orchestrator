@@ -582,3 +582,135 @@ func TestIntegrity_RangedReadKeepsHealthyCopy(t *testing.T) {
 		t.Error("the object no longer reads back as written after a ranged read")
 	}
 }
+
+// -------------------------------------------------------------------------
+// VERIFY ON REPLICATE
+// -------------------------------------------------------------------------
+
+// enableVerifyOnReplicate turns on the replicator's read-back check and returns
+// a function restoring the previous configuration. Off by default, so a test
+// that wants it has to ask.
+func enableVerifyOnReplicate(t *testing.T) func() {
+	t.Helper()
+
+	previous := testWorkers.Replicator.IntegrityConfig()
+	testWorkers.Replicator.SetIntegrityConfig(&config.IntegrityConfig{
+		Enabled:           true,
+		VerifyOnReplicate: true,
+	})
+	return func() { testWorkers.Replicator.SetIntegrityConfig(previous) }
+}
+
+// seedHashedObject writes one object and backfills its hash, leaving a single
+// copy the replicator can later be pointed at. The write path only stores a
+// hash when integrity is configured, so the backfill is what puts a digest on
+// the row for verification to compare against.
+func seedHashedObject(t *testing.T, ctx context.Context, client *s3.Client, prefix string, body []byte) string {
+	t.Helper()
+
+	key := uniqueKey(t, prefix)
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
+	}); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	if _, _ = testWorkers.Scrubber.Backfill(ctx, 100, 0, nil); queryHashedCopies(t, key) != 1 {
+		t.Fatalf("expected the written copy of %q to carry a hash after backfill", key)
+	}
+	return key
+}
+
+// TestIntegrity_VerifyOnReplicateRejectsACorruptCopy is the point of the
+// setting. The source copy is corrupted after its hash is recorded, so the
+// replica is a faithful copy of bad bytes: without the read-back it is written,
+// recorded, and counts toward the replication factor, leaving the object
+// looking twice as durable as it is.
+func TestIntegrity_VerifyOnReplicateRejectsACorruptCopy(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+	resetState(t)
+
+	restore := enableVerifyOnReplicate(t)
+	defer restore()
+
+	body := bytes.Repeat([]byte("V"), 512)
+	key := seedHashedObject(t, ctx, client, "verify-replicate-bad", body)
+
+	origin := queryObjectBackends(t, key)
+	if len(origin) != 1 {
+		t.Fatalf("expected a single copy before replication, got %v", origin)
+	}
+	corruptBackendCopy(t, ctx, origin[0], key, bytes.Repeat([]byte("X"), 512))
+
+	if _, err := testWorkers.Replicator.Replicate(ctx, replicationFactorTwo(), nil); err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+
+	if after := queryObjectBackends(t, key); len(after) != 1 {
+		t.Errorf("ledger lists %v; the replica disagreed with its source and must not have been recorded", after)
+	}
+}
+
+// TestIntegrity_VerifyOnReplicateAdmitsAGoodCopy is the control: verification
+// passing must leave ordinary replication alone. Without this, a check that
+// rejected everything would look identical to the test above.
+func TestIntegrity_VerifyOnReplicateAdmitsAGoodCopy(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+	resetState(t)
+
+	restore := enableVerifyOnReplicate(t)
+	defer restore()
+
+	body := bytes.Repeat([]byte("G"), 512)
+	key := seedHashedObject(t, ctx, client, "verify-replicate-good", body)
+
+	if _, err := testWorkers.Replicator.Replicate(ctx, replicationFactorTwo(), nil); err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+
+	if after := queryObjectBackends(t, key); len(after) != 2 {
+		t.Fatalf("expected 2 copies after verified replication, got %v", after)
+	}
+	assertObjectIntact(t, ctx, client, key, body, "after verified replication")
+}
+
+// TestIntegrity_VerifyOnReplicateRecordsAnUncheckableCopy pins the arm that
+// keeps the setting from costing durability: a source with no stored hash has
+// nothing to compare against, and the replica is recorded rather than refused.
+// Refusing it would leave every object written before integrity was enabled
+// permanently under-replicated.
+func TestIntegrity_VerifyOnReplicateRecordsAnUncheckableCopy(t *testing.T) {
+	client := newS3Client(t)
+	ctx := context.Background()
+	resetState(t)
+
+	restore := enableVerifyOnReplicate(t)
+	defer restore()
+
+	// No backfill, so the row carries no content_hash.
+	key := uniqueKey(t, "verify-replicate-unhashed")
+	body := bytes.Repeat([]byte("U"), 512)
+	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(virtualBucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
+	}); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	if hashed := queryHashedCopies(t, key); hashed != 0 {
+		t.Fatalf("expected an unhashed copy, got %d hashed", hashed)
+	}
+
+	if _, err := testWorkers.Replicator.Replicate(ctx, replicationFactorTwo(), nil); err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+
+	if after := queryObjectBackends(t, key); len(after) != 2 {
+		t.Errorf("expected 2 copies, got %v; an unverifiable copy must still be recorded", after)
+	}
+}

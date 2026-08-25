@@ -24,6 +24,8 @@ Replication is **asynchronous** — writes go to a single backend and the replic
 
 **Health-aware replication:** When backend circuit breakers are enabled, the replicator monitors backend health. If a backend's circuit breaker has been open longer than `unhealthy_threshold`, copies on that backend are treated as unavailable and replacement copies are created on healthy backends. This prevents sustained outages from silently reducing redundancy. The threshold prevents churn during brief transient failures. Set to `0` to disable health-aware replication (copies on down backends are still counted).
 
+**Verifying new copies:** Copies are streamed backend-to-backend and recorded without being read back, so a copy that lands corrupt still counts toward the replication factor until the scrubber reaches it. Setting `integrity.verify_on_replicate` closes that window by hash-checking each new copy before recording it, at the cost of reading every replica back. It is off by default; see [configuration.md#integrity](../configuration/#integrity).
+
 
 ## Rebalance
 

@@ -161,6 +161,37 @@ func NewS3Backend(ctx context.Context, cfg *config.BackendConfig) (*S3Backend, e
 // CRUD OPERATIONS
 // -------------------------------------------------------------------------
 
+// measuredStream hides a stream's concrete type from the AWS SDK so the
+// Content-Length this package supplies survives request building.
+//
+// smithy-go's Request.Build type-switches on *io.PipeReader and overwrites
+// ContentLength with -1 for it (transport/http/request.go). The upload then
+// goes out chunked with no Content-Length header, while SigV4 has already
+// signed content-length into SignedHeaders, so the request cannot validate:
+// backends answer 411 if they require the header and 403 SignatureDoesNotMatch
+// if they merely check the signature. Every PutObject call site here knows the
+// exact size and passes it, so that conservatism is wrong for this code.
+type measuredStream struct{ r io.Reader }
+
+// Read proxies to the wrapped stream. Deliberately the only method: gaining an
+// io.Seeker or io.Closer here would change how the SDK treats the body.
+func (s measuredStream) Read(p []byte) (int, error) { return s.r.Read(p) }
+
+// withKnownLength wraps a stream whose length the caller knows but the SDK
+// would otherwise discard.
+//
+// Seekable bodies pass through untouched. Hiding an io.Seeker would cost the
+// SDK its ability to rewind and retry, which the single-object write path
+// relies on for failover. Everything else is wrapped rather than only
+// *io.PipeReader, so the behaviour does not depend on which concrete types the
+// SDK happens to special-case in a given release.
+func withKnownLength(body io.Reader) io.Reader {
+	if _, ok := body.(io.ReadSeeker); ok {
+		return body
+	}
+	return measuredStream{r: body}
+}
+
 // preparePutBody resolves the body and request options for a single PutObject
 // call, plus a cleanup the caller must defer (always safe to call). In
 // unsigned-payload mode (default) it tags the request so the SDK skips the
@@ -177,7 +208,7 @@ func (b *S3Backend) preparePutBody(body io.Reader, size int64) (io.Reader, []fun
 		// Nothing to release on the non-materialized paths.
 	}
 	if b.unsignedPayload {
-		return body, []func(*s3.Options){withUnsignedPayload}, noop, nil
+		return withKnownLength(body), []func(*s3.Options){withUnsignedPayload}, noop, nil
 	}
 	if _, ok := body.(io.ReadSeeker); ok {
 		return body, nil, noop, nil

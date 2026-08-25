@@ -129,7 +129,7 @@ func newReplicatorFor(
 ) *Replicator {
 	t.Helper()
 	rt, coord := newFleet(t, store, backends, opts)
-	return NewReplicator(rt, coord, store)
+	return newTestReplicator(rt, coord, store)
 }
 
 // newRebalancerFor builds a Rebalancer over a fleet of the named backends.
