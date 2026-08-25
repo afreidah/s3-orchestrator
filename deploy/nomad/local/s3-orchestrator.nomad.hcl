@@ -157,6 +157,13 @@ job "s3-orchestrator" {
             master_key: "F2rpnHM7TmwJ4/DalNfk0cvCCPmHTfvB9LyhBLPoCVc="
             chunk_size: 262144
 
+          compression:
+            enabled: true
+            level: "default"
+            chunk_size: 1048576
+            min_size: 4096
+            min_ratio: 0.95
+
           integrity:
             enabled: true
             verify_on_read: true

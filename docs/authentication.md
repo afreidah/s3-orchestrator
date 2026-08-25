@@ -1,10 +1,8 @@
 ---
-title: "Authentication"
+title: "Authentication and Credentials"
 linkTitle: "Authentication"
 weight: 22
 ---
-
-# Authentication and Credentials
 
 ## SigV4 and multi-bucket auth
 
