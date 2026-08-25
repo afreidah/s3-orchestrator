@@ -1,4 +1,7 @@
-# Admin Guide
+---
+title: "Admin Guide"
+linkTitle: "Admin Guide"
+---
 
 The admin guide has been split into per-topic pages so each topic has a focused home rather than living in a single 2000-line reference. Start with the topic that matches what you're doing:
 

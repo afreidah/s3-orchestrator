@@ -27,14 +27,14 @@ weight: 35
     <i class="fas fa-upload landing-card-icon" style="color: #3fb950;"></i>
     <div>
       <strong>Write Path</strong>
-      <p>PutObject flow through backend selection, encryption, failover, and metadata recording.</p>
+      <p>PutObject flow through backend selection, compression, encryption, failover, and metadata recording.</p>
     </div>
   </a>
   <a class="landing-card" href="read-path/">
     <i class="fas fa-download landing-card-icon" style="color: #bc8cff;"></i>
     <div>
       <strong>Read Path</strong>
-      <p>GetObject flow through location lookup, failover, broadcast reads, decryption, and streaming.</p>
+      <p>GetObject flow through location lookup, failover, broadcast reads, decryption, frame decoding, and streaming.</p>
     </div>
   </a>
   <a class="landing-card" href="circuit-breaker/">
@@ -49,6 +49,13 @@ weight: 35
     <div>
       <strong>Encryption Flow</strong>
       <p>Envelope encryption pipeline: DEK generation, key wrapping, chunk-based AES-256-GCM, and range decryption.</p>
+    </div>
+  </a>
+  <a class="landing-card" href="compression/">
+    <i class="fas fa-file-zipper landing-card-icon" style="color: #f0883e;"></i>
+    <div>
+      <strong>Compression</strong>
+      <p>Chunked zstd pipeline: size and ratio floors, seek table, frame-level ranged reads, and composition with encryption.</p>
     </div>
   </a>
   <a class="landing-card" href="background-services/">

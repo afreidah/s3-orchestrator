@@ -4,7 +4,7 @@ linkTitle: "Read Path"
 weight: 3
 ---
 
-Detailed flow of a GetObject request through location lookup, failover, broadcast reads, decryption, and streaming. **Hover over any component** for implementation details.
+Detailed flow of a GetObject request through location lookup, failover, broadcast reads, decryption, decoding, and streaming. **Hover over any component** for implementation details.
 
 <style>
   #ac-diagram { margin: 1rem 0; }
@@ -62,7 +62,17 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     '    COPIES --> ULIMIT{Usage Limit<br>Check}:::filter',
     '    ULIMIT -->|over limit, more copies| COPIES',
     '    ULIMIT -->|all over limit| RLIMIT[429 Usage<br>Limit Exceeded]:::reject',
-    '    ULIMIT -->|within limits| FETCH[Backend<br>GetObject]:::process',
+    '    ULIMIT -->|within limits| COMP{Compressed<br>Copy?}:::decision',
+    '',
+    '    COMP -->|no| FETCH[Backend<br>GetObject]:::process',
+    '    COMP -->|yes| SEEK[Open Seekable<br>Reader]:::process',
+    '    SEEK --> FRAME[Ranged GET<br>per Frame]:::storage',
+    '    FRAME --> FDEC{Frame<br>Encrypted?}:::decision',
+    '    FDEC -->|yes| FDECRANGE[DecryptRange:<br>Ciphertext Chunks]:::process',
+    '    FDEC -->|no| DECODE',
+    '    FDECRANGE --> DECODE[Decode Frames:<br>zstd]:::process',
+    '    DECODE --> SLICE[Slice to<br>Client Range]:::process',
+    '    SLICE --> INTEG',
     '',
     '    FETCH --> CB{Circuit<br>Breaker}:::decision',
     '    CB -->|open| FETCHFAIL',
@@ -170,6 +180,41 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
       badge: 'reject', badgeText: 'rate limited',
       body: '<p>All copies of this object are on backends that have exceeded their monthly usage limits (API calls or egress).</p><p>The HTTP handler translates <code>ErrUsageLimitExceeded</code> to a 429 Too Many Requests response with a <code>SlowDown</code> S3 error code.</p>'
     },
+    COMP: {
+      title: 'Compressed Copy?',
+      badge: 'decision', badgeText: 'stored form check',
+      body: '<p>Checks whether this copy\'s row carries a <code>compression_algorithm</code>. An empty algorithm is the ledger\'s own way of saying the bytes are stored verbatim, so nothing else has to agree with it.</p><p>A compressed copy is not served by a whole-object GET. The codec drives the read instead, pulling the frames it needs through a ranged fetcher, which is the entire reason the stored format is chunked.</p><p>Every copy of a key agrees on whether it is compressed, so whichever copy wins the failover takes the same branch.</p><p><a href="../compression/">Compression flow diagram &rarr;</a></p>'
+    },
+    SEEK: {
+      title: 'Open Seekable Reader',
+      badge: 'process', badgeText: 'seek table',
+      body: '<p><code>codec.DecompressRanged(ctx, fetcher, compressedSize)</code> reads the seek table from the trailing skippable frame, which is what maps a logical offset to the frame holding it.</p><p>The size handed to the decoder is the compressed stream\'s size, not the stored size: for an encrypted copy the stored bytes are its ciphertext, so the figure comes from <code>plaintext_size</code> rather than <code>size_bytes</code>.</p><p>Reading the table is itself a ranged fetch, so the object metadata (content type, ETag, user metadata) is captured from that first response rather than paid for with a separate HEAD.</p>'
+    },
+    FRAME: {
+      title: 'Ranged GET per Frame',
+      badge: 'storage', badgeText: 'S3 API call',
+      body: '<p><code>storedRangeFetcher.FetchRange()</code> turns a request for part of the compressed stream into one ranged backend GET.</p><p>Each fetch is charged its own API call and its own egress, on the bytes that actually left the backend. A compressed read makes one call per frame it touches, so charging once per client request would under-report all but the first.</p><p>The usage limit is re-checked per fetch, before and after the response size is known, exactly as the uncompressed path checks it once.</p><p class="ac-metric">Metric: s3o_compression_fetched_bytes_total</p>'
+    },
+    FDEC: {
+      title: 'Frame Encrypted?',
+      badge: 'decision', badgeText: 'decryption check',
+      body: '<p>Compression runs inside encryption, so a copy with both features on is ciphertext of compressed data.</p><p>That ordering is what lets the same offset arithmetic serve both layers: the compressed stream is exactly the encryptor\'s plaintext domain, so a compressed-domain range translates into a ciphertext range through <code>encryption.CiphertextRange()</code> with no new maths.</p>'
+    },
+    FDECRANGE: {
+      title: 'DecryptRange: Ciphertext Chunks',
+      badge: 'process', badgeText: 'range decryption',
+      body: '<p><code>encryptor.DecryptStored()</code> with the translated range unwraps the frame bytes the fetcher asked for.</p><p>Whole ciphertext chunks are fetched because each carries its own GCM auth tag, so the bytes crossing the backend link exceed the frame requested, and that is what the egress charge counts.</p><p class="ac-metric">Metric: s3o_encryption_ops_total{operation="decrypt_range"}</p>'
+    },
+    DECODE: {
+      title: 'Decode Frames: zstd',
+      badge: 'process', badgeText: 'decompression',
+      body: '<p>Frames are decoded as the client reads, not up front. Each is independently decodable, which is what makes an entry point every <code>chunk_size</code> possible instead of only at byte zero.</p><p>A decode failure here is reported against <code>s3o_compression_errors_total{operation="decode"}</code>, which deserves an alert on any value: an encode failure costs one write, a decode failure means stored bytes cannot be read back.</p><p class="ac-metric">Metrics: s3o_compression_errors_total{operation="decode"}, s3o_compression_served_bytes_total</p>'
+    },
+    SLICE: {
+      title: 'Slice to Client Range',
+      badge: 'process', badgeText: 'range slice',
+      body: '<p>The client\'s <code>Range</code> is applied in logical coordinates, against the size the client originally wrote (<code>logical_size</code>), not against the stored size.</p><p>The decoded reader is seeked to the range start and limited to its length, and <code>Content-Range</code> is reported over the logical size. An unsatisfiable range is served as the whole object, which is what the uncompressed path does with one it cannot translate.</p>'
+    },
     FETCH: {
       title: 'Backend GetObject',
       badge: 'process', badgeText: 'fetch',
@@ -243,7 +288,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     METRICS: {
       title: 'Record Usage & Metrics',
       badge: 'process', badgeText: 'telemetry',
-      body: '<p><code>Record(backendName, apiCalls=1, egress=result.Size, ingress=0)</code> increments the monthly usage counters in the counter backend.</p><p>Operation duration is recorded via <code>MetricsCollector</code>. If failover occurred (primary copy failed), the span includes <code>s3o.failover=true</code>.</p><p>Audit event: <code>storage.GetObject</code> with key, backend name, and size.</p>'
+      body: '<p><code>Record(backendName, apiCalls=1, egress=wireBytes, ingress=0)</code> increments the monthly usage counters in the counter backend.</p><p>The egress charged is what crossed the backend link, which is not the size the client is served. Decryption happens on this side of that link, so an encrypted object is served as a smaller plaintext than the ciphertext fetched, and a ranged read of one crosses whole chunks to serve a slice.</p><p>A compressed read is not charged here at all: it meters itself per frame inside the fetcher, and adding the logical size on top would double-count the larger of the two figures.</p><p>Operation duration is recorded via <code>MetricsCollector</code>. If failover occurred (primary copy failed), the span includes <code>s3o.failover=true</code>.</p><p>Audit event: <code>storage.GetObject</code> with key, backend name, and size.</p>'
     },
     OK: {
       title: 'Return GetObjectResult',

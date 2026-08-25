@@ -1,10 +1,8 @@
 ---
-title: "Configuration"
+title: "Configuration Walkthrough"
 linkTitle: "Configuration"
 weight: 21
 ---
-
-# Configuration Walkthrough
 
 This page walks every YAML block in the config, with examples and validation rules. Each subsection below has a corresponding per-topic doc with operational depth:
 

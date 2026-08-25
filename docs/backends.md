@@ -4,8 +4,6 @@ linkTitle: "Backends"
 weight: 23
 ---
 
-# Backends
-
 Configuration, routing strategies, multi-backend topologies, and the provider quick-reference table.
 
 ## Backend configuration

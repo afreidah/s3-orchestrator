@@ -4,8 +4,6 @@ linkTitle: "Encryption"
 weight: 27
 ---
 
-# Encryption
-
 
 Server-side envelope encryption with chunked AES-256-GCM. When enabled, objects are encrypted before being stored on backends and decrypted transparently on read. Exactly one key source is required.
 
@@ -62,7 +60,16 @@ After updating the config, call the `rotate-encryption-key` admin API to re-wrap
 - Per-object data-encryption keys and wrapped key material are held server-side only. They are never serialized in API responses - the admin object-locations endpoint reports the `encrypted` flag and `key_id`, never the key itself.
 - Encryption is **not reloadable** — changing encryption settings requires a restart.
 - The `chunk_size` must stay the same for the lifetime of the data. Changing it after objects are encrypted will make those objects unreadable.
-- Encrypted objects are slightly larger than their plaintext (header + per-chunk overhead). The exact overhead is: 32 bytes (header) + 28 bytes per chunk (nonce + auth tag).
+- Encrypted objects are slightly larger than their plaintext (header + per-chunk overhead). The exact overhead is: 32 bytes (header) + 28 bytes per chunk (nonce + auth tag). Because that overhead is a fixed function of the size, the stored size of a write is known before it starts, and placement and the usage counters both use it rather than the size the client announced.
+
+
+## Composition with compression
+
+When [compression](compression.md) is also enabled, it runs first, in that order only: ciphertext does not compress. The compressed stream is therefore what the encryptor takes as its input, which is what `plaintext_size` records - the pre-encryption size, not the object the client wrote. That size lives in `logical_size` instead.
+
+A read runs the layers backwards: decrypt, then decompress, then slice. Ranged reads translate twice, from a logical range to the frames covering it, and from those to the ciphertext chunks holding them. Both translations use the same chunk arithmetic, because the compressed stream is the encryptor's plaintext domain.
+
+An object that is both compressed and encrypted cannot be recognised from its bytes alone, since the encoding is inside the ciphertext. Reconcile therefore takes its description from a surviving copy's row rather than inspecting the object.
 
 
 ## Encrypting objects that already exist

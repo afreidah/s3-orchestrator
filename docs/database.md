@@ -4,8 +4,6 @@ linkTitle: "Database"
 weight: 24
 ---
 
-# Database
-
 ## database
 
 The `driver` field selects between SQLite (embedded, zero-dependency) and PostgreSQL (required for multi-instance deployments). When `driver` is omitted, the orchestrator infers `postgres` if `host` is set, otherwise `sqlite`.
@@ -65,13 +63,13 @@ The schema currently provisions:
 | Table | Purpose |
 |-------|---------|
 | `backend_quotas` | Per-backend byte limits, usage counters, and orphan bytes tracking |
-| `object_locations` | Maps object keys to backends with size tracking. The `managed` flag is false for objects reconcile found outside every configured virtual bucket prefix: they count toward quota, but replication, rebalance, integrity and drain skip them |
+| `object_locations` | Maps object keys to backends with size tracking. `size_bytes` counts what the backend holds, so the `compression_*` columns and `logical_size` are what describe the object it decodes to; a NULL algorithm means the bytes are stored verbatim. The `managed` flag is false for objects reconcile found outside every configured virtual bucket prefix: they count toward quota, but replication, rebalance, integrity and drain skip them |
 | `multipart_uploads` | In-progress multipart upload metadata |
 | `multipart_parts` | Individual parts for active multipart uploads |
 | `backend_usage` | Monthly per-backend API request and data transfer counters |
 | `cleanup_queue` | Retry queue for failed backend object deletions |
 | `cleanup_dlq` | Dead-letter for `cleanup_queue` rows that exhausted retries; surfaces unrecoverable orphans for operator action |
-| `pending_objects` | In-flight PUT intents recorded before the backend write so a DB outage can't silently destroy the prior copy |
+| `pending_objects` | In-flight PUT intents recorded before the backend write so a DB outage can't silently destroy the prior copy. Carries the same stored-form columns as `object_locations`, so an intent the reaper promotes describes bytes that can actually be read |
 | `notification_outbox` | Durable webhook event delivery queue |
 
 Quota updates are transactional: object location inserts/deletes and quota counter changes happen atomically.

@@ -1,10 +1,8 @@
 ---
-title: "Replication"
+title: "Replication, Over-Replication, and Reconciliation"
 linkTitle: "Replication"
 weight: 25
 ---
-
-# Replication, Over-Replication, and Reconciliation
 
 ## Replication
 

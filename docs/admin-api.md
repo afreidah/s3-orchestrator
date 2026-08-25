@@ -22,7 +22,7 @@ Requests without a valid token get `401` with a JSON body. Request bodies are ca
 
 ## Streaming progress
 
-Seven endpoints run long enough that a single response is unhelpful: `rebalance`, `replicate`, `over-replication`, `scrub`, `backfill-checksums`, `reconcile`, and a backend purge. They return their JSON result by default, but stream newline-delimited progress when the caller asks for it:
+Nine endpoints run long enough that a single response is unhelpful: `rebalance`, `replicate`, `over-replication`, `scrub`, `backfill-checksums`, `reconcile`, `compress-existing`, `decompress-existing`, and a backend purge. They return their JSON result by default, but stream newline-delimited progress when the caller asks for it:
 
 ```bash
 curl -H "X-Admin-Token: $TOKEN" \
@@ -100,6 +100,8 @@ To bring such an object under management, move it under a virtual bucket's prefi
 Endpoints that trigger a worker report whether the pass actually ran. A response with `"status": "ok"` did the work; `"status": "skipped"` did not, and carries a `reason` explaining why.
 
 An operator who asks for a pass gets one. A worker that was never given a schedule still runs on demand: the endpoint falls back to the running configuration, then to defaults, rather than declining because nothing was configured. What remains skipped is work that would be meaningless: replication endpoints skip at factor 1, integrity endpoints skip when verification is disabled, encryption endpoints skip when no encryptor is configured, and rebalance skips when utilization is already within the threshold or the strategy plans no moves.
+
+The compression endpoints skip only when no codec is available, which is not the same as compression being disabled. A codec is built either way so already-stored objects stay readable, so `compress-existing` is a legitimate thing to run on a fleet that has not turned compression on for writes yet.
 
 This is not an error, so the status code is still `200`. Check `status` rather than the HTTP code when driving these from a script.
 

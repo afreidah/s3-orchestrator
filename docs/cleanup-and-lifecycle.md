@@ -1,10 +1,8 @@
 ---
-title: "Cleanup & Lifecycle"
+title: "Cleanup Queue, Pending Intents, and Lifecycle"
 linkTitle: "Cleanup & Lifecycle"
 weight: 26
 ---
-
-# Cleanup Queue, Pending Intents, and Lifecycle
 
 ## Cleanup queue
 

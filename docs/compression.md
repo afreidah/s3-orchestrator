@@ -4,8 +4,6 @@ linkTitle: "Compression"
 weight: 28
 ---
 
-# Compression
-
 At-rest compression. When enabled, objects are stored on backends as chunked zstd; sizes, ETags and content hashes stay those of the object the client wrote. Disabled by default.
 
 Storage and transfer are both metered on the backends this project targets, so compression reduces the bill twice. That second saving only holds if a partial read stays cheap, which is what drives the format.
