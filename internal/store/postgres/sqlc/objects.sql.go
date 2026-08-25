@@ -1311,7 +1311,8 @@ func (q *Queries) LockObjectKeyForWrite(ctx context.Context, hashtext string) er
 }
 
 const lockObjectOnBackend = `-- name: LockObjectOnBackend :one
-SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash
+SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash,
+       compression_algorithm, compression_level, compression_format_version, logical_size
 FROM object_locations
 WHERE object_key = $1 AND backend_name = $2
 FOR UPDATE
@@ -1323,14 +1324,22 @@ type LockObjectOnBackendParams struct {
 }
 
 type LockObjectOnBackendRow struct {
-	SizeBytes     int64
-	Encrypted     bool
-	EncryptionKey []byte
-	KeyID         *string
-	PlaintextSize *int64
-	ContentHash   *string
+	SizeBytes                int64
+	Encrypted                bool
+	EncryptionKey            []byte
+	KeyID                    *string
+	PlaintextSize            *int64
+	ContentHash              *string
+	CompressionAlgorithm     *string
+	CompressionLevel         *string
+	CompressionFormatVersion *int16
+	LogicalSize              *int64
 }
 
+// Every column describing the stored bytes, because the caller moving this row
+// to another backend rebuilds the destination from what this returns. A column
+// missing here is one the moved copy silently stops claiming, which for the
+// compression columns means a still-encoded object recorded as verbatim.
 func (q *Queries) LockObjectOnBackend(ctx context.Context, arg LockObjectOnBackendParams) (LockObjectOnBackendRow, error) {
 	row := q.db.QueryRow(ctx, lockObjectOnBackend, arg.ObjectKey, arg.BackendName)
 	var i LockObjectOnBackendRow
@@ -1341,6 +1350,10 @@ func (q *Queries) LockObjectOnBackend(ctx context.Context, arg LockObjectOnBacke
 		&i.KeyID,
 		&i.PlaintextSize,
 		&i.ContentHash,
+		&i.CompressionAlgorithm,
+		&i.CompressionLevel,
+		&i.CompressionFormatVersion,
+		&i.LogicalSize,
 	)
 	return i, err
 }

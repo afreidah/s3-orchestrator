@@ -246,8 +246,9 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 		return "", err
 	}
 
-	// Check usage limits before uploading
-	if !mp.core.Usage().WithinLimits(mu.BackendName, 1, 0, size) {
+	// Checked against what the part will occupy, which for an encrypted upload
+	// is the envelope rather than the bytes the client sent.
+	if !mp.core.Usage().WithinLimits(mu.BackendName, 1, 0, mp.physicalPartSize(mu, size)) {
 		observe.MarkSpanError(span, "usage limits exceeded")
 		return "", core.ErrInsufficientStorage
 	}
@@ -277,9 +278,24 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 		return "", fmt.Errorf("failed to record part: %w", err)
 	}
 
-	mp.core.Acct().PutSuccess(operation, mu.BackendName, size, start)
+	// Charged at what was sent, not at what the client handed over: an
+	// encrypted part carries its own envelope, and a large upload repeats that
+	// difference once per part.
+	mp.core.Acct().PutSuccess(operation, mu.BackendName, uploadSize, start)
 	pobserve.UploadPartCompleted(ctx, span, mu.ObjectKey, mu.BackendName, uploadID, partNumber, size)
 	return etag, nil
+}
+
+// physicalPartSize reports how many bytes a part of this size will occupy.
+// Encryption is applied per part under the upload's data key, and its envelope
+// is a fixed function of the size, so the figure is available before the part
+// is read. Parts are never compressed - assembly encodes the whole object -
+// so there is nothing else here that could only be known afterwards.
+func (mp *Manager) physicalPartSize(mu *core.MultipartUpload, size int64) int64 {
+	if mp.encryptor == nil || !mu.Encrypted {
+		return size
+	}
+	return mp.encryptor.CiphertextSize(size)
 }
 
 // -------------------------------------------------------------------------
@@ -770,11 +786,15 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// row intact, leaving the completion retryable.
 	mp.cleanupCompletedUpload(ctx, span, be, mu, uploadID, parts)
 
-	// N part GETs + 1 assembled PUT (Ingress charges that one). The N
-	// cleanup DELETEs of the part temp keys go through DeleteOrEnqueue,
-	// which records them itself.
+	// Assembly reads every part back off the backend and writes one object in
+	// their place, so it spends egress equal to the parts and ingress equal to
+	// the result. Each Egress carries its own API-call tick, which is the N part
+	// GETs; the N cleanup DELETEs of the part temp keys go through
+	// DeleteOrEnqueue, which records them itself.
 	mp.core.Acct().Operation(operation, mu.BackendName, start, nil)
-	mp.core.Acct().APICalls(mu.BackendName, int64(len(parts)))
+	for _, part := range parts {
+		mp.core.Acct().Egress(mu.BackendName, part.SizeBytes)
+	}
 	mp.core.Acct().Ingress(mu.BackendName, uploadSize)
 
 	pobserve.MultipartCompleted(ctx, span, mu.ObjectKey, mu.BackendName, uploadID, totalPlaintextSize, len(parts))
