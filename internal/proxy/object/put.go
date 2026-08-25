@@ -50,7 +50,7 @@ func (o *Manager) PutObject(ctx context.Context, key string, body io.Reader, siz
 	compress := o.compressOnWrite(size)
 	eligible := []string{}
 	if !compress {
-		if eligible = o.core.EligibleForWrite(1, 0, size); len(eligible) == 0 {
+		if eligible = o.core.EligibleForWrite(1, 0, o.physicalSize(size)); len(eligible) == 0 {
 			return "", rejectPutForUsage(span, operation)
 		}
 	}
@@ -62,7 +62,7 @@ func (o *Manager) PutObject(ctx context.Context, key string, body io.Reader, siz
 	defer plan.cleanup()
 
 	if compress {
-		if eligible = o.core.EligibleForWrite(1, 0, plan.storedSize); len(eligible) == 0 {
+		if eligible = o.core.EligibleForWrite(1, 0, o.physicalSize(plan.storedSize)); len(eligible) == 0 {
 			return "", rejectPutForUsage(span, operation)
 		}
 	}
@@ -80,7 +80,7 @@ func (o *Manager) PutObject(ctx context.Context, key string, body io.Reader, siz
 			return "", res.fatalErr
 		}
 		if res.putErr == nil {
-			o.finalizePutSuccess(ctx, span, operation, key, res.backend, plan.storedSize, start, failedBackends)
+			o.finalizePutSuccess(ctx, span, operation, key, res.backend, res.uploadSize, start, failedBackends)
 			return res.etag, nil
 		}
 		lastErr = res.putErr
@@ -124,6 +124,22 @@ type putPlan struct {
 // headers cost more than a small object saves.
 func (o *Manager) compressOnWrite(size int64) bool {
 	return o.codec != nil && o.compression.Enabled && size >= o.compression.MinSize
+}
+
+// physicalSize reports how many bytes a body of storedSize will occupy on a
+// backend once every stored-form layer has been applied.
+//
+// Encryption is the only layer that can be answered here, and it always can:
+// the envelope is a header plus a tag per chunk, so its size is a function of
+// the plaintext size and is known before a byte is written. Compression is
+// already folded into storedSize by the time this is asked, because an encoder
+// only reports its output size once it has run - which is why a compressed
+// write is admitted after encoding rather than before.
+func (o *Manager) physicalSize(storedSize int64) int64 {
+	if o.encryptor == nil {
+		return storedSize
+	}
+	return o.encryptor.CiphertextSize(storedSize)
 }
 
 // preparePutBody materializes the request body and, when compression applies,
@@ -199,11 +215,16 @@ func (o *Manager) compressPutBody(src *materialize.Body, size int64) (*materiali
 // the failover loop. A non-nil fatalErr terminates the call. A non-nil
 // putErr signals a backend-side failure that should drop the chosen
 // backend and retry on the remainder.
+// uploadSize is what the attempt actually sent, which is what the backend is
+// charged. It is the plan's stored size grown by the encryption envelope when
+// one was applied, and is carried back rather than recomputed so accounting
+// reports the figure the upload used.
 type putAttemptResult struct {
-	backend  string
-	etag     string
-	fatalErr error
-	putErr   error
+	backend    string
+	etag       string
+	uploadSize int64
+	fatalErr   error
+	putErr     error
 }
 
 // bufferPutBody materializes the request body into a seekable form
@@ -234,9 +255,11 @@ func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*m
 // destination, prepare the payload (encrypt/hash), insert a pending
 // intent, upload, then promote the intent on success.
 func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, operation, key string, plan *putPlan, contentType string, metadata map[string]string, dekState *putEncryptState, eligible []string) putAttemptResult {
-	// Placement decides on the bytes that will occupy the backend, which for a
-	// compressed write is not the size the client announced.
-	backendName, err := o.coord.SelectBackendForWrite(ctx, plan.storedSize, eligible)
+	// Placement decides on the bytes that will occupy the backend, which is
+	// neither the size the client announced nor the size the plan holds: a
+	// compressed write shrank before this point and an encrypted one grows
+	// after it.
+	backendName, err := o.coord.SelectBackendForWrite(ctx, o.physicalSize(plan.storedSize), eligible)
 	if err != nil {
 		return putAttemptResult{fatalErr: o.core.ClassifyWriteError(span, operation, err)}
 	}
@@ -295,7 +318,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, key, backendName, uploadSize, form, intentID); err != nil {
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
-	return putAttemptResult{backend: backendName, etag: etag}
+	return putAttemptResult{backend: backendName, etag: etag, uploadSize: uploadSize}
 }
 
 // errDrainRaceAborted is the sentinel putErr the attemptPutOnBackend

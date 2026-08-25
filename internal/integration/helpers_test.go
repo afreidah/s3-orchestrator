@@ -58,8 +58,14 @@ import (
 const virtualBucket = "test-bucket"
 
 // proxyAddr and related package-level variables used by this package.
+//
+// testDBConfig and minioEndpoints describe the containers rather than the
+// shared fixture built on them, so a harness can provision its own database and
+// its own buckets alongside it. See harness_test.go.
 var (
 	proxyAddr         string
+	testDBConfig      config.DatabaseConfig
+	minioEndpoints    []string
 	testDB            *sql.DB
 	testManager       *proxy.BackendManager
 	testReconciler    *reconcile.Manager
@@ -135,6 +141,7 @@ func mustStartMinios(ctx context.Context) []minioInstance {
 			bucket:    spec.bucket,
 		}
 		os.Setenv(spec.envKey, minios[i].endpoint)
+		minioEndpoints = append(minioEndpoints, minios[i].endpoint)
 	}
 	return minios
 }
@@ -279,6 +286,8 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "config validation failed: %v\n", err)
 		os.Exit(1)
 	}
+
+	testDBConfig = cfg.Database
 
 	dbCB := store.NewDatabaseBreaker(cfg.CircuitBreaker)
 	testDatabaseCB = dbCB
@@ -461,6 +470,128 @@ func queryQuotaUsed(t *testing.T, backendName string) int64 {
 		t.Fatalf("queryQuotaUsed(%q): %v", backendName, err)
 	}
 	return bytesUsed
+}
+
+// queryStoredSize returns size_bytes for a key: what the backend actually
+// holds, which for an encoded object is smaller than what the client wrote.
+func queryStoredSize(t *testing.T, key string) int64 {
+	t.Helper()
+	var size int64
+	err := testDB.QueryRow(
+		"SELECT size_bytes FROM object_locations WHERE object_key = $1",
+		virtualBucket+"/"+key).Scan(&size)
+	if err != nil {
+		t.Fatalf("queryStoredSize(%q): %v", key, err)
+	}
+	return size
+}
+
+// queryCompressionAlgorithm returns the encoding a key is stored in, or "" for
+// a copy held verbatim. Tests that mean to exercise the compressed path assert
+// on this: an object the ratio floor declined is stored plain, and every
+// compressed-read assertion would then pass without the encoded path running.
+func queryCompressionAlgorithm(t *testing.T, key string) string {
+	t.Helper()
+	var algorithm sql.NullString
+	err := testDB.QueryRow(
+		"SELECT compression_algorithm FROM object_locations WHERE object_key = $1",
+		virtualBucket+"/"+key).Scan(&algorithm)
+	if err != nil {
+		t.Fatalf("queryCompressionAlgorithm(%q): %v", key, err)
+	}
+	return algorithm.String
+}
+
+// queryLogicalSize returns logical_size for a key: the size the client wrote
+// and the size the object is known by, whatever form it is stored in.
+func queryLogicalSize(t *testing.T, key string) int64 {
+	t.Helper()
+	var size sql.NullInt64
+	err := testDB.QueryRow(
+		"SELECT logical_size FROM object_locations WHERE object_key = $1",
+		virtualBucket+"/"+key).Scan(&size)
+	if err != nil {
+		t.Fatalf("queryLogicalSize(%q): %v", key, err)
+	}
+	return size.Int64
+}
+
+// backendObjectSize reports how many bytes a backend physically holds for an
+// object key. Every other size in the system - the ledger's size_bytes, the
+// quota, the usage counters - is a derived number that can drift from this one,
+// so accounting assertions measure against it rather than against each other.
+func backendObjectSize(t *testing.T, backendName, key string) int64 {
+	t.Helper()
+	return backendRawObjectSize(t, backendName, internalKey(key))
+}
+
+// backendRawObjectSize is backendObjectSize for a key the orchestrator stores
+// outside a virtual bucket, which multipart part objects are.
+func backendRawObjectSize(t *testing.T, backendName, storedKey string) int64 {
+	t.Helper()
+	be, ok := allBackends[backendName]
+	if !ok {
+		t.Fatalf("backendRawObjectSize: backend %q is not configured", backendName)
+	}
+	head, err := be.HeadObject(context.Background(), storedKey)
+	if err != nil {
+		t.Fatalf("backendRawObjectSize(%s, %s): %v", backendName, storedKey, err)
+	}
+	return head.Size
+}
+
+// queryMultipartBackend returns the backend an in-flight upload is pinned to.
+func queryMultipartBackend(t *testing.T, uploadID string) string {
+	t.Helper()
+	var backendName string
+	err := testDB.QueryRow(
+		"SELECT backend_name FROM multipart_uploads WHERE upload_id = $1", uploadID).Scan(&backendName)
+	if err != nil {
+		t.Fatalf("queryMultipartBackend(%q): %v", uploadID, err)
+	}
+	return backendName
+}
+
+// setQuotaLimits gives every backend the same capacity for the duration of one
+// test and puts the configured values back afterwards.
+//
+// The fleet is provisioned at one and two kilobytes, which is what the spread
+// and rebalance tests do their arithmetic against. A test needing room for a
+// multi-chunk object, or needing a limit pitched at one exact size, has to move
+// them, and leaving them moved would quietly change the placement decisions
+// every later test asserts on.
+func setQuotaLimits(t *testing.T, limit int64) {
+	t.Helper()
+	original := map[string]int64{}
+	rows, err := testDB.Query("SELECT backend_name, bytes_limit FROM backend_quotas")
+	if err != nil {
+		t.Fatalf("read quota limits: %v", err)
+	}
+	for rows.Next() {
+		var name string
+		var value int64
+		if err := rows.Scan(&name, &value); err != nil {
+			rows.Close()
+			t.Fatalf("scan quota limit: %v", err)
+		}
+		original[name] = value
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read quota limits: %v", err)
+	}
+
+	if _, err := testDB.Exec("UPDATE backend_quotas SET bytes_limit = $1", limit); err != nil {
+		t.Fatalf("set quota limits: %v", err)
+	}
+	t.Cleanup(func() {
+		for name, value := range original {
+			if _, err := testDB.Exec(
+				"UPDATE backend_quotas SET bytes_limit = $1 WHERE backend_name = $2", value, name); err != nil {
+				t.Errorf("restore quota limit for %s: %v", name, err)
+			}
+		}
+	})
 }
 
 // resetState truncates all object/multipart tables and re-establishes the

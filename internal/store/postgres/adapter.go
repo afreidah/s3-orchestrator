@@ -126,14 +126,18 @@ func (a *pgTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, backen
 		return nil, false, fmt.Errorf("lock object on backend: %w", err)
 	}
 	loc := &core.ObjectLocation{
-		ObjectKey:     objectKey,
-		BackendName:   backend,
-		SizeBytes:     row.SizeBytes,
-		Encrypted:     row.Encrypted,
-		EncryptionKey: row.EncryptionKey,
-		KeyID:         derefStr(row.KeyID),
-		PlaintextSize: derefInt64(row.PlaintextSize),
-		ContentHash:   derefStr(row.ContentHash),
+		ObjectKey:                objectKey,
+		BackendName:              backend,
+		SizeBytes:                row.SizeBytes,
+		Encrypted:                row.Encrypted,
+		EncryptionKey:            row.EncryptionKey,
+		KeyID:                    derefStr(row.KeyID),
+		PlaintextSize:            derefInt64(row.PlaintextSize),
+		ContentHash:              derefStr(row.ContentHash),
+		CompressionAlgorithm:     derefStr(row.CompressionAlgorithm),
+		CompressionLevel:         derefStr(row.CompressionLevel),
+		CompressionFormatVersion: int(derefInt16(row.CompressionFormatVersion)),
+		LogicalSize:              derefInt64(row.LogicalSize),
 	}
 	return loc, true, nil
 }

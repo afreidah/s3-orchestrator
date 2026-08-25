@@ -615,8 +615,12 @@ web-push: web-submodules builder ## Build and push multi-arch website image to r
 # -------------------------------------------------------------------------
 
 clean: ## Remove build artifacts, demo environments, containers, and volumes
-	# --- Stop Nomad job and agent ---
-	NOMAD_ADDR=http://127.0.0.1:4646 nomad job stop -purge s3-orchestrator 2>/dev/null || true
+	# --- Stop Nomad job and agent (localhost dev agent only; clear any prod
+	#     NOMAD_*/CONSUL_* from the shell so this can never hit a real cluster) ---
+	env -u NOMAD_TOKEN -u NOMAD_CACERT -u NOMAD_CLIENT_CERT -u NOMAD_CLIENT_KEY -u NOMAD_TLS_SERVER_NAME -u NOMAD_NAMESPACE -u NOMAD_REGION \
+		-u CONSUL_HTTP_TOKEN -u CONSUL_CACERT -u CONSUL_CLIENT_CERT -u CONSUL_CLIENT_KEY -u CONSUL_TLS_SERVER_NAME \
+		NOMAD_ADDR=http://127.0.0.1:4646 CONSUL_HTTP_ADDR=http://127.0.0.1:8500 \
+		nomad job stop -purge s3-orchestrator 2>/dev/null || true
 	pkill -f '[n]omad agent -dev' 2>/dev/null || true
 	rm -f /tmp/nomad-demo.pid
 	# --- Delete k3d cluster ---

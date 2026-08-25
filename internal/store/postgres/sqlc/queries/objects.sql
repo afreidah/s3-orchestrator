@@ -63,7 +63,12 @@ SELECT EXISTS(
 ) AS exists;
 
 -- name: LockObjectOnBackend :one
-SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash
+-- Every column describing the stored bytes, because the caller moving this row
+-- to another backend rebuilds the destination from what this returns. A column
+-- missing here is one the moved copy silently stops claiming, which for the
+-- compression columns means a still-encoded object recorded as verbatim.
+SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash,
+       compression_algorithm, compression_level, compression_format_version, logical_size
 FROM object_locations
 WHERE object_key = $1 AND backend_name = $2
 FOR UPDATE;
