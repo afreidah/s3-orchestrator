@@ -4,8 +4,6 @@ linkTitle: "Deployment"
 weight: 34
 ---
 
-# Deployment
-
 
 ### Nomad and Kubernetes
 

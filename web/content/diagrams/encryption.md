@@ -35,9 +35,11 @@ When encryption is enabled, every object stored through the S3 Orchestrator is e
    - Write to the output: `nonce (12 bytes) | ciphertext | auth tag (16 bytes)`.
    - Repeat until all plaintext is consumed.
 6. **Upload the ciphertext stream** (header + chunks) to the S3 backend.
-7. **Store metadata in PostgreSQL**: the wrapped DEK, the master key ID, the base nonce (packed together as `baseNonce || wrappedDEK` in the `encryption_key` column), and the original plaintext size.
+7. **Store metadata in PostgreSQL**: the wrapped DEK, the master key ID, the base nonce (packed together as `baseNonce || wrappedDEK` in the `encryption_key` column), and the plaintext size.
 
 The plaintext DEK is never stored anywhere — it exists only in memory during the encryption operation.
+
+"Plaintext" here means whatever the encryptor was handed, which is not always the object the client wrote. With [compression](../../docs/compression/) also enabled, the object is encoded first - ciphertext does not compress - so the encryptor's input is the compressed stream and `plaintext_size` records that. The client's own size lives in `logical_size`. With compression off the two are the same and `logical_size` is unset.
 
 #### Decrypting an object (read path)
 

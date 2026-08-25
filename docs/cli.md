@@ -4,8 +4,6 @@ linkTitle: "CLI Subcommands"
 weight: 33
 ---
 
-# CLI Subcommands
-
 
 ### version
 

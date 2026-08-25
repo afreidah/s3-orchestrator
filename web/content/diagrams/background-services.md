@@ -1,7 +1,7 @@
 ---
 title: "Background Services"
 linkTitle: "Background Services"
-weight: 6
+weight: 7
 ---
 
 Coordination of periodic background workers that maintain storage health, enforce replication, and persist counters. **Hover over any component** for implementation details.

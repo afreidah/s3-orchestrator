@@ -146,7 +146,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     USAGE: {
       title: 'Usage Limits Check',
       badge: 'filter', badgeText: 'quota filter',
-      body: '<p><code>BackendsWithinLimits(order, apiCalls=1, egress=0, ingress=size)</code></p><p>Checks three dimensions per backend against monthly rolling limits:</p><p>1. <b>API requests</b>: baseline + current + 1 &le; limit<br>2. <b>Egress bytes</b>: baseline + current + 0 &le; limit<br>3. <b>Ingress bytes</b>: baseline + current + size &le; limit</p><p>Also skips backends where the object size exceeds <code>max_object_size</code> (0 = unlimited). Prevents repeated 413 errors from providers with per-object size restrictions.</p><p>Effective usage = DB baseline (cached) + in-memory deltas (from counter backend). Orphan bytes from cleanup queue are factored into quota calculations.</p>'
+      body: '<p><code>BackendsWithinLimits(order, apiCalls=1, egress=0, ingress=physicalSize)</code></p><p>Checks three dimensions per backend against monthly rolling limits:</p><p>1. <b>API requests</b>: baseline + current + 1 &le; limit<br>2. <b>Egress bytes</b>: baseline + current + 0 &le; limit<br>3. <b>Ingress bytes</b>: baseline + current + physicalSize &le; limit</p><p>The size admitted is what will occupy the backend, not what the client announced. Encryption grows an object by a header plus a tag per chunk, which is a fixed function of the size and so is known before a byte moves. Compression is not: an encoder only reports its output size once it has run, which is why a compressed write is admitted after encoding rather than before.</p><p>Also skips backends where the object size exceeds <code>max_object_size</code> (0 = unlimited). Prevents repeated 413 errors from providers with per-object size restrictions.</p><p>Effective usage = DB baseline (cached) + in-memory deltas (from counter backend). Orphan bytes from cleanup queue are factored into quota calculations.</p>'
     },
     DRAIN: {
       title: 'Exclude Draining',
@@ -166,7 +166,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     BUFFER: {
       title: 'Buffer Request Body',
       badge: 'process', badgeText: 'buffering',
-      body: '<p>Reads the entire request body into memory using <code>bufpool.Copy()</code> with pooled 32KB buffers from <code>sync.Pool</code>.</p><p>Necessary because <code>io.Reader</code> is single-use &mdash; if the upload fails and we need to retry on another backend, we need to replay the body. Each retry creates a fresh <code>bytes.NewReader(bodyBytes)</code>.</p><p>If encryption is enabled, each retry also re-encrypts with a fresh random DEK and nonce, producing different ciphertext.</p>'
+      body: '<p><code>materialize.New(body, size, hasher)</code> buffers the request body into a seekable form: memory below 32 MiB, a self-unlinking tempfile above it, so heap does not scale with object size.</p><p>Necessary because <code>io.Reader</code> is single-use &mdash; if the upload fails and we need to retry on another backend, we need to replay the body. <code>Reader()</code> serves a fresh reader positioned at offset 0 on every call.</p><p>When integrity verification is enabled the SHA-256 is computed during this same pass, so the body is never re-scanned after buffering.</p><p>If encryption is enabled, each retry also re-encrypts with a fresh base nonce, producing different ciphertext. The wrapped DEK is cached across attempts so a failover storm does not hammer the key provider.</p>'
     },
     HASH: {
       title: 'Integrity Enabled?',
@@ -206,7 +206,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     COMPRESS: {
       title: 'Encode Chunked zstd',
       badge: 'process', badgeText: 'compression',
-      body: '<p>Encodes the buffered body into a second materialized body as one independently decodable zstd frame per <code>chunk_size</code> of input, with a seek table in a trailing skippable frame.</p><p>Runs once, ahead of the failover loop: an attempt replays already-encoded bytes and rebuilds only the encryption layer. Ordering is compress then encrypt, because ciphertext does not compress.</p><p>Both bodies are held until the upload settles, since the encoded copy has to replay on every attempt.</p><p>Records <code>compression_algorithm</code>, <code>compression_level</code>, <code>compression_format_version</code> and <code>logical_size</code> on the object row. <code>logical_size</code> is the only place the client-visible size survives, since <code>size_bytes</code> counts what landed on the backend.</p>'
+      body: '<p>Encodes the buffered body into a second materialized body as one independently decodable zstd frame per <code>chunk_size</code> of input, with a seek table in a trailing skippable frame.</p><p>Runs once, ahead of the failover loop: an attempt replays already-encoded bytes and rebuilds only the encryption layer. Ordering is compress then encrypt, because ciphertext does not compress.</p><p>Both bodies are held until the upload settles, since the encoded copy has to replay on every attempt.</p><p>Records <code>compression_algorithm</code>, <code>compression_level</code>, <code>compression_format_version</code> and <code>logical_size</code> on the object row. <code>logical_size</code> is the only place the client-visible size survives, since <code>size_bytes</code> counts what landed on the backend.</p><p><a href="../compression/">Compression flow diagram &rarr;</a></p>'
     },
     ENC: {
       title: 'Encryption Enabled?',
@@ -286,7 +286,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     METRICS: {
       title: 'Record Usage & Metrics',
       badge: 'process', badgeText: 'telemetry',
-      body: '<p><code>Record(backendName, apiCalls=1, egress=0, ingress=size)</code> increments the monthly usage counters in the counter backend (local atomics or Redis).</p><p>Records operation duration histogram via <code>MetricsCollector</code>. If failover occurred, increments <code>WriteFailoverTotal</code> for each failed backend paired with the successful backend.</p><p>Audit event: <code>storage.PutObject</code> with key, backend name, plaintext size.</p>'
+      body: '<p><code>Record(backendName, apiCalls=1, egress=0, ingress=uploadSize)</code> increments the monthly usage counters in the counter backend (local atomics or Redis).</p><p>The ingress charged is the size the attempt actually sent, carried back from the upload rather than recomputed: the encoded bytes for a compressed object, the envelope for an encrypted one, and the ciphertext of the encoding when both are on. It is the same figure the ledger row commits, so the storage and bandwidth counters describe the object identically.</p><p>Records operation duration histogram via <code>MetricsCollector</code>. If failover occurred, increments <code>WriteFailoverTotal</code> for each failed backend paired with the successful backend.</p><p>Audit event: <code>storage.PutObject</code> with key, backend name, stored size.</p>'
     },
     OK: {
       title: 'Return ETag / 200 OK',

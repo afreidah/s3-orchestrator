@@ -2,8 +2,6 @@
 title: "Performance envelope"
 ---
 
-# Performance envelope
-
 This document is a **runbook + results template** for characterising
 the orchestrator's performance envelope (closes #367). The tooling in
 `loadtest/` produces the per-scenario JSON matrices referenced below;

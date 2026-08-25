@@ -1,7 +1,7 @@
 ---
 title: "Database Schema"
 linkTitle: "Database Schema"
-weight: 7
+weight: 8
 ---
 
 Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any table** for column details and usage context.
@@ -217,7 +217,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>last_scrubbed_at</td><td>TIMESTAMPTZ</td><td>When the scrubber last verified this copy. NULL means never verified; the scrub queue falls back to created_at so a fresh write sorts behind older unverified data (nullable)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Insert timestamp</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_backend (backend_name) &bull; idx_object_locations_key_pattern (object_key text_pattern_ops) &bull; idx_object_locations_created (created_at) &bull; idx_object_locations_key_created (object_key, created_at) &bull; idx_object_locations_backend_key_collate_c (backend_name, object_key COLLATE "C") &bull; idx_object_locations_key_collate_c (object_key COLLATE "C") &bull; idx_object_locations_managed (backend_name) WHERE managed &bull; idx_object_locations_scrub_queue (COALESCE(last_scrubbed_at, created_at), object_key) WHERE content_hash IS NOT NULL AND managed</p>' +
-        '<p>Used by: <a href="../write-path/">write path</a> (RecordObject), <a href="../read-path/">read path</a> (GetAllObjectLocations), <a href="../background-services/">replicator</a> (GetUnderReplicatedObjects), directory tree listing, <a href="../encryption/">key rotation</a>.</p>' +
+        '<p>Used by: <a href="../write-path/">write path</a> (RecordObject), <a href="../read-path/">read path</a> (GetAllObjectLocations), <a href="../background-services/">replicator</a> (GetUnderReplicatedObjects), directory tree listing, <a href="../encryption/">key rotation</a>, <a href="../compression/">compression</a> (stored-form columns).</p>' +
         '<p class="ac-metric">Key queries: InsertObjectLocation, ListObjectsByPrefix, GetDirectoryStats, GetUnderReplicatedObjects, BackendObjectStats</p>'
     },
     multipart_uploads: {

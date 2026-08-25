@@ -4,8 +4,6 @@ linkTitle: "Architecture"
 weight: 20
 ---
 
-# Architecture
-
 ```
               S3 clients (aws cli, rclone, etc.)
                           |
@@ -55,6 +53,19 @@ Standard S3-compatible services accessed via AWS SDK v2, each with a dedicated t
 
 See [docs/backends.md](backends.md) for the provider quick-reference table and supported configurations.
 
+## Stored form
+
+What a backend holds is not always the object the client wrote. Two optional layers sit between them, and both are off by default:
+
+- **Compression** - objects are stored as chunked zstd, one independently decodable frame per `chunk_size` with a seek table in a trailing skippable frame. The chunking is what keeps a range read cheap: a compressed object is served by fetching the frames the range covers rather than the whole object.
+- **Encryption** - envelope encryption with chunked AES-256-GCM, a fresh data key per object wrapped by the configured key source.
+
+They compose in one order only. Compression runs first, because ciphertext does not compress, which makes the compressed stream the encryptor's input. A read runs it backwards: decrypt, then decompress, then slice.
+
+That ordering is why a row carries more than one size. `size_bytes` is what the backend holds and what quota and the usage counters are charged; `plaintext_size` is the encryptor's input; `logical_size` is the object the client wrote. An object with neither layer applied has one size and the rest are unset.
+
+See [docs/compression.md](compression.md) and [docs/encryption.md](encryption.md) for each layer, and the [write path](../diagrams/write-path/) and [read path](../diagrams/read-path/) diagrams for where they sit.
+
 ## Write routing
 
 The `routing_strategy` config selects how a write picks its target backend:
@@ -69,6 +80,8 @@ See [docs/backends.md](backends.md) for full routing semantics.
 ## Usage limits
 
 Optionally cap monthly API requests, egress bytes, and ingress bytes per backend. When a backend exceeds a limit, writes overflow to other backends and reads fail over to replicas. Delete and abort operations always bypass limits.
+
+The bytes counted are the ones that crossed the link to the backend, which for an object stored compressed or encrypted is its stored form rather than the object the client sees. A write is admitted against that figure too: the encryption envelope is a fixed function of the size and so is known in advance, while a compressed write is admitted after encoding, because an encoder only reports its output size once it has run.
 
 Limits are enforced using cached database totals (refreshed at the configured flush interval) plus unflushed counters held in Redis when configured, otherwise in local in-memory atomics. Adaptive flushing automatically shortens the interval when any backend approaches a limit.
 
