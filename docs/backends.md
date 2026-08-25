@@ -61,6 +61,8 @@ For HTTPS endpoints, unsigned payload is enabled by default. For plain HTTP endp
 
 Set `unsigned_payload: false` to force payload hashing. This buffers the entire object in memory before uploading — only use this if you have a specific compliance requirement for end-to-end payload integrity independent of TLS.
 
+Streaming never means an unknown length: every upload declares its size up front, so `Content-Length` is always sent and `Transfer-Encoding: chunked` is never used. That matters because SigV4 signs `content-length`, so a request that streams without it cannot validate — backends that require the header answer `411`, and backends that merely check the signature answer `403 SignatureDoesNotMatch`.
+
 **Disable checksum:** AWS SDK v2 defaults to sending streaming checksums (CRC64NVME) on uploads. Some S3-compatible providers — notably Google Cloud Storage — reject these with `SignatureDoesNotMatch`. Set `disable_checksum: true` on backends that don't support the AWS checksum headers:
 
 ```yaml

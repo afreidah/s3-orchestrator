@@ -22,6 +22,14 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// newTestReplicator builds a Replicator with no stored-form decoders and no
+// integrity config, which is the shape most replication tests want: copies move
+// verbatim and nothing is hash-checked. Tests that exercise verify_on_replicate
+// call SetIntegrityConfig and pass their own decoders through ReplicatorDeps.
+func newTestReplicator(ops Ops, pl Placement, store ReplicatorStore) *Replicator {
+	return NewReplicator(ReplicatorDeps{Ops: ops, Placement: pl, Store: store})
+}
+
 // mockMetadataStore is a minimal stub for worker tests. It embeds every
 // narrow store role as a nil interface so any worker signature accepts it;
 // tests override only the methods they exercise, and any unstubbed call

@@ -145,13 +145,13 @@ type Workers struct {
 }
 
 // WorkerFeatures carries the stored-form layers a worker has to undo to read an
-// object back. Only the scrubber needs them: it hashes the bytes the client
-// wrote, so it has to decrypt and decode a copy before hashing it.
+// object back. The scrubber and the replicator both need them: each hashes the
+// bytes the client wrote, so each has to decrypt and decode a copy first.
 //
-// A fixture that leaves these zero builds a scrubber that cannot read an
-// encrypted or compressed copy at all. It does not fail loudly - the read
-// errors, the copy is counted as skipped, and the sweep reports a clean pass
-// having verified nothing.
+// A fixture that leaves these zero builds workers that cannot read an encrypted
+// or compressed copy at all. It does not fail loudly - the read errors, the
+// scrubber counts the copy as skipped and reports a clean pass having verified
+// nothing, and the replicator records every new copy unverified.
 type WorkerFeatures struct {
 	Encryptor *encryption.Encryptor
 	Codec     worker.StreamDecompressor
@@ -171,15 +171,21 @@ func BuildWorkers(mgr *proxy.BackendManager, m core.MetadataStore) *Workers {
 }
 
 // BuildWorkersWithFeatures is BuildWorkers for a fixture whose objects are
-// encrypted, compressed, or both, mirroring what di.ProvideScrubber wires in
-// production.
+// encrypted, compressed, or both, mirroring what di.ProvideScrubber and
+// di.ProvideReplicator wire in production.
 func BuildWorkersWithFeatures(mgr *proxy.BackendManager, m core.MetadataStore, features WorkerFeatures) *Workers {
 	// The manager's own coordinator, so a worker's placement decisions run
 	// against the same write-path state the manager writes through.
 	coord := mgr.Coordinator()
 	w := &Workers{}
 	w.Rebalancer = worker.NewRebalancer(mgr.Runtime(), coord, m)
-	w.Replicator = worker.NewReplicator(mgr.Runtime(), coord, m)
+	w.Replicator = worker.NewReplicator(worker.ReplicatorDeps{
+		Ops:       mgr.Runtime(),
+		Placement: coord,
+		Store:     m,
+		Encryptor: features.Encryptor,
+		Codec:     features.Codec,
+	})
 	w.OverReplicationCleaner = worker.NewOverReplicationCleaner(mgr.Runtime(), coord, m)
 	w.CleanupWorker = worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: mgr.Runtime(), Store: m, Concurrency: 10, InstanceID: "test-instance", ClaimGracePeriod: 5 * time.Minute})
 	w.PendingReaper = worker.NewPendingReaper(worker.PendingReaperDeps{Ops: mgr.Runtime(), Placement: coord, Store: m})

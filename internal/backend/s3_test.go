@@ -47,6 +47,87 @@ func TestPreparePutBody_UnsignedStreamsDirectly(t *testing.T) {
 	}
 }
 
+// TestPutObject_PipeBodyStillSendsContentLength is the regression guard for the
+// multipart assembly failure: the assembly body is an *io.PipeReader, and
+// smithy-go's request builder overwrites ContentLength with -1 for that one
+// concrete type. The upload then goes out chunked with no Content-Length while
+// SigV4 has already signed the header, which no S3 implementation accepts.
+//
+// The assertion is deliberately on the wire rather than on preparePutBody's
+// return value. What preparePutBody returns is not the property that matters;
+// what reaches the backend is, and that is what a future SDK bump can silently
+// change.
+func TestPutObject_PipeBodyStillSendsContentLength(t *testing.T) {
+	t.Parallel()
+
+	var (
+		gotLength   int64
+		gotEncoding []string
+		gotBody     []byte
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotLength, gotEncoding = r.ContentLength, r.TransferEncoding
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("ETag", `"abc123"`)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	unsigned := true
+	be, err := NewS3Backend(t.Context(), &config.BackendConfig{
+		Name:            "test",
+		Endpoint:        srv.URL,
+		Region:          "us-east-1",
+		Bucket:          "test-bucket",
+		AccessKeyID:     "AKID",
+		SecretAccessKey: "secret",
+		ForcePathStyle:  true,
+		UnsignedPayload: &unsigned,
+	})
+	if err != nil {
+		t.Fatalf("NewS3Backend: %v", err)
+	}
+
+	payload := bytes.Repeat([]byte("s3o-pipe-body-"), 128)
+	pr, pw := io.Pipe()
+	go func() {
+		_, _ = pw.Write(payload)
+		_ = pw.Close()
+	}()
+
+	if _, err := be.PutObject(t.Context(), "dir/obj", pr, int64(len(payload)), "text/plain", nil); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	if gotLength != int64(len(payload)) {
+		t.Errorf("Content-Length = %d, want %d; a backend requiring it answers 411 and one checking the signature answers 403",
+			gotLength, len(payload))
+	}
+	if len(gotEncoding) != 0 {
+		t.Errorf("Transfer-Encoding = %v, want none", gotEncoding)
+	}
+	if !bytes.Equal(gotBody, payload) {
+		t.Errorf("backend received %d bytes, want %d", len(gotBody), len(payload))
+	}
+}
+
+// TestWithKnownLength_KeepsSeekableBodiesSeekable pins the other half of the
+// wrapper's contract. The single-object write path materializes precisely so
+// the SDK can rewind and retry on failover; wrapping a seekable body would
+// hide io.Seeker and take that away.
+func TestWithKnownLength_KeepsSeekableBodiesSeekable(t *testing.T) {
+	t.Parallel()
+
+	seekable := bytes.NewReader([]byte("seekable"))
+	if got := withKnownLength(seekable); got != io.Reader(seekable) {
+		t.Errorf("withKnownLength wrapped a seekable body (%T); the SDK loses retry", got)
+	}
+
+	nonSeekable := nonSeekableReader{r: bytes.NewReader([]byte("stream"))}
+	if _, ok := withKnownLength(nonSeekable).(io.ReadSeeker); ok {
+		t.Error("withKnownLength must not invent seekability")
+	}
+}
+
 // TestPreparePutBody_SignedSeekablePassthrough covers signed-payload mode with
 // an already-seekable body: it is passed through unchanged, not re-materialized.
 func TestPreparePutBody_SignedSeekablePassthrough(t *testing.T) {

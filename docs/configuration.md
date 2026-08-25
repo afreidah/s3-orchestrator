@@ -200,6 +200,8 @@ For HTTPS endpoints, unsigned payload is enabled by default. For plain HTTP endp
 
 Set `unsigned_payload: false` to force payload hashing. This buffers the entire object in memory before uploading — only use this if you have a specific compliance requirement for end-to-end payload integrity independent of TLS.
 
+Streaming never means an unknown length: every upload declares its size up front, so `Content-Length` is always sent and `Transfer-Encoding: chunked` is never used. That matters because SigV4 signs `content-length`, so a request that streams without it cannot validate — backends that require the header answer `411`, and backends that merely check the signature answer `403 SignatureDoesNotMatch`.
+
 **Disable checksum:** AWS SDK v2 defaults to sending streaming checksums (CRC64NVME) on uploads. Some S3-compatible providers — notably Google Cloud Storage — reject these with `SignatureDoesNotMatch`. Set `disable_checksum: true` on backends that don't support the AWS checksum headers:
 
 ```yaml
@@ -664,7 +666,7 @@ SHA-256 content hashing for data integrity verification. When enabled, objects a
 integrity:
   enabled: true
   verify_on_read: true               # Hash-check every GET response as it streams
-  verify_on_replicate: true          # Verify hash when creating replicas (default: true)
+  verify_on_replicate: false         # Read each new replica back and hash-check it
   scrubber_interval: "6h"            # Background verification interval (0 = disabled)
   scrubber_batch_size: 100           # Objects per scrub cycle
 ```
@@ -673,8 +675,15 @@ integrity:
 
 - **Write path:** SHA-256 is computed on the plaintext body (before encryption) and stored in `object_locations.content_hash`.
 - **Read path (`verify_on_read`):** A `VerifyingReader` wraps the response body and computes the hash as data streams to the client. On mismatch at EOF, the corrupted copy is enqueued for cleanup.
+- **Replication (`verify_on_replicate`):** Each new copy is read back from its target, decoded to plaintext, and checked against the source's hash before the ledger row that makes it count toward the replication factor is written. A copy whose hash disagrees is deleted and another target is tried.
 - **Scrubber:** A background worker works through the copies least recently verified, reads them from their backend, decrypts if needed, and checks the hash. A copy that fails has its bytes discarded and its ledger row removed, so the replicator rebuilds it from a healthy copy. Each read counts against the backend's usage quota.
 - **Backfill:** Objects written before integrity was enabled have no stored hash. Use `admin backfill-checksums` to read those objects and compute their hashes.
+
+**What `verify_on_replicate` costs, and why it is off by default.** Hashing on write is nearly free, because the digest is computed during a buffering pass the write path already performs. Verifying a replica is not: it reads the whole copy back, so every replica costs its size in egress twice instead of once. Enabling integrity therefore does not enable this on its own. Turn it on when the window it closes matters to you - a corrupt copy counts toward the replication factor from the moment its row exists, and until the scrubber reaches it the object reads as fully replicated when it is not.
+
+Only a hash that actually disagrees discards a copy. Three situations leave the copy in place and report it as unverified rather than rejecting it: the source carries no `content_hash` (written before integrity, or not yet backfilled), the target has no egress headroom left under its usage limit, or the read-back failed. A copy that cannot be checked is not a copy known to be bad, and discarding it would leave the object under-replicated for reasons that have nothing to do with its contents. Backends that are not read-after-write consistent make that last case routine.
+
+A mismatch does not say which end is damaged. The copy is byte-for-byte identical to its source, so a source that has already rotted produces a faithful copy of bad bytes and every target disagrees the same way. Both backend names appear in the log; `admin scrub -key <key>` settles which one is wrong.
 
 **Sizing the sweep.** `scrubber_interval` and `scrubber_batch_size` together decide how long a full pass takes: copies divided by batch size, times the interval. Verifying a copy means reading its whole body from the backend, so a complete pass re-reads the entire dataset and that egress is metered on most providers. Pick the period first, monthly being a normal operating point for bit rot, then derive the batch from the fleet size.
 

@@ -122,7 +122,7 @@ backends:
 # integrity:
 #   enabled: false
 #   verify_on_read: false            # Hash-check every GET response (streams through VerifyingReader)
-#   verify_on_replicate: true        # Verify hash when creating replicas (default: true when enabled)
+#   verify_on_replicate: false       # Read each new replica back and hash-check it (doubles replication egress)
 #   scrubber_interval: 6h            # Background verification interval (0 = disabled)
 #   scrubber_batch_size: 100         # Objects per scrub cycle
 

@@ -58,7 +58,21 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.76.x (current)
+### v0.101.x (current)
+
+**`integrity.verify_on_replicate` now does something ([#1292](https://github.com/afreidah/s3-orchestrator/issues/1292), v0.101.0)**
+
+The field has been parsed and documented since v0.41.x, but no code read it, so replicas were never hash-checked whatever it was set to. It is now wired into the replicator: when enabled, each new copy is read back from its target, decoded to plaintext, and compared against the source's `content_hash` before the ledger row that makes it count toward the replication factor is written. A copy whose hash disagrees is deleted and another target is tried.
+
+**Default changed from `true` to `false`.** The documented default was never in force, so no deployment's behaviour changes on upgrade. It is off because it is the one integrity check that is not close to free: reading each new copy back means a replica costs its size in egress twice. Every other check in this section is opt-in for the same reason, and hashing on write stays on because it rides a buffering pass the write path already performs.
+
+**Operator action items after upgrade:**
+
+- No config change required. A config that already sets `verify_on_replicate: true` starts verifying replicas on upgrade - expect replication egress on the receiving backends to roughly double. Remove the field or set it to `false` to keep the previous behaviour.
+- If you enable it, run `admin backfill-checksums` first. A source with no `content_hash` has nothing to compare against, and its replicas are recorded unverified.
+- `s3o_integrity_checks_total{operation="replicate"}` and `s3o_integrity_errors_total{operation="replicate"}` report the new check. A non-zero error rate does not say which end is damaged: the copy is byte-identical to its source, so a source that has already rotted makes every target disagree. Both backend names are logged; `admin scrub -key <key>` settles it.
+
+### v0.76.x
 
 **Reconcile imports objects at their literal key ([#1161](https://github.com/afreidah/s3-orchestrator/pull/1161), v0.76.0)**
 
@@ -536,10 +550,11 @@ SHA-256 content hashing for object integrity verification. When enabled, objects
 integrity:
   enabled: false                     # Enable integrity verification
   verify_on_read: false              # Hash-check GET responses as they stream
-  verify_on_replicate: true          # Verify hash when creating replicas (default when enabled)
   scrubber_interval: "6h"            # Background verification interval (0 = disabled)
   scrubber_batch_size: 100           # Objects per scrub cycle
 ```
+
+A `verify_on_replicate` field was also parsed from this section, but nothing read it and replicas were never hash-checked. It became a real setting in v0.101.x.
 
 All fields are optional and default to disabled. This is a non-breaking change — existing configs work without modification.
 
