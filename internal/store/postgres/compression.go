@@ -24,9 +24,12 @@ import (
 )
 
 // ListUncompressedLocations returns a page of copies whose bytes carry no
-// encoding.
-func (s *Store) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.RewritableLocation, error) {
+// encoding and that the supplied thresholds do not already exclude.
+func (s *Store) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor, t core.CompressionThresholds) ([]core.RewritableLocation, error) {
 	rows, err := s.queries.ListUncompressedLocations(ctx, db.ListUncompressedLocationsParams{
+		MinSize:      t.MinSize,
+		ProbeLevel:   t.Level,
+		MinRatio:     t.MinRatio,
 		AfterKey:     after.ObjectKey,
 		AfterBackend: after.BackendName,
 		RowLimit:     int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
@@ -106,6 +109,21 @@ func (s *Store) MarkObjectCompressed(ctx context.Context, u *core.CompressedUpda
 		}
 		return nil
 	})
+}
+
+// RecordCompressionProbe stores what the encoder produced for a copy it
+// declined to store compressed, so a later pass can reach the same verdict
+// from the row rather than downloading and encoding the object again.
+func (s *Store) RecordCompressionProbe(ctx context.Context, probe *core.CompressionProbe) error {
+	if err := s.queries.RecordCompressionProbe(ctx, db.RecordCompressionProbeParams{
+		ObjectKey:             probe.ObjectKey,
+		BackendName:           probe.BackendName,
+		CompressionProbeSize:  int64Ptr(probe.Size),
+		CompressionProbeLevel: strPtr(probe.Level),
+	}); err != nil {
+		return fmt.Errorf("record compression probe: %w", err)
+	}
+	return nil
 }
 
 // rewritableRow is the shape both listings return. The two generated row types

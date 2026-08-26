@@ -82,11 +82,16 @@ func (c *Compression) rewriteEnv() bulkRewriteEnv {
 }
 
 // CompressExisting encodes every copy stored verbatim and records the new
-// stored form. Objects below the configured minimum size, and objects the
-// encoder cannot shrink past the configured ratio, are left exactly as they are
-// and counted as skipped: the pass applies the same thresholds a PUT does, so
-// it cannot write an encoding a fresh write would have rejected.
-func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observer) (BulkRewriteResult, error) {
+// stored form. Objects the encoder cannot shrink past the configured ratio are
+// left exactly as they are and counted as skipped: the pass applies the same
+// thresholds a PUT does, so it cannot write an encoding a fresh write would
+// have rejected.
+//
+// maxRewrites caps how many copies are rewritten, or zero for the whole fleet. A
+// capped run needs nothing carried between invocations to continue: a rewritten
+// copy leaves the listing, and one declined on ratio is recorded so it leaves too,
+// so running it again converts the next batch rather than re-examining the last.
+func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observer, maxRewrites int) (BulkRewriteResult, error) {
 	if c.codec == nil || c.store == nil {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
@@ -94,23 +99,29 @@ func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observe
 		opName:      "compress-existing",
 		resultLabel: "compressed",
 		counter:     telemetry.CompressExistingObjectsTotal,
-		listFn:      rewriteListFn(c.store.ListUncompressedLocations),
-		// The size floor is answerable from the row, so an object below it
-		// costs no backend read at all.
-		declines: func(loc *rewriteRow) bool {
-			if loc.LogicalSizeOfSource() >= c.cfg.MinSize {
-				return false
-			}
-			telemetry.CompressionSkippedTotal.WithLabelValues(telemetry.CompressionSkipMinSize).Inc()
-			return true
-		},
-		rewrite: c.compressOne,
+		// The size floor and the recorded declines are both applied by the
+		// listing rather than here: both answers outlive the pass, so a copy
+		// either one excludes selects out of every future pass instead of being
+		// handed to each one only to be declined again.
+		listFn: rewriteListFn(func(ctx context.Context, batchSize int, after core.Cursor) ([]core.RewritableLocation, error) {
+			return c.store.ListUncompressedLocations(ctx, batchSize, after, core.CompressionThresholds{
+				MinSize:  c.cfg.MinSize,
+				MinRatio: c.cfg.MinRatio,
+				Level:    c.cfg.Level,
+			})
+		}),
+		rewrite:     c.compressOne,
+		maxRewrites: maxRewrites,
 	})
 }
 
 // DecompressExisting decodes every encoded copy and records it as stored
 // verbatim, which is what an operator runs to take the feature back out.
-func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Observer) (BulkRewriteResult, error) {
+//
+// maxRewrites caps how many copies are rewritten, or zero for the whole fleet.
+// This direction declines nothing, so every copy a capped run touches leaves the
+// listing and the next run continues straight on from there.
+func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Observer, maxRewrites int) (BulkRewriteResult, error) {
 	if c.codec == nil || c.store == nil {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
@@ -120,6 +131,7 @@ func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Obser
 		counter:     telemetry.DecompressExistingObjectsTotal,
 		listFn:      rewriteListFn(c.store.ListCompressedLocations),
 		rewrite:     c.decompressOne,
+		maxRewrites: maxRewrites,
 	})
 }
 
@@ -146,6 +158,20 @@ func (c *Compression) compressOne(ctx context.Context, src *s3be.GetObjectResult
 	if !compression.WorthStoring(logical, encodedSize, c.cfg.MinRatio) {
 		encoded.Cleanup()
 		telemetry.CompressionSkippedTotal.WithLabelValues(telemetry.CompressionSkipMinRatio).Inc()
+		// What the encode cost bought is the knowledge that this copy does not
+		// shrink enough, so it is written down. A pass that discarded it would
+		// spend the same download and encode to learn it again on every run.
+		// The failure is logged and swallowed: the copy is correctly declined
+		// either way, and losing the record costs efficiency, not correctness.
+		if err := c.store.RecordCompressionProbe(ctx, &core.CompressionProbe{
+			ObjectKey:   loc.ObjectKey,
+			BackendName: loc.BackendName,
+			Size:        encodedSize,
+			Level:       c.cfg.Level,
+		}); err != nil {
+			c.log.WarnContext(ctx, "failed to record compression probe",
+				"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+		}
 		return rewritten{}, errSkipRewrite
 	}
 	telemetry.RecordCompressed(logical, encodedSize)

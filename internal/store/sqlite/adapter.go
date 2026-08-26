@@ -234,16 +234,19 @@ func (a *sqliteTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, ba
 		compLevel     sql.NullString
 		compVersion   sql.NullInt64
 		logicalSize   sql.NullInt64
+		probeSize     sql.NullInt64
+		probeLevel    sql.NullString
 	)
 	err := a.tx.QueryRowContext(ctx,
 		`SELECT size_bytes, encrypted, encryption_key,
 		        key_id, plaintext_size, content_hash,
-		        compression_algorithm, compression_level, compression_format_version, logical_size
+		        compression_algorithm, compression_level, compression_format_version, logical_size,
+		        compression_probe_size, compression_probe_level
 		 FROM object_locations
 		 WHERE object_key = ? AND backend_name = ?`,
 		objectKey, backend,
 	).Scan(&size, &encrypted, &encryptionKey, &keyID, &plaintextSize, &contentHash,
-		&compAlgorithm, &compLevel, &compVersion, &logicalSize)
+		&compAlgorithm, &compLevel, &compVersion, &logicalSize, &probeSize, &probeLevel)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -263,6 +266,8 @@ func (a *sqliteTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, ba
 		CompressionLevel:         nullStringValue(compLevel),
 		CompressionFormatVersion: int(nullInt64Value(compVersion)),
 		LogicalSize:              nullInt64Value(logicalSize),
+		CompressionProbeSize:     nullInt64Value(probeSize),
+		CompressionProbeLevel:    nullStringValue(probeLevel),
 	}
 	return loc, true, nil
 }
@@ -274,6 +279,20 @@ func (a *sqliteTxAdapter) DeleteObjectFromBackend(ctx context.Context, objectKey
 		objectKey, backend,
 	); err != nil {
 		return fmt.Errorf("delete object from backend: %w", err)
+	}
+	return nil
+}
+
+// RecordCompressionProbe stores what the encoder measured for a copy it
+// declined to store compressed.
+func (a *sqliteTxAdapter) RecordCompressionProbe(ctx context.Context, probe *core.CompressionProbe) error {
+	if _, err := a.tx.ExecContext(ctx,
+		`UPDATE object_locations
+		 SET compression_probe_size = ?, compression_probe_level = ?
+		 WHERE object_key = ? AND backend_name = ?`,
+		probe.Size, probe.Level, probe.ObjectKey, probe.BackendName,
+	); err != nil {
+		return fmt.Errorf("record compression probe: %w", err)
 	}
 	return nil
 }

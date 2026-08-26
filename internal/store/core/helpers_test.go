@@ -325,6 +325,11 @@ func (*quotaTxStub) LockObjectOnBackend(context.Context, string, string) (*Objec
 // real test fixtures.
 func (*quotaTxStub) DeleteObjectFromBackend(context.Context, string, string) error { return nil }
 
+// RecordCompressionProbe is a no-op stub on quotaTxStub so the type satisfies the
+// full TxAdapter interface; only the quota-touching methods carry
+// real test fixtures.
+func (*quotaTxStub) RecordCompressionProbe(context.Context, *CompressionProbe) error { return nil }
+
 // InsertObjectLocationIfNotExists is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.

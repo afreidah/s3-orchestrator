@@ -92,7 +92,7 @@ func TestStoreInt_CompressionListings_AreComplements(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	uncompressed, err := s.ListUncompressedLocations(ctx, 1000, core.Cursor{})
+	uncompressed, err := s.ListUncompressedLocations(ctx, 1000, core.Cursor{}, core.CompressionThresholds{MinSize: 0, MinRatio: 1, Level: "default"})
 	if err != nil {
 		t.Fatalf("ListUncompressedLocations: %v", err)
 	}

@@ -33,6 +33,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// pathCompressExisting and pathDecompressExisting are the admin endpoints the
+// whole-fleet and bounded compression entries both post to.
+const (
+	pathCompressExisting   = "/admin/api/compress-existing"
+	pathDecompressExisting = "/admin/api/decompress-existing"
+)
+
 // opsAction is one selectable admin operation. result decodes the single JSON
 // summary a short action answers with; the long-running actions leave it nil
 // and stream NDJSON progress instead. An action that needs a value from the
@@ -180,12 +187,32 @@ func encryptionActions() []opsAction {
 // Both stream their progress rather than answering with one summary: they read
 // and rewrite every object in the fleet, so a caller watching one needs to see
 // it move rather than wait on a spinner that is indistinguishable from a hang.
+// The bounded runs are separate entries rather than a prompt on the whole-fleet
+// ones, because an attached prompt refuses an empty answer: it would make
+// converting a whole fleet impossible to ask for, which is the common case.
 func compressionActions() []opsAction {
 	return []opsAction{
-		post("Compress existing objects", "/admin/api/compress-existing",
+		post("Compress existing objects", pathCompressExisting,
 			"Read and rewrite every uncompressed copy as chunked zstd?", nil),
-		post("Decompress existing objects", "/admin/api/decompress-existing",
+		post("Compress existing objects (batch)", pathCompressExisting,
+			"Read and rewrite that many uncompressed copies as chunked zstd?", nil,
+			asks("Compress how many objects?", "1000", boundedRewrite(pathCompressExisting))),
+		post("Decompress existing objects", pathDecompressExisting,
 			"Read and rewrite every compressed copy back to its stored bytes?", nil),
+		post("Decompress existing objects (batch)", pathDecompressExisting,
+			"Read and rewrite that many compressed copies back to their stored bytes?", nil,
+			asks("Decompress how many objects?", "1000", boundedRewrite(pathDecompressExisting))),
+	}
+}
+
+// boundedRewrite turns the typed count into a capped request against path.
+//
+// Nothing is carried between runs: a rewritten copy leaves the listing that
+// selected it, and one declined on ratio is recorded so it leaves too, so
+// running the entry again converts the next batch rather than the last one.
+func boundedRewrite(path string) func(string) opsRequest {
+	return func(value string) opsRequest {
+		return opsRequest{path: path, query: url.Values{"max": {value}}}
 	}
 }
 

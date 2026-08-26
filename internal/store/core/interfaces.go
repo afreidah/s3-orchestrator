@@ -283,10 +283,16 @@ type EncryptionAdmin interface {
 // shrank underneath it steps straight over the rows that moved up, and the run
 // reports success having never looked at them. The cursor is the last row seen,
 // so a row leaving the set moves nothing.
+// The uncompressed listing takes the thresholds that decide candidacy, because
+// both of its exclusions are answers that outlive the pass: a copy under the
+// size floor is never a candidate, and one already measured as unable to reach
+// the ratio stays declined until a setting changes. Selecting on them is what
+// keeps a second pass from paying to rediscover what the first one learned.
 type CompressionAdmin interface {
-	ListUncompressedLocations(ctx context.Context, limit int, after Cursor) ([]RewritableLocation, error)
+	ListUncompressedLocations(ctx context.Context, limit int, after Cursor, t CompressionThresholds) ([]RewritableLocation, error)
 	ListCompressedLocations(ctx context.Context, limit int, after Cursor) ([]RewritableLocation, error)
 	MarkObjectCompressed(ctx context.Context, u *CompressedUpdate, previousSize int64) error
+	RecordCompressionProbe(ctx context.Context, probe *CompressionProbe) error
 }
 
 // NotificationOutbox defines the durable notification outbox operations
