@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -532,5 +533,62 @@ func TestCompressionStats_ReportsPerBackendTotals(t *testing.T) {
 	}
 	if _, ok := stats["backend-b"]; ok {
 		t.Error("backend-b holds nothing encoded and must be absent, not zero")
+	}
+}
+
+// TestRecordCompressionProbe_ReportsWriteFailure verifies a failed measurement
+// write is reported rather than swallowed. Recording a measurement is what
+// takes a declined copy out of the compression listing, so a silent failure
+// leaves the pass re-downloading and re-encoding that copy on every future run
+// while reporting clean.
+func TestRecordCompressionProbe_ReportsWriteFailure(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE object_locations`); err != nil {
+		t.Fatalf("drop object_locations: %v", err)
+	}
+
+	err := s.RecordCompressionProbe(ctx, &core.CompressionProbe{
+		ObjectKey: "bucket/random.bin", BackendName: "backend-a", Size: 4090, Level: "default",
+	})
+	if err == nil {
+		t.Fatal("RecordCompressionProbe returned nil against a missing table")
+	}
+	if !strings.Contains(err.Error(), "record compression probe") {
+		t.Errorf("error = %q, want it to name the operation", err)
+	}
+}
+
+// TestTxAdapterRecordCompressionProbe_ReportsWriteFailure covers the in-transaction
+// form, which is the one a move uses to carry a measurement onto the destination
+// row. It has to surface the failure so the move rolls back whole: a committed
+// move that dropped the measurement is the same wasted re-encode as above, only
+// now the copy has changed backends and nothing points at what was lost.
+func TestTxAdapterRecordCompressionProbe_ReportsWriteFailure(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	err := s.WithTx(ctx, func(ctx context.Context, tx core.TxAdapter) error {
+		adapter, ok := tx.(*sqliteTxAdapter)
+		if !ok {
+			t.Fatalf("WithTx handed back %T, want *sqliteTxAdapter", tx)
+		}
+		// Dropped inside the transaction, so the adapter's UPDATE fails and the
+		// rollback puts the table back for anything else sharing this store.
+		if _, err := adapter.tx.ExecContext(ctx, `DROP TABLE object_locations`); err != nil {
+			t.Fatalf("drop object_locations: %v", err)
+		}
+		return adapter.RecordCompressionProbe(ctx, &core.CompressionProbe{
+			ObjectKey: "bucket/random.bin", BackendName: "backend-a", Size: 4090, Level: "default",
+		})
+	})
+	if err == nil {
+		t.Fatal("RecordCompressionProbe returned nil against a missing table")
+	}
+	if !strings.Contains(err.Error(), "record compression probe") {
+		t.Errorf("error = %q, want it to name the operation", err)
 	}
 }
