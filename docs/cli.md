@@ -219,6 +219,9 @@ s3-orchestrator admin rotate-encryption-key --old-key-id config-0
 # Store every uncompressed object as chunked zstd (requires a compression codec)
 s3-orchestrator admin compress-existing
 
+# Convert part of a fleet and stop; run it again to continue where it left off
+s3-orchestrator admin compress-existing -max=1000
+
 # Rewrite every compressed object back to the bytes the client wrote
 s3-orchestrator admin decompress-existing
 

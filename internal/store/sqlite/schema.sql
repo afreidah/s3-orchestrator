@@ -48,6 +48,12 @@ CREATE TABLE IF NOT EXISTS object_locations (
     compression_level          TEXT,
     compression_format_version INTEGER,
     logical_size               INTEGER,
+    -- What the encoder produced for a copy it declined to store compressed, and
+    -- the level it produced it at. NULL means never probed. The uncompressed
+    -- listing judges these against the current settings so a copy already known
+    -- not to shrink enough is not downloaded and encoded again to find out.
+    compression_probe_size     INTEGER,
+    compression_probe_level    TEXT,
     created_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (object_key, backend_name)
 );
@@ -202,4 +208,4 @@ CREATE INDEX IF NOT EXISTS idx_pending_objects_backend
     ON pending_objects(backend_name);
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (7);
+INSERT INTO schema_version (version) VALUES (8);

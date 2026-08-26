@@ -79,7 +79,7 @@
       {{if .Config.EncryptionEnabled}}
       <button id="encrypt-existing-btn" class="btn-action" title="Walk every unencrypted object, encrypt it with the configured key, re-upload the ciphertext, and update its metadata. Long-running.">Encrypt Existing</button>
       {{end}}
-      <button id="compress-existing-btn" class="btn-action" title="Walk every object stored verbatim, encode it as chunked zstd, re-upload it, and update its metadata. Objects too small or too incompressible to benefit are skipped. Works whether or not compression is enabled for new writes, so an existing fleet can be converted before the write path is switched over. Long-running.">Compress Existing</button>
+      <button id="compress-existing-btn" class="btn-action" title="Walk every object stored verbatim, encode it as chunked zstd, re-upload it, and update its metadata. Objects too small to benefit are never selected, and ones the encoder cannot shrink enough are reported as skipped and not offered to a later run. Works whether or not compression is enabled for new writes, so an existing fleet can be converted before the write path is switched over. Long-running.">Compress Existing</button>
       {{if .Data.HasCompressedData}}
       <button id="decompress-existing-btn" class="btn-action" title="Rewrite every compressed object back to the bytes the client wrote. Offered whenever compressed objects exist, including after compression has been turned off, since that is when you would unwind them. Long-running.">Decompress Existing</button>
       {{end}}

@@ -43,6 +43,7 @@ type shrinkingSet struct {
 	mu      sync.Mutex
 	rows    []core.RewritableLocation
 	served  int
+	limits  []int
 	visited map[string]int
 }
 
@@ -67,6 +68,7 @@ func (s *shrinkingSet) page(_ context.Context, limit int, after core.Cursor) ([]
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.limits = append(s.limits, limit)
 	var out []core.RewritableLocation
 	for i := range s.rows {
 		r := &s.rows[i]
@@ -337,5 +339,138 @@ func TestRunBulkRewrite_DeclinesObjectsWithoutUsageHeadroom(t *testing.T) {
 	}
 	if be.gets.Load() != 0 || be.puts.Load() != 0 {
 		t.Errorf("backend saw %d gets and %d puts, want none", be.gets.Load(), be.puts.Load())
+	}
+}
+
+// TestBulkRewritePageSize covers the arithmetic that turns a cap into a listing
+// limit. The uncapped and nearly-exhausted ends are the obvious cases; the one
+// that matters is a cap wider than a page, where asking for the remaining
+// budget instead of a full page would page the fleet one row at a time.
+func TestBulkRewritePageSize(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		maxRewrites int
+		rewritten   int
+		want        int
+	}{
+		{"uncapped", 0, 0, bulkRewriteBatchSize},
+		{"negative cap reads as uncapped", -1, 0, bulkRewriteBatchSize},
+		{"cap below a page", 3, 0, 3},
+		{"cap exactly a page", bulkRewriteBatchSize, 0, bulkRewriteBatchSize},
+		{"cap wider than a page", 250, 0, bulkRewriteBatchSize},
+		{"budget still wider than a page", 250, 100, bulkRewriteBatchSize},
+		{"budget narrowed to the remainder", 250, 200, 50},
+		{"one row of budget left", 250, 249, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := bulkRewritePageSize(tc.maxRewrites, tc.rewritten); got != tc.want {
+				t.Errorf("bulkRewritePageSize(%d, %d) = %d, want %d",
+					tc.maxRewrites, tc.rewritten, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunBulkRewrite_CapSpanningPagesStopsExactly drives a cap wider than one
+// listing page. The existing cap tests all fit inside a single page, so they
+// never exercise the pass asking for a full page and then narrowing to what is
+// left: a driver that asked for the whole remaining budget every time would
+// still stop at the right count here, and one that forgot to narrow the final
+// page would overshoot it.
+func TestRunBulkRewrite_CapSpanningPagesStopsExactly(t *testing.T) {
+	t.Parallel()
+	const capRewrites = bulkRewriteBatchSize + 50
+	set := newShrinkingSet(pagingRows)
+
+	res, err := runBulkRewrite(pagingEnv(t), context.Background(), nil, bulkRewriteOp[*rewriteRow]{
+		opName:      "paging-test",
+		resultLabel: "rewritten",
+		counter:     pagingCounter(),
+		listFn:      rewriteListFn(set.page),
+		maxRewrites: capRewrites,
+		rewrite: func(_ context.Context, _ *s3be.GetObjectResult, loc *rewriteRow) (rewritten, error) {
+			key := loc.rewriteKey()
+			set.visit(key)
+			return rewritten{
+				body: strings.NewReader("rewritten"),
+				size: int64(len("rewritten")),
+				commit: func() error {
+					set.remove(key)
+					return nil
+				},
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("runBulkRewrite: %v", err)
+	}
+
+	if res.Succeeded != capRewrites || res.Total != capRewrites {
+		t.Errorf("counts = %+v, want exactly the %d asked for", res, capRewrites)
+	}
+	// The rows the cap did not reach must be untouched and still listed, which
+	// is what lets the next run continue from here.
+	if len(set.rows) != pagingRows-capRewrites {
+		t.Errorf("%d rows left in the set, want %d", len(set.rows), pagingRows-capRewrites)
+	}
+	set.assertVisitedAll(t, capRewrites)
+
+	// A full page first, then only the remaining budget. Asking for the full
+	// batch on the second page would read 50 rows the pass never converts.
+	if len(set.limits) < 2 || set.limits[0] != bulkRewriteBatchSize || set.limits[1] != 50 {
+		t.Errorf("page sizes = %v, want the first %d then the remaining 50",
+			set.limits, bulkRewriteBatchSize)
+	}
+}
+
+// TestRunBulkRewrite_CapCountsRewritesNotRowsConsidered checks a cap spends its
+// budget on conversions rather than on rows the pass declines. Compress-existing
+// declines most of a fleet of media, so a cap charged per row considered would
+// return having converted a handful and report itself finished.
+func TestRunBulkRewrite_CapCountsRewritesNotRowsConsidered(t *testing.T) {
+	t.Parallel()
+	const capRewrites = 20
+	set := newShrinkingSet(pagingRows)
+
+	// Declining every other row means reaching the cap has to walk twice as
+	// many rows as it converts.
+	var considered int
+	res, err := runBulkRewrite(pagingEnv(t), context.Background(), nil, bulkRewriteOp[*rewriteRow]{
+		opName:      "paging-test",
+		resultLabel: "rewritten",
+		counter:     pagingCounter(),
+		listFn:      rewriteListFn(set.page),
+		maxRewrites: capRewrites,
+		declines: func(*rewriteRow) bool {
+			considered++
+			return considered%2 == 1
+		},
+		rewrite: func(_ context.Context, _ *s3be.GetObjectResult, loc *rewriteRow) (rewritten, error) {
+			key := loc.rewriteKey()
+			return rewritten{
+				body: strings.NewReader("rewritten"),
+				size: int64(len("rewritten")),
+				commit: func() error {
+					set.remove(key)
+					return nil
+				},
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("runBulkRewrite: %v", err)
+	}
+
+	if res.Succeeded != capRewrites {
+		t.Errorf("rewrote %d, want the %d asked for despite the declines", res.Succeeded, capRewrites)
+	}
+	if res.Skipped != capRewrites {
+		t.Errorf("skipped %d, want the %d declined alongside them", res.Skipped, capRewrites)
+	}
+	if res.Total != 2*capRewrites {
+		t.Errorf("considered %d rows, want %d: a cap counts conversions, not rows", res.Total, 2*capRewrites)
 	}
 }

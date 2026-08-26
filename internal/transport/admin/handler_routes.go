@@ -50,6 +50,7 @@ const (
 	paramName       = "name"
 	paramBackend    = "backend"
 	paramBatchSize  = "batch_size"
+	paramMax        = "max"
 	paramKey        = "key"
 	paramPrefix     = "prefix"
 	descBackendName = "Backend name"
@@ -310,13 +311,19 @@ func (h *Handler) routes() []route {
 			Method: http.MethodPost, Pattern: "/admin/api/compress-existing", Handler: h.handleCompressExisting,
 			Summary:  "Store every uncompressed object as chunked zstd",
 			Response: adminapi.CompressExistingResponse{},
-			Stream:   adminstream.Event{},
+			Params: []param{
+				{Name: paramMax, In: inQuery, Type: typeInteger, Description: "Cap the objects rewritten by this request; 0 converts the whole fleet"},
+			},
+			Stream: adminstream.Event{},
 		},
 		{
 			Method: http.MethodPost, Pattern: "/admin/api/decompress-existing", Handler: h.handleDecompressExisting,
 			Summary:  "Rewrite every compressed object back to its stored bytes",
 			Response: adminapi.DecompressExistingResponse{},
-			Stream:   adminstream.Event{},
+			Params: []param{
+				{Name: paramMax, In: inQuery, Type: typeInteger, Description: "Cap the objects rewritten by this request; 0 converts the whole fleet"},
+			},
+			Stream: adminstream.Event{},
 		},
 		{
 			Method: http.MethodPost, Pattern: "/admin/api/scrub", Handler: h.handleScrub,
@@ -341,7 +348,7 @@ func (h *Handler) routes() []route {
 			Response: adminapi.BackfillChecksumsResponse{},
 			Params: []param{
 				{Name: paramBatchSize, In: inQuery, Type: typeInteger, Description: "Objects hashed per pass"},
-				{Name: "max", In: inQuery, Type: typeInteger, Description: "Cap the objects processed by this request; 0 drains the backlog"},
+				{Name: paramMax, In: inQuery, Type: typeInteger, Description: "Cap the objects processed by this request; 0 drains the backlog"},
 				{Name: "delay_ms", In: inQuery, Type: typeInteger, Description: "Pause between passes to rate-limit backend reads"},
 			},
 			Stream: adminstream.Event{},

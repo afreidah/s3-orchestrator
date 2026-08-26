@@ -97,7 +97,7 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 // handleOverReplicationClean triggers an immediate over-replication cleanup
 // pass. Accepts an optional batch_size query parameter.
 func (h *Handler) handleOverReplicationClean(w http.ResponseWriter, r *http.Request) {
-	batchSize := queryPositiveInt(r.URL.Query().Get("batch_size"))
+	batchSize := httputil.QueryPositiveInt(r.URL.Query().Get("batch_size"))
 
 	if acceptsStream(r) {
 		h.streamOverReplication(w, r, batchSize)

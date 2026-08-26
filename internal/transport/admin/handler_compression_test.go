@@ -30,8 +30,13 @@ import (
 type emptyCompressionStore struct{}
 
 // ListUncompressedLocations returns no rows.
-func (emptyCompressionStore) ListUncompressedLocations(context.Context, int, core.Cursor) ([]core.RewritableLocation, error) {
+func (emptyCompressionStore) ListUncompressedLocations(context.Context, int, core.Cursor, core.CompressionThresholds) ([]core.RewritableLocation, error) {
 	return nil, nil
+}
+
+// RecordCompressionProbe is never reached: the listing is empty.
+func (emptyCompressionStore) RecordCompressionProbe(context.Context, *core.CompressionProbe) error {
+	return nil
 }
 
 // ListCompressedLocations returns no rows.

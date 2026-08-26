@@ -16,12 +16,19 @@ package sqlite
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
+
+// anyCandidate is the threshold set that excludes nothing, so a listing test
+// sees every verbatim copy regardless of size or any recorded measurement.
+func anyCandidate() core.CompressionThresholds {
+	return core.CompressionThresholds{MinSize: 0, MinRatio: 1, Level: "default"}
+}
 
 // compressedForm describes an object stored both compressed and encrypted,
 // which is the case that carries every column at once.
@@ -200,6 +207,127 @@ func TestRecordReplica_CarriesRepresentation(t *testing.T) {
 	assertCarried(t, locationOn(t, s, "bucket/replicated", "backend-b"), 4096)
 }
 
+// probeOn reads back the measurement recorded against one copy.
+func probeOn(t *testing.T, s *Store, key, backendName string) (int64, string) {
+	t.Helper()
+	var (
+		size  sql.NullInt64
+		level sql.NullString
+	)
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT compression_probe_size, compression_probe_level
+		 FROM object_locations WHERE object_key = ? AND backend_name = ?`,
+		key, backendName,
+	).Scan(&size, &level)
+	if err != nil {
+		t.Fatalf("read probe for %s on %s: %v", key, backendName, err)
+	}
+	return size.Int64, level.String
+}
+
+// listKeys returns the keys the uncompressed listing offers under thresholds.
+func listKeys(t *testing.T, s *Store, thresholds core.CompressionThresholds) []string {
+	t.Helper()
+	rows, err := s.ListUncompressedLocations(context.Background(), 10, core.Cursor{}, thresholds)
+	if err != nil {
+		t.Fatalf("ListUncompressedLocations: %v", err)
+	}
+	keys := make([]string, len(rows))
+	for i := range rows {
+		keys[i] = rows[i].ObjectKey
+	}
+	return keys
+}
+
+// TestMoveObjectLocation_CarriesCompressionProbe covers the rebalance path for
+// the measurement rather than the stored form. The bytes move verbatim, so what
+// the encoder measured about them still holds; a destination row that lands
+// without it has the next compression pass download the copy to learn what the
+// source row already knew, which is metered egress spent for nothing.
+func TestMoveObjectLocation_CarriesCompressionProbe(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := s.RecordObject(ctx, "bucket/random.bin", "backend-a", 4096, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if err := s.RecordCompressionProbe(ctx, &core.CompressionProbe{
+		ObjectKey: "bucket/random.bin", BackendName: "backend-a", Size: 4090, Level: "default",
+	}); err != nil {
+		t.Fatalf("RecordCompressionProbe: %v", err)
+	}
+
+	if _, err := s.MoveObjectLocation(ctx, "bucket/random.bin", "backend-a", "backend-b"); err != nil {
+		t.Fatalf("MoveObjectLocation: %v", err)
+	}
+
+	size, level := probeOn(t, s, "bucket/random.bin", "backend-b")
+	if size != 4090 || level != "default" {
+		t.Errorf("probe on the destination = (%d, %q), want (4090, \"default\")", size, level)
+	}
+}
+
+// TestListUncompressedLocations_ExcludesRecordedDeclines is the point of
+// recording a measurement at all: a copy already known not to shrink enough is
+// not offered again, so a second pass does not pay to re-measure it.
+//
+// The exclusion is judged against the current settings rather than stored as a
+// verdict, so loosening min_ratio returns the copy with no read, and a level
+// change does too: a measurement taken at another level describes an encoding
+// this pass would not produce.
+func TestListUncompressedLocations_ExcludesRecordedDeclines(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := s.RecordObject(ctx, "bucket/random.bin", "backend-a", 1000, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if err := s.RecordCompressionProbe(ctx, &core.CompressionProbe{
+		ObjectKey: "bucket/random.bin", BackendName: "backend-a", Size: 900, Level: "default",
+	}); err != nil {
+		t.Fatalf("RecordCompressionProbe: %v", err)
+	}
+
+	strict := core.CompressionThresholds{MinRatio: 0.5, Level: "default"}
+	if keys := listKeys(t, s, strict); len(keys) != 0 {
+		t.Errorf("listing offered %v, want nothing: 900/1000 does not reach a 0.5 ratio", keys)
+	}
+
+	loosened := core.CompressionThresholds{MinRatio: 0.95, Level: "default"}
+	if keys := listKeys(t, s, loosened); len(keys) != 1 {
+		t.Errorf("listing offered %v, want the copy back: 900/1000 now reaches the ratio", keys)
+	}
+
+	otherLevel := core.CompressionThresholds{MinRatio: 0.5, Level: "better"}
+	if keys := listKeys(t, s, otherLevel); len(keys) != 1 {
+		t.Errorf("listing offered %v, want the copy back: the measurement is from another level", keys)
+	}
+}
+
+// TestListUncompressedLocations_ExcludesBelowMinSize checks the size floor is
+// applied by the listing. A copy too small to be worth encoding is answered
+// from its own row, so selecting it only to decline it would spend a page slot
+// on every pass forever.
+func TestListUncompressedLocations_ExcludesBelowMinSize(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := s.RecordObject(ctx, "bucket/small.txt", "backend-a", 100, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if _, err := s.RecordObject(ctx, "bucket/large.bin", "backend-a", 9000, nil); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	keys := listKeys(t, s, core.CompressionThresholds{MinSize: 4096, MinRatio: 1, Level: "default"})
+	if len(keys) != 1 || keys[0] != "bucket/large.bin" {
+		t.Errorf("listing offered %v, want only bucket/large.bin", keys)
+	}
+}
+
 // TestListUncompressedLocations_SelectsOnlyVerbatim checks the listing that
 // drives compress-existing: it must offer copies with no encoding and skip the
 // ones that already have one, or a pass would re-encode what it just wrote.
@@ -215,7 +343,7 @@ func TestListUncompressedLocations_SelectsOnlyVerbatim(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	verbatim, err := s.ListUncompressedLocations(ctx, 10, core.Cursor{})
+	verbatim, err := s.ListUncompressedLocations(ctx, 10, core.Cursor{}, anyCandidate())
 	if err != nil {
 		t.Fatalf("ListUncompressedLocations: %v", err)
 	}
@@ -261,7 +389,7 @@ func TestListUncompressedLocations_PagesByCursor(t *testing.T) {
 	seen := map[string]int{}
 	var after core.Cursor
 	for range total {
-		page, err := s.ListUncompressedLocations(ctx, 2, after)
+		page, err := s.ListUncompressedLocations(ctx, 2, after, anyCandidate())
 		if err != nil {
 			t.Fatalf("ListUncompressedLocations: %v", err)
 		}

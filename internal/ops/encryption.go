@@ -293,6 +293,11 @@ type bulkRewriteOp[L bulkRewriteRow] struct {
 	// returning. Returning errSkipRewrite leaves the object exactly as it is
 	// and counts it as skipped.
 	rewrite func(ctx context.Context, src *s3be.GetObjectResult, loc L) (rewritten, error)
+	// maxRewrites caps how many copies the pass rewrites before stopping, or zero
+	// for the whole listing. It counts rewrites rather than rows considered, so a
+	// capped run converts the number asked for instead of spending its budget
+	// on copies it declines.
+	maxRewrites int
 }
 
 // rewritten is one transformed object: the bytes to upload, the size to declare
@@ -369,7 +374,8 @@ func runBulkRewrite[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Context, o
 	var res BulkRewriteResult
 	var after core.Cursor
 	for {
-		rows, err := op.listFn(ctx, bulkRewriteBatchSize, after)
+		pageSize := bulkRewritePageSize(op.maxRewrites, res.Succeeded)
+		rows, err := op.listFn(ctx, pageSize, after)
 		if err != nil {
 			env.log.ErrorContext(ctx, op.opName+" list failed", "error", err)
 			return res, err
@@ -378,25 +384,20 @@ func runBulkRewrite[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Context, o
 			break
 		}
 
-		for _, row := range rows {
-			res.Total++
-			outcome := rewriteErrored
-			progress.Track(obs, row.rewriteKey(), func() string {
-				outcome = processBulkLocation(env, ctx, op, row)
-				return outcome.status()
-			})
-			switch outcome {
-			case rewriteDone:
-				res.Succeeded++
-			case rewriteSkipped:
-				res.Skipped++
-			case rewriteErrored:
-				res.Failed++
-			}
-			after = core.Cursor{ObjectKey: row.rewriteKey(), BackendName: row.rewriteBackend()}
+		stop, err := runBulkRewritePage(env, ctx, obs, op, rows, &res, &after)
+		if err != nil {
+			return res, err
+		}
+		if stop {
+			env.log.InfoContext(ctx, op.opName+" reached its limit",
+				op.resultLabel, res.Succeeded, "skipped", res.Skipped, "failed", res.Failed)
+			return res, nil
 		}
 
-		if len(rows) < bulkRewriteBatchSize {
+		// Compared against what was asked for, not the constant: a capped run's
+		// last page is short by design, and reading that as an exhausted listing
+		// would end a pass that still had room.
+		if len(rows) < pageSize {
 			break
 		}
 	}
@@ -404,6 +405,55 @@ func runBulkRewrite[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Context, o
 	env.log.InfoContext(ctx, op.opName+" complete",
 		op.resultLabel, res.Succeeded, "skipped", res.Skipped, "failed", res.Failed, "total", res.Total)
 	return res, nil
+}
+
+// runBulkRewritePage processes one listing page, advancing res and the cursor.
+// Reports whether the pass should stop because it reached its cap.
+func runBulkRewritePage[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Context, obs progress.Observer, op bulkRewriteOp[L], rows []L, res *BulkRewriteResult, after *core.Cursor) (bool, error) {
+	for _, row := range rows {
+		// Checked per row rather than per page: without it a cancelled pass
+		// runs out the rest of the page, failing every remaining copy's
+		// download and reporting a hundred failures that never happened.
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		res.Total++
+		outcome := rewriteErrored
+		progress.Track(obs, row.rewriteKey(), func() string {
+			outcome = processBulkLocation(env, ctx, op, row)
+			return outcome.status()
+		})
+		res.tally(outcome)
+		*after = core.Cursor{ObjectKey: row.rewriteKey(), BackendName: row.rewriteBackend()}
+		if op.maxRewrites > 0 && res.Succeeded >= op.maxRewrites {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// tally records one copy's outcome against the running counts.
+func (r *BulkRewriteResult) tally(outcome rewriteOutcome) {
+	switch outcome {
+	case rewriteDone:
+		r.Succeeded++
+	case rewriteSkipped:
+		r.Skipped++
+	case rewriteErrored:
+		r.Failed++
+	}
+}
+
+// bulkRewritePageSize is how many rows to ask for next: a full page, or only
+// what a capped run still has room for.
+func bulkRewritePageSize(maxRewrites, rewritten int) int {
+	if maxRewrites <= 0 {
+		return bulkRewriteBatchSize
+	}
+	if remaining := maxRewrites - rewritten; remaining < bulkRewriteBatchSize {
+		return remaining
+	}
+	return bulkRewriteBatchSize
 }
 
 // processBulkLocation runs one rewrite step for a single location: admit the

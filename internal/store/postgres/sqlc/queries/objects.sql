@@ -67,8 +67,14 @@ SELECT EXISTS(
 -- to another backend rebuilds the destination from what this returns. A column
 -- missing here is one the moved copy silently stops claiming, which for the
 -- compression columns means a still-encoded object recorded as verbatim.
+--
+-- The probe columns come along because a verbatim move does not change the
+-- bytes, so what the encoder measured about them still holds. Dropping them
+-- would have the next pass download and encode the copy again to learn what
+-- this row already knows.
 SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash,
-       compression_algorithm, compression_level, compression_format_version, logical_size
+       compression_algorithm, compression_level, compression_format_version, logical_size,
+       compression_probe_size, compression_probe_level
 FROM object_locations
 WHERE object_key = $1 AND backend_name = $2
 FOR UPDATE;
@@ -218,11 +224,34 @@ LIMIT sqlc.arg(row_limit);
 --
 -- Paged by cursor, not offset: an encoded copy leaves this predicate, so the
 -- set shrinks under the pass walking it.
+--
+-- Copies already measured as not worth encoding are excluded here rather than
+-- downloaded and encoded again to reach the same verdict, which on an
+-- incompressible fleet is the pass's largest wasted expense. The stored
+-- measurement is judged against the current settings, so it excludes a copy
+-- only while it would still be declined: lowering min_ratio returns those
+-- copies to the pass without reading any of them. A probe taken at a different
+-- level says nothing about this one and is ignored, since the levels are names
+-- from an ordered set rather than numbers.
+--
+-- The divisor is NULLIF'd because a zero-length copy cannot shrink: the
+-- comparison goes NULL and the row is excluded, matching WorthStoring, which
+-- declines a logical size of zero outright.
+--
+-- The size floor is applied here for the same reason, one the row can answer:
+-- a copy below it is never a candidate, so listing it only to decline it costs
+-- a page slot on every pass forever.
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
        plaintext_size, compression_algorithm, compression_level,
        compression_format_version, logical_size
 FROM object_locations
 WHERE compression_algorithm IS NULL
+  AND (CASE WHEN encrypted THEN plaintext_size ELSE size_bytes END) >= sqlc.arg(min_size)::bigint
+  AND (compression_probe_size IS NULL
+       OR compression_probe_level IS DISTINCT FROM sqlc.arg(probe_level)::text
+       OR compression_probe_size::float8
+          / NULLIF(CASE WHEN encrypted THEN plaintext_size ELSE size_bytes END, 0)::float8
+          <= sqlc.arg(min_ratio)::float8)
   AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
 ORDER BY object_key, backend_name
 LIMIT sqlc.arg(row_limit);
@@ -256,6 +285,19 @@ SET compression_algorithm = $3,
     plaintext_size = $8,
     encryption_key = $9,
     key_id = $10
+WHERE object_key = $1 AND backend_name = $2;
+
+-- name: RecordCompressionProbe :exec
+-- Records what the encoder produced for a copy it declined to store compressed,
+-- so the next pass reaches the same verdict from the row instead of downloading
+-- and encoding the object again.
+--
+-- Only the min_ratio decline writes here. A min_size decline is answered from
+-- the row at no cost, a copy declined by usage limits never reached the encoder,
+-- and a failure measured nothing.
+UPDATE object_locations
+SET compression_probe_size = $3,
+    compression_probe_level = $4
 WHERE object_key = $1 AND backend_name = $2;
 
 -- name: MarkObjectDecrypted :exec

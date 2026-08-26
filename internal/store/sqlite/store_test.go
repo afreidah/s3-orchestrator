@@ -68,17 +68,14 @@ func rewindToSchemaVersion(t *testing.T, s *Store, version int) {
 	t.Helper()
 	ctx := context.Background()
 
+	if version < 8 {
+		dropColumns(t, s, "object_locations", "compression_probe_size", "compression_probe_level")
+	}
+
 	if version < 7 {
 		for _, table := range []string{"object_locations", "pending_objects"} {
-			for _, column := range []string{
-				"compression_algorithm", "compression_level",
-				"compression_format_version", "logical_size",
-			} {
-				if _, err := s.db.ExecContext(ctx,
-					`ALTER TABLE `+table+` DROP COLUMN `+column); err != nil {
-					t.Fatalf("drop %s.%s: %v", table, column, err)
-				}
-			}
+			dropColumns(t, s, table, "compression_algorithm", "compression_level",
+				"compression_format_version", "logical_size")
 		}
 	}
 
@@ -86,6 +83,18 @@ func rewindToSchemaVersion(t *testing.T, s *Store, version int) {
 		`DELETE FROM schema_version; INSERT INTO schema_version (version) VALUES (?)`,
 		version); err != nil {
 		t.Fatalf("rewind schema version to %d: %v", version, err)
+	}
+}
+
+// dropColumns removes columns schema.sql creates but an older database predates,
+// so a rewound store is one the migration under test has real work to do on.
+func dropColumns(t *testing.T, s *Store, table string, columns ...string) {
+	t.Helper()
+	for _, column := range columns {
+		if _, err := s.db.ExecContext(context.Background(),
+			`ALTER TABLE `+table+` DROP COLUMN `+column); err != nil {
+			t.Fatalf("drop %s.%s: %v", table, column, err)
+		}
 	}
 }
 

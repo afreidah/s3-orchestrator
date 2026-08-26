@@ -12,6 +12,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -47,27 +48,61 @@ func TestRowsFromLocations_ShowsEncoding(t *testing.T) {
 	}
 }
 
+// compressionPaths are the two bulk passes, each of which the ops menu offers
+// twice: once for the whole fleet and once for a batch.
+var compressionPaths = []string{"/admin/api/compress-existing", "/admin/api/decompress-existing"}
+
 // TestOpsActions_OfferCompressionPasses checks both bulk passes are reachable
 // from the ops menu. The admin API and adminctl have carried them since #1264;
 // an operator driving the TUI had no way to run either.
 func TestOpsActions_OfferCompressionPasses(t *testing.T) {
 	t.Parallel()
-	want := map[string]string{
-		"/admin/api/compress-existing":   "Compress existing objects",
-		"/admin/api/decompress-existing": "Decompress existing objects",
+	want := map[string][]string{
+		compressionPaths[0]: {"Compress existing objects", "Compress existing objects (batch)"},
+		compressionPaths[1]: {"Decompress existing objects", "Decompress existing objects (batch)"},
 	}
-	got := map[string]string{}
+	got := map[string][]string{}
 	for _, a := range opsActions() {
 		if _, ok := want[a.path]; ok {
-			got[a.path] = a.label
+			got[a.path] = append(got[a.path], a.label)
 			if a.confirm == "" {
-				t.Errorf("%s has no confirmation; it rewrites the whole fleet", a.path)
+				t.Errorf("%q has no confirmation; it rewrites stored objects", a.label)
 			}
 		}
 	}
-	for path, label := range want {
-		if got[path] != label {
-			t.Errorf("ops menu entry for %s = %q, want %q", path, got[path], label)
+	for path, labels := range want {
+		if !slices.Equal(got[path], labels) {
+			t.Errorf("ops menu entries for %s = %q, want %q", path, got[path], labels)
+		}
+	}
+}
+
+// TestOpsActions_BatchCompressionAsksAndCaps checks the bounded entries prompt
+// for a count and send it as max, and that the whole-fleet entries do not
+// prompt. An input prompt refuses an empty answer, so attaching one to the
+// unbounded entries would leave no way to ask for a whole-fleet conversion.
+func TestOpsActions_BatchCompressionAsksAndCaps(t *testing.T) {
+	t.Parallel()
+	for _, a := range opsActions() {
+		if !slices.Contains(compressionPaths, a.path) {
+			continue
+		}
+		batch := strings.HasSuffix(a.label, "(batch)")
+		if !batch {
+			if a.resolve != nil {
+				t.Errorf("%q prompts; a whole-fleet run must be one keypress", a.label)
+			}
+			continue
+		}
+		if a.resolve == nil {
+			t.Fatalf("%q does not prompt for a count", a.label)
+		}
+		req := a.resolve("250")
+		if got := req.query.Get("max"); got != "250" {
+			t.Errorf("%q sent max=%q, want 250", a.label, got)
+		}
+		if req.path != a.path {
+			t.Errorf("%q posts to %q, want %q", a.label, req.path, a.path)
 		}
 	}
 }

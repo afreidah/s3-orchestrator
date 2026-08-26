@@ -21,7 +21,9 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"io"
+	"slices"
 	"sync/atomic"
 	"testing"
 
@@ -60,6 +62,17 @@ func compressibleBytes(n int) []byte {
 	return out[:n]
 }
 
+// incompressibleBytes returns n bytes zstd cannot shrink, which is what makes a
+// pass reach the ratio decision rather than the size one.
+func incompressibleBytes(t *testing.T, n int) []byte {
+	t.Helper()
+	out := make([]byte, n)
+	if _, err := rand.Read(out); err != nil {
+		t.Fatalf("read random payload: %v", err)
+	}
+	return out
+}
+
 // oneRowStore serves a single rewritable location once and captures the update
 // the pass records for it.
 type oneRowStore struct {
@@ -68,12 +81,29 @@ type oneRowStore struct {
 	update   core.CompressedUpdate
 	previous int64
 	marked   atomic.Bool
+	probes   []core.CompressionProbe
+	probeErr error
 }
 
 // ListUncompressedLocations serves the row once, then reports the end of the
 // listing so the pass terminates.
-func (s *oneRowStore) ListUncompressedLocations(_ context.Context, _ int, _ core.Cursor) ([]core.RewritableLocation, error) {
-	return s.serveOnce(), nil
+//
+// The size floor is applied here because that is where the real store applies
+// it: a copy under it is not a candidate rather than a candidate the pass
+// declines, so it never reaches the pass at all.
+func (s *oneRowStore) ListUncompressedLocations(_ context.Context, _ int, _ core.Cursor, t core.CompressionThresholds) ([]core.RewritableLocation, error) {
+	rows := s.serveOnce()
+	if len(rows) == 1 && rows[0].LogicalSize == 0 && rows[0].SizeBytes < t.MinSize {
+		return nil, nil
+	}
+	return rows, nil
+}
+
+// RecordCompressionProbe records what a declined copy was measured at, so a
+// test can assert the pass wrote down what its encode cost bought.
+func (s *oneRowStore) RecordCompressionProbe(_ context.Context, probe *core.CompressionProbe) error {
+	s.probes = append(s.probes, *probe)
+	return s.probeErr
 }
 
 // ListCompressedLocations serves the same row for the reverse direction.
@@ -87,6 +117,66 @@ func (s *oneRowStore) serveOnce() []core.RewritableLocation {
 		return nil
 	}
 	return []core.RewritableLocation{s.row}
+}
+
+// pagedStore serves a fixed set of copies through the cursor the driver pages
+// with, so a test can watch a capped run stop partway rather than seeing every
+// row arrive on one page.
+type pagedStore struct {
+	rows      []core.RewritableLocation
+	pageSizes []int
+	marked    int
+}
+
+// ListUncompressedLocations returns the rows after the cursor, capped at limit,
+// and records what the driver asked for.
+func (s *pagedStore) ListUncompressedLocations(_ context.Context, limit int, after core.Cursor, _ core.CompressionThresholds) ([]core.RewritableLocation, error) {
+	s.pageSizes = append(s.pageSizes, limit)
+	out := make([]core.RewritableLocation, 0, limit)
+	for i := range s.rows {
+		if s.rows[i].ObjectKey <= after.ObjectKey {
+			continue
+		}
+		if len(out) == limit {
+			break
+		}
+		out = append(out, s.rows[i])
+	}
+	return out, nil
+}
+
+// ListCompressedLocations serves nothing: these tests drive the forward pass.
+func (s *pagedStore) ListCompressedLocations(context.Context, int, core.Cursor) ([]core.RewritableLocation, error) {
+	return nil, nil
+}
+
+// MarkObjectCompressed counts the copies the pass rewrote. A rewritten copy is
+// dropped from the listing, matching a real store, so the pass cannot see it
+// again on a later page.
+func (s *pagedStore) MarkObjectCompressed(_ context.Context, u *core.CompressedUpdate, _ int64) error {
+	s.marked++
+	s.rows = slices.DeleteFunc(s.rows, func(r core.RewritableLocation) bool {
+		return r.ObjectKey == u.ObjectKey
+	})
+	return nil
+}
+
+// RecordCompressionProbe is unused: these tests use compressible payloads.
+func (s *pagedStore) RecordCompressionProbe(context.Context, *core.CompressionProbe) error {
+	return nil
+}
+
+// pagedRows builds n distinct copies, keyed so cursor order is obvious.
+func pagedRows(n int, size int64) []core.RewritableLocation {
+	rows := make([]core.RewritableLocation, n)
+	for i := range rows {
+		rows[i] = core.RewritableLocation{
+			ObjectKey:   fmt.Sprintf("bucket/obj-%03d", i),
+			BackendName: "backend-a",
+			SizeBytes:   size,
+		}
+	}
+	return rows
 }
 
 // MarkObjectCompressed captures what the pass decided the copy now is.
@@ -139,7 +229,7 @@ func TestCompressExisting_RewritesAndRecords(t *testing.T) {
 	}}
 	svc, be := newCompression(t, store, compressionOn(), payload)
 
-	res, err := svc.CompressExisting(context.Background(), nil)
+	res, err := svc.CompressExisting(context.Background(), nil, 0)
 	if err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
@@ -190,7 +280,7 @@ func TestCompressExisting_SkipsIncompressible(t *testing.T) {
 	cfg := compressionOn()
 	svc, be := newCompression(t, store, cfg, payload)
 
-	res, err := svc.CompressExisting(context.Background(), nil)
+	res, err := svc.CompressExisting(context.Background(), nil, 0)
 	if err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
@@ -205,9 +295,10 @@ func TestCompressExisting_SkipsIncompressible(t *testing.T) {
 	}
 }
 
-// TestCompressExisting_SkipsBelowMinSize checks the size floor is answered from
-// the row: an object under it costs no backend read at all.
-func TestCompressExisting_SkipsBelowMinSize(t *testing.T) {
+// TestCompressExisting_ExcludesBelowMinSize checks the size floor reaches the
+// listing: an object under it is never selected, so it costs no backend read
+// and does not occupy a page slot on this pass or any later one.
+func TestCompressExisting_ExcludesBelowMinSize(t *testing.T) {
 	t.Parallel()
 	payload := compressibleBytes(512)
 	store := &oneRowStore{row: core.RewritableLocation{
@@ -217,15 +308,180 @@ func TestCompressExisting_SkipsBelowMinSize(t *testing.T) {
 	cfg.MinSize = 4096
 	svc, be := newCompression(t, store, cfg, payload)
 
-	res, err := svc.CompressExisting(context.Background(), nil)
+	res, err := svc.CompressExisting(context.Background(), nil, 0)
+	if err != nil {
+		t.Fatalf("CompressExisting: %v", err)
+	}
+	if res.Total != 0 || res.Succeeded != 0 {
+		t.Errorf("counts = %+v, want nothing considered", res)
+	}
+	if be.gets.Load() != 0 {
+		t.Errorf("GetObject calls = %d, want 0; the listing answers the size floor", be.gets.Load())
+	}
+}
+
+// TestCompressExisting_StopsAtMax checks a capped run converts the number asked
+// for and stops, which is what lets a fleet-sized conversion be spread across
+// maintenance windows instead of run all at once.
+func TestCompressExisting_StopsAtMax(t *testing.T) {
+	t.Parallel()
+	payload := compressibleBytes(8192)
+	store := &pagedStore{rows: pagedRows(10, int64(len(payload)))}
+	svc, be := newCompression(t, store, compressionOn(), payload)
+
+	res, err := svc.CompressExisting(context.Background(), nil, 3)
+	if err != nil {
+		t.Fatalf("CompressExisting: %v", err)
+	}
+	if res.Succeeded != 3 {
+		t.Errorf("rewrote %d, want the 3 asked for", res.Succeeded)
+	}
+	if be.gets.Load() != 3 {
+		t.Errorf("GetObject calls = %d, want 3; a capped run reads only what it converts", be.gets.Load())
+	}
+	if store.marked != 3 {
+		t.Errorf("marked %d rows, want 3", store.marked)
+	}
+}
+
+// TestCompressExisting_MaxNarrowsThePage checks the cap reaches the listing. A
+// run asking for 3 must not pull a full page of a hundred rows it will never
+// look at.
+func TestCompressExisting_MaxNarrowsThePage(t *testing.T) {
+	t.Parallel()
+	payload := compressibleBytes(8192)
+	store := &pagedStore{rows: pagedRows(10, int64(len(payload)))}
+	svc, _ := newCompression(t, store, compressionOn(), payload)
+
+	if _, err := svc.CompressExisting(context.Background(), nil, 3); err != nil {
+		t.Fatalf("CompressExisting: %v", err)
+	}
+	if len(store.pageSizes) == 0 || store.pageSizes[0] != 3 {
+		t.Errorf("first page asked for %v, want 3", store.pageSizes)
+	}
+}
+
+// TestCompressExisting_ResumesWhereTheLastRunStopped is the property that makes
+// a capped run usable without an operator tracking anything: a converted copy
+// leaves the listing, so the next run continues rather than repeating.
+func TestCompressExisting_ResumesWhereTheLastRunStopped(t *testing.T) {
+	t.Parallel()
+	payload := compressibleBytes(8192)
+	store := &pagedStore{rows: pagedRows(5, int64(len(payload)))}
+	svc, _ := newCompression(t, store, compressionOn(), payload)
+
+	for range 2 {
+		if _, err := svc.CompressExisting(context.Background(), nil, 2); err != nil {
+			t.Fatalf("CompressExisting: %v", err)
+		}
+	}
+
+	if store.marked != 4 {
+		t.Errorf("rewrote %d across two runs of 2, want 4 distinct copies", store.marked)
+	}
+	if len(store.rows) != 1 {
+		t.Errorf("%d copies left uncompressed, want the 1 the two runs did not reach", len(store.rows))
+	}
+}
+
+// TestCompressExisting_MaxZeroConvertsEverything pins the default: the knob is
+// opt-in, and its absence is the whole-fleet run that existed before it.
+func TestCompressExisting_MaxZeroConvertsEverything(t *testing.T) {
+	t.Parallel()
+	payload := compressibleBytes(8192)
+	store := &pagedStore{rows: pagedRows(7, int64(len(payload)))}
+	svc, _ := newCompression(t, store, compressionOn(), payload)
+
+	res, err := svc.CompressExisting(context.Background(), nil, 0)
+	if err != nil {
+		t.Fatalf("CompressExisting: %v", err)
+	}
+	if res.Succeeded != 7 || len(store.rows) != 0 {
+		t.Errorf("rewrote %d with %d left, want all 7 converted", res.Succeeded, len(store.rows))
+	}
+}
+
+// TestCompressExisting_CancelStopsWithoutFailingThePage checks a cancelled pass
+// exits rather than running out the page it is on. Without the check every
+// remaining copy fails its download, and a run stopped on purpose reports a
+// hundred failures that never happened.
+func TestCompressExisting_CancelStopsWithoutFailingThePage(t *testing.T) {
+	t.Parallel()
+	payload := compressibleBytes(8192)
+	store := &pagedStore{rows: pagedRows(50, int64(len(payload)))}
+	svc, _ := newCompression(t, store, compressionOn(), payload)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	res, err := svc.CompressExisting(ctx, nil, 0)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("CompressExisting error = %v, want context.Canceled", err)
+	}
+	if res.Failed != 0 {
+		t.Errorf("failed = %d, want 0; cancelling is not a rewrite failure", res.Failed)
+	}
+}
+
+// TestCompressExisting_RecordsRatioDecline checks the encode that proved a copy
+// incompressible is written down. Discarding it would have every later pass
+// spend the same download and encode to reach the same verdict, which on a
+// metered backend is quota spent for nothing.
+func TestCompressExisting_RecordsRatioDecline(t *testing.T) {
+	t.Parallel()
+	payload := incompressibleBytes(t, 8192)
+	store := &oneRowStore{row: core.RewritableLocation{
+		ObjectKey: "bucket/random.bin", BackendName: "backend-a", SizeBytes: int64(len(payload)),
+	}}
+	cfg := compressionOn()
+	svc, _ := newCompression(t, store, cfg, payload)
+
+	res, err := svc.CompressExisting(context.Background(), nil, 0)
 	if err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
 	if res.Skipped != 1 || res.Succeeded != 0 {
 		t.Errorf("counts = %+v, want one skipped", res)
 	}
-	if be.gets.Load() != 0 {
-		t.Errorf("GetObject calls = %d, want 0; the row alone answers the size floor", be.gets.Load())
+	if len(store.probes) != 1 {
+		t.Fatalf("recorded %d probes, want 1", len(store.probes))
+	}
+	got := store.probes[0]
+	if got.ObjectKey != "bucket/random.bin" || got.BackendName != "backend-a" {
+		t.Errorf("probe names %s/%s, want bucket/random.bin/backend-a", got.ObjectKey, got.BackendName)
+	}
+	if got.Size <= 0 {
+		t.Errorf("probe size = %d, want what the encoder produced", got.Size)
+	}
+	if got.Level != cfg.Level {
+		t.Errorf("probe level = %q, want the level it was measured at (%q)", got.Level, cfg.Level)
+	}
+}
+
+// TestCompressExisting_RatioDeclineSurvivesProbeFailure checks a copy is still
+// declined when the measurement cannot be stored. Losing the record costs a
+// later pass the work of measuring again; treating it as a rewrite failure
+// would misreport a healthy run.
+func TestCompressExisting_RatioDeclineSurvivesProbeFailure(t *testing.T) {
+	t.Parallel()
+	payload := incompressibleBytes(t, 8192)
+	store := &oneRowStore{
+		row: core.RewritableLocation{
+			ObjectKey: "bucket/random.bin", BackendName: "backend-a", SizeBytes: int64(len(payload)),
+		},
+		probeErr: errors.New("probe write failed"),
+	}
+	svc, be := newCompression(t, store, compressionOn(), payload)
+
+	res, err := svc.CompressExisting(context.Background(), nil, 0)
+	if err != nil {
+		t.Fatalf("CompressExisting: %v", err)
+	}
+	if res.Skipped != 1 || res.Failed != 0 {
+		t.Errorf("counts = %+v, want one skipped and no failures", res)
+	}
+	if be.puts.Load() != 0 {
+		t.Errorf("PutObject calls = %d, want 0; the copy stays as it is", be.puts.Load())
 	}
 }
 
@@ -251,7 +507,7 @@ func TestDecompressExisting_RestoresStoredBytes(t *testing.T) {
 	}}
 	svc, be := newCompression(t, store, compressionOn(), encoded.Bytes())
 
-	res, err := svc.DecompressExisting(context.Background(), nil)
+	res, err := svc.DecompressExisting(context.Background(), nil, 0)
 	if err != nil {
 		t.Fatalf("DecompressExisting: %v", err)
 	}
@@ -280,10 +536,10 @@ func TestCompressExisting_WithoutCodec(t *testing.T) {
 		BackendOps: opstest.NewMockBackendOps(ctrl),
 	})
 
-	if _, err := svc.CompressExisting(context.Background(), nil); err != ErrCompressionUnavailable {
+	if _, err := svc.CompressExisting(context.Background(), nil, 0); err != ErrCompressionUnavailable {
 		t.Errorf("err = %v, want ErrCompressionUnavailable", err)
 	}
-	if _, err := svc.DecompressExisting(context.Background(), nil); err != ErrCompressionUnavailable {
+	if _, err := svc.DecompressExisting(context.Background(), nil, 0); err != ErrCompressionUnavailable {
 		t.Errorf("err = %v, want ErrCompressionUnavailable", err)
 	}
 }
@@ -372,7 +628,7 @@ func TestCompressExisting_EncryptedObject(t *testing.T) {
 		BackendOps: backendOps,
 	})
 
-	got, err := svc.CompressExisting(context.Background(), nil)
+	got, err := svc.CompressExisting(context.Background(), nil, 0)
 	if err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
@@ -434,7 +690,7 @@ func TestCompressExisting_EncryptedWithoutEncryptor(t *testing.T) {
 	}}
 	svc, be := newCompression(t, store, compressionOn(), compressibleBytes(4096))
 
-	res, err := svc.CompressExisting(context.Background(), nil)
+	res, err := svc.CompressExisting(context.Background(), nil, 0)
 	if err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
@@ -456,7 +712,7 @@ func TestDecompressExisting_UndecodableBytes(t *testing.T) {
 	}}
 	svc, _ := newCompression(t, store, compressionOn(), []byte("not a zstd stream at all"))
 
-	res, err := svc.DecompressExisting(context.Background(), nil)
+	res, err := svc.DecompressExisting(context.Background(), nil, 0)
 	if err != nil {
 		t.Fatalf("DecompressExisting: %v", err)
 	}
@@ -473,7 +729,7 @@ func TestDecompressExisting_UndecodableBytes(t *testing.T) {
 type failingListStore struct{ err error }
 
 // ListUncompressedLocations fails.
-func (f failingListStore) ListUncompressedLocations(context.Context, int, core.Cursor) ([]core.RewritableLocation, error) {
+func (f failingListStore) ListUncompressedLocations(context.Context, int, core.Cursor, core.CompressionThresholds) ([]core.RewritableLocation, error) {
 	return nil, f.err
 }
 
@@ -487,6 +743,11 @@ func (f failingListStore) MarkObjectCompressed(context.Context, *core.Compressed
 	return nil
 }
 
+// RecordCompressionProbe is never reached when the listing fails.
+func (f failingListStore) RecordCompressionProbe(context.Context, *core.CompressionProbe) error {
+	return nil
+}
+
 // TestCompressExisting_ListingFailureStopsPass checks a listing error ends the
 // run and surfaces, rather than being counted against an object. The counts
 // gathered so far come back with it so a caller can report partial progress.
@@ -495,7 +756,7 @@ func TestCompressExisting_ListingFailureStopsPass(t *testing.T) {
 	wantErr := errors.New("database is down")
 	svc, _ := newCompression(t, failingListStore{err: wantErr}, compressionOn(), nil)
 
-	res, err := svc.CompressExisting(context.Background(), nil)
+	res, err := svc.CompressExisting(context.Background(), nil, 0)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want the listing error", err)
 	}
@@ -503,7 +764,7 @@ func TestCompressExisting_ListingFailureStopsPass(t *testing.T) {
 		t.Errorf("Total = %d, want 0; nothing was listed to process", res.Total)
 	}
 
-	if _, err := svc.DecompressExisting(context.Background(), nil); !errors.Is(err, wantErr) {
+	if _, err := svc.DecompressExisting(context.Background(), nil, 0); !errors.Is(err, wantErr) {
 		t.Errorf("decompress err = %v, want the listing error", err)
 	}
 }
@@ -542,7 +803,7 @@ func TestCompressExisting_EncodeFailureCountsAgainstObject(t *testing.T) {
 		BackendOps: backendOps,
 	})
 
-	res, err := svc.CompressExisting(context.Background(), nil)
+	res, err := svc.CompressExisting(context.Background(), nil, 0)
 	if err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
@@ -578,7 +839,7 @@ func TestCompressExisting_ReportsProgress(t *testing.T) {
 	var steps []progress.Step
 	obs := func(s progress.Step) { steps = append(steps, s) }
 
-	if _, err := svc.CompressExisting(context.Background(), obs); err != nil {
+	if _, err := svc.CompressExisting(context.Background(), obs, 0); err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
 

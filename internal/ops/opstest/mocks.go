@@ -863,18 +863,18 @@ func (mr *MockCompressionStoreMockRecorder) ListCompressedLocations(ctx, limit, 
 }
 
 // ListUncompressedLocations mocks base method.
-func (m *MockCompressionStore) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.RewritableLocation, error) {
+func (m *MockCompressionStore) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor, t core.CompressionThresholds) ([]core.RewritableLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListUncompressedLocations", ctx, limit, after)
+	ret := m.ctrl.Call(m, "ListUncompressedLocations", ctx, limit, after, t)
 	ret0, _ := ret[0].([]core.RewritableLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListUncompressedLocations indicates an expected call of ListUncompressedLocations.
-func (mr *MockCompressionStoreMockRecorder) ListUncompressedLocations(ctx, limit, after any) *gomock.Call {
+func (mr *MockCompressionStoreMockRecorder) ListUncompressedLocations(ctx, limit, after, t any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUncompressedLocations", reflect.TypeOf((*MockCompressionStore)(nil).ListUncompressedLocations), ctx, limit, after)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUncompressedLocations", reflect.TypeOf((*MockCompressionStore)(nil).ListUncompressedLocations), ctx, limit, after, t)
 }
 
 // MarkObjectCompressed mocks base method.
@@ -889,4 +889,18 @@ func (m *MockCompressionStore) MarkObjectCompressed(ctx context.Context, u *core
 func (mr *MockCompressionStoreMockRecorder) MarkObjectCompressed(ctx, u, previousSize any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkObjectCompressed", reflect.TypeOf((*MockCompressionStore)(nil).MarkObjectCompressed), ctx, u, previousSize)
+}
+
+// RecordCompressionProbe mocks base method.
+func (m *MockCompressionStore) RecordCompressionProbe(ctx context.Context, probe *core.CompressionProbe) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RecordCompressionProbe", ctx, probe)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RecordCompressionProbe indicates an expected call of RecordCompressionProbe.
+func (mr *MockCompressionStoreMockRecorder) RecordCompressionProbe(ctx, probe any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordCompressionProbe", reflect.TypeOf((*MockCompressionStore)(nil).RecordCompressionProbe), ctx, probe)
 }

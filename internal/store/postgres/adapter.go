@@ -138,6 +138,8 @@ func (a *pgTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, backen
 		CompressionLevel:         derefStr(row.CompressionLevel),
 		CompressionFormatVersion: int(derefInt16(row.CompressionFormatVersion)),
 		LogicalSize:              derefInt64(row.LogicalSize),
+		CompressionProbeSize:     derefInt64(row.CompressionProbeSize),
+		CompressionProbeLevel:    derefStr(row.CompressionProbeLevel),
 	}
 	return loc, true, nil
 }
@@ -150,6 +152,20 @@ func (a *pgTxAdapter) DeleteObjectFromBackend(ctx context.Context, objectKey, ba
 		BackendName: backend,
 	}); err != nil {
 		return fmt.Errorf("delete object from backend: %w", err)
+	}
+	return nil
+}
+
+// RecordCompressionProbe stores what the encoder measured for a copy it
+// declined to store compressed.
+func (a *pgTxAdapter) RecordCompressionProbe(ctx context.Context, probe *core.CompressionProbe) error {
+	if err := a.q.RecordCompressionProbe(ctx, db.RecordCompressionProbeParams{
+		ObjectKey:             probe.ObjectKey,
+		BackendName:           probe.BackendName,
+		CompressionProbeSize:  int64Ptr(probe.Size),
+		CompressionProbeLevel: strPtr(probe.Level),
+	}); err != nil {
+		return fmt.Errorf("record compression probe: %w", err)
 	}
 	return nil
 }
