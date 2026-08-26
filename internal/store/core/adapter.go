@@ -101,6 +101,12 @@ type ObjectsTxAdapter interface {
 	// object_locations row.
 	DeleteObjectFromBackend(ctx context.Context, objectKey, backend string) error
 
+	// RecordCompressionProbe stores what the encoder measured for a copy
+	// it declined to store compressed. Used by the move path to carry a
+	// measurement onto the destination row, since a verbatim move leaves
+	// the bytes it describes unchanged.
+	RecordCompressionProbe(ctx context.Context, probe *CompressionProbe) error
+
 	// InsertObjectLocationIfNotExists is the import-side INSERT that
 	// preserves an existing row. Returns true if a row was inserted.
 	InsertObjectLocationIfNotExists(ctx context.Context, loc *ObjectLocation) (inserted bool, err error)

@@ -221,6 +221,9 @@ func MoveObjectLocation(ctx context.Context, runner Runner, key, fromBackend, to
 		if err := tx.InsertObjectLocation(ctx, dest); err != nil {
 			return 0, err
 		}
+		if err := carryCompressionProbe(ctx, tx, src, key, toBackend); err != nil {
+			return 0, err
+		}
 		// Apply both quota deltas in stable order: a concurrent
 		// move in the opposite direction (b1->b2 vs b2->b1) used to
 		// lock the two rows in opposite sequences and deadlock.
@@ -231,6 +234,26 @@ func MoveObjectLocation(ctx context.Context, runner Runner, key, fromBackend, to
 			return 0, err
 		}
 		return src.SizeBytes, nil
+	})
+}
+
+// carryCompressionProbe copies a source copy's compression measurement onto the
+// destination row of a move.
+//
+// A measurement of what the encoder produced for these bytes is not a
+// description of them, so it rides here rather than through StoredForm. It
+// still has to ride: the move is verbatim, so what was measured on the source
+// holds on the destination, and dropping it has the next compression pass
+// download the copy to learn it again.
+func carryCompressionProbe(ctx context.Context, tx TxAdapter, src *ObjectLocation, key, toBackend string) error {
+	if src.CompressionProbeSize <= 0 {
+		return nil
+	}
+	return tx.RecordCompressionProbe(ctx, &CompressionProbe{
+		ObjectKey:   key,
+		BackendName: toBackend,
+		Size:        src.CompressionProbeSize,
+		Level:       src.CompressionProbeLevel,
 	})
 }
 

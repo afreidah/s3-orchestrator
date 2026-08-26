@@ -267,6 +267,13 @@ paths:
         post:
             summary: Store every uncompressed object as chunked zstd
             operationId: postCompressExisting
+            parameters:
+                - name: max
+                  in: query
+                  description: Cap the objects rewritten by this request; 0 converts the whole fleet
+                  required: false
+                  schema:
+                    type: integer
             responses:
                 "200":
                     description: Success
@@ -284,6 +291,13 @@ paths:
         post:
             summary: Rewrite every compressed object back to its stored bytes
             operationId: postDecompressExisting
+            parameters:
+                - name: max
+                  in: query
+                  description: Cap the objects rewritten by this request; 0 converts the whole fleet
+                  required: false
+                  schema:
+                    type: integer
             responses:
                 "200":
                     description: Success

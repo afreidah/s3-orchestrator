@@ -102,6 +102,8 @@ type ObjectLocation struct {
 	CompressionLevel         *string
 	CompressionFormatVersion *int16
 	LogicalSize              *int64
+	CompressionProbeSize     *int64
+	CompressionProbeLevel    *string
 }
 
 type PendingObject struct {

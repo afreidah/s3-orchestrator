@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/ops"
@@ -32,7 +31,7 @@ import (
 // query parameter. Streams per-object NDJSON progress when the client accepts
 // the stream content type; otherwise returns a single JSON result.
 func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
-	batchSize := queryPositiveInt(r.URL.Query().Get("batch_size"))
+	batchSize := httputil.QueryPositiveInt(r.URL.Query().Get("batch_size"))
 
 	if acceptsStream(r) {
 		h.streamScrub(w, r, batchSize)
@@ -154,9 +153,9 @@ func (h *Handler) streamScrub(w http.ResponseWriter, r *http.Request, batchSize 
 // line by line; otherwise a single JSON result is returned.
 func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	batchSize := queryPositiveInt(q.Get("batch_size"))
-	maxObjects := queryPositiveInt(q.Get("max"))
-	pause := time.Duration(queryPositiveInt(q.Get("delay_ms"))) * time.Millisecond
+	batchSize := httputil.QueryPositiveInt(q.Get("batch_size"))
+	maxObjects := httputil.QueryPositiveInt(q.Get("max"))
+	pause := time.Duration(httputil.QueryPositiveInt(q.Get("delay_ms"))) * time.Millisecond
 
 	if acceptsStream(r) {
 		h.streamBackfillChecksums(w, r, batchSize, maxObjects, pause)
@@ -195,15 +194,6 @@ func (h *Handler) streamBackfillChecksums(w http.ResponseWriter, r *http.Request
 		}
 		return stepResult{Processed: res.Processed, Fields: map[string]any{"done": res.Done}}, nil
 	})
-}
-
-// queryPositiveInt parses a positive integer query parameter, returning 0
-// when the value is absent, malformed, or non-positive.
-func queryPositiveInt(v string) int {
-	if n, err := strconv.ParseInt(v, 10, 32); err == nil && n > 0 {
-		return int(n)
-	}
-	return 0
 }
 
 // handleReconcile triggers an on-demand reconciliation. Lists objects on

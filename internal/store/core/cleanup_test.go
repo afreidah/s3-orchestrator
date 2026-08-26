@@ -173,6 +173,13 @@ func (t *cleanupTxStub) LockObjectOnBackend(context.Context, string, string) (*O
 // real test fixtures.
 func (t *cleanupTxStub) DeleteObjectFromBackend(context.Context, string, string) error { return nil }
 
+// RecordCompressionProbe is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; only the cleanup-touching methods carry
+// real test fixtures.
+func (t *cleanupTxStub) RecordCompressionProbe(context.Context, *CompressionProbe) error {
+	return nil
+}
+
 // InsertObjectLocationIfNotExists is a no-op stub on cleanupTxStub so the type satisfies the
 // full TxAdapter interface; only the cleanup-touching methods carry
 // real test fixtures.

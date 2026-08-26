@@ -37,6 +37,8 @@ const (
 
 	flagBatchSize = "batch-size"
 	fmtBatchSize  = "?batch_size=%d"
+	flagMax       = "max"
+	fmtMax        = "?max=%d"
 	fmtError      = "error: %v\n"
 
 	errBackendNameRequired = "error: backend name is required"
@@ -76,8 +78,8 @@ Commands:
   encrypt-existing    Encrypt all unencrypted objects in place (requires encryption enabled)
   decrypt-existing    Decrypt all encrypted objects back to plaintext (requires encryption enabled)
   rotate-encryption-key  Re-wrap all DEKs sealed with -old-key-id under the current primary key
-  compress-existing   Store every uncompressed object as chunked zstd (requires a compression codec)
-  decompress-existing Rewrite every compressed object back to the bytes the client wrote
+  compress-existing   Store every uncompressed object as chunked zstd, or -max=N of them (requires a compression codec)
+  decompress-existing Rewrite every compressed object back to the bytes the client wrote, or -max=N of them
   workers             Show background worker last-tick health
   reload-status       Show the outcome of the last SIGHUP config reload
   trace-snapshot      Download the flight-recorder trace ring buffer to a file (use -o)

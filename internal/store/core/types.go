@@ -67,6 +67,11 @@ type StoredForm struct {
 // The compression columns follow StoredForm: an empty algorithm means the
 // bytes are stored verbatim, and they are zero on rows from queries that do
 // not select them.
+//
+// CompressionProbeSize and CompressionProbeLevel are bookkeeping about the copy
+// rather than a description of its content, like LastScrubbedAt: they record
+// what the encoder measured for a copy it declined, so a later pass need not
+// download it to measure again.
 type ObjectLocation struct {
 	ObjectKey                string
 	BackendName              string
@@ -81,6 +86,8 @@ type ObjectLocation struct {
 	CompressionLevel         string
 	CompressionFormatVersion int
 	LogicalSize              int64
+	CompressionProbeSize     int64
+	CompressionProbeLevel    string
 	LastScrubbedAt           *time.Time
 	Unmanaged                bool
 }
@@ -380,6 +387,39 @@ type RewritableLocation struct {
 	CompressionLevel         string
 	CompressionFormatVersion int
 	LogicalSize              int64
+}
+
+// CompressionThresholds are the settings that decide whether a copy is worth
+// encoding, passed to the uncompressed listing so it selects only candidates.
+//
+// The listing applies them rather than the pass filtering afterwards, because
+// both answers are durable: a copy under MinSize is never a candidate, and a
+// copy already measured as unable to reach MinRatio stays declined until one of
+// these values changes. Judging a recorded measurement against the current
+// settings is what lets a loosened threshold return those copies to the pass
+// with no read at all.
+//
+// Level names the level a recorded measurement must have been taken at to count
+// against MinRatio. A measurement from a different level describes an encoding
+// the pass would no longer produce.
+type CompressionThresholds struct {
+	MinSize  int64
+	MinRatio float64
+	Level    string
+}
+
+// CompressionProbe is what the encoder measured for a copy it declined to store
+// compressed: the size it produced and the level it produced it at.
+//
+// A zero Size means the copy has never been probed. Only the ratio decision is
+// recorded, because it is the only one that costs a download and an encode to
+// reach: a size floor is answered from the row, and a copy declined by usage
+// limits never reached the encoder.
+type CompressionProbe struct {
+	ObjectKey   string
+	BackendName string
+	Size        int64
+	Level       string
 }
 
 // CompressedUpdate is the new description of a copy a compression pass has

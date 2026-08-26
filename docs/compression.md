@@ -60,6 +60,20 @@ The pass reads each copy, encodes it, writes it back in place and updates the ro
 
 Objects it declines are reported as **skipped**, separately from failures. On a fleet of media or archives most of it will be skipped, and that is a healthy run rather than a broken one. Only objects below `min_size` are free to skip: deciding on the ratio means encoding the object first, since nothing else answers the question.
 
+### Converting in batches
+
+`-max` stops the pass after that many objects, which is how a fleet-sized conversion is spread across maintenance windows rather than run in one sitting:
+
+```bash
+s3-orchestrator admin compress-existing -max=1000
+```
+
+The same cap is a `max` query parameter on both endpoints, and the TUI offers each pass twice, once whole-fleet and once as a batch that asks for a count. Without it, both convert everything, which is the default on every entry point.
+
+Nothing has to be carried between runs, and nothing needs tracking on your side. A converted copy no longer matches the listing that selected it, and one declined on `min_ratio` has what the encoder produced recorded against its row, so it drops out of the listing too. Run the command again a week later and it picks up the objects the previous runs did not reach, including anything written in the meantime.
+
+That recording is what keeps a batched conversion from costing more than a single pass. Proving an object incompressible means downloading and encoding it, so a pass that forgot the answer would spend that egress again on every subsequent run - on a metered backend, quota spent to reach a verdict already reached. The stored measurement is judged against the current `min_ratio` rather than treated as final, so lowering the threshold returns those objects to the pass with no read at all. Changing `level` has the same effect, since a measurement taken at another level says nothing about the current one.
+
 An encrypted object is decrypted, encoded, and re-encrypted, because compression sits inside encryption. That mints a fresh data key for the rewritten copy - re-encrypting changes the base nonce whatever key is used, so keeping the old one preserves nothing, and the new one is wrapped under whichever key is primary now.
 
 The pass rewrites one copy at a time, so a replicated object is brought over one copy per pass rather than atomically. Copies that differ in stored form are not a problem: every row describes its own bytes.

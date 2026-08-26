@@ -201,7 +201,7 @@ Both `encrypt-existing` and `decrypt-existing` keep `backend_quotas.bytes_used` 
 
 ### Compressing existing data
 
-Enabling compression affects new writes only, exactly as enabling encryption does. `s3-orchestrator admin compress-existing` brings what is already stored under it, and `decompress-existing` takes it back out. Both keep quota consistent the same way, moving the counter by the size difference in the same transaction as the row update.
+Enabling compression affects new writes only, exactly as enabling encryption does. `s3-orchestrator admin compress-existing` brings what is already stored under it, and `decompress-existing` takes it back out. Both keep quota consistent the same way, moving the counter by the size difference in the same transaction as the row update. Both also take `-max=N` to convert part of a fleet and stop; the next run continues from there without anything being carried between them.
 
 Unlike the encryption passes, these decline objects on purpose: anything below `min_size`, and anything the encoder cannot shrink past `min_ratio`, is left alone and counted as skipped. Watch `s3o_compress_existing_objects_total{status="skipped"}` alongside the success count - on media or backup data most of a fleet will be skipped, and that is the pass working. See [Compression](compression.md) for what the thresholds mean.
 

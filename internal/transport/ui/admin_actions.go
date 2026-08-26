@@ -22,6 +22,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
+// paramMax is the query parameter capping how many objects a bulk pass rewrites
+// in one run, named to match the admin API's own.
+const paramMax = "max"
+
 // skipReason reports the reason an operation declined to run, and whether it
 // declined at all. The dashboard surfaces a skip as a completed action
 // carrying the reason rather than as a failure.
@@ -244,14 +248,18 @@ func (h *Handler) handleAPIEncryptExistingStatus(w http.ResponseWriter, _ *http.
 // re-uploads the encoding, and updates the DB record. Long-running.
 //
 // The payload reports skipped alongside failed because this pass declines
-// objects on purpose - too small, or too incompressible to be worth encoding -
-// and a run that skipped most of a fleet is a healthy one.
+// objects on purpose - too incompressible to be worth encoding - and a run that
+// skipped most of a fleet is a healthy one.
+//
+// The optional max query parameter caps how many objects this run rewrites, 0
+// or absent meaning the whole fleet.
 func (h *Handler) handleAPICompressExisting(w http.ResponseWriter, r *http.Request) {
+	maxObjects := httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))
 	h.startAdminAction(w, r, adminActionOp{
 		name:      "compress-existing",
 		resultKey: "compressed",
 		run: func(ctx context.Context) (int, map[string]any, string, error) {
-			res, err := h.compression.CompressExisting(ctx, nil)
+			res, err := h.compression.CompressExisting(ctx, nil, maxObjects)
 			if reason, skipped := skipReason(err); skipped {
 				return 0, nil, reason, nil
 			}
@@ -272,13 +280,15 @@ func (h *Handler) handleAPICompressExistingStatus(w http.ResponseWriter, _ *http
 }
 
 // handleAPIDecompressExisting rewrites every encoded object back to the bytes
-// the client wrote, which is how an operator takes the feature back out.
+// the client wrote, which is how an operator takes the feature back out. Takes
+// the same optional max as the forward pass.
 func (h *Handler) handleAPIDecompressExisting(w http.ResponseWriter, r *http.Request) {
+	maxObjects := httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))
 	h.startAdminAction(w, r, adminActionOp{
 		name:      "decompress-existing",
 		resultKey: "decompressed",
 		run: func(ctx context.Context) (int, map[string]any, string, error) {
-			res, err := h.compression.DecompressExisting(ctx, nil)
+			res, err := h.compression.DecompressExisting(ctx, nil, maxObjects)
 			if reason, skipped := skipReason(err); skipped {
 				return 0, nil, reason, nil
 			}
