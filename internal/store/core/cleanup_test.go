@@ -194,6 +194,16 @@ func (t *cleanupTxStub) InsertReplicaConditional(context.Context, string, string
 	return 0, false, nil
 }
 
+// InsertObjectTag is a no-op stub on cleanupTxStub so the type satisfies the
+// full TxAdapter interface; the cleanup paths do not touch tags.
+func (*cleanupTxStub) InsertObjectTag(context.Context, string, string, string) error { return nil }
+
+// DeleteObjectTags is a no-op stub on cleanupTxStub.
+func (*cleanupTxStub) DeleteObjectTags(context.Context, string) error { return nil }
+
+// DeleteObjectTagsForKeys is a no-op stub on cleanupTxStub.
+func (*cleanupTxStub) DeleteObjectTagsForKeys(context.Context, []string) error { return nil }
+
 // stubRunner runs the supplied closure synchronously against the
 // embedded TxAdapter so cleanup_test.go can exercise the tx body
 // without is a no-op stub on cleanupTxStub so the type satisfies the

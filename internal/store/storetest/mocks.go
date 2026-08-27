@@ -304,6 +304,20 @@ func (mr *MockMetadataStoreMockRecorder) DeleteObjectLocation(ctx, key, backendN
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectLocation", reflect.TypeOf((*MockMetadataStore)(nil).DeleteObjectLocation), ctx, key, backendName)
 }
 
+// DeleteObjectTags mocks base method.
+func (m *MockMetadataStore) DeleteObjectTags(ctx context.Context, key string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteObjectTags", ctx, key)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteObjectTags indicates an expected call of DeleteObjectTags.
+func (mr *MockMetadataStoreMockRecorder) DeleteObjectTags(ctx, key any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectTags", reflect.TypeOf((*MockMetadataStore)(nil).DeleteObjectTags), ctx, key)
+}
+
 // DeleteObjectsBatch mocks base method.
 func (m *MockMetadataStore) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, error) {
 	m.ctrl.T.Helper()
@@ -508,6 +522,21 @@ func (m *MockMetadataStore) GetObjectCounts(ctx context.Context) (map[string]int
 func (mr *MockMetadataStoreMockRecorder) GetObjectCounts(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObjectCounts", reflect.TypeOf((*MockMetadataStore)(nil).GetObjectCounts), ctx)
+}
+
+// GetObjectTags mocks base method.
+func (m *MockMetadataStore) GetObjectTags(ctx context.Context, key string) ([]core.Tag, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetObjectTags", ctx, key)
+	ret0, _ := ret[0].([]core.Tag)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetObjectTags indicates an expected call of GetObjectTags.
+func (mr *MockMetadataStoreMockRecorder) GetObjectTags(ctx, key any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObjectTags", reflect.TypeOf((*MockMetadataStore)(nil).GetObjectTags), ctx, key)
 }
 
 // GetObjectsWithoutHash mocks base method.
@@ -1177,6 +1206,20 @@ func (m *MockMetadataStore) RemoveExcessCopy(ctx context.Context, key, backendNa
 func (mr *MockMetadataStoreMockRecorder) RemoveExcessCopy(ctx, key, backendName, factor any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveExcessCopy", reflect.TypeOf((*MockMetadataStore)(nil).RemoveExcessCopy), ctx, key, backendName, factor)
+}
+
+// ReplaceObjectTags mocks base method.
+func (m *MockMetadataStore) ReplaceObjectTags(ctx context.Context, key string, tags []core.Tag) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReplaceObjectTags", ctx, key, tags)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ReplaceObjectTags indicates an expected call of ReplaceObjectTags.
+func (mr *MockMetadataStoreMockRecorder) ReplaceObjectTags(ctx, key, tags any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReplaceObjectTags", reflect.TypeOf((*MockMetadataStore)(nil).ReplaceObjectTags), ctx, key, tags)
 }
 
 // RequeueCleanupDLQ mocks base method.

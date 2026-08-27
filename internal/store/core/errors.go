@@ -112,3 +112,32 @@ var (
 	// a benign no-op rather than an error.
 	ErrCleanupItemNotFound = errors.New("cleanup queue row not found")
 )
+
+// -------------------------------------------------------------------------
+// TAG VALIDATION ERRORS
+// -------------------------------------------------------------------------
+
+// Tag-set validation failures. These stay plain sentinels rather than
+// S3Error values so the transport owns the mapping onto InvalidTag and
+// BadRequest along with the message AWS words for each case; core wraps them
+// with the offending measurement, which a generic S3Error message would drop.
+var (
+	// ErrTooManyTags is returned when a tag set exceeds MaxTagsPerObject.
+	ErrTooManyTags = errors.New("too many tags for one object")
+
+	// ErrEmptyTagKey is returned for a tag whose key is the empty string.
+	// The key is half the primary key, so an empty one is not storable.
+	ErrEmptyTagKey = errors.New("tag key must not be empty")
+
+	// ErrTagKeyTooLong is returned when a key exceeds MaxTagKeyLength
+	// UTF-16 code units.
+	ErrTagKeyTooLong = errors.New("tag key too long")
+
+	// ErrTagValueTooLong is returned when a value exceeds
+	// MaxTagValueLength UTF-16 code units.
+	ErrTagValueTooLong = errors.New("tag value too long")
+
+	// ErrDuplicateTagKey is returned when a set names the same key twice.
+	// Tag keys are case sensitive, so "a" and "A" are not duplicates.
+	ErrDuplicateTagKey = errors.New("duplicate tag key")
+)
