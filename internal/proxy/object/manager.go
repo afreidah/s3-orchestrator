@@ -43,6 +43,7 @@ const managerSpanPrefix = "Manager "
 type ObjectStores interface {
 	core.ObjectStore
 	core.QuotaStore
+	core.TagStore
 }
 
 // Manager handles object-level CRUD operations with read failover,
