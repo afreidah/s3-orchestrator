@@ -170,6 +170,38 @@ func (a *pgTxAdapter) RecordCompressionProbe(ctx context.Context, probe *core.Co
 	return nil
 }
 
+// -------------------------------------------------------------------------
+// OBJECT TAGS
+// -------------------------------------------------------------------------
+
+// InsertObjectTag adds one tag row for an object.
+func (a *pgTxAdapter) InsertObjectTag(ctx context.Context, objectKey, tagKey, tagValue string) error {
+	if err := a.q.InsertObjectTag(ctx, db.InsertObjectTagParams{
+		ObjectKey: objectKey,
+		TagKey:    tagKey,
+		TagValue:  tagValue,
+	}); err != nil {
+		return fmt.Errorf("insert object tag: %w", err)
+	}
+	return nil
+}
+
+// DeleteObjectTags removes every tag row for one object key.
+func (a *pgTxAdapter) DeleteObjectTags(ctx context.Context, objectKey string) error {
+	if err := a.q.DeleteObjectTags(ctx, objectKey); err != nil {
+		return fmt.Errorf("delete object tags: %w", err)
+	}
+	return nil
+}
+
+// DeleteObjectTagsForKeys removes every tag row for any of the given keys.
+func (a *pgTxAdapter) DeleteObjectTagsForKeys(ctx context.Context, objectKeys []string) error {
+	if err := a.q.DeleteObjectTagsForKeys(ctx, objectKeys); err != nil {
+		return fmt.Errorf("delete object tags for keys: %w", err)
+	}
+	return nil
+}
+
 // InsertObjectLocationIfNotExists inserts a row only when one does not
 // already exist for (key, backend). Returns true when the row was newly
 // inserted.

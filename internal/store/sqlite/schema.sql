@@ -207,5 +207,21 @@ CREATE INDEX IF NOT EXISTS idx_pending_objects_created
 CREATE INDEX IF NOT EXISTS idx_pending_objects_backend
     ON pending_objects(backend_name);
 
+-- S3 object tags, keyed by object rather than by copy so replicas of a key
+-- cannot disagree about the set. Rows rather than a JSON column because
+-- lifecycle expiry by tag filters on (tag_key, tag_value) and needs an index.
+-- No foreign key: nothing is keyed on object_key alone, so core clears these
+-- rows at every path that puts a new object at a key or removes its last copy.
+-- See migrations/0009_object_tags.sql for the full design notes.
+CREATE TABLE IF NOT EXISTS object_tags (
+    object_key TEXT NOT NULL,
+    tag_key    TEXT NOT NULL,
+    tag_value  TEXT NOT NULL,
+    PRIMARY KEY (object_key, tag_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_object_tags_lookup
+    ON object_tags(tag_key, tag_value);
+
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (8);
+INSERT INTO schema_version (version) VALUES (9);

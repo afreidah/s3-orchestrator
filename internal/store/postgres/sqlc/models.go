@@ -106,6 +106,12 @@ type ObjectLocation struct {
 	CompressionProbeLevel    *string
 }
 
+type ObjectTag struct {
+	ObjectKey string
+	TagKey    string
+	TagValue  string
+}
+
 type PendingObject struct {
 	IntentID                 string
 	ObjectKey                string

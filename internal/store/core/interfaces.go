@@ -43,6 +43,7 @@ type MetadataStore interface {
 	EncryptionAdmin
 	CompressionAdmin
 	NotificationOutbox
+	TagStore
 }
 
 // -------------------------------------------------------------------------
@@ -64,6 +65,20 @@ type ObjectStore interface {
 	MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error)
 	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *StoredForm) (bool, error)
 	DeleteObjectLocation(ctx context.Context, key, backendName string) error
+}
+
+// TagStore defines object tag read and write operations. Writes are
+// transactional and promoted from TxOps, so both engines share one
+// implementation; only the read is per-engine.
+type TagStore interface {
+	// GetObjectTags returns an object's tag set ordered by key, so the
+	// Tagging XML response is byte-identical run to run. An object with
+	// no tags yields an empty slice rather than an error: an untagged
+	// object has an empty TagSet, not a missing one.
+	GetObjectTags(ctx context.Context, key string) ([]Tag, error)
+
+	ReplaceObjectTags(ctx context.Context, key string, tags []Tag) error
+	DeleteObjectTags(ctx context.Context, key string) error
 }
 
 // QuotaStore defines quota routing queries.

@@ -15,6 +15,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"slices"
 )
 
 // -------------------------------------------------------------------------
@@ -59,6 +60,14 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, key, backend string, size
 	if err != nil {
 		return nil, err
 	}
+	// A PUT is a full replacement, so the object landing here starts with no
+	// tags and the caller inserts any it carried afterwards. Unconditional
+	// rather than gated on len(existing): a key with no copies but leftover
+	// tag rows still starts clean, which also sweeps anything a bug elsewhere
+	// orphaned.
+	if err := clearTagsForKey(ctx, tx, key); err != nil {
+		return nil, err
+	}
 	if err := tx.InsertObjectLocation(ctx, objectFromStoredForm(key, backend, size, form)); err != nil {
 		return nil, fmt.Errorf("insert object location: %w", err)
 	}
@@ -84,6 +93,14 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, key, backend string, size
 // in stable backend_name order.
 func DeleteObject(ctx context.Context, runner Runner, key string) ([]DeletedCopy, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) ([]DeletedCopy, error) {
+		// Ahead of the row read, matching recordObjectTx. A tagging call
+		// touches object_tags without touching object_locations, so the row
+		// locks below do not exclude it; only the key lock does. Taking it in
+		// the same order everywhere is what keeps the two paths from
+		// deadlocking against each other.
+		if err := tx.AcquireKeyLock(ctx, key); err != nil {
+			return nil, err
+		}
 		existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
 		if err != nil {
 			return nil, err
@@ -93,6 +110,9 @@ func DeleteObject(ctx context.Context, runner Runner, key string) ([]DeletedCopy
 		}
 		if err := tx.DeleteObjectCopies(ctx, key); err != nil {
 			return nil, fmt.Errorf("delete object copies: %w", err)
+		}
+		if err := clearTagsForKey(ctx, tx, key); err != nil {
+			return nil, err
 		}
 		copies := make([]DeletedCopy, len(existing))
 		deltas := make(map[string]int64, len(existing))
@@ -123,6 +143,9 @@ func DeleteObjectsBatch(ctx context.Context, runner Runner, keys []string) (map[
 		return map[string][]DeletedCopy{}, nil
 	}
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (map[string][]DeletedCopy, error) {
+		if err := lockKeysInOrder(ctx, tx, keys); err != nil {
+			return nil, err
+		}
 		rows, err := tx.GetCopiesForKeysForUpdate(ctx, keys)
 		if err != nil {
 			return nil, err
@@ -132,6 +155,9 @@ func DeleteObjectsBatch(ctx context.Context, runner Runner, keys []string) (map[
 		}
 		if err := tx.DeleteObjectsByKeys(ctx, keys); err != nil {
 			return nil, fmt.Errorf("delete object copies by keys: %w", err)
+		}
+		if err := clearTagsForKeys(ctx, tx, keys); err != nil {
+			return nil, err
 		}
 		// Per-key copies for the caller, plus per-backend totals so we
 		// decrement each backend's quota exactly once instead of once
@@ -155,6 +181,23 @@ func DeleteObjectsBatch(ctx context.Context, runner Runner, keys []string) (map[
 	})
 }
 
+// lockKeysInOrder takes the per-key lock for every supplied key, sorted and
+// deduplicated first.
+//
+// Sorted for the same reason applyQuotaDeltas sorts backends: two concurrent
+// batches sharing keys would otherwise take the same locks in caller-supplied
+// order and deadlock. Sorted on a copy so the caller's slice is left alone.
+func lockKeysInOrder(ctx context.Context, tx TxAdapter, keys []string) error {
+	ordered := slices.Clone(keys)
+	slices.Sort(ordered)
+	for _, k := range slices.Compact(ordered) {
+		if err := tx.AcquireKeyLock(ctx, k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // -------------------------------------------------------------------------
 // DELETE OBJECT LOCATION
 // -------------------------------------------------------------------------
@@ -173,6 +216,9 @@ func DeleteObjectsBatch(ctx context.Context, runner Runner, keys []string) (map[
 // that was actually removed.
 func DeleteObjectLocation(ctx context.Context, runner Runner, key, backendName string) error {
 	return runner.WithTx(ctx, func(ctx context.Context, tx TxAdapter) error {
+		if err := tx.AcquireKeyLock(ctx, key); err != nil {
+			return err
+		}
 		existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
 		if err != nil {
 			return err
@@ -183,6 +229,16 @@ func DeleteObjectLocation(ctx context.Context, runner Runner, key, backendName s
 		}
 		if err := tx.DeleteObjectFromBackend(ctx, key, backendName); err != nil {
 			return err
+		}
+		// Only the copy that was the object's last one takes its tags with
+		// it. Removing one replica of a multi-copy object leaves the object
+		// alive, and dropping its tags there would be silent data loss. The
+		// copy list is already in hand for the quota debit, so this costs
+		// no extra query.
+		if len(existing) == 1 {
+			if err := clearTagsForKey(ctx, tx, key); err != nil {
+				return err
+			}
 		}
 		return tx.DecrementBackendQuota(ctx, backendName, size)
 	})

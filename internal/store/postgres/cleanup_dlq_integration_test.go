@@ -34,6 +34,23 @@ func dlqAllPg(t *testing.T, s *Store, lastError string) {
 	}
 }
 
+// resetCleanupTablesPg empties cleanup_queue and cleanup_dlq so a test that
+// asserts an exact row count measures only what it enqueued itself.
+//
+// dlqAllPg sweeps every pending row in the database, not just this test's, and
+// EnqueueCleanup dates next_retry forward: a row an earlier test left behind
+// becomes pending once its backoff elapses, so whether it lands in the DLQ
+// depends on how long the suite took to reach here. Clearing first makes the
+// count depend on the test rather than on what ran before it.
+func resetCleanupTablesPg(t *testing.T, s *Store) {
+	t.Helper()
+	for _, table := range []string{"cleanup_queue", "cleanup_dlq"} {
+		if _, err := s.pool.Exec(context.Background(), "DELETE FROM "+table); err != nil {
+			t.Fatalf("clear %s: %v", table, err)
+		}
+	}
+}
+
 // mustEnqueuePg enqueues one cleanup row under a fresh key, failing on error.
 func mustEnqueuePg(t *testing.T, s *Store, backend string, size int64) {
 	t.Helper()
@@ -64,6 +81,7 @@ func TestStoreInt_ListCleanupDLQ_ScopeAndFields(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 
+	resetCleanupTablesPg(t, s)
 	mustEnqueuePg(t, s, "backend-a", 2048)
 	mustEnqueuePg(t, s, "backend-a", 1024)
 	mustEnqueuePg(t, s, "backend-b", 512)

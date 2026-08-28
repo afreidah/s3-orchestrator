@@ -55,6 +55,16 @@ func (o TxOps) DeleteObjectLocation(ctx context.Context, key, backendName string
 	return DeleteObjectLocation(ctx, o.runner, key, backendName)
 }
 
+// ReplaceObjectTags swaps an object's whole tag set for the supplied one.
+func (o TxOps) ReplaceObjectTags(ctx context.Context, key string, tags []Tag) error {
+	return ReplaceObjectTags(ctx, o.runner, key, tags)
+}
+
+// DeleteObjectTags removes an object's whole tag set.
+func (o TxOps) DeleteObjectTags(ctx context.Context, key string) error {
+	return DeleteObjectTags(ctx, o.runner, key)
+}
+
 // ImportObject records bytes discovered on a backend, leaving an existing row
 // untouched.
 func (o TxOps) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *StoredForm) (bool, error) {
