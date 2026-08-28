@@ -43,4 +43,5 @@ type MetadataStore interface {
 	core.EncryptionAdmin
 	core.CompressionAdmin
 	core.NotificationOutbox
+	core.TagStore
 }

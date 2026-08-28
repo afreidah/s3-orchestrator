@@ -14,6 +14,7 @@ package core
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 )
@@ -60,10 +61,7 @@ func TestObjectFromStoredForm_EncryptedFields(t *testing.T) {
 }
 
 // TestObjectFromStoredForm_HashOnly verifies that an integrity-only PUT
-// (encryption disabled, content hash present) still copies the hash
-// across is a no-op stub on quotaTxStub so the type satisfies the
-// full TxAdapter interface; only the quota-touching methods carry
-// real test fixtures.
+// (encryption disabled, content hash present) still copies the hash across.
 func TestObjectFromStoredForm_HashOnly(t *testing.T) {
 	t.Parallel()
 	form := &StoredForm{ContentHash: "abc123"}
@@ -150,9 +148,7 @@ func TestDisplacedFromExisting_OtherBackends(t *testing.T) {
 // -------------------------------------------------------------------------
 
 // TestGroupByKey_EmptySlice verifies the empty-slice case returns an
-// empty is a no-op stub on quotaTxStub so the type satisfies the
-// full TxAdapter interface; only the quota-touching methods carry
-// real test fixtures.
+// empty map, so callers can range over the result without a nil check.
 func TestGroupByKey_EmptySlice(t *testing.T) {
 	t.Parallel()
 	got := GroupByKey(nil)
@@ -161,9 +157,8 @@ func TestGroupByKey_EmptySlice(t *testing.T) {
 	}
 }
 
-// TestGroupByKey_SingleKeySingleCopy is a no-op stub on quotaTxStub so the type satisfies the
-// full TxAdapter interface; only the quota-touching methods carry
-// real test fixtures.
+// TestGroupByKey_SingleKeySingleCopy verifies one key holding one copy
+// groups into a single bucket carrying that copy.
 func TestGroupByKey_SingleKeySingleCopy(t *testing.T) {
 	t.Parallel()
 	got := GroupByKey([]ObjectLocation{{ObjectKey: "k", BackendName: "b1"}})
@@ -207,19 +202,34 @@ type quotaTxStub struct {
 	ops     []quotaOp
 	failOn  string
 	failErr error
+
+	tagsCleared    []string
+	tagKeysCleared [][]string
+	tagsInserted   []Tag
+	tagClearErr    error
+	tagInsertErr   error
+	keyLockErr     error
+	existingCopies []ExistingCopy
+	existingErr    error
 }
 
-// quotaOp is a no-op stub on quotaTxStub so the type satisfies the
-// full TxAdapter interface; only the quota-touching methods carry
-// real test fixtures.
+// storedCopy is the seed a tag test uses to say the object exists, since the
+// tagging operations refuse a key that holds nothing.
+func storedCopy() []ExistingCopy {
+	return []ExistingCopy{{BackendName: "b1", SizeBytes: 100}}
+}
+
+// quotaOp is one recorded quota mutation. The sign carries the caller's
+// intent rather than the SQL direction, so a test can assert the order the
+// backends were touched in without decoding which method produced each entry.
 type quotaOp struct {
 	backend string
 	delta   int64 // positive=increment, negative=decrement (mirrors caller intent)
 }
 
-// IncrementBackendQuota is a no-op stub on quotaTxStub so the type satisfies the
-// full TxAdapter interface; only the quota-touching methods carry
-// real test fixtures.
+// IncrementBackendQuota records the credit and honours the failOn hook. One
+// of the two instrumented methods: the call order it captures is what the
+// deadlock regression asserts on.
 func (t *quotaTxStub) IncrementBackendQuota(_ context.Context, backend string, delta int64) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -230,9 +240,8 @@ func (t *quotaTxStub) IncrementBackendQuota(_ context.Context, backend string, d
 	return nil
 }
 
-// DecrementBackendQuota is a no-op stub on quotaTxStub so the type satisfies the
-// full TxAdapter interface; only the quota-touching methods carry
-// real test fixtures.
+// DecrementBackendQuota records the debit as a negative delta and honours the
+// failOn hook, mirroring IncrementBackendQuota.
 func (t *quotaTxStub) DecrementBackendQuota(_ context.Context, backend string, delta int64) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -257,6 +266,42 @@ func (*quotaTxStub) SumObjectSizesByBackend(context.Context) (map[string]int64, 
 // SetBackendBytesUsed is a no-op stub on quotaTxStub.
 func (*quotaTxStub) SetBackendBytesUsed(context.Context, string, int64) error { return nil }
 
+// InsertObjectTag records the tag so replace-semantics tests can assert what
+// was written after the preceding clear.
+func (t *quotaTxStub) InsertObjectTag(_ context.Context, _, tagKey, tagValue string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.tagInsertErr != nil {
+		return t.tagInsertErr
+	}
+	t.tagsInserted = append(t.tagsInserted, Tag{Key: tagKey, Value: tagValue})
+	return nil
+}
+
+// DeleteObjectTags records which keys had their tags cleared, which is what
+// the cascade tests assert on.
+func (t *quotaTxStub) DeleteObjectTags(_ context.Context, objectKey string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.tagClearErr != nil {
+		return t.tagClearErr
+	}
+	t.tagsCleared = append(t.tagsCleared, objectKey)
+	return nil
+}
+
+// DeleteObjectTagsForKeys records the batch clear as one call so a test can
+// tell it apart from a loop of single clears.
+func (t *quotaTxStub) DeleteObjectTagsForKeys(_ context.Context, objectKeys []string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.tagClearErr != nil {
+		return t.tagClearErr
+	}
+	t.tagKeysCleared = append(t.tagKeysCleared, slices.Clone(objectKeys))
+	return nil
+}
+
 // The remaining TxAdapter methods are unused by applyQuotaDeltas; stubs
 // return zero values so the type satisfies the full interface.
 // AcquireKeyLock is a no-op stub on quotaTxStub so the type satisfies the
@@ -265,7 +310,7 @@ func (*quotaTxStub) SetBackendBytesUsed(context.Context, string, int64) error { 
 // AcquireKeyLock is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
-func (*quotaTxStub) AcquireKeyLock(context.Context, string) error { return nil }
+func (t *quotaTxStub) AcquireKeyLock(context.Context, string) error { return t.keyLockErr }
 
 // ClaimPending is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
@@ -280,8 +325,8 @@ func (*quotaTxStub) DeletePending(context.Context, string) error { return nil }
 // GetExistingCopiesForUpdate is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
-func (*quotaTxStub) GetExistingCopiesForUpdate(context.Context, string) ([]ExistingCopy, error) {
-	return nil, nil
+func (t *quotaTxStub) GetExistingCopiesForUpdate(context.Context, string) ([]ExistingCopy, error) {
+	return t.existingCopies, t.existingErr
 }
 
 // InsertObjectLocation is a no-op stub on quotaTxStub so the type satisfies the

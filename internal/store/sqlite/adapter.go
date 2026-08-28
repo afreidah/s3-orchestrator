@@ -297,6 +297,51 @@ func (a *sqliteTxAdapter) RecordCompressionProbe(ctx context.Context, probe *cor
 	return nil
 }
 
+// -------------------------------------------------------------------------
+// OBJECT TAGS
+// -------------------------------------------------------------------------
+
+// InsertObjectTag adds one tag row for an object.
+func (a *sqliteTxAdapter) InsertObjectTag(ctx context.Context, objectKey, tagKey, tagValue string) error {
+	if _, err := a.tx.ExecContext(ctx,
+		`INSERT INTO object_tags (object_key, tag_key, tag_value) VALUES (?, ?, ?)`,
+		objectKey, tagKey, tagValue,
+	); err != nil {
+		return fmt.Errorf("insert object tag: %w", err)
+	}
+	return nil
+}
+
+// DeleteObjectTags removes every tag row for one object key.
+func (a *sqliteTxAdapter) DeleteObjectTags(ctx context.Context, objectKey string) error {
+	if _, err := a.tx.ExecContext(ctx,
+		`DELETE FROM object_tags WHERE object_key = ?`, objectKey,
+	); err != nil {
+		return fmt.Errorf("delete object tags: %w", err)
+	}
+	return nil
+}
+
+// DeleteObjectTagsForKeys removes every tag row for any of the given keys,
+// passing the list as JSON for the same reason DeleteObjectsByKeys does:
+// SQLite has no array parameter, and json_each keeps this one statement
+// rather than one per key.
+func (a *sqliteTxAdapter) DeleteObjectTagsForKeys(ctx context.Context, objectKeys []string) error {
+	if len(objectKeys) == 0 {
+		return nil
+	}
+	keysJSON, err := json.Marshal(objectKeys)
+	if err != nil {
+		return fmt.Errorf("marshal keys: %w", err)
+	}
+	if _, err := a.tx.ExecContext(ctx, `
+		DELETE FROM object_tags
+		WHERE object_key IN (SELECT value FROM json_each(?))`, string(keysJSON)); err != nil {
+		return fmt.Errorf("delete object tags for keys: %w", err)
+	}
+	return nil
+}
+
 // InsertObjectLocationIfNotExists inserts a row only if one does not
 // already exist for (key, backend). Returns true when a row was newly
 // inserted.

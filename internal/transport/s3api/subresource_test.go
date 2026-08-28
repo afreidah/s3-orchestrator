@@ -31,7 +31,6 @@ import (
 // data-path operation, which is what made them destructive.
 var unimplementedSubresources = []string{
 	"acl",
-	"tagging",
 	"retention",
 	"legal-hold",
 	"object-lock",
@@ -112,14 +111,14 @@ func TestObjectSubresource_GetDoesNotServeTheObject(t *testing.T) {
 	const key = "mybucket/doc.txt"
 	_ = statusOf(t, ts, http.MethodPut, ts.URL+"/"+key, strings.NewReader("object bytes"))
 
-	get := doReq(t, ts, http.MethodGet, ts.URL+"/"+key+"?tagging", nil)
+	get := doReq(t, ts, http.MethodGet, ts.URL+"/"+key+"?acl", nil)
 	defer get.Body.Close()
 	if get.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("GET ?tagging status = %d, want 501", get.StatusCode)
+		t.Fatalf("GET ?acl status = %d, want 501", get.StatusCode)
 	}
 	body, _ := io.ReadAll(get.Body)
 	if strings.Contains(string(body), "object bytes") {
-		t.Error("GET ?tagging served the object's contents")
+		t.Error("GET ?acl served the object's contents")
 	}
 }
 
@@ -179,10 +178,12 @@ func TestUnsupportedObjectQuery_Classification(t *testing.T) {
 		// rejects every SDK write; the integration suite caught this.
 		{"x-id=PutObject", false},
 		{"x-id=GetObject", false},
-		{"tagging=", true},
+		// tagging is implemented, so it belongs on the allowed side; the
+		// subresources below it are still refused.
+		{"tagging=", false},
 		{"acl=", true},
 		{"versionId=null", true},
-		{"uploadId=abc&tagging=", true}, // a known key does not excuse an unknown one
+		{"uploadId=abc&acl=", true}, // a known key does not excuse an unknown one
 	}
 
 	for _, tc := range cases {
