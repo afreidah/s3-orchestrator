@@ -200,6 +200,7 @@ var supportedObjectQueryKeys = map[string]bool{
 	"uploads":    true, // CreateMultipartUpload / ListMultipartUploads
 	"uploadId":   true, // per-upload multipart operations
 	"partNumber": true, // UploadPart
+	"tagging":    true, // Put/Get/DeleteObjectTagging
 
 	// x-id names the SDK operation that built the request (x-id=PutObject).
 	// Added by the AWS SDKs, carries no meaning for the server, and appears on
