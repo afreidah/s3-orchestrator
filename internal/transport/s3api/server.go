@@ -69,6 +69,9 @@ type ObjectOps interface {
 	ObjectExists(ctx context.Context, key string) (bool, error)
 	CanAcceptWrite(size int64) bool
 	BackendCapacityStats(ctx context.Context) map[string]core.QuotaStat
+	GetObjectTags(ctx context.Context, key string) ([]core.Tag, error)
+	PutObjectTags(ctx context.Context, key string, tags []core.Tag) error
+	DeleteObjectTags(ctx context.Context, key string) error
 }
 
 // MultipartOps is the narrow multipart surface the S3 transport depends on.
@@ -390,6 +393,13 @@ func (s *Server) routeObjectRequest(ctx context.Context, w http.ResponseWriter, 
 		return "UnsupportedSubresource", http.StatusNotImplemented, 0, 0, nil, true
 	}
 
+	// Checked ahead of the multipart split because a tagging request carries
+	// neither uploads nor uploadId, so it would otherwise fall through to
+	// PutObject, GetObject or DeleteObject against the key it names.
+	if _, hasTagging := query["tagging"]; hasTagging {
+		return s.routeTaggingRequest(ctx, w, r, method, internalKey)
+	}
+
 	_, hasUploads := query["uploads"]
 	uploadID := query.Get("uploadId")
 	rk := &objectRouteKey{method: method, bucket: bucket, key: key, internalKey: internalKey, uploadID: uploadID}
@@ -420,6 +430,24 @@ func (s *Server) routeMultipartRequest(ctx context.Context, w http.ResponseWrite
 	case http.MethodGet:
 		st, e := s.handleListParts(ctx, w, r, rk.bucket, rk.key, rk.internalKey)
 		return "ListParts", st, 0, 0, e, true
+	}
+	return "", 0, 0, 0, nil, false
+}
+
+// routeTaggingRequest dispatches the three ?tagging subresource operations.
+// supported=false for any other method, which the caller renders as 405 rather
+// than letting it reach the object itself.
+func (s *Server) routeTaggingRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, method, internalKey string) (string, int, int64, int64, error, bool) {
+	switch method {
+	case http.MethodGet:
+		st, e := s.handleGetObjectTagging(ctx, w, internalKey)
+		return "GetObjectTagging", st, 0, 0, e, true
+	case http.MethodPut:
+		st, e := s.handlePutObjectTagging(ctx, w, r, internalKey)
+		return "PutObjectTagging", st, r.ContentLength, 0, e, true
+	case http.MethodDelete:
+		st, e := s.handleDeleteObjectTagging(ctx, w, internalKey)
+		return "DeleteObjectTagging", st, 0, 0, e, true
 	}
 	return "", 0, 0, 0, nil, false
 }

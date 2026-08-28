@@ -101,6 +101,20 @@ func (mr *MockObjectOpsMockRecorder) DeleteObject(ctx, key any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObject", reflect.TypeOf((*MockObjectOps)(nil).DeleteObject), ctx, key)
 }
 
+// DeleteObjectTags mocks base method.
+func (m *MockObjectOps) DeleteObjectTags(ctx context.Context, key string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteObjectTags", ctx, key)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteObjectTags indicates an expected call of DeleteObjectTags.
+func (mr *MockObjectOpsMockRecorder) DeleteObjectTags(ctx, key any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteObjectTags", reflect.TypeOf((*MockObjectOps)(nil).DeleteObjectTags), ctx, key)
+}
+
 // DeleteObjects mocks base method.
 func (m *MockObjectOps) DeleteObjects(ctx context.Context, keys []string) []object.DeleteObjectResult {
 	m.ctrl.T.Helper()
@@ -128,6 +142,21 @@ func (m *MockObjectOps) GetObject(ctx context.Context, key, rangeHeader string) 
 func (mr *MockObjectOpsMockRecorder) GetObject(ctx, key, rangeHeader any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObject", reflect.TypeOf((*MockObjectOps)(nil).GetObject), ctx, key, rangeHeader)
+}
+
+// GetObjectTags mocks base method.
+func (m *MockObjectOps) GetObjectTags(ctx context.Context, key string) ([]core.Tag, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetObjectTags", ctx, key)
+	ret0, _ := ret[0].([]core.Tag)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetObjectTags indicates an expected call of GetObjectTags.
+func (mr *MockObjectOpsMockRecorder) GetObjectTags(ctx, key any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObjectTags", reflect.TypeOf((*MockObjectOps)(nil).GetObjectTags), ctx, key)
 }
 
 // HeadObject mocks base method.
@@ -188,6 +217,20 @@ func (m *MockObjectOps) PutObject(ctx context.Context, key string, body io.Reade
 func (mr *MockObjectOpsMockRecorder) PutObject(ctx, key, body, size, contentType, metadata any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PutObject", reflect.TypeOf((*MockObjectOps)(nil).PutObject), ctx, key, body, size, contentType, metadata)
+}
+
+// PutObjectTags mocks base method.
+func (m *MockObjectOps) PutObjectTags(ctx context.Context, key string, tags []core.Tag) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PutObjectTags", ctx, key, tags)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PutObjectTags indicates an expected call of PutObjectTags.
+func (mr *MockObjectOpsMockRecorder) PutObjectTags(ctx, key, tags any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PutObjectTags", reflect.TypeOf((*MockObjectOps)(nil).PutObjectTags), ctx, key, tags)
 }
 
 // MockMultipartOps is a mock of MultipartOps interface.
