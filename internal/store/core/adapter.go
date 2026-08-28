@@ -35,6 +35,7 @@ type TxAdapter interface {
 	ObjectsTxAdapter
 	CleanupTxAdapter
 	QuotaTxAdapter
+	TagsTxAdapter
 
 	// AcquireKeyLock takes a transaction-scoped lock keyed by the
 	// object key. Postgres uses pg_advisory_xact_lock derived from a
@@ -148,6 +149,25 @@ type CleanupTxAdapter interface {
 	// DeleteCleanupItem removes a cleanup_queue row by id. Used inside
 	// MoveCleanupToDLQ so the queue->DLQ move is atomic.
 	DeleteCleanupItem(ctx context.Context, id int64) error
+}
+
+// TagsTxAdapter exposes the transactional operations on the object_tags
+// table. Reads are absent by design: a tag set is read outside a
+// transaction through TagStore, and the write paths here replace or clear a
+// whole set rather than deriving it from what is already stored.
+type TagsTxAdapter interface {
+	// InsertObjectTag adds one tag row. Callers delete the existing set
+	// first, so a primary-key conflict here means a duplicate key
+	// survived validation and is surfaced rather than absorbed.
+	InsertObjectTag(ctx context.Context, objectKey, tagKey, tagValue string) error
+
+	// DeleteObjectTags removes every tag row for one object key.
+	// Removing a set that is already empty is a no-op.
+	DeleteObjectTags(ctx context.Context, objectKey string) error
+
+	// DeleteObjectTagsForKeys removes every tag row for any key in the
+	// supplied list, in one statement, for the batch-delete path.
+	DeleteObjectTagsForKeys(ctx context.Context, objectKeys []string) error
 }
 
 // QuotaTxAdapter exposes the transactional operations on the

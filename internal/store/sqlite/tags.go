@@ -1,0 +1,50 @@
+// -------------------------------------------------------------------------------
+// SQLite Store - Object Tags
+//
+// Author: Alex Freidah
+//
+// The read side of object_tags. The writes are transactional and promoted from
+// core.TxOps, so this engine contributes only the query that reads a set back.
+// -------------------------------------------------------------------------------
+
+package sqlite
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
+)
+
+// GetObjectTags returns an object's tag set ordered by key. An object with no
+// tags yields an empty slice, not an error: an untagged object has an empty
+// TagSet rather than a missing one, and the caller answers 200 either way.
+//
+// Ordered in SQL rather than in Go so both engines hand back the same sequence
+// without the caller having to re-sort what it was given.
+func (s *Store) GetObjectTags(ctx context.Context, key string) ([]core.Tag, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT tag_key, tag_value
+		 FROM object_tags
+		 WHERE object_key = ?
+		 ORDER BY tag_key`,
+		key,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get object tags: %w", err)
+	}
+	defer rows.Close()
+
+	tags := []core.Tag{}
+	for rows.Next() {
+		var t core.Tag
+		if err := rows.Scan(&t.Key, &t.Value); err != nil {
+			return nil, fmt.Errorf("failed to scan object tag: %w", err)
+		}
+		tags = append(tags, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate object tags: %w", err)
+	}
+	return tags, nil
+}
