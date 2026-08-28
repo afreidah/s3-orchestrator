@@ -118,7 +118,7 @@ func TestUTF16Length(t *testing.T) {
 // concurrent taggers last-writer-wins instead of merging.
 func TestReplaceObjectTags_ClearsThenInserts(t *testing.T) {
 	t.Parallel()
-	stub := &quotaTxStub{}
+	stub := &quotaTxStub{existingCopies: storedCopy()}
 	tags := []Tag{{Key: "a", Value: "1"}, {Key: "b", Value: "2"}}
 
 	if err := ReplaceObjectTags(context.Background(), &stubRunner{tx: stub}, "k", tags); err != nil {
@@ -136,7 +136,7 @@ func TestReplaceObjectTags_ClearsThenInserts(t *testing.T) {
 // refused without touching the adapter, so a bad request costs no lock.
 func TestReplaceObjectTags_RejectsBeforeTransaction(t *testing.T) {
 	t.Parallel()
-	stub := &quotaTxStub{}
+	stub := &quotaTxStub{existingCopies: storedCopy()}
 	bad := []Tag{{Key: "k", Value: "1"}, {Key: "k", Value: "2"}}
 
 	if err := ReplaceObjectTags(context.Background(), &stubRunner{tx: stub}, "k", bad); !errors.Is(err, ErrDuplicateTagKey) {
@@ -154,7 +154,7 @@ func TestReplaceObjectTags_RejectsBeforeTransaction(t *testing.T) {
 func TestReplaceObjectTags_LockError(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("lock failed")
-	stub := &quotaTxStub{keyLockErr: sentinel}
+	stub := &quotaTxStub{keyLockErr: sentinel, existingCopies: storedCopy()}
 
 	err := ReplaceObjectTags(context.Background(), &stubRunner{tx: stub}, "k", []Tag{{Key: "a", Value: "1"}})
 	if !errors.Is(err, sentinel) {
@@ -171,7 +171,7 @@ func TestReplaceObjectTags_LockError(t *testing.T) {
 func TestReplaceObjectTags_ClearError(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("clear failed")
-	stub := &quotaTxStub{tagClearErr: sentinel}
+	stub := &quotaTxStub{tagClearErr: sentinel, existingCopies: storedCopy()}
 
 	err := ReplaceObjectTags(context.Background(), &stubRunner{tx: stub}, "k", []Tag{{Key: "a", Value: "1"}})
 	if !errors.Is(err, sentinel) {
@@ -187,7 +187,7 @@ func TestReplaceObjectTags_ClearError(t *testing.T) {
 func TestReplaceObjectTags_InsertError(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("insert failed")
-	stub := &quotaTxStub{tagInsertErr: sentinel}
+	stub := &quotaTxStub{tagInsertErr: sentinel, existingCopies: storedCopy()}
 
 	err := ReplaceObjectTags(context.Background(), &stubRunner{tx: stub},
 		"k", []Tag{{Key: "a", Value: "1"}, {Key: "b", Value: "2"}})
@@ -196,12 +196,61 @@ func TestReplaceObjectTags_InsertError(t *testing.T) {
 	}
 }
 
+// TestReplaceObjectTags_NotFound verifies tagging a key that holds nothing is
+// refused. Tag rows are only ever collected when a location row is removed, so
+// a set written against a key with no locations is an orphan nothing sweeps.
+func TestReplaceObjectTags_NotFound(t *testing.T) {
+	t.Parallel()
+	stub := &quotaTxStub{}
+
+	err := ReplaceObjectTags(context.Background(), &stubRunner{tx: stub}, "gone", []Tag{{Key: "a", Value: "1"}})
+	if !errors.Is(err, ErrObjectNotFound) {
+		t.Fatalf("ReplaceObjectTags() error = %v, want ErrObjectNotFound", err)
+	}
+	if len(stub.tagsCleared) != 0 || len(stub.tagsInserted) != 0 {
+		t.Errorf("wrote tags for a key holding nothing: cleared=%v inserted=%v",
+			stub.tagsCleared, stub.tagsInserted)
+	}
+}
+
+// TestReplaceObjectTags_ExistenceCheckError verifies a failure to establish
+// whether the object exists aborts the write, rather than being read as
+// absent (which would 404) or ignored (which would orphan the rows).
+func TestReplaceObjectTags_ExistenceCheckError(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("copy read failed")
+	stub := &quotaTxStub{existingErr: sentinel}
+
+	err := ReplaceObjectTags(context.Background(), &stubRunner{tx: stub}, "k", []Tag{{Key: "a", Value: "1"}})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("ReplaceObjectTags() error = %v, want the read error", err)
+	}
+	if len(stub.tagsCleared) != 0 || len(stub.tagsInserted) != 0 {
+		t.Errorf("wrote despite an unresolved existence check: cleared=%v inserted=%v",
+			stub.tagsCleared, stub.tagsInserted)
+	}
+}
+
+// TestDeleteObjectTags_NotFound verifies the delete refuses a key that holds
+// nothing, rather than reporting success for an object that is not there.
+func TestDeleteObjectTags_NotFound(t *testing.T) {
+	t.Parallel()
+	stub := &quotaTxStub{}
+
+	if err := DeleteObjectTags(context.Background(), &stubRunner{tx: stub}, "gone"); !errors.Is(err, ErrObjectNotFound) {
+		t.Fatalf("DeleteObjectTags() error = %v, want ErrObjectNotFound", err)
+	}
+	if len(stub.tagsCleared) != 0 {
+		t.Errorf("cleared tags for a key holding nothing: %v", stub.tagsCleared)
+	}
+}
+
 // TestDeleteObjectTags_LockError verifies the delete takes the key lock and
 // surfaces a failure to get it.
 func TestDeleteObjectTags_LockError(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("lock failed")
-	stub := &quotaTxStub{keyLockErr: sentinel}
+	stub := &quotaTxStub{keyLockErr: sentinel, existingCopies: storedCopy()}
 
 	if err := DeleteObjectTags(context.Background(), &stubRunner{tx: stub}, "k"); !errors.Is(err, sentinel) {
 		t.Fatalf("DeleteObjectTags() error = %v, want the lock error", err)
@@ -215,7 +264,7 @@ func TestDeleteObjectTags_LockError(t *testing.T) {
 // and the call reports no error even when there was nothing to remove.
 func TestDeleteObjectTags_ClearsSet(t *testing.T) {
 	t.Parallel()
-	stub := &quotaTxStub{}
+	stub := &quotaTxStub{existingCopies: storedCopy()}
 
 	if err := DeleteObjectTags(context.Background(), &stubRunner{tx: stub}, "k"); err != nil {
 		t.Fatalf("DeleteObjectTags() error = %v", err)
@@ -255,7 +304,7 @@ func TestClearTagsForKeys_Error(t *testing.T) {
 // object with no tags, matching DeleteObjectTagging as AWS specifies.
 func TestReplaceObjectTags_EmptySetClears(t *testing.T) {
 	t.Parallel()
-	stub := &quotaTxStub{}
+	stub := &quotaTxStub{existingCopies: storedCopy()}
 
 	if err := ReplaceObjectTags(context.Background(), &stubRunner{tx: stub}, "k", nil); err != nil {
 		t.Fatalf("ReplaceObjectTags() error = %v", err)

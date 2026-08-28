@@ -209,6 +209,14 @@ type quotaTxStub struct {
 	tagClearErr    error
 	tagInsertErr   error
 	keyLockErr     error
+	existingCopies []ExistingCopy
+	existingErr    error
+}
+
+// storedCopy is the seed a tag test uses to say the object exists, since the
+// tagging operations refuse a key that holds nothing.
+func storedCopy() []ExistingCopy {
+	return []ExistingCopy{{BackendName: "b1", SizeBytes: 100}}
 }
 
 // quotaOp is one recorded quota mutation. The sign carries the caller's
@@ -317,8 +325,8 @@ func (*quotaTxStub) DeletePending(context.Context, string) error { return nil }
 // GetExistingCopiesForUpdate is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
-func (*quotaTxStub) GetExistingCopiesForUpdate(context.Context, string) ([]ExistingCopy, error) {
-	return nil, nil
+func (t *quotaTxStub) GetExistingCopiesForUpdate(context.Context, string) ([]ExistingCopy, error) {
+	return t.existingCopies, t.existingErr
 }
 
 // InsertObjectLocation is a no-op stub on quotaTxStub so the type satisfies the

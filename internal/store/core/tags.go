@@ -113,8 +113,30 @@ func ReplaceObjectTags(ctx context.Context, runner Runner, key string, tags []Ta
 		if err := tx.AcquireKeyLock(ctx, key); err != nil {
 			return err
 		}
+		if err := requireObjectExists(ctx, tx, key); err != nil {
+			return err
+		}
 		return replaceObjectTagsTx(ctx, tx, key, tags)
 	})
+}
+
+// requireObjectExists reports ErrObjectNotFound when no copy of the key is
+// stored, so a tagging call against a key that holds nothing is refused.
+//
+// Checked inside the transaction rather than by the caller beforehand: tag rows
+// are only ever collected when a location row is removed, so a set written for
+// a key with no locations is an orphan nothing sweeps. The key lock is already
+// held here, and the copy read locks the rows, so a delete cannot land between
+// the check and the write.
+func requireObjectExists(ctx context.Context, tx TxAdapter, key string) error {
+	existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
+	if err != nil {
+		return err
+	}
+	if len(existing) == 0 {
+		return ErrObjectNotFound
+	}
+	return nil
 }
 
 // replaceObjectTagsTx is the transactional body, shared with the write path so
@@ -142,6 +164,9 @@ func replaceObjectTagsTx(ctx context.Context, tx TxAdapter, key string, tags []T
 func DeleteObjectTags(ctx context.Context, runner Runner, key string) error {
 	return runner.WithTx(ctx, func(ctx context.Context, tx TxAdapter) error {
 		if err := tx.AcquireKeyLock(ctx, key); err != nil {
+			return err
+		}
+		if err := requireObjectExists(ctx, tx, key); err != nil {
 			return err
 		}
 		return tx.DeleteObjectTags(ctx, key)
