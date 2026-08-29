@@ -58,6 +58,13 @@ weight: 35
       <p>Chunked zstd pipeline: size and ratio floors, seek table, frame-level ranged reads, and composition with encryption.</p>
     </div>
   </a>
+  <a class="landing-card" href="tagging/">
+    <i class="fas fa-tags landing-card-icon" style="color: #58a6ff;"></i>
+    <div>
+      <strong>Object Tagging</strong>
+      <p>The four ways a tag set is written, validation and the per-key lock, one set per object key, and what clears it.</p>
+    </div>
+  </a>
   <a class="landing-card" href="background-services/">
     <i class="fas fa-cogs landing-card-icon" style="color: #8b949e;"></i>
     <div>

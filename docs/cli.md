@@ -1,7 +1,7 @@
 ---
 title: "CLI Subcommands"
 linkTitle: "CLI Subcommands"
-weight: 33
+weight: 34
 ---
 
 
@@ -148,6 +148,9 @@ s3-orchestrator admin status
 # (s3-orchestrator tui browses the same data interactively)
 s3-orchestrator admin object-locations -key "my-bucket/path/to/file.txt"
 
+# Read, replace, or clear an object's tag set
+s3-orchestrator admin object-tags -key "my-bucket/path/to/file.txt"
+
 # Show cleanup queue depth and pending items
 s3-orchestrator admin cleanup-queue
 
@@ -265,6 +268,20 @@ s3-orchestrator admin trace-snapshot -o trace.bin
 
 The admin API requires `ui.admin_token` (or `ui.admin_key` as fallback) to be set in the configuration. All requests are authenticated via the `X-Admin-Token` header.
 
+#### object-tags
+
+`object-tags` has three modes, selected by which flags are present. With `-key` alone it reads the object's tag set; with `-tag` it replaces the set; with `-clear` it removes every tag:
+
+```bash
+s3-orchestrator admin object-tags -key photos/report.pdf
+s3-orchestrator admin object-tags -key photos/report.pdf -tag team=infra -tag retain=30d
+s3-orchestrator admin object-tags -key photos/report.pdf -clear
+```
+
+Tags are given as repeatable `key=value` pairs rather than a JSON document, so a set can be written from a shell without quoting one. Only the first `=` splits, so a value may itself contain one: `-tag expr=a=b` is the key `expr` with the value `a=b`.
+
+`-tag` replaces the whole set, matching `PutObjectTagging`, so adding one tag to an object that has three means passing all four. `-clear` and `-tag` are refused together: they describe different outcomes for the same call. See [Object Tagging](tagging.md) for the limits and the storage model.
+
 ### tui
 
 Full-screen terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status; **Replication** shows a self-refreshing view of replication health; **Workers** shows each background service's last-tick health; **Cleanup** shows the cleanup queue and its dead-letter table; **Cache** shows the object data cache's utilization and hit rate; **Logs** shows recent structured log entries; **Ops** runs admin write actions. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the server address and admin token with the same precedence as `admin` (**flag &rarr; environment &rarr; config file**), loading `config.yaml` only when a value is still missing:
@@ -321,6 +338,8 @@ s3-orchestrator tui
 The listing pages lazily: scrolling past the bottom of a truncated prefix pulls the next page. Press `/` to filter the loaded rows by substring, and `s` to sort by name or size. Objects show their stored size in human-readable units alongside child prefixes.
 
 The inspector renders one row per backend copy - backend, size, age, whether the copy is encrypted, its key id, a content-hash prefix, and how long ago that hash was last checked against the stored bytes - sourced from `GET /admin/api/object-locations`. It is the interactive equivalent of `admin object-locations`, and like the rest of the admin surface it never displays raw key material.
+
+Above the table, a `tags:` line shows the object's [tag set](tagging.md), or `(none)`. It sits outside the table because a tag set belongs to the object rather than to any one copy, so repeating it down every row would suggest the copies could differ. A failed tag read leaves the line empty rather than replacing the copy ledger with an error, since that ledger is what the pane is for.
 
 A copy reading `never` under `VERIFIED` has a recorded hash that nothing has ever read back, which is not the same as a copy known to be intact. Press `S` to verify every copy of the object immediately rather than waiting for the scrub queue to reach it; the footer reports how many passed and names any that did not. A copy whose bytes do not match its hash is discarded and rebuilt from a healthy one, exactly as a scrub pass would, so the confirmation says so.
 

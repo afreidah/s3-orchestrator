@@ -81,6 +81,28 @@ s3o s3 cp s3://app1-files/old/location.txt s3://app1-files/new/location.txt
 
 Cross-bucket copies are not supported. Both source and destination must be in the same bucket.
 
+By default a copy carries the source object's tags. Pass `--tagging-directive REPLACE` with `--tagging` to give the copy a different set.
+
+### Tag an object
+
+```bash
+# Tag on upload
+s3o s3api put-object --bucket app1-files --key report.pdf \
+    --body report.pdf --tagging "team=infra&retain=30d"
+
+# Replace the whole set on an object that already exists
+s3o s3api put-object-tagging --bucket app1-files --key report.pdf \
+    --tagging 'TagSet=[{Key=team,Value=infra},{Key=retain,Value=30d}]'
+
+# Read it back
+s3o s3api get-object-tagging --bucket app1-files --key report.pdf
+
+# Remove every tag
+s3o s3api delete-object-tagging --bucket app1-files --key report.pdf
+```
+
+Tags describe the object, so all of its replicas share one set. `put-object-tagging` replaces the whole set rather than merging into it, and overwriting the key without `--tagging` leaves the new object untagged. Up to 10 tags per object. See [Object Tagging](tagging.md).
+
 ### Sync a directory
 
 Upload an entire directory, only transferring new or changed files:
@@ -235,6 +257,36 @@ s3.copy_object(
 )
 ```
 
+### Tag an object
+
+```python
+# Tag on upload, query-string encoded
+s3.put_object(
+    Bucket="app1-files",
+    Key="report.pdf",
+    Body=b"...",
+    Tagging="team=infra&retain=30d",
+)
+
+# Replace the whole set on an object that already exists
+s3.put_object_tagging(
+    Bucket="app1-files",
+    Key="report.pdf",
+    Tagging={"TagSet": [
+        {"Key": "team", "Value": "infra"},
+        {"Key": "retain", "Value": "30d"},
+    ]},
+)
+
+response = s3.get_object_tagging(Bucket="app1-files", Key="report.pdf")
+for tag in response["TagSet"]:
+    print(f"{tag['Key']}={tag['Value']}")
+
+s3.delete_object_tagging(Bucket="app1-files", Key="report.pdf")
+```
+
+See [Object Tagging](tagging.md) for the limits and the replacement semantics.
+
 ## Go (AWS SDK v2)
 
 ### Setup
@@ -323,6 +375,38 @@ _, err := client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
     Key:    aws.String("path/to/data.txt"),
 })
 ```
+
+### Tag an object
+
+```go
+// Tag on upload, query-string encoded
+_, err := client.PutObject(context.Background(), &s3.PutObjectInput{
+    Bucket:  aws.String("app1-files"),
+    Key:     aws.String("report.pdf"),
+    Body:    strings.NewReader("..."),
+    Tagging: aws.String("team=infra&retain=30d"),
+})
+
+// Replace the whole set on an object that already exists
+_, err = client.PutObjectTagging(context.Background(), &s3.PutObjectTaggingInput{
+    Bucket: aws.String("app1-files"),
+    Key:    aws.String("report.pdf"),
+    Tagging: &types.Tagging{TagSet: []types.Tag{
+        {Key: aws.String("team"), Value: aws.String("infra")},
+        {Key: aws.String("retain"), Value: aws.String("30d")},
+    }},
+})
+
+result, err := client.GetObjectTagging(context.Background(), &s3.GetObjectTaggingInput{
+    Bucket: aws.String("app1-files"),
+    Key:    aws.String("report.pdf"),
+})
+for _, tag := range result.TagSet {
+    fmt.Printf("%s=%s\n", *tag.Key, *tag.Value)
+}
+```
+
+`types` is `github.com/aws/aws-sdk-go-v2/service/s3/types`. See [Object Tagging](tagging.md) for the limits and the replacement semantics.
 
 ## Conditional Writes
 
