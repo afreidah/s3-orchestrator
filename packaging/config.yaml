@@ -170,13 +170,25 @@ backends:
 #   multipart_stale_timeout: 24h # Abandon multipart uploads older than this (default: 24h)
 
 # --- Lifecycle rules (object expiration) ---
-# Prefix is required (empty prefix would match all objects). Rules with
+# Each rule needs at least one of prefix or tags; a rule with neither would
+# match every object. Every condition set must match, so a rule carrying both
+# selects their intersection. Express "or" as a second rule. Rules with
 # expiration_days <= 0 are rejected at startup.
+#
+# The cutoff is the object's creation time, not when a tag was applied, so
+# tagging an object older than the window makes it eligible immediately.
 # lifecycle:
 #   batch_size: 100              # Objects per DB query (default: 100)
 #   rules:
 #     - prefix: "tmp/"
 #       expiration_days: 30
+#     - prefix: "logs/"
+#       tags:
+#         env: staging
+#       expiration_days: 7
+#     - tags:
+#         scratch: "true"
+#       expiration_days: 1
 
 # --- Per-IP rate limiting (disabled by default) ---
 # rate_limit:

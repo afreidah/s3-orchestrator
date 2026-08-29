@@ -143,9 +143,10 @@ var (
 
 // Lifecycle errors.
 var (
-	ErrLifecyclePrefixRequired = errors.New("lifecycle.rules: prefix must not be empty (would match all objects)")
+	ErrLifecycleFilterRequired = errors.New("lifecycle.rules: at least one of prefix or tags must be set (an unfiltered rule would match all objects)")
 	ErrInvalidExpiration       = errors.New("lifecycle.rules: expiration_days must be positive")
-	ErrDuplicatePrefix         = errors.New("duplicate prefix")
+	ErrLifecycleEmptyTagKey    = errors.New("lifecycle.rules: tag key must not be empty")
+	ErrDuplicateFilter         = errors.New("duplicate filter")
 )
 
 // Rebalance / replication errors.

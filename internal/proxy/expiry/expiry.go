@@ -103,7 +103,12 @@ func batchSizeFor(cfg *config.LifecycleConfig) int {
 func (m *Manager) applyRule(ctx context.Context, rule config.LifecycleRule, batchSize int) (deleted, failed int) {
 	cutoff := time.Now().Add(-time.Duration(rule.ExpirationDays) * 24 * time.Hour)
 	for {
-		objects, err := m.store.ListExpiredObjects(ctx, rule.Prefix, cutoff, batchSize)
+		objects, err := m.store.ListExpiredObjects(ctx, core.ExpiredObjectsQuery{
+			Prefix: rule.Prefix,
+			Tags:   rule.Tags,
+			Cutoff: cutoff,
+			Limit:  batchSize,
+		})
 		if err != nil {
 			m.logger().ErrorContext(ctx, "failed to list expired objects",
 				slog.String("prefix", rule.Prefix), "error", err)

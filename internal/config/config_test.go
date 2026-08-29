@@ -1709,8 +1709,8 @@ func TestLifecycleConfig_MissingPrefix(t *testing.T) {
 	if err == nil {
 		t.Error("empty prefix should fail validation")
 	}
-	if !errors.Is(err, ErrLifecyclePrefixRequired) {
-		t.Errorf("error should wrap ErrLifecyclePrefixRequired, got: %v", err)
+	if !errors.Is(err, ErrLifecycleFilterRequired) {
+		t.Errorf("error should wrap ErrLifecycleFilterRequired, got: %v", err)
 	}
 }
 
@@ -1766,8 +1766,94 @@ func TestLifecycleConfig_DuplicatePrefix(t *testing.T) {
 	if err == nil {
 		t.Error("duplicate prefix should fail validation")
 	}
-	if !strings.Contains(err.Error(), "duplicate prefix") {
-		t.Errorf("error should mention duplicate prefix, got: %v", err)
+	if !strings.Contains(err.Error(), "duplicate filter") {
+		t.Errorf("error should mention a duplicate filter, got: %v", err)
+	}
+}
+
+// TestLifecycleConfig_TagsSatisfyTheFilterRequirement verifies a rule may
+// filter on tags alone. The prefix requirement exists to stop a rule matching
+// the whole namespace, which a tag filter also prevents.
+func TestLifecycleConfig_TagsSatisfyTheFilterRequirement(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	cfg.Lifecycle = LifecycleConfig{
+		Rules: []LifecycleRule{
+			{Tags: map[string]string{"scratch": "true"}, ExpirationDays: 7},
+		},
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("a tags-only rule should validate, got: %v", err)
+	}
+}
+
+// TestLifecycleConfig_NoFilterRejected verifies a rule with neither a prefix
+// nor tags is refused rather than expiring every object in the namespace.
+func TestLifecycleConfig_NoFilterRejected(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	cfg.Lifecycle = LifecycleConfig{
+		Rules: []LifecycleRule{{ExpirationDays: 7}},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Fatal("a rule with no filter should fail validation")
+	}
+	if !errors.Is(err, ErrLifecycleFilterRequired) {
+		t.Errorf("error should wrap ErrLifecycleFilterRequired, got: %v", err)
+	}
+}
+
+// TestLifecycleConfig_EmptyTagKeyRejected verifies an empty tag key is caught
+// at startup rather than becoming a filter that silently matches nothing.
+func TestLifecycleConfig_EmptyTagKeyRejected(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	cfg.Lifecycle = LifecycleConfig{
+		Rules: []LifecycleRule{
+			{Prefix: "tmp/", Tags: map[string]string{"": "x"}, ExpirationDays: 7},
+		},
+	}
+
+	err := cfg.SetDefaultsAndValidate()
+	if err == nil {
+		t.Fatal("an empty tag key should fail validation")
+	}
+	if !errors.Is(err, ErrLifecycleEmptyTagKey) {
+		t.Errorf("error should wrap ErrLifecycleEmptyTagKey, got: %v", err)
+	}
+}
+
+// TestLifecycleConfig_SamePrefixDifferentTags verifies two rules sharing a
+// prefix but differing by tag are a legitimate pair: they select different
+// objects, so the duplicate check has to compare the whole filter.
+func TestLifecycleConfig_SamePrefixDifferentTags(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	cfg.Lifecycle = LifecycleConfig{
+		Rules: []LifecycleRule{
+			{Prefix: "logs/", Tags: map[string]string{"env": "staging"}, ExpirationDays: 7},
+			{Prefix: "logs/", Tags: map[string]string{"env": "prod"}, ExpirationDays: 90},
+		},
+	}
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("rules differing only by tag should validate, got: %v", err)
+	}
+}
+
+// TestLifecycleRule_FilterIDIgnoresMapOrder verifies two rules carrying the
+// same tags compare equal regardless of the order the map yields them, so
+// duplicate detection cannot depend on Go's map iteration.
+func TestLifecycleRule_FilterIDIgnoresMapOrder(t *testing.T) {
+	t.Parallel()
+	a := LifecycleRule{Prefix: "p/", Tags: map[string]string{"x": "1", "y": "2"}}
+	b := LifecycleRule{Prefix: "p/", Tags: map[string]string{"y": "2", "x": "1"}}
+
+	if a.filterID() != b.filterID() {
+		t.Errorf("filterID differs by map order: %q vs %q", a.filterID(), b.filterID())
 	}
 }
 
@@ -3310,8 +3396,9 @@ func TestParseByteSize_Negative(t *testing.T) {
 	}
 }
 
-// TestLifecycleConfig_EmptyPrefixRejected verifies the lifecycle config empty prefix rejected contract.
-// Asserts that error = , want mention of empty prefix.
+// TestLifecycleConfig_EmptyPrefixRejected verifies that a rule filtering on
+// nothing at all is refused. An empty prefix is only acceptable when tags
+// narrow the rule instead.
 func TestLifecycleConfig_EmptyPrefixRejected(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
@@ -3323,10 +3410,10 @@ func TestLifecycleConfig_EmptyPrefixRejected(t *testing.T) {
 
 	err := cfg.SetDefaultsAndValidate()
 	if err == nil {
-		t.Fatal("expected validation error for empty lifecycle prefix")
+		t.Fatal("expected validation error for a rule with no filter")
 	}
-	if !strings.Contains(err.Error(), "prefix must not be empty") {
-		t.Errorf("error = %q, want mention of empty prefix", err)
+	if !errors.Is(err, ErrLifecycleFilterRequired) {
+		t.Errorf("error = %q, want ErrLifecycleFilterRequired", err)
 	}
 }
 

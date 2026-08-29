@@ -219,9 +219,24 @@ type IntegrityStore interface {
 	OldestUnverifiedAge(ctx context.Context) (age time.Duration, neverVerified int64, err error)
 }
 
+// ExpiredObjectsQuery selects the objects one lifecycle rule expires. Prefix
+// and Tags are both optional filters and every one set must match, so a query
+// carrying each selects their intersection; a query with neither matches the
+// whole namespace, which config validation refuses to express.
+//
+// A struct rather than positional parameters because the filter grows: size
+// and absolute-date conditions belong here too, and adding one should not
+// re-break every implementation and caller.
+type ExpiredObjectsQuery struct {
+	Prefix string
+	Tags   map[string]string
+	Cutoff time.Time
+	Limit  int
+}
+
 // ExpiredObjectsLister defines object lifecycle expiration operations.
 type ExpiredObjectsLister interface {
-	ListExpiredObjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]ObjectLocation, error)
+	ListExpiredObjects(ctx context.Context, q ExpiredObjectsQuery) ([]ObjectLocation, error)
 }
 
 // BackendLifecycleStore defines backend-level admin operations.

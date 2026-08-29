@@ -106,21 +106,42 @@ write_path:
 ## Lifecycle (object expiration)
 
 
-Automatically deletes objects whose key matches a prefix and whose age exceeds the configured expiration. Useful for temporary uploads, staging artifacts, or anything with a known retention period.
+Automatically deletes objects matching a rule's filter whose age exceeds the configured expiration. Useful for temporary uploads, staging artifacts, or anything with a known retention period.
 
 ```yaml
 lifecycle:
   rules:
     - prefix: "tmp/"
       expiration_days: 7
-    - prefix: "uploads/staging/"
+    - prefix: "logs/"
+      tags:
+        env: staging
+      expiration_days: 7
+    - tags:
+        scratch: "true"
       expiration_days: 1
 ```
 
-- `prefix` — key prefix to match (required, must be non-empty).
+- `prefix` — key prefix to match.
+- `tags` — [tags](tagging.md) the object must carry, as key/value pairs.
 - `expiration_days` — delete objects older than this many days (required, must be > 0).
+- At least one of `prefix` or `tags` is required. A rule with neither would expire the whole namespace, so it is refused at startup.
 - Omit the `lifecycle` section or leave `rules` empty to disable lifecycle entirely.
 - Rules are evaluated every hour by a background worker with an advisory lock.
 - Deletions go through the standard `DeleteObject` path — all copies removed, quotas decremented, failed deletes enqueued to the cleanup queue.
 - Hot-reloadable via `SIGHUP`.
+
+### How a filter matches
+
+Every condition a rule sets must hold, so a rule carrying both a prefix and tags selects their intersection. Several tags are likewise an "and": the object has to carry all of them, matching on the value and not the key alone.
+
+There is no "or" inside a rule. Express it by writing a second rule — rules are evaluated independently, each against its own cutoff, so an object matching two of them is deleted as soon as the earlier window passes regardless of the order they appear in.
+
+Two rules may share a prefix as long as their tags differ, since they then select different objects. Two rules with the same filter are refused as a duplicate.
+
+### Age is measured from object creation
+
+The cutoff compares against the object's creation time, not the time a tag was applied — the same as S3. Tagging an object that is already older than a rule's window therefore makes it eligible on the next sweep, so a rule expiring `retain=30d` after 30 days will delete a two-year-old object shortly after you tag it.
+
+That is the intended behaviour, but it makes tagging an existing object a deletion decision rather than a scheduling one. Worth knowing before retagging in bulk.
 
