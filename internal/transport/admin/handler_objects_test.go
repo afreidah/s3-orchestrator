@@ -233,10 +233,13 @@ func TestHandlePutObject_StoresBody(t *testing.T) {
 	t.Parallel()
 	_, api, mux := objectsAPIHandler(t)
 	var stored []byte
-	api.EXPECT().PutObject(gomock.Any(), "bucket/dir/file.txt", gomock.Any(), int64(5), "text/plain", nil).
-		DoAndReturn(func(_ context.Context, _ string, body io.Reader, _ int64, _ string, _ map[string]string) (string, error) {
+	api.EXPECT().PutObject(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req *object.PutObjectRequest) (string, error) {
+			if req.Key != "bucket/dir/file.txt" || req.Size != 5 || req.ContentType != "text/plain" {
+				t.Errorf("unexpected put request: %+v", req)
+			}
 			var err error
-			stored, err = io.ReadAll(body)
+			stored, err = io.ReadAll(req.Body)
 			return "etag-1", err
 		}).Times(1)
 
@@ -349,7 +352,7 @@ func TestHandleDeleteObject_RejectsKeyOutsideBucket(t *testing.T) {
 func TestHandlePutObject_BackendFailureIs500(t *testing.T) {
 	t.Parallel()
 	_, api, mux := objectsAPIHandler(t)
-	api.EXPECT().PutObject(gomock.Any(), "bucket/file.txt", gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	api.EXPECT().PutObject(gomock.Any(), gomock.Any()).
 		Return("", errors.New("backend unavailable")).Times(1)
 
 	w := httptest.NewRecorder()

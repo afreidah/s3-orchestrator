@@ -1134,33 +1134,18 @@ func (mr *MockMetadataStoreMockRecorder) RecordCompressionProbe(ctx, probe any) 
 }
 
 // RecordObject mocks base method.
-func (m *MockMetadataStore) RecordObject(ctx context.Context, key, backend string, size int64, form *core.StoredForm) ([]core.DeletedCopy, error) {
+func (m *MockMetadataStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordObject", ctx, key, backend, size, form)
+	ret := m.ctrl.Call(m, "RecordObject", ctx, req)
 	ret0, _ := ret[0].([]core.DeletedCopy)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RecordObject indicates an expected call of RecordObject.
-func (mr *MockMetadataStoreMockRecorder) RecordObject(ctx, key, backend, size, form any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) RecordObject(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObject", reflect.TypeOf((*MockMetadataStore)(nil).RecordObject), ctx, key, backend, size, form)
-}
-
-// RecordObjectAndClearPending mocks base method.
-func (m *MockMetadataStore) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, form *core.StoredForm, intentID string) ([]core.DeletedCopy, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordObjectAndClearPending", ctx, key, backend, size, form, intentID)
-	ret0, _ := ret[0].([]core.DeletedCopy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// RecordObjectAndClearPending indicates an expected call of RecordObjectAndClearPending.
-func (mr *MockMetadataStoreMockRecorder) RecordObjectAndClearPending(ctx, key, backend, size, form, intentID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectAndClearPending", reflect.TypeOf((*MockMetadataStore)(nil).RecordObjectAndClearPending), ctx, key, backend, size, form, intentID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObject", reflect.TypeOf((*MockMetadataStore)(nil).RecordObject), ctx, req)
 }
 
 // RecordPart mocks base method.

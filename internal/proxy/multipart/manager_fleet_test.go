@@ -63,6 +63,7 @@ type multipartObjectCall struct {
 	Key, Backend string
 	Size         int64
 	Form         *core.StoredForm // pinned so tests can assert ContentHash etc.
+	Tags         []core.Tag       // the set the create call carried, applied at complete
 }
 
 func stubCreateMultipart(c *multipartCalls, err error) func(context.Context, *core.CreateMultipartUploadParams) error {
@@ -92,11 +93,13 @@ func stubRecordPart(c *multipartCalls, err error) func(context.Context, string, 
 	}
 }
 
-func stubRecordObject(c *multipartCalls, err error) func(context.Context, string, string, int64, *core.StoredForm) ([]core.DeletedCopy, error) {
-	return func(_ context.Context, key, backend string, size int64, form *core.StoredForm) ([]core.DeletedCopy, error) {
+func stubRecordObject(c *multipartCalls, err error) func(context.Context, *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
+	return func(_ context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		c.recordObject = append(c.recordObject, multipartObjectCall{Key: key, Backend: backend, Size: size, Form: form})
+		c.recordObject = append(c.recordObject, multipartObjectCall{
+			Key: req.Key, Backend: req.Backend, Size: req.Size, Form: req.Form, Tags: req.Tags,
+		})
 		return nil, err
 	}
 }
@@ -134,15 +137,8 @@ func multipartStubs(t *testing.T, store *storetest.MockMetadataStore) *multipart
 		DoAndReturn(stubDeleteMultipart(c)).AnyTimes()
 	store.EXPECT().RecordPart(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubRecordPart(c, nil)).AnyTimes()
-	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubRecordObject(c, nil)).AnyTimes()
-	store.EXPECT().RecordObjectAndClearPending(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, key, backend string, size int64, form *core.StoredForm, _ string) ([]core.DeletedCopy, error) {
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			c.recordObject = append(c.recordObject, multipartObjectCall{Key: key, Backend: backend, Size: size, Form: form})
-			return nil, nil
-		}).AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubMultipartEnqueue(c)).AnyTimes()
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -163,7 +159,7 @@ func TestCreateMultipartUpload_Success(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	uploadID, backendName, err := mgr.CreateMultipartUpload(context.Background(), "multi/key", "application/zip", nil)
+	uploadID, backendName, err := mgr.CreateMultipartUpload(context.Background(), &CreateUploadRequest{Key: "multi/key", ContentType: "application/zip"})
 	if err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
@@ -186,7 +182,7 @@ func TestCreateMultipartUpload_DBUnavailable(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 
-	if _, _, err := mgr.CreateMultipartUpload(context.Background(), "key", "", nil); !errors.Is(err, core.ErrServiceUnavailable) {
+	if _, _, err := mgr.CreateMultipartUpload(context.Background(), &CreateUploadRequest{Key: "key"}); !errors.Is(err, core.ErrServiceUnavailable) {
 		t.Fatalf("expected st.ErrServiceUnavailable, got %v", err)
 	}
 }
@@ -202,7 +198,7 @@ func TestCreateMultipartUpload_NoSpace(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 
-	if _, _, err := mgr.CreateMultipartUpload(context.Background(), "key", "", nil); !errors.Is(err, core.ErrInsufficientStorage) {
+	if _, _, err := mgr.CreateMultipartUpload(context.Background(), &CreateUploadRequest{Key: "key"}); !errors.Is(err, core.ErrInsufficientStorage) {
 		t.Fatalf("expected st.ErrInsufficientStorage, got %v", err)
 	}
 }
@@ -956,7 +952,7 @@ func TestCreateMultipartUpload_CreateStoreError(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 
-	if _, _, err := mgr.CreateMultipartUpload(context.Background(), "key", "", nil); err == nil {
+	if _, _, err := mgr.CreateMultipartUpload(context.Background(), &CreateUploadRequest{Key: "key"}); err == nil {
 		t.Fatal("expected error from CreateMultipartUpload store failure")
 	}
 }
@@ -1102,7 +1098,7 @@ func TestCreateMultipartUpload_WrapDEKError(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newFailingEncryptionTestManager(t, store, map[string]*backendtest.InMemory{"b1": backendtest.NewInMemory()})
-	if _, _, err := mgr.CreateMultipartUpload(context.Background(), "k", "", nil); err == nil {
+	if _, _, err := mgr.CreateMultipartUpload(context.Background(), &CreateUploadRequest{Key: "k"}); err == nil {
 		t.Fatal("expected error from wrap failure, got nil")
 	}
 }
@@ -1119,7 +1115,7 @@ func TestCreateMultipartUpload_EncryptionWrapsSharedDEK(t *testing.T) {
 	storetest.Permissive(store)
 
 	mgr := newEncryptedTestManager(t, store, map[string]*backendtest.InMemory{"b1": be})
-	if _, _, err := mgr.CreateMultipartUpload(context.Background(), "k", "application/zip", nil); err != nil {
+	if _, _, err := mgr.CreateMultipartUpload(context.Background(), &CreateUploadRequest{Key: "k", ContentType: "application/zip"}); err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
 	if len(c.create) != 1 {
@@ -1163,7 +1159,7 @@ func TestUploadPart_ReusesSharedDEK(t *testing.T) {
 
 	mgr := newEncryptedTestManager(t, store, map[string]*backendtest.InMemory{"b1": be})
 
-	uploadID, _, err := mgr.CreateMultipartUpload(context.Background(), "multi/k", "", nil)
+	uploadID, _, err := mgr.CreateMultipartUpload(context.Background(), &CreateUploadRequest{Key: "multi/k"})
 	if err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
@@ -1229,7 +1225,7 @@ func TestCompleteMultipartUpload_Encrypted_RoundTrips(t *testing.T) {
 
 	mgr := newEncryptedTestManager(t, store, map[string]*backendtest.InMemory{"b1": be})
 
-	uploadID, _, err := mgr.CreateMultipartUpload(ctx, "multi/k", "", nil)
+	uploadID, _, err := mgr.CreateMultipartUpload(ctx, &CreateUploadRequest{Key: "multi/k"})
 	if err != nil {
 		t.Fatalf("CreateMultipartUpload: %v", err)
 	}
@@ -1514,9 +1510,7 @@ func TestCompleteMultipartUpload_CommitFailure_PreservesParts(t *testing.T) {
 	// The commit is what fails here, after the assembly PUT has succeeded.
 	// Registered before multipartStubs so it wins: gomock matches in
 	// declaration order and multipartStubs stubs RecordObject as succeeding.
-	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil, errors.New("db down")).AnyTimes()
-	store.EXPECT().RecordObjectAndClearPending(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("db down")).AnyTimes()
 	c := multipartStubs(t, store)
 	storetest.Permissive(store)

@@ -22,61 +22,77 @@ import (
 // RECORD OBJECT
 // -------------------------------------------------------------------------
 
+// RecordObjectRequest is one committed write: where the object landed, how its
+// bytes are stored, the tag set it carries, and the pending intent it resolves.
+//
+// Tags are separate from Form because Form describes the bytes and rides
+// through replication and moves; a tag set carried there would be re-inserted
+// on every copy that lands. Tags describe the object, and there is one set of
+// them however many copies exist.
+type RecordObjectRequest struct {
+	Key      string
+	Backend  string
+	Size     int64
+	Form     *StoredForm
+	Tags     []Tag
+	IntentID string
+}
+
 // RecordObject records an object's location and updates the backend
 // quota. On overwrite, all existing copies (including replicas) are
 // removed and their quotas decremented before inserting the new
 // primary copy. Returns the displaced copies for cleanup.
-func RecordObject(ctx context.Context, runner Runner, key, backend string, size int64, form *StoredForm) ([]DeletedCopy, error) {
-	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) ([]DeletedCopy, error) {
-		return recordObjectTx(ctx, tx, key, backend, size, form, "")
-	})
-}
-
-// RecordObjectAndClearPending performs the same atomic commit as
-// RecordObject and additionally deletes the matching pending_objects
-// intent inside the same transaction. The write path uses this on a
-// successful PUT so the intent never outlives a committed location.
-func RecordObjectAndClearPending(ctx context.Context, runner Runner, key, backend string, size int64, form *StoredForm, intentID string) ([]DeletedCopy, error) {
-	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) ([]DeletedCopy, error) {
-		return recordObjectTx(ctx, tx, key, backend, size, form, intentID)
-	})
-}
-
-// recordObjectTx is the shared transactional body. When intentID is
-// non-empty the same transaction also deletes the corresponding
-// pending row. All per-backend quota deltas are aggregated and applied
-// in stable backend_name order via applyQuotaDeltas so
-// concurrent overwrites can never deadlock on backend_quotas row locks.
-func recordObjectTx(ctx context.Context, tx TxAdapter, key, backend string, size int64, form *StoredForm, intentID string) ([]DeletedCopy, error) {
-	if err := tx.AcquireKeyLock(ctx, key); err != nil {
+//
+// A non-empty IntentID additionally deletes the matching pending_objects row
+// inside the same transaction, so a successful PUT's intent never outlives the
+// location it was covering.
+func RecordObject(ctx context.Context, runner Runner, req *RecordObjectRequest) ([]DeletedCopy, error) {
+	if err := ValidateTags(req.Tags); err != nil {
 		return nil, err
 	}
-	existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
+	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) ([]DeletedCopy, error) {
+		return recordObjectTx(ctx, tx, req)
+	})
+}
+
+// recordObjectTx is the shared transactional body. All per-backend quota
+// deltas are aggregated and applied in stable backend_name order via
+// applyQuotaDeltas so concurrent overwrites can never deadlock on
+// backend_quotas row locks.
+func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest) ([]DeletedCopy, error) {
+	if err := tx.AcquireKeyLock(ctx, req.Key); err != nil {
+		return nil, err
+	}
+	existing, err := tx.GetExistingCopiesForUpdate(ctx, req.Key)
 	if err != nil {
 		return nil, err
 	}
 	deltas := make(map[string]int64, len(existing)+1)
-	displaced, err := clearExistingCopies(ctx, tx, key, backend, existing, deltas)
+	displaced, err := clearExistingCopies(ctx, tx, req.Key, req.Backend, existing, deltas)
 	if err != nil {
 		return nil, err
 	}
-	// A PUT is a full replacement, so the object landing here starts with no
-	// tags and the caller inserts any it carried afterwards. Unconditional
+	// A PUT is a full replacement, so the object landing here starts from an
+	// empty set and takes only the tags this write carried. Unconditional
 	// rather than gated on len(existing): a key with no copies but leftover
 	// tag rows still starts clean, which also sweeps anything a bug elsewhere
 	// orphaned.
-	if err := clearTagsForKey(ctx, tx, key); err != nil {
+	//
+	// Written here rather than by the caller afterwards so the object and its
+	// tags commit together; two calls would leave the object tagless whenever
+	// the second one failed.
+	if err := replaceObjectTagsTx(ctx, tx, req.Key, req.Tags); err != nil {
 		return nil, err
 	}
-	if err := tx.InsertObjectLocation(ctx, objectFromStoredForm(key, backend, size, form)); err != nil {
+	if err := tx.InsertObjectLocation(ctx, objectFromStoredForm(req.Key, req.Backend, req.Size, req.Form)); err != nil {
 		return nil, fmt.Errorf("insert object location: %w", err)
 	}
-	deltas[backend] += size
+	deltas[req.Backend] += req.Size
 	if err := applyQuotaDeltas(ctx, tx, deltas); err != nil {
 		return nil, err
 	}
-	if intentID != "" {
-		if err := tx.DeletePending(ctx, intentID); err != nil {
+	if req.IntentID != "" {
+		if err := tx.DeletePending(ctx, req.IntentID); err != nil {
 			return nil, fmt.Errorf("clear pending intent: %w", err)
 		}
 	}

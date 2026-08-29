@@ -152,14 +152,27 @@ func (mp *Manager) invalidateCache(key string) {
 // -------------------------------------------------------------------------
 
 // CreateMultipartUpload initiates a multipart upload by selecting a backend
+// CreateUploadRequest is one CreateMultipartUpload call's inputs.
+//
+// Tags are validated by the transport before the upload is opened, so an
+// unusable set costs no upload slot and no parts. They are held on the upload
+// row and applied to the object CompleteMultipartUpload produces.
+type CreateUploadRequest struct {
+	Key         string
+	ContentType string
+	Metadata    map[string]string
+	Tags        []core.Tag
+}
+
 // with available quota and recording the upload in the database. When
 // proxy-side encryption is configured, a single DEK is wrapped once
 // here and persisted on the multipart_uploads row so every subsequent
 // UploadPart can reuse it without paying its own KeyProvider
 // round-trip (this is the shared-DEK invariant CompleteMultipartUpload
 // also depends on).
-func (mp *Manager) CreateMultipartUpload(ctx context.Context, key, contentType string, metadata map[string]string) (string, string, error) {
+func (mp *Manager) CreateMultipartUpload(ctx context.Context, req *CreateUploadRequest) (string, string, error) {
 	const operation = "CreateMultipartUpload"
+	key := req.Key
 	start := time.Now()
 
 	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation,
@@ -201,10 +214,11 @@ func (mp *Manager) CreateMultipartUpload(ctx context.Context, key, contentType s
 		UploadID:      uploadID,
 		ObjectKey:     key,
 		BackendName:   backendName,
-		ContentType:   contentType,
-		Metadata:      metadata,
+		ContentType:   req.ContentType,
+		Metadata:      req.Metadata,
 		EncryptionKey: encryptionKey,
 		KeyID:         keyID,
+		Tags:          req.Tags,
 	}); err != nil {
 		observe.RecordSpanError(span, err)
 		return "", "", err
@@ -777,7 +791,12 @@ func (mp *Manager) completeMultipartUploadLocked(
 
 	form = stampContentHash(form, hasher)
 
-	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, mu.ObjectKey, mu.BackendName, uploadSize, form, intentID); err != nil {
+	// The tag set the create call carried lands with the assembled object, in
+	// the same transaction, so a completed upload is never briefly untagged.
+	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
+		Key: mu.ObjectKey, Backend: mu.BackendName, Size: uploadSize, Form: form,
+		Tags: mu.Tags, IntentID: intentID,
+	}); err != nil {
 		return "", err
 	}
 

@@ -808,7 +808,7 @@ func TestReconcile_StaleRowSweepsCleanupQueue(t *testing.T) {
 	// Seed an object_locations row pointing at a key that was never
 	// uploaded to the backend, plus a cleanup_queue entry for the same
 	// key+backend with a corresponding orphan_bytes credit.
-	if _, err := testStore.RecordObject(ctx, staleKey, backend, sizeBytes, nil); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: staleKey, Backend: backend, Size: sizeBytes}); err != nil {
 		t.Fatalf("seed RecordObject: %v", err)
 	}
 	if err := testStore.EnqueueCleanup(ctx, backend, staleKey, "test-seed", sizeBytes); err != nil {
@@ -1098,7 +1098,7 @@ func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
 	resetState(t)
 	spreadManager.Objects().LocationCache().Clear()
 
-	if _, err := testStore.RecordObject(ctx, uniqueKey(t, "prefill"), "minio-1", 512, nil); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "prefill"), Backend: "minio-1", Size: 512}); err != nil {
 		t.Fatalf("RecordObject prefill: %v", err)
 	}
 
@@ -2885,14 +2885,14 @@ func TestStore_RecordObject_OverwriteUpdatesQuota(t *testing.T) {
 
 	key := uniqueKey(t, "store-overwrite")
 
-	if _, err := testStore.RecordObject(ctx, internalKey(key), "minio-1", 100, nil); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: internalKey(key), Backend: "minio-1", Size: 100}); err != nil {
 		t.Fatalf("RecordObject A: %v", err)
 	}
 	if used := queryQuotaUsed(t, "minio-1"); used != 100 {
 		t.Fatalf("minio-1 after first record = %d, want 100", used)
 	}
 
-	if _, err := testStore.RecordObject(ctx, internalKey(key), "minio-2", 200, nil); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: internalKey(key), Backend: "minio-2", Size: 200}); err != nil {
 		t.Fatalf("RecordObject B: %v", err)
 	}
 
@@ -2945,7 +2945,7 @@ func TestStore_MoveObjectLocation_RaceSafe(t *testing.T) {
 
 	key := uniqueKey(t, "store-move")
 
-	if _, err := testStore.RecordObject(ctx, key, "minio-1", 100, nil); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-1", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -2995,7 +2995,7 @@ func TestStore_ListObjects_PaginationAndEscaping(t *testing.T) {
 		prefix + "has_underscore",
 	}
 	for _, key := range wildcardKeys {
-		if _, err := testStore.RecordObject(ctx, key, "minio-1", 10, nil); err != nil {
+		if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-1", Size: 10}); err != nil {
 			t.Fatalf("RecordObject(%q): %v", key, err)
 		}
 	}
@@ -3064,7 +3064,7 @@ func TestStore_GetBackendWithSpace_RespectsOrder(t *testing.T) {
 		t.Errorf("got %q, want %q (first in reversed order)", name, "minio-2")
 	}
 
-	if _, err := testStore.RecordObject(ctx, uniqueKey(t, "fill"), "minio-1", 1024, nil); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "fill"), Backend: "minio-1", Size: 1024}); err != nil {
 		t.Fatalf("RecordObject fill: %v", err)
 	}
 	name, err = testStore.GetBackendWithSpace(ctx, 1, []string{"minio-1", "minio-2"})
@@ -3092,7 +3092,7 @@ func TestStore_GetLeastUtilizedBackend_PicksLeastFull(t *testing.T) {
 		t.Errorf("unexpected backend %q", name)
 	}
 
-	if _, err := testStore.RecordObject(ctx, uniqueKey(t, "fill"), "minio-1", 500, nil); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "fill"), Backend: "minio-1", Size: 500}); err != nil {
 		t.Fatalf("RecordObject fill: %v", err)
 	}
 	name, err = testStore.GetLeastUtilizedBackend(ctx, 10, []string{"minio-1", "minio-2"})
@@ -3112,7 +3112,7 @@ func TestStore_GetLeastUtilizedBackend_RespectsMinSize(t *testing.T) {
 
 	resetState(t)
 
-	if _, err := testStore.RecordObject(ctx, uniqueKey(t, "full"), "minio-1", 1024, nil); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "full"), Backend: "minio-1", Size: 1024}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -3135,7 +3135,7 @@ func TestStore_RecordReplica_StaleSourceSkipped(t *testing.T) {
 
 	key := uniqueKey(t, "store-replica")
 
-	if _, err := testStore.RecordObject(ctx, key, "minio-1", 100, nil); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-1", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -3154,7 +3154,7 @@ func TestStore_RecordReplica_StaleSourceSkipped(t *testing.T) {
 		t.Fatalf("DeleteObject: %v", err)
 	}
 
-	if _, err := testStore.RecordObject(ctx, key, "minio-2", 50, nil); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-2", Size: 50}); err != nil {
 		t.Fatalf("RecordObject fresh: %v", err)
 	}
 
@@ -4300,7 +4300,7 @@ func TestRemoveBackend(t *testing.T) {
 	// remove without affecting minio-1 (which other tests depend on).
 	for i := range 3 {
 		key := fmt.Sprintf("%s/remove-test-%d-%d", virtualBucket, i, time.Now().UnixNano())
-		if _, err := testStore.RecordObject(ctx, key, "minio-2", 100, nil); err != nil {
+		if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-2", Size: 100}); err != nil {
 			t.Fatalf("RecordObject: %v", err)
 		}
 	}

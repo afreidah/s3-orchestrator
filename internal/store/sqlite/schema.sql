@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS multipart_uploads (
     metadata       TEXT,
     encryption_key BLOB,
     key_id         TEXT,
+    tagging        TEXT,
     created_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -224,4 +225,4 @@ CREATE INDEX IF NOT EXISTS idx_object_tags_lookup
     ON object_tags(tag_key, tag_value);
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (9);
+INSERT INTO schema_version (version) VALUES (10);

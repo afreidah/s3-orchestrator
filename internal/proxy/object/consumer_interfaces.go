@@ -98,7 +98,7 @@ type WriteRouter interface {
 // pending-pattern handoff can mock this alone.
 type PendingWriter interface {
 	InsertPendingIntent(ctx context.Context, key, backendName string, size int64, form *core.StoredForm) (string, error)
-	RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, key, backendName string, size int64, form *core.StoredForm, intentID string) error
+	RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest) error
 }
 
 // CleanupWriter is the post-write commit + recovery subset of
@@ -108,7 +108,7 @@ type PendingWriter interface {
 // RecoverFromRecordFailure also backs the drain-race abort path in
 // attemptPutOnBackend (when the post-PUT IsDraining re-check fires).
 type CleanupWriter interface {
-	RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, key, backendName string, size int64, form *core.StoredForm) error
+	RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, req *core.RecordObjectRequest) error
 	RecoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, backendName, key, cleanupReason string, size int64)
 	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
 }

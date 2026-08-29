@@ -501,33 +501,18 @@ func (mr *MockCoordinatorStoresMockRecorder) ReconcileUsage(ctx any) *gomock.Cal
 }
 
 // RecordObject mocks base method.
-func (m *MockCoordinatorStores) RecordObject(ctx context.Context, key, backend string, size int64, form *core.StoredForm) ([]core.DeletedCopy, error) {
+func (m *MockCoordinatorStores) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordObject", ctx, key, backend, size, form)
+	ret := m.ctrl.Call(m, "RecordObject", ctx, req)
 	ret0, _ := ret[0].([]core.DeletedCopy)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RecordObject indicates an expected call of RecordObject.
-func (mr *MockCoordinatorStoresMockRecorder) RecordObject(ctx, key, backend, size, form any) *gomock.Call {
+func (mr *MockCoordinatorStoresMockRecorder) RecordObject(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObject", reflect.TypeOf((*MockCoordinatorStores)(nil).RecordObject), ctx, key, backend, size, form)
-}
-
-// RecordObjectAndClearPending mocks base method.
-func (m *MockCoordinatorStores) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, form *core.StoredForm, intentID string) ([]core.DeletedCopy, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordObjectAndClearPending", ctx, key, backend, size, form, intentID)
-	ret0, _ := ret[0].([]core.DeletedCopy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// RecordObjectAndClearPending indicates an expected call of RecordObjectAndClearPending.
-func (mr *MockCoordinatorStoresMockRecorder) RecordObjectAndClearPending(ctx, key, backend, size, form, intentID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectAndClearPending", reflect.TypeOf((*MockCoordinatorStores)(nil).RecordObjectAndClearPending), ctx, key, backend, size, form, intentID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObject", reflect.TypeOf((*MockCoordinatorStores)(nil).RecordObject), ctx, req)
 }
 
 // RequeueCleanupDLQ mocks base method.

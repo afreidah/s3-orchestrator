@@ -176,7 +176,7 @@ func TestStoreInt_GetObjectsWithoutHash(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
@@ -216,7 +216,7 @@ func TestStoreInt_GetLeastRecentlyScrubbedObjects(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
@@ -588,7 +588,7 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
@@ -760,14 +760,14 @@ func TestStoreInt_GetObjectBackendsForKeys_GroupsByKey(t *testing.T) {
 	k1 := uniqueKey(t, "k1")
 	k2 := uniqueKey(t, "k2")
 	missing := uniqueKey(t, "missing")
-	if _, err := s.RecordObject(ctx, k1, "backend-a", 100, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject(k1): %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, k1) }()
 	if _, _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
-	if _, err := s.RecordObject(ctx, k2, "backend-a", 50, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Backend: "backend-a", Size: 50}); err != nil {
 		t.Fatalf("RecordObject(k2): %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, k2) }()
@@ -814,13 +814,13 @@ func TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T
 	k1 := uniqueKey(t, "k1")
 	k2 := uniqueKey(t, "k2")
 	missing := uniqueKey(t, "missing")
-	if _, err := s.RecordObject(ctx, k1, "backend-a", 100, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject(k1): %v", err)
 	}
 	if _, _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
-	if _, err := s.RecordObject(ctx, k2, "backend-a", 50, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Backend: "backend-a", Size: 50}); err != nil {
 		t.Fatalf("RecordObject(k2): %v", err)
 	}
 
@@ -966,7 +966,7 @@ func TestStoreInt_ScrubQueue_FreshWritesDoNotJumpTheQueue(t *testing.T) {
 	oldKey := uniqueKey(t, "old")
 	freshKey := uniqueKey(t, "fresh")
 	for _, key := range []string{oldKey, freshKey} {
-		if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
 		defer func() { _, _ = s.DeleteObject(ctx, key) }()
@@ -1067,7 +1067,7 @@ func TestStoreInt_ScrubQueue_BackendFilter(t *testing.T) {
 	keyA := uniqueKey(t, "affordable")
 	keyB := uniqueKey(t, "declined")
 	for backend, key := range map[string]string{"backend-a": keyA, "backend-b": keyB} {
-		if _, err := s.RecordObject(ctx, key, backend, 10, nil); err != nil {
+		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: backend, Size: 10}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
 		defer func() { _, _ = s.DeleteObject(ctx, key) }()
@@ -1122,7 +1122,7 @@ func TestStoreInt_CountUnencryptedLocations(t *testing.T) {
 	}
 
 	key := uniqueKey(t, "plaintext")
-	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
@@ -1167,7 +1167,7 @@ func TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 	ctx := context.Background()
 
 	key := uniqueKey(t, "verified")
-	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()

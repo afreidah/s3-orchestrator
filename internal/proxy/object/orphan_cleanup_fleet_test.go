@@ -76,9 +76,7 @@ func TestPutObject_Overwrite_EnqueuesDisplacedCopiesWithSize(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("b1", nil).AnyTimes()
-	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]core.DeletedCopy{{BackendName: "b2", SizeBytes: 500}}, nil).AnyTimes()
-	store.EXPECT().RecordObjectAndClearPending(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		Return([]core.DeletedCopy{{BackendName: "b2", SizeBytes: 500}}, nil).AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
@@ -88,7 +86,7 @@ func TestPutObject_Overwrite_EnqueuesDisplacedCopiesWithSize(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, nil)
 
-	if _, err := mgr.PutObject(context.Background(), "overwritten-key", bytes.NewReader([]byte("new")), 3, "text/plain", nil); err != nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "overwritten-key", Body: bytes.NewReader([]byte("new")), Size: 3, ContentType: "text/plain"}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 
@@ -154,9 +152,7 @@ func TestRecordObjectOrCleanup_DisplacedCopyBackendNotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("b1", nil).AnyTimes()
-	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]core.DeletedCopy{{BackendName: "gone", SizeBytes: 300}}, nil).AnyTimes()
-	store.EXPECT().RecordObjectAndClearPending(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		Return([]core.DeletedCopy{{BackendName: "gone", SizeBytes: 300}}, nil).AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
@@ -164,7 +160,7 @@ func TestRecordObjectOrCleanup_DisplacedCopyBackendNotFound(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1}, nil)
 
-	if _, err := mgr.PutObject(context.Background(), "key1", bytes.NewReader([]byte("hi")), 2, "text/plain", nil); err != nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key1", Body: bytes.NewReader([]byte("hi")), Size: 2, ContentType: "text/plain"}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 	if len(c.enqueue) != 0 {
@@ -184,9 +180,7 @@ func TestRecordObjectOrCleanup_DisplacedCopyDeleteSucceeds(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("b1", nil).AnyTimes()
-	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]core.DeletedCopy{{BackendName: "b2", SizeBytes: 3}}, nil).AnyTimes()
-	store.EXPECT().RecordObjectAndClearPending(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		Return([]core.DeletedCopy{{BackendName: "b2", SizeBytes: 3}}, nil).AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
@@ -196,7 +190,7 @@ func TestRecordObjectOrCleanup_DisplacedCopyDeleteSucceeds(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, nil)
 
-	if _, err := mgr.PutObject(context.Background(), "key1", bytes.NewReader([]byte("new")), 3, "", nil); err != nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key1", Body: bytes.NewReader([]byte("new")), Size: 3}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 	if len(c.enqueue) != 0 {
@@ -278,10 +272,7 @@ func TestPutObject_RecordFails_DoesNotEnqueueOrphanCleanup(t *testing.T) {
 	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return("b1", nil).
 		AnyTimes()
-	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil, errors.New("db error")).
-		AnyTimes()
-	store.EXPECT().RecordObjectAndClearPending(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("db error")).
 		AnyTimes()
 	store.EXPECT().InsertPending(gomock.Any(), gomock.Any()).
@@ -299,7 +290,7 @@ func TestPutObject_RecordFails_DoesNotEnqueueOrphanCleanup(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	if _, err := mgr.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err == nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "mykey", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err == nil {
 		t.Fatal("expected error from PutObject")
 	}
 

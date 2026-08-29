@@ -35,7 +35,7 @@ func tagNames(tags []core.Tag) []string {
 // hang off.
 func seedObject(t *testing.T, s *Store, key, backend string) {
 	t.Helper()
-	if _, err := s.RecordObject(context.Background(), key, backend, 1024, nil); err != nil {
+	if _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{Key: key, Backend: backend, Size: 1024}); err != nil {
 		t.Fatalf("RecordObject(%s, %s): %v", key, backend, err)
 	}
 }
@@ -66,6 +66,63 @@ func TestObjectTags_ReplaceAndRead(t *testing.T) {
 		if tg.Key == "alpha" && tg.Value != "1" {
 			t.Errorf("alpha value = %q, want %q", tg.Value, "1")
 		}
+	}
+}
+
+// TestMultipartTags_SurviveCreateToComplete verifies the set supplied at
+// CreateMultipartUpload is held on the upload row and read back intact, which
+// is what lets CompleteMultipartUpload apply it to the assembled object hours
+// and many parts later.
+func TestMultipartTags_SurviveCreateToComplete(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	tags := []core.Tag{{Key: "zeta", Value: "3"}, {Key: "alpha", Value: "1"}}
+	if err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+		UploadID:    "upload-1",
+		ObjectKey:   "bucket/big",
+		BackendName: "backend-a",
+		Tags:        tags,
+	}); err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+
+	mu, err := s.GetMultipartUpload(ctx, "upload-1")
+	if err != nil {
+		t.Fatalf("GetMultipartUpload: %v", err)
+	}
+	if names := tagNames(mu.Tags); len(names) != 2 || names[0] != "alpha" || names[1] != "zeta" {
+		t.Errorf("tags = %v, want [alpha zeta]", names)
+	}
+	for _, tg := range mu.Tags {
+		if tg.Key == "zeta" && tg.Value != "3" {
+			t.Errorf("zeta value = %q, want 3", tg.Value)
+		}
+	}
+}
+
+// TestMultipartTags_UntaggedUploadReadsEmpty verifies an upload created with no
+// tags reads back with none rather than failing to decode an empty column.
+func TestMultipartTags_UntaggedUploadReadsEmpty(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+		UploadID:    "upload-2",
+		ObjectKey:   "bucket/plain",
+		BackendName: "backend-a",
+	}); err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+
+	mu, err := s.GetMultipartUpload(ctx, "upload-2")
+	if err != nil {
+		t.Fatalf("GetMultipartUpload: %v", err)
+	}
+	if len(mu.Tags) != 0 {
+		t.Errorf("expected no tags, got %v", tagNames(mu.Tags))
 	}
 }
 

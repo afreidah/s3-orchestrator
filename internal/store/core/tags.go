@@ -18,6 +18,8 @@ package core
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"sort"
 )
 
 // -------------------------------------------------------------------------
@@ -92,6 +94,51 @@ func utf16Length(s string) int {
 		n++
 	}
 	return n
+}
+
+// -------------------------------------------------------------------------
+// STORAGE ENCODING
+// -------------------------------------------------------------------------
+
+// EncodeTags renders a tag set as a query string, the same shape the
+// x-amz-tagging header uses.
+//
+// Used where a set has to ride in a single column rather than its own rows:
+// the multipart upload row holds the tags supplied at create until the upload
+// completes. Rows would need an index and a cascade to serve a set that is
+// only ever read whole for one upload.
+//
+// Encode sorts by key, so the stored form is stable for a given set.
+func EncodeTags(tags []Tag) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	values := make(url.Values, len(tags))
+	for _, t := range tags {
+		values.Set(t.Key, t.Value)
+	}
+	return values.Encode()
+}
+
+// DecodeTags parses what EncodeTags wrote. An empty string is a set of no
+// tags rather than an error, which is what a row that carried none holds.
+//
+// The set was validated before it was stored, so a decode failure here means
+// the column was corrupted rather than the caller supplying something bad.
+func DecodeTags(encoded string) ([]Tag, error) {
+	if encoded == "" {
+		return nil, nil
+	}
+	values, err := url.ParseQuery(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("decode stored tag set: %w", err)
+	}
+	tags := make([]Tag, 0, len(values))
+	for key, vals := range values {
+		tags = append(tags, Tag{Key: key, Value: vals[0]})
+	}
+	sort.Slice(tags, func(i, j int) bool { return tags[i].Key < tags[j].Key })
+	return tags, nil
 }
 
 // -------------------------------------------------------------------------

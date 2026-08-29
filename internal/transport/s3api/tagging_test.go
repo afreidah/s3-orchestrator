@@ -22,6 +22,7 @@ import (
 
 	"go.uber.org/mock/gomock"
 
+	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -52,6 +53,156 @@ func doTagging(t *testing.T, url, method, body string) (int, string) {
 		t.Fatalf("read body: %v", err)
 	}
 	return resp.StatusCode, string(raw)
+}
+
+// -------------------------------------------------------------------------
+// INLINE TAGGING HEADER
+// -------------------------------------------------------------------------
+
+// TestParseTaggingHeader covers the query-string encoding the header uses,
+// which is not the XML the tagging endpoints exchange.
+func TestParseTaggingHeader(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		raw     string
+		want    []core.Tag
+		wantErr error
+	}{
+		{"absent header is no tags", "", nil, nil},
+		{"single pair", "a=1", []core.Tag{{Key: "a", Value: "1"}}, nil},
+		{
+			"sorted regardless of order",
+			"zeta=3&alpha=1",
+			[]core.Tag{{Key: "alpha", Value: "1"}, {Key: "zeta", Value: "3"}},
+			nil,
+		},
+		{"percent-encoded value", "path=a%2Fb", []core.Tag{{Key: "path", Value: "a/b"}}, nil},
+		{"empty value is allowed", "a=", []core.Tag{{Key: "a", Value: ""}}, nil},
+		{"repeated key", "a=1&a=2", nil, core.ErrDuplicateTagKey},
+		{"malformed encoding", "a=%zz", nil, errMalformedTaggingHeader},
+		{"over the tag limit", "a=1&b=2&c=3&d=4&e=5&f=6&g=7&h=8&i=9&j=10&k=11", nil, core.ErrTooManyTags},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := parseTaggingHeader(tc.raw)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("error = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr == nil {
+				assertTagsEqual(t, got, tc.want)
+			}
+		})
+	}
+}
+
+// assertTagsEqual compares two tag sets element by element, in order: the
+// parser sorts, so order is part of what is being asserted.
+func assertTagsEqual(t *testing.T, got, want []core.Tag) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("tags = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("tag %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestPutObject_TaggingHeaderReachesTheStore verifies a valid header is parsed
+// and handed to the write as a tag set, so the object and its tags commit
+// together rather than needing a second call.
+func TestPutObject_TaggingHeaderReachesTheStore(t *testing.T) {
+	ts, objects, _ := newOpsServer(t)
+	objects.EXPECT().CanAcceptWrite(gomock.Any()).Return(true).AnyTimes()
+	objects.EXPECT().ObjectExists(gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
+	objects.EXPECT().PutObject(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req *object.PutObjectRequest) (string, error) {
+			if len(req.Tags) != 2 || req.Tags[0].Key != "alpha" || req.Tags[1].Key != "zeta" {
+				t.Errorf("tags = %+v, want alpha and zeta sorted", req.Tags)
+			}
+			return "etag-1", nil
+		}).Times(1)
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut,
+		ts.URL+"/mybucket/k", strings.NewReader("body"))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("x-amz-tagging", "zeta=3&alpha=1")
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// TestPutObject_BadTaggingHeaderRejectedBeforeTheWrite is the point of parsing
+// at the transport: an unusable set is refused without the object ever
+// reaching a backend, so the request costs no transfer and leaves no orphan.
+func TestPutObject_BadTaggingHeaderRejectedBeforeTheWrite(t *testing.T) {
+	ts, objects, _ := newOpsServer(t)
+	objects.EXPECT().CanAcceptWrite(gomock.Any()).Return(true).AnyTimes()
+	objects.EXPECT().ObjectExists(gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
+	// No PutObject expectation: the mock controller fails the test if the
+	// write is attempted despite the header being unusable.
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut,
+		ts.URL+"/mybucket/k", strings.NewReader("body"))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("x-amz-tagging", "a=1&a=2")
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "InvalidTag") {
+		t.Errorf("expected InvalidTag, got %s", body)
+	}
+}
+
+// TestCreateMultipartUpload_BadTaggingHeaderRejected verifies an unusable set
+// is refused before the upload is opened, so the client is not left to
+// discover it after transferring every part.
+func TestCreateMultipartUpload_BadTaggingHeaderRejected(t *testing.T) {
+	ts, _, multipartOps := newOpsServer(t)
+	multipartOps.EXPECT().CountActiveMultipartUploads(gomock.Any(), gomock.Any()).
+		Return(int64(0), nil).AnyTimes()
+	// No CreateMultipartUpload expectation: the upload must not be opened.
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
+		ts.URL+"/mybucket/k?uploads", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("x-amz-tagging", "a=1&a=2")
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "InvalidTag") {
+		t.Errorf("expected InvalidTag, got %s", body)
+	}
 }
 
 // TestGetObjectTagging_ReturnsSortedDocument verifies the tag set renders as a

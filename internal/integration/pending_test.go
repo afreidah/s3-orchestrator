@@ -28,6 +28,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
+	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -112,9 +113,12 @@ func TestPending_DBBlipMidPUT_RecoveredByReaper(t *testing.T) {
 	// on the retry  -  masking the failure we're trying to observe.
 	testFailableStore.SetFailCommitOnce()
 
-	_, err := testManager.Objects().PutObject(
-		ctx, internalKey(key), bytes.NewReader([]byte("payload")), 7, "application/octet-stream", nil,
-	)
+	_, err := testManager.Objects().PutObject(ctx, &object.PutObjectRequest{
+		Key:         internalKey(key),
+		Body:        bytes.NewReader([]byte("payload")),
+		Size:        7,
+		ContentType: "application/octet-stream",
+	})
 	if err == nil {
 		t.Fatal("expected PutObject to fail after armed commit failure")
 	}

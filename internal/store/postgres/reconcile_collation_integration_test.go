@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // adversarialKeys sorts differently under byte order vs a locale/ICU collation:
@@ -53,7 +54,7 @@ func seedAdversarialKeys(t *testing.T, s *Store, backendName string) {
 		t.Fatalf("SyncQuotaLimits(%q): %v", backendName, err)
 	}
 	for _, k := range adversarialKeys {
-		if _, err := s.RecordObject(ctx, k, backendName, 1, nil); err != nil {
+		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k, Backend: backendName, Size: 1}); err != nil {
 			t.Fatalf("RecordObject(%q, %q): %v", k, backendName, err)
 		}
 	}

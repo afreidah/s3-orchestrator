@@ -214,6 +214,7 @@ type MultipartUpload struct {
 	Encrypted     bool
 	EncryptionKey []byte
 	KeyID         string
+	Tags          []Tag
 	CreatedAt     time.Time
 }
 

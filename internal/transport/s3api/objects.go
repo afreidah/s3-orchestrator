@@ -26,6 +26,7 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 )
@@ -131,6 +132,14 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 		return http.StatusInsufficientStorage, fmt.Errorf("no backend capacity for %d bytes", r.ContentLength)
 	}
 
+	// Refused alongside the capacity check and for the same reason: an
+	// unusable tag set rejected after the body lands has already spent the
+	// transfer and left an object on a backend to clean up.
+	tags, err := parseTaggingHeader(r.Header.Get("x-amz-tagging"))
+	if err != nil {
+		return writeTaggingError(w, err), err
+	}
+
 	// --- Add size to span ---
 	span := trace.SpanFromContext(ctx)
 	span.SetAttributes(
@@ -138,7 +147,14 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 		telemetry.AttrContentType.String(contentType),
 	)
 
-	etag, err := s.Objects.PutObject(ctx, key, r.Body, r.ContentLength, contentType, metadata)
+	etag, err := s.Objects.PutObject(ctx, &object.PutObjectRequest{
+		Key:         key,
+		Body:        r.Body,
+		Size:        r.ContentLength,
+		ContentType: contentType,
+		Metadata:    metadata,
+		Tags:        tags,
+	})
 	if err != nil {
 		return writeStorageError(w, err, "Failed to store object"), err
 	}

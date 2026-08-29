@@ -44,7 +44,7 @@ func TestPgListDirectoryChildren_FileRowReplicated(t *testing.T) {
 	prefix := dirTestPrefix(t, "dirtest-replicated")
 	key := prefix + "file.txt"
 
-	if _, err := testStore.RecordObject(ctx, key, "minio-1", 100, nil); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-1", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if _, _, err := testStore.RecordReplica(ctx, key, "minio-2", "minio-1"); err != nil {
@@ -79,7 +79,7 @@ func TestPgListDirectoryChildren_FileRowSingle(t *testing.T) {
 	prefix := dirTestPrefix(t, "dirtest-single")
 	key := prefix + "file.txt"
 
-	if _, err := testStore.RecordObject(ctx, key, "minio-1", 50, nil); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-1", Size: 50}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	t.Cleanup(func() {
@@ -113,13 +113,13 @@ func TestPgListDirectoryChildren_DirRollupPhysicalBytes(t *testing.T) {
 	repKey := parent + "child/replicated.txt"
 	singleKey := parent + "child/single.txt"
 
-	if _, err := testStore.RecordObject(ctx, repKey, "minio-1", 100, nil); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: repKey, Backend: "minio-1", Size: 100}); err != nil {
 		t.Fatalf("RecordObject(replicated): %v", err)
 	}
 	if _, _, err := testStore.RecordReplica(ctx, repKey, "minio-2", "minio-1"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
-	if _, err := testStore.RecordObject(ctx, singleKey, "minio-1", 50, nil); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: singleKey, Backend: "minio-1", Size: 50}); err != nil {
 		t.Fatalf("RecordObject(single): %v", err)
 	}
 	t.Cleanup(func() {
@@ -160,10 +160,10 @@ func TestPgListDirectoryChildren_UnderscorePrefix(t *testing.T) {
 	fileKey := prefix + "file.txt"
 	subKey := prefix + "sub/inner.txt"
 
-	if _, err := testStore.RecordObject(ctx, fileKey, "minio-1", 100, nil); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: fileKey, Backend: "minio-1", Size: 100}); err != nil {
 		t.Fatalf("RecordObject(file): %v", err)
 	}
-	if _, err := testStore.RecordObject(ctx, subKey, "minio-1", 50, nil); err != nil {
+	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: subKey, Backend: "minio-1", Size: 50}); err != nil {
 		t.Fatalf("RecordObject(sub): %v", err)
 	}
 	t.Cleanup(func() {

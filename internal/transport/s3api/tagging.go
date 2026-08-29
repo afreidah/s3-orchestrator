@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sort"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -82,6 +83,53 @@ func taggingDocumentFrom(tags []core.Tag) *taggingDocument {
 }
 
 // -------------------------------------------------------------------------
+// INLINE TAGGING HEADER
+// -------------------------------------------------------------------------
+
+// errMalformedTaggingHeader is returned for an x-amz-tagging value that is not
+// a decodable query string. Transport-local because the encoding is a property
+// of the header, not of a tag set.
+var errMalformedTaggingHeader = errors.New("malformed x-amz-tagging header")
+
+// parseTaggingHeader decodes the x-amz-tagging header carried by PutObject and
+// CreateMultipartUpload. The header is query-string encoded (k1=v1&k2=v2), not
+// the XML document the tagging endpoints exchange.
+//
+// Validated here rather than left to the store so an unusable set is refused
+// before the request body is read and before anything reaches a backend. Doing
+// it later means the bytes have already been transferred and written, leaving
+// an orphan to collect and the ingress already spent.
+//
+// Sorted because url.ParseQuery yields a map, whose iteration order would
+// otherwise vary run to run.
+func parseTaggingHeader(raw string) ([]core.Tag, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	values, err := url.ParseQuery(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errMalformedTaggingHeader, err)
+	}
+
+	tags := make([]core.Tag, 0, len(values))
+	for key, vals := range values {
+		// A repeated key survives ParseQuery as extra slice entries rather
+		// than an error, so the duplicate is caught here instead of silently
+		// keeping whichever one happened to be first.
+		if len(vals) > 1 {
+			return nil, fmt.Errorf("%w: %q", core.ErrDuplicateTagKey, key)
+		}
+		tags = append(tags, core.Tag{Key: key, Value: vals[0]})
+	}
+	sort.Slice(tags, func(i, j int) bool { return tags[i].Key < tags[j].Key })
+
+	if err := core.ValidateTags(tags); err != nil {
+		return nil, err
+	}
+	return tags, nil
+}
+
+// -------------------------------------------------------------------------
 // ERROR MAPPING
 // -------------------------------------------------------------------------
 
@@ -102,7 +150,8 @@ func writeTaggingError(w http.ResponseWriter, err error) int {
 	case errors.Is(err, core.ErrEmptyTagKey),
 		errors.Is(err, core.ErrTagKeyTooLong),
 		errors.Is(err, core.ErrTagValueTooLong),
-		errors.Is(err, core.ErrDuplicateTagKey):
+		errors.Is(err, core.ErrDuplicateTagKey),
+		errors.Is(err, errMalformedTaggingHeader):
 		writeS3Error(w, http.StatusBadRequest, "InvalidTag", err.Error())
 		return http.StatusBadRequest
 	}
