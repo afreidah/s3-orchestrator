@@ -545,19 +545,28 @@ Redis is not reloadable — changing Redis settings requires a restart.
 
 ### lifecycle
 
-Automatically deletes objects whose key matches a prefix and whose age exceeds the configured expiration. Useful for temporary uploads, staging artifacts, or anything with a known retention period.
+Automatically deletes objects matching a rule's filter whose age exceeds the configured expiration. Useful for temporary uploads, staging artifacts, or anything with a known retention period.
 
 ```yaml
 lifecycle:
   rules:
     - prefix: "tmp/"
       expiration_days: 7
-    - prefix: "uploads/staging/"
+    - prefix: "logs/"
+      tags:
+        env: staging
+      expiration_days: 7
+    - tags:
+        scratch: "true"
       expiration_days: 1
 ```
 
-- `prefix` — key prefix to match (required, must be non-empty).
+- `prefix` — key prefix to match.
+- `tags` — [tags](tagging.md) the object must carry, as key/value pairs. Every one must match, so a rule with a prefix and tags selects their intersection.
 - `expiration_days` — delete objects older than this many days (required, must be > 0).
+- At least one of `prefix` or `tags` is required; a rule with neither would expire the whole namespace and is refused at startup.
+- Two rules may share a prefix when their tags differ. Two rules with the same filter are refused as a duplicate.
+- The cutoff is measured from the object's creation time, not from when a tag was applied, so tagging an object older than the window makes it eligible immediately. See [Cleanup and lifecycle](cleanup-and-lifecycle.md#age-is-measured-from-object-creation).
 - Omit the `lifecycle` section or leave `rules` empty to disable lifecycle entirely.
 - Rules are evaluated every hour by a background worker with an advisory lock.
 - Deletions go through the standard `DeleteObject` path — all copies removed, quotas decremented, failed deletes enqueued to the cleanup queue.

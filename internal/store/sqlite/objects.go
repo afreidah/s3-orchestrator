@@ -16,6 +16,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -265,12 +266,25 @@ func scanDelimitedEntries(rows *sql.Rows) ([]core.DelimitedEntry, error) {
 	return entries, nil
 }
 
-// ListExpiredObjects returns one row per unique key matching the given prefix
-// whose created_at is older than cutoff, up to limit rows. Used by lifecycle
-// expiration to find objects eligible for deletion.
-func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]core.ObjectLocation, error) {
-	escapedPrefix := likeEscaper.Replace(prefix)
-	cutoffStr := formatTime(cutoff)
+// ListExpiredObjects returns one row per unique key matching the query's
+// filters whose created_at is older than its cutoff, up to Limit rows. Used by
+// lifecycle expiration to find objects eligible for deletion.
+//
+// One EXISTS per tag, all required, which is what makes several tags an
+// intersection. EXISTS rather than a join because the dedup subquery groups by
+// object_key and a join would multiply its input row per matching tag.
+func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQuery) ([]core.ObjectLocation, error) {
+	args := []any{likeEscaper.Replace(q.Prefix), formatTime(q.Cutoff)}
+
+	var tagFilter strings.Builder
+	for _, key := range sortedTagKeys(q.Tags) {
+		tagFilter.WriteString(`
+			  AND EXISTS (SELECT 1 FROM object_tags t
+			              WHERE t.object_key = object_locations.object_key
+			                AND t.tag_key = ? AND t.tag_value = ?)`)
+		args = append(args, key, q.Tags[key])
+	}
+	args = append(args, q.Limit)
 
 	// Subquery with GROUP BY + MIN(rowid) replaces DISTINCT ON (object_key).
 	rows, err := s.db.QueryContext(ctx, `
@@ -280,17 +294,29 @@ func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff ti
 			SELECT object_key, MIN(rowid) AS min_rowid
 			FROM object_locations
 			WHERE object_key LIKE ? || '%' ESCAPE '\'
-			  AND created_at < ?
+			  AND created_at < ?`+tagFilter.String()+`
 			GROUP BY object_key
 		) dedup ON ol.rowid = dedup.min_rowid
 		ORDER BY ol.object_key
-		LIMIT ?`, escapedPrefix, cutoffStr, limit)
+		LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list expired objects: %w", err)
 	}
 	defer rows.Close()
 
 	return scanSlimObjectLocations(rows)
+}
+
+// sortedTagKeys orders a tag filter's keys so the generated SQL and its
+// arguments are identical run to run, which keeps the statement cacheable and
+// a failure reproducible.
+func sortedTagKeys(tags map[string]string) []string {
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // ListObjectsByBackend returns objects stored on a specific backend, ordered by

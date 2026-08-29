@@ -6,7 +6,7 @@ weight: 29
 
 Object tags: key/value labels attached to an object independently of its data. Always on, with nothing to configure.
 
-Tags are yours to give meaning to. Nothing in this project reads a tag key or acts on one; they are stored, replicated with the object, and served back as written.
+Tags are yours to give meaning to. The one place the orchestrator acts on them itself is [lifecycle expiration](cleanup-and-lifecycle.md#lifecycle-object-expiration), where a rule can filter on a tag; otherwise they are stored, replicated with the object, and served back as written, and no key is treated specially.
 
 ## Current status
 
@@ -144,4 +144,5 @@ make loadtest-put-tagged LOADTEST_RATE=200
 - [Admin API](admin-api.md#object-tags) for the JSON endpoints
 - [CLI](cli.md#object-tags) for the `object-tags` subcommand
 - [Database](database.md) for the `object_tags` schema
+- [Cleanup and lifecycle](cleanup-and-lifecycle.md#lifecycle-object-expiration) for expiring objects by tag
 - [Tagging diagram](../diagrams/tagging/) for the write paths and what clears a set

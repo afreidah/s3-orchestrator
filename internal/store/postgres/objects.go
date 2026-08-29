@@ -17,8 +17,8 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
@@ -125,15 +125,31 @@ func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, sta
 	return core.BuildDelimitedPage(entries, maxKeys), nil
 }
 
-// ListExpiredObjects returns one row per unique key matching the given prefix
-// whose created_at is older than cutoff, up to limit rows. Used by lifecycle
-// expiration to find objects eligible for deletion.
-func (s *Store) ListExpiredObjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]core.ObjectLocation, error) {
-	escapedPrefix := likeEscaper.Replace(prefix)
+// ListExpiredObjects returns one row per unique key matching the query's
+// filters whose created_at is older than its cutoff, up to Limit rows. Used by
+// lifecycle expiration to find objects eligible for deletion.
+//
+// Tags travel as a JSON object rather than parallel arrays because sqlc's
+// catalog has no two-argument unnest, and pairing a key to its own value is
+// what makes the filter an intersection rather than a cross product.
+func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQuery) ([]core.ObjectLocation, error) {
+	// Encoded as {} rather than null when unset: SQL does not promise to
+	// short-circuit the OR that guards the subquery, and jsonb_each_text
+	// errors on a JSON null where it yields no rows for an empty object.
+	filter := q.Tags
+	if filter == nil {
+		filter = map[string]string{}
+	}
+	tags, err := json.Marshal(filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode lifecycle tag filter: %w", err)
+	}
 	rows, err := s.queries.ListExpiredObjects(ctx, db.ListExpiredObjectsParams{
-		Prefix:  escapedPrefix,
-		Cutoff:  pgTimestamptz(cutoff),
-		MaxKeys: int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
+		Prefix:   likeEscaper.Replace(q.Prefix),
+		Cutoff:   pgTimestamptz(q.Cutoff),
+		TagCount: int32(len(q.Tags)), //nolint:gosec // G115: capped at MaxTagsPerObject by config validation
+		Tags:     tags,
+		MaxKeys:  int32(q.Limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list expired objects: %w", err)

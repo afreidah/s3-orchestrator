@@ -139,11 +139,30 @@ ORDER BY is_dir DESC, name ASC;
 -- Collated for the same reason as ListObjectsByPrefix. The expiry worker does
 -- not depend on the order, but a batch that differs by engine is one more thing
 -- an operator has to hold in their head when a run is reproduced elsewhere.
-SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, size_bytes, created_at
-FROM object_locations
-WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
-  AND created_at < @cutoff
-ORDER BY object_key COLLATE "C", created_at ASC
+--
+-- The tag filter is a correlated subquery rather than a join: a join against
+-- object_tags multiplies the row per matching tag, and this query's DISTINCT ON
+-- and its matching ORDER BY are what reduce an object's replicas to one row.
+-- Counting in a subquery leaves both untouched.
+--
+-- Requiring the count to equal tag_count is what makes several tags an AND.
+-- The primary key allows one row per (object_key, tag_key), so a count equal to
+-- the number of pairs asked for means every one of them matched.
+SELECT DISTINCT ON (ol.object_key COLLATE "C") ol.object_key, ol.backend_name, ol.size_bytes, ol.created_at
+FROM object_locations ol
+WHERE ol.object_key LIKE @prefix::text || '%' ESCAPE '\'
+  AND ol.created_at < @cutoff
+  AND (
+    @tag_count::int = 0
+    OR (
+      SELECT COUNT(*)
+      FROM object_tags t
+      JOIN jsonb_each_text(@tags::jsonb) AS f(k, v)
+        ON t.tag_key = f.k AND t.tag_value = f.v
+      WHERE t.object_key = ol.object_key
+    ) = @tag_count::int
+  )
+ORDER BY ol.object_key COLLATE "C", ol.created_at ASC
 LIMIT @max_keys;
 
 -- name: BackendObjectStats :one

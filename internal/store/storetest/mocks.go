@@ -852,18 +852,18 @@ func (mr *MockMetadataStoreMockRecorder) ListEncryptedLocations(ctx, keyID, limi
 }
 
 // ListExpiredObjects mocks base method.
-func (m *MockMetadataStore) ListExpiredObjects(ctx context.Context, prefix string, cutoff time.Time, limit int) ([]core.ObjectLocation, error) {
+func (m *MockMetadataStore) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQuery) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListExpiredObjects", ctx, prefix, cutoff, limit)
+	ret := m.ctrl.Call(m, "ListExpiredObjects", ctx, q)
 	ret0, _ := ret[0].([]core.ObjectLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListExpiredObjects indicates an expected call of ListExpiredObjects.
-func (mr *MockMetadataStoreMockRecorder) ListExpiredObjects(ctx, prefix, cutoff, limit any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) ListExpiredObjects(ctx, q any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListExpiredObjects", reflect.TypeOf((*MockMetadataStore)(nil).ListExpiredObjects), ctx, prefix, cutoff, limit)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListExpiredObjects", reflect.TypeOf((*MockMetadataStore)(nil).ListExpiredObjects), ctx, q)
 }
 
 // ListMultipartUploads mocks base method.

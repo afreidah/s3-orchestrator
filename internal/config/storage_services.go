@@ -18,6 +18,8 @@ package config
 import (
 	"cmp"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -116,17 +118,42 @@ type ReconcileConfig struct {
 }
 
 // LifecycleConfig holds rules for automatic object expiration. Objects matching
-// a rule's prefix that are older than expiration_days are deleted by a background
+// a rule's filter that are older than expiration_days are deleted by a background
 // worker. Empty rules list disables lifecycle processing.
 type LifecycleConfig struct {
 	Rules     []LifecycleRule `yaml:"rules"`
 	BatchSize int             `yaml:"batch_size"` // objects per DB query (default 100)
 }
 
-// LifecycleRule defines a single object expiration rule.
+// LifecycleRule defines a single object expiration rule. Prefix and Tags are
+// both filters and every one set must match, so a rule carrying each selects
+// their intersection. At least one is required: a rule with neither would
+// expire the whole namespace. Expressing "or" is a matter of writing a second
+// rule, since rules are evaluated independently.
 type LifecycleRule struct {
-	Prefix         string `yaml:"prefix"`
-	ExpirationDays int    `yaml:"expiration_days"`
+	Prefix         string            `yaml:"prefix"`
+	Tags           map[string]string `yaml:"tags"`
+	ExpirationDays int               `yaml:"expiration_days"`
+}
+
+// filterID renders a rule's filter as a canonical string so two rules that
+// select the same objects compare equal regardless of map iteration order.
+func (r *LifecycleRule) filterID() string {
+	keys := make([]string, 0, len(r.Tags))
+	for k := range r.Tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var b strings.Builder
+	b.WriteString(r.Prefix)
+	for _, k := range keys {
+		b.WriteString("\x00")
+		b.WriteString(k)
+		b.WriteString("=")
+		b.WriteString(r.Tags[k])
+	}
+	return b.String()
 }
 
 // -------------------------------------------------------------------------
@@ -139,19 +166,10 @@ func (c *LifecycleConfig) setDefaultsAndValidate() []error {
 		return nil
 	}
 
-	var errs []error
 	if c.BatchSize <= 0 {
 		c.BatchSize = 100
 	}
-	for i, rule := range c.Rules {
-		if rule.Prefix == "" {
-			errs = append(errs, fmt.Errorf("lifecycle.rules[%d]: %w", i, ErrLifecyclePrefixRequired))
-		}
-		if rule.ExpirationDays <= 0 {
-			errs = append(errs, fmt.Errorf("lifecycle.rules[%d]: %w", i, ErrInvalidExpiration))
-		}
-	}
-	return errs
+	return nil
 }
 
 // setDefaultsAndValidate sets defaults and validate.
@@ -232,27 +250,34 @@ func (r *ReplicationConfig) validateReplicationLimits(backendCount int) []error 
 }
 
 // validateLifecycleRules enforces that every configured rule has a
-// non-empty prefix and a positive expiration_days. Returns the set of
-// problems so a misconfigured rule cannot silently disable lifecycle
-// expiration.
+// filter and a positive expiration_days. Returns the set of problems so a
+// misconfigured rule cannot silently disable lifecycle expiration.
+//
+// Duplicates are judged on the whole filter rather than the prefix alone,
+// because two rules sharing a prefix but differing by tag select different
+// objects and are a legitimate pair.
 func validateLifecycleRules(rules []LifecycleRule) []error {
 	var errs []error
 
-	prefixes := make(map[string]bool)
+	seen := make(map[string]bool)
 	for i := range rules {
 		r := &rules[i]
-		prefix := fmt.Sprintf("lifecycle.rules[%d]", i)
+		label := fmt.Sprintf("lifecycle.rules[%d]", i)
 
-		if r.Prefix == "" {
-			errs = append(errs, fmt.Errorf("%s: %w", prefix, ErrLifecyclePrefixRequired))
+		if r.Prefix == "" && len(r.Tags) == 0 {
+			errs = append(errs, fmt.Errorf("%s: %w", label, ErrLifecycleFilterRequired))
 		}
 		if r.ExpirationDays <= 0 {
-			errs = append(errs, fmt.Errorf("%s: %w", prefix, ErrInvalidExpiration))
+			errs = append(errs, fmt.Errorf("%s: %w", label, ErrInvalidExpiration))
 		}
-		if prefixes[r.Prefix] {
-			errs = append(errs, fmt.Errorf("%s: %w: %q", prefix, ErrDuplicatePrefix, r.Prefix))
+		if _, empty := r.Tags[""]; empty {
+			errs = append(errs, fmt.Errorf("%s: %w", label, ErrLifecycleEmptyTagKey))
 		}
-		prefixes[r.Prefix] = true
+		id := r.filterID()
+		if seen[id] {
+			errs = append(errs, fmt.Errorf("%s: %w: %q", label, ErrDuplicateFilter, id))
+		}
+		seen[id] = true
 	}
 
 	return errs

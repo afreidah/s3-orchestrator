@@ -1482,7 +1482,9 @@ func TestListExpiredObjects(t *testing.T) {
 
 	// Everything is "new" (just created)  -  none should be expired
 	cutoff := time.Now().Add(-time.Hour)
-	expired, err := s.ListExpiredObjects(ctx, "bucket/", cutoff, 10)
+	expired, err := s.ListExpiredObjects(ctx, core.ExpiredObjectsQuery{
+		Prefix: "bucket/", Cutoff: cutoff, Limit: 10,
+	})
 	if err != nil {
 		t.Fatalf("ListExpiredObjects: %v", err)
 	}
@@ -1491,10 +1493,98 @@ func TestListExpiredObjects(t *testing.T) {
 	}
 
 	// Use a future cutoff  -  everything should be expired
-	expired, _ = s.ListExpiredObjects(ctx, "bucket/", time.Now().Add(time.Hour), 10)
+	expired, _ = s.ListExpiredObjects(ctx, core.ExpiredObjectsQuery{
+		Prefix: "bucket/", Cutoff: time.Now().Add(time.Hour), Limit: 10,
+	})
 	if len(expired) != 2 {
 		t.Errorf("expected 2 expired with future cutoff, got %d", len(expired))
 	}
+}
+
+// expiredKeys runs one query and returns the keys it selected, sorted, so a
+// test can compare against a literal without depending on row order.
+func expiredKeys(t *testing.T, s *Store, q core.ExpiredObjectsQuery) []string {
+	t.Helper()
+	rows, err := s.ListExpiredObjects(context.Background(), q)
+	if err != nil {
+		t.Fatalf("ListExpiredObjects: %v", err)
+	}
+	keys := make([]string, 0, len(rows))
+	for i := range rows {
+		keys = append(keys, rows[i].ObjectKey)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// TestListExpiredObjects_TagFilter verifies that a tag filter selects the
+// intersection: an object has to carry every tag asked for, matching on the
+// value and not the key alone.
+func TestListExpiredObjects_TagFilter(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	for _, key := range []string{"bucket/both", "bucket/one", "bucket/other", "bucket/none"} {
+		mustRecordObject(t, s, key, "backend-a", 100)
+	}
+	tagged := map[string][]core.Tag{
+		"bucket/both":  {{Key: "env", Value: "staging"}, {Key: "team", Value: "infra"}},
+		"bucket/one":   {{Key: "env", Value: "staging"}},
+		"bucket/other": {{Key: "env", Value: "prod"}, {Key: "team", Value: "infra"}},
+	}
+	for key, tags := range tagged {
+		if err := s.ReplaceObjectTags(ctx, key, tags); err != nil {
+			t.Fatalf("tag %s: %v", key, err)
+		}
+	}
+
+	future := time.Now().Add(time.Hour)
+	base := core.ExpiredObjectsQuery{Prefix: "bucket/", Cutoff: future, Limit: 10}
+
+	t.Run("no filter selects every object", func(t *testing.T) {
+		got := expiredKeys(t, s, base)
+		if len(got) != 4 {
+			t.Errorf("got %v, want all four keys", got)
+		}
+	})
+
+	t.Run("one tag", func(t *testing.T) {
+		q := base
+		q.Tags = map[string]string{"env": "staging"}
+		got := expiredKeys(t, s, q)
+		want := []string{"bucket/both", "bucket/one"}
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("two tags select the intersection", func(t *testing.T) {
+		q := base
+		q.Tags = map[string]string{"env": "staging", "team": "infra"}
+		got := expiredKeys(t, s, q)
+		want := []string{"bucket/both"}
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("value must match, not just the key", func(t *testing.T) {
+		q := base
+		q.Tags = map[string]string{"env": "nonexistent"}
+		if got := expiredKeys(t, s, q); len(got) != 0 {
+			t.Errorf("got %v, want nothing", got)
+		}
+	})
+
+	t.Run("cutoff still applies alongside the tags", func(t *testing.T) {
+		q := base
+		q.Tags = map[string]string{"env": "staging"}
+		q.Cutoff = time.Now().Add(-time.Hour)
+		if got := expiredKeys(t, s, q); len(got) != 0 {
+			t.Errorf("got %v, want nothing for a past cutoff", got)
+		}
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -1874,7 +1964,9 @@ func TestCorruptTimestamp_ListExpiredObjects(t *testing.T) {
 		t.Fatalf("corrupt timestamp: %v", err)
 	}
 
-	_, err = s.ListExpiredObjects(ctx, "bucket/", time.Now().Add(time.Hour), 100)
+	_, err = s.ListExpiredObjects(ctx, core.ExpiredObjectsQuery{
+		Prefix: "bucket/", Cutoff: time.Now().Add(time.Hour), Limit: 100,
+	})
 	if err == nil {
 		t.Fatal("expected error from corrupt expired object timestamp, got nil")
 	}

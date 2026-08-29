@@ -19,6 +19,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -707,13 +709,120 @@ func TestStoreInt_CleanupQueueLifecycle(t *testing.T) {
 // for prefixes containing wildcards.
 func TestStoreInt_ListExpiredObjects(t *testing.T) {
 	s := adapterPgStore(t)
-	if _, err := s.ListExpiredObjects(context.Background(), t.Name(), time.Now().Add(time.Hour), 100); err != nil {
+	if _, err := s.ListExpiredObjects(context.Background(), core.ExpiredObjectsQuery{
+		Prefix: t.Name(), Cutoff: time.Now().Add(time.Hour), Limit: 100,
+	}); err != nil {
 		t.Fatalf("ListExpiredObjects: %v", err)
 	}
 	// Prefix containing a LIKE wildcard exercises the escaper.
-	if _, err := s.ListExpiredObjects(context.Background(), t.Name()+"%", time.Now().Add(time.Hour), 100); err != nil {
+	if _, err := s.ListExpiredObjects(context.Background(), core.ExpiredObjectsQuery{
+		Prefix: t.Name() + "%", Cutoff: time.Now().Add(time.Hour), Limit: 100,
+	}); err != nil {
 		t.Errorf("ListExpiredObjects(wildcard): %v", err)
 	}
+}
+
+// expiredKeysPg runs one query against real Postgres and returns the keys it
+// selected, sorted, so a test can compare against a literal.
+func expiredKeysPg(t *testing.T, s *Store, q core.ExpiredObjectsQuery) []string {
+	t.Helper()
+	rows, err := s.ListExpiredObjects(context.Background(), q)
+	if err != nil {
+		t.Fatalf("ListExpiredObjects: %v", err)
+	}
+	keys := make([]string, 0, len(rows))
+	for i := range rows {
+		keys = append(keys, rows[i].ObjectKey)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// TestStoreInt_ListExpiredObjectsTagFilter proves the lifecycle tag filter
+// against real Postgres. The unit tests cover the SQLite variant only, so this
+// is the only thing exercising the jsonb_each_text join, the tag_count
+// equality that makes several tags an intersection, and the interaction with
+// the DISTINCT ON that reduces an object's replicas to one row.
+func TestStoreInt_ListExpiredObjectsTagFilter(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	prefix := t.Name() + "/"
+
+	objects := []struct {
+		key  string
+		tags []core.Tag
+	}{
+		{prefix + "both", []core.Tag{{Key: "env", Value: "staging"}, {Key: "team", Value: "infra"}}},
+		{prefix + "one", []core.Tag{{Key: "env", Value: "staging"}}},
+		{prefix + "other", []core.Tag{{Key: "env", Value: "prod"}, {Key: "team", Value: "infra"}}},
+		{prefix + "none", nil},
+	}
+	for _, o := range objects {
+		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+			Key: o.key, Backend: "backend-a", Size: 100, Tags: o.tags,
+		}); err != nil {
+			t.Fatalf("RecordObject %s: %v", o.key, err)
+		}
+	}
+
+	// A second copy of one key, so a tag-filtered query has to dedup replicas
+	// rather than trivially returning one row per object.
+	if _, _, err := s.RecordReplica(ctx, prefix+"both", "backend-b", "backend-a"); err != nil {
+		t.Fatalf("RecordReplica: %v", err)
+	}
+
+	future := time.Now().Add(time.Hour)
+	base := core.ExpiredObjectsQuery{Prefix: prefix, Cutoff: future, Limit: 100}
+
+	cases := []struct {
+		name string
+		tags map[string]string
+		want []string
+	}{
+		{
+			name: "no filter selects every object once",
+			want: []string{prefix + "both", prefix + "none", prefix + "one", prefix + "other"},
+		},
+		{
+			name: "one tag",
+			tags: map[string]string{"env": "staging"},
+			want: []string{prefix + "both", prefix + "one"},
+		},
+		{
+			name: "two tags select the intersection",
+			tags: map[string]string{"env": "staging", "team": "infra"},
+			want: []string{prefix + "both"},
+		},
+		{
+			name: "a tag the objects carry with a different value matches nothing",
+			tags: map[string]string{"env": "nonexistent"},
+			want: []string{},
+		},
+		{
+			name: "keys and values are not matched independently",
+			tags: map[string]string{"env": "infra", "team": "staging"},
+			want: []string{},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			q := base
+			q.Tags = tc.tags
+			if got := expiredKeysPg(t, s, q); !slices.Equal(got, tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("cutoff still applies alongside the tags", func(t *testing.T) {
+		q := base
+		q.Tags = map[string]string{"env": "staging"}
+		q.Cutoff = time.Now().Add(-time.Hour)
+		if got := expiredKeysPg(t, s, q); len(got) != 0 {
+			t.Errorf("got %v, want nothing for a past cutoff", got)
+		}
+	})
 }
 
 // TestStoreInt_ListObjectsByBackendKeyAsc verifies the paginated
