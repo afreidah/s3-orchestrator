@@ -69,8 +69,9 @@ func (o *Manager) headSourceForCopy(
 // Content-Length; S3 implementations that require Content-Length
 // (notably OCI) then reject the upload with HTTP 411. Supports
 // cross-backend copies and read failover from replicas.
-func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (string, error) {
+func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (string, error) {
 	const operation = "CopyObject"
+	sourceKey, destKey := req.SourceKey, req.DestKey
 	start := time.Now()
 
 	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
@@ -78,6 +79,11 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 		attribute.String("s3o.dest_key", destKey),
 	)
 	defer span.End()
+
+	tags, err := o.resolveCopyTags(ctx, req)
+	if err != nil {
+		return "", err
+	}
 
 	locations, err := o.stores.GetAllObjectLocations(ctx, sourceKey)
 	if err != nil {
@@ -124,6 +130,7 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 			contentType:     contentType,
 			metadata:        metadata,
 			srcForm:         srcForm,
+			tags:            tags,
 			start:           start,
 		}
 		if etag, handled, nerr := o.tryNativeCopy(ctx, req); handled {
@@ -151,7 +158,18 @@ func (o *Manager) CopyObject(ctx context.Context, sourceKey, destKey string) (st
 		return "", fmt.Errorf("failed to write destination: %w", err)
 	}
 
-	return o.finalizeMaterializedCopy(ctx, span, destBackend, sourceKey, destKey, src.sourceBackend, destBackendName, size, srcForm, start, etag)
+	return o.finalizeMaterializedCopy(ctx, &materializedCopyContext{
+		span:            span,
+		destBackend:     destBackend,
+		sourceKey:       sourceKey,
+		destKey:         destKey,
+		srcBackendName:  src.sourceBackend,
+		destBackendName: destBackendName,
+		size:            size,
+		srcForm:         srcForm,
+		tags:            tags,
+		start:           start,
+	}, etag)
 }
 
 // sameBackendCopyEligible reports whether the source has at least one
@@ -172,6 +190,51 @@ func sameBackendCopyEligible(locations []core.ObjectLocation, destBackendName st
 // helpers share: tryNativeCopy attempts the server-side copy,
 // probeDestAfterAmbiguousCopy disambiguates lost-response failures,
 // and finalizeNativeCopy commits the destination metadata.
+// CopyObjectRequest is one CopyObject call's inputs.
+//
+// ReplaceTags carries the x-amz-tagging-directive: false is COPY, which gives
+// the destination the source's tag set, and true is REPLACE, which gives it
+// Tags instead. A REPLACE with no Tags leaves the destination untagged, which
+// is how a client strips a copy's tags.
+type CopyObjectRequest struct {
+	SourceKey   string
+	DestKey     string
+	ReplaceTags bool
+	Tags        []core.Tag
+}
+
+// resolveCopyTags settles which tag set the destination gets.
+//
+// Read before the copy starts rather than at the finalizers, so both the
+// native and the stream-through path commit the same set and neither has to
+// reach back to the source once the bytes have moved.
+func (o *Manager) resolveCopyTags(ctx context.Context, req *CopyObjectRequest) ([]core.Tag, error) {
+	if req.ReplaceTags {
+		return req.Tags, nil
+	}
+	tags, err := o.stores.GetObjectTags(ctx, req.SourceKey)
+	if err != nil {
+		return nil, fmt.Errorf("read source tags: %w", err)
+	}
+	return tags, nil
+}
+
+// materializedCopyContext is what the stream-through copy's finalizer needs.
+// Bundled for the same reason as nativeCopyContext: the positional form had
+// reached eleven arguments with four adjacent strings among them.
+type materializedCopyContext struct {
+	span            trace.Span
+	destBackend     s3be.ObjectBackend
+	sourceKey       string
+	destKey         string
+	srcBackendName  string
+	destBackendName string
+	size            int64
+	srcForm         *core.StoredForm
+	tags            []core.Tag
+	start           time.Time
+}
+
 type nativeCopyContext struct {
 	span            trace.Span
 	destBackend     s3be.ObjectBackend
@@ -182,6 +245,7 @@ type nativeCopyContext struct {
 	contentType     string
 	metadata        map[string]string
 	srcForm         *core.StoredForm
+	tags            []core.Tag
 	start           time.Time
 }
 
