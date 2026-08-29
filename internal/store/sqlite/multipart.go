@@ -46,9 +46,10 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMu
 		keyID = params.KeyID
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		params.UploadID, params.ObjectKey, params.BackendName, params.ContentType, string(metaJSON), encKey, keyID, now,
+		`INSERT INTO multipart_uploads (upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, tagging, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		params.UploadID, params.ObjectKey, params.BackendName, params.ContentType, string(metaJSON), encKey, keyID,
+		core.EncodeTags(params.Tags), now,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create multipart upload: %w", err)
@@ -58,18 +59,26 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMu
 
 // GetMultipartUpload retrieves metadata for a multipart upload.
 func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*core.MultipartUpload, error) {
+	// tagging is read here and nowhere else: CompleteMultipartUpload applies
+	// the set the create call carried, and the list paths have no use for it.
+	// Selected separately from the shared scanner so those paths keep their
+	// column list, and so both engines populate Tags on the same one read.
 	row := s.db.QueryRowContext(ctx,
-		`SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at
+		`SELECT upload_id, object_key, backend_name, content_type, metadata, encryption_key, key_id, created_at, tagging
 		 FROM multipart_uploads
 		 WHERE upload_id = ?`,
 		uploadID,
 	)
-	mu, err := scanMultipartUploadRow(row)
+	var tagging sql.NullString
+	mu, err := scanMultipartUploadRow(taggedRowScanner{row: row, tagging: &tagging})
 	if err == sql.ErrNoRows {
 		return nil, core.ErrMultipartUploadNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get multipart upload: %w", err)
+	}
+	if mu.Tags, err = core.DecodeTags(nullStringValue(tagging)); err != nil {
+		return nil, err
 	}
 	return &mu, nil
 }
@@ -307,6 +316,19 @@ type rowScanner interface {
 // (upload_id, object_key, backend_name, content_type, metadata, created_at)
 // from any sql Scan-capable source and returns a MultipartUpload. Returns
 // sql.ErrNoRows untouched so single-row callers can map it to a sentinel.
+// taggedRowScanner adapts a row carrying one extra trailing column onto the
+// shared multipart scanner, so the read that needs tagging does not fork the
+// scan logic the other reads share.
+type taggedRowScanner struct {
+	row     rowScanner
+	tagging *sql.NullString
+}
+
+// Scan appends the extra destination the wrapped row was selected with.
+func (t taggedRowScanner) Scan(dest ...any) error {
+	return t.row.Scan(append(dest, t.tagging)...)
+}
+
 func scanMultipartUploadRow(s rowScanner) (core.MultipartUpload, error) {
 	var (
 		mu            core.MultipartUpload

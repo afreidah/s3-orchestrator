@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // TestStoreInt_ListObjectsDelimited_GroupsAndLeaves verifies keys fold into
@@ -34,7 +36,7 @@ func TestStoreInt_ListObjectsDelimited_GroupsAndLeaves(t *testing.T) {
 		prefix + "file1.txt", prefix + "file2.txt",
 	}
 	for _, k := range keys {
-		if _, err := s.RecordObject(ctx, k, "backend-a", 10, nil); err != nil {
+		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k, Backend: "backend-a", Size: 10}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", k, err)
 		}
 		t.Cleanup(func() { _, _ = s.DeleteObject(ctx, k) })
@@ -88,7 +90,7 @@ func seedPGDelimiterGroups(t *testing.T, s *Store, prefix string, groups, perGro
 	for g := range groups {
 		for k := range perGroup {
 			key := fmt.Sprintf("%sg%d/k%d.txt", prefix, g, k)
-			if _, err := s.RecordObject(ctx, key, "backend-a", 1, nil); err != nil {
+			if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1}); err != nil {
 				t.Fatalf("RecordObject(%s): %v", key, err)
 			}
 			t.Cleanup(func() { _, _ = s.DeleteObject(ctx, key) })

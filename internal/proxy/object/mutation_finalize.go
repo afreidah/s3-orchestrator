@@ -50,7 +50,9 @@ func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, opera
 // orchestrator.
 func (o *Manager) finalizeMaterializedCopy(ctx context.Context, span trace.Span, destBackend s3be.ObjectBackend, sourceKey, destKey, srcBackendName, destBackendName string, size int64, srcForm *core.StoredForm, start time.Time, etag string) (string, error) {
 	const operation = "CopyObject"
-	if err := o.coord.RecordObjectOrCleanup(ctx, span, destBackend, destKey, destBackendName, size, srcForm); err != nil {
+	if err := o.coord.RecordObjectOrCleanup(ctx, span, destBackend, &core.RecordObjectRequest{
+		Key: destKey, Backend: destBackendName, Size: size, Form: srcForm,
+	}); err != nil {
 		return "", err
 	}
 	o.core.Acct().Operation(operation, destBackendName, start, nil)
@@ -69,7 +71,9 @@ func (o *Manager) finalizeMaterializedCopy(ctx context.Context, span trace.Span,
 // already on the destination so the caller MUST NOT fall back.
 func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyContext, etag string) (string, bool, error) {
 	const operation = "CopyObject"
-	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, req.destKey, req.destBackendName, req.size, req.srcForm); err != nil {
+	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, &core.RecordObjectRequest{
+		Key: req.destKey, Backend: req.destBackendName, Size: req.size, Form: req.srcForm,
+	}); err != nil {
 		return "", true, err
 	}
 	o.core.Acct().Operation(operation, req.destBackendName, req.start, nil)

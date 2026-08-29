@@ -124,17 +124,17 @@ func (w *Coordinator) SelectWriteTarget(ctx context.Context, span trace.Span, op
 // orphaned object from the backend. On success, enqueues cleanup for any
 // displaced copies on other backends (from overwrites). Updates the
 // tracing span on error.
-func (w *Coordinator) RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, key, backendName string, size int64, form *core.StoredForm) error {
-	displaced, err := w.stores.RecordObject(ctx, key, backendName, size, form)
+func (w *Coordinator) RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, req *core.RecordObjectRequest) error {
+	displaced, err := w.stores.RecordObject(ctx, req)
 	if err != nil {
 		w.log.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
-			"key", key, "backend", backendName, "error", err)
-		w.RecoverFromRecordFailure(ctx, be, backendName, key, "orphan_record_failed", size)
+			"key", req.Key, "backend", req.Backend, "error", err)
+		w.RecoverFromRecordFailure(ctx, be, req.Backend, req.Key, "orphan_record_failed", req.Size)
 		observe.RecordSpanError(span, err)
 		return fmt.Errorf("failed to record object: %w", err)
 	}
 
-	w.cleanupDisplacedCopies(ctx, key, backendName, displaced)
+	w.cleanupDisplacedCopies(ctx, req.Key, req.Backend, displaced)
 	return nil
 }
 
@@ -203,38 +203,38 @@ func (w *Coordinator) InsertPendingIntent(ctx context.Context, key, backendName 
 // HEADing the backend, promoting the metadata if the bytes are present
 // and removing the intent if they are absent.
 //
-// When intentID is empty (no pending store configured) this falls back
+// When req.IntentID is empty (no pending store configured) this falls back
 // to the legacy RecordObjectOrCleanup behavior so existing call sites
 // and tests retain their previous semantics.
-func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, key, backendName string, size int64, form *core.StoredForm, intentID string) error {
-	if intentID == "" {
+func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest) error {
+	if req.IntentID == "" {
 		// No pending tracking - caller already wrote bytes, fall back to the
 		// legacy path. The backend is unavailable here, so we cannot use
 		// RecordObjectOrCleanup (which deletes on failure). Resolve via the
 		// backend map.
-		be, ok := w.core.Backends()[backendName]
+		be, ok := w.core.Backends()[req.Backend]
 		if !ok {
-			return fmt.Errorf("backend %s not registered", backendName)
+			return fmt.Errorf("backend %s not registered", req.Backend)
 		}
-		return w.RecordObjectOrCleanup(ctx, span, be, key, backendName, size, form)
+		return w.RecordObjectOrCleanup(ctx, span, be, req)
 	}
 
-	displaced, err := w.stores.RecordObjectAndClearPending(ctx, key, backendName, size, form, intentID)
+	displaced, err := w.stores.RecordObject(ctx, req)
 	if err == nil {
 		telemetry.PendingIntentsResolvedTotal.WithLabelValues("committed").Inc()
 	}
 	if err != nil {
-		w.log.ErrorContext(ctx, "recordObjectAndClearPending failed; intent left for reaper",
-			"key", key, "backend", backendName, "intent_id", intentID, "error", err)
+		w.log.ErrorContext(ctx, "recordObject failed; intent left for reaper",
+			"key", req.Key, "backend", req.Backend, "intent_id", req.IntentID, "error", err)
 		// The successful PUT against the backend still consumed an API
 		// call. The success-path usage record runs only when this returns
 		// nil, so account for it here.
-		w.core.Acct().APICall(backendName)
+		w.core.Acct().APICall(req.Backend)
 		observe.RecordSpanError(span, err)
 		return fmt.Errorf("failed to record object: %w", err)
 	}
 
-	w.cleanupDisplacedCopies(ctx, key, backendName, displaced)
+	w.cleanupDisplacedCopies(ctx, req.Key, req.Backend, displaced)
 	return nil
 }
 

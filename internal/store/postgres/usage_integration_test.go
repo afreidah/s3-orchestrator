@@ -16,6 +16,8 @@ package postgres
 import (
 	"context"
 	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // TestStoreInt_ReconcileUsage_CorrectsDrift records two objects so the ledger
@@ -26,10 +28,10 @@ func TestStoreInt_ReconcileUsage_CorrectsDrift(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 
-	if _, err := s.RecordObject(ctx, uniqueKey(t, "recon-1"), "backend-a", 100, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "recon-1"), Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, err := s.RecordObject(ctx, uniqueKey(t, "recon-2"), "backend-a", 250, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "recon-2"), Backend: "backend-a", Size: 250}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 

@@ -853,11 +853,19 @@ func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) (
 
 // RecordObject is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) RecordObject(ctx context.Context, key, backend string, size int64, form *core.StoredForm) ([]core.DeletedCopy, error) {
+// A commit carrying a pending intent also honours the one-shot fail-commit
+// flag: sustained outages surface as errSimulatedDBOutage (wraps
+// ErrDBUnavailable, triggers degraded-mode fallbacks), while the one-shot blip
+// surfaces as errSimulatedCommitFailure (plain) so the caller fails the PUT
+// instead of reading the error as a degraded-mode signal.
+func (f *FailableStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
 	if f.isFailing() {
 		return nil, errSimulatedDBOutage
 	}
-	return f.inner.RecordObject(ctx, key, backend, size, form)
+	if req.IntentID != "" && f.consumeFailCommitOnce() {
+		return nil, errSimulatedCommitFailure
+	}
+	return f.inner.RecordObject(ctx, req)
 }
 
 // SetFailCommitOnce arms a one-shot failure on RecordObjectAndClearPending
@@ -881,22 +889,6 @@ func (f *FailableStore) consumeFailCommitOnce() bool {
 		return true
 	}
 	return false
-}
-
-// RecordObjectAndClearPending honours both the global failing flag and
-// the one-shot fail-commit flag. Sustained outages surface as
-// errSimulatedDBOutage (wraps ErrDBUnavailable, triggers degraded-mode
-// fallbacks); the one-shot blip surfaces as errSimulatedCommitFailure
-// (plain) so the caller fails the PUT instead of treating the error as
-// a degraded-mode signal.
-func (f *FailableStore) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, form *core.StoredForm, intentID string) ([]core.DeletedCopy, error) {
-	if f.isFailing() {
-		return nil, errSimulatedDBOutage
-	}
-	if f.consumeFailCommitOnce() {
-		return nil, errSimulatedCommitFailure
-	}
-	return f.inner.RecordObjectAndClearPending(ctx, key, backend, size, form, intentID)
 }
 
 // DeleteObject is an integration-test fixture helper; see file header for

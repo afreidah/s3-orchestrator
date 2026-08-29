@@ -11,7 +11,6 @@ package opstest
 
 import (
 	context "context"
-	io "io"
 	reflect "reflect"
 
 	backend "github.com/afreidah/s3-orchestrator/internal/backend"
@@ -106,18 +105,18 @@ func (mr *MockObjectAPIMockRecorder) ListObjects(ctx, prefix, delimiter, startAf
 }
 
 // PutObject mocks base method.
-func (m *MockObjectAPI) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
+func (m *MockObjectAPI) PutObject(ctx context.Context, req *object.PutObjectRequest) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PutObject", ctx, key, body, size, contentType, metadata)
+	ret := m.ctrl.Call(m, "PutObject", ctx, req)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // PutObject indicates an expected call of PutObject.
-func (mr *MockObjectAPIMockRecorder) PutObject(ctx, key, body, size, contentType, metadata any) *gomock.Call {
+func (mr *MockObjectAPIMockRecorder) PutObject(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PutObject", reflect.TypeOf((*MockObjectAPI)(nil).PutObject), ctx, key, body, size, contentType, metadata)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PutObject", reflect.TypeOf((*MockObjectAPI)(nil).PutObject), ctx, req)
 }
 
 // MockObjectStore is a mock of ObjectStore interface.
@@ -309,33 +308,18 @@ func (mr *MockObjectStoreMockRecorder) MoveObjectLocation(ctx, key, fromBackend,
 }
 
 // RecordObject mocks base method.
-func (m *MockObjectStore) RecordObject(ctx context.Context, key, arg2 string, size int64, form *core.StoredForm) ([]core.DeletedCopy, error) {
+func (m *MockObjectStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordObject", ctx, key, arg2, size, form)
+	ret := m.ctrl.Call(m, "RecordObject", ctx, req)
 	ret0, _ := ret[0].([]core.DeletedCopy)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RecordObject indicates an expected call of RecordObject.
-func (mr *MockObjectStoreMockRecorder) RecordObject(ctx, key, arg2, size, form any) *gomock.Call {
+func (mr *MockObjectStoreMockRecorder) RecordObject(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObject", reflect.TypeOf((*MockObjectStore)(nil).RecordObject), ctx, key, arg2, size, form)
-}
-
-// RecordObjectAndClearPending mocks base method.
-func (m *MockObjectStore) RecordObjectAndClearPending(ctx context.Context, key, arg2 string, size int64, form *core.StoredForm, intentID string) ([]core.DeletedCopy, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordObjectAndClearPending", ctx, key, arg2, size, form, intentID)
-	ret0, _ := ret[0].([]core.DeletedCopy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// RecordObjectAndClearPending indicates an expected call of RecordObjectAndClearPending.
-func (mr *MockObjectStoreMockRecorder) RecordObjectAndClearPending(ctx, key, arg2, size, form, intentID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectAndClearPending", reflect.TypeOf((*MockObjectStore)(nil).RecordObjectAndClearPending), ctx, key, arg2, size, form, intentID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObject", reflect.TypeOf((*MockObjectStore)(nil).RecordObject), ctx, req)
 }
 
 // MockBackendOps is a mock of BackendOps interface.

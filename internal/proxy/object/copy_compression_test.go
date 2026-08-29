@@ -40,7 +40,7 @@ type copyResult struct {
 }
 
 // dest returns the bytes that landed on the destination key.
-func (r copyResult) dest(t *testing.T) []byte {
+func (r *copyResult) dest(t *testing.T) []byte {
 	t.Helper()
 	obj, ok := r.be.Get(copyDstKey)
 	if !ok {

@@ -105,7 +105,7 @@ func TestPgInsertPaths_PreserveRepresentation(t *testing.T) {
 		{
 			name: "RecordObject",
 			write: func(t *testing.T, key string) {
-				if _, err := s.RecordObject(ctx, key, "backend-a", 1024, form); err != nil {
+				if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1024, Form: form}); err != nil {
 					t.Fatalf("RecordObject: %v", err)
 				}
 			},
@@ -113,8 +113,10 @@ func TestPgInsertPaths_PreserveRepresentation(t *testing.T) {
 		{
 			name: "RecordObjectAndClearPending",
 			write: func(t *testing.T, key string) {
-				if _, err := s.RecordObjectAndClearPending(ctx, key, "backend-a", 1024, form, "intent-absent"); err != nil {
-					t.Fatalf("RecordObjectAndClearPending: %v", err)
+				if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+					Key: key, Backend: "backend-a", Size: 1024, Form: form, IntentID: "intent-absent",
+				}); err != nil {
+					t.Fatalf("RecordObject with intent: %v", err)
 				}
 			},
 		},
@@ -213,7 +215,7 @@ func TestPgRecordReplica_PreservesRepresentation(t *testing.T) {
 	key := uniqueKey(t, "replicated")
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
-	if _, err := s.RecordObject(ctx, key, "backend-a", 1024, form); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1024, Form: form}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if _, inserted, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil || !inserted {
@@ -244,7 +246,7 @@ func TestPgLegacyRow_ReadsAsUncompressed(t *testing.T) {
 	key := uniqueKey(t, "legacy")
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
-	if _, err := s.RecordObject(ctx, key, "backend-a", 512, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 512}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if _, err := s.pool.Exec(ctx,

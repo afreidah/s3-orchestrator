@@ -102,17 +102,14 @@ func putThroughFleet(t *testing.T, opts *fleetOpts, key string, body []byte) put
 		DoAndReturn(stubObjGetBackend(calls, "b1", nil)).AnyTimes()
 	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjGetLeastUtilized(calls, "b1", nil)).AnyTimes()
-	store.EXPECT().RecordObjectAndClearPending(
-		gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjRecordAndClear(calls, nil)).AnyTimes()
-	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjRecord(calls, nil)).AnyTimes()
 	storetest.Permissive(store)
 
 	opts.Order = []string{"b1"}
 	f := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, opts)
 
-	if _, err := f.PutObject(context.Background(), key, bytes.NewReader(body), int64(len(body)), "text/plain", nil); err != nil {
+	if _, err := f.PutObject(context.Background(), &PutObjectRequest{Key: key, Body: bytes.NewReader(body), Size: int64(len(body)), ContentType: "text/plain"}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 	if len(calls.recordObject) != 1 {
@@ -248,9 +245,7 @@ func TestPut_CleanupSizedByStoredBytes(t *testing.T) {
 	calls := &orphanCalls{}
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("b1", nil).AnyTimes()
-	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil, errors.New("commit failed")).AnyTimes()
-	store.EXPECT().RecordObjectAndClearPending(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("commit failed")).AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanEnqueue(calls, nil)).AnyTimes()
@@ -263,7 +258,7 @@ func TestPut_CleanupSizedByStoredBytes(t *testing.T) {
 		PendingDisabled: true,
 	})
 
-	if _, err := f.PutObject(context.Background(), "key", bytes.NewReader(src), int64(len(src)), "text/plain", nil); err == nil {
+	if _, err := f.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader(src), Size: int64(len(src)), ContentType: "text/plain"}); err == nil {
 		t.Fatal("expected the PUT to fail when the commit does")
 	}
 	if len(calls.enqueue) != 1 {
@@ -406,7 +401,7 @@ func TestPut_CompressFailureAbortsWrite(t *testing.T) {
 	})
 
 	src := compressibleBody(4096)
-	_, err := f.PutObject(context.Background(), "boom", bytes.NewReader(src), int64(len(src)), "text/plain", nil)
+	_, err := f.PutObject(context.Background(), &PutObjectRequest{Key: "boom", Body: bytes.NewReader(src), Size: int64(len(src)), ContentType: "text/plain"})
 	if !errors.Is(err, boom) {
 		t.Fatalf("PutObject err = %v, want %v", err, boom)
 	}

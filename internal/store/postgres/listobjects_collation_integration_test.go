@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // seedCollationKeys records the adversarial key set under a caller-supplied
@@ -42,7 +43,7 @@ func seedCollationKeys(t *testing.T, s *Store, backendName, prefix string) []str
 	keys := make([]string, 0, len(adversarialKeys))
 	for _, k := range adversarialKeys {
 		full := prefix + k
-		if _, err := s.RecordObject(ctx, full, backendName, 1, nil); err != nil {
+		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: full, Backend: backendName, Size: 1}); err != nil {
 			t.Fatalf("RecordObject(%q): %v", full, err)
 		}
 		keys = append(keys, full)

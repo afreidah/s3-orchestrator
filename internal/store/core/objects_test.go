@@ -97,7 +97,7 @@ func TestDeleteObjectsBatch_TagClearError(t *testing.T) {
 func TestRecordObject_ClearsTagsOnWrite(t *testing.T) {
 	t.Parallel()
 	stub := &quotaTxStub{}
-	if _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, "k", "b1", 100, nil); err != nil {
+	if _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{Key: "k", Backend: "b1", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if len(stub.tagsCleared) != 1 || stub.tagsCleared[0] != "k" {
@@ -112,7 +112,7 @@ func TestRecordObject_TagClearError(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("tag clear failed")
 	stub := &quotaTxStub{tagClearErr: sentinel}
-	if _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, "k", "b1", 100, nil); !errors.Is(err, sentinel) {
+	if _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{Key: "k", Backend: "b1", Size: 100}); !errors.Is(err, sentinel) {
 		t.Errorf("expected the tag clear error, got %v", err)
 	}
 	if len(stub.ops) != 0 {

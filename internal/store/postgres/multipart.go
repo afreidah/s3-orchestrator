@@ -59,6 +59,7 @@ func (s *Store) CreateMultipartUpload(ctx context.Context, params *core.CreateMu
 		Metadata:      metaJSON,
 		EncryptionKey: nilIfEmptyBytes(params.EncryptionKey),
 		KeyID:         keyIDPtr,
+		Tagging:       strPtr(core.EncodeTags(params.Tags)),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create multipart upload: %w", err)
@@ -95,6 +96,9 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*core.
 		CreatedAt:     row.CreatedAt.Time,
 	})
 	if err != nil {
+		return nil, err
+	}
+	if mu.Tags, err = core.DecodeTags(derefStr(row.Tagging)); err != nil {
 		return nil, err
 	}
 	return &mu, nil
