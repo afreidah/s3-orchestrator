@@ -38,8 +38,20 @@ func TestOpen_ObjectInspectsDirDescends(t *testing.T) {
 	if m.mode != modeInspect || m.insp.key != "file" {
 		t.Fatalf("open on object: mode=%v key=%q", m.mode, m.insp.key)
 	}
-	if msg, ok := cmd().(locationsLoadedMsg); !ok || msg.resp.Key != "file" {
-		t.Errorf("open on object result = %#v", cmd())
+	// Opening batches two loads: the copy ledger and the tag set. Run each
+	// and assert the ledger load is among them, keyed to the object opened.
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("open on object result = %#v, want a batch", cmd())
+	}
+	var sawLocations bool
+	for _, c := range batch {
+		if msg, isLoc := c().(locationsLoadedMsg); isLoc && msg.resp.Key == "file" {
+			sawLocations = true
+		}
+	}
+	if !sawLocations {
+		t.Error("open on object did not load the copy ledger")
 	}
 
 	// open on a directory (cursor 0) descends and stays in browse mode

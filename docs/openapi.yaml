@@ -551,6 +551,70 @@ paths:
                                 $ref: '#/components/schemas/ObjectUploadResponse'
                 "401":
                     description: Missing or invalid admin token
+    /admin/api/objects/tags/{key}:
+        delete:
+            summary: Clear one object's tag set
+            operationId: deleteObjectsTagsKey
+            parameters:
+                - name: key
+                  in: path
+                  description: Object key, including its bucket prefix
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ObjectTagsResponse'
+                "401":
+                    description: Missing or invalid admin token
+        get:
+            summary: Read one object's tag set
+            operationId: getObjectsTagsKey
+            parameters:
+                - name: key
+                  in: path
+                  description: Object key, including its bucket prefix
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ObjectTagsResponse'
+                "401":
+                    description: Missing or invalid admin token
+        put:
+            summary: Replace one object's tag set
+            operationId: putObjectsTagsKey
+            parameters:
+                - name: key
+                  in: path
+                  description: Object key, including its bucket prefix
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ObjectTagsRequest'
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ObjectTagsResponse'
+                "401":
+                    description: Missing or invalid admin token
     /admin/api/over-replication:
         get:
             summary: Count of objects holding surplus copies
@@ -1274,6 +1338,34 @@ components:
             required:
                 - key
                 - locations
+            type: object
+        ObjectTag:
+            properties:
+                key:
+                    type: string
+                value:
+                    type: string
+            required:
+                - key
+                - value
+            type: object
+        ObjectTagsRequest:
+            properties:
+                tags:
+                    items:
+                        $ref: '#/components/schemas/ObjectTag'
+                    type: array
+            required:
+                - tags
+            type: object
+        ObjectTagsResponse:
+            properties:
+                tags:
+                    items:
+                        $ref: '#/components/schemas/ObjectTag'
+                    type: array
+            required:
+                - tags
             type: object
         ObjectUploadResponse:
             properties:

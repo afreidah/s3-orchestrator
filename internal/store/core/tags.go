@@ -17,6 +17,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -78,6 +79,20 @@ func ValidateTags(tags []Tag) error {
 		seen[t.Key] = struct{}{}
 	}
 	return nil
+}
+
+// IsTagValidationError reports whether err is one of the tag-shape refusals,
+// as opposed to a storage failure or a missing object.
+//
+// For callers that answer every refusal with one status. The S3 transport does
+// not use it: the spec gives ErrTooManyTags a different code from the rest, so
+// it has to tell them apart.
+func IsTagValidationError(err error) bool {
+	return errors.Is(err, ErrTooManyTags) ||
+		errors.Is(err, ErrEmptyTagKey) ||
+		errors.Is(err, ErrTagKeyTooLong) ||
+		errors.Is(err, ErrTagValueTooLong) ||
+		errors.Is(err, ErrDuplicateTagKey)
 }
 
 // utf16Length counts s in UTF-16 code units. Runes outside the basic

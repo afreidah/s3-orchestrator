@@ -61,6 +61,7 @@ func Run(args []string, stdout, stderr io.Writer) int { // codecov:ignore -- CLI
 Commands:
   status              Show backend health and circuit breaker state
   object-locations    List all copies of an object (requires -key)
+  object-tags         Read, replace or clear an object's tags (requires -key)
   cleanup-queue       Show cleanup queue depth and pending items
   usage-flush         Force flush usage counters to database
   replicate           Trigger one replication cycle
@@ -135,6 +136,7 @@ type handler func(args []string, c *client) int
 var handlers = map[string]handler{
 	"status":                  cmdStatus,
 	"object-locations":        cmdObjectLocations,
+	"object-tags":             cmdObjectTags,
 	"cleanup-queue":           cmdCleanupQueue,
 	"cleanup-dlq":             cmdCleanupDLQ,
 	"usage-flush":             cmdUsageFlush,
