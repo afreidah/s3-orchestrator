@@ -52,4 +52,5 @@ FROM nginx:alpine
 ARG APK_CACHEBUST=0
 RUN APK_CACHEBUST="$APK_CACHEBUST" apk upgrade --no-cache
 COPY --from=build /src/web/public /usr/share/nginx/html
+COPY web/nginx-cache.conf /etc/nginx/conf.d/nginx-cache.conf
 EXPOSE 80
