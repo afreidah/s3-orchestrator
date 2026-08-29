@@ -16,6 +16,8 @@ package expiry
 import (
 	"context"
 	"errors"
+	"fmt"
+	"maps"
 	"testing"
 	"time"
 
@@ -26,12 +28,43 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// queryMatcher matches an ExpiredObjectsQuery on the one field a test cares
+// about. Matching the whole struct is not an option: the cutoff is derived
+// from the clock at call time.
+type queryMatcher struct {
+	name  string
+	match func(core.ExpiredObjectsQuery) bool
+}
+
+func (m queryMatcher) Matches(x any) bool {
+	q, ok := x.(core.ExpiredObjectsQuery)
+	return ok && m.match(q)
+}
+
+func (m queryMatcher) String() string { return m.name }
+
+// queryPrefix matches a query by the prefix its rule carried.
+func queryPrefix(p string) queryMatcher {
+	return queryMatcher{
+		name:  "query with prefix " + p,
+		match: func(q core.ExpiredObjectsQuery) bool { return q.Prefix == p },
+	}
+}
+
+// queryLimit matches a query by its batch size.
+func queryLimit(n int) queryMatcher {
+	return queryMatcher{
+		name:  fmt.Sprintf("query with limit %d", n),
+		match: func(q core.ExpiredObjectsQuery) bool { return q.Limit == n },
+	}
+}
+
 // pages returns a ListExpiredObjects stub that yields each supplied batch in
 // turn and then reports the store as exhausted, mirroring how a real cursor
 // drains.
-func pages(batches ...[]core.ObjectLocation) func(context.Context, string, time.Time, int) ([]core.ObjectLocation, error) {
+func pages(batches ...[]core.ObjectLocation) func(context.Context, core.ExpiredObjectsQuery) ([]core.ObjectLocation, error) {
 	var n int
-	return func(context.Context, string, time.Time, int) ([]core.ObjectLocation, error) {
+	return func(context.Context, core.ExpiredObjectsQuery) ([]core.ObjectLocation, error) {
 		if n >= len(batches) {
 			return nil, nil
 		}
@@ -67,12 +100,40 @@ func TestProcessRules_DeletesExpiredObjects(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	m, lister, deleter := newManager(t, ctrl)
 
-	lister.EXPECT().ListExpiredObjects(gomock.Any(), "tmp/", gomock.Any(), gomock.Any()).
+	lister.EXPECT().ListExpiredObjects(gomock.Any(), queryPrefix("tmp/")).
 		DoAndReturn(pages(objectsNamed("tmp/old-file"))).AnyTimes()
 	deleter.EXPECT().DeleteObject(gomock.Any(), "tmp/old-file").Return(nil).Times(1)
 
 	deleted, failed := m.ProcessRules(t.Context(), []config.LifecycleRule{
 		{Prefix: "tmp/", ExpirationDays: 1},
+	})
+	if deleted != 1 || failed != 0 {
+		t.Errorf("deleted=%d failed=%d, want 1/0", deleted, failed)
+	}
+}
+
+// TestProcessRules_PassesTagFilter verifies a rule's tags reach the store
+// query. Without this the filter would be silently dropped and the rule would
+// expire every object under its prefix.
+func TestProcessRules_PassesTagFilter(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	m, lister, deleter := newManager(t, ctrl)
+
+	tags := map[string]string{"env": "staging", "team": "infra"}
+	matchTags := queryMatcher{
+		name: "query carrying the rule's tags",
+		match: func(q core.ExpiredObjectsQuery) bool {
+			return maps.Equal(q.Tags, tags)
+		},
+	}
+
+	lister.EXPECT().ListExpiredObjects(gomock.Any(), matchTags).
+		DoAndReturn(pages(objectsNamed("logs/a"))).AnyTimes()
+	deleter.EXPECT().DeleteObject(gomock.Any(), "logs/a").Return(nil).Times(1)
+
+	deleted, failed := m.ProcessRules(t.Context(), []config.LifecycleRule{
+		{Prefix: "logs/", Tags: tags, ExpirationDays: 1},
 	})
 	if deleted != 1 || failed != 0 {
 		t.Errorf("deleted=%d failed=%d, want 1/0", deleted, failed)
@@ -86,7 +147,7 @@ func TestProcessRules_NoExpiredObjects(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	m, lister, deleter := newManager(t, ctrl)
 
-	lister.EXPECT().ListExpiredObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	lister.EXPECT().ListExpiredObjects(gomock.Any(), gomock.Any()).
 		Return(nil, nil).AnyTimes()
 	// Any delete at all would be a bug.
 	deleter.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Times(0)
@@ -105,9 +166,9 @@ func TestProcessRules_MultipleRules(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	m, lister, deleter := newManager(t, ctrl)
 
-	lister.EXPECT().ListExpiredObjects(gomock.Any(), "tmp/", gomock.Any(), gomock.Any()).
+	lister.EXPECT().ListExpiredObjects(gomock.Any(), queryPrefix("tmp/")).
 		DoAndReturn(pages(objectsNamed("tmp/a"))).AnyTimes()
-	lister.EXPECT().ListExpiredObjects(gomock.Any(), "logs/", gomock.Any(), gomock.Any()).
+	lister.EXPECT().ListExpiredObjects(gomock.Any(), queryPrefix("logs/")).
 		DoAndReturn(pages(objectsNamed("logs/b"))).AnyTimes()
 	deleter.EXPECT().DeleteObject(gomock.Any(), "tmp/a").Return(nil).Times(1)
 	deleter.EXPECT().DeleteObject(gomock.Any(), "logs/b").Return(nil).Times(1)
@@ -130,7 +191,7 @@ func TestProcessRules_BatchPagination(t *testing.T) {
 	m.SetConfig(&config.LifecycleConfig{BatchSize: 2})
 
 	// A full batch of 2, then a short batch of 1, which ends the rule.
-	lister.EXPECT().ListExpiredObjects(gomock.Any(), gomock.Any(), gomock.Any(), 2).
+	lister.EXPECT().ListExpiredObjects(gomock.Any(), queryLimit(2)).
 		DoAndReturn(pages(objectsNamed("a", "b"), objectsNamed("c"))).Times(2)
 	deleter.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(nil).Times(3)
 
@@ -147,7 +208,7 @@ func TestProcessRules_DeleteFailureContinues(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	m, lister, deleter := newManager(t, ctrl)
 
-	lister.EXPECT().ListExpiredObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	lister.EXPECT().ListExpiredObjects(gomock.Any(), gomock.Any()).
 		DoAndReturn(pages(objectsNamed("good", "bad"))).AnyTimes()
 	deleter.EXPECT().DeleteObject(gomock.Any(), "good").Return(nil).Times(1)
 	deleter.EXPECT().DeleteObject(gomock.Any(), "bad").Return(errors.New("backend down")).Times(1)
@@ -165,7 +226,7 @@ func TestProcessRules_ListError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	m, lister, deleter := newManager(t, ctrl)
 
-	lister.EXPECT().ListExpiredObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	lister.EXPECT().ListExpiredObjects(gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("db down")).Times(1)
 	deleter.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Times(0)
 
@@ -185,7 +246,7 @@ func TestProcessRules_ZeroProgressTerminates(t *testing.T) {
 	m.SetConfig(&config.LifecycleConfig{BatchSize: 2})
 
 	// The store would happily keep returning full batches forever.
-	lister.EXPECT().ListExpiredObjects(gomock.Any(), gomock.Any(), gomock.Any(), 2).
+	lister.EXPECT().ListExpiredObjects(gomock.Any(), queryLimit(2)).
 		Return(objectsNamed("a", "b"), nil).Times(1)
 	deleter.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
 		Return(errors.New("backend down")).Times(2)
@@ -201,7 +262,7 @@ func TestProcessRules_EmptyRules(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	m, lister, deleter := newManager(t, ctrl)
-	lister.EXPECT().ListExpiredObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	lister.EXPECT().ListExpiredObjects(gomock.Any(), gomock.Any()).Times(0)
 	deleter.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Times(0)
 
 	if deleted, failed := m.ProcessRules(t.Context(), nil); deleted != 0 || failed != 0 {
