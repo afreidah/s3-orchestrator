@@ -1,7 +1,7 @@
 ---
 title: "Operations"
 linkTitle: "Operations"
-weight: 29
+weight: 30
 ---
 
 Day-to-day operational procedures: drain, rebalance, scrub, cache management, and trace snapshot.
