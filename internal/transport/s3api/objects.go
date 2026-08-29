@@ -289,7 +289,7 @@ func (s *Server) handleDelete(ctx context.Context, w http.ResponseWriter, _ *htt
 // Copies an object from the source key to the destination key, potentially
 // across backends, with atomic quota tracking. Only same-bucket copies are
 // allowed (no cross-bucket copying).
-func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, bucket, destInternalKey, copySource string) (int, error) {
+func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, destInternalKey, copySource string) (int, error) {
 	// --- Parse x-amz-copy-source header (may be URL-encoded) ---
 	decoded, err := url.PathUnescape(copySource)
 	if err != nil {
@@ -312,7 +312,19 @@ func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, bu
 	// Prefix source key for internal storage
 	sourceInternalKey := internalkey.Make(bucket, sourceKey)
 
-	etag, err := s.Objects.CopyObject(ctx, sourceInternalKey, destInternalKey)
+	// Refused before the copy so an unusable directive or tag set costs no
+	// transfer, matching how the header is handled on a plain PUT.
+	replaceTags, tags, err := parseTaggingDirective(r.Header)
+	if err != nil {
+		return writeTaggingError(w, err), err
+	}
+
+	etag, err := s.Objects.CopyObject(ctx, &object.CopyObjectRequest{
+		SourceKey:   sourceInternalKey,
+		DestKey:     destInternalKey,
+		ReplaceTags: replaceTags,
+		Tags:        tags,
+	})
 	if err != nil {
 		return writeStorageError(w, err, "Failed to copy object"), err
 	}

@@ -19,7 +19,6 @@ import (
 	"context"
 	"time"
 
-	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	pobserve "github.com/afreidah/s3-orchestrator/internal/proxy/observe"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -48,18 +47,18 @@ func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, opera
 // stream-through copy path. Differs from finalizeNativeCopy by adding
 // the egress/ingress tick because the bytes physically traversed the
 // orchestrator.
-func (o *Manager) finalizeMaterializedCopy(ctx context.Context, span trace.Span, destBackend s3be.ObjectBackend, sourceKey, destKey, srcBackendName, destBackendName string, size int64, srcForm *core.StoredForm, start time.Time, etag string) (string, error) {
+func (o *Manager) finalizeMaterializedCopy(ctx context.Context, req *materializedCopyContext, etag string) (string, error) {
 	const operation = "CopyObject"
-	if err := o.coord.RecordObjectOrCleanup(ctx, span, destBackend, &core.RecordObjectRequest{
-		Key: destKey, Backend: destBackendName, Size: size, Form: srcForm,
+	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, &core.RecordObjectRequest{
+		Key: req.destKey, Backend: req.destBackendName, Size: req.size, Form: req.srcForm, Tags: req.tags,
 	}); err != nil {
 		return "", err
 	}
-	o.core.Acct().Operation(operation, destBackendName, start, nil)
-	o.core.Acct().Egress(srcBackendName, size)
-	o.core.Acct().Ingress(destBackendName, size)
-	pobserve.CopyCompleted(ctx, span, sourceKey, destKey, srcBackendName, destBackendName, size)
-	o.invalidateObjectCaches(destKey)
+	o.core.Acct().Operation(operation, req.destBackendName, req.start, nil)
+	o.core.Acct().Egress(req.srcBackendName, req.size)
+	o.core.Acct().Ingress(req.destBackendName, req.size)
+	pobserve.CopyCompleted(ctx, req.span, req.sourceKey, req.destKey, req.srcBackendName, req.destBackendName, req.size)
+	o.invalidateObjectCaches(req.destKey)
 	return etag, nil
 }
 
@@ -72,7 +71,7 @@ func (o *Manager) finalizeMaterializedCopy(ctx context.Context, span trace.Span,
 func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyContext, etag string) (string, bool, error) {
 	const operation = "CopyObject"
 	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, &core.RecordObjectRequest{
-		Key: req.destKey, Backend: req.destBackendName, Size: req.size, Form: req.srcForm,
+		Key: req.destKey, Backend: req.destBackendName, Size: req.size, Form: req.srcForm, Tags: req.tags,
 	}); err != nil {
 		return "", true, err
 	}

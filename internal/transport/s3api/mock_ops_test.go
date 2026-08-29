@@ -74,18 +74,18 @@ func (mr *MockObjectOpsMockRecorder) CanAcceptWrite(size any) *gomock.Call {
 }
 
 // CopyObject mocks base method.
-func (m *MockObjectOps) CopyObject(ctx context.Context, sourceKey, destKey string) (string, error) {
+func (m *MockObjectOps) CopyObject(ctx context.Context, req *object.CopyObjectRequest) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CopyObject", ctx, sourceKey, destKey)
+	ret := m.ctrl.Call(m, "CopyObject", ctx, req)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // CopyObject indicates an expected call of CopyObject.
-func (mr *MockObjectOpsMockRecorder) CopyObject(ctx, sourceKey, destKey any) *gomock.Call {
+func (mr *MockObjectOpsMockRecorder) CopyObject(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CopyObject", reflect.TypeOf((*MockObjectOps)(nil).CopyObject), ctx, sourceKey, destKey)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CopyObject", reflect.TypeOf((*MockObjectOps)(nil).CopyObject), ctx, req)
 }
 
 // DeleteObject mocks base method.
