@@ -1,7 +1,7 @@
 ---
 title: "Background Services"
 linkTitle: "Background Services"
-weight: 31
+weight: 32
 ---
 
 The orchestrator runs a set of long-running background workers that keep the metadata layer consistent with the backends, handle replication / cleanup / lifecycle, and refresh observability state. All locked tasks apply a random startup jitter of up to half the tick interval before the first tick, preventing thundering herd on the advisory lock when multiple instances start simultaneously.

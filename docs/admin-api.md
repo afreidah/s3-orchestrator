@@ -67,6 +67,28 @@ curl -X DELETE -H "X-Admin-Token: $TOKEN" \
 
 A prefix delete that removes some objects and fails on others answers `500` carrying the counts it did achieve (`deleted`, `failed`, `total`), because the prefix is left half removed and the caller needs to know that rather than to retry blind.
 
+## Object tags
+
+`/admin/api/objects/tags/{key}` reads, replaces and clears one object's tag set. It exchanges JSON rather than the `Tagging` XML the S3 endpoints use, because its callers are `adminctl`, the dashboard and the TUI:
+
+```bash
+# Read the set.
+curl -H "X-Admin-Token: $TOKEN" \
+  http://localhost:9000/admin/api/objects/tags/photos/report.pdf
+# {"tags":[{"key":"team","value":"infra"}]}
+
+# Replace it wholesale.
+curl -X PUT -H "X-Admin-Token: $TOKEN" \
+  -d '{"tags":[{"key":"team","value":"infra"}]}' \
+  http://localhost:9000/admin/api/objects/tags/photos/report.pdf
+```
+
+`PUT` replaces the whole set rather than merging into it, matching `PutObjectTagging`. An empty list leaves the object untagged, which is the same outcome as `DELETE`. An untagged object reads back as `{"tags":[]}` rather than `null`.
+
+A key holding no copies is refused with `404`: tags belong to an object, so there is nothing to attach them to. Exceeding a tag limit answers `400` with a message naming the measurement that broke it. Request bodies are capped at 64 KiB, far above the few kilobytes ten maximum-length tags occupy.
+
+These endpoints reach the same stored set as the S3 `?tagging` operations, under the same per-key lock. See [Object Tagging](tagging.md) for the semantics and the limits.
+
 ## Removing a backend
 
 `DELETE /admin/api/backends/{name}` is the one destructive endpoint, and the only one whose response shape depends on how it is called.

@@ -1,7 +1,7 @@
 ---
 title: "Webhook Notifications"
 linkTitle: "Notifications"
-weight: 32
+weight: 33
 ---
 
 Optional outbound webhooks for object mutations and operational events. Events are written to a durable `notification_outbox` table inside the same transaction as the originating change, then a background drainer POSTs them as CloudEvents-formatted JSON to each configured endpoint. The outbox pattern means events are never lost on crash and never sent twice for the same change.

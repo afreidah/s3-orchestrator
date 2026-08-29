@@ -74,6 +74,12 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        TIMESTAMPTZ created_at',
     '    }',
     '',
+    '    object_tags {',
+    '        TEXT object_key PK',
+    '        TEXT tag_key PK',
+    '        TEXT tag_value',
+    '    }',
+    '',
     '    multipart_uploads {',
     '        TEXT upload_id PK',
     '        TEXT object_key',
@@ -82,6 +88,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        JSONB metadata',
     '        BYTEA encryption_key',
     '        TEXT key_id',
+    '        TEXT tagging',
     '        TIMESTAMPTZ created_at',
     '    }',
     '',
@@ -168,7 +175,8 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '    backend_quotas ||--o{ cleanup_dlq : "exhausted orphans"',
     '    backend_quotas ||--o{ pending_objects : "in-flight intents"',
     '    cleanup_queue ||--o| cleanup_dlq : "graduates on retry exhaustion"',
-    '    multipart_uploads ||--o{ multipart_parts : "upload parts"'
+    '    multipart_uploads ||--o{ multipart_parts : "upload parts"',
+    '    object_locations ||--o{ object_tags : "tag set, by object_key only"'
   ].join('\n');
 
   mermaid.initialize({
@@ -220,10 +228,24 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<p>Used by: <a href="../write-path/">write path</a> (RecordObject), <a href="../read-path/">read path</a> (GetAllObjectLocations), <a href="../background-services/">replicator</a> (GetUnderReplicatedObjects), directory tree listing, <a href="../encryption/">key rotation</a>, <a href="../compression/">compression</a> (stored-form columns).</p>' +
         '<p class="ac-metric">Key queries: InsertObjectLocation, ListObjectsByPrefix, GetDirectoryStats, GetUnderReplicatedObjects, BackendObjectStats</p>'
     },
+    object_tags: {
+      title: 'object_tags',
+      badge: 'core', badgeText: 'core table',
+      body: '<p>S3 object tags: key/value labels attached to an object independently of its data. Keyed by <code>object_key</code> alone, not <code>(object_key, backend_name)</code> &mdash; a tag set describes the object, so per-replica rows would let three copies of a key disagree with nothing to say which wins.</p>' +
+        '<p>One row per tag rather than a JSON column on <code>object_locations</code>. Filtering objects by tag is a <code>WHERE tag_key = ? AND tag_value = ?</code>, which needs an index; a JSON blob turns that into a scan over every object. Ten tags per object caps how many rows a key can add.</p>' +
+        '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
+        '<tr><td class="pk">object_key</td><td>TEXT</td><td>PRIMARY KEY (composite). Default collation, matching object_locations.object_key, so equality joins need no coercion</td></tr>' +
+        '<tr><td class="pk">tag_key</td><td>TEXT</td><td>PRIMARY KEY (composite). Max 128 UTF-16 code units, case sensitive</td></tr>' +
+        '<tr><td>tag_value</td><td>TEXT</td><td>Max 256 UTF-16 code units, case sensitive</td></tr></table>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK (object_key, tag_key) &bull; idx_object_tags_lookup (tag_key, tag_value)</p>' +
+        '<p>No foreign key, because there is no table to point at: <code>object_locations</code> is keyed <code>(object_key, backend_name)</code> and nothing is keyed on object key alone, so <code>ON DELETE CASCADE</code> cannot express this. Core clears these rows instead, at every path that puts a new object at a key or removes the last copy of one. The PK already serves lookup and delete by object key; idx_object_tags_lookup is for the reverse direction.</p>' +
+        '<p>Used by: <a href="../tagging/">tagging</a> (PutObjectTagging, GetObjectTagging, DeleteObjectTagging), inline <code>x-amz-tagging</code> on the <a href="../write-path/">write path</a>, CopyObject tagging directive, admin API and TUI object inspector.</p>' +
+        '<p class="ac-metric">Key queries: ReplaceObjectTags, GetObjectTags, DeleteObjectTags, ClearTagsForKeys</p>'
+    },
     multipart_uploads: {
       title: 'multipart_uploads',
       badge: 'multipart', badgeText: 'multipart',
-      body: '<p>Tracks in-progress multipart uploads. Each upload is pinned to a single backend at initiation time. The <code>metadata</code> JSONB column stores user-provided <code>x-amz-meta-*</code> headers for replay at completion.</p>' +
+      body: '<p>Tracks in-progress multipart uploads. Each upload is pinned to a single backend at initiation time. The <code>metadata</code> JSONB column stores user-provided <code>x-amz-meta-*</code> headers for replay at completion, and <code>tagging</code> holds a query-string-encoded tag set until the upload completes.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">upload_id</td><td>TEXT</td><td>PRIMARY KEY (UUID)</td></tr>' +
         '<tr><td>object_key</td><td>TEXT</td><td>Target object key</td></tr>' +
@@ -232,6 +254,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>metadata</td><td>JSONB</td><td>User metadata (x-amz-meta-*)</td></tr>' +
         '<tr><td>encryption_key</td><td>BYTEA</td><td>Packed nonce + wrapped DEK (nullable)</td></tr>' +
         '<tr><td>key_id</td><td>TEXT</td><td>KMS/Vault key version identifier (nullable)</td></tr>' +
+        '<tr><td>tagging</td><td>TEXT</td><td>Query-string-encoded tag set from CreateMultipartUpload (nullable; NULL means the upload carried no tags)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Upload initiation time</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK on upload_id &bull; idx_multipart_uploads_created (created_at) &bull; idx_multipart_uploads_key_pattern (object_key text_pattern_ops) &bull; idx_multipart_uploads_backend_name (backend_name)</p>' +
         '<p>Used by: CreateMultipartUpload, UploadPart, CompleteMultipartUpload, AbortMultipartUpload, <a href="../background-services/">stale upload cleanup</a> (GetStaleMultipartUploads), drain (GetMultipartUploadsByBackend), quota available-space calculation (inflight parts JOIN).</p>' +
@@ -399,7 +422,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
       // Mermaid ER diagram entity IDs follow the pattern: entity-TABLE_NAME-N
       // or just the table name directly. Try to extract the table name.
       var tableName = null;
-      var tableNames = ['backend_quotas', 'object_locations', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'cleanup_queue', 'cleanup_dlq', 'pending_objects', 'notification_outbox'];
+      var tableNames = ['backend_quotas', 'object_locations', 'object_tags', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'cleanup_queue', 'cleanup_dlq', 'pending_objects', 'notification_outbox'];
       for (var i = 0; i < tableNames.length; i++) {
         if (gId.indexOf(tableNames[i]) !== -1) {
           tableName = tableNames[i];
@@ -438,6 +461,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 |-------|---------|-------------|
 | **backend_quotas** | Backend registry with storage quota tracking | `backend_name` |
 | **object_locations** | Maps objects to backends (supports replication) | `(object_key, backend_name)` |
+| **object_tags** | Key/value labels on an object, shared by every replica | `(object_key, tag_key)` |
 | **multipart_uploads** | In-progress multipart upload state | `upload_id` |
 | **multipart_parts** | Individual parts within a multipart upload | `(upload_id, part_number)` |
 | **backend_usage** | Monthly API/bandwidth counters per backend | `(backend_name, period)` |
@@ -467,3 +491,6 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | `00015_object_last_scrubbed_at` | Add `last_scrubbed_at` to `object_locations` (nullable) plus a partial index for the scrub queue. Replaces random sampling, which on Postgres could not reach past the front of the table: `TABLESAMPLE` walks the heap in physical order and `LIMIT` halts the scan, so most of the fleet was never verified |
 | `00016_scrub_queue_last_touched` | Re-index the scrub queue on `COALESCE(last_scrubbed_at, created_at)` so a freshly written copy sorts behind an old unverified one. Ordering on the verified timestamp alone put every new write at the head, and a write rate above the scrub rate meant older data was never reached |
 | `00017_compression_columns` | Add `compression_algorithm`, `compression_level`, `compression_format_version` and `logical_size` to `object_locations` and `pending_objects`. Nullable throughout, and a NULL algorithm means the bytes are stored verbatim, which is what every pre-existing row is, so no backfill is needed |
+| `00018_compression_probe` | Record what the encoder produced for a copy it declined to store compressed, so a later pass reaches the same verdict without downloading and encoding it again. The measurement is stored rather than a declined flag, because `min_ratio` is applied at query time: loosening it returns those copies to the pass with no read at all, where a flag would have to be found and cleared |
+| `00019_object_tags` | Add `object_tags` (`object_key`, `tag_key`, `tag_value`) with `idx_object_tags_lookup (tag_key, tag_value)`. Keyed by object key alone, because tags describe the object and per-replica rows would let copies of one key disagree. No foreign key: nothing is keyed on object key alone, so `ON DELETE CASCADE` cannot express it and core clears the rows instead |
+| `00020_multipart_tagging` | Add `tagging` to `multipart_uploads`, holding a query-string-encoded tag set from `CreateMultipartUpload` until completion. One column rather than a child table, since these are only ever read whole for one upload and never filtered by tag. Nullable, and NULL means the upload carried no tags, which is what every pre-existing row is |
