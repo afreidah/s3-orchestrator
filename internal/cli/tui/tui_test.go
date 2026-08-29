@@ -40,6 +40,8 @@ type fakeLister struct {
 	cleanupD  *adminapi.CleanupDLQResponse
 	cacheStat *adminapi.CacheStatsResponse
 	requeued  *adminapi.CleanupDLQRequeueResponse
+	tags      map[string][]adminapi.ObjectTag // per-key tag sets
+	tagsErr   error                           // when set, GetObjectTags fails
 	scrubbed  *adminapi.ScrubKeyResponse
 	scrubErr  error               // when set, ScrubKey fails
 	opEvents  []adminstream.Event // canned RunOp stream (nil = single ok result)
@@ -81,6 +83,14 @@ func (f *fakeLister) GetObjectLocations(_ context.Context, key string) (*adminap
 		return r, nil
 	}
 	return &adminapi.ObjectLocationsResponse{Key: key}, nil
+}
+
+// GetObjectTags returns the seeded tag set for key, or an empty one.
+func (f *fakeLister) GetObjectTags(_ context.Context, key string) (*adminapi.ObjectTagsResponse, error) {
+	if f.tagsErr != nil {
+		return nil, f.tagsErr
+	}
+	return &adminapi.ObjectTagsResponse{Tags: f.tags[key]}, nil
 }
 
 func (f *fakeLister) ScrubKey(_ context.Context, key string) (*adminapi.ScrubKeyResponse, error) {

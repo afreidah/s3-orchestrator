@@ -31,6 +31,7 @@ const (
 	pathLogLevel        = "/admin/api/log-level"
 	pathObjects         = "/admin/api/objects"
 	pathObject          = pathObjects + "/" + objectKeyPattern
+	pathObjectTags      = pathObjects + "/tags/" + objectKeyPattern
 )
 
 // param is one query or path parameter a handler reads. Declaring them on the
@@ -161,6 +162,31 @@ func (h *Handler) routes() []route {
 			Summary:     "Upload one object",
 			RequestType: mediaOctetStream,
 			Response:    adminapi.ObjectUploadResponse{},
+			Params: []param{
+				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
+			},
+		},
+		{
+			Method: http.MethodGet, Pattern: pathObjectTags, Handler: h.handleGetObjectTags,
+			Summary:  "Read one object's tag set",
+			Response: adminapi.ObjectTagsResponse{},
+			Params: []param{
+				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
+			},
+		},
+		{
+			Method: http.MethodPut, Pattern: pathObjectTags, Handler: h.handlePutObjectTags,
+			Summary:  "Replace one object's tag set",
+			Request:  adminapi.ObjectTagsRequest{},
+			Response: adminapi.ObjectTagsResponse{},
+			Params: []param{
+				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
+			},
+		},
+		{
+			Method: http.MethodDelete, Pattern: pathObjectTags, Handler: h.handleDeleteObjectTags,
+			Summary:  "Clear one object's tag set",
+			Response: adminapi.ObjectTagsResponse{},
 			Params: []param{
 				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
 			},

@@ -55,8 +55,20 @@ const defaultMaxErrorRate = 0.01
 // needsSeeding reports whether an operation reads objects, and so requires a
 // working set to exist on the endpoint before the run starts.
 func needsSeeding(op string) bool {
-	return op == "get" || op == "mixed" || op == "listobjects"
+	return op == "get" || op == "mixed" || op == "listobjects" || op == "tagging"
 }
+
+// taggingBody is the Tagging document the ?tagging PUT sends. Fixed rather
+// than generated per request: the point of the scenario is the cost of the
+// write path, not of building two tags.
+const taggingBody = `<Tagging><TagSet>` +
+	`<Tag><Key>loadtest</Key><Value>1</Value></Tag>` +
+	`<Tag><Key>retain</Key><Value>30d</Value></Tag>` +
+	`</TagSet></Tagging>`
+
+// inlineTaggingHeader is the x-amz-tagging value a tagged PUT carries. Query
+// string encoded, which is the header's format rather than the XML above.
+const inlineTaggingHeader = "loadtest=1&retain=30d"
 
 // scenarioConfig captures the immutable inputs to a single scenario run.
 // Extracted so the sweep loop can re-run with only the body size varying.
@@ -152,7 +164,7 @@ func main() {
 		dur              = flag.Duration("duration", 30*time.Second, "Test duration per scenario step")
 		size             = flag.Int("size", 1024, "Object size in bytes (ignored if -sizes is set)")
 		sizesFlag        = flag.String("sizes", "", "Comma-separated object sizes for sweep mode (e.g. 1024,1048576,104857600); overrides -size")
-		op               = flag.String("op", "put", "Operation: put, get, mixed, listobjects")
+		op               = flag.String("op", "put", "Operation: put, get, mixed, listobjects, tagging, puttagged")
 		workers          = flag.Uint64("workers", 10, "Concurrent workers")
 		seedN            = flag.Int("seed", 100, "Objects to pre-seed for get/mixed/listobjects (per size in sweep mode)")
 		listPrefix       = flag.String("list-prefix", "loadtest/", "Prefix for listobjects scenario")
@@ -594,6 +606,30 @@ func newTargeter(cfg *scenarioConfig, body []byte, keys []string) vegeta.Targete
 				cfg.endpoint, cfg.bucket,
 				url.QueryEscape(cfg.listPrefix), cfg.listMaxKeys)
 			tgt.Body = nil
+		case "tagging":
+			// Rotates the three subresource verbs over the seeded set so one
+			// run exercises the write, the read and the clear rather than
+			// measuring whichever happens to be cheapest.
+			key := keys[n%uint64(len(keys))]
+			tgt.URL = fmt.Sprintf("%s/%s/%s?tagging", cfg.endpoint, cfg.bucket, key)
+			switch n % 3 {
+			case 0:
+				tgt.Method = http.MethodPut
+				tgt.Body = []byte(taggingBody)
+			case 1:
+				tgt.Method = http.MethodGet
+				tgt.Body = nil
+			default:
+				tgt.Method = http.MethodDelete
+				tgt.Body = nil
+			}
+		case "puttagged":
+			// A plain PUT plus the inline header, so the run is directly
+			// comparable against `put` at the same rate and size: the delta is
+			// what tagging on the write path costs.
+			tgt.Method = http.MethodPut
+			tgt.URL = fmt.Sprintf("%s/%s/loadtest/%s/obj-%06d", cfg.endpoint, cfg.bucket, cfg.runID, n)
+			tgt.Body = body
 		default:
 			return fmt.Errorf("unknown operation: %s", cfg.op)
 		}
@@ -605,6 +641,16 @@ func newTargeter(cfg *scenarioConfig, body []byte, keys []string) vegeta.Targete
 		}
 		req.Header.Set("Content-Type", "application/octet-stream")
 		req.Header.Set("X-Amz-Content-Sha256", unsignedPayload)
+
+		// Set before signing, not after: the orchestrator verifies the
+		// signature over the headers the client sent, and x-amz-tagging is one
+		// SigV4 covers.
+		switch cfg.op {
+		case "tagging":
+			req.Header.Set("Content-Type", "application/xml")
+		case "puttagged":
+			req.Header.Set("x-amz-tagging", inlineTaggingHeader)
+		}
 
 		if err := cfg.signer.SignHTTP(context.Background(), cfg.creds, req, unsignedPayload, "s3", cfg.region, time.Now()); err != nil {
 			return err
