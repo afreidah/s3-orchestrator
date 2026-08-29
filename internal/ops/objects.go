@@ -111,6 +111,51 @@ func (o *Objects) Locations(ctx context.Context, key string) ([]core.ObjectLocat
 	return o.store.GetAllObjectLocations(ctx, key)
 }
 
+// Tags reports one object's tag set, ordered by key. An object carrying none
+// yields an empty set; a key holding no copies reports ErrNotFound.
+func (o *Objects) Tags(ctx context.Context, key string) ([]core.Tag, error) {
+	if err := o.validateKey(key); err != nil {
+		return nil, err
+	}
+	tags, err := o.objects.GetObjectTags(ctx, key)
+	if err != nil {
+		if errors.Is(err, core.ErrObjectNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return tags, nil
+}
+
+// SetTags replaces one object's whole tag set. An empty set leaves the object
+// untagged, which is the same outcome as DeleteTags.
+func (o *Objects) SetTags(ctx context.Context, key string, tags []core.Tag) error {
+	if err := o.validateKey(key); err != nil {
+		return err
+	}
+	if err := o.objects.PutObjectTags(ctx, key, tags); err != nil {
+		if errors.Is(err, core.ErrObjectNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+// DeleteTags removes one object's whole tag set.
+func (o *Objects) DeleteTags(ctx context.Context, key string) error {
+	if err := o.validateKey(key); err != nil {
+		return err
+	}
+	if err := o.objects.DeleteObjectTags(ctx, key); err != nil {
+		if errors.Is(err, core.ErrObjectNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return nil
+}
+
 // Get streams one object. The caller closes the returned body. Reports
 // ErrNotFound when no copy of the key is recorded.
 func (o *Objects) Get(ctx context.Context, key string) (*s3be.GetObjectResult, error) {

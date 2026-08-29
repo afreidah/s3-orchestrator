@@ -45,6 +45,7 @@ type entry struct {
 type adminClient interface {
 	ListObjects(ctx context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error)
 	GetObjectLocations(ctx context.Context, key string) (*adminapi.ObjectLocationsResponse, error)
+	GetObjectTags(ctx context.Context, key string) (*adminapi.ObjectTagsResponse, error)
 	ScrubKey(ctx context.Context, key string) (*adminapi.ScrubKeyResponse, error)
 	GetStatus(ctx context.Context) (*adminapi.StatusResponse, error)
 	GetLogs(ctx context.Context, level string) (*adminapi.LogsResponse, error)
@@ -212,6 +213,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case locationsErrMsg:
 		m.insp.loading = false
 		m.insp.err = msg.err
+		return m, nil
+	case tagsLoadedMsg:
+		m.applyTags(msg)
 		return m, nil
 	case scrubKeyMsg:
 		return m.applyScrubKey(msg)

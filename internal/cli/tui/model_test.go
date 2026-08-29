@@ -37,6 +37,10 @@ func (errLister) GetObjectLocations(_ context.Context, _ string) (*adminapi.Obje
 	return nil, errors.New("nope")
 }
 
+func (errLister) GetObjectTags(_ context.Context, _ string) (*adminapi.ObjectTagsResponse, error) {
+	return nil, errors.New("nope")
+}
+
 func (errLister) ScrubKey(_ context.Context, _ string) (*adminapi.ScrubKeyResponse, error) {
 	return nil, errors.New("nope")
 }

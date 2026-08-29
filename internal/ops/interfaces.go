@@ -35,6 +35,9 @@ type ObjectAPI interface {
 	DeleteObject(ctx context.Context, key string) error
 	DeleteObjects(ctx context.Context, keys []string) []object.DeleteObjectResult
 	ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*object.ListObjectsV2Result, error)
+	GetObjectTags(ctx context.Context, key string) ([]core.Tag, error)
+	PutObjectTags(ctx context.Context, key string, tags []core.Tag) error
+	DeleteObjectTags(ctx context.Context, key string) error
 }
 
 // ObjectStore is the metadata half of the object operations: the namespace

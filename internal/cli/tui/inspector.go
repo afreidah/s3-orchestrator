@@ -39,6 +39,7 @@ const (
 type inspector struct {
 	key       string                    // the object key under inspection
 	locations []adminapi.ObjectLocation // per-backend copies, in load order
+	tags      []adminapi.ObjectTag      // the object's tag set, ordered by key
 	table     table.Model               // scrolling table over the copies
 	loading   bool                      // a locations fetch is in flight
 	scrubbing bool                      // a targeted scrub is in flight
@@ -70,6 +71,29 @@ func (m *model) loadLocations(key string) tea.Cmd {
 	}
 }
 
+// tagsLoadedMsg carries an object's tag set, or the error that prevented
+// reading it.
+type tagsLoadedMsg struct {
+	tags []adminapi.ObjectTag
+	err  error
+}
+
+// loadTags returns a command that fetches key's tag set off the main loop.
+//
+// Separate from the locations load so a tag read that fails leaves the copy
+// ledger intact: the ledger is what the pane exists for, and tags are context
+// beside it.
+func (m *model) loadTags(key string) tea.Cmd {
+	client := m.client
+	return func() tea.Msg {
+		resp, err := client.GetObjectTags(context.Background(), key)
+		if err != nil {
+			return tagsLoadedMsg{err: err}
+		}
+		return tagsLoadedMsg{tags: resp.Tags}
+	}
+}
+
 // scrubKeyMsg carries the outcome of a targeted scrub.
 type scrubKeyMsg struct {
 	resp *adminapi.ScrubKeyResponse
@@ -94,8 +118,7 @@ func (m *model) openInspector(key string) (tea.Model, tea.Cmd) {
 	m.mode = modeInspect
 	m.insp = inspector{key: key, loading: true, table: newTable()}
 	m.resizeInspector()
-	cmd := m.loadLocations(key)
-	return m, cmd
+	return m, tea.Batch(m.loadLocations(key), m.loadTags(key))
 }
 
 // applyLocations folds a loaded ledger into the inspector state.
@@ -105,6 +128,19 @@ func (m *model) applyLocations(resp *adminapi.ObjectLocationsResponse) {
 	m.insp.table.SetCursor(0)
 	m.insp.loading = false
 	m.insp.err = nil
+}
+
+// applyTags folds a loaded tag set into the inspector state.
+//
+// A failed read leaves the set empty and does not set insp.err: the pane's
+// error line belongs to the copy ledger, and blanking that because tags could
+// not be read would hide what the operator opened the pane to see.
+func (m *model) applyTags(msg tagsLoadedMsg) {
+	if msg.err != nil {
+		m.insp.tags = nil
+		return
+	}
+	m.insp.tags = msg.tags
 }
 
 // handleInspectKey applies inspector-level keys (quit, back, reload) and
@@ -185,13 +221,16 @@ func scrubSummary(copies []adminapi.CopyScrubResult) (bool, string) {
 // -------------------------------------------------------------------------
 
 // resizeInspector fits the inspector columns and viewport to the window, capping
-// the backend column so short names don't sprawl on a wide terminal.
+// the backend column so short names don't sprawl on a wide terminal. The table
+// yields three rows to the title, the footer and the tag line, because the frame
+// clips whatever the body renders past its height.
 func (m *model) resizeInspector() {
 	const (
 		// size + logical + comp + created + enc + key id + hash + verified
 		fixed   = 12 + 12 + 6 + 14 + 5 + 12 + 18 + 10
 		cols    = 9
 		nameCap = 24
+		chrome  = 3
 	)
 	backendWidth := fitFirstColumn(m.contentWidth(), fixed, cols, nameCap)
 	m.insp.table.SetColumns([]table.Column{
@@ -206,7 +245,7 @@ func (m *model) resizeInspector() {
 		{Title: "VERIFIED", Width: 10},
 	})
 	m.insp.table.SetWidth(m.contentWidth())
-	m.insp.table.SetHeight(max(m.height-2, 3))
+	m.insp.table.SetHeight(max(m.height-chrome, 3))
 }
 
 // rowsFromLocations builds inspector rows in the same order as the ledger so
@@ -275,8 +314,23 @@ func (m *model) inspectBodyView() string {
 		if len(m.insp.locations) == 0 {
 			return pathStyle.Render("(no copies found)")
 		}
-		return m.insp.table.View()
+		return m.inspectTagsView() + "\n" + m.insp.table.View()
 	})
+}
+
+// inspectTagsView renders the object's tag set as one line above the copy
+// table. Tags belong to the object rather than to any copy, so they sit
+// outside the per-backend table rather than as a column repeated down it.
+func (m *model) inspectTagsView() string {
+	label := tagLabelStyle.Render("tags:")
+	if len(m.insp.tags) == 0 {
+		return label + " " + pathStyle.Render("(none)")
+	}
+	pairs := make([]string, len(m.insp.tags))
+	for i, t := range m.insp.tags {
+		pairs[i] = t.Key + "=" + t.Value
+	}
+	return label + " " + tagValueStyle.Render(strings.Join(pairs, "  "))
 }
 
 // -------------------------------------------------------------------------

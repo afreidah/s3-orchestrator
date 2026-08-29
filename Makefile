@@ -496,6 +496,18 @@ loadtest-listobjects: loadtest-build ## Run ListObjectsV2 load test against a pr
 		-list-prefix $(LOADTEST_LIST_PREFIX) -list-max-keys $(LOADTEST_LIST_MAX_KEYS) \
 		$(LOADTEST_OUTPUT_FLAG)
 
+loadtest-tagging: loadtest-build ## Run PutObjectTagging/GetObjectTagging/DeleteObjectTagging load test against a pre-seeded set (use LOADTEST_SEED)
+	./loadtest/s3-loadtest \
+		-endpoint $(LOADTEST_ENDPOINT) -bucket $(LOADTEST_BUCKET) \
+		-op tagging -rate $(LOADTEST_RATE) -duration $(LOADTEST_DURATION) \
+		$(LOADTEST_SIZE_FLAG) -seed $(LOADTEST_SEED) -workers $(LOADTEST_WORKERS) $(LOADTEST_OUTPUT_FLAG)
+
+loadtest-put-tagged: loadtest-build ## Run PUT with x-amz-tagging; diff against loadtest-put at the same rate and size for the inline-tagging cost
+	./loadtest/s3-loadtest \
+		-endpoint $(LOADTEST_ENDPOINT) -bucket $(LOADTEST_BUCKET) \
+		-op puttagged -rate $(LOADTEST_RATE) -duration $(LOADTEST_DURATION) \
+		$(LOADTEST_SIZE_FLAG) -workers $(LOADTEST_WORKERS) $(LOADTEST_OUTPUT_FLAG)
+
 loadtest-cache: loadtest-build ## Run cache stress test (seeds more data than cache capacity to exercise eviction)
 	./loadtest/s3-loadtest \
 		-endpoint $(LOADTEST_ENDPOINT) -bucket $(LOADTEST_BUCKET) \

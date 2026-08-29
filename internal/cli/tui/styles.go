@@ -35,6 +35,13 @@ var (
 	// colHeaderStyle renders a hand-rolled table's column header row.
 	colHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111"))
 
+	// tagLabelStyle and tagValueStyle render the inspector's tag line. The
+	// label matches the column headers so it reads as a field name, the pairs
+	// are bright enough to notice, and the label's left pad aligns the line
+	// with the padded table cells beneath it.
+	tagLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")).PaddingLeft(1)
+	tagValueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+
 	// errStyle renders the error line.
 	errStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
 

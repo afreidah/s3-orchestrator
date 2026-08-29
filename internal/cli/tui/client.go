@@ -58,6 +58,12 @@ func (c *apiClient) GetObjectLocations(ctx context.Context, key string) (*admina
 	return adminclient.Get[adminapi.ObjectLocationsResponse](ctx, c.c, "/admin/api/object-locations", q)
 }
 
+// GetObjectTags fetches one object's tag set. The key rides in the path rather
+// than a query parameter, matching the admin route.
+func (c *apiClient) GetObjectTags(ctx context.Context, key string) (*adminapi.ObjectTagsResponse, error) {
+	return adminclient.Get[adminapi.ObjectTagsResponse](ctx, c.c, "/admin/api/objects/tags/"+url.PathEscape(key), nil)
+}
+
 // ScrubKey verifies every recorded copy of one key now and reports a verdict
 // per copy.
 func (c *apiClient) ScrubKey(ctx context.Context, key string) (*adminapi.ScrubKeyResponse, error) {

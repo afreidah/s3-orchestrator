@@ -276,3 +276,26 @@ func TestEnforceErrorBudget_BoundaryIsInclusive(t *testing.T) {
 		t.Errorf("exactly at budget must pass, got %v", err)
 	}
 }
+
+// TestNeedsSeeding covers which operations require a pre-existing working set.
+// The tagging scenario tags objects that already exist, so it seeds; the
+// inline-tagging PUT creates its own objects and does not.
+func TestNeedsSeeding(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		op   string
+		want bool
+	}{
+		{"put", false},
+		{"puttagged", false},
+		{"get", true},
+		{"mixed", true},
+		{"listobjects", true},
+		{"tagging", true},
+	}
+	for _, tc := range tests {
+		if got := needsSeeding(tc.op); got != tc.want {
+			t.Errorf("needsSeeding(%q) = %v, want %v", tc.op, got, tc.want)
+		}
+	}
+}

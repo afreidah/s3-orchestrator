@@ -13,6 +13,8 @@ make loadtest-put                                          # 100 PUT/s, 30s, 1KB
 make loadtest-get LOADTEST_SEED=1000                       # 100 GET/s, 1000 pre-seeded objects
 make loadtest-mixed LOADTEST_RATE=300 LOADTEST_DURATION=2m # 300 req/s mixed PUT/GET
 make loadtest-listobjects LOADTEST_SEED=10000              # 100 ListObjectsV2/s against 10k pre-seeded keys
+make loadtest-tagging LOADTEST_SEED=1000                   # 100 req/s over Put/Get/DeleteObjectTagging
+make loadtest-put-tagged                                   # 100 PUT/s carrying x-amz-tagging
 make loadtest-burst                                        # k6 burst to 100 VUs
 make loadtest-k6                                           # k6 mixed CRUD workflow
 ```
@@ -46,6 +48,32 @@ pre-seeded namespace. Vary `LOADTEST_SEED` across runs (e.g. 10k, 100k,
 make loadtest-listobjects LOADTEST_SEED=10000   LOADTEST_OUTPUT_JSON=/tmp/list-10k.json
 make loadtest-listobjects LOADTEST_SEED=100000  LOADTEST_OUTPUT_JSON=/tmp/list-100k.json
 make loadtest-listobjects LOADTEST_SEED=1000000 LOADTEST_OUTPUT_JSON=/tmp/list-1m.json
+```
+
+### Object tagging
+
+Two scenarios, measuring different halves of the feature.
+
+`loadtest-tagging` rotates `PutObjectTagging`, `GetObjectTagging` and
+`DeleteObjectTagging` over a pre-seeded set, so one run covers the write, the
+read and the clear rather than whichever is cheapest. The tag write takes the
+per-key advisory lock and replaces the set as a delete plus insert inside one
+transaction, so this is the scenario that shows what that costs under
+contention - drive it against a small `LOADTEST_SEED` to concentrate several
+requests on the same keys:
+
+```bash
+make loadtest-tagging LOADTEST_SEED=1000 LOADTEST_OUTPUT_JSON=/tmp/tag-1k.json
+make loadtest-tagging LOADTEST_SEED=50   LOADTEST_OUTPUT_JSON=/tmp/tag-50.json   # lock contention
+```
+
+`loadtest-put-tagged` is a plain PUT carrying `x-amz-tagging`. Run it against
+`loadtest-put` at the same rate and size; the delta is what inline tagging adds
+to the write path, since the tags are inserted in the object's own transaction:
+
+```bash
+make loadtest-put        LOADTEST_RATE=200 LOADTEST_OUTPUT_JSON=/tmp/put.json
+make loadtest-put-tagged LOADTEST_RATE=200 LOADTEST_OUTPUT_JSON=/tmp/put-tagged.json
 ```
 
 ### Saturation-find ramp

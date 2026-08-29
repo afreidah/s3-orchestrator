@@ -395,6 +395,12 @@ var simpleWrapperCases = []wrapperCase{
 	{"backfill-checksums-delay", "backfill-checksums", []string{"-delay-ms", "500"}, http.MethodPost, "/admin/api/backfill-checksums", "delay_ms=500"},
 	{"backfill-checksums-all", "backfill-checksums", []string{"-batch-size", "50", "-max", "200", "-delay-ms", "500"}, http.MethodPost, "/admin/api/backfill-checksums", "batch_size=50&delay_ms=500&max=200"},
 	{"object-locations", "object-locations", []string{"-key", "my/key"}, http.MethodGet, "/admin/api/object-locations", "key=my/key"},
+	// The key is escaped on the way out so a key carrying "?" or "#" reaches
+	// the server intact; the server decodes it again, so the path recorded
+	// here is the decoded form.
+	{"object-tags-read", "object-tags", []string{"-key", "bucket/k"}, http.MethodGet, "/admin/api/objects/tags/bucket/k", ""},
+	{"object-tags-set", "object-tags", []string{"-key", "bucket/k", "-tag", "a=1"}, http.MethodPut, "/admin/api/objects/tags/bucket/k", ""},
+	{"object-tags-clear", "object-tags", []string{"-key", "bucket/k", "-clear"}, http.MethodDelete, "/admin/api/objects/tags/bucket/k", ""},
 }
 
 // runWrapperCase exercises a single wrapper assertion. Pulling the body out
