@@ -171,6 +171,80 @@ func TestPutObject_UntaggedWriteRecordsNoTags(t *testing.T) {
 	}
 }
 
+// TestResolveCopyTags_CopyDirectiveReadsTheSource verifies the default
+// directive gives the destination whatever the source carries, which means
+// reading the source's set rather than taking one from the request.
+func TestResolveCopyTags_CopyDirectiveReadsTheSource(t *testing.T) {
+	t.Parallel()
+	m, store := newTagTestManager(t)
+	want := []core.Tag{{Key: "inherited", Value: "yes"}}
+
+	store.EXPECT().GetObjectTags(gomock.Any(), "src").Return(want, nil)
+
+	got, err := m.resolveCopyTags(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"})
+	if err != nil {
+		t.Fatalf("resolveCopyTags: %v", err)
+	}
+	if len(got) != 1 || got[0].Key != "inherited" {
+		t.Errorf("tags = %+v, want the source's set", got)
+	}
+}
+
+// TestResolveCopyTags_ReplaceIgnoresTheSource verifies REPLACE takes the
+// request's set and never reads the source, so a copy can be given different
+// tags without inheriting any.
+func TestResolveCopyTags_ReplaceIgnoresTheSource(t *testing.T) {
+	t.Parallel()
+	m, store := newTagTestManager(t)
+	// No GetObjectTags expectation: reading the source would be wrong here.
+	_ = store
+
+	supplied := []core.Tag{{Key: "fresh", Value: "1"}}
+	got, err := m.resolveCopyTags(context.Background(), &CopyObjectRequest{
+		SourceKey: "src", DestKey: "dst", ReplaceTags: true, Tags: supplied,
+	})
+	if err != nil {
+		t.Fatalf("resolveCopyTags: %v", err)
+	}
+	if len(got) != 1 || got[0].Key != "fresh" {
+		t.Errorf("tags = %+v, want the request's set", got)
+	}
+}
+
+// TestResolveCopyTags_ReplaceWithNoTagsStrips verifies a REPLACE carrying no
+// tags leaves the destination untagged, which is how a client drops a copy's
+// tags rather than inheriting them.
+func TestResolveCopyTags_ReplaceWithNoTagsStrips(t *testing.T) {
+	t.Parallel()
+	m, _ := newTagTestManager(t)
+
+	got, err := m.resolveCopyTags(context.Background(), &CopyObjectRequest{
+		SourceKey: "src", DestKey: "dst", ReplaceTags: true,
+	})
+	if err != nil {
+		t.Fatalf("resolveCopyTags: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected no tags, got %+v", got)
+	}
+}
+
+// TestResolveCopyTags_SourceReadError verifies a failure reading the source's
+// set aborts the copy rather than silently producing an untagged destination.
+func TestResolveCopyTags_SourceReadError(t *testing.T) {
+	t.Parallel()
+	m, store := newTagTestManager(t)
+	sentinel := errors.New("read failed")
+
+	store.EXPECT().GetObjectTags(gomock.Any(), "src").Return(nil, sentinel)
+
+	if _, err := m.resolveCopyTags(context.Background(), &CopyObjectRequest{
+		SourceKey: "src", DestKey: "dst",
+	}); !errors.Is(err, sentinel) {
+		t.Errorf("error = %v, want the store error", err)
+	}
+}
+
 // TestPutObjectTags_PassesThrough verifies the set reaches the store unaltered.
 // Validation and the existence check live there, so the manager adds nothing.
 func TestPutObjectTags_PassesThrough(t *testing.T) {

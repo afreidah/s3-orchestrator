@@ -64,7 +64,7 @@ type ObjectOps interface {
 	HeadObject(ctx context.Context, key string) (*s3be.HeadObjectResult, error)
 	DeleteObject(ctx context.Context, key string) error
 	DeleteObjects(ctx context.Context, keys []string) []object.DeleteObjectResult
-	CopyObject(ctx context.Context, sourceKey, destKey string) (string, error)
+	CopyObject(ctx context.Context, req *object.CopyObjectRequest) (string, error)
 	ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*object.ListObjectsV2Result, error)
 	ObjectExists(ctx context.Context, key string) (bool, error)
 	CanAcceptWrite(size int64) bool
@@ -459,7 +459,7 @@ func (s *Server) routePlainObjectRequest(ctx context.Context, w http.ResponseWri
 	switch method {
 	case http.MethodPut:
 		if copySource := r.Header.Get("X-Amz-Copy-Source"); copySource != "" {
-			st, e := s.handleCopyObject(ctx, w, bucket, internalKey, copySource)
+			st, e := s.handleCopyObject(ctx, w, r, bucket, internalKey, copySource)
 			return "CopyObject", st, 0, 0, e, true
 		}
 		st, e := s.handlePut(ctx, w, r, internalKey)

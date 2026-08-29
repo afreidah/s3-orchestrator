@@ -175,6 +175,124 @@ func TestPutObject_BadTaggingHeaderRejectedBeforeTheWrite(t *testing.T) {
 	}
 }
 
+// TestParseTaggingDirective covers the copy directive: absent and COPY both
+// carry the source's set, REPLACE takes the request's own header, and an
+// unrecognised value is refused rather than quietly treated as COPY.
+func TestParseTaggingDirective(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		directive   string
+		tagging     string
+		wantReplace bool
+		wantTags    []core.Tag
+		wantErr     error
+	}{
+		{"absent is COPY", "", "", false, nil, nil},
+		{"explicit COPY", "COPY", "", false, nil, nil},
+		{"COPY ignores any tagging header", "COPY", "a=1", false, nil, nil},
+		{"REPLACE takes the header", "REPLACE", "a=1", true, []core.Tag{{Key: "a", Value: "1"}}, nil},
+		{"REPLACE with no header strips tags", "REPLACE", "", true, nil, nil},
+		{"REPLACE propagates a bad set", "REPLACE", "a=1&a=2", false, nil, core.ErrDuplicateTagKey},
+		{"lowercase is not accepted", "replace", "", false, nil, errInvalidTaggingDirective},
+		{"unknown value", "MERGE", "", false, nil, errInvalidTaggingDirective},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			replace, tags, err := parseTaggingDirective(taggingHeaders(tc.directive, tc.tagging))
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("error = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				return
+			}
+			if replace != tc.wantReplace {
+				t.Errorf("replace = %v, want %v", replace, tc.wantReplace)
+			}
+			assertTagsEqual(t, tags, tc.wantTags)
+		})
+	}
+}
+
+// taggingHeaders builds the header pair a copy request carries, omitting
+// either one when the case leaves it empty: absent and empty are different
+// inputs to the directive parser.
+func taggingHeaders(directive, tagging string) http.Header {
+	h := http.Header{}
+	if directive != "" {
+		h.Set("x-amz-tagging-directive", directive)
+	}
+	if tagging != "" {
+		h.Set("x-amz-tagging", tagging)
+	}
+	return h
+}
+
+// TestCopyObject_TaggingDirectiveReachesTheManager verifies the parsed
+// directive is handed to the copy, which is what decides whether the
+// destination inherits the source's tags or takes the request's.
+func TestCopyObject_TaggingDirectiveReachesTheManager(t *testing.T) {
+	ts, objects, _ := newOpsServer(t)
+	objects.EXPECT().CopyObject(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req *object.CopyObjectRequest) (string, error) {
+			if !req.ReplaceTags {
+				t.Error("expected ReplaceTags for a REPLACE directive")
+			}
+			if len(req.Tags) != 1 || req.Tags[0].Key != "fresh" {
+				t.Errorf("tags = %+v, want the request's own set", req.Tags)
+			}
+			return "etag-1", nil
+		}).Times(1)
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut,
+		ts.URL+"/mybucket/dst", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("X-Amz-Copy-Source", "/mybucket/src")
+	req.Header.Set("x-amz-tagging-directive", "REPLACE")
+	req.Header.Set("x-amz-tagging", "fresh=1")
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// TestCopyObject_BadDirectiveRejectedBeforeTheCopy verifies an unrecognised
+// directive is refused without the copy running, so the bytes never move.
+func TestCopyObject_BadDirectiveRejectedBeforeTheCopy(t *testing.T) {
+	ts, _, _ := newOpsServer(t)
+	// No CopyObject expectation: the copy must not be attempted.
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut,
+		ts.URL+"/mybucket/dst", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("X-Proxy-Token", "test-token")
+	req.Header.Set("X-Amz-Copy-Source", "/mybucket/src")
+	req.Header.Set("x-amz-tagging-directive", "MERGE")
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "InvalidArgument") {
+		t.Errorf("expected InvalidArgument, got %s", body)
+	}
+}
+
 // TestCreateMultipartUpload_BadTaggingHeaderRejected verifies an unusable set
 // is refused before the upload is opened, so the client is not left to
 // discover it after transferring every part.

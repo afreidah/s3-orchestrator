@@ -1526,7 +1526,7 @@ func TestCopyObject_HeadSourceForCopy_SkipsUnknownBackend(t *testing.T) {
 		}, nil, "b1", nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	if _, err := mgr.CopyObject(context.Background(), "src", "dst"); err != nil {
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err != nil {
 		t.Fatalf("CopyObject: %v", err)
 	}
 	if !be.Has("dst") {
@@ -1549,7 +1549,7 @@ func TestCopyObject_DestBackendNotInMap(t *testing.T) {
 		"ghost", nil) // SelectWriteTarget returns a name not in the backend map
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": src}, nil)
 
-	if _, err := mgr.CopyObject(context.Background(), "src", "dst"); err == nil {
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err == nil {
 		t.Fatal("expected error when destination backend is unknown")
 	}
 }
@@ -1582,7 +1582,7 @@ func TestCopyObject_RecordFailureSurfaces(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	if _, err := mgr.CopyObject(context.Background(), "src", "dst"); err == nil {
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err == nil {
 		t.Fatal("expected error when destination record fails")
 	}
 }
@@ -1598,7 +1598,7 @@ func TestCopyObject_Success(t *testing.T) {
 		"b1", nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	etag, err := mgr.CopyObject(context.Background(), "src", "dst")
+	etag, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"})
 	if err != nil {
 		t.Fatalf("CopyObject: %v", err)
 	}
@@ -1634,7 +1634,7 @@ func TestCopyObject_SameBackendFastPath_UsesNativeCopy(t *testing.T) {
 		"b1", nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	etag, err := mgr.CopyObject(context.Background(), "src", "dst")
+	etag, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"})
 	if err != nil {
 		t.Fatalf("CopyObject: %v", err)
 	}
@@ -1671,7 +1671,7 @@ func TestCopyObject_FastPathFallsBackOnNativeError(t *testing.T) {
 		"b1", nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	if _, err := mgr.CopyObject(context.Background(), "src", "dst"); err != nil {
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err != nil {
 		t.Fatalf("CopyObject (fallback path): %v", err)
 	}
 	if !be.Has("dst") {
@@ -1707,7 +1707,7 @@ func TestCopyObject_AmbiguousNativeFailure_HeadConfirmsTreatsAsSuccess(t *testin
 		"b1", nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	etag, err := mgr.CopyObject(context.Background(), "src", "dst")
+	etag, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"})
 	if err != nil {
 		t.Fatalf("CopyObject: %v", err)
 	}
@@ -1739,7 +1739,7 @@ func TestCopyObject_AmbiguousNativeFailure_HeadMissingFallsBack(t *testing.T) {
 		"b1", nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	if _, err := mgr.CopyObject(context.Background(), "src", "dst"); err != nil {
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err != nil {
 		t.Fatalf("CopyObject: %v", err)
 	}
 	if !be.Has("dst") {
@@ -1773,7 +1773,7 @@ func TestCopyObject_AmbiguousNativeFailure_SizeMismatchFallsBack(t *testing.T) {
 		"b1", nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	if _, err := mgr.CopyObject(context.Background(), "src", "dst"); err != nil {
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err != nil {
 		t.Fatalf("CopyObject: %v", err)
 	}
 	puttedBody := be.PutBodyWasSeekable()
@@ -1799,7 +1799,7 @@ func TestCopyObject_FastPathSkippedCrossBackend(t *testing.T) {
 		"b2", nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, nil)
 
-	if _, err := mgr.CopyObject(context.Background(), "src", "dst"); err != nil {
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err != nil {
 		t.Fatalf("CopyObject: %v", err)
 	}
 	calls := dst.CopyCallCount()
@@ -1817,7 +1817,7 @@ func TestCopyObject_SourceNotFound(t *testing.T) {
 	store := locationsStore(t, nil, core.ErrObjectNotFound)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 
-	if _, err := mgr.CopyObject(context.Background(), "missing", "dst"); !errors.Is(err, core.ErrObjectNotFound) {
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "missing", DestKey: "dst"}); !errors.Is(err, core.ErrObjectNotFound) {
 		t.Fatalf("expected st.ErrObjectNotFound, got %v", err)
 	}
 }
@@ -1829,7 +1829,7 @@ func TestCopyObject_DBUnavailable_SourceLookup(t *testing.T) {
 	store := locationsStore(t, nil, core.ErrDBUnavailable)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 
-	if _, err := mgr.CopyObject(context.Background(), "src", "dst"); !errors.Is(err, core.ErrServiceUnavailable) {
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); !errors.Is(err, core.ErrServiceUnavailable) {
 		t.Fatalf("expected st.ErrServiceUnavailable, got %v", err)
 	}
 }
@@ -1846,7 +1846,7 @@ func TestCopyObject_DBUnavailable_DestLookup(t *testing.T) {
 		"", core.ErrDBUnavailable)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	if _, err := mgr.CopyObject(context.Background(), "src", "dst"); !errors.Is(err, core.ErrServiceUnavailable) {
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); !errors.Is(err, core.ErrServiceUnavailable) {
 		t.Fatalf("expected st.ErrServiceUnavailable, got %v", err)
 	}
 }
@@ -1963,7 +1963,7 @@ func TestCopyObject_BackendTimeout_SourceGetSlow(t *testing.T) {
 		"b1", nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": slow}, &fleetOpts{Order: []string{"b1"}, BackendTimeout: 50 * time.Millisecond, PendingDisabled: true})
 
-	_, err := mgr.CopyObject(context.Background(), "src", "dst")
+	_, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"})
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -1988,7 +1988,7 @@ func TestCopyObject_BackendTimeout_DestPutSlow(t *testing.T) {
 		"b2", nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": srcBE, "b2": slowDst}, &fleetOpts{Order: []string{"b1", "b2"}, BackendTimeout: 50 * time.Millisecond, PendingDisabled: true})
 
-	_, err := mgr.CopyObject(context.Background(), "src", "dst")
+	_, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"})
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -2654,7 +2654,7 @@ func TestCopyObject_AllSourceHeadsFail(t *testing.T) {
 		"b1", nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1}, nil)
 
-	if _, err := mgr.CopyObject(context.Background(), "src", "dst"); err == nil {
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err == nil {
 		t.Fatal("expected error when all source HeadObjects fail")
 	}
 }
@@ -2672,7 +2672,7 @@ func TestCopyObject_DestWriteFails(t *testing.T) {
 		"dst-be", nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"src-be": src, "dst-be": dst}, &fleetOpts{Order: []string{"src-be", "dst-be"}, BackendTimeout: 30 * time.Second, PendingDisabled: true})
 
-	if _, err := mgr.CopyObject(context.Background(), "src", "dst"); err == nil {
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err == nil {
 		t.Fatal("expected error when dest PutObject fails")
 	}
 }
@@ -2695,7 +2695,7 @@ func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
 			Draining:        []string{"src-be", "dst-be"},
 		})
 
-	if _, err := mgr.CopyObject(context.Background(), "src", "dst"); !errors.Is(err, core.ErrInsufficientStorage) {
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); !errors.Is(err, core.ErrInsufficientStorage) {
 		t.Fatalf("expected st.ErrInsufficientStorage when all backends are draining, got %v", err)
 	}
 	if dst.Has("dst") {
@@ -2715,7 +2715,7 @@ func TestCopyObject_SourceReadFails(t *testing.T) {
 		"dst-be", nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"src-be": src, "dst-be": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"src-be", "dst-be"}, BackendTimeout: 30 * time.Second, PendingDisabled: true})
 
-	if _, err := mgr.CopyObject(context.Background(), "src", "dst"); err == nil {
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err == nil {
 		t.Fatal("expected error when source body read fails")
 	}
 }
@@ -2732,7 +2732,7 @@ func TestCopyObject_AllSourceGetObjectsFail(t *testing.T) {
 		"dst-be", nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"src-be": src, "dst-be": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"src-be", "dst-be"}, BackendTimeout: 30 * time.Second, PendingDisabled: true})
 
-	if _, err := mgr.CopyObject(context.Background(), "src", "dst"); err == nil {
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err == nil {
 		t.Fatal("expected error when all source GetObjects fail")
 	}
 }
@@ -2860,7 +2860,7 @@ func TestCopyObject_SourceGetPanics(t *testing.T) {
 		"b1", nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": srcBackend}, nil)
 
-	if _, err := mgr.CopyObject(context.Background(), "src", "dst"); err == nil {
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err == nil {
 		t.Fatal("expected error from panicking source reader, got nil")
 	}
 }

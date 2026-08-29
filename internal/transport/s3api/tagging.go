@@ -129,6 +129,40 @@ func parseTaggingHeader(raw string) ([]core.Tag, error) {
 	return tags, nil
 }
 
+// Values x-amz-tagging-directive accepts on a copy. COPY carries the source's
+// tag set to the destination and is what an absent header means; REPLACE takes
+// the set from the copy request's own x-amz-tagging instead.
+const (
+	taggingDirectiveCopy    = "COPY"
+	taggingDirectiveReplace = "REPLACE"
+)
+
+// parseTaggingDirective reads x-amz-tagging-directive and, for REPLACE, the
+// x-amz-tagging header that supplies the replacement set.
+//
+// An unrecognised directive is refused rather than treated as COPY: silently
+// falling back would carry the source's tags onto a copy the client asked to
+// have different ones, which is the opposite of what it requested.
+func parseTaggingDirective(h http.Header) (replace bool, tags []core.Tag, err error) {
+	switch directive := h.Get("x-amz-tagging-directive"); directive {
+	case "", taggingDirectiveCopy:
+		return false, nil, nil
+	case taggingDirectiveReplace:
+		tags, err = parseTaggingHeader(h.Get("x-amz-tagging"))
+		if err != nil {
+			return false, nil, err
+		}
+		return true, tags, nil
+	default:
+		return false, nil, fmt.Errorf("%w: x-amz-tagging-directive %q must be %s or %s",
+			errInvalidTaggingDirective, directive, taggingDirectiveCopy, taggingDirectiveReplace)
+	}
+}
+
+// errInvalidTaggingDirective is returned for a directive value the spec does
+// not define.
+var errInvalidTaggingDirective = errors.New("invalid tagging directive")
+
 // -------------------------------------------------------------------------
 // ERROR MAPPING
 // -------------------------------------------------------------------------
@@ -146,6 +180,9 @@ func writeTaggingError(w http.ResponseWriter, err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, core.ErrTooManyTags):
 		writeS3Error(w, http.StatusBadRequest, "BadRequest", err.Error())
+		return http.StatusBadRequest
+	case errors.Is(err, errInvalidTaggingDirective):
+		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", err.Error())
 		return http.StatusBadRequest
 	case errors.Is(err, core.ErrEmptyTagKey),
 		errors.Is(err, core.ErrTagKeyTooLong),
