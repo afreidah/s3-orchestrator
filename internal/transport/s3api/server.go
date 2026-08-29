@@ -59,7 +59,7 @@ var httpSpanName = map[string]string{
 // the object CRUD, listing, and capacity queries reachable from an S3
 // request. *object.Manager satisfies it.
 type ObjectOps interface {
-	PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error)
+	PutObject(ctx context.Context, req *object.PutObjectRequest) (string, error)
 	GetObject(ctx context.Context, key, rangeHeader string) (*s3be.GetObjectResult, error)
 	HeadObject(ctx context.Context, key string) (*s3be.HeadObjectResult, error)
 	DeleteObject(ctx context.Context, key string) error
@@ -77,7 +77,7 @@ type ObjectOps interface {
 // MultipartOps is the narrow multipart surface the S3 transport depends on.
 // *multipart.Manager satisfies it.
 type MultipartOps interface {
-	CreateMultipartUpload(ctx context.Context, key, contentType string, metadata map[string]string) (string, string, error)
+	CreateMultipartUpload(ctx context.Context, req *multipart.CreateUploadRequest) (string, string, error)
 	UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, body io.Reader, size int64) (string, error)
 	CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, manifest []core.CompletePart) (string, error)
 	AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error

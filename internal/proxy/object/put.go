@@ -32,8 +32,25 @@ import (
 // PutObject uploads an object to the first backend with available quota.
 // If the upload fails, it retries on remaining eligible backends before
 // returning an error to the caller (write failover).
-func (o *Manager) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
+// PutObjectRequest is one PutObject call's inputs. Bundled rather than passed
+// positionally because the list had already reached the point where two
+// adjacent strings could be transposed without the compiler noticing.
+//
+// Tags are the set the write carries, which replaces whatever the key held: a
+// PUT is a full replacement, so an empty Tags leaves the object untagged even
+// if its predecessor had tags.
+type PutObjectRequest struct {
+	Key         string
+	Body        io.Reader
+	Size        int64
+	ContentType string
+	Metadata    map[string]string
+	Tags        []core.Tag
+}
+
+func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string, error) {
 	const operation = "PutObject"
+	key, size := req.Key, req.Size
 	start := time.Now()
 
 	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
@@ -55,7 +72,7 @@ func (o *Manager) PutObject(ctx context.Context, key string, body io.Reader, siz
 		}
 	}
 
-	plan, err := o.preparePutBody(span, body, size)
+	plan, err := o.preparePutBody(span, req.Body, size)
 	if err != nil {
 		return "", err
 	}
@@ -75,7 +92,7 @@ func (o *Manager) PutObject(ctx context.Context, key string, body io.Reader, siz
 	var lastErr error
 
 	for len(eligible) > 0 {
-		res := o.attemptPutOnBackend(ctx, span, operation, key, plan, contentType, metadata, &dekState, eligible)
+		res := o.attemptPutOnBackend(ctx, span, operation, req, plan, &dekState, eligible)
 		if res.fatalErr != nil {
 			return "", res.fatalErr
 		}
@@ -254,7 +271,8 @@ func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*m
 // attemptPutOnBackend performs one backend PUT attempt: select a
 // destination, prepare the payload (encrypt/hash), insert a pending
 // intent, upload, then promote the intent on success.
-func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, operation, key string, plan *putPlan, contentType string, metadata map[string]string, dekState *putEncryptState, eligible []string) putAttemptResult {
+func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, operation string, req *PutObjectRequest, plan *putPlan, dekState *putEncryptState, eligible []string) putAttemptResult {
+	key := req.Key
 	// Placement decides on the bytes that will occupy the backend, which is
 	// neither the size the client announced nor the size the plan holds: a
 	// compressed write shrank before this point and an encrypted one grows
@@ -288,7 +306,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	}
 
 	bctx, bcancel := o.core.WithTimeout(ctx)
-	etag, err := be.PutObject(bctx, key, uploadBody, uploadSize, contentType, metadata)
+	etag, err := be.PutObject(bctx, key, uploadBody, uploadSize, req.ContentType, req.Metadata)
 	bcancel()
 	if err != nil {
 		o.core.Acct().APICall(backendName)
@@ -315,7 +333,9 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 		return putAttemptResult{backend: backendName, putErr: errDrainRaceAborted}
 	}
 
-	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, key, backendName, uploadSize, form, intentID); err != nil {
+	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
+		Key: key, Backend: backendName, Size: uploadSize, Form: form, Tags: req.Tags, IntentID: intentID,
+	}); err != nil {
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 	return putAttemptResult{backend: backendName, etag: etag, uploadSize: uploadSize}

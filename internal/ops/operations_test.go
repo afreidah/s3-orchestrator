@@ -859,8 +859,13 @@ func TestObjectsGet_ReturnsBody(t *testing.T) {
 func TestObjectsPut_ReturnsETag(t *testing.T) {
 	t.Parallel()
 	objects, api := newObjects(t)
-	api.EXPECT().PutObject(gomock.Any(), testBucket+"/file.txt", gomock.Any(), int64(5), "text/plain", nil).
-		Return("etag-1", nil).Times(1)
+	api.EXPECT().PutObject(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req *object.PutObjectRequest) (string, error) {
+			if req.Key != testBucket+"/file.txt" || req.Size != 5 || req.ContentType != "text/plain" {
+				t.Errorf("unexpected put request: %+v", req)
+			}
+			return "etag-1", nil
+		}).Times(1)
 
 	etag, err := objects.Put(context.Background(), testBucket+"/file.txt", bytes.NewReader([]byte("hello")), 5, "text/plain")
 	if err != nil {
@@ -1168,7 +1173,7 @@ func TestObjects_PropagateBackendFailures(t *testing.T) {
 	t.Run("put", func(t *testing.T) {
 		t.Parallel()
 		objects, api := newObjects(t)
-		api.EXPECT().PutObject(gomock.Any(), key, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		api.EXPECT().PutObject(gomock.Any(), gomock.Any()).
 			Return("", errBackend).Times(1)
 		if _, err := objects.Put(context.Background(), key, bytes.NewReader(nil), 0, ""); !errors.Is(err, errBackend) {
 			t.Errorf("err = %v, want the backend failure", err)

@@ -25,16 +25,11 @@ type TxOps struct {
 // NewTxOps binds the shared methods to the store that will embed them.
 func NewTxOps(r Runner) TxOps { return TxOps{runner: r} }
 
-// RecordObject records an object's location and updates the backend quota,
-// removing and returning any copies the write displaces.
-func (o TxOps) RecordObject(ctx context.Context, key, backend string, size int64, form *StoredForm) ([]DeletedCopy, error) {
-	return RecordObject(ctx, o.runner, key, backend, size, form)
-}
-
-// RecordObjectAndClearPending commits the location and deletes the matching
-// pending intent in one transaction, so the intent never outlives the commit.
-func (o TxOps) RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, form *StoredForm, intentID string) ([]DeletedCopy, error) {
-	return RecordObjectAndClearPending(ctx, o.runner, key, backend, size, form, intentID)
+// RecordObject records an object's location, its tag set and the backend
+// quota in one transaction, removing and returning any copies the write
+// displaces. A non-empty IntentID also clears the matching pending intent.
+func (o TxOps) RecordObject(ctx context.Context, req *RecordObjectRequest) ([]DeletedCopy, error) {
+	return RecordObject(ctx, o.runner, req)
 }
 
 // DeleteObject removes every copy of an object and decrements the quotas,

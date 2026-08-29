@@ -12,12 +12,15 @@
 package object
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
 
 	"go.uber.org/mock/gomock"
 
+	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
@@ -113,6 +116,58 @@ func TestGetObjectTags_ReadError(t *testing.T) {
 
 	if _, err := m.GetObjectTags(context.Background(), "k"); !errors.Is(err, sentinel) {
 		t.Errorf("error = %v, want the store error", err)
+	}
+}
+
+// TestPutObject_CarriesTagsIntoTheRecord verifies a write's tag set reaches
+// the commit, so the object and its tags land in one transaction rather than
+// leaving the object briefly untagged.
+func TestPutObject_CarriesTagsIntoTheRecord(t *testing.T) {
+	store, calls := putObjectStore(t, "b1")
+	f := newFleet(t, store, map[string]backend.ObjectBackend{
+		"b1": backendtest.NewInMemory(),
+	}, nil)
+
+	tags := []core.Tag{{Key: "retain", Value: "30d"}}
+	if _, err := f.PutObject(context.Background(), &PutObjectRequest{
+		Key: "tagged", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain", Tags: tags,
+	}); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	calls.mu.Lock()
+	defer calls.mu.Unlock()
+	if len(calls.recordObject) != 1 {
+		t.Fatalf("expected one record, got %d", len(calls.recordObject))
+	}
+	got := calls.recordObject[0].Tags
+	if len(got) != 1 || got[0].Key != "retain" || got[0].Value != "30d" {
+		t.Errorf("recorded tags = %+v, want the set the write carried", got)
+	}
+}
+
+// TestPutObject_UntaggedWriteRecordsNoTags verifies a write with no tags
+// commits an empty set, which is what clears whatever the key held: a PUT is
+// a full replacement rather than a merge.
+func TestPutObject_UntaggedWriteRecordsNoTags(t *testing.T) {
+	store, calls := putObjectStore(t, "b1")
+	f := newFleet(t, store, map[string]backend.ObjectBackend{
+		"b1": backendtest.NewInMemory(),
+	}, nil)
+
+	if _, err := f.PutObject(context.Background(), &PutObjectRequest{
+		Key: "plain", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain",
+	}); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	calls.mu.Lock()
+	defer calls.mu.Unlock()
+	if len(calls.recordObject) != 1 {
+		t.Fatalf("expected one record, got %d", len(calls.recordObject))
+	}
+	if len(calls.recordObject[0].Tags) != 0 {
+		t.Errorf("expected no tags recorded, got %+v", calls.recordObject[0].Tags)
 	}
 }
 

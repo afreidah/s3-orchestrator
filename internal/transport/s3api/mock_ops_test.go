@@ -15,6 +15,7 @@ import (
 	reflect "reflect"
 
 	backend "github.com/afreidah/s3-orchestrator/internal/backend"
+	multipart "github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	object "github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	core "github.com/afreidah/s3-orchestrator/internal/store/core"
 	gomock "go.uber.org/mock/gomock"
@@ -205,18 +206,18 @@ func (mr *MockObjectOpsMockRecorder) ObjectExists(ctx, key any) *gomock.Call {
 }
 
 // PutObject mocks base method.
-func (m *MockObjectOps) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
+func (m *MockObjectOps) PutObject(ctx context.Context, req *object.PutObjectRequest) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PutObject", ctx, key, body, size, contentType, metadata)
+	ret := m.ctrl.Call(m, "PutObject", ctx, req)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // PutObject indicates an expected call of PutObject.
-func (mr *MockObjectOpsMockRecorder) PutObject(ctx, key, body, size, contentType, metadata any) *gomock.Call {
+func (mr *MockObjectOpsMockRecorder) PutObject(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PutObject", reflect.TypeOf((*MockObjectOps)(nil).PutObject), ctx, key, body, size, contentType, metadata)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PutObject", reflect.TypeOf((*MockObjectOps)(nil).PutObject), ctx, req)
 }
 
 // PutObjectTags mocks base method.
@@ -302,9 +303,9 @@ func (mr *MockMultipartOpsMockRecorder) CountActiveMultipartUploads(ctx, bucketP
 }
 
 // CreateMultipartUpload mocks base method.
-func (m *MockMultipartOps) CreateMultipartUpload(ctx context.Context, key, contentType string, metadata map[string]string) (string, string, error) {
+func (m *MockMultipartOps) CreateMultipartUpload(ctx context.Context, req *multipart.CreateUploadRequest) (string, string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateMultipartUpload", ctx, key, contentType, metadata)
+	ret := m.ctrl.Call(m, "CreateMultipartUpload", ctx, req)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(string)
 	ret2, _ := ret[2].(error)
@@ -312,9 +313,9 @@ func (m *MockMultipartOps) CreateMultipartUpload(ctx context.Context, key, conte
 }
 
 // CreateMultipartUpload indicates an expected call of CreateMultipartUpload.
-func (mr *MockMultipartOpsMockRecorder) CreateMultipartUpload(ctx, key, contentType, metadata any) *gomock.Call {
+func (mr *MockMultipartOpsMockRecorder) CreateMultipartUpload(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateMultipartUpload", reflect.TypeOf((*MockMultipartOps)(nil).CreateMultipartUpload), ctx, key, contentType, metadata)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateMultipartUpload", reflect.TypeOf((*MockMultipartOps)(nil).CreateMultipartUpload), ctx, req)
 }
 
 // GetParts mocks base method.

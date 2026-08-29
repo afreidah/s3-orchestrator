@@ -213,6 +213,58 @@ func TestReplaceObjectTags_NotFound(t *testing.T) {
 	}
 }
 
+// TestEncodeDecodeTags_RoundTrip verifies the storage encoding used for the
+// multipart upload row survives a round trip, sorted, and that an empty string
+// decodes as no tags rather than an error.
+func TestEncodeDecodeTags_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	if got, err := DecodeTags(""); err != nil || len(got) != 0 {
+		t.Fatalf("DecodeTags(\"\") = %v, %v; want no tags and no error", got, err)
+	}
+
+	in := []Tag{{Key: "zeta", Value: "3"}, {Key: "alpha", Value: "with space & =sign"}}
+	got, err := DecodeTags(EncodeTags(in))
+	if err != nil {
+		t.Fatalf("DecodeTags: %v", err)
+	}
+	if len(got) != 2 || got[0].Key != "alpha" || got[1].Key != "zeta" {
+		t.Fatalf("round trip = %+v, want alpha then zeta", got)
+	}
+	if got[0].Value != "with space & =sign" {
+		t.Errorf("value = %q, want the original", got[0].Value)
+	}
+}
+
+// TestDecodeTags_CorruptColumn verifies a column that will not parse surfaces
+// as an error rather than reading as an upload that carried no tags.
+func TestDecodeTags_CorruptColumn(t *testing.T) {
+	t.Parallel()
+	if _, err := DecodeTags("a=%zz"); err == nil {
+		t.Error("expected an error decoding a malformed stored tag set")
+	}
+}
+
+// TestRecordObject_RejectsInvalidTags verifies a write carrying an unusable
+// tag set is refused before a transaction is opened, so a bad set costs no
+// lock and no partial commit.
+func TestRecordObject_RejectsInvalidTags(t *testing.T) {
+	t.Parallel()
+	stub := &quotaTxStub{existingCopies: storedCopy()}
+
+	_, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
+		Key: "k", Backend: "b1", Size: 100,
+		Tags: []Tag{{Key: "a", Value: "1"}, {Key: "a", Value: "2"}},
+	})
+	if !errors.Is(err, ErrDuplicateTagKey) {
+		t.Fatalf("RecordObject() error = %v, want ErrDuplicateTagKey", err)
+	}
+	if len(stub.ops) != 0 || len(stub.tagsInserted) != 0 {
+		t.Errorf("touched the adapter on a rejected set: ops=%v inserted=%v",
+			stub.ops, stub.tagsInserted)
+	}
+}
+
 // TestReplaceObjectTags_ExistenceCheckError verifies a failure to establish
 // whether the object exists aborts the write, rather than being read as
 // absent (which would 404) or ignored (which would orphan the rows).

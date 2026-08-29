@@ -51,6 +51,7 @@ type objRecordCall struct {
 	Key, Backend string
 	Size         int64
 	Form         *core.StoredForm
+	Tags         []core.Tag // the set the write carried, replacing whatever the key held
 }
 
 func stubObjGetBackend(c *objectsCalls, resp string, err error) func(context.Context, int64, []string) (string, error) {
@@ -77,20 +78,13 @@ func stubObjGetLeastUtilized(c *objectsCalls, resp string, err error) func(conte
 	}
 }
 
-func stubObjRecord(c *objectsCalls, err error) func(context.Context, string, string, int64, *core.StoredForm) ([]core.DeletedCopy, error) {
-	return func(_ context.Context, key, backend string, size int64, form *core.StoredForm) ([]core.DeletedCopy, error) {
+func stubObjRecord(c *objectsCalls, err error) func(context.Context, *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
+	return func(_ context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		c.recordObject = append(c.recordObject, objRecordCall{Key: key, Backend: backend, Size: size, Form: form})
-		return nil, err
-	}
-}
-
-func stubObjRecordAndClear(c *objectsCalls, err error) func(context.Context, string, string, int64, *core.StoredForm, string) ([]core.DeletedCopy, error) {
-	return func(_ context.Context, key, backend string, size int64, form *core.StoredForm, _ string) ([]core.DeletedCopy, error) {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		c.recordObject = append(c.recordObject, objRecordCall{Key: key, Backend: backend, Size: size, Form: form})
+		c.recordObject = append(c.recordObject, objRecordCall{
+			Key: req.Key, Backend: req.Backend, Size: req.Size, Form: req.Form, Tags: req.Tags,
+		})
 		return nil, err
 	}
 }
@@ -119,10 +113,8 @@ func stubObjEnqueue(c *objectsCalls) func(context.Context, string, string, strin
 // returns the calls accumulator.
 func objectsStubs(store *storetest.MockMetadataStore) *objectsCalls {
 	c := &objectsCalls{}
-	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjRecord(c, nil)).AnyTimes()
-	store.EXPECT().RecordObjectAndClearPending(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjRecordAndClear(c, nil)).AnyTimes()
 	store.EXPECT().InsertPending(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjInsertPending(c, nil)).AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -226,7 +218,7 @@ func TestPutObject_Success(t *testing.T) {
 	store, c := putObjectStore(t, "b1")
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	etag, err := mgr.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
+	etag, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "mykey", Body: bytes.NewReader([]byte("hello")), Size: 5, ContentType: "text/plain"})
 	if err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
@@ -288,7 +280,7 @@ func TestPutObject_DrainRace_AbortsAndFailsOver(t *testing.T) {
 	mgr.Runtime.SetDrainChecker(&flippingDrainChecker{backend: "b1"})
 
 	before := testutil.ToFloat64(telemetry.DrainRaceAbortedTotal)
-	etag, err := mgr.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
+	etag, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "mykey", Body: bytes.NewReader([]byte("hello")), Size: 5, ContentType: "text/plain"})
 	if err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
@@ -321,7 +313,7 @@ func TestPutObject_DrainRace_AllBackendsDraining(t *testing.T) {
 	// EligibleForWrite check; the per-attempt re-check fires for each.
 	mgr.Runtime.SetDrainChecker(&allFlippingDrainChecker{})
 
-	_, err := mgr.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
+	_, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "mykey", Body: bytes.NewReader([]byte("hello")), Size: 5, ContentType: "text/plain"})
 	if err == nil {
 		t.Fatal("expected error when every backend flipped to draining mid-write")
 	}
@@ -356,7 +348,7 @@ func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
 	store, c := putObjectStore(t, "b1")
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, &fleetOpts{Order: []string{"b1"}, BackendTimeout: 30 * time.Second, PendingDisabled: true})
 
-	if _, err := mgr.PutObject(context.Background(), "pack-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err != nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "pack-key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 	if c.getBackendWithSpaceCalls.Load() != 1 {
@@ -375,7 +367,7 @@ func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
 	store, c := putObjectStore(t, "b1")
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, &fleetOpts{Order: []string{"b1"}, Routing: config.RoutingSpread, BackendTimeout: 30 * time.Second, PendingDisabled: true})
 
-	if _, err := mgr.PutObject(context.Background(), "spread-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err != nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "spread-key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 	if c.getLeastUtilizedCalls.Load() != 1 {
@@ -458,7 +450,7 @@ func TestPutObject_QuotaExhausted(t *testing.T) {
 	store := putObjectErrStore(t, core.ErrNoSpaceAvailable)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 
-	if _, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("x")), 1, "", nil); !errors.Is(err, core.ErrInsufficientStorage) {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("x")), Size: 1}); !errors.Is(err, core.ErrInsufficientStorage) {
 		t.Fatalf("expected st.ErrInsufficientStorage, got %v", err)
 	}
 }
@@ -469,7 +461,7 @@ func TestPutObject_DBUnavailable(t *testing.T) {
 	store := putObjectErrStore(t, core.ErrDBUnavailable)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 
-	if _, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("x")), 1, "", nil); !errors.Is(err, core.ErrServiceUnavailable) {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("x")), Size: 1}); !errors.Is(err, core.ErrServiceUnavailable) {
 		t.Fatalf("expected st.ErrServiceUnavailable, got %v", err)
 	}
 }
@@ -483,7 +475,7 @@ func TestPutObject_BackendFailure_StillRecordsUsage(t *testing.T) {
 	store, _ := putObjectStore(t, "b1")
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	if _, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err == nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err == nil {
 		t.Fatal("expected error from be failure")
 	}
 	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 1 {
@@ -507,10 +499,8 @@ func TestPutObject_RecordFailure_LeavesBackendBytesAndPendingIntent(t *testing.T
 		DoAndReturn(stubObjGetBackend(c, "b1", nil)).AnyTimes()
 	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjGetLeastUtilized(c, "b1", nil)).AnyTimes()
-	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjRecord(c, errors.New("db write failed"))).AnyTimes()
-	store.EXPECT().RecordObjectAndClearPending(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjRecordAndClear(c, errors.New("db write failed"))).AnyTimes()
 	store.EXPECT().InsertPending(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjInsertPending(c, nil)).AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -519,7 +509,7 @@ func TestPutObject_RecordFailure_LeavesBackendBytesAndPendingIntent(t *testing.T
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	if _, err := mgr.PutObject(context.Background(), "cleanup-key", bytes.NewReader([]byte("data")), 4, "", nil); err == nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "cleanup-key", Body: bytes.NewReader([]byte("data")), Size: 4}); err == nil {
 		t.Fatal("expected error from RecordObjectAndClearPending failure")
 	}
 	if !be.Has("cleanup-key") {
@@ -548,7 +538,7 @@ func TestPutObject_RecordFailure_LegacyPath(t *testing.T) {
 		DoAndReturn(stubObjGetBackend(c, "b1", nil)).AnyTimes()
 	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjGetLeastUtilized(c, "b1", nil)).AnyTimes()
-	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjRecord(c, errors.New("db write failed"))).AnyTimes()
 	store.EXPECT().InsertPending(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjInsertPending(c, nil)).AnyTimes()
@@ -558,7 +548,7 @@ func TestPutObject_RecordFailure_LegacyPath(t *testing.T) {
 
 	mgr.Coord.SetPendingEnabledForTest(false)
 
-	if _, err := mgr.PutObject(context.Background(), "legacy-key", bytes.NewReader([]byte("data")), 4, "", nil); err == nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "legacy-key", Body: bytes.NewReader([]byte("data")), Size: 4}); err == nil {
 		t.Fatal("expected error from RecordObject failure")
 	}
 	if be.Has("legacy-key") {
@@ -585,7 +575,7 @@ func TestPutObject_WriteFailover_Success(t *testing.T) {
 	store, c := eligibleStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
 
-	etag, err := mgr.PutObject(context.Background(), "failover-key", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
+	etag, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "failover-key", Body: bytes.NewReader([]byte("hello")), Size: 5, ContentType: "text/plain"})
 	if err != nil {
 		t.Fatalf("PutObject should succeed via failover: %v", err)
 	}
@@ -620,7 +610,7 @@ func TestPutObject_WriteFailover_AllBackendsFail(t *testing.T) {
 	store, _ := eligibleStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2, "b3": b3}, &fleetOpts{Order: []string{"b1", "b2", "b3"}})
 
-	if _, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err == nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err == nil {
 		t.Fatal("expected error when all backends fail")
 	}
 	total := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests) +
@@ -644,7 +634,7 @@ func TestPutObject_WriteFailover_SkipsMultipleFailedBackends(t *testing.T) {
 	store, c := eligibleStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2, "b3": b3}, &fleetOpts{Order: []string{"b1", "b2", "b3"}})
 
-	etag, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	etag, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"})
 	if err != nil {
 		t.Fatalf("PutObject should succeed on b3: %v", err)
 	}
@@ -670,7 +660,7 @@ func TestPutObject_WriteFailover_Metrics(t *testing.T) {
 	store, _ := eligibleStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
 
-	if _, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err != nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 
@@ -691,7 +681,7 @@ func TestPutObject_WriteFailover_UsageTracking(t *testing.T) {
 	store, _ := eligibleStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
 
-	if _, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err != nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 
@@ -721,7 +711,7 @@ func TestPutObject_WriteFailover_DataIntegrity(t *testing.T) {
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
 
 	payload := []byte("the quick brown fox jumps over the lazy dog")
-	if _, err := mgr.PutObject(context.Background(), "key", bytes.NewReader(payload), int64(len(payload)), "text/plain", map[string]string{"x-custom": "value"}); err != nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader(payload), Size: int64(len(payload)), ContentType: "text/plain", Metadata: map[string]string{"x-custom": "value"}}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 
@@ -745,7 +735,7 @@ func TestPutObject_WriteFailover_BufferBodyError(t *testing.T) {
 	store, _ := eligibleStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"b1"}})
 
-	_, err := mgr.PutObject(context.Background(), "key", &errReader{err: errors.New("read failed")}, 4, "text/plain", nil)
+	_, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: &errReader{err: errors.New("read failed")}, Size: 4, ContentType: "text/plain"})
 	if err == nil {
 		t.Fatal("expected error from body buffer failure")
 	}
@@ -787,7 +777,7 @@ func TestPutObject_WriteFailover_SelectBackendErrorDuringRetry(t *testing.T) {
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"b1", "b2"}})
 
-	if _, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil); !errors.Is(err, core.ErrServiceUnavailable) {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); !errors.Is(err, core.ErrServiceUnavailable) {
 		t.Fatalf("expected st.ErrServiceUnavailable, got %v", err)
 	}
 }
@@ -799,7 +789,7 @@ func TestPutObject_WriteFailover_BackendNotInMap(t *testing.T) {
 	store, _ := putObjectStore(t, "ghost")
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"b1"}})
 
-	if _, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err == nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err == nil {
 		t.Fatal("expected error when backend not in map")
 	}
 }
@@ -825,7 +815,7 @@ func TestPutObject_WriteFailover_WithEncryption(t *testing.T) {
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}, BackendTimeout: 30 * time.Second, Encryptor: enc, PendingDisabled: true})
 
 	payload := []byte("encrypt-failover-test-data")
-	etag, err := mgr.PutObject(context.Background(), "enc-key", bytes.NewReader(payload), int64(len(payload)), "text/plain", nil)
+	etag, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "enc-key", Body: bytes.NewReader(payload), Size: int64(len(payload)), ContentType: "text/plain"})
 	if err != nil {
 		t.Fatalf("PutObject with encryption failover: %v", err)
 	}
@@ -917,7 +907,7 @@ func TestHeadObject_WithEncryption(t *testing.T) {
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1}, &fleetOpts{Order: []string{"b1"}, BackendTimeout: 30 * time.Second, Encryptor: enc, PendingDisabled: true})
 
 	payload := []byte("head-encryption-test-data")
-	if _, err = mgr.PutObject(context.Background(), "enc-key", bytes.NewReader(payload), int64(len(payload)), "text/plain", nil); err != nil {
+	if _, err = mgr.PutObject(context.Background(), &PutObjectRequest{Key: "enc-key", Body: bytes.NewReader(payload), Size: int64(len(payload)), ContentType: "text/plain"}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 
@@ -941,7 +931,7 @@ func TestPutObject_WriteFailover_NoFailoverMetricOnFirstSuccess(t *testing.T) {
 	store, _ := eligibleStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
 
-	if _, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil); err != nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 
@@ -1503,7 +1493,7 @@ func TestPutObject_IntegrityEnabled_PersistsContentHash(t *testing.T) {
 
 	mgr.SetIntegrityConfig(&config.IntegrityConfig{Enabled: true})
 
-	_, err := mgr.PutObject(context.Background(), "k", bytes.NewReader([]byte("hello")), 5, "text/plain", nil)
+	_, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "k", Body: bytes.NewReader([]byte("hello")), Size: 5, ContentType: "text/plain"})
 	if err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
@@ -1584,7 +1574,7 @@ func TestCopyObject_RecordFailureSurfaces(t *testing.T) {
 	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjGetLeastUtilized(c, "b1", nil)).AnyTimes()
 	// RecordObject returns an error -> RecordObjectOrCleanup wraps + recovers + returns.
-	store.EXPECT().RecordObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjRecord(c, errors.New("commit failed"))).AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjEnqueue(c)).AnyTimes()
@@ -2016,7 +2006,7 @@ func TestPutObject_BackendTimeout(t *testing.T) {
 	store, _ := putObjectStore(t, "b1")
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": slowBackend}, &fleetOpts{Order: []string{"b1"}, BackendTimeout: 50 * time.Millisecond, PendingDisabled: true})
 
-	_, err := mgr.PutObject(context.Background(), "timeout-key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	_, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "timeout-key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"})
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -2112,7 +2102,7 @@ func TestPutObject_InvalidatesCache(t *testing.T) {
 
 	mgr.LocationCache().Set("mykey", "old-be")
 
-	if _, err := mgr.PutObject(context.Background(), "mykey", bytes.NewReader([]byte("hello")), 5, "text/plain", nil); err != nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "mykey", Body: bytes.NewReader([]byte("hello")), Size: 5, ContentType: "text/plain"}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 
@@ -2155,7 +2145,7 @@ func TestPutObject_UsageLimitOverflow(t *testing.T) {
 
 	mgr.Runtime.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
 
-	etag, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
+	etag, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"})
 	if err != nil {
 		t.Fatalf("PutObject should overflow to b2: %v", err)
 	}
@@ -2258,7 +2248,7 @@ func TestPutObject_UsageLimitRejectionsMetric(t *testing.T) {
 
 	before := testutil.ToFloat64(telemetry.UsageLimitRejectionsTotal.WithLabelValues("PutObject", "write"))
 
-	if _, err := mgr.PutObject(context.Background(), "key", bytes.NewReader([]byte("x")), 1, "text/plain", nil); err == nil {
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("x")), Size: 1, ContentType: "text/plain"}); err == nil {
 		t.Fatal("expected error from PutObject with all backends over limit")
 	}
 

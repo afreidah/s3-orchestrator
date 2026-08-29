@@ -315,7 +315,7 @@ func TestPgAdapter_GetExistingCopiesForUpdate_ReturnsAllCopies(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
@@ -374,7 +374,7 @@ func TestPgAdapter_InsertObjectLocation_PreservesEncryptionFields(t *testing.T) 
 		PlaintextSize: 50,
 		ContentHash:   "abc123",
 	}
-	if _, err := s.RecordObject(ctx, key, "backend-a", 75, form); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 75, Form: form}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
@@ -402,10 +402,10 @@ func TestPgAdapter_DeleteObjectCopies_RemovesAllRows(t *testing.T) {
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
 	other := uniqueKey(t, "other")
-	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject(target): %v", err)
 	}
-	if _, err := s.RecordObject(ctx, other, "backend-a", 100, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: other, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject(other): %v", err)
 	}
 	defer func() {
@@ -440,7 +440,7 @@ func TestPgAdapter_CheckObjectExistsOnBackend(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
@@ -477,7 +477,7 @@ func TestPgAdapter_LockObjectOnBackend_ReturnsRow(t *testing.T) {
 		PlaintextSize: 50,
 		ContentHash:   "hash",
 	}
-	if _, err := s.RecordObject(ctx, key, "backend-a", 75, form); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 75, Form: form}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
@@ -523,7 +523,7 @@ func TestPgAdapter_DeleteObjectFromBackend_RemovesOneRow(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
@@ -569,7 +569,7 @@ func TestPgAdapter_InsertReplicaConditional_InsertsWhenSourceExists(t *testing.T
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
@@ -728,7 +728,7 @@ func TestPgAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState(t *testing.
 		KeyID:         "key-1",
 		PlaintextSize: 1024,
 	}
-	if _, err := s.RecordObject(ctx, key, "backend-a", 1100, form); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1100, Form: form}); err != nil {
 		t.Fatalf("RecordObject encrypted: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
@@ -763,7 +763,7 @@ func TestPgAdapter_GetExistingCopiesForUpdate_ReportsUnencryptedCopy(t *testing.
 	ctx := context.Background()
 	key := uniqueKey(t, "plain")
 
-	if _, err := s.RecordObject(ctx, key, "backend-a", 100, nil); err != nil {
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()

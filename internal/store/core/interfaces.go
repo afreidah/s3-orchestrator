@@ -54,8 +54,7 @@ type MetadataStore interface {
 type ObjectStore interface {
 	GetAllObjectLocations(ctx context.Context, key string) ([]ObjectLocation, error)
 	GetObjectBackendsForKeys(ctx context.Context, keys []string) (map[string][]string, error)
-	RecordObject(ctx context.Context, key, backend string, size int64, form *StoredForm) ([]DeletedCopy, error)
-	RecordObjectAndClearPending(ctx context.Context, key, backend string, size int64, form *StoredForm, intentID string) ([]DeletedCopy, error)
+	RecordObject(ctx context.Context, req *RecordObjectRequest) ([]DeletedCopy, error)
 	DeleteObject(ctx context.Context, key string) ([]DeletedCopy, error)
 	DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]DeletedCopy, error)
 	ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error)
@@ -118,6 +117,7 @@ type CreateMultipartUploadParams struct {
 	Metadata      map[string]string
 	EncryptionKey []byte // empty for unencrypted uploads
 	KeyID         string // empty for unencrypted uploads
+	Tags          []Tag  // applied to the object CompleteMultipartUpload produces
 }
 
 // ReplicationStore defines replication management operations.

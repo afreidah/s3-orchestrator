@@ -110,7 +110,20 @@ func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.Respons
 		}
 	}
 
-	uploadID, _, err := s.Multipart.CreateMultipartUpload(ctx, internalKey, contentType, metadata)
+	// Refused before the upload is opened, so an unusable tag set costs no
+	// upload slot and no parts: the alternative is discovering it at complete,
+	// after the client has transferred everything.
+	tags, err := parseTaggingHeader(r.Header.Get("x-amz-tagging"))
+	if err != nil {
+		return writeTaggingError(w, err), err
+	}
+
+	uploadID, _, err := s.Multipart.CreateMultipartUpload(ctx, &multipart.CreateUploadRequest{
+		Key:         internalKey,
+		ContentType: contentType,
+		Metadata:    metadata,
+		Tags:        tags,
+	})
 	if err != nil {
 		return writeStorageError(w, err, "Failed to create multipart upload"), err
 	}

@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // newBenchStore builds an in-memory store for benchmarks (newTestStore is
@@ -67,7 +68,7 @@ func seedDelimitedKeys(b *testing.B, s *Store, n, dirs int) {
 	ctx := context.Background()
 	for i := range n {
 		key := fmt.Sprintf("logs/dir%02d/key%08d.txt", i%dirs, i)
-		if _, err := s.RecordObject(ctx, key, "backend-a", 1, nil); err != nil {
+		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1}); err != nil {
 			b.Fatalf("RecordObject: %v", err)
 		}
 	}

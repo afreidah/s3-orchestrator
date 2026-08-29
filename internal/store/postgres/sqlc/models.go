@@ -73,6 +73,7 @@ type MultipartUpload struct {
 	Metadata      []byte
 	EncryptionKey []byte
 	KeyID         *string
+	Tagging       *string
 }
 
 type NotificationOutbox struct {

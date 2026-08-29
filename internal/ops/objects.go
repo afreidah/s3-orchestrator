@@ -21,6 +21,7 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
@@ -134,7 +135,9 @@ func (o *Objects) Put(ctx context.Context, key string, body io.Reader, size int6
 		return "", err
 	}
 
-	etag, err := o.objects.PutObject(ctx, key, body, size, contentType, nil)
+	etag, err := o.objects.PutObject(ctx, &object.PutObjectRequest{
+		Key: key, Body: body, Size: size, ContentType: contentType,
+	})
 	if err != nil {
 		return "", err
 	}
