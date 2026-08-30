@@ -26,6 +26,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -60,27 +61,36 @@ func newStoredHasher(ops StoredReader, enc *encryption.Encryptor, codec StreamDe
 	return &storedHasher{ops: ops, encryptor: enc, codec: codec, source: source}
 }
 
-// hashStored reads a copy from its backend and returns the SHA-256 hex digest
-// of the bytes the client wrote. Records the API call and egress against the
+// storedDigests are the two digests one read of a stored copy produces: the
+// SHA-256 integrity verifies against, and the MD5 that is the object's ETag.
+// Both come off the same pass, so the ETag of an object whose stored bytes are
+// not the client's costs no extra egress to learn.
+type storedDigests struct {
+	SHA256 string
+	MD5    string
+}
+
+// hashStored reads a copy from its backend and returns the digests of the
+// bytes the client wrote. Records the API call and egress against the
 // backend's usage quota.
-func (h *storedHasher) hashStored(ctx context.Context, loc *core.ObjectLocation) (string, error) {
+func (h *storedHasher) hashStored(ctx context.Context, loc *core.ObjectLocation) (storedDigests, error) {
 	// A row that contradicts itself about encryption cannot produce a
 	// meaningful plaintext hash, so it is rejected before a backend read is
 	// spent on it.
 	if err := core.ValidateEncryptionMetadata(loc); err != nil {
 		telemetry.EncryptionFlagMismatchTotal.WithLabelValues(h.source).Inc()
-		return "", err
+		return storedDigests{}, err
 	}
 
 	be, err := h.ops.GetBackend(loc.BackendName)
 	if err != nil {
-		return "", err
+		return storedDigests{}, err
 	}
 
 	result, cancel, err := h.ops.GetWithTimeout(ctx, be, loc.ObjectKey, "")
 	if err != nil {
 		h.ops.Acct().APICall(loc.BackendName)
-		return "", fmt.Errorf("get object: %w", err)
+		return storedDigests{}, fmt.Errorf("get object: %w", err)
 	}
 	defer cancel()
 	defer result.Body.Close()
@@ -93,25 +103,26 @@ func (h *storedHasher) hashStored(ctx context.Context, loc *core.ObjectLocation)
 	// turns any later repair of the flag into a false integrity failure.
 	isEnvelope, body, err := encryption.PeekEnvelope(result.Body)
 	if err != nil {
-		return "", fmt.Errorf("inspect object header: %w", err)
+		return storedDigests{}, fmt.Errorf("inspect object header: %w", err)
 	}
 	if isEnvelope != loc.Encrypted {
 		telemetry.EncryptionFlagMismatchTotal.WithLabelValues(h.source).Inc()
-		return "", fmt.Errorf("%w: row says encrypted=%t but stored bytes say encrypted=%t",
+		return storedDigests{}, fmt.Errorf("%w: row says encrypted=%t but stored bytes say encrypted=%t",
 			core.ErrEncryptionFlagMismatch, loc.Encrypted, isEnvelope)
 	}
 
 	reader, closeDecoded, err := h.decode(ctx, body, loc)
 	if err != nil {
-		return "", err
+		return storedDigests{}, err
 	}
 	defer closeDecoded()
 
 	hasher := sha256.New()
-	if _, err := io.Copy(hasher, reader); err != nil {
-		return "", fmt.Errorf("read body: %w", err)
+	etagHasher := etag.NewHasher()
+	if _, err := io.Copy(io.MultiWriter(hasher, etagHasher), reader); err != nil {
+		return storedDigests{}, fmt.Errorf("read body: %w", err)
 	}
-	return hex.EncodeToString(hasher.Sum(nil)), nil
+	return storedDigests{SHA256: hex.EncodeToString(hasher.Sum(nil)), MD5: etag.Hex(etagHasher)}, nil
 }
 
 // decode undoes the stored form in the order it was applied, so the hash covers

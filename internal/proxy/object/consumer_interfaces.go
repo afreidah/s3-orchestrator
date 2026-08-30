@@ -97,7 +97,7 @@ type WriteRouter interface {
 // permanent object_locations row. Tests that exercise only the
 // pending-pattern handoff can mock this alone.
 type PendingWriter interface {
-	InsertPendingIntent(ctx context.Context, key, backendName string, size int64, form *core.StoredForm) (string, error)
+	InsertPendingIntent(ctx context.Context, key, backendName string, size int64, form *core.StoredForm, id *core.ObjectIdentity) (string, error)
 	RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest) error
 }
 

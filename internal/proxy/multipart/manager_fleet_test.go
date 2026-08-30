@@ -84,11 +84,13 @@ func stubDeleteMultipart(c *multipartCalls) func(context.Context, string) error 
 	}
 }
 
-func stubRecordPart(c *multipartCalls, err error) func(context.Context, string, int, string, int64, *core.StoredForm) error {
-	return func(_ context.Context, uploadID string, partNumber int, etag string, size int64, form *core.StoredForm) error {
+func stubRecordPart(c *multipartCalls, err error) func(context.Context, *core.RecordPartParams) error {
+	return func(_ context.Context, p *core.RecordPartParams) error {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		c.recordPart = append(c.recordPart, multipartPartCall{uploadID: uploadID, partNumber: partNumber, etag: etag, sizeBytes: size, form: form})
+		c.recordPart = append(c.recordPart, multipartPartCall{
+			uploadID: p.UploadID, partNumber: p.PartNumber, etag: p.ETag, sizeBytes: p.SizeBytes, form: p.Form,
+		})
 		return err
 	}
 }
@@ -135,7 +137,7 @@ func multipartStubs(t *testing.T, store *storetest.MockMetadataStore) *multipart
 		DoAndReturn(stubCreateMultipart(c, nil)).AnyTimes()
 	store.EXPECT().DeleteMultipartUpload(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubDeleteMultipart(c)).AnyTimes()
-	store.EXPECT().RecordPart(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordPart(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubRecordPart(c, nil)).AnyTimes()
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubRecordObject(c, nil)).AnyTimes()
@@ -732,7 +734,7 @@ func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).AnyTimes()
-	store.EXPECT().RecordPart(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordPart(gomock.Any(), gomock.Any()).
 		Return(errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
 
@@ -761,7 +763,7 @@ func TestUploadPart_RecordPartFails_DeleteFails_EnqueuesCleanup(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).AnyTimes()
-	store.EXPECT().RecordPart(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordPart(gomock.Any(), gomock.Any()).
 		Return(errors.New("db error")).AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubMultipartEnqueue(c)).AnyTimes()
@@ -1195,11 +1197,13 @@ func TestCompleteMultipartUpload_Encrypted_RoundTrips(t *testing.T) {
 				Encrypted: true, EncryptionKey: encKey, KeyID: keyID,
 			}, nil
 		}).AnyTimes()
-	store.EXPECT().RecordPart(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, uploadID string, partNumber int, etag string, size int64, form *core.StoredForm) error {
+	store.EXPECT().RecordPart(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, p *core.RecordPartParams) error {
 			partsCallsMu.Lock()
 			defer partsCallsMu.Unlock()
-			partsCalls = append(partsCalls, multipartPartCall{uploadID: uploadID, partNumber: partNumber, etag: etag, sizeBytes: size, form: form})
+			partsCalls = append(partsCalls, multipartPartCall{
+				uploadID: p.UploadID, partNumber: p.PartNumber, etag: p.ETag, sizeBytes: p.SizeBytes, form: p.Form,
+			})
 			return nil
 		}).AnyTimes()
 	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).

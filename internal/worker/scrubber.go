@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -43,6 +44,11 @@ type ScrubberStore interface {
 	core.IntegrityStore
 	DeleteObjectLocation(ctx context.Context, key, backendName string) error
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
+
+	// RecordObjectIdentity gives an object with no recorded ETag the one this
+	// pass computes from the plaintext, which is the only source for a copy
+	// whose stored bytes are compressed or encrypted.
+	RecordObjectIdentity(ctx context.Context, key string, id *core.ObjectIdentity) error
 }
 
 // Scrubber periodically verifies stored object integrity by reading objects
@@ -348,11 +354,11 @@ func (s *Scrubber) verifyObject(ctx context.Context, loc *core.ObjectLocation) (
 		return false, err
 	}
 
-	if actual != loc.ContentHash {
+	if actual.SHA256 != loc.ContentHash {
 		be, _ := s.deps.GetBackend(loc.BackendName)
 		s.log.ErrorContext(ctx, "integrity check failed",
 			"key", loc.ObjectKey, "backend", loc.BackendName,
-			"expected_hash", loc.ContentHash, "actual_hash", actual)
+			"expected_hash", loc.ContentHash, "actual_hash", actual.SHA256)
 		telemetry.IntegrityErrorsTotal.WithLabelValues("scrub").Inc()
 		if be != nil {
 			s.placement.DeleteOrEnqueue(ctx, be, loc.BackendName, loc.ObjectKey,
@@ -431,27 +437,46 @@ func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int, observer
 // hashOne computes and stores the hash for one object, returning the outcome
 // for the batch tally and a status for the progress stream.
 func (s *Scrubber) hashOne(ctx context.Context, loc *core.ObjectLocation) ItemResult {
-	hash, hashErr := s.readAndHash(ctx, loc)
+	digests, hashErr := s.readAndHash(ctx, loc)
 	if hashErr != nil {
 		s.log.WarnContext(ctx, "failed to hash object",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", hashErr)
 		return ItemResult{Outcome: ItemFailed, Status: progress.StatusFailed}
 	}
-	if err := s.store.UpdateContentHash(ctx, loc.ObjectKey, loc.BackendName, hash); err != nil {
+	if err := s.store.UpdateContentHash(ctx, loc.ObjectKey, loc.BackendName, digests.SHA256); err != nil {
 		s.log.WarnContext(ctx, "failed to store hash",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 		return ItemResult{Outcome: ItemFailed, Status: progress.StatusFailed}
 	}
+	s.recordETag(ctx, loc, digests.MD5)
 	return ItemResult{Outcome: ItemSucceeded, Status: progress.StatusOK}
+}
+
+// recordETag gives an object with no recorded ETag the one this pass just
+// computed. It is the only way a compressed or encrypted object gets one
+// without a client write: the backend's own value describes the stored bytes,
+// so a read cannot adopt it, and this pass already has the plaintext in hand.
+//
+// The store fills only what is NULL, so an object that already has an ETag -
+// every object written since it started being recorded - keeps it.
+func (s *Scrubber) recordETag(ctx context.Context, loc *core.ObjectLocation, digest string) {
+	if digest == "" {
+		return
+	}
+	id := &core.ObjectIdentity{ETag: etag.Single(digest)}
+	if err := s.store.RecordObjectIdentity(ctx, loc.ObjectKey, id); err != nil {
+		s.log.WarnContext(ctx, "failed to record object etag",
+			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
+	}
 }
 
 // -------------------------------------------------------------------------
 // SHARED  -  read object from backend, decrypt if needed, compute SHA-256
 // -------------------------------------------------------------------------
 
-// readAndHash returns the SHA-256 hex digest of the bytes the client wrote for
-// this copy. The digest has to match what the replicator computes for the same
-// copy, so the work lives in storedHasher rather than here.
-func (s *Scrubber) readAndHash(ctx context.Context, loc *core.ObjectLocation) (string, error) {
+// readAndHash returns the digests of the bytes the client wrote for this copy.
+// They have to match what the replicator computes for the same copy, so the
+// work lives in storedHasher rather than here.
+func (s *Scrubber) readAndHash(ctx context.Context, loc *core.ObjectLocation) (storedDigests, error) {
 	return s.hasher.hashStored(ctx, loc)
 }

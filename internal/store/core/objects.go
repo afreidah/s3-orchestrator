@@ -34,6 +34,7 @@ type RecordObjectRequest struct {
 	Backend  string
 	Size     int64
 	Form     *StoredForm
+	Identity *ObjectIdentity
 	Tags     []Tag
 	IntentID string
 }
@@ -84,7 +85,7 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 	if err := replaceObjectTagsTx(ctx, tx, req.Key, req.Tags); err != nil {
 		return nil, err
 	}
-	if err := tx.InsertObjectLocation(ctx, objectFromStoredForm(req.Key, req.Backend, req.Size, req.Form)); err != nil {
+	if err := tx.InsertObjectLocation(ctx, objectFromStoredForm(req.Key, req.Backend, req.Size, req.Form, req.Identity)); err != nil {
 		return nil, fmt.Errorf("insert object location: %w", err)
 	}
 	deltas[req.Backend] += req.Size
@@ -289,7 +290,7 @@ func MoveObjectLocation(ctx context.Context, runner Runner, key, fromBackend, to
 		// hand-listed subset of the source row's fields. A field omitted here is
 		// a column describing bytes the moved copy then contradicts, which is
 		// how this path came to drop the compression columns.
-		dest := objectFromStoredForm(key, toBackend, src.SizeBytes, StoredFormFromLocation(src))
+		dest := objectFromStoredForm(key, toBackend, src.SizeBytes, StoredFormFromLocation(src), src.Identity)
 		if err := tx.InsertObjectLocation(ctx, dest); err != nil {
 			return 0, err
 		}
@@ -387,7 +388,12 @@ func ImportObject(ctx context.Context, runner Runner, key, backend string, size 
 			return ImportSkippedPendingCleanup, nil
 		}
 
-		loc := objectFromStoredForm(key, backend, size, form)
+		// No identity: an imported object's ETag is whatever the backend
+		// reports, which is not known here and is not the same answer on every
+		// copy. The first read that has to ask the backend records what it got
+		// for every copy, so the value settles on first use instead of being
+		// guessed at import.
+		loc := objectFromStoredForm(key, backend, size, form, nil)
 		loc.Unmanaged = unmanaged
 		inserted, err := tx.InsertObjectLocationIfNotExists(ctx, loc)
 		if err != nil {

@@ -63,6 +63,7 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 			res, wire, err := o.getObjectAttempt(ctx, key, rangeHeader, beName, backend, loc)
 			if err == nil {
 				wireBytes.Store(wire)
+				applyStoredIdentity(res.Value, loc)
 			}
 			return res, err
 		})
@@ -331,6 +332,22 @@ func (o *Manager) dropCorruptedLocation(ctx context.Context, key, beName string)
 // client with zero proxy-side buffering, so a 5 GB GET with a 100 MB
 // max_object_size never allocates more than the read buffer worth of
 // heap.
+// applyStoredIdentity replaces the serving copy's answer with the object's
+// own, which is the point of storing it: the backend reports a digest of the
+// bytes it holds, so an unranged GET that failed over to a replica would
+// otherwise hand the client a different validator for an unchanged object.
+//
+// loc is nil on a degraded-mode broadcast, where there is no row to prefer.
+func applyStoredIdentity(res *s3be.GetObjectResult, loc *core.ObjectLocation) {
+	if res == nil || loc == nil || !loc.Identity.Complete() {
+		return
+	}
+	res.ETag = loc.Identity.ETag
+	if loc.Identity.ContentType != "" {
+		res.ContentType = loc.Identity.ContentType
+	}
+}
+
 func (o *Manager) populateObjectCache(key, rangeHeader string, result *s3be.GetObjectResult, tagCount int) error {
 	if o.objectCache == nil || rangeHeader != "" || result.Size <= 0 {
 		return nil

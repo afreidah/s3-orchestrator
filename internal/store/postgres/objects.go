@@ -80,7 +80,21 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 	}
 
 	objects := toSlimObjectLocations(rows)
+	for i := range rows {
+		objects[i].Identity = listedIdentity(rows[i].Etag)
+	}
 	return core.BuildListPage(objects, maxKeys), nil
+}
+
+// listedIdentity builds the identity a listing row carries. A listing selects
+// the ETag and nothing else of the identity, which is all a Contents entry
+// reports; NULL means the object has not learned one yet and the entry carries
+// no ETag rather than a wrong one.
+func listedIdentity(etag *string) *core.ObjectIdentity {
+	if etag == nil || *etag == "" {
+		return nil
+	}
+	return &core.ObjectIdentity{ETag: *etag}
 }
 
 // ListObjectsDelimited groups a delimiter listing in Postgres through the
@@ -118,6 +132,7 @@ func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, sta
 				BackendName: r.BackendName,
 				SizeBytes:   r.SizeBytes,
 				CreatedAt:   r.CreatedAt.Time,
+				Identity:    listedIdentity(&r.Etag),
 			}
 		}
 		entries[i] = e
@@ -247,4 +262,26 @@ func (s *Store) ListDirectoryChildren(ctx context.Context, prefix, startAfter st
 	}
 
 	return result, nil
+}
+
+// RecordObjectIdentity fills the identity columns a read had to ask a backend
+// for. Applied to every copy of the key: a per-copy value is what lets a
+// failover change the ETag under a conditional request.
+func (s *Store) RecordObjectIdentity(ctx context.Context, key string, id *core.ObjectIdentity) error {
+	if id == nil {
+		return nil
+	}
+	meta, err := core.EncodeUserMetadata(id.UserMetadata)
+	if err != nil {
+		return err
+	}
+	if err := s.queries.RecordObjectIdentity(ctx, db.RecordObjectIdentityParams{
+		ObjectKey:    key,
+		Etag:         strPtr(id.ETag),
+		ContentType:  strPtr(id.ContentType),
+		UserMetadata: meta,
+	}); err != nil {
+		return fmt.Errorf("record object identity: %w", err)
+	}
+	return nil
 }

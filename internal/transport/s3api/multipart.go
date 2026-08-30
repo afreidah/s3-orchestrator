@@ -236,9 +236,9 @@ func (s *Server) checkMultipartTotalSize(ctx context.Context, w http.ResponseWri
 		requested[pn] = true
 	}
 	var totalSize int64
-	for _, p := range parts {
-		if requested[p.PartNumber] {
-			totalSize += p.SizeBytes
+	for i := range parts {
+		if requested[parts[i].PartNumber] {
+			totalSize += parts[i].SizeBytes
 		}
 	}
 	if totalSize > s.MaxObjectSize {
@@ -337,12 +337,12 @@ func (s *Server) handleListParts(ctx context.Context, w http.ResponseWriter, r *
 		UploadId: uploadID,
 	}
 
-	for _, p := range parts {
+	for i := range parts {
 		result.Parts = append(result.Parts, partInfo{
-			PartNumber:   p.PartNumber,
-			ETag:         p.ETag,
-			Size:         p.SizeBytes,
-			LastModified: p.CreatedAt.UTC().Format(time.RFC3339),
+			PartNumber:   parts[i].PartNumber,
+			ETag:         parts[i].ETag,
+			Size:         parts[i].SizeBytes,
+			LastModified: parts[i].CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
 

@@ -54,6 +54,12 @@ CREATE TABLE IF NOT EXISTS object_locations (
     -- not to shrink enough is not downloaded and encoded again to find out.
     compression_probe_size     INTEGER,
     compression_probe_level    TEXT,
+    -- What a HEAD answers with, held here so every copy reports the same
+    -- validator and the backend round trip can be skipped. NULL means unknown,
+    -- which is distinct from a known-empty content type or metadata set.
+    etag           TEXT,
+    content_type   TEXT,
+    user_metadata  TEXT,
     created_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (object_key, backend_name)
 );
@@ -110,6 +116,10 @@ CREATE TABLE IF NOT EXISTS multipart_parts (
     encryption_key BLOB,
     key_id         TEXT,
     plaintext_size INTEGER,
+    -- MD5 of the bytes the client sent for this part, which etag is not once
+    -- the stored part is ciphertext. The AWS multipart ETag is the MD5 of the
+    -- concatenated part digests, so it can only be built from these.
+    plaintext_etag TEXT,
     created_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (upload_id, part_number)
 );
@@ -199,6 +209,10 @@ CREATE TABLE IF NOT EXISTS pending_objects (
     compression_level          TEXT,
     compression_format_version INTEGER,
     logical_size               INTEGER,
+    -- Carried so a reaper-promoted intent keeps the identity the write knew.
+    etag           TEXT,
+    content_type   TEXT,
+    user_metadata  TEXT,
     created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -225,4 +239,4 @@ CREATE INDEX IF NOT EXISTS idx_object_tags_lookup
     ON object_tags(tag_key, tag_value);
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (10);
+INSERT INTO schema_version (version) VALUES (11);

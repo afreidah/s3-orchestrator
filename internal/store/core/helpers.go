@@ -101,12 +101,15 @@ func StoredFormFromLocation(loc *ObjectLocation) *StoredForm {
 
 // objectFromStoredForm builds an ObjectLocation suitable for
 // InsertObjectLocation from a key/backend/size triple plus the optional
-// description of how the bytes are stored.
-func objectFromStoredForm(key, backend string, size int64, form *StoredForm) *ObjectLocation {
+// description of how the bytes are stored and the optional client-facing
+// identity. A nil identity leaves the row's columns NULL, which is what a
+// write that never learned the object's ETag records.
+func objectFromStoredForm(key, backend string, size int64, form *StoredForm, id *ObjectIdentity) *ObjectLocation {
 	loc := &ObjectLocation{
 		ObjectKey:   key,
 		BackendName: backend,
 		SizeBytes:   size,
+		Identity:    id,
 	}
 	if form == nil {
 		return loc

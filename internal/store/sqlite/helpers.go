@@ -13,6 +13,8 @@ package sqlite
 import (
 	"database/sql"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -111,4 +113,50 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// -------------------------------------------------------------------------
+// IDENTITY COLUMN HELPERS
+// -------------------------------------------------------------------------
+
+// identityETag, identityContentType and identityMetadataJSON render the three
+// identity columns from an optional *core.ObjectIdentity. A nil identity
+// writes NULL to all three, which is the row an object whose ETag was never
+// computed carries.
+func identityETag(id *core.ObjectIdentity) sql.NullString {
+	if id == nil {
+		return sql.NullString{}
+	}
+	return nullableString(id.ETag)
+}
+
+func identityContentType(id *core.ObjectIdentity) sql.NullString {
+	if id == nil {
+		return sql.NullString{}
+	}
+	return nullableString(id.ContentType)
+}
+
+// A marshal failure would mean a map[string]string that cannot be JSON, which
+// does not exist; the column stays NULL rather than failing a write over
+// metadata a later read can re-learn.
+func identityMetadataJSON(id *core.ObjectIdentity) sql.NullString {
+	if id == nil {
+		return sql.NullString{}
+	}
+	b, err := core.EncodeUserMetadata(id.UserMetadata)
+	if err != nil || len(b) == 0 {
+		return sql.NullString{}
+	}
+	return nullableString(string(b))
+}
+
+// identityFromColumns rebuilds the identity a row carries, or nil when it
+// carries none.
+func identityFromColumns(etag, contentType, userMetadata sql.NullString) *core.ObjectIdentity {
+	id, err := core.IdentityFromColumns(nullStringValue(etag), nullStringValue(contentType), []byte(nullStringValue(userMetadata)))
+	if err != nil {
+		return nil
+	}
+	return id
 }

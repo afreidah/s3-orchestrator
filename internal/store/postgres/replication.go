@@ -35,7 +35,7 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.O
 		return nil, core.ErrObjectNotFound
 	}
 
-	return toVerifiableObjectLocations(rows), nil
+	return toIdentifiedObjectLocations(rows), nil
 }
 
 // GetObjectBackendsForKeys returns a map from each supplied object_key to

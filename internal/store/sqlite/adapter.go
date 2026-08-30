@@ -177,13 +177,15 @@ func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.Ob
 		   (object_key, backend_name, size_bytes, encrypted, encryption_key,
 		    key_id, plaintext_size, content_hash,
 		    compression_algorithm, compression_level, compression_format_version, logical_size,
+		    etag, content_type, user_metadata,
 		    managed, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		loc.ObjectKey, loc.BackendName, loc.SizeBytes, boolToInt(loc.Encrypted),
 		loc.EncryptionKey,
 		nullableString(loc.KeyID), nullableInt64(loc.PlaintextSize), nullableString(loc.ContentHash),
 		nullableString(loc.CompressionAlgorithm), nullableString(loc.CompressionLevel),
 		nullableInt64(int64(loc.CompressionFormatVersion)), nullableInt64(loc.LogicalSize),
+		identityETag(loc.Identity), identityContentType(loc.Identity), identityMetadataJSON(loc.Identity),
 		boolToInt(!loc.Unmanaged),
 		now,
 	); err != nil {

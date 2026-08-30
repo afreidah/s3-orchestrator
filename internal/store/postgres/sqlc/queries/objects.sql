@@ -25,8 +25,8 @@ DELETE FROM object_locations
 WHERE object_key = $1;
 
 -- name: InsertObjectLocation :exec
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW());
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW());
 
 -- ListObjectsByBackend backs the rebalance, placement and drain candidate
 -- scans, so it returns managed rows only. Objects outside every configured
@@ -74,7 +74,7 @@ SELECT EXISTS(
 -- this row already knows.
 SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash,
        compression_algorithm, compression_level, compression_format_version, logical_size,
-       compression_probe_size, compression_probe_level
+       compression_probe_size, compression_probe_level, etag, content_type, user_metadata
 FROM object_locations
 WHERE object_key = $1 AND backend_name = $2
 FOR UPDATE;
@@ -90,7 +90,7 @@ WHERE object_key = $1 AND backend_name = $2;
 -- splitting them would page a byte-ordered scan with a locale-ordered cursor and
 -- skip or repeat keys. DISTINCT ON must carry it too, or Postgres rejects the
 -- query for not matching the leading ORDER BY expression.
-SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, size_bytes, created_at
+SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, size_bytes, etag, created_at
 FROM object_locations
 WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
   AND object_key COLLATE "C" > @start_after
@@ -98,14 +98,14 @@ ORDER BY object_key COLLATE "C", created_at ASC
 LIMIT @max_keys;
 
 -- name: GetAllObjectLocations :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at, last_scrubbed_at
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at, last_scrubbed_at
 FROM object_locations
 WHERE object_key = $1
 ORDER BY created_at ASC;
 
 -- name: InsertObjectLocationIfNotExists :one
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, managed, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, managed, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING true AS inserted;
 
@@ -391,6 +391,20 @@ UPDATE object_locations
 SET content_hash = $3
 WHERE object_key = $1 AND backend_name = $2;
 
+-- RecordObjectIdentity fills in what a read had to ask a backend for, so the
+-- next one does not. Every copy of the key is written, not just the one that
+-- answered: a per-copy value is what lets a failover change the ETag under a
+-- conditional request, which is the divergence this column exists to end.
+--
+-- Only NULL columns are filled. A recorded identity is what the write computed
+-- over the client's own bytes, and a backend's answer must never overwrite it.
+-- name: RecordObjectIdentity :exec
+UPDATE object_locations
+SET etag          = COALESCE(etag, sqlc.narg('etag')),
+    content_type  = COALESCE(content_type, sqlc.narg('content_type')),
+    user_metadata = COALESCE(user_metadata, sqlc.narg('user_metadata'))
+WHERE object_key = $1;
+
 -- name: GetCopiesForKeysForUpdate :many
 -- Returns (object_key, backend_name, size_bytes) for every row matching
 -- a key in the supplied list, locked FOR UPDATE so the same transaction
@@ -475,10 +489,11 @@ SELECT
         ELSE w.k END)::text AS skip_bound,
     COALESCE(leaf.backend_name, '')::text AS backend_name,
     COALESCE(leaf.size_bytes, 0)::bigint AS size_bytes,
+    COALESCE(leaf.etag, '')::text AS etag,
     COALESCE(leaf.created_at, to_timestamp(0)) AS created_at
 FROM walk w
 LEFT JOIN LATERAL (
-    SELECT backend_name, size_bytes, created_at
+    SELECT backend_name, size_bytes, etag, created_at
       FROM object_locations o2
      WHERE o2.object_key = w.k
        AND position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) = 0

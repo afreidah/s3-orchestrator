@@ -37,20 +37,24 @@ type Body struct {
 	size int64
 }
 
-// New copies src into a memory buffer or a tempfile based on size, optionally
-// tee'ing the bytes into hasher so the caller can compute a content hash in
-// the same single pass instead of re-scanning the materialized body
-// afterwards. Pass hasher=nil when hashing is not required. The caller must
-// defer (*Body).Cleanup on the returned body so the tempfile fd is released
-// when the body is no longer needed (safe even on the in-memory branch).
-func New(src io.Reader, size int64, hasher hash.Hash) (*Body, error) {
+// New copies src into a memory buffer or a tempfile based on size, tee'ing
+// the bytes into each supplied hasher so every digest the caller needs comes
+// out of the same single pass instead of re-scanning the materialized body.
+// A PUT wants two - the ETag's MD5 always, the integrity SHA-256 when it is
+// enabled - and nil entries are skipped so a caller can pass an optional
+// hasher without branching. The caller must defer (*Body).Cleanup on the
+// returned body so the tempfile fd is released when the body is no longer
+// needed (safe even on the in-memory branch).
+func New(src io.Reader, size int64, hashers ...hash.Hash) (*Body, error) {
 	b, err := NewEmpty(size)
 	if err != nil {
 		return nil, err
 	}
 	w := b.Writer()
-	if hasher != nil {
-		w = io.MultiWriter(w, hasher)
+	for _, h := range hashers {
+		if h != nil {
+			w = io.MultiWriter(w, h)
+		}
 	}
 	n, err := bufpool.Copy(w, src)
 	if err != nil {

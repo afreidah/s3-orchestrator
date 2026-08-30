@@ -50,9 +50,13 @@ func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, opera
 func (o *Manager) finalizeMaterializedCopy(ctx context.Context, req *materializedCopyContext, etag string) (string, error) {
 	const operation = "CopyObject"
 	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, &core.RecordObjectRequest{
-		Key: req.destKey, Backend: req.destBackendName, Size: req.size, Form: req.srcForm, Tags: req.tags,
+		Key: req.destKey, Backend: req.destBackendName, Size: req.size, Form: req.srcForm,
+		Identity: req.identity, Tags: req.tags,
 	}); err != nil {
 		return "", err
+	}
+	if req.identity.Complete() {
+		etag = req.identity.ETag
 	}
 	o.core.Acct().Operation(operation, req.destBackendName, req.start, nil)
 	o.core.Acct().Egress(req.srcBackendName, req.size)
@@ -71,9 +75,13 @@ func (o *Manager) finalizeMaterializedCopy(ctx context.Context, req *materialize
 func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyContext, etag string) (string, bool, error) {
 	const operation = "CopyObject"
 	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, &core.RecordObjectRequest{
-		Key: req.destKey, Backend: req.destBackendName, Size: req.size, Form: req.srcForm, Tags: req.tags,
+		Key: req.destKey, Backend: req.destBackendName, Size: req.size, Form: req.srcForm,
+		Identity: req.identity, Tags: req.tags,
 	}); err != nil {
 		return "", true, err
+	}
+	if req.identity.Complete() {
+		etag = req.identity.ETag
 	}
 	o.core.Acct().Operation(operation, req.destBackendName, req.start, nil)
 	req.span.SetAttributes(telemetry.AttrNativeCopy.Bool(true))
