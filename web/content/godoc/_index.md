@@ -11,11 +11,18 @@ weight: 40
 ### Core
 
 <div class="landing-grid">
-  <a class="landing-card" href="proxy/">
+  <a class="landing-card" href="object/">
     <i class="fas fa-database landing-card-icon" style="color: #93c5fd;"></i>
     <div>
-      <strong>proxy</strong>
-      <p>Multi-backend S3 object orchestration with quota enforcement, replication, and rebalancing.</p>
+      <strong>object</strong>
+      <p>Multi-backend object CRUD with read failover, broadcast reads, and location caching.</p>
+    </div>
+  </a>
+  <a class="landing-card" href="infra/">
+    <i class="fas fa-network-wired landing-card-icon" style="color: #93c5fd;"></i>
+    <div>
+      <strong>infra</strong>
+      <p>Backend runtime shared by every proxy subpackage: registry, usage limits, timeouts, admission.</p>
     </div>
   </a>
   <a class="landing-card" href="store/">

@@ -162,8 +162,8 @@ func TestTLS_CertReloaderIntegration(t *testing.T) {
 	}
 
 	srv := &s3api.Server{
-		Objects:   testManager.Objects(),
-		Multipart: testManager.Multipart(),
+		Objects:   testStack.Objects,
+		Multipart: testStack.Multipart,
 	}
 	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{{
 		Name: virtualBucket,
@@ -382,8 +382,8 @@ func startTLSProxy(t *testing.T, certFile, keyFile, clientCAFile string) string 
 	t.Helper()
 
 	srv := &s3api.Server{
-		Objects:   testManager.Objects(),
-		Multipart: testManager.Multipart(),
+		Objects:   testStack.Objects,
+		Multipart: testStack.Multipart,
 	}
 	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{{
 		Name: virtualBucket,

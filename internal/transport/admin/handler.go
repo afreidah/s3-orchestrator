@@ -67,7 +67,7 @@ type Handler struct {
 // Deps groups the narrow role interfaces and infrastructure the admin
 // handler touches. Each field carries the smallest contract the handler
 // actually uses, so the constructor (and the backing DI provider) never
-// hand the handler a god-shaped *proxy.BackendManager.
+// hand the handler a god-shaped orchestration object.
 type Deps struct {
 	BackendOps   BackendOps
 	Dashboard    DashboardReader

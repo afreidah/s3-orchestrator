@@ -5,7 +5,7 @@
 //
 // Implements the Postgres engine bindings for the backend_quotas table:
 // per-backend bytes_used, bytes_limit, and orphan_bytes tracking. Carries
-// the read-side eligibility queries the BackendManager uses for write
+// the read-side eligibility queries the write path uses for backend
 // routing (GetBackendWithSpace, GetLeastUtilizedBackend) and the per-tx
 // increment / decrement primitives core/ uses to keep quota in lockstep
 // with object_locations changes. Increment is guarded so the UPDATE

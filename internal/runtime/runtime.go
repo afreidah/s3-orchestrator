@@ -35,7 +35,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/reload"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
@@ -66,7 +65,7 @@ type Runtime struct {
 	log      *slog.Logger
 
 	inj      do.Injector
-	manager  *proxy.BackendManager
+	svc      bootstrapped
 	http     *httpserver.Server
 	reload   *reload.Coordinator
 	lifecyc  *lifecycle.Manager
@@ -98,11 +97,11 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 
 	r.inj = di.NewInjector(di.InjectorDeps{Config: cfg, Mode: opts.Mode, LogLevel: &r.logLevel, LogBuffer: obs.LogBuffer})
 
-	manager, err := resolveRequiredServices(r.inj, cfg)
+	svc, err := resolveRequiredServices(r.inj, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("resolve services: %w", err)
 	}
-	r.manager = manager
+	r.svc = svc
 	r.cfgPtr.Store(cfg)
 
 	httpSrv, err := httpserver.New(httpserver.Deps{
@@ -249,9 +248,12 @@ func (r *Runtime) shutdown() {
 	r.lifecyc.Stop(10 * time.Second)
 
 	closeEncryptionProvider(r.inj)
-	r.manager.Close()
+	// Caches close before the final flush: the eviction goroutines are what
+	// would otherwise still be running while the counters are read.
+	r.svc.objects.LocationCache().Close()
+	r.svc.multipart.Close()
 
-	if err := r.manager.FlushUsage(shutdownCtx); err != nil {
+	if err := r.svc.usage.FlushUsage(shutdownCtx); err != nil {
 		r.log.WarnContext(shutdownCtx, "final usage flush failed", "error", err)
 	}
 

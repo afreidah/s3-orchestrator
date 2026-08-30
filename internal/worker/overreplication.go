@@ -48,8 +48,7 @@ type OverReplicationCleanerStore interface {
 }
 
 // OverReplicationCleaner removes excess copies of objects that exceed the
-// configured replication factor. Embeds *backendCore for access to shared
-// infrastructure.
+// configured replication factor.
 type OverReplicationCleaner struct {
 	log       *slog.Logger
 	ops       Ops

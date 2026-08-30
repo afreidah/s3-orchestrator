@@ -6,9 +6,9 @@
 // Hand-rolled fakes for the narrow consumer interfaces (BackendOps,
 // ReplicatorOps, OverReplicationOps, ScrubberOps, Reconciler) so the
 // success branches of handlers that otherwise required a full
-// BackendManager + worker fleet stay exercised. Pairs with the existing
+// backend runtime + worker fleet stay exercised. Pairs with the existing
 // handler_manager_test.go which covers the empty/skip paths via a real
-// manager.
+// stack.
 // -------------------------------------------------------------------------------
 
 package admin
@@ -39,7 +39,7 @@ import (
 
 // newCoverageHandler builds a Handler wired entirely from the generated ops
 // mocks, so each test can dial in the precise branch it wants to exercise
-// without standing up a BackendManager.
+// without standing up a backend runtime.
 func newCoverageHandler(t *testing.T) *Handler {
 	t.Helper()
 	var lv slog.LevelVar

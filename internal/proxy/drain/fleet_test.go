@@ -7,7 +7,7 @@
 // coordinator, with the multipart-abort and cleanup-queue callbacks as inert
 // closures. Those two are funcs precisely so drain does not depend on the
 // multipart manager or the cleanup worker, and the tests here take the same
-// route rather than reaching through a BackendManager.
+// route rather than reaching through a full proxy stack.
 //
 // The narrow-mock unit tests in manager_test.go cover dispatch wiring; this
 // fixture is for the paths whose behaviour depends on real backends holding
@@ -29,7 +29,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
@@ -41,7 +40,7 @@ const fleetTimeout = 30 * time.Second
 // inert cleanup-queue callback. store is the wide metadata store; New narrows
 // it to the three role interfaces it declares.
 func newDrainFleet(
-	t *testing.T, store core.MetadataStore, backends map[string]backend.ObjectBackend,
+	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend,
 ) (*Manager, *infra.BackendRuntime) {
 	t.Helper()
 	return newDrainFleetWithCleanup(t, store, backends, nil)
@@ -51,7 +50,7 @@ func newDrainFleet(
 // cleanup-queue callback, for the tests that assert drain drains the queue
 // before it tears a backend down. nil means the queue is a no-op.
 func newDrainFleetWithCleanup(
-	t *testing.T, store core.MetadataStore, backends map[string]backend.ObjectBackend,
+	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend,
 	processCleanup func(context.Context) (int, int),
 ) (*Manager, *infra.BackendRuntime) {
 	t.Helper()

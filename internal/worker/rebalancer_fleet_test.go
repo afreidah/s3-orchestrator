@@ -353,7 +353,7 @@ func TestRebalance_EmptyPlan_Skips(t *testing.T) {
 
 // newRebalancerOver builds a Rebalancer over one in-memory backend per name,
 // in the order given.
-func newRebalancerOver(t *testing.T, store core.MetadataStore, names []string) *Rebalancer {
+func newRebalancerOver(t *testing.T, store storetest.MetadataStore, names []string) *Rebalancer {
 	t.Helper()
 	backends := make(map[string]backend.ObjectBackend, len(names))
 	for _, name := range names {

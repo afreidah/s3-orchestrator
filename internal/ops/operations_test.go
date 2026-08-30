@@ -30,11 +30,11 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -159,12 +159,15 @@ func testServices(t *testing.T, backends map[string]s3be.ObjectBackend, enc *enc
 	for name := range backends {
 		order = append(order, name)
 	}
-	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
-		Storage:    proxy.StorageDeps{Backends: backends, Order: order},
-		Policies:   proxy.PolicyConfig{RoutingStrategy: config.RoutingPack},
-		Operations: proxy.OperationalDeps{Metrics: mock},
+	st := proxytest.New(t, mock, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        backends,
+			Order:           order,
+			RoutingStrategy: config.RoutingPack,
+			Metrics:         mock,
+		}),
 	})
-	workers := proxytest.BuildWorkers(mgr, mock)
+	workers := proxytest.BuildWorkers(st, mock)
 	workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 1})
 	workers.OverReplicationCleaner.SetConfig(&config.ReplicationConfig{Factor: 1})
 
@@ -173,29 +176,30 @@ func testServices(t *testing.T, backends map[string]s3be.ObjectBackend, enc *enc
 		store = encStore
 	}
 	return New(&Deps{
-		Objects:    mgr.Objects(),
-		Store:      mock,
-		Encryptor:  enc,
-		EncStore:   store,
-		Runtime:    mgr.Runtime(),
-		BackendOps: mgr,
-		Replicator: workers.Replicator,
-		OverRep:    workers.OverReplicationCleaner,
-		Rebalancer: workers.Rebalancer,
-		Scrubber:   workers.Scrubber,
-		Cfg:        &config.Config{Buckets: []config.BucketConfig{{Name: testBucket}}},
+		Objects:      st.Objects,
+		Store:        mock,
+		Encryptor:    enc,
+		EncStore:     store,
+		Runtime:      st.Runtime,
+		Usage:        st.Runtime.Usage(),
+		IntegrityCfg: st.IntegrityCfg,
+		Replicator:   workers.Replicator,
+		OverRep:      workers.OverReplicationCleaner,
+		Rebalancer:   workers.Rebalancer,
+		Scrubber:     workers.Scrubber,
+		Cfg:          &config.Config{Buckets: []config.BucketConfig{{Name: testBucket}}},
 	})
 }
 
-// enableIntegrity turns verification on for the manager behind svc, so the
+// enableIntegrity turns verification on for the config behind svc, so the
 // integrity operations get past their disabled guard.
 func enableIntegrity(t *testing.T, svc *Services) {
 	t.Helper()
-	mgr, ok := svc.Integrity.backendOps.(*proxy.BackendManager)
+	cfg, ok := svc.Integrity.integrityCfg.(*syncutil.AtomicConfig[config.IntegrityConfig])
 	if !ok {
-		t.Fatalf("backendOps is %T, want *proxy.BackendManager", svc.Integrity.backendOps)
+		t.Fatalf("integrityCfg is %T, want the shared atomic config", svc.Integrity.integrityCfg)
 	}
-	mgr.SetIntegrityConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50})
+	cfg.Store(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50})
 }
 
 // assertSkipped fails unless err is a skip carrying a reason.
@@ -604,10 +608,10 @@ func TestRotateKey_RewrapsEveryLocation(t *testing.T) {
 		}).Times(1)
 
 	svc := NewEncryption(EncryptionDeps{
-		Encryptor:  enc,
-		Store:      store,
-		Runtime:    opstest.NewMockRuntimeOps(gomock.NewController(t)),
-		BackendOps: opstest.NewMockBackendOps(gomock.NewController(t)),
+		Encryptor: enc,
+		Store:     store,
+		Runtime:   opstest.NewMockRuntimeOps(gomock.NewController(t)),
+		Usage:     opstest.NewMockUsageGate(gomock.NewController(t)),
 	})
 
 	res, err := svc.RotateKey(context.Background(), keyID)
@@ -741,10 +745,10 @@ func TestObjectsGet_NotFound(t *testing.T) {
 // verification enabled.
 func integrityOver(t *testing.T, scrubber ScrubberOps) *Integrity {
 	t.Helper()
-	be := opstest.NewMockBackendOps(gomock.NewController(t))
-	be.EXPECT().IntegrityConfig().
+	icfg := opstest.NewMockIntegrityConfigLoader(gomock.NewController(t))
+	icfg.EXPECT().Load().
 		Return(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}).AnyTimes()
-	return NewIntegrity(IntegrityDeps{Scrubber: scrubber, BackendOps: be})
+	return NewIntegrity(IntegrityDeps{Scrubber: scrubber, IntegrityCfg: icfg})
 }
 
 // TestVerifyKey_ReportsEveryCopy asserts a per-key verification answers with a
@@ -1110,10 +1114,10 @@ func TestRotateKey_CountsFailuresPerLocation(t *testing.T) {
 		Return(nil, nil).After(first).AnyTimes()
 
 	svc := NewEncryption(EncryptionDeps{
-		Encryptor:  testEncryptor(t),
-		Store:      store,
-		Runtime:    opstest.NewMockRuntimeOps(gomock.NewController(t)),
-		BackendOps: opstest.NewMockBackendOps(gomock.NewController(t)),
+		Encryptor: testEncryptor(t),
+		Store:     store,
+		Runtime:   opstest.NewMockRuntimeOps(gomock.NewController(t)),
+		Usage:     opstest.NewMockUsageGate(gomock.NewController(t)),
 	})
 
 	res, err := svc.RotateKey(context.Background(), "old")

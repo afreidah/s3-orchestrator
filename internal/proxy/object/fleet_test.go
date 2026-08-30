@@ -9,7 +9,7 @@
 // need in order to be asserted end to end.
 //
 // The manager is built from object.Deps directly. Nothing here needs a
-// BackendManager: Deps already names every collaborator the manager has, and
+// composition root: Deps already names every collaborator the manager has, and
 // reaching through the composition root would only hide that.
 // -------------------------------------------------------------------------------
 
@@ -107,7 +107,7 @@ func (f *fleet) SetIntegrityConfig(cfg *config.IntegrityConfig) { f.Integrity.St
 // newFleet builds an object Manager over the supplied backends. store is the
 // wide metadata store; New narrows it to ObjectStores.
 func newFleet(
-	t *testing.T, store core.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
+	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
 ) *fleet {
 	t.Helper()
 	if opts == nil {

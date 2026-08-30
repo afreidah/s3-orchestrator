@@ -30,7 +30,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -44,8 +44,8 @@ type usageSnapshot struct {
 // readUsage reads the live per-backend counters. Read rather than flushed:
 // the flush drains into the database on its own schedule, and these tests are
 // asserting on what an operation charged, not on when it was persisted.
-func readUsage(mgr *proxy.BackendManager, backendName string) usageSnapshot {
-	be := mgr.Runtime().Usage().Backend()
+func readUsage(rt *infra.BackendRuntime, backendName string) usageSnapshot {
+	be := rt.Usage().Backend()
 	return usageSnapshot{
 		APICalls: be.Load(backendName, counter.FieldAPIRequests),
 		Egress:   be.Load(backendName, counter.FieldEgressBytes),
@@ -64,25 +64,25 @@ func (u usageSnapshot) sub(prev usageSnapshot) usageSnapshot {
 
 // usageDelta captures the counters for one backend, runs fn, and reports what
 // the operation charged.
-func usageDelta(mgr *proxy.BackendManager, backendName string, fn func()) usageSnapshot {
-	before := readUsage(mgr, backendName)
+func usageDelta(rt *infra.BackendRuntime, backendName string, fn func()) usageSnapshot {
+	before := readUsage(rt, backendName)
 	fn()
-	return readUsage(mgr, backendName).sub(before)
+	return readUsage(rt, backendName).sub(before)
 }
 
 // fleetUsageDelta is usageDelta across several backends at once, for the
 // operations that charge two of them: a copy spends egress on its source and
 // ingress on its destination, and charging both to one backend would look
 // correct in a single-backend assertion.
-func fleetUsageDelta(mgr *proxy.BackendManager, names []string, fn func()) map[string]usageSnapshot {
+func fleetUsageDelta(rt *infra.BackendRuntime, names []string, fn func()) map[string]usageSnapshot {
 	before := make(map[string]usageSnapshot, len(names))
 	for _, name := range names {
-		before[name] = readUsage(mgr, name)
+		before[name] = readUsage(rt, name)
 	}
 	fn()
 	out := make(map[string]usageSnapshot, len(names))
 	for _, name := range names {
-		out[name] = readUsage(mgr, name).sub(before[name])
+		out[name] = readUsage(rt, name).sub(before[name])
 	}
 	return out
 }
@@ -128,7 +128,7 @@ func TestUsage_PutChargesIngressOnTargetOnly(t *testing.T) {
 	key := uniqueKey(t, "usage-put")
 	body := bytes.Repeat([]byte("P"), 512)
 
-	deltas := fleetUsageDelta(testManager, allBackendOrder, func() {
+	deltas := fleetUsageDelta(testStack.Runtime, allBackendOrder, func() {
 		_, err := client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String(virtualBucket),
 			Key:           aws.String(key),
@@ -168,7 +168,7 @@ func TestUsage_GetChargesEgressOnServingBackend(t *testing.T) {
 	}
 	target := queryObjectBackend(t, key)
 
-	delta := usageDelta(testManager, target, func() {
+	delta := usageDelta(testStack.Runtime, target, func() {
 		out, err := client.GetObject(ctx, &s3.GetObjectInput{
 			Bucket: aws.String(virtualBucket),
 			Key:    aws.String(key),
@@ -205,7 +205,7 @@ func TestUsage_HeadChargesApiCallWithoutBytes(t *testing.T) {
 	}
 	target := queryObjectBackend(t, key)
 
-	delta := usageDelta(testManager, target, func() {
+	delta := usageDelta(testStack.Runtime, target, func() {
 		if _, err := client.HeadObject(ctx, &s3.HeadObjectInput{
 			Bucket: aws.String(virtualBucket),
 			Key:    aws.String(key),
@@ -240,7 +240,7 @@ func TestUsage_DeleteChargesApiCallAndReleasesQuota(t *testing.T) {
 	target := queryObjectBackend(t, key)
 	quotaBefore := queryQuotaUsed(t, target)
 
-	delta := usageDelta(testManager, target, func() {
+	delta := usageDelta(testStack.Runtime, target, func() {
 		if _, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
 			Bucket: aws.String(virtualBucket),
 			Key:    aws.String(key),
@@ -303,7 +303,7 @@ func TestUsage_MultipartCompleteChargesPartReadEgress(t *testing.T) {
 		partBytes += backendRawObjectSize(t, target, multipartPartStoredKey(uploadID, i+1))
 	}
 
-	delta := usageDelta(testManager, target, func() {
+	delta := usageDelta(testStack.Runtime, target, func() {
 		if _, err := client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
 			Bucket:          aws.String(virtualBucket),
 			Key:             aws.String(key),
@@ -337,14 +337,14 @@ func exhaustBackends(t *testing.T, names []string, limits core.UsageLimits, spen
 	byName := make(map[string]core.UsageLimits, len(names))
 	for _, name := range names {
 		byName[name] = limits
-		testManager.Runtime().Usage().SetBaseline(name, spent)
+		testStack.Runtime.Usage().SetBaseline(name, spent)
 	}
-	testManager.UpdateUsageLimits(byName)
+	testStack.Runtime.Usage().UpdateLimits(byName)
 
 	t.Cleanup(func() {
-		testManager.UpdateUsageLimits(map[string]core.UsageLimits{})
-		testManager.Runtime().Usage().ResetBaselines(allBackendOrder)
-		testManager.Objects().LocationCache().Clear()
+		testStack.Runtime.Usage().UpdateLimits(map[string]core.UsageLimits{})
+		testStack.Runtime.Usage().ResetBaselines(allBackendOrder)
+		testStack.Objects.LocationCache().Clear()
 	})
 }
 
@@ -364,7 +364,7 @@ func TestUsage_PutRefusedWhenFleetOutOfIngress(t *testing.T) {
 	key := uniqueKey(t, "usage-put-refused")
 	body := bytes.Repeat([]byte("X"), 64)
 
-	deltas := fleetUsageDelta(testManager, allBackendOrder, func() {
+	deltas := fleetUsageDelta(testStack.Runtime, allBackendOrder, func() {
 		_, err := client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:        aws.String(virtualBucket),
 			Key:           aws.String(key),

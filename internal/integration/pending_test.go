@@ -113,7 +113,7 @@ func TestPending_DBBlipMidPUT_RecoveredByReaper(t *testing.T) {
 	// on the retry  -  masking the failure we're trying to observe.
 	testFailableStore.SetFailCommitOnce()
 
-	_, err := testManager.Objects().PutObject(ctx, &object.PutObjectRequest{
+	_, err := testStack.Objects.PutObject(ctx, &object.PutObjectRequest{
 		Key:         internalKey(key),
 		Body:        bytes.NewReader([]byte("payload")),
 		Size:        7,

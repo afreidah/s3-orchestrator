@@ -36,7 +36,7 @@ import (
 // same testManager / testStore as the bundled testWorkers.Replicator
 // but participates as a separate worker instance.
 func newAuxReplicator() *worker.Replicator {
-	return worker.NewReplicator(worker.ReplicatorDeps{Ops: testManager.Runtime(), Placement: testCoord, Store: testStore})
+	return worker.NewReplicator(worker.ReplicatorDeps{Ops: testStack.Runtime, Placement: testCoord, Store: testStore})
 }
 
 // TestInt_Replicator_ConcurrentInstancesNoDoubleCopy enqueues several

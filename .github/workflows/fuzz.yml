@@ -49,7 +49,7 @@ jobs:
           - target: FuzzValidMetadataToken
             package: ./internal/transport/s3api/
           - target: FuzzParsePlaintextRange
-            package: ./internal/proxy/
+            package: ./internal/proxy/object/
           - target: FuzzParseQueryInt
             package: ./internal/transport/s3api/
           - target: FuzzParseHeader

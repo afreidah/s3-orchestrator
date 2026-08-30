@@ -23,13 +23,15 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -54,7 +56,7 @@ func defaultHooks(inj do.Injector, certReloader *httputil.CertReloader, logLevel
 		&usageLimitsHook{inj: inj},
 		&logLevelHook{level: logLevel},
 		&workerConfigsHook{inj: inj},
-		&managerConfigHook{inj: inj},
+		&runtimeConfigHook{inj: inj},
 		&opsHook{inj: inj},
 		&uiHandlerHook{inj: inj},
 	}
@@ -178,7 +180,7 @@ func (h *quotaSyncHook) Apply(ctx context.Context, _, newCfg *config.Config) (Ho
 // -------------------------------------------------------------------------
 
 // usageLimitsHook rebuilds the in-memory per-backend usage limit map
-// and pushes it onto the manager.
+// and pushes it onto the usage tracker.
 type usageLimitsHook struct {
 	inj do.Injector
 }
@@ -186,9 +188,9 @@ type usageLimitsHook struct {
 func (*usageLimitsHook) Name() string                    { return "usage_limits" }
 func (*usageLimitsHook) Check(_, _ *config.Config) error { return nil }
 func (h *usageLimitsHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	res := di.Optional[*proxy.BackendManager](h.inj)
+	res := di.Optional[*infra.BackendRuntime](h.inj)
 	if res.Failed() {
-		return HookFailed, resolutionError("backend manager", res.Err)
+		return HookFailed, resolutionError("backend runtime", res.Err)
 	}
 	if res.Value == nil {
 		return HookSkipped, nil
@@ -202,8 +204,8 @@ func (h *usageLimitsHook) Apply(_ context.Context, _, newCfg *config.Config) (Ho
 			IngressByteLimit: bcfg.IngressByteLimit,
 		}
 	}
-	var applier usageLimitsApplier = res.Value
-	applier.UpdateUsageLimits(limits)
+	var applier usageLimitsApplier = res.Value.Usage()
+	applier.UpdateLimits(limits)
 	return HookApplied, nil
 }
 
@@ -282,31 +284,40 @@ func (h *workerConfigsHook) Apply(_ context.Context, _, newCfg *config.Config) (
 }
 
 // -------------------------------------------------------------------------
-// MANAGER CONFIG SECTIONS
+// RELOADABLE CONFIG SECTIONS
 // -------------------------------------------------------------------------
 
-// managerConfigHook updates UsageFlush, Lifecycle, and Integrity
-// per-section configs on the manager and refreshes Prometheus quota
-// gauges. The metrics refresh is the only fallible step; a failure
+// runtimeConfigHook updates the UsageFlush, Lifecycle, and Integrity
+// per-section configs on the collaborators that read them, and refreshes
+// Prometheus quota gauges. The metrics refresh is the only fallible step; a failure
 // there returns HookFailed but the AtomicConfig swaps already
 // happened, matching historical best-effort semantics.
-type managerConfigHook struct {
+type runtimeConfigHook struct {
 	inj do.Injector
 }
 
-func (*managerConfigHook) Name() string                    { return "manager_config" }
-func (*managerConfigHook) Check(_, _ *config.Config) error { return nil }
-func (h *managerConfigHook) Apply(ctx context.Context, _, newCfg *config.Config) (HookStatus, error) {
-	res := di.Optional[*proxy.BackendManager](h.inj)
-	if res.Failed() {
-		return HookFailed, resolutionError("backend manager", res.Err)
+func (*runtimeConfigHook) Name() string                    { return "runtime_config" }
+func (*runtimeConfigHook) Check(_, _ *config.Config) error { return nil }
+func (h *runtimeConfigHook) Apply(ctx context.Context, _, newCfg *config.Config) (HookStatus, error) {
+	usageRes := di.Optional[*usage.Service](h.inj)
+	if usageRes.Failed() {
+		return HookFailed, resolutionError("usage service", usageRes.Err)
 	}
-	if res.Value == nil {
+	integrityRes := di.Optional[*syncutil.AtomicConfig[config.IntegrityConfig]](h.inj)
+	if integrityRes.Failed() {
+		return HookFailed, resolutionError("integrity config", integrityRes.Err)
+	}
+	fleetRes := di.Optional[*infra.BackendRuntime](h.inj)
+	if fleetRes.Failed() {
+		return HookFailed, resolutionError("backend runtime", fleetRes.Err)
+	}
+	if usageRes.Value == nil || integrityRes.Value == nil || fleetRes.Value == nil {
 		return HookSkipped, nil
 	}
-	var applier managerConfigApplier = res.Value
-	applier.SetUsageFlushConfig(&newCfg.UsageFlush)
-	applier.SetIntegrityConfig(&newCfg.Integrity)
+
+	var flushApplier usageFlushConfigApplier = usageRes.Value
+	flushApplier.SetConfig(&newCfg.UsageFlush)
+	integrityRes.Value.Store(&newCfg.Integrity)
 
 	// Lifecycle rules live with the code that applies them.
 	if exp := di.Optional[*expiry.Manager](h.inj); exp.Failed() {
@@ -315,7 +326,9 @@ func (h *managerConfigHook) Apply(ctx context.Context, _, newCfg *config.Config)
 		var lifecycleApplier lifecycleConfigApplier = exp.Value
 		lifecycleApplier.SetConfig(&newCfg.Lifecycle)
 	}
-	if err := applier.UpdateQuotaMetrics(ctx); err != nil {
+
+	var refresher quotaMetricsRefresher = fleetRes.Value
+	if err := refresher.UpdateQuotaMetrics(ctx); err != nil {
 		return HookFailed, err
 	}
 	return HookApplied, nil

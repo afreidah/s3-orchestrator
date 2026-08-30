@@ -18,13 +18,13 @@ import (
 	"context"
 
 	"github.com/afreidah/s3-orchestrator/internal/progress"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // BackendOps is the usage-accounting surface behind the flush and reconcile
-// endpoints. *proxy.BackendManager satisfies it.
+// endpoints. *usage.Service satisfies it.
 type BackendOps interface {
 	FlushUsage(ctx context.Context) error
 	ReconcileUsage(ctx context.Context) (map[string]int64, error)
@@ -45,7 +45,7 @@ type Reconciler interface {
 
 // Compile-time assertions.
 var (
-	_ BackendOps      = (*proxy.BackendManager)(nil)
+	_ BackendOps      = (*usage.Service)(nil)
 	_ DashboardReader = (*dashboard.Aggregator)(nil)
 	_ Reconciler      = (*worker.Reconciler)(nil)
 )

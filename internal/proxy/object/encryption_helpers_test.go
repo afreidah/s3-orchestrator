@@ -3,7 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Verifies the proxy-side adapters that bridge BackendManager to the
+// Verifies the proxy-side adapters that bridge the object manager to the
 // chunked encryption package: the on-write wrap of the upload reader,
 // the on-read unwrap and ciphertext range plumbing, and the metadata
 // projection that records encrypted, encryption_key, key_id, and

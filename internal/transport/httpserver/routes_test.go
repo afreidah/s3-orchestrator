@@ -118,21 +118,21 @@ func TestRegisterUIHandler_InvokeFails(t *testing.T) {
 	}
 }
 
-// TestRegisterS3Handler_BackendManagerInvokeFails drives the
-// "initialize backend manager" wrapped-error path against a bare
-// injector with no BackendManager provider.
-func TestRegisterS3Handler_BackendManagerInvokeFails(t *testing.T) {
+// TestRegisterS3Handler_BackendRuntimeInvokeFails drives the
+// "initialize backend runtime" wrapped-error path against a bare
+// injector with no BackendRuntime provider.
+func TestRegisterS3Handler_BackendRuntimeInvokeFails(t *testing.T) {
 	err := registerS3Handler(http.NewServeMux(), do.New(), &config.Config{})
 	if err == nil {
-		t.Fatal("expected error when BackendManager is not registered")
+		t.Fatal("expected error when BackendRuntime is not registered")
 	}
-	if !strings.Contains(err.Error(), "initialize backend manager") {
-		t.Errorf("err = %q, want wrap mentioning backend manager", err)
+	if !strings.Contains(err.Error(), "initialize backend runtime") {
+		t.Errorf("err = %q, want wrap mentioning backend runtime", err)
 	}
 }
 
 // TestRegisterS3Handler_S3ServerInvokeFails drives the
-// "initialize S3 server" wrapped-error path: BackendManager resolves
+// "initialize S3 server" wrapped-error path: the backend runtime resolves
 // cleanly but the s3api.Server provider errors, so registerS3Handler
 // must propagate the wrapped error rather than mount a broken handler.
 func TestRegisterS3Handler_S3ServerInvokeFails(t *testing.T) {

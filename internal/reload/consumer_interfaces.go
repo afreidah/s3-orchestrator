@@ -3,9 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Narrow contracts each reload hook in hooks.go pulls from
-// *proxy.BackendManager. DI still returns the concrete value; the local
-// interface restricts what the hook can call. Pattern rationale:
+// Narrow contracts each reload hook in hooks.go pulls from the collaborator
+// that owns the section being swapped. DI still returns the concrete value;
+// the local interface restricts what the hook can call. Pattern rationale:
 // docs/style-guide.md (Interface Design section).
 // -------------------------------------------------------------------------------
 
@@ -18,18 +18,22 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// usageLimitsApplier is the subset of *proxy.BackendManager the
-// usage-limits reload hook needs.
+// usageLimitsApplier is the *counter.UsageTracker call the usage-limits
+// reload hook needs. The limits belong to the counters, so the hook writes
+// them there rather than through anything holding the counters.
 type usageLimitsApplier interface {
-	UpdateUsageLimits(limits map[string]core.UsageLimits)
+	UpdateLimits(limits map[string]core.UsageLimits)
 }
 
-// managerConfigApplier is the subset of *proxy.BackendManager the
-// manager-config reload hook needs to swap UsageFlush and Integrity sections
-// and refresh quota gauges.
-type managerConfigApplier interface {
-	SetUsageFlushConfig(cfg *config.UsageFlushConfig)
-	SetIntegrityConfig(cfg *config.IntegrityConfig)
+// usageFlushConfigApplier swaps the usage-flush section on the *usage.Service
+// that reads it.
+type usageFlushConfigApplier interface {
+	SetConfig(cfg *config.UsageFlushConfig)
+}
+
+// quotaMetricsRefresher republishes the quota gauges after a swap, so what
+// operators watch reflects the configuration now in force.
+type quotaMetricsRefresher interface {
 	UpdateQuotaMetrics(ctx context.Context) error
 }
 

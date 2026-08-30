@@ -11,7 +11,7 @@
 
 package worker
 
-//go:generate mockgen -destination=mock_ops_test.go -package=worker github.com/afreidah/s3-orchestrator/internal/worker Ops,CleanupOps,ScrubberOps,Placement,BackendSyncer,FleetOps
+//go:generate mockgen -destination=mock_ops_test.go -package=worker github.com/afreidah/s3-orchestrator/internal/worker Ops,CleanupOps,ScrubberOps,Placement,BackendSyncer,FleetOps,UsageReconciler
 
 import (
 	"context"
@@ -48,8 +48,8 @@ type DataMover interface {
 }
 
 // Placement is the store-coupled write-path facet (target selection, move,
-// delete-or-enqueue) workers get from the BackendManager, kept apart from the
-// runtime roles so the manager need not re-export runtime methods.
+// delete-or-enqueue) workers get from *writepath.Coordinator, kept apart from
+// the runtime roles because the runtime deliberately holds no store.
 type Placement interface {
 	SelectReplicaTarget(ctx context.Context, size int64, exclusion map[string]bool) (string, error)
 	MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error)

@@ -36,7 +36,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
@@ -52,16 +51,16 @@ const (
 
 // newTestHandler constructs a new test handler.
 // testDashboard builds the aggregator the UI now reads directly, wired to the
-// same mock store and live fleet the manager under test uses.
+// same mock store and live fleet the handler under test uses.
 // testSync builds the reconcile manager the UI's sync action invokes.
-func testSync(mgr *proxy.BackendManager, store reconcile.Stores) *reconcile.Manager {
+func testSync(st *proxytest.Stack, store reconcile.Stores) *reconcile.Manager {
 	return reconcile.NewManager(&reconcile.Deps{
-		Backends: mgr.Runtime(), Stores: store, Usage: mgr.Runtime().Acct(),
+		Backends: st.Runtime, Stores: store, Usage: st.Runtime.Acct(),
 	})
 }
 
-func testDashboard(mgr *proxy.BackendManager, store core.DashboardStore) *dashboard.Aggregator {
-	return dashboard.New(store, mgr.Runtime().Usage(), mgr.BackendOrder(), mgr.Runtime(), mgr.Drain())
+func testDashboard(st *proxytest.Stack, store core.DashboardStore) *dashboard.Aggregator {
+	return dashboard.New(store, st.Runtime.Usage(), st.Runtime.BackendOrder(), st.Runtime, st.Drain)
 }
 
 func newTestHandler(t *testing.T) (*Handler, *http.ServeMux) {
@@ -95,20 +94,15 @@ func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataSt
 		}, nil).AnyTimes()
 	storetest.Permissive(mockStore)
 
-	mgr := proxytest.NewManager(t, mockStore, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: map[string]backend.ObjectBackend{},
-			Order:    []string{"b1"},
-		},
-		Policies: proxy.PolicyConfig{
+	st := proxytest.New(t, mockStore, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        map[string]backend.ObjectBackend{},
+			Order:           []string{"b1"},
 			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: mockStore,
-		},
+			Metrics:         mockStore,
+		}),
 	})
-	svc := testOps(mgr, proxytest.BuildWorkers(mgr, mockStore), mockStore)
-	t.Cleanup(mgr.Close)
+	svc := testOps(st, proxytest.BuildWorkers(st, mockStore), mockStore)
 
 	cfg := &config.Config{
 		Buckets: []config.BucketConfig{
@@ -129,7 +123,7 @@ func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataSt
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
@@ -482,17 +476,14 @@ func TestLogin_BcryptSecret(t *testing.T) {
 
 	mockStore := storetest.NewMockMetadataStore(gomock.NewController(t))
 	storetest.Permissive(mockStore)
-	mgr := proxytest.NewManager(t, mockStore, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
+	st := proxytest.New(t, mockStore, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
 			Backends: map[string]backend.ObjectBackend{},
 			Order:    []string{},
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: mockStore,
-		},
+			Metrics:  mockStore,
+		}),
 	})
-	svc := testOps(mgr, proxytest.BuildWorkers(mgr, mockStore), mockStore)
-	t.Cleanup(mgr.Close)
+	svc := testOps(st, proxytest.BuildWorkers(st, mockStore), mockStore)
 
 	cfg := &config.Config{
 		Buckets:  []config.BucketConfig{{Name: "b"}},
@@ -505,7 +496,7 @@ func TestLogin_BcryptSecret(t *testing.T) {
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 
@@ -556,17 +547,14 @@ func TestCrossInstanceSession(t *testing.T) {
 	// Two handlers with the same config should accept each other's sessions.
 	mockStore := storetest.NewMockMetadataStore(gomock.NewController(t))
 	storetest.Permissive(mockStore)
-	mgr := proxytest.NewManager(t, mockStore, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
+	st := proxytest.New(t, mockStore, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
 			Backends: map[string]backend.ObjectBackend{},
 			Order:    []string{},
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: mockStore,
-		},
+			Metrics:  mockStore,
+		}),
 	})
-	svc := testOps(mgr, proxytest.BuildWorkers(mgr, mockStore), mockStore)
-	t.Cleanup(mgr.Close)
+	svc := testOps(st, proxytest.BuildWorkers(st, mockStore), mockStore)
 
 	cfg := &config.Config{
 		Buckets:  []config.BucketConfig{{Name: "b"}},
@@ -578,8 +566,8 @@ func TestCrossInstanceSession(t *testing.T) {
 		},
 	}
 
-	h1 := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
-	h2 := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h1 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h2 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux1 := http.NewServeMux()
 	mux2 := http.NewServeMux()
 	h1.Register(mux1, "/ui")
@@ -1955,20 +1943,15 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 	mockStore := storetest.NewMockMetadataStore(gomock.NewController(b))
 	storetest.Permissive(mockStore)
 
-	mgr := proxytest.NewManager(b, mockStore, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: map[string]backend.ObjectBackend{},
-			Order:    []string{},
-		},
-		Policies: proxy.PolicyConfig{
+	st := proxytest.New(b, mockStore, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        map[string]backend.ObjectBackend{},
+			Order:           []string{},
 			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: mockStore,
-		},
+			Metrics:         mockStore,
+		}),
 	})
-	svc := testOps(mgr, proxytest.BuildWorkers(mgr, mockStore), mockStore)
-	b.Cleanup(mgr.Close)
+	svc := testOps(st, proxytest.BuildWorkers(st, mockStore), mockStore)
 
 	cfg := &config.Config{
 		RoutingStrategy: config.RoutingPack,
@@ -1982,7 +1965,7 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(mgr, mockStore), Sync: testSync(mgr, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 

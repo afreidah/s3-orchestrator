@@ -37,8 +37,8 @@ a `*_bench_test.go` file next to the code under test. See existing examples:
 | `internal/transport/s3api/ratelimit_bench_test.go` | Per-credential rate limit checks |
 | `internal/transport/s3api/helpers_bench_test.go` | Path parsing, metadata extraction, XML encoding, error responses |
 | `internal/proxy/object/location_cache_bench_test.go` | Cache get/set/delete, concurrent contention, eviction |
-| `internal/proxy/object/copy_materialize_bench_test.go` | CopyObject materialize sink branches |
-| `internal/proxy/streaming_bench_test.go` | Raw io.Copy throughput, streamCopy end-to-end with mock backends |
+| `internal/proxy/infra/streaming_bench_test.go` | Raw io.Copy throughput, StreamCopy end-to-end with mock backends |
+| `internal/util/materialize/materialize_bench_test.go` | Materialize sink branches (memory vs spill to disk) |
 | `internal/counter/tracker_bench_test.go` | UsageTracker `WithinLimits` / `Record` under contention |
 | `internal/breaker/breaker_bench_test.go` | Circuit breaker call dispatch |
 | `internal/cache/memory_bench_test.go` | In-memory LRU |
@@ -63,7 +63,7 @@ Sample output:
 ```
 goos: linux
 goarch: amd64
-pkg: github.com/afreidah/s3-orchestrator/internal/proxy
+pkg: github.com/afreidah/s3-orchestrator/internal/proxy/object
                               │ bench-before │          bench-after          │
                               │    sec/op    │   sec/op    vs base           │
 LocationCache_Get_Hit-8          45.2ns ± 1%   44.8ns ± 2%  ~ (p=0.35 n=6)

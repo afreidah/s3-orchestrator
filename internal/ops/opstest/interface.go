@@ -4,4 +4,4 @@
 // hand-rolling its own stub of the same worker.
 package opstest
 
-//go:generate mockgen -destination=mocks.go -package=opstest github.com/afreidah/s3-orchestrator/internal/ops ObjectAPI,ObjectStore,BackendOps,RuntimeOps,ReplicatorOps,RebalancerOps,OverReplicationOps,ScrubberOps,EncryptionStore,CompressionStore
+//go:generate mockgen -destination=mocks.go -package=opstest github.com/afreidah/s3-orchestrator/internal/ops ObjectAPI,ObjectStore,UsageGate,IntegrityConfigLoader,RuntimeOps,ReplicatorOps,RebalancerOps,OverReplicationOps,ScrubberOps,EncryptionStore,CompressionStore

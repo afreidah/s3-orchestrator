@@ -45,26 +45,26 @@ type BackfillResult struct {
 
 // IntegrityDeps holds the collaborators Integrity requires.
 type IntegrityDeps struct {
-	Scrubber   ScrubberOps
-	BackendOps BackendOps
+	Scrubber     ScrubberOps
+	IntegrityCfg IntegrityConfigLoader
 }
 
 // Integrity serves the verification operations shared by the admin API and
 // the web UI.
 type Integrity struct {
-	log        *slog.Logger
-	scrubber   ScrubberOps
-	backendOps BackendOps
+	log          *slog.Logger
+	scrubber     ScrubberOps
+	integrityCfg IntegrityConfigLoader
 }
 
 // NewIntegrity is the explicit-deps constructor.
 func NewIntegrity(d IntegrityDeps) *Integrity {
 	must.NotNil("d.Scrubber", d.Scrubber)
-	must.NotNil("d.BackendOps", d.BackendOps)
+	must.NotNil("d.IntegrityCfg", d.IntegrityCfg)
 	return &Integrity{
-		log:        slog.Default().With(logfmt.Component("ops")),
-		scrubber:   d.Scrubber,
-		backendOps: d.BackendOps,
+		log:          slog.Default().With(logfmt.Component("ops")),
+		scrubber:     d.Scrubber,
+		integrityCfg: d.IntegrityCfg,
 	}
 }
 
@@ -72,7 +72,7 @@ func NewIntegrity(d IntegrityDeps) *Integrity {
 // <= 0 uses the configured ScrubberBatchSize. observer, when non-nil, receives
 // a start and end step per copy verified.
 func (i *Integrity) Scrub(ctx context.Context, batchSize int, observer progress.Observer) (ScrubResult, error) {
-	icfg := i.backendOps.IntegrityConfig()
+	icfg := i.integrityCfg.Load()
 	if icfg == nil || !icfg.Enabled {
 		return ScrubResult{}, ErrIntegrityDisabled
 	}
@@ -96,7 +96,7 @@ func (i *Integrity) VerifyKey(ctx context.Context, key string) ([]worker.CopyVer
 	if key == "" {
 		return nil, ErrKeyRequired
 	}
-	icfg := i.backendOps.IntegrityConfig()
+	icfg := i.integrityCfg.Load()
 	if icfg == nil || !icfg.Enabled {
 		return nil, ErrIntegrityDisabled
 	}
@@ -117,7 +117,7 @@ func (i *Integrity) VerifyKey(ctx context.Context, key string) ([]worker.CopyVer
 // batchSize <= 0 uses the default pass size. observer, when non-nil, receives a
 // start and end step per object hashed.
 func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects int, pause time.Duration, observer progress.Observer) (BackfillResult, error) {
-	icfg := i.backendOps.IntegrityConfig()
+	icfg := i.integrityCfg.Load()
 	if icfg == nil || !icfg.Enabled {
 		return BackfillResult{}, ErrIntegrityDisabled
 	}

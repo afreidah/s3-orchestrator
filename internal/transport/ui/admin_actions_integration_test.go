@@ -32,7 +32,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -41,9 +40,9 @@ import (
 )
 
 // newOpsForTest builds the operations layer against a mock store and an empty
-// backend set. opts mutates the resulting BackendManager and workers so
+// backend set. opts mutates the resulting stack and workers so
 // individual tests can flip the relevant skipped-vs-happy guards.
-func newOpsForTest(t testing.TB, opts ...func(*proxy.BackendManager, *proxytest.Workers)) *ops.Services {
+func newOpsForTest(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.Workers)) *ops.Services {
 	t.Helper()
 	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
 	// The handler drives real workers, whose passes read the ledger. These are
@@ -62,50 +61,47 @@ func newOpsForTest(t testing.TB, opts ...func(*proxy.BackendManager, *proxytest.
 	mock.EXPECT().GetLeastRecentlyScrubbedObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	mock.EXPECT().OldestUnverifiedAge(gomock.Any()).Return(time.Duration(0), int64(0), nil).AnyTimes()
 	mock.EXPECT().GetObjectsWithoutHash(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
-	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: map[string]backend.ObjectBackend{},
-			Order:    []string{},
-		},
-		Policies: proxy.PolicyConfig{
+	st := proxytest.New(t, mock, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        map[string]backend.ObjectBackend{},
+			Order:           []string{},
 			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: mock,
-		},
+			Metrics:         mock,
+		}),
 	})
-	workers := proxytest.BuildWorkers(mgr, mock)
+	workers := proxytest.BuildWorkers(st, mock)
 	workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 1})
 	workers.OverReplicationCleaner.SetConfig(&config.ReplicationConfig{Factor: 1})
 	for _, opt := range opts {
-		opt(mgr, workers)
+		opt(st, workers)
 	}
 
-	return testOps(mgr, workers, mock)
+	return testOps(st, workers, mock)
 }
 
-// testOps assembles the operations layer over a manager and its workers, the
+// testOps assembles the operations layer over a stack and its workers, the
 // same wiring the composition root performs.
-func testOps(mgr *proxy.BackendManager, workers *proxytest.Workers, store core.MetadataStore) *ops.Services {
+func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.MetadataStore) *ops.Services {
 	return ops.New(&ops.Deps{
-		Objects:    mgr.Objects(),
-		Store:      store,
-		EncStore:   store,
-		CompStore:  store,
-		Runtime:    mgr.Runtime(),
-		BackendOps: mgr,
-		Replicator: workers.Replicator,
-		OverRep:    workers.OverReplicationCleaner,
-		Rebalancer: workers.Rebalancer,
-		Scrubber:   workers.Scrubber,
-		Cfg:        &config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}},
+		Objects:      st.Objects,
+		Store:        store,
+		EncStore:     store,
+		CompStore:    store,
+		Runtime:      st.Runtime,
+		Usage:        st.Runtime.Usage(),
+		IntegrityCfg: st.IntegrityCfg,
+		Replicator:   workers.Replicator,
+		OverRep:      workers.OverReplicationCleaner,
+		Rebalancer:   workers.Rebalancer,
+		Scrubber:     workers.Scrubber,
+		Cfg:          &config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}},
 	})
 }
 
 // newActionsHandler builds a UI handler whose operations are the ones under
 // test. Every operation resolves to the skipped branch unless opts say
 // otherwise.
-func newActionsHandler(t testing.TB, opts ...func(*proxy.BackendManager, *proxytest.Workers)) *Handler {
+func newActionsHandler(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.Workers)) *Handler {
 	t.Helper()
 	svc := newOpsForTest(t, opts...)
 	return &Handler{
@@ -127,7 +123,7 @@ func newActionsHandler(t testing.TB, opts ...func(*proxy.BackendManager, *proxyt
 // across the four operations; covering one is enough.
 func TestHandleAPIReplicate_HappyPathReturnsCount(t *testing.T) {
 	t.Parallel()
-	h := newActionsHandler(t, func(_ *proxy.BackendManager, workers *proxytest.Workers) {
+	h := newActionsHandler(t, func(_ *proxytest.Stack, workers *proxytest.Workers) {
 		workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 10})
 	})
 
@@ -218,10 +214,10 @@ func TestHandleAPIEncryptExisting_ReportsCounts(t *testing.T) {
 	h := &Handler{
 		log: slog.Default(),
 		encryption: ops.NewEncryption(ops.EncryptionDeps{
-			Encryptor:  enc,
-			Store:      store,
-			Runtime:    opstest.NewMockRuntimeOps(gomock.NewController(t)),
-			BackendOps: opstest.NewMockBackendOps(gomock.NewController(t)),
+			Encryptor: enc,
+			Store:     store,
+			Runtime:   opstest.NewMockRuntimeOps(gomock.NewController(t)),
+			Usage:     opstest.NewMockUsageGate(gomock.NewController(t)),
 		}),
 	}
 
@@ -255,8 +251,8 @@ func TestIntegrityActions_ReportCountsWhenEnabled(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.opName, func(t *testing.T) {
 			t.Parallel()
-			h := newActionsHandler(t, func(mgr *proxy.BackendManager, _ *proxytest.Workers) {
-				mgr.SetIntegrityConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10})
+			h := newActionsHandler(t, func(st *proxytest.Stack, _ *proxytest.Workers) {
+				st.IntegrityCfg.Store(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10})
 			})
 
 			w := httptest.NewRecorder()
@@ -277,7 +273,7 @@ func TestIntegrityActions_ReportCountsWhenEnabled(t *testing.T) {
 // reports what it removed once the factor makes the pass meaningful.
 func TestHandleAPICleanExcess_ReportsRemovedCount(t *testing.T) {
 	t.Parallel()
-	h := newActionsHandler(t, func(_ *proxy.BackendManager, workers *proxytest.Workers) {
+	h := newActionsHandler(t, func(_ *proxytest.Stack, workers *proxytest.Workers) {
 		workers.OverReplicationCleaner.SetConfig(&config.ReplicationConfig{Factor: 2, BatchSize: 10})
 	})
 
@@ -471,11 +467,11 @@ func TestHandleAPICompressExisting_ReportsCounts(t *testing.T) {
 			h := &Handler{
 				log: slog.Default(),
 				compression: ops.NewCompression(&ops.CompressionDeps{
-					Codec:      codec,
-					Config:     config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
-					Store:      store,
-					Runtime:    opstest.NewMockRuntimeOps(gomock.NewController(t)),
-					BackendOps: opstest.NewMockBackendOps(gomock.NewController(t)),
+					Codec:   codec,
+					Config:  config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
+					Store:   store,
+					Runtime: opstest.NewMockRuntimeOps(gomock.NewController(t)),
+					Usage:   opstest.NewMockUsageGate(gomock.NewController(t)),
 				}),
 			}
 

@@ -8,7 +8,7 @@
 // accounting paths need in order to be asserted end to end.
 //
 // The coordinator is built from writepath.New directly. Nothing here needs a
-// BackendManager - New already names every collaborator the coordinator has.
+// composition root - New already names every collaborator the coordinator has.
 // -------------------------------------------------------------------------------
 
 package writepath
@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
 // fleetTimeout bounds a backend call in the test fleet. Long enough that no
@@ -44,7 +45,7 @@ type fleetOpts struct {
 // the runtime so a test can read the usage counters it charged. store is the
 // wide metadata store; New narrows it to CoordinatorStores.
 func newFleet(
-	t *testing.T, store core.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
+	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
 ) (*Coordinator, *infra.BackendRuntime) {
 	t.Helper()
 	if opts == nil {

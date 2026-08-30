@@ -22,19 +22,20 @@ import (
 // worker pool is not wired; the operations that depend on them report that
 // rather than failing.
 type Deps struct {
-	Objects    ObjectAPI
-	Store      ObjectStore
-	Encryptor  *encryption.Encryptor
-	EncStore   EncryptionStore
-	Codec      CompressionCodec
-	CompStore  CompressionStore
-	Runtime    RuntimeOps
-	BackendOps BackendOps
-	Replicator ReplicatorOps
-	OverRep    OverReplicationOps
-	Rebalancer RebalancerOps
-	Scrubber   ScrubberOps
-	Cfg        *config.Config
+	Objects      ObjectAPI
+	Store        ObjectStore
+	Encryptor    *encryption.Encryptor
+	EncStore     EncryptionStore
+	Codec        CompressionCodec
+	CompStore    CompressionStore
+	Runtime      RuntimeOps
+	Usage        UsageGate
+	IntegrityCfg IntegrityConfigLoader
+	Replicator   ReplicatorOps
+	OverRep      OverReplicationOps
+	Rebalancer   RebalancerOps
+	Scrubber     ScrubberOps
+	Cfg          *config.Config
 }
 
 // Services is the assembled operations layer. Transports hold the services
@@ -60,8 +61,8 @@ func New(d *Deps) *Services {
 			Config:  cfg,
 		}),
 		Integrity: NewIntegrity(IntegrityDeps{
-			Scrubber:   d.Scrubber,
-			BackendOps: d.BackendOps,
+			Scrubber:     d.Scrubber,
+			IntegrityCfg: d.IntegrityCfg,
 		}),
 		Replication: NewReplication(ReplicationDeps{
 			Replicator: d.Replicator,
@@ -75,18 +76,18 @@ func New(d *Deps) *Services {
 			Config:     cfg,
 		}),
 		Encryption: NewEncryption(EncryptionDeps{
-			Encryptor:  d.Encryptor,
-			Store:      d.EncStore,
-			Runtime:    d.Runtime,
-			BackendOps: d.BackendOps,
+			Encryptor: d.Encryptor,
+			Store:     d.EncStore,
+			Runtime:   d.Runtime,
+			Usage:     d.Usage,
 		}),
 		Compression: NewCompression(&CompressionDeps{
-			Codec:      d.Codec,
-			Config:     d.Cfg.Compression,
-			Encryptor:  d.Encryptor,
-			Store:      d.CompStore,
-			Runtime:    d.Runtime,
-			BackendOps: d.BackendOps,
+			Codec:     d.Codec,
+			Config:    d.Cfg.Compression,
+			Encryptor: d.Encryptor,
+			Store:     d.CompStore,
+			Runtime:   d.Runtime,
+			Usage:     d.Usage,
 		}),
 	}
 }

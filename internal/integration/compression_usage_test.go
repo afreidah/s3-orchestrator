@@ -35,16 +35,16 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
-// compressionEnv is a proxy whose writes are encoded, plus the manager behind
+// compressionEnv is a proxy whose writes are encoded, plus the stack behind
 // it so a test can read the counters the requests moved.
 type compressionEnv struct {
 	client *s3.Client
-	mgr    *proxy.BackendManager
+	rt     *infra.BackendRuntime
 }
 
 // compTestChunk is the chunk size these tests encode at. The smallest the
@@ -67,32 +67,27 @@ func setupCompressionEnv(t *testing.T) *compressionEnv {
 	t.Cleanup(codec.Close)
 
 	stores := newStores(testStore)
-	mgr := proxytest.NewManager(t, stores, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: testBackends,
-			Order:    testBackendOrder,
-		},
-		Policies: proxy.PolicyConfig{
-			CacheTTL:        60 * time.Second,
+	st := proxytest.New(t, stores, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        testBackends,
+			Order:           testBackendOrder,
 			BackendTimeout:  30 * time.Second,
 			RoutingStrategy: config.RoutingPack,
+			Metrics:         newMetricsAdapter(testStore),
+		}),
+		Codec: codec,
+		Compression: config.CompressionConfig{
+			Enabled:   true,
+			Level:     "default",
+			ChunkSize: compTestChunk,
+			MinSize:   1,
+			MinRatio:  config.DefaultCompressionMinRatio,
 		},
-		Features: proxy.FeatureDeps{
-			Codec: codec,
-			Compression: config.CompressionConfig{
-				Enabled:   true,
-				Level:     "default",
-				ChunkSize: compTestChunk,
-				MinSize:   1,
-				MinRatio:  config.DefaultCompressionMinRatio,
-			},
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: newMetricsAdapter(testStore),
-		},
+		CacheTTL:       60 * time.Second,
+		BackendTimeout: 30 * time.Second,
 	})
 
-	srv := &s3api.Server{Objects: mgr.Objects(), Multipart: mgr.Multipart()}
+	srv := &s3api.Server{Objects: st.Objects, Multipart: st.Multipart}
 	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
 		{
 			Name:        virtualBucket,
@@ -115,7 +110,7 @@ func setupCompressionEnv(t *testing.T) *compressionEnv {
 			Credentials:  credentials.NewStaticCredentialsProvider("test", "test", ""),
 			UsePathStyle: true,
 		}),
-		mgr: mgr,
+		rt: st.Runtime,
 	}
 }
 
@@ -197,7 +192,7 @@ func TestCompressionUsage_PutChargesStoredSizeNotLogical(t *testing.T) {
 
 	var key, target string
 	var stored int64
-	deltas := fleetUsageDelta(env.mgr, testBackendOrder, func() {
+	deltas := fleetUsageDelta(env.rt, testBackendOrder, func() {
 		key, target, stored = env.putCompressed(t, "comp-usage-put", body)
 	})
 
@@ -240,7 +235,7 @@ func TestCompressionUsage_GetChargesStoredSize(t *testing.T) {
 	key, target, stored := env.putCompressed(t, "comp-usage-get", body)
 
 	var got []byte
-	delta := usageDelta(env.mgr, target, func() {
+	delta := usageDelta(env.rt, target, func() {
 		out, err := env.client.GetObject(context.Background(), &s3.GetObjectInput{
 			Bucket: aws.String(virtualBucket),
 			Key:    aws.String(key),
@@ -276,7 +271,7 @@ func TestCompressionUsage_RangeFetchesOnlyCoveredFrames(t *testing.T) {
 
 	const want = 64
 	var got []byte
-	delta := usageDelta(env.mgr, target, func() {
+	delta := usageDelta(env.rt, target, func() {
 		out, err := env.client.GetObject(context.Background(), &s3.GetObjectInput{
 			Bucket: aws.String(virtualBucket),
 			Key:    aws.String(key),

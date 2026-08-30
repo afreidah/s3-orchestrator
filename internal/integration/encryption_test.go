@@ -33,7 +33,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
@@ -53,10 +52,10 @@ type encryptionTestEnv struct {
 	adminAddr   string
 	encryptor   *encryption.Encryptor
 	rawStore    *postgres.Store
-	manager     *proxy.BackendManager
+	stack       *proxytest.Stack
 }
 
-// setupEncryptionEnv creates a fresh BackendManager with encryption enabled,
+// setupEncryptionEnv creates a fresh proxy stack with encryption enabled,
 // an admin API server, and a proxy server. Returns the environment and a
 // cleanup function.
 func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
@@ -77,27 +76,22 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 
 	// Build a manager with encryption enabled using the same backends/store
 	stores := newStores(testStore)
-	mgr := proxytest.NewManager(t, stores, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: testBackends,
-			Order:    testBackendOrder,
-		},
-		Policies: proxy.PolicyConfig{
-			CacheTTL:        60 * time.Second,
+	st := proxytest.New(t, stores, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        testBackends,
+			Order:           testBackendOrder,
 			BackendTimeout:  30 * time.Second,
 			RoutingStrategy: config.RoutingPack,
-		},
-		Features: proxy.FeatureDeps{
-			Encryptor: enc,
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: newMetricsAdapter(testStore),
-		},
+			Metrics:         newMetricsAdapter(testStore),
+		}),
+		Encryptor:      enc,
+		CacheTTL:       60 * time.Second,
+		BackendTimeout: 30 * time.Second,
 	})
-	workers := proxytest.BuildWorkers(mgr, stores)
+	workers := proxytest.BuildWorkers(st, stores)
 
 	// Start proxy server
-	srv := &s3api.Server{Objects: mgr.Objects(), Multipart: mgr.Multipart()}
+	srv := &s3api.Server{Objects: st.Objects, Multipart: st.Multipart}
 	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
 		{
 			Name: virtualBucket,
@@ -119,27 +113,28 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	opsSvc := ops.New(&ops.Deps{
-		Objects:    mgr.Objects(),
-		Store:      testStore,
-		Encryptor:  enc,
-		EncStore:   testStore,
-		Runtime:    mgr.Runtime(),
-		BackendOps: mgr,
-		Replicator: workers.Replicator,
-		OverRep:    workers.OverReplicationCleaner,
-		Rebalancer: workers.Rebalancer,
-		Scrubber:   workers.Scrubber,
-		Cfg:        &config.Config{Buckets: []config.BucketConfig{{Name: virtualBucket}}},
+		Objects:      st.Objects,
+		Store:        testStore,
+		Encryptor:    enc,
+		EncStore:     testStore,
+		Runtime:      st.Runtime,
+		Usage:        st.Runtime.Usage(),
+		IntegrityCfg: st.IntegrityCfg,
+		Replicator:   workers.Replicator,
+		OverRep:      workers.OverReplicationCleaner,
+		Rebalancer:   workers.Rebalancer,
+		Scrubber:     workers.Scrubber,
+		Cfg:          &config.Config{Buckets: []config.BucketConfig{{Name: virtualBucket}}},
 	})
 	adminHandler := admin.New(&admin.Deps{
-		BackendOps:  mgr,
+		BackendOps:  st.Usage,
 		Objects:     opsSvc.Objects,
 		Integrity:   opsSvc.Integrity,
 		Replication: opsSvc.Replication,
 		Rebalance:   opsSvc.Rebalance,
 		Encryption:  opsSvc.Encryption,
 		Compression: opsSvc.Compression,
-		Drain:       mgr.Drain(),
+		Drain:       st.Drain,
 		Lifecycle:   testStore,
 		DBHealthy:   testDatabaseCB.IsHealthy,
 		Cleanup:     testStore,
@@ -169,7 +164,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		adminAddr:   adminListener.Addr().String(),
 		encryptor:   enc,
 		rawStore:    testStore,
-		manager:     mgr,
+		stack:       st,
 	}
 }
 

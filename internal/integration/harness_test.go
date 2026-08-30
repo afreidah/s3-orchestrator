@@ -45,7 +45,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
@@ -75,12 +74,12 @@ type harnessSpec struct {
 }
 
 // harness is one isolated orchestrator and everything a test needs to reach
-// into it: the client that drives it, the manager and workers behind it, and a
+// into it: the client that drives it, the stack and workers behind it, and a
 // direct handle on its own database.
 type harness struct {
 	t        *testing.T
 	client   *s3.Client
-	mgr      *proxy.BackendManager
+	stack    *proxytest.Stack
 	workers  *proxytest.Workers
 	store    *postgres.Store
 	db       *sql.DB
@@ -140,7 +139,7 @@ func newHarness(t *testing.T, spec harnessSpec) *harness {
 		h.order = append(h.order, backendCfgs[i].Name)
 	}
 
-	h.buildManager(t, spec)
+	h.buildStack(t, spec)
 
 	h.db, err = sql.Open("pgx", dbCfg.ConnectionString())
 	if err != nil {
@@ -215,12 +214,16 @@ func mustCreateHarnessBucket(t *testing.T, ctx context.Context, endpoint, bucket
 	}
 }
 
-// buildManager assembles the manager and workers for a spec, wiring whichever
-// stored-form layers it asked for.
-func (h *harness) buildManager(t *testing.T, spec harnessSpec) {
+// buildStack assembles the proxy stack and workers for a spec, wiring
+// whichever stored-form layers it asked for.
+func (h *harness) buildStack(t *testing.T, spec harnessSpec) {
 	t.Helper()
 
-	features := proxy.FeatureDeps{}
+	opts := proxytest.StackOptions{
+		CacheTTL:       60 * time.Second,
+		BackendTimeout: 30 * time.Second,
+		PendingEnabled: spec.Pending,
+	}
 	if spec.Encrypt {
 		provider, err := encryption.NewConfigKeyProvider(testMasterKey, "test-key")
 		if err != nil {
@@ -230,7 +233,7 @@ func (h *harness) buildManager(t *testing.T, spec harnessSpec) {
 		if err != nil {
 			t.Fatalf("harness encryptor: %v", err)
 		}
-		features.Encryptor = h.enc
+		opts.Encryptor = h.enc
 	}
 	if spec.Compression != nil {
 		codec, err := compression.NewCodec(compression.DefaultLevel, spec.Compression.ChunkSize)
@@ -239,8 +242,8 @@ func (h *harness) buildManager(t *testing.T, spec harnessSpec) {
 		}
 		t.Cleanup(codec.Close)
 		h.codec = codec
-		features.Codec = codec
-		features.Compression = *spec.Compression
+		opts.Codec = codec
+		opts.Compression = *spec.Compression
 	}
 
 	routing := spec.Routing
@@ -249,24 +252,21 @@ func (h *harness) buildManager(t *testing.T, spec harnessSpec) {
 	}
 
 	stores := newStores(h.store)
-	h.mgr = proxytest.NewManager(t, stores, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{Backends: h.backends, Order: h.order},
-		Policies: proxy.PolicyConfig{
-			CacheTTL:        60 * time.Second,
-			BackendTimeout:  30 * time.Second,
-			RoutingStrategy: routing,
-			PendingEnabled:  spec.Pending,
-		},
-		Features:   features,
-		Operations: proxy.OperationalDeps{Metrics: newMetricsAdapter(h.store)},
+	opts.Runtime = proxytest.NewRuntime(&proxytest.RuntimeOptions{
+		Backends:        h.backends,
+		Order:           h.order,
+		BackendTimeout:  30 * time.Second,
+		RoutingStrategy: routing,
+		Metrics:         newMetricsAdapter(h.store),
 	})
+	h.stack = proxytest.New(t, stores, &opts)
 	if spec.Integrity != nil {
-		h.mgr.SetIntegrityConfig(spec.Integrity)
+		h.stack.IntegrityCfg.Store(spec.Integrity)
 	}
-	// The workers get the same stored-form layers the manager writes with, so
+	// The workers get the same stored-form layers the stack writes with, so
 	// the scrubber can undo them; without that it cannot read the objects this
 	// harness stores and reports a clean sweep having checked none of them.
-	h.workers = proxytest.BuildWorkersWithFeatures(h.mgr, stores, proxytest.WorkerFeatures{
+	h.workers = proxytest.BuildWorkersWithFeatures(h.stack, stores, proxytest.WorkerFeatures{
 		Encryptor: h.enc,
 		Codec:     h.codec,
 	})
@@ -275,7 +275,7 @@ func (h *harness) buildManager(t *testing.T, spec harnessSpec) {
 // serve starts the harness's own S3 endpoint and returns its address.
 func (h *harness) serve(t *testing.T, ctx context.Context) string {
 	t.Helper()
-	srv := &s3api.Server{Objects: h.mgr.Objects(), Multipart: h.mgr.Multipart()}
+	srv := &s3api.Server{Objects: h.stack.Objects, Multipart: h.stack.Multipart}
 	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{{
 		Name:        virtualBucket,
 		Credentials: []config.CredentialConfig{{AccessKeyID: "test", SecretAccessKey: "test"}},
@@ -490,7 +490,7 @@ func (h *harness) waitDrainComplete(backendName string, timeout time.Duration) {
 	ctx := context.Background()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		progress, err := h.mgr.Drain().GetDrainProgress(ctx, backendName)
+		progress, err := h.stack.Drain.GetDrainProgress(ctx, backendName)
 		if err != nil {
 			h.t.Fatalf("GetDrainProgress(%s): %v", backendName, err)
 		}

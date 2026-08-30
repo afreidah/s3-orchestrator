@@ -8,7 +8,7 @@
 // zero-progress guard that keeps a backend outage from looping forever.
 //
 // Exercises the manager against a 1-method ExpiredObjectsLister mock and a
-// 1-method ObjectDeleter mock rather than standing up a BackendManager.
+// 1-method ObjectDeleter mock rather than standing up a full proxy stack.
 // -------------------------------------------------------------------------------
 
 package expiry

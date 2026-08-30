@@ -68,13 +68,21 @@ func newBackendOps(t *testing.T, cfg backendOpsStub) *MockBackendOps {
 	return m
 }
 
-// newOpsBackendOps builds the operations layer's view of the same backend
-// manager: usage recording plus the integrity settings that gate a scrub.
-func newOpsBackendOps(t *testing.T, cfg backendOpsStub) *opstest.MockBackendOps {
+// newOpsUsage builds the operations layer's view of the counters: it records
+// what a pass spends, and admits it first.
+func newOpsUsage(t *testing.T) *opstest.MockUsageGate {
 	t.Helper()
-	m := opstest.NewMockBackendOps(gomock.NewController(t))
-	m.EXPECT().RecordUsage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
-	m.EXPECT().IntegrityConfig().Return(cfg.integrity).AnyTimes()
+	m := opstest.NewMockUsageGate(gomock.NewController(t))
+	m.EXPECT().Record(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	m.EXPECT().WithinLimits(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
+	return m
+}
+
+// newOpsIntegrityCfg builds the integrity settings that gate a scrub.
+func newOpsIntegrityCfg(t *testing.T, cfg backendOpsStub) *opstest.MockIntegrityConfigLoader {
+	t.Helper()
+	m := opstest.NewMockIntegrityConfigLoader(gomock.NewController(t))
+	m.EXPECT().Load().Return(cfg.integrity).AnyTimes()
 	return m
 }
 
@@ -83,8 +91,8 @@ func newOpsBackendOps(t *testing.T, cfg backendOpsStub) *opstest.MockBackendOps 
 func integrityWith(t *testing.T, h *Handler, be backendOpsStub, sc *scrubberStub) {
 	t.Helper()
 	h.integrity = ops.NewIntegrity(ops.IntegrityDeps{
-		Scrubber:   newScrubber(t, sc),
-		BackendOps: newOpsBackendOps(t, be),
+		Scrubber:     newScrubber(t, sc),
+		IntegrityCfg: newOpsIntegrityCfg(t, be),
 	})
 }
 
@@ -121,10 +129,10 @@ func rebalanceWith(t *testing.T, h *Handler, cfg *rebalancerStub) {
 func encryptionWith(t *testing.T, h *Handler, enc *encryption.Encryptor, store ops.EncryptionStore) {
 	t.Helper()
 	h.encryption = ops.NewEncryption(ops.EncryptionDeps{
-		Encryptor:  enc,
-		Store:      store,
-		Runtime:    newRuntimeOps(t),
-		BackendOps: newOpsBackendOps(t, backendOpsStub{}),
+		Encryptor: enc,
+		Store:     store,
+		Runtime:   newRuntimeOps(t),
+		Usage:     newOpsUsage(t),
 	})
 }
 
@@ -134,11 +142,11 @@ func encryptionWith(t *testing.T, h *Handler, enc *encryption.Encryptor, store o
 func compressionWith(t *testing.T, h *Handler, codec *compression.Codec, store ops.CompressionStore) {
 	t.Helper()
 	h.compression = ops.NewCompression(&ops.CompressionDeps{
-		Codec:      codec,
-		Config:     config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
-		Store:      store,
-		Runtime:    newRuntimeOps(t),
-		BackendOps: newOpsBackendOps(t, backendOpsStub{}),
+		Codec:   codec,
+		Config:  config.CompressionConfig{Enabled: true, Level: "default", MinRatio: 0.95},
+		Store:   store,
+		Runtime: newRuntimeOps(t),
+		Usage:   newOpsUsage(t),
 	})
 }
 

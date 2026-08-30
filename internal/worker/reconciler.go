@@ -40,13 +40,19 @@ type BackendSyncer interface {
 	ReconcileBackend(ctx context.Context, backendName string, knownBuckets []string) (*reconcile.Result, error)
 }
 
-// FleetOps is the fleet-wide surface the reconciler needs around a pass: the
-// backends to walk, and the counters to correct afterwards.
-// *proxy.BackendManager satisfies it.
+// FleetOps is the fleet-wide surface the reconciler walks and republishes:
+// the backends to visit, and the quota gauges to refresh once a pass has
+// changed what they report. *infra.BackendRuntime satisfies it.
 type FleetOps interface {
 	UpdateQuotaMetrics(ctx context.Context) error
-	ReconcileUsage(ctx context.Context) (map[string]int64, error)
 	BackendOrder() []string
+}
+
+// UsageReconciler corrects the drift in the incrementally maintained byte
+// counters, which a reconcile pass is the natural point to do: it has just
+// established what each backend actually holds. *usage.Service satisfies it.
+type UsageReconciler interface {
+	ReconcileUsage(ctx context.Context) (map[string]int64, error)
 }
 
 // Reconciler scans backends for untracked objects and imports them into the
@@ -55,19 +61,32 @@ type Reconciler struct {
 	log         *slog.Logger
 	syncer      BackendSyncer
 	fleet       FleetOps
+	usage       UsageReconciler
 	bucketNames []string
+}
+
+// ReconcilerDeps groups what a pass draws on: the diff engine, the fleet it
+// walks, and the counters it corrects once the diff has landed.
+type ReconcilerDeps struct {
+	Syncer      BackendSyncer
+	Fleet       FleetOps
+	Usage       UsageReconciler
+	BucketNames []string
 }
 
 // NewReconciler creates a reconciler that uses the syncer's SyncBackend to
 // import untracked objects.
-func NewReconciler(syncer BackendSyncer, fleet FleetOps, bucketNames []string) *Reconciler {
-	must.NotNil("syncer", syncer)
-	must.NotNil("fleet", fleet)
+func NewReconciler(d *ReconcilerDeps) *Reconciler {
+	must.NotNil("d", d)
+	must.NotNil("d.Syncer", d.Syncer)
+	must.NotNil("d.Fleet", d.Fleet)
+	must.NotNil("d.Usage", d.Usage)
 	return &Reconciler{
 		log:         slog.Default().With(logfmt.Component("reconciler")),
-		syncer:      syncer,
-		fleet:       fleet,
-		bucketNames: bucketNames,
+		syncer:      d.Syncer,
+		fleet:       d.Fleet,
+		usage:       d.Usage,
+		bucketNames: d.BucketNames,
 	}
 }
 
@@ -126,7 +145,7 @@ func (r *Reconciler) Run(ctx context.Context) {
 // (drift can exist with zero imports); a failure is logged and swallowed so it
 // never aborts the reconcile cycle.
 func (r *Reconciler) reconcileUsage(ctx context.Context) {
-	adjustments, err := r.fleet.ReconcileUsage(ctx)
+	adjustments, err := r.usage.ReconcileUsage(ctx)
 	if err != nil {
 		r.log.WarnContext(ctx, "usage reconciliation failed", logfmt.Err(err))
 		return

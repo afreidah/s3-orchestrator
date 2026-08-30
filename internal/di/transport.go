@@ -30,13 +30,14 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -44,6 +45,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
+	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -95,8 +97,10 @@ func ProvideLoginThrottle(_ do.Injector) (*httputil.LoginThrottle, error) {
 func ProvideOps(i do.Injector) (*ops.Services, error) {
 	r := newResolver(i)
 	cfg := resolve[*config.Config](r)
-	manager := resolve[*proxy.BackendManager](r)
-	stores := resolve[core.MetadataStore](r)
+	rt := resolve[*infra.BackendRuntime](r)
+	objectManager := resolve[*object.Manager](r)
+	integrityCfg := resolve[*syncutil.AtomicConfig[config.IntegrityConfig]](r)
+	stores := resolve[metadataStore](r)
 	encAdmin := resolve[core.EncryptionAdmin](r)
 	replicator := resolve[*worker.Replicator](r)
 	overRep := resolve[*worker.OverReplicationCleaner](r)
@@ -119,19 +123,20 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 	}
 
 	return ops.New(&ops.Deps{
-		Objects:    manager.Objects(),
-		Store:      stores,
-		Encryptor:  enc,
-		EncStore:   encAdmin,
-		Codec:      codec,
-		CompStore:  stores,
-		Runtime:    manager.Runtime(),
-		BackendOps: manager,
-		Replicator: replicator,
-		OverRep:    overRep,
-		Rebalancer: rebalancer,
-		Scrubber:   scrubber,
-		Cfg:        cfg,
+		Objects:      objectManager,
+		Store:        stores,
+		Encryptor:    enc,
+		EncStore:     encAdmin,
+		Codec:        codec,
+		CompStore:    stores,
+		Runtime:      rt,
+		Usage:        rt.Usage(),
+		IntegrityCfg: integrityCfg,
+		Replicator:   replicator,
+		OverRep:      overRep,
+		Rebalancer:   rebalancer,
+		Scrubber:     scrubber,
+		Cfg:          cfg,
 	}), nil
 }
 
@@ -170,10 +175,10 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 // cache, reconciler) are resolved separately via Optional[T].
 type adminHandlerRequiredDeps struct {
 	cfg      *config.Config
-	manager  *proxy.BackendManager
+	usageSvc *usage.Service
 	cb       *breaker.CircuitBreaker
 	logLevel *slog.LevelVar
-	stores   core.MetadataStore
+	stores   metadataStore
 	drain    *drain.Manager
 	ops      *ops.Services
 }
@@ -184,10 +189,10 @@ func resolveAdminHandlerRequiredDeps(i do.Injector) (adminHandlerRequiredDeps, e
 	r := newResolver(i)
 	d := adminHandlerRequiredDeps{
 		cfg:      resolve[*config.Config](r),
-		manager:  resolve[*proxy.BackendManager](r),
+		usageSvc: resolve[*usage.Service](r),
 		cb:       resolve[*breaker.CircuitBreaker](r),
 		logLevel: resolve[*slog.LevelVar](r),
-		stores:   resolve[core.MetadataStore](r),
+		stores:   resolve[metadataStore](r),
 		drain:    resolve[*drain.Manager](r),
 		ops:      resolve[*ops.Services](r),
 	}
@@ -248,7 +253,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		return nil, err
 	}
 	deps := &admin.Deps{
-		BackendOps:   d.manager,
+		BackendOps:   d.usageSvc,
 		Dashboard:    aggregator,
 		Objects:      d.ops.Objects,
 		Integrity:    d.ops.Integrity,
@@ -284,7 +289,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 func ProvideNotifier(i do.Injector) (*notify.Notifier, error) {
 	r := newResolver(i)
 	cfg := resolve[*config.Config](r)
-	stores := resolve[core.MetadataStore](r)
+	stores := resolve[metadataStore](r)
 	if r.err != nil {
 		return nil, r.err
 	}

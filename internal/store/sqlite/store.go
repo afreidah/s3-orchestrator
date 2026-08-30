@@ -112,9 +112,6 @@ func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx core
 	})
 }
 
-// Compile-time check that *Store satisfies core.Runner.
-var _ core.Runner = (*Store)(nil)
-
 // WithAdvisoryLock emulates PostgreSQL advisory locks using a process-local
 // mutex. For single-instance SQLite deployments, this is correct  -  there are
 // no competing instances. Returns (false, nil) if the lock is already held
@@ -127,6 +124,5 @@ func (s *Store) WithAdvisoryLock(ctx context.Context, _ int64, fn func(ctx conte
 	return true, fn(ctx)
 }
 
-// Compile-time check that *Store satisfies the wide metadata-store
-// contract every consumer depends on.
-var _ core.MetadataStore = (*Store)(nil)
+// Compile-time check that *Store implements every store role.
+var _ = core.AssertEngine[*Store]
