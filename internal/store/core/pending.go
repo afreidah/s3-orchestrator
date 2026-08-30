@@ -69,7 +69,7 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 	if err != nil {
 		return promoteOutcome{}, err
 	}
-	loc := objectFromStoredForm(p.ObjectKey, p.BackendName, p.SizeBytes, pendingStoredForm(p))
+	loc := objectFromStoredForm(p.ObjectKey, p.BackendName, p.SizeBytes, pendingStoredForm(p), p.Identity)
 	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
 		return promoteOutcome{}, fmt.Errorf("insert promoted location: %w", err)
 	}

@@ -117,6 +117,14 @@ func objectInsertParams(loc *core.ObjectLocation) db.InsertObjectLocationParams 
 		params.CompressionFormatVersion = int16Ptr(loc.CompressionFormatVersion)
 		params.LogicalSize = int64Ptr(loc.LogicalSize)
 	}
+	if id := loc.Identity; id != nil {
+		params.Etag = strPtr(id.ETag)
+		params.ContentType = strPtr(id.ContentType)
+		// A marshal failure would mean a map[string]string that cannot be
+		// JSON, which does not exist; the column stays NULL rather than
+		// failing a write over metadata a later read can re-learn.
+		params.UserMetadata, _ = core.EncodeUserMetadata(id.UserMetadata)
+	}
 	return params
 }
 
@@ -139,6 +147,9 @@ func objectInsertIfNotExistsParams(loc *core.ObjectLocation) db.InsertObjectLoca
 		CompressionLevel:         p.CompressionLevel,
 		CompressionFormatVersion: p.CompressionFormatVersion,
 		LogicalSize:              p.LogicalSize,
+		Etag:                     p.Etag,
+		ContentType:              p.ContentType,
+		UserMetadata:             p.UserMetadata,
 		Managed:                  !loc.Unmanaged,
 	}
 }

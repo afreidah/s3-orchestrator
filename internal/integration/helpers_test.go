@@ -940,11 +940,11 @@ func (f *FailableStore) GetMultipartUpload(ctx context.Context, uploadID string)
 
 // RecordPart is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, form *core.StoredForm) error {
+func (f *FailableStore) RecordPart(ctx context.Context, p *core.RecordPartParams) error {
 	if f.isFailing() {
 		return errSimulatedDBOutage
 	}
-	return f.inner.RecordPart(ctx, uploadID, partNumber, etag, size, form)
+	return f.inner.RecordPart(ctx, p)
 }
 
 // GetParts is an integration-test fixture helper; see file header for

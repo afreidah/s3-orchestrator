@@ -408,6 +408,17 @@ for _, tag := range result.TagSet {
 
 `types` is `github.com/aws/aws-sdk-go-v2/service/s3/types`. See [Object Tagging](tagging.md) for the limits and the replacement semantics.
 
+## ETags
+
+An object's ETag is the MD5 of the bytes you uploaded, in the same form S3 reports: the quoted hex digest for a single-part upload, and the MD5 of the concatenated part digests with a `-N` part-count suffix for a multipart one. Comparing it against the MD5 of your local file works, and comparing an object against itself over time works whichever replica answers the read.
+
+That holds with compression or encryption enabled. The bytes on a backend are then not your bytes, and the ETag that backend would report is a digest of the stored form; the orchestrator reports the object's own value instead.
+
+Two cases carry an ETag it did not compute:
+
+- Objects imported by reconcile — bytes found on a backend with no ledger row — report what the backend reports until something reads them, at which point that value is recorded for every copy so it stops changing across a failover.
+- Objects written before this version keep their backend value the same way. Compressed and encrypted ones get a computed ETag when the integrity scrubber next reads them, since only a plaintext read can produce one.
+
 ## Conditional Writes
 
 The orchestrator honors the `If-None-Match: *` header on `PutObject` and `CompleteMultipartUpload` to give clients opt-in conflict detection. When the header is set and an object already exists at the target key, the request fails with `412 Precondition Failed` and the upload bytes are not stored.

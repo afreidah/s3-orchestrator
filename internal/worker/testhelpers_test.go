@@ -77,6 +77,7 @@ type mockMetadataStore struct {
 	oldestUnverified    time.Duration
 	neverVerified       int64
 	lastUpdatedHash     string
+	lastRecordedETag    string
 	underReplicated     []core.ObjectLocation
 	underReplicatedErr  error
 	overReplicated      []core.ObjectLocation
@@ -218,6 +219,15 @@ func (m *mockMetadataStore) GetObjectsWithoutHash(_ context.Context, limit, _ in
 // fixture field or the zero value.
 func (m *mockMetadataStore) UpdateContentHash(_ context.Context, _, _, hash string) error {
 	m.lastUpdatedHash = hash
+	return nil
+}
+
+// RecordObjectIdentity is a stub on mockMetadataStore; records the ETag the
+// backfill computed so a test can assert the object learned one.
+func (m *mockMetadataStore) RecordObjectIdentity(_ context.Context, _ string, id *core.ObjectIdentity) error {
+	if id != nil {
+		m.lastRecordedETag = id.ETag
+	}
 	return nil
 }
 

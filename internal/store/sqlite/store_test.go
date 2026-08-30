@@ -68,6 +68,13 @@ func rewindToSchemaVersion(t *testing.T, s *Store, version int) {
 	t.Helper()
 	ctx := context.Background()
 
+	if version < 11 {
+		for _, table := range []string{"object_locations", "pending_objects"} {
+			dropColumns(t, s, table, "etag", "content_type", "user_metadata")
+		}
+		dropColumns(t, s, "multipart_parts", "plaintext_etag")
+	}
+
 	if version < 10 {
 		dropColumns(t, s, "multipart_uploads", "tagging")
 	}
@@ -892,10 +899,10 @@ func TestMultipartUpload_Lifecycle(t *testing.T) {
 	}
 
 	// Record parts
-	if err := s.RecordPart(ctx, "upload-1", 1, "etag1", 1024, nil); err != nil {
+	if err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: "upload-1", PartNumber: 1, ETag: "etag1", SizeBytes: 1024, Form: nil}); err != nil {
 		t.Fatalf("RecordPart 1: %v", err)
 	}
-	if err := s.RecordPart(ctx, "upload-1", 2, "etag2", 2048, nil); err != nil {
+	if err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: "upload-1", PartNumber: 2, ETag: "etag2", SizeBytes: 2048, Form: nil}); err != nil {
 		t.Fatalf("RecordPart 2: %v", err)
 	}
 
@@ -1980,7 +1987,7 @@ func TestCorruptTimestamp_GetParts(t *testing.T) {
 	ctx := context.Background()
 
 	mustCreateUpload(t, s, "up-parts", "bucket/mp", "backend-a")
-	if err := s.RecordPart(ctx, "up-parts", 1, "etag1", 100, nil); err != nil {
+	if err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: "up-parts", PartNumber: 1, ETag: "etag1", SizeBytes: 100, Form: nil}); err != nil {
 		t.Fatalf("RecordPart: %v", err)
 	}
 

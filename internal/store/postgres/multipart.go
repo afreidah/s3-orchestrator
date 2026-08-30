@@ -147,21 +147,24 @@ func toMultipartUpload(r *multipartRow) (core.MultipartUpload, error) {
 
 // RecordPart records a completed part for a multipart upload.
 // S3 spec requires part numbers between 1 and 10000.
-func (s *Store) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, form *core.StoredForm) error {
-	if partNumber < 1 || partNumber > 10000 {
-		return fmt.Errorf("invalid part number %d: must be between 1 and 10000", partNumber)
+func (s *Store) RecordPart(ctx context.Context, p *core.RecordPartParams) error {
+	if p.PartNumber < 1 || p.PartNumber > 10000 {
+		return fmt.Errorf("invalid part number %d: must be between 1 and 10000", p.PartNumber)
 	}
 	params := db.UpsertPartParams{
-		UploadID:   uploadID,
-		PartNumber: int32(partNumber),
-		Etag:       etag,
-		SizeBytes:  size,
+		UploadID:   p.UploadID,
+		PartNumber: int32(p.PartNumber),
+		Etag:       p.ETag,
+		SizeBytes:  p.SizeBytes,
 	}
-	if form != nil && form.Encrypted {
+	if p.PlaintextETag != "" {
+		params.PlaintextEtag = &p.PlaintextETag
+	}
+	if p.Form != nil && p.Form.Encrypted {
 		params.Encrypted = true
-		params.EncryptionKey = form.EncryptionKey
-		params.KeyID = &form.KeyID
-		params.PlaintextSize = &form.PlaintextSize
+		params.EncryptionKey = p.Form.EncryptionKey
+		params.KeyID = &p.Form.KeyID
+		params.PlaintextSize = &p.Form.PlaintextSize
 	}
 	if err := s.queries.UpsertPart(ctx, params); err != nil {
 		return fmt.Errorf("failed to record part: %w", err)
@@ -186,6 +189,7 @@ func multipartPartFromRow(r *db.GetPartsRow) core.MultipartPart {
 	return core.MultipartPart{
 		PartNumber:    int(r.PartNumber),
 		ETag:          r.Etag,
+		PlaintextETag: derefStr(r.PlaintextEtag),
 		SizeBytes:     r.SizeBytes,
 		CreatedAt:     r.CreatedAt.Time,
 		Encrypted:     r.Encrypted,

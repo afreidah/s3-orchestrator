@@ -172,18 +172,21 @@ func (w *Coordinator) RecoverFromRecordFailure(ctx context.Context, be backend.O
 // while pending tracking is configured fails the PUT - proceeding without
 // the intent would reintroduce the data-loss window the pattern exists to
 // close.
-func (w *Coordinator) InsertPendingIntent(ctx context.Context, key, backendName string, size int64, form *core.StoredForm) (string, error) {
+func (w *Coordinator) InsertPendingIntent(ctx context.Context, key, backendName string, size int64, form *core.StoredForm, id *core.ObjectIdentity) (string, error) {
 	if !w.pendingEnabled {
 		return "", nil
 	}
 	intentID := audit.NewID()
 	// size is what will land on the backend, which is what quota is reconciled
-	// against if this intent is recovered rather than committed.
+	// against if this intent is recovered rather than committed. id is what the
+	// client will be told the object is; carrying it here is what lets a
+	// reaper-promoted object answer a HEAD without re-learning it.
 	p := core.PendingObject{
 		IntentID:    intentID,
 		ObjectKey:   key,
 		BackendName: backendName,
 		SizeBytes:   size,
+		Identity:    id,
 	}
 	p.ApplyStoredForm(form)
 	if err := w.stores.InsertPending(ctx, &p); err != nil {

@@ -44,7 +44,7 @@ func TestUploadPart_RecordFailure_CleanupDeleteCarriesDeadline(t *testing.T) {
 			BackendName: "b1",
 		}, nil).
 		AnyTimes()
-	store.EXPECT().RecordPart(gomock.Any(), "upload-1", 1, gomock.Any(), int64(4), gomock.Any()).
+	store.EXPECT().RecordPart(gomock.Any(), gomock.Any()).
 		Return(errors.New("db error")).
 		AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
