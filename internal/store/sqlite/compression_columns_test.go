@@ -125,12 +125,12 @@ func TestInsertPaths_PreserveRepresentation(t *testing.T) {
 			name: "ImportObject",
 			key:  "bucket/import",
 			write: func(t *testing.T, s *Store, key string) {
-				inserted, err := s.ImportObject(ctx, key, "backend-a", 1024, false, form)
+				outcome, err := s.ImportObject(ctx, key, "backend-a", 1024, false, form)
 				if err != nil {
 					t.Fatalf("ImportObject: %v", err)
 				}
-				if !inserted {
-					t.Fatal("ImportObject reported no insert")
+				if outcome != core.ImportInserted {
+					t.Fatalf("ImportObject outcome = %s, want inserted", outcome)
 				}
 			},
 		},

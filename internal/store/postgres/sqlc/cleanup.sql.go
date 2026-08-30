@@ -302,6 +302,34 @@ func (q *Queries) GetPendingCleanups(ctx context.Context, limit int32) ([]GetPen
 	return items, nil
 }
 
+const hasPendingCleanup = `-- name: HasPendingCleanup :one
+SELECT EXISTS (
+    SELECT 1 FROM cleanup_queue q
+     WHERE q.object_key = $1 AND q.backend_name = $2
+    UNION ALL
+    SELECT 1 FROM cleanup_dlq d
+     WHERE d.object_key = $1 AND d.backend_name = $2
+) AS pending
+`
+
+type HasPendingCleanupParams struct {
+	ObjectKey   string
+	BackendName string
+}
+
+// Reports whether a delete for (object_key, backend_name) is still
+// outstanding: either waiting in the retry queue or dead-lettered after
+// exhausting its attempts. Both mean the bytes are still on the backend and
+// the object is meant to be gone, which is what stops reconcile importing it
+// back. Dead-lettered counts because retrying stopped, not because the delete
+// was withdrawn.
+func (q *Queries) HasPendingCleanup(ctx context.Context, arg HasPendingCleanupParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasPendingCleanup, arg.ObjectKey, arg.BackendName)
+	var pending bool
+	err := row.Scan(&pending)
+	return pending, err
+}
+
 const insertCleanupDLQ = `-- name: InsertCleanupDLQ :exec
 INSERT INTO cleanup_dlq (
     original_id, backend_name, object_key, reason, size_bytes,

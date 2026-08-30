@@ -27,9 +27,10 @@ import (
 
 // ReconcileResult holds the outcome of a reconciliation pass for one backend.
 type ReconcileResult struct {
-	Imported        int `json:"imported"`
-	Removed         int `json:"removed"`
-	BackendsScanned int `json:"backends_scanned"`
+	Imported                 int `json:"imported"`
+	Removed                  int `json:"removed"`
+	SuppressedPendingCleanup int `json:"suppressed_pending_cleanup"`
+	BackendsScanned          int `json:"backends_scanned"`
 }
 
 // BackendSyncer scans and reconciles one backend against the ledger.
@@ -172,6 +173,7 @@ func (r *Reconciler) ReconcileStreaming(ctx context.Context, backendName string,
 			if result != nil {
 				total.Imported += int(result.Imported)
 				total.Removed += int(result.Removed)
+				total.SuppressedPendingCleanup += int(result.SuppressedPendingCleanup)
 				total.BackendsScanned++
 			}
 			if err != nil {
@@ -191,6 +193,7 @@ func (r *Reconciler) ReconcileStreaming(ctx context.Context, backendName string,
 	audit.Log(ctx, "storage.ReconcileComplete",
 		slog.Int("imported", total.Imported),
 		slog.Int("removed", total.Removed),
+		slog.Int("suppressed_pending_cleanup", total.SuppressedPendingCleanup),
 		slog.Int("backends_scanned", total.BackendsScanned),
 	)
 
