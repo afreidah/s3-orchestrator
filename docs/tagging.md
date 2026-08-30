@@ -10,7 +10,7 @@ Tags are yours to give meaning to. The one place the orchestrator acts on them i
 
 ## Current status
 
-Every way S3 sets tags is handled: inline on `PutObject` and `CreateMultipartUpload`, the three `?tagging` subresource operations, and `x-amz-tagging-directive` on a server-side copy. An object's set is reachable from the admin API, the CLI and the TUI object inspector, and it is cleared wherever a key stops holding the object it held.
+Every way S3 sets tags is handled: inline on `PutObject` and `CreateMultipartUpload`, the three `?tagging` subresource operations, and `x-amz-tagging-directive` on a server-side copy. `GetObject` and `HeadObject` report how many tags an object carries. An object's set is reachable from the admin API, the CLI and the TUI object inspector, and it is cleared wherever a key stops holding the object it held.
 
 ## Tags belong to the object, not to a copy
 
@@ -47,6 +47,20 @@ aws s3api delete-object-tagging --bucket photos --key report.pdf
 `DeleteObjectTagging` removes the whole set and answers `204`. Clearing a set that is already empty succeeds for the same reason.
 
 A `PutObjectTagging` whose `TagSet` is empty removes every tag, which the spec defines as the same outcome as a delete.
+
+## Knowing whether an object has tags
+
+`GetObject` and `HeadObject` report the size of the set in `x-amz-tagging-count`:
+
+```
+x-amz-tagging-count: 3
+```
+
+The header is sent only when the object carries at least one tag. An untagged object omits it rather than sending a zero, which is what S3 does and what lets a client read its presence as "there is a set here worth fetching".
+
+It reports how many, never which. `GetObjectTagging` remains the only way to read the tags themselves, and stays the authority: the count is advisory, and a read that cannot reach the metadata store serves the object with the header left off rather than failing over one number.
+
+A cached object carries its count in the cache entry, and a tag write drops the entry so the next read counts again.
 
 ## Copying an object
 

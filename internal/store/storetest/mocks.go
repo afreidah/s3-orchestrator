@@ -174,6 +174,21 @@ func (mr *MockMetadataStoreMockRecorder) CountActiveMultipartUploads(ctx, bucket
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountActiveMultipartUploads", reflect.TypeOf((*MockMetadataStore)(nil).CountActiveMultipartUploads), ctx, bucketPrefix)
 }
 
+// CountObjectTags mocks base method.
+func (m *MockMetadataStore) CountObjectTags(ctx context.Context, key string) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountObjectTags", ctx, key)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountObjectTags indicates an expected call of CountObjectTags.
+func (mr *MockMetadataStoreMockRecorder) CountObjectTags(ctx, key any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountObjectTags", reflect.TypeOf((*MockMetadataStore)(nil).CountObjectTags), ctx, key)
+}
+
 // CountOverReplicatedObjects mocks base method.
 func (m *MockMetadataStore) CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error) {
 	m.ctrl.T.Helper()

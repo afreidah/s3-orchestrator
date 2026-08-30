@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -164,9 +165,11 @@ func TestHandleAPIDownload_StreamsObject(t *testing.T) {
 	api := opstest.NewMockObjectAPI(gomock.NewController(t))
 	payload := []byte("hello world")
 	api.EXPECT().GetObject(gomock.Any(), "test-bucket/dir/file.txt", "").
-		Return(&backend.GetObjectResult{
-			Body: io.NopCloser(bytes.NewReader(payload)),
-			Size: int64(len(payload)),
+		Return(&object.GetResult{
+			GetObjectResult: &backend.GetObjectResult{
+				Body: io.NopCloser(bytes.NewReader(payload)),
+				Size: int64(len(payload)),
+			},
 		}, nil).Times(1)
 
 	h := &Handler{

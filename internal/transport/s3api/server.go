@@ -23,7 +23,6 @@ import (
 	"strconv"
 	"time"
 
-	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -60,8 +59,8 @@ var httpSpanName = map[string]string{
 // request. *object.Manager satisfies it.
 type ObjectOps interface {
 	PutObject(ctx context.Context, req *object.PutObjectRequest) (string, error)
-	GetObject(ctx context.Context, key, rangeHeader string) (*s3be.GetObjectResult, error)
-	HeadObject(ctx context.Context, key string) (*s3be.HeadObjectResult, error)
+	GetObject(ctx context.Context, key, rangeHeader string) (*object.GetResult, error)
+	HeadObject(ctx context.Context, key string) (*object.HeadResult, error)
 	DeleteObject(ctx context.Context, key string) error
 	DeleteObjects(ctx context.Context, keys []string) []object.DeleteObjectResult
 	CopyObject(ctx context.Context, req *object.CopyObjectRequest) (string, error)

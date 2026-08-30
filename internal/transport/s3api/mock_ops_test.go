@@ -14,7 +14,6 @@ import (
 	io "io"
 	reflect "reflect"
 
-	backend "github.com/afreidah/s3-orchestrator/internal/backend"
 	multipart "github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	object "github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	core "github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -131,10 +130,10 @@ func (mr *MockObjectOpsMockRecorder) DeleteObjects(ctx, keys any) *gomock.Call {
 }
 
 // GetObject mocks base method.
-func (m *MockObjectOps) GetObject(ctx context.Context, key, rangeHeader string) (*backend.GetObjectResult, error) {
+func (m *MockObjectOps) GetObject(ctx context.Context, key, rangeHeader string) (*object.GetResult, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetObject", ctx, key, rangeHeader)
-	ret0, _ := ret[0].(*backend.GetObjectResult)
+	ret0, _ := ret[0].(*object.GetResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -161,10 +160,10 @@ func (mr *MockObjectOpsMockRecorder) GetObjectTags(ctx, key any) *gomock.Call {
 }
 
 // HeadObject mocks base method.
-func (m *MockObjectOps) HeadObject(ctx context.Context, key string) (*backend.HeadObjectResult, error) {
+func (m *MockObjectOps) HeadObject(ctx context.Context, key string) (*object.HeadResult, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "HeadObject", ctx, key)
-	ret0, _ := ret[0].(*backend.HeadObjectResult)
+	ret0, _ := ret[0].(*object.HeadResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

@@ -4,17 +4,19 @@ linkTitle: "Object Tagging"
 weight: 9
 ---
 
-Object tagging: the four ways a tag set is written, the one place it is stored, and what clears it. **Hover over any component** for implementation details.
+Object tagging: the four ways a tag set is written, the one place it is stored, the two ways it is read back, and what clears it. **Hover over any component** for implementation details.
 
 ### How it works
 
-A tag set is key/value labels attached to an object independently of its data. Nothing in this project reads a tag key or acts on one; they are stored, shared by every replica, and served back as written.
+A tag set is key/value labels attached to an object independently of its data. Tags are yours to give meaning to: the one place the orchestrator acts on a tag itself is [lifecycle expiration](../../docs/cleanup-and-lifecycle/#lifecycle-object-expiration), where a rule can filter on one. Otherwise they are stored, shared by every replica, and served back as written, and no key is treated specially.
 
 The set is stored once per object key, never per copy. An object exists as N replicas with no authoritative copy, so per-replica rows would let three copies of a key disagree with nothing to say which one wins. That also keeps tagging off the providers entirely, which matters because provider support is inconsistent and a backend sitting over its usage limit could not be tagged at all.
 
-#### Four ways in, one set out
+#### Four ways in, two ways out
 
 `PutObject` and `CreateMultipartUpload` take the set inline as `x-amz-tagging`, query-string encoded. `PutObjectTagging` takes it as a `Tagging` XML document on the `?tagging` subresource. `CopyObject` either carries the source's set or replaces it, depending on `x-amz-tagging-directive`. All four converge on the same validation and the same rows.
+
+Reads split by what the caller needs. `GetObjectTagging` returns the tags themselves and is the only way to see them. `GetObject` and `HeadObject` report just how many, in `x-amz-tagging-count`, so a client can decide whether that second round trip is worth making.
 
 #### Why validation happens early
 
@@ -83,6 +85,10 @@ An inline header is parsed and checked before the request body is read. Refusing
     '    TAGS --> READ',
     '    READ --> SORT[Sort by tag key]:::process',
     '    SORT --> SERVE[TagSet to client<br>200, empty if none]:::success',
+    '',
+    '    GETO([GetObject<br>HeadObject]):::entry --> COUNT[Count the set<br>for the key]:::storage',
+    '    TAGS --> COUNT',
+    '    COUNT --> HDR[x-amz-tagging-count<br>omitted when zero]:::success',
     '',
     '    classDef entry fill:#1a7a5a,stroke:#1a7a5a,color:#fff,font-weight:bold',
     '    classDef filter fill:#6b5b2e,stroke:#c4a35a,color:#fff',
@@ -198,6 +204,21 @@ An inline header is parsed and checked before the request body is read. Refusing
       title: 'TagSet to the client',
       badge: 'success', badgeText: 'success',
       body: '<p><code>200</code> with the <code>Tagging</code> document. An untagged object gets an empty <code>TagSet</code> rather than a <code>404</code>.</p><p><code>DeleteObjectTagging</code> answers <code>204</code>. Both writes are recorded in the audit log, as <code>s3.PutObjectTagging</code> and <code>s3.DeleteObjectTagging</code>.</p><p><a href="../../docs/tagging/">Tagging reference &rarr;</a></p>'
+    },
+    GETO: {
+      title: 'GetObject and HeadObject',
+      badge: 'entry', badgeText: 'entry point',
+      body: '<p>Every read reports how many tags the object carries, so a client can tell an object worth calling <code>GetObjectTagging</code> on from one that would answer with an empty set.</p><p>A <code>GET</code> served from the object data cache never reaches the metadata store, so its entry carries the count it was filled with, and a tag write drops the entry. <code>HEAD</code> does not use that cache and counts on every request.</p><p><a href="../read-path/">Read path &rarr;</a></p>'
+    },
+    COUNT: {
+      title: 'Count the set',
+      badge: 'storage', badgeText: 'metadata store',
+      body: '<p>A <code>count(*)</code> on the primary key prefix, which is an index-only scan over the one key\'s rows. The read path needs the size of the set, not its contents.</p><p>A separate query rather than a subquery folded into the location lookup: that lookup is shared by the scrubber, drain, reconcile and the sync command, and a per-object count has no business on a per-copy row those callers read.</p>'
+    },
+    HDR: {
+      title: 'x-amz-tagging-count',
+      badge: 'success', badgeText: 'response header',
+      body: '<p>Sent only when the object carries at least one tag. An untagged object omits the header rather than sending a zero, matching S3, so its presence reads as "there is a set here worth fetching".</p><p>Advisory, never authoritative. A count the store cannot serve is reported as none and the header left off, because the object\'s bytes are already correct and one header is not worth failing a read over. That is also what a degraded read does, having reached the object by broadcast with the store unreachable.</p><p><a href="../../docs/tagging/">Tagging reference &rarr;</a></p>'
     }
   };
 
@@ -303,3 +324,4 @@ An inline header is parsed and checked before the request body is read. Refusing
 - [Tagging reference](../../docs/tagging/) - semantics, limits and the operator surface
 - [Database schema](../database-schema/) - `object_tags` and the multipart `tagging` column
 - [Write path](../write-path/) - where an inline set is parsed and written
+- [Read path](../read-path/) - where the tagging count joins a GET or HEAD

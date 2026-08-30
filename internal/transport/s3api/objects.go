@@ -187,7 +187,7 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 
 	// Validators go out before the conditional check so a 304 carries the
 	// ETag and Last-Modified it would have carried on a 200 (RFC 9110 15.4.5).
-	setValidatorHeaders(w, result)
+	setValidatorHeaders(w, result.GetObjectResult)
 
 	// Preconditions are evaluated before the Range is considered: a failed
 	// precondition aborts the whole request, whether or not only part of the
@@ -210,7 +210,7 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 			return writeStorageError(w, ferr, "Failed to retrieve object"), 0, ferr
 		}
 		result = full
-		setValidatorHeaders(w, result)
+		setValidatorHeaders(w, result.GetObjectResult)
 	}
 
 	w.Header().Set(headerContentType, result.ContentType)
@@ -221,6 +221,7 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 	for k, v := range result.Metadata {
 		w.Header().Set("x-amz-meta-"+k, v)
 	}
+	setTaggingCountHeader(w, result.TagCount)
 
 	status := http.StatusOK
 	if result.ContentRange != "" {
@@ -263,6 +264,7 @@ func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.
 	for k, v := range result.Metadata {
 		w.Header().Set("x-amz-meta-"+k, v)
 	}
+	setTaggingCountHeader(w, result.TagCount)
 
 	// --- Conditional request evaluation ---
 	if status, done := checkConditionals(r, result.ETag, result.LastModified); done {
@@ -438,6 +440,17 @@ func setValidatorHeaders(w http.ResponseWriter, result *s3be.GetObjectResult) {
 	}
 	if !result.LastModified.IsZero() {
 		w.Header().Set("Last-Modified", result.LastModified.UTC().Format(http.TimeFormat))
+	}
+}
+
+// setTaggingCountHeader reports how many tags the object carries. A count of
+// zero is left off entirely, matching S3: the header means "this object has
+// tags, fetch them with GetObjectTagging", so sending a zero would answer a
+// question nobody asked. An unreadable count arrives here as zero too, which
+// is why the header is advisory and GetObjectTagging remains the authority.
+func setTaggingCountHeader(w http.ResponseWriter, tagCount int) {
+	if tagCount > 0 {
+		w.Header().Set(headerTaggingCount, strconv.Itoa(tagCount))
 	}
 }
 
