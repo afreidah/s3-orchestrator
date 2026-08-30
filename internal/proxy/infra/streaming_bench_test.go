@@ -1,15 +1,15 @@
 // -------------------------------------------------------------------------------
-// Streaming Benchmarks - io.Copy and streamCopy Throughput
+// Streaming Benchmarks - io.Copy and StreamCopy Throughput
 //
 // Author: Alex Freidah
 //
 // Measures baseline io.Copy throughput at various payload sizes and end-to-end
-// streaming throughput through backendCore.streamCopy with mock backends. These
-// benchmarks isolate copy overhead from real I/O and serve as the baseline for
-// buffer pooling and transport tuning improvements.
+// streaming throughput through BackendRuntime.StreamCopy with mock backends.
+// These benchmarks isolate copy overhead from real I/O and serve as the
+// baseline for buffer pooling and transport tuning improvements.
 // -------------------------------------------------------------------------------
 
-package proxy
+package infra
 
 import (
 	"bytes"
@@ -21,7 +21,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
-	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 )
 
 // -------------------------------------------------------------------------
@@ -30,7 +30,7 @@ import (
 
 // BenchmarkIOCopy measures the baseline cost of io.Copy at various payload
 // sizes. This is the pattern used on every GET/PUT proxy path and in
-// streamCopy for rebalancer/replicator copies.
+// StreamCopy for rebalancer/replicator copies.
 func BenchmarkIOCopy(b *testing.B) {
 	sizes := []int{
 		4 * 1024,         // 4KB - small metadata/config
@@ -52,11 +52,11 @@ func BenchmarkIOCopy(b *testing.B) {
 }
 
 // -------------------------------------------------------------------------
-// streamCopy THROUGHPUT (MOCK BACKENDS)
+// StreamCopy THROUGHPUT (MOCK BACKENDS)
 // -------------------------------------------------------------------------
 
 // BenchmarkStreamCopy measures end-to-end streaming throughput through the
-// backendCore.streamCopy path used by the rebalancer and replicator. Uses
+// BackendRuntime.StreamCopy path used by the rebalancer and replicator. Uses
 // in-memory mock backends to isolate the copy overhead from real I/O.
 func BenchmarkStreamCopy(b *testing.B) {
 	sizes := []struct {
@@ -76,8 +76,11 @@ func BenchmarkStreamCopy(b *testing.B) {
 			data := make([]byte, tc.size)
 			_, _ = src.PutObject(context.Background(), "bench-key", bytes.NewReader(data), int64(tc.size), "application/octet-stream", nil)
 
-			core := infra.New(&infra.Config{
+			// StreamCopy admits every copy against the usage tracker, so the
+			// runtime needs one; no limits are set, which admits everything.
+			core := New(&Config{
 				BackendTimeout: 30 * time.Second,
+				Usage:          counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"bench-src", "bench-dst"}), nil),
 			})
 
 			b.SetBytes(int64(tc.size))

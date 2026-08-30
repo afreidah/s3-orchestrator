@@ -55,9 +55,9 @@ func newCoordinatorWithBackend(name string, be s3be.ObjectBackend, store Coordin
 }
 
 // newCoordinatorWithStore builds a minimal Coordinator backed by the
-// supplied store. Avoids the BackendManager constructor so coordinator
-// branches can be exercised in isolation without dragging the full
-// manager assembly into every test.
+// supplied store. Avoids the live-fleet fixture so coordinator branches
+// can be exercised in isolation without dragging real backends into
+// every test.
 func newCoordinatorWithStore(store CoordinatorStores, pendingEnabled bool) *Coordinator {
 	c := infra.New(&infra.Config{
 		Backends: map[string]s3be.ObjectBackend{},

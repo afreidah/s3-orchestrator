@@ -1,7 +1,6 @@
 // Package storetest hosts the mockgen-generated MockMetadataStore used
-// across the test suite as a single drop-in replacement for the
-// hand-written wide store mocks that previously lived in internal/proxy,
-// internal/store, internal/testutil, and internal/di.
+// across the test suite as the single wide store mock, plus the per-role
+// mocks a test that exercises one capability stubs instead.
 package storetest
 
 import "github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -15,12 +14,12 @@ import "github.com/afreidah/s3-orchestrator/internal/store/core"
 // rather than generating mocks nothing calls.
 //go:generate mockgen -destination=role_mocks.go -package=storetest github.com/afreidah/s3-orchestrator/internal/store/core ObjectStore,QuotaStore,CleanupStore,ExpiredObjectsLister,BackendLifecycleStore,DashboardStore,LifecycleAdmin
 
-// MetadataStore is the union of every narrow store role interface. It
-// exists only as a mockgen target so a single generated MockMetadataStore
-// can stand in wherever a fully-populated proxy.ManagerStores or a
-// concreteStore-shaped DI value is needed. Production code never depends
-// on this composite - production callers consume the narrow roles
-// declared in internal/store/core directly.
+// MetadataStore is the union of every narrow store role interface. It exists
+// only as a mockgen target, so a single generated MockMetadataStore can stand
+// in wherever a test needs a fully-populated store. Production code never
+// depends on it: consumers take the narrow roles from internal/store/core,
+// and the one place that holds an opened engine whole is the unexported
+// composite in internal/di.
 //
 // QuotaStore.GetQuotaStats and DashboardStore.GetQuotaStats share a
 // signature; embedded interfaces flatten to a single method on the

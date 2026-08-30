@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Covers the happy path (every required dependency resolves and the
-// worker handles + drain manager land on BackendManager) and each
+// drain manager lands on the BackendRuntime) and each
 // dependency-missing branch by feeding WireManager a bare injector
 // instead of the full one NewInjector assembles.
 // -------------------------------------------------------------------------------
@@ -20,14 +20,14 @@ import (
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // TestWireManager_HappyPath builds a fully-populated injector via
-// NewInjector, runs WireManager, and asserts the worker handles plus
-// the drain manager were installed on BackendManager. PendingReaper is
+// NewInjector, runs WireManager, and asserts every worker resolves and
+// the drain manager was installed on the BackendRuntime. PendingReaper is
 // expected nil because happyPathConfig leaves the pending pattern
 // disabled, which exercises the invokeOptional branch.
 func TestWireManager_HappyPath(t *testing.T) {
@@ -43,12 +43,11 @@ func TestWireManager_HappyPath(t *testing.T) {
 		t.Fatalf("WireManager: %v", err)
 	}
 
-	mgr, err := do.Invoke[*proxy.BackendManager](inj)
-	if err != nil {
-		t.Fatalf("resolve BackendManager: %v", err)
+	if _, err := do.Invoke[*infra.BackendRuntime](inj); err != nil {
+		t.Fatalf("resolve BackendRuntime: %v", err)
 	}
-	if mgr.Drain() == nil {
-		t.Error("drain manager not injected into BackendManager")
+	if dm, err := do.Invoke[*drain.Manager](inj); err != nil || dm == nil {
+		t.Errorf("drain manager not resolvable after wiring: %v", err)
 	}
 	if _, err := do.Invoke[*worker.Rebalancer](inj); err != nil {
 		t.Errorf("resolve Rebalancer: %v", err)
@@ -67,39 +66,33 @@ func TestWireManager_HappyPath(t *testing.T) {
 	}
 }
 
-// TestWireManager_NoBackendManager covers the first invoke's error
-// path: with a bare injector the BackendManager provider is not
-// registered and WireManager surfaces the wrapped resolution error.
-func TestWireManager_NoBackendManager(t *testing.T) {
+// TestWireManager_NoRebalancer covers the first invoke's error path: with a
+// bare injector nothing is registered and WireManager surfaces the wrapped
+// resolution error for the first dependency it asks for.
+func TestWireManager_NoRebalancer(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
 	t.Cleanup(func() { _ = inj.Shutdown() })
 
 	err := WireManager(inj)
 	if err == nil {
-		t.Fatal("expected error for missing BackendManager")
+		t.Fatal("expected error for missing Rebalancer")
 	}
-	if !strings.Contains(err.Error(), "resolve BackendManager") {
-		t.Errorf("error = %q, want to contain \"resolve BackendManager\"", err.Error())
+	if !strings.Contains(err.Error(), "resolve Rebalancer") {
+		t.Errorf("error = %q, want to contain \"resolve Rebalancer\"", err.Error())
 	}
 }
 
-// TestWireManager_NoWorkers covers a subsequent invoke's error path:
-// register BackendManager so the first lookup succeeds, then call
-// WireManager and assert the wrap names the worker that failed to
-// resolve. The specific worker named is whichever WireManager invokes
-// first after BackendManager - the contract this test pins is
-// "missing required worker bubbles up wrapped, not panicking".
+// TestWireManager_NoWorkers covers the invoke error path against a bare
+// injector: the wrap names whichever dependency WireManager asks for
+// first, and the contract this test pins is "missing required worker
+// bubbles up wrapped, not panicking".
 func TestWireManager_NoWorkers(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
 	t.Cleanup(func() { _ = inj.Shutdown() })
 
-	// Provide just enough of a BackendManager value so the first
-	// invoke succeeds without a real injector. Workers are intentionally
-	// absent so WireManager bails on the next lookup.
-	do.ProvideValue(inj, &proxy.BackendManager{})
-
+	// Nothing is registered, so WireManager bails on its first lookup.
 	err := WireManager(inj)
 	if err == nil {
 		t.Fatal("expected error for missing worker")
@@ -131,7 +124,7 @@ func TestWireManager_ProgressiveErrors(t *testing.T) {
 		return inj
 	}
 
-	provideManager := func(inj do.Injector) { do.ProvideValue(inj, &proxy.BackendManager{}) }
+	provideRuntime := func(inj do.Injector) { do.ProvideValue(inj, &infra.BackendRuntime{}) }
 	provideRebalancer := func(inj do.Injector) { do.ProvideValue(inj, &worker.Rebalancer{}) }
 	provideReplicator := func(inj do.Injector) { do.ProvideValue(inj, &worker.Replicator{}) }
 	provideOverRep := func(inj do.Injector) { do.ProvideValue(inj, &worker.OverReplicationCleaner{}) }
@@ -145,27 +138,32 @@ func TestWireManager_ProgressiveErrors(t *testing.T) {
 	}{
 		{
 			name:      "missing Replicator",
-			steps:     []func(do.Injector){provideManager, provideRebalancer},
+			steps:     []func(do.Injector){provideRebalancer},
 			errSubstr: "resolve Replicator",
 		},
 		{
 			name:      "missing OverReplicationCleaner",
-			steps:     []func(do.Injector){provideManager, provideRebalancer, provideReplicator},
+			steps:     []func(do.Injector){provideRebalancer, provideReplicator},
 			errSubstr: "resolve OverReplicationCleaner",
 		},
 		{
 			name:      "missing CleanupWorker",
-			steps:     []func(do.Injector){provideManager, provideRebalancer, provideReplicator, provideOverRep},
+			steps:     []func(do.Injector){provideRebalancer, provideReplicator, provideOverRep},
 			errSubstr: "resolve CleanupWorker",
 		},
 		{
 			name:      "missing Scrubber",
-			steps:     []func(do.Injector){provideManager, provideRebalancer, provideReplicator, provideOverRep, provideCleanup},
+			steps:     []func(do.Injector){provideRebalancer, provideReplicator, provideOverRep, provideCleanup},
 			errSubstr: "resolve Scrubber",
 		},
 		{
+			name:      "missing BackendRuntime",
+			steps:     []func(do.Injector){provideRebalancer, provideReplicator, provideOverRep, provideCleanup, provideScrubber},
+			errSubstr: "resolve BackendRuntime",
+		},
+		{
 			name:      "missing DrainManager",
-			steps:     []func(do.Injector){provideManager, provideRebalancer, provideReplicator, provideOverRep, provideCleanup, provideScrubber},
+			steps:     []func(do.Injector){provideRebalancer, provideReplicator, provideOverRep, provideCleanup, provideScrubber, provideRuntime},
 			errSubstr: "resolve DrainManager",
 		},
 	}
@@ -192,7 +190,7 @@ func TestWireManager_ProgressiveErrors(t *testing.T) {
 // TestWireManager_PendingReaperFailedLogsAndContinues drives the Failed
 // branch the Optional[T] migration added: an override registers a
 // PendingReaper provider that errors, and WireManager must still
-// succeed (assigning nil onto the manager) so a broken optional
+// succeed (logging the failure and continuing) so a broken optional
 // dependency does not abort startup.
 func TestWireManager_PendingReaperFailedLogsAndContinues(t *testing.T) {
 	t.Parallel()

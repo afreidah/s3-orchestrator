@@ -42,13 +42,13 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
+	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
@@ -67,7 +67,7 @@ var (
 	testDBConfig      config.DatabaseConfig
 	minioEndpoints    []string
 	testDB            *sql.DB
-	testManager       *proxy.BackendManager
+	testStack         *proxytest.Stack
 	testReconciler    *reconcile.Manager
 	testCoord         *writepath.Coordinator
 	testWorkers       *proxytest.Workers
@@ -338,32 +338,29 @@ func TestMain(m *testing.M) {
 
 	stores := newStores(failableStore)
 
-	manager := proxytest.BuildManager(stores, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: testBackends,
-			Order:    testBackendOrder,
-		},
-		Policies: proxy.PolicyConfig{
-			PendingEnabled:  true,
-			CacheTTL:        60 * time.Second,
+	stack := proxytest.Build(stores, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        testBackends,
+			Order:           testBackendOrder,
 			BackendTimeout:  30 * time.Second,
 			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: newMetricsAdapter(failableStore),
-		},
+			Metrics:         newMetricsAdapter(failableStore),
+		}),
+		PendingEnabled: true,
+		CacheTTL:       60 * time.Second,
+		BackendTimeout: 30 * time.Second,
 	})
-	workers := proxytest.BuildWorkers(manager, stores)
-	testManager = manager
-	testCoord = writepath.New(manager.Runtime(), db, false)
+	workers := proxytest.BuildWorkers(stack, stores)
+	testStack = stack
+	testCoord = writepath.New(stack.Runtime, db, false)
 	testReconciler = reconcile.NewManager(&reconcile.Deps{
-		Backends: manager.Runtime(), Stores: db, Usage: manager.Runtime().Acct(),
+		Backends: stack.Runtime, Stores: db, Usage: stack.Runtime.Acct(),
 	})
 	testWorkers = workers
 
 	srv := &s3api.Server{
-		Objects:   manager.Objects(),
-		Multipart: manager.Multipart(),
+		Objects:   stack.Objects,
+		Multipart: stack.Multipart,
 	}
 	bucketAuth, err := auth.NewBucketRegistry(cfg.Buckets)
 	if err != nil {
@@ -624,8 +621,8 @@ func resetState(t *testing.T) {
 	if _, err := testDB.Exec("UPDATE backend_quotas SET bytes_used = 0, orphan_bytes = 0, updated_at = NOW()"); err != nil {
 		t.Fatalf("resetState: %v", err)
 	}
-	testManager.Objects().LocationCache().Clear()
-	testManager.ClearDrainState()
+	testStack.Objects.LocationCache().Clear()
+	testStack.Drain.ClearState()
 }
 
 // uniqueKey generates a collision-free object key.
@@ -715,36 +712,32 @@ func setOrphanBytes(t *testing.T, backendName string, amount int64) {
 	}
 }
 
-// newThreeBackendManager creates a BackendManager with all 3 backends for
+// newThreeBackendStack creates a proxy stack with all 3 backends for
 // tests that need more than 2 backends (e.g., over-replication with factor=3).
-// Returns the manager and its fully-wired worker bundle so callers that need
+// Returns the stack and its fully-wired worker bundle so callers that need
 // a specific worker (Replicator/OverReplicationCleaner/...) can reach it
-// directly, since these are no longer fields on BackendManager.
-func newThreeBackendManager(t *testing.T) (*proxy.BackendManager, *proxytest.Workers) {
+// directly.
+func newThreeBackendStack(t *testing.T) (*proxytest.Stack, *proxytest.Workers) {
 	t.Helper()
 	stores := newStores(testFailableStore)
-	mgr := proxytest.NewManager(t, stores, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: allBackends,
-			Order:    allBackendOrder,
-		},
-		Policies: proxy.PolicyConfig{
-			CacheTTL:        60 * time.Second,
+	st := proxytest.New(t, stores, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        allBackends,
+			Order:           allBackendOrder,
 			BackendTimeout:  30 * time.Second,
 			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: newMetricsAdapter(testFailableStore),
-		},
+			Metrics:         newMetricsAdapter(testFailableStore),
+		}),
+		CacheTTL:       60 * time.Second,
+		BackendTimeout: 30 * time.Second,
 	})
-	workers := proxytest.BuildWorkers(mgr, stores)
-	return mgr, workers
+	return st, proxytest.BuildWorkers(st, stores)
 }
 
 // newStores returns src typed as the wide metadata-store contract every
 // proxy consumer depends on. Identity at the type level - kept so the
 // call sites read uniformly with the production DI wiring.
-func newStores(src core.MetadataStore) core.MetadataStore { return src }
+func newStores(src storetest.MetadataStore) storetest.MetadataStore { return src }
 
 // roleStore names the role union tests need on a single source value.
 type roleStore interface {
@@ -813,11 +806,11 @@ var errSimulatedCommitFailure = errors.New("simulated commit failure")
 // to is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
 type FailableStore struct {
-	core.MetadataStore // embedded inner satisfies every method by default
-	inner              *postgres.Store
-	mu                 sync.Mutex
-	failing            bool
-	failCommitOnce     bool // when true, RecordObjectAndClearPending fails once, then auto-clears
+	storetest.MetadataStore // embedded inner satisfies every method by default
+	inner                   *postgres.Store
+	mu                      sync.Mutex
+	failing                 bool
+	failCommitOnce          bool // when true, RecordObjectAndClearPending fails once, then auto-clears
 }
 
 // newFailableStore returns a FailableStore whose role views all resolve to

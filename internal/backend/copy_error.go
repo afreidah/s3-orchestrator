@@ -4,7 +4,7 @@
 // Author: Alex Freidah
 //
 // Typed errors for the read/write phases of a backend-to-backend stream copy.
-// Producers (proxy.backendCore.StreamCopy) wrap the underlying backend error
+// Producers (infra.BackendRuntime.StreamCopy) wrap the underlying backend error
 // with a phase tag so consumers (the replicator's per-source retry loop) can
 // classify failures structurally - "destination is broken, do not try other
 // sources" vs "this source failed, move on to the next" - without inspecting

@@ -7,7 +7,7 @@
 // endpoint, credentials, optional quota and per-object size cap, and the
 // read/write tunables (timeouts, max idle conns, signing tweaks) - plus
 // its validators. Every backend listed in config.yaml is parsed into one
-// of these structs and handed to the BackendManager at startup.
+// of these structs and handed to the backend runtime at startup.
 // -------------------------------------------------------------------------------
 
 package config

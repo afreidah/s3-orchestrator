@@ -22,7 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -99,16 +99,16 @@ func registerUIHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 //   - Split mode (both MaxConcurrentReads and MaxConcurrentWrites set):
 //     a fresh read semaphore is created here sized to MaxConcurrentReads;
 //     it is local to the HTTP read path and never touched by background
-//     workers. The write half reuses manager.AdmissionSem() which the
+//     workers. The write half reuses the runtime's AdmissionSem() which the
 //     DI layer already sized to MaxConcurrentWrites - that channel is
 //     also the budget every background worker (cleanup, replication,
 //     rebalance, pending reaper, over-replication) acquires from via
 //     WithAdmission. So in split mode HTTP reads have their own ceiling
 //     while HTTP writes share their ceiling with worker activity.
-//   - Merged mode (only MaxConcurrentRequests set): manager.AdmissionSem()
+//   - Merged mode (only MaxConcurrentRequests set): the runtime's AdmissionSem()
 //     is the single global pool sized to MaxConcurrentRequests; HTTP
 //     reads, HTTP writes, and workers all contend for the same slots.
-//   - Neither set: no admission middleware is installed (manager.AdmissionSem()
+//   - Neither set: no admission middleware is installed (AdmissionSem()
 //     returns nil and the switch falls through).
 //
 // Operators sizing MaxConcurrentWrites in split mode should plan for
@@ -116,9 +116,9 @@ func registerUIHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 //
 // Either form respects LoadShedThreshold and AdmissionWait when set.
 func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) error {
-	manager, err := do.Invoke[*proxy.BackendManager](inj)
+	rt, err := do.Invoke[*infra.BackendRuntime](inj)
 	if err != nil {
-		return fmt.Errorf("initialize backend manager: %w", err)
+		return fmt.Errorf("initialize backend runtime: %w", err)
 	}
 	s3Server, err := do.Invoke[*s3api.Server](inj)
 	if err != nil {
@@ -141,14 +141,14 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 	switch {
 	case cfg.Server.MaxConcurrentReads > 0 && cfg.Server.MaxConcurrentWrites > 0:
 		// Split-pool: dedicate a fresh read sem (HTTP-only) and reuse
-		// the manager's sem as the write+workers pool. See the func
+		// the runtime's sem as the write+workers pool. See the func
 		// doc above for the full model.
 		readSem := make(chan struct{}, cfg.Server.MaxConcurrentReads)
-		ac = s3api.NewSplitAdmissionControllerFromSem(readSem, manager.AdmissionSem())
+		ac = s3api.NewSplitAdmissionControllerFromSem(readSem, rt.AdmissionSem())
 	case cfg.Server.MaxConcurrentRequests > 0:
 		// Merged-pool: every request and every worker shares the
-		// manager's sem.
-		ac = s3api.NewAdmissionControllerFromSem(manager.AdmissionSem())
+		// runtime's sem.
+		ac = s3api.NewAdmissionControllerFromSem(rt.AdmissionSem())
 	}
 	if ac != nil {
 		if cfg.Server.LoadShedThreshold > 0 {

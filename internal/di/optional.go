@@ -92,9 +92,8 @@ func IsRegistered[T any](inj do.Injector) bool {
 }
 
 // resolveOptionalCounterBackend returns the configured Redis counter
-// backend, or nil when Redis is disabled / not registered. The
-// CounterBackend field on BackendManagerConfig accepts nil to mean
-// "use the local counter backend".
+// backend, or nil when Redis is disabled / not registered. The runtime
+// builder treats nil as "use the local counter backend".
 func resolveOptionalCounterBackend(i do.Injector) counter.CounterBackend {
 	rb, err := do.Invoke[*counter.RedisCounterBackend](i)
 	if err != nil {
@@ -104,8 +103,8 @@ func resolveOptionalCounterBackend(i do.Injector) counter.CounterBackend {
 }
 
 // resolveOptionalCache returns the object data cache, or nil when
-// caching is disabled / not registered. NewBackendManager treats nil
-// as "object data caching is off" (read path bypasses the cache layer).
+// caching is disabled / not registered. The object manager treats nil as
+// "object data caching is off" (read path bypasses the cache layer).
 func resolveOptionalCache(i do.Injector) objcache.ObjectCache {
 	c, err := do.Invoke[objcache.ObjectCache](i)
 	if err != nil {

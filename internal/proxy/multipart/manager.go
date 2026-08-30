@@ -74,7 +74,7 @@ type MultipartStores interface {
 
 type Manager struct {
 	core               MultipartRuntime       // infrastructure subset: backends, usage, timeout, error classification, metrics
-	coord              *writepath.Coordinator // write-path helpers shared with BackendManager and ObjectManager
+	coord              *writepath.Coordinator // write-path helpers shared with the object manager
 	stores             MultipartStores        // multipart row/part operations and WithAdvisoryLock
 	encryptor          *encryption.Encryptor
 	codec              MultipartCodec

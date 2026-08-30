@@ -2288,7 +2288,7 @@ func TestGetObject_UsageLimitRejectionsMetric(t *testing.T) {
 
 // newTestManagerParallel builds a fleet with parallel
 // broadcast enabled and explicit ordering.
-func newTestManagerParallel(t *testing.T, store core.MetadataStore, orderedBackends []struct {
+func newTestManagerParallel(t *testing.T, store storetest.MetadataStore, orderedBackends []struct {
 	name    string
 	backend backend.ObjectBackend
 }) *fleet {

@@ -30,7 +30,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -97,12 +98,8 @@ func resolvedInjector(t *testing.T, cfg *config.Config, logLevel *slog.LevelVar)
 	if _, err := do.Invoke[*breaker.CircuitBreaker](inj); err != nil {
 		t.Fatalf("invoke breaker: %v", err)
 	}
-	manager, err := do.Invoke[*proxy.BackendManager](inj)
-	if err != nil {
-		t.Fatalf("invoke manager: %v", err)
-	}
 	if err := di.WireManager(inj); err != nil {
-		t.Fatalf("wire manager: %v", err)
+		t.Fatalf("wire backend stack: %v", err)
 	}
 	if _, err := do.Invoke[*s3api.Server](inj); err != nil {
 		t.Fatalf("invoke s3 server: %v", err)
@@ -112,7 +109,12 @@ func resolvedInjector(t *testing.T, cfg *config.Config, logLevel *slog.LevelVar)
 		if admin, _ := do.Invoke[core.LifecycleAdmin](inj); admin != nil {
 			admin.Close()
 		}
-		manager.Close()
+		if om, _ := do.Invoke[*object.Manager](inj); om != nil {
+			om.LocationCache().Close()
+		}
+		if mp, _ := do.Invoke[*multipart.Manager](inj); mp != nil {
+			mp.Close()
+		}
 		_ = shutdownTracer(context.Background())
 	}
 	return inj, cleanup

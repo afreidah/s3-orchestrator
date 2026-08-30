@@ -50,7 +50,7 @@ type ObjectStores interface {
 // broadcast reads during degraded mode, and location caching.
 type Manager struct {
 	core              ObjectRuntime     // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics
-	coord             ObjectCoordinator // write-path helpers shared with BackendManager and MultipartManager
+	coord             ObjectCoordinator // write-path helpers shared with the multipart manager
 	stores            ObjectStores      // direct store access for read paths and quota inspection
 	encryptor         *encryption.Encryptor
 	codec             ObjectCodec
@@ -66,8 +66,7 @@ type Manager struct {
 // Deps bundles the dependencies New needs so the call signature stays
 // under the parameter-count ceiling. Core and Coord are
 // consumer-declared interfaces; the concrete *infra.BackendRuntime and
-// *writepath.Coordinator that BackendManager builds satisfy them
-// implicitly.
+// *writepath.Coordinator that DI builds satisfy them implicitly.
 type Deps struct {
 	Core          ObjectRuntime
 	BroadcastCore readpath.ReadRuntime // narrow consumer interface for the failover broadcaster; satisfied by the same *infra.BackendRuntime that backs Core
@@ -144,8 +143,8 @@ func (o *Manager) invalidateObjectCaches(key string) {
 }
 
 // LocationCache returns the location cache the manager holds. Exposed for
-// BackendManager and tests so the lifecycle (Close, Clear) can be driven
-// from the root package without reaching into the unexported field.
+// the runtime, DI reload hooks, and tests so the lifecycle (Close, Clear)
+// can be driven without reaching into the unexported field.
 func (o *Manager) LocationCache() *LocationCache {
 	return o.cache
 }

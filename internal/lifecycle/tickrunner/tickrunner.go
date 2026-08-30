@@ -48,7 +48,7 @@ type AdvisoryLocker interface {
 }
 
 // QuotaMetricsRefresher is the single-method subset of
-// *proxy.BackendManager that HandlePassResult calls to push fresh quota
+// *infra.BackendRuntime that HandlePassResult calls to push fresh quota
 // gauges after a successful worker pass. Lives here so the worker
 // packages can take it as a typed dep without importing DI.
 type QuotaMetricsRefresher interface {

@@ -3,9 +3,9 @@
 //
 // Author: Alex Freidah
 //
-// Two background services whose run-loop semantics live in DI because
-// they read state from *proxy.BackendManager via consumer interfaces
-// (usageFlushOps / lifecycleOps) declared in service_interfaces.go:
+// Two background services whose run-loop semantics live in DI because they
+// read state from several collaborators at once, through the consumer
+// interfaces declared in service_interfaces.go:
 //
 //   - usageFlushService: adapts its tick interval at runtime based on
 //     observed load; does not fit the plain tickrunner.Service shape.
@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
 // defaultUsageFlushInterval is the usage-flush service's tick cadence
@@ -47,16 +48,34 @@ const (
 // usageFlushService periodically flushes in-memory usage counters to the
 // database, acquiring an advisory lock only when Redis counters are active.
 type usageFlushService struct {
-	manager usageFlushOps
+	flusher usageFlushOps
+	tracker nearLimitReporter
+	fleet   quotaMetricsRefresher
 	locker  tickrunner.AdvisoryLocker
 	log     *slog.Logger
 }
 
+// UsageFlushDeps groups what the flush tick draws on: the usage service that
+// owns the flush, the counters that say whether to tick faster, and the
+// runtime that republishes the gauges afterwards.
+type UsageFlushDeps struct {
+	Flusher usageFlushOps
+	Tracker nearLimitReporter
+	Fleet   quotaMetricsRefresher
+	Locker  tickrunner.AdvisoryLocker
+}
+
 // NewUsageFlushService constructs the usage flush background service.
-func NewUsageFlushService(manager usageFlushOps, locker tickrunner.AdvisoryLocker) lifecycle.Runner {
+func NewUsageFlushService(d *UsageFlushDeps) lifecycle.Runner {
+	must.NotNil("d", d)
+	must.NotNil("d.Flusher", d.Flusher)
+	must.NotNil("d.Tracker", d.Tracker)
+	must.NotNil("d.Fleet", d.Fleet)
 	return &usageFlushService{
-		manager: manager,
-		locker:  locker,
+		flusher: d.Flusher,
+		tracker: d.Tracker,
+		fleet:   d.Fleet,
+		locker:  d.Locker,
 		log:     tickrunner.ComponentLogger("usage_flush"),
 	}
 }
@@ -64,7 +83,7 @@ func NewUsageFlushService(manager usageFlushOps, locker tickrunner.AdvisoryLocke
 // Run periodically flushes in-memory usage counters and adapts the tick
 // interval toward FastInterval when a backend nears its limits.
 func (s *usageFlushService) Run(ctx context.Context) error {
-	cfg := s.manager.UsageFlushConfig()
+	cfg := s.flusher.Config()
 	interval := defaultUsageFlushInterval
 	if cfg != nil {
 		interval = cfg.Interval
@@ -90,12 +109,12 @@ func (s *usageFlushService) Run(ctx context.Context) error {
 // adaptive fast-path changes the target interval, and returns the interval now
 // in effect (unchanged when nothing moved).
 func (s *usageFlushService) adjustInterval(ctx context.Context, ticker *time.Ticker, current time.Duration) time.Duration {
-	cfg := s.manager.UsageFlushConfig()
+	cfg := s.flusher.Config()
 	if cfg == nil {
 		return current
 	}
 	target := cfg.Interval
-	if cfg.AdaptiveEnabled && s.manager.NearUsageLimit(cfg.AdaptiveThreshold) {
+	if cfg.AdaptiveEnabled && s.tracker.NearLimit(cfg.AdaptiveThreshold) {
 		target = cfg.FastInterval
 	}
 	if target == current {
@@ -110,7 +129,7 @@ func (s *usageFlushService) adjustInterval(ctx context.Context, ticker *time.Tic
 // configured, wraps the flush in an advisory lock so only one instance
 // performs the destructive GETSET.
 func (s *usageFlushService) flushTick(ctx context.Context) {
-	if s.manager.RedisCounterConfigured() {
+	if s.flusher.RedisCounterConfigured() {
 		acquired, err := s.locker.WithAdvisoryLock(ctx, core.LockUsageFlush,
 			func(lockCtx context.Context) error {
 				s.doFlush(lockCtx)
@@ -129,10 +148,10 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 
 // doFlush performs the actual flush and quota metric update.
 func (s *usageFlushService) doFlush(ctx context.Context) {
-	if err := s.manager.FlushUsage(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
+	if err := s.flusher.FlushUsage(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
 		s.log.ErrorContext(ctx, "counter flush failed", "error", err)
 	}
-	if err := s.manager.UpdateQuotaMetrics(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
+	if err := s.fleet.UpdateQuotaMetrics(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
 		s.log.ErrorContext(ctx, "quota metrics refresh failed", "error", err)
 	}
 }
@@ -143,8 +162,8 @@ func (s *usageFlushService) doFlush(ctx context.Context) {
 
 // NewLifecycleService constructs the lifecycle-expiration background
 // service. Lives in DI (rather than next to a worker) because the work
-// surface is on *proxy.BackendManager itself (via the lifecycleOps
-// consumer interface) - there is no dedicated worker type.
+// surface is on *expiry.Manager via the lifecycleOps consumer interface -
+// there is no dedicated worker type.
 func NewLifecycleService(manager lifecycleOps, locker tickrunner.AdvisoryLocker) lifecycle.Runner {
 	const slug = "lifecycle"
 	log := tickrunner.ComponentLogger(slug)

@@ -29,11 +29,45 @@ import (
 	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 )
 
-// ProvideMetadataStore opens the configured driver, runs migrations,
-// syncs quota limits, and returns the wide core.MetadataStore every
-// consumer depends on. CB protection lives inside each driver's DBTX/DB
-// chokepoint, so this provider does no wrapping of its own.
-func ProvideMetadataStore(i do.Injector) (core.MetadataStore, error) {
+// metadataStore is the union of every store role, and exists only so the
+// composition root can carry one opened engine from openStore to the
+// do.MustAs role aliases in injector.go.
+//
+// Unexported on purpose. The union is not a domain fact: nothing in the
+// persistence domain requires one object to implement all seventeen roles,
+// and a design that split persistence across several objects would satisfy
+// every role interface without violating anything. What it actually encodes
+// is that this package holds one opened value before splitting it, which is
+// wiring. Keeping it unnameable outside di is what stops it being taken as a
+// dependency, since consumers cannot depend on a type they cannot write down.
+//
+// Each engine also carries per-role compile-time assertions, so a driver that
+// drops a method names the role rather than the union.
+type metadataStore interface {
+	core.ObjectStore
+	core.QuotaStore
+	core.MultipartStore
+	core.ReplicationStore
+	core.CleanupStore
+	core.PendingStore
+	core.IntegrityStore
+	core.ExpiredObjectsLister
+	core.BackendLifecycleStore
+	core.UsageFlusher
+	core.AdvisoryLocker
+	core.DashboardStore
+	core.LifecycleAdmin
+	core.EncryptionAdmin
+	core.CompressionAdmin
+	core.NotificationOutbox
+	core.TagStore
+}
+
+// provideMetadataStore opens the configured driver, runs migrations, syncs
+// quota limits, and returns the opened engine for the role aliases to split.
+// CB protection lives inside each driver's DBTX/DB chokepoint, so this
+// provider does no wrapping of its own.
+func provideMetadataStore(i do.Injector) (metadataStore, error) {
 	r := newResolver(i)
 	cfg := resolve[*config.Config](r)
 	cb := resolve[*breaker.CircuitBreaker](r)
@@ -77,7 +111,7 @@ func ProvideDatabaseBreaker(i do.Injector) (*breaker.CircuitBreaker, error) {
 // shared *breaker.CircuitBreaker is threaded through so every SQL
 // statement (pool-bound or tx-bound) gets PreCheck/PostCheck protection
 // at the driver chokepoint.
-func openStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.CircuitBreaker) (core.MetadataStore, error) {
+func openStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.CircuitBreaker) (metadataStore, error) {
 	switch dbCfg.Driver {
 	case "postgres":
 		return postgres.NewStore(ctx, dbCfg, cb)

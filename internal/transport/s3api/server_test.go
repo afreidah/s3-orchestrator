@@ -22,7 +22,6 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
@@ -58,13 +57,10 @@ func TestServer_LoggerReturnsCustomLog(t *testing.T) {
 func TestNewServer_AssignsScopedLogger(t *testing.T) {
 	t.Parallel()
 	mockStore := storetest.NewMockMetadataStore(gomock.NewController(t))
-	mgr := proxytest.NewManager(t, mockStore, &proxy.BackendManagerConfig{
-		Operations: proxy.OperationalDeps{
-			Metrics: mockStore,
-		},
+	st := proxytest.New(t, mockStore, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{Metrics: mockStore}),
 	})
-	t.Cleanup(mgr.Close)
-	srv := NewServer(mgr.Objects(), mgr.Multipart(), 1024)
+	srv := NewServer(st.Objects, st.Multipart, 1024)
 	if srv.log == nil {
 		t.Fatal("NewServer left log field nil")
 	}
@@ -218,7 +214,7 @@ func TestInvalidPath_Returns400(t *testing.T) {
 }
 
 // newOpsServer builds a Server over mocked ObjectOps/MultipartOps, with no
-// BackendManager, store, or backend behind it. Use it for the handler
+// proxy stack, store, or backend behind it. Use it for the handler
 // behaviour that depends only on what the ops layer returns - status
 // mapping, header handling, response shape - so the test states the one
 // call it cares about instead of steering a whole fleet into that state.

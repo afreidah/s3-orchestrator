@@ -39,8 +39,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -298,7 +299,7 @@ func TestQuotaSyncHook_SkippedWhenDisabled(t *testing.T) {
 // TestUsageLimitsHook_FailedResolution drives the Failed branch.
 func TestUsageLimitsHook_FailedResolution(t *testing.T) {
 	inj := do.New()
-	failingProvider[*proxy.BackendManager](inj)
+	failingProvider[*infra.BackendRuntime](inj)
 	h := &usageLimitsHook{inj: inj}
 	status, err := h.Apply(context.Background(), nil, &config.Config{})
 	if status != HookFailed || !errors.Is(err, errResolve) {
@@ -407,16 +408,15 @@ func TestWorkerConfigsHook_FailedScrubber(t *testing.T) {
 // SIGHUP report success.
 func TestWorkerConfigsHook_PushesIntegrityOntoTheReplicator(t *testing.T) {
 	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
-	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: map[string]backend.ObjectBackend{},
-			Order:    []string{},
-		},
-		Policies:   proxy.PolicyConfig{RoutingStrategy: config.RoutingPack},
-		Operations: proxy.OperationalDeps{Metrics: mock},
+	st := proxytest.New(t, mock, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        map[string]backend.ObjectBackend{},
+			Order:           []string{},
+			RoutingStrategy: config.RoutingPack,
+			Metrics:         mock,
+		}),
 	})
-	t.Cleanup(mgr.Close)
-	workers := proxytest.BuildWorkers(mgr, mock)
+	workers := proxytest.BuildWorkers(st, mock)
 
 	inj := do.New()
 	do.ProvideValue(inj, workers.Replicator)
@@ -454,8 +454,8 @@ func TestWorkerConfigsHook_AllDisabledSkipped(t *testing.T) {
 // TestManagerConfigHook_FailedResolution drives the Failed branch.
 func TestManagerConfigHook_FailedResolution(t *testing.T) {
 	inj := do.New()
-	failingProvider[*proxy.BackendManager](inj)
-	h := &managerConfigHook{inj: inj}
+	failingProvider[*usage.Service](inj)
+	h := &runtimeConfigHook{inj: inj}
 	status, err := h.Apply(context.Background(), nil, &config.Config{})
 	if status != HookFailed || !errors.Is(err, errResolve) {
 		t.Fatalf("Apply = (%s, %v), want failed wrapping errResolve", status, err)
@@ -464,7 +464,7 @@ func TestManagerConfigHook_FailedResolution(t *testing.T) {
 
 // TestManagerConfigHook_SkippedWhenDisabled covers the no-provider path.
 func TestManagerConfigHook_SkippedWhenDisabled(t *testing.T) {
-	h := &managerConfigHook{inj: do.New()}
+	h := &runtimeConfigHook{inj: do.New()}
 	status, err := h.Apply(context.Background(), nil, &config.Config{})
 	if status != HookSkipped || err != nil {
 		t.Fatalf("Apply = (%s, %v), want (skipped, nil)", status, err)
@@ -540,7 +540,7 @@ func TestHookNamesStable(t *testing.T) {
 		&usageLimitsHook{}:   "usage_limits",
 		&logLevelHook{}:      "log_level",
 		&workerConfigsHook{}: "worker_configs",
-		&managerConfigHook{}: "manager_config",
+		&runtimeConfigHook{}: "runtime_config",
 		&opsHook{}:           "ops",
 		&uiHandlerHook{}:     "ui_handler",
 	}
@@ -560,31 +560,27 @@ func TestHookNamesStable(t *testing.T) {
 func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 	t.Helper()
 	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
-	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: map[string]backend.ObjectBackend{},
-			Order:    []string{},
-		},
-		Policies: proxy.PolicyConfig{
+	st := proxytest.New(t, mock, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        map[string]backend.ObjectBackend{},
+			Order:           []string{},
 			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: mock,
-		},
+			Metrics:         mock,
+		}),
 	})
-	workers := proxytest.BuildWorkers(mgr, mock)
-	t.Cleanup(mgr.Close)
+	workers := proxytest.BuildWorkers(st, mock)
 	svc := ops.New(&ops.Deps{
-		Objects:    mgr.Objects(),
-		Store:      mock,
-		EncStore:   mock,
-		Runtime:    mgr.Runtime(),
-		BackendOps: mgr,
-		Replicator: workers.Replicator,
-		OverRep:    workers.OverReplicationCleaner,
-		Rebalancer: workers.Rebalancer,
-		Scrubber:   workers.Scrubber,
-		Cfg:        &config.Config{},
+		Objects:      st.Objects,
+		Store:        mock,
+		EncStore:     mock,
+		Runtime:      st.Runtime,
+		Usage:        st.Runtime.Usage(),
+		IntegrityCfg: st.IntegrityCfg,
+		Replicator:   workers.Replicator,
+		OverRep:      workers.OverReplicationCleaner,
+		Rebalancer:   workers.Rebalancer,
+		Scrubber:     workers.Scrubber,
+		Cfg:          &config.Config{},
 	})
 	return &ui.Deps{
 		Objects:     svc.Objects,

@@ -61,12 +61,12 @@ func queryHashedCopies(t *testing.T, key string) int {
 func enableVerifyOnRead(t *testing.T) func() {
 	t.Helper()
 
-	previous := testManager.IntegrityConfig()
-	testManager.SetIntegrityConfig(&config.IntegrityConfig{
+	previous := testStack.IntegrityCfg.Load()
+	testStack.IntegrityCfg.Store(&config.IntegrityConfig{
 		Enabled:      true,
 		VerifyOnRead: true,
 	})
-	return func() { testManager.SetIntegrityConfig(previous) }
+	return func() { testStack.IntegrityCfg.Store(previous) }
 }
 
 // resyncQuotaLimits restores the configured quota limits, which backend
@@ -482,7 +482,7 @@ func TestIntegrity_RemoveBackendKeepsSurvivingCopies(t *testing.T) {
 	}
 	ws.assertIntact(ctx, "before backend removal")
 
-	if err := testManager.Drain().RemoveBackend(ctx, "minio-2", false, nil); err != nil {
+	if err := testStack.Drain.RemoveBackend(ctx, "minio-2", false, nil); err != nil {
 		t.Fatalf("RemoveBackend: %v", err)
 	}
 	defer resyncQuotaLimits(t, ctx)

@@ -20,22 +20,18 @@ import (
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
-// WireManager resolves the BackendManager plus every required worker
-// (as a smoke check that construction succeeded) and points the runtime's
-// eligibility filter at the drain manager. Returns the first error from
+// WireManager resolves every required worker (as a smoke check that
+// construction succeeded) and points the runtime's eligibility filter at
+// the drain manager. Returns the first error from
 // resolving a required dependency; the optional PendingReaper Failed
 // resolution is logged so a broken provider stays distinguishable from
 // an intentionally absent one.
 func WireManager(inj do.Injector) error {
-	if _, err := do.Invoke[*proxy.BackendManager](inj); err != nil {
-		return fmt.Errorf("resolve BackendManager: %w", err)
-	}
-
 	if _, err := do.Invoke[*worker.Rebalancer](inj); err != nil {
 		return fmt.Errorf("resolve Rebalancer: %w", err)
 	}
@@ -62,15 +58,15 @@ func WireManager(inj do.Injector) error {
 			"error", prRes.Err)
 	}
 
-	mgr, err := do.Invoke[*proxy.BackendManager](inj)
+	rt, err := do.Invoke[*infra.BackendRuntime](inj)
 	if err != nil {
-		return fmt.Errorf("resolve BackendManager: %w", err)
+		return fmt.Errorf("resolve BackendRuntime: %w", err)
 	}
 	dm, err := do.Invoke[*drain.Manager](inj)
 	if err != nil {
 		return fmt.Errorf("resolve DrainManager: %w", err)
 	}
-	mgr.Runtime().SetDrainChecker(dm)
+	rt.SetDrainChecker(dm)
 
 	return nil
 }
