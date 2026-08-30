@@ -68,14 +68,16 @@ type ObjectStore interface {
 
 // TagStore defines object tag read and write operations. Writes are
 // transactional and promoted from TxOps, so both engines share one
-// implementation; only the read is per-engine.
+// implementation; only the reads are per-engine.
+//
+// GetObjectTags returns the set ordered by key, so the Tagging XML response is
+// byte-identical run to run. CountObjectTags returns its size for the read
+// path's tagging-count header, which needs how many rather than which. Neither
+// errors on an untagged object: an untagged object has an empty TagSet, not a
+// missing one.
 type TagStore interface {
-	// GetObjectTags returns an object's tag set ordered by key, so the
-	// Tagging XML response is byte-identical run to run. An object with
-	// no tags yields an empty slice rather than an error: an untagged
-	// object has an empty TagSet, not a missing one.
 	GetObjectTags(ctx context.Context, key string) ([]Tag, error)
-
+	CountObjectTags(ctx context.Context, key string) (int, error)
 	ReplaceObjectTags(ctx context.Context, key string, tags []Tag) error
 	DeleteObjectTags(ctx context.Context, key string) error
 }

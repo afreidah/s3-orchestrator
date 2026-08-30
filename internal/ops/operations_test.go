@@ -835,9 +835,11 @@ func TestObjectsGet_ReturnsBody(t *testing.T) {
 	objects, api := newObjects(t)
 	payload := []byte("hello world")
 	api.EXPECT().GetObject(gomock.Any(), testBucket+"/file.txt", "").
-		Return(&s3be.GetObjectResult{
-			Body: io.NopCloser(bytes.NewReader(payload)),
-			Size: int64(len(payload)),
+		Return(&object.GetResult{
+			GetObjectResult: &s3be.GetObjectResult{
+				Body: io.NopCloser(bytes.NewReader(payload)),
+				Size: int64(len(payload)),
+			},
 		}, nil).Times(1)
 
 	res, err := objects.Get(context.Background(), testBucket+"/file.txt")

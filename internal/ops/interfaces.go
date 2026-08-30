@@ -30,7 +30,7 @@ import (
 // that move data through a backend and record usage on the way.
 // *object.Manager satisfies it.
 type ObjectAPI interface {
-	GetObject(ctx context.Context, key, rangeHeader string) (*s3be.GetObjectResult, error)
+	GetObject(ctx context.Context, key, rangeHeader string) (*object.GetResult, error)
 	PutObject(ctx context.Context, req *object.PutObjectRequest) (string, error)
 	DeleteObject(ctx context.Context, key string) error
 	DeleteObjects(ctx context.Context, keys []string) []object.DeleteObjectResult

@@ -45,6 +45,11 @@ const s3XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/"
 // constant avoids string-literal duplication across handlers.
 const headerContentType = "Content-Type"
 
+// headerTaggingCount reports how many tags an object carries on GET and HEAD.
+// The wire name is "tagging-count" even though the SDKs expose the field as
+// TagCount.
+const headerTaggingCount = "x-amz-tagging-count"
+
 // -------------------------------------------------------------------------
 // REQUEST GUARDS
 // -------------------------------------------------------------------------

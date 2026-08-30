@@ -175,9 +175,11 @@ func TestHandleGetObject_StreamsBytes(t *testing.T) {
 	_, api, mux := objectsAPIHandler(t)
 	payload := []byte("hello world")
 	api.EXPECT().GetObject(gomock.Any(), "bucket/dir/file.txt", "").
-		Return(&backend.GetObjectResult{
-			Body: io.NopCloser(bytes.NewReader(payload)),
-			Size: int64(len(payload)),
+		Return(&object.GetResult{
+			GetObjectResult: &backend.GetObjectResult{
+				Body: io.NopCloser(bytes.NewReader(payload)),
+				Size: int64(len(payload)),
+			},
 		}, nil).Times(1)
 
 	w := httptest.NewRecorder()

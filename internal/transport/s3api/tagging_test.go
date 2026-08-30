@@ -22,9 +22,102 @@ import (
 
 	"go.uber.org/mock/gomock"
 
+	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
+
+// doObjectRequest issues an authenticated request for an object and returns the
+// response headers, which is all the tagging-count tests assert on.
+func doObjectRequest(t *testing.T, url, method string) http.Header {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), method, url, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("X-Proxy-Token", "test-token")
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		t.Fatalf("drain body: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	return resp.Header
+}
+
+// TestGetObject_ReportsTheTaggingCount verifies a tagged object's GET carries
+// the count. That header is what lets a client decide whether fetching the set
+// is worth a second round trip, so an object with tags must advertise them.
+func TestGetObject_ReportsTheTaggingCount(t *testing.T) {
+	ts, objects, _ := newOpsServer(t)
+	objects.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&object.GetResult{
+			GetObjectResult: &s3be.GetObjectResult{
+				Body:        io.NopCloser(strings.NewReader("data")),
+				Size:        4,
+				ContentType: "text/plain",
+			},
+			TagCount: 3,
+		}, nil)
+
+	if got := doObjectRequest(t, ts.URL+"/mybucket/k", http.MethodGet).Get("x-amz-tagging-count"); got != "3" {
+		t.Errorf("x-amz-tagging-count = %q, want %q", got, "3")
+	}
+}
+
+// TestGetObject_UntaggedObjectOmitsTheCount verifies an object with no tags
+// sends no header at all rather than a zero. S3 omits it, and a client reading
+// the header as "are there tags" must not be told there is a set of size zero.
+func TestGetObject_UntaggedObjectOmitsTheCount(t *testing.T) {
+	ts, objects, _ := newOpsServer(t)
+	objects.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&object.GetResult{
+			GetObjectResult: &s3be.GetObjectResult{
+				Body:        io.NopCloser(strings.NewReader("data")),
+				Size:        4,
+				ContentType: "text/plain",
+			},
+		}, nil)
+
+	if _, ok := doObjectRequest(t, ts.URL+"/mybucket/k", http.MethodGet)["X-Amz-Tagging-Count"]; ok {
+		t.Error("an untagged object sent a tagging-count header")
+	}
+}
+
+// TestHeadObject_ReportsTheTaggingCount verifies HEAD carries the count too. A
+// client that stats before it reads should not have to issue a GET to learn
+// whether the object has tags.
+func TestHeadObject_ReportsTheTaggingCount(t *testing.T) {
+	ts, objects, _ := newOpsServer(t)
+	objects.EXPECT().HeadObject(gomock.Any(), gomock.Any()).
+		Return(&object.HeadResult{
+			HeadObjectResult: &s3be.HeadObjectResult{Size: 4, ContentType: "text/plain"},
+			TagCount:         2,
+		}, nil)
+
+	if got := doObjectRequest(t, ts.URL+"/mybucket/k", http.MethodHead).Get("x-amz-tagging-count"); got != "2" {
+		t.Errorf("x-amz-tagging-count = %q, want %q", got, "2")
+	}
+}
+
+// TestHeadObject_UntaggedObjectOmitsTheCount verifies HEAD omits the header for
+// an untagged object, matching GET.
+func TestHeadObject_UntaggedObjectOmitsTheCount(t *testing.T) {
+	ts, objects, _ := newOpsServer(t)
+	objects.EXPECT().HeadObject(gomock.Any(), gomock.Any()).
+		Return(&object.HeadResult{
+			HeadObjectResult: &s3be.HeadObjectResult{Size: 4, ContentType: "text/plain"},
+		}, nil)
+
+	if _, ok := doObjectRequest(t, ts.URL+"/mybucket/k", http.MethodHead)["X-Amz-Tagging-Count"]; ok {
+		t.Error("an untagged object sent a tagging-count header on HEAD")
+	}
+}
 
 // doTagging issues an authenticated ?tagging request against the test server
 // and returns the status and body.

@@ -127,7 +127,7 @@ func (c *compressedFixture) get(t *testing.T, rangeHeader string) *backend.GetOb
 	if err != nil {
 		t.Fatalf("GetObject(%q): %v", rangeHeader, err)
 	}
-	return res
+	return res.GetObjectResult
 }
 
 // TestCompressedGet_ServesTheObjectAsWritten is the headline of #1256: whatever

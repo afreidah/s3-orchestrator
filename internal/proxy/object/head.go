@@ -24,7 +24,7 @@ import (
 // HeadObject retrieves object metadata. Tries the primary copy first, then
 // falls back to replicas if the primary fails. When the object is encrypted,
 // the reported size reflects the original plaintext size.
-func (o *Manager) HeadObject(ctx context.Context, key string) (*s3be.HeadObjectResult, error) {
+func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, error) {
 	result, backendName, err := readpath.Read(ctx, o.failover, "HeadObject", key,
 		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.HeadObjectResult], error) {
 			var fail readpath.ProbeResult[*s3be.HeadObjectResult]
@@ -77,5 +77,5 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*s3be.HeadObjectR
 	o.core.Acct().APICall(backendName)
 
 	pobserve.HeadCompleted(ctx, key, backendName, result.Size)
-	return result, nil
+	return &HeadResult{HeadObjectResult: result, TagCount: o.countObjectTags(ctx, key)}, nil
 }

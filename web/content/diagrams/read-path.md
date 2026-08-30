@@ -98,7 +98,8 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     '    INTEG -->|disabled or no hash| STREAM',
     '    VERIFY --> STREAM',
     '',
-    '    STREAM[Stream Body<br>to Client]:::process --> CACHEFILL{Cache<br>Fill?}:::decision',
+    '    STREAM[Stream Body<br>to Client]:::process --> TAGCOUNT[Count Tags:<br>x-amz-tagging-count]:::storage',
+    '    TAGCOUNT --> CACHEFILL{Cache<br>Fill?}:::decision',
     '    CACHEFILL -->|cacheable| CACHEPUT[Store in<br>Data Cache]:::process',
     '    CACHEFILL -->|too large or range| METRICS',
     '    CACHEPUT --> METRICS',
@@ -138,7 +139,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     CACHESTREAM: {
       title: 'Return Cached Response',
       badge: 'success', badgeText: 'cache hit',
-      body: '<p>Serves the object directly from the in-memory cache. The response includes all original metadata (content type, ETag, user metadata) captured when the object was first cached.</p><p>Avoids backend API calls, egress charges, decryption overhead, and database queries. Audit event is emitted with <code>source=cache</code>.</p>'
+      body: '<p>Serves the object directly from the in-memory cache. The response includes all original metadata (content type, ETag, user metadata) captured when the object was first cached, plus the tag count that fills <code>x-amz-tagging-count</code>.</p><p>The count rides on the entry because a hit reaches no database at all, which would otherwise leave the header off exactly the responses the cache serves. A tag write drops the entry, so the next read counts again.</p><p>Avoids backend API calls, egress charges, decryption overhead, and database queries. Audit event is emitted with <code>source=cache</code>.</p>'
     },
     DBLOOKUP: {
       title: 'DB Lookup: GetAllObjectLocations',
@@ -275,6 +276,11 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
       badge: 'process', badgeText: 'streaming',
       body: '<p>The (possibly decrypted) response body streams directly to the HTTP client. Uses <code>sync.Once</code> to protect the result assignment when parallel broadcast is enabled &mdash; only the first successful response is returned, and losing responses have their bodies closed.</p><p>The body is an <code>io.ReadCloser</code>; the HTTP handler streams it to the response writer and closes it when done.</p>'
     },
+    TAGCOUNT: {
+      title: 'Count Tags',
+      badge: 'storage', badgeText: 'metadata store',
+      body: '<p><code>count(*)</code> on <code>object_tags</code> for the key, an index-only scan over the primary key prefix. Fills <code>x-amz-tagging-count</code>, which is sent only when the object carries at least one tag.</p><p>Counted here rather than folded into the location lookup: that lookup is shared by the scrubber, drain, reconcile and the sync command, and a per-object count does not belong on the per-copy rows they read.</p><p>Advisory. A count the store cannot serve is reported as none and the header left off, because the bytes are already correct and one header is not worth failing a read over. A degraded read, having reached the object by broadcast with the store unreachable, omits it for the same reason.</p><p><a href="../tagging/">Object tagging &rarr;</a></p>'
+    },
     CACHEFILL: {
       title: 'Cache Fill Decision',
       badge: 'decision', badgeText: 'cache fill',
@@ -283,7 +289,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     CACHEPUT: {
       title: 'Store in Data Cache',
       badge: 'process', badgeText: 'cache store',
-      body: '<p>Stores the object data, content type, ETag, and user metadata in the in-memory LRU cache via <code>objectCache.Put()</code>.</p><p>If the cache is at capacity, the least recently used entry is evicted to make room. The entry expires after the configured <code>cache.ttl</code> (default: 5 minutes).</p><p class="ac-metric">Metrics: s3o_cache_size_bytes, s3o_cache_entries, s3o_cache_evictions_total</p>'
+      body: '<p>Stores the object data, content type, ETag, user metadata, and tag count in the in-memory LRU cache via <code>objectCache.Put()</code>.</p><p>If the cache is at capacity, the least recently used entry is evicted to make room. The entry expires after the configured <code>cache.ttl</code> (default: 5 minutes).</p><p class="ac-metric">Metrics: s3o_cache_size_bytes, s3o_cache_entries, s3o_cache_evictions_total</p>'
     },
     METRICS: {
       title: 'Record Usage & Metrics',

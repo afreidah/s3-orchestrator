@@ -9,6 +9,22 @@ import (
 	"context"
 )
 
+const countObjectTags = `-- name: CountObjectTags :one
+SELECT count(*)
+FROM object_tags
+WHERE object_key = $1
+`
+
+// Serves the tagging-count header on the read path, which needs the size of
+// the set rather than its contents. The object_tags primary key leads with
+// object_key, so this is an index-only scan over the one key's rows.
+func (q *Queries) CountObjectTags(ctx context.Context, objectKey string) (int64, error) {
+	row := q.db.QueryRow(ctx, countObjectTags, objectKey)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteObjectTags = `-- name: DeleteObjectTags :exec
 DELETE FROM object_tags
 WHERE object_key = $1

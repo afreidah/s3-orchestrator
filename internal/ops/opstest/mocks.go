@@ -89,10 +89,10 @@ func (mr *MockObjectAPIMockRecorder) DeleteObjects(ctx, keys any) *gomock.Call {
 }
 
 // GetObject mocks base method.
-func (m *MockObjectAPI) GetObject(ctx context.Context, key, rangeHeader string) (*backend.GetObjectResult, error) {
+func (m *MockObjectAPI) GetObject(ctx context.Context, key, rangeHeader string) (*object.GetResult, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetObject", ctx, key, rangeHeader)
-	ret0, _ := ret[0].(*backend.GetObjectResult)
+	ret0, _ := ret[0].(*object.GetResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

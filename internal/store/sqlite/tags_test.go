@@ -69,6 +69,89 @@ func TestObjectTags_ReplaceAndRead(t *testing.T) {
 	}
 }
 
+// TestCountObjectTags_MatchesTheSetSize verifies the count the read path serves
+// agrees with the set the tagging endpoint returns. A count that drifts from
+// the set sends clients after tags that are not there, or hides ones that are.
+func TestCountObjectTags_MatchesTheSetSize(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedObject(t, s, "bucket/tagged", "backend-a")
+
+	tags := []core.Tag{{Key: "a", Value: "1"}, {Key: "b", Value: "2"}, {Key: "c", Value: "3"}}
+	if err := s.ReplaceObjectTags(ctx, "bucket/tagged", tags); err != nil {
+		t.Fatalf("ReplaceObjectTags: %v", err)
+	}
+
+	n, err := s.CountObjectTags(ctx, "bucket/tagged")
+	if err != nil {
+		t.Fatalf("CountObjectTags: %v", err)
+	}
+	if n != len(tags) {
+		t.Errorf("count = %d, want %d", n, len(tags))
+	}
+}
+
+// TestCountObjectTags_FollowsAReplace verifies the count tracks a set that
+// shrinks. Replace is a delete plus inserts, so a count reading stale rows
+// would keep reporting the size the object used to have.
+func TestCountObjectTags_FollowsAReplace(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedObject(t, s, "bucket/tagged", "backend-a")
+
+	if err := s.ReplaceObjectTags(ctx, "bucket/tagged", []core.Tag{
+		{Key: "a", Value: "1"}, {Key: "b", Value: "2"}, {Key: "c", Value: "3"},
+	}); err != nil {
+		t.Fatalf("ReplaceObjectTags: %v", err)
+	}
+	if err := s.ReplaceObjectTags(ctx, "bucket/tagged", []core.Tag{{Key: "a", Value: "1"}}); err != nil {
+		t.Fatalf("ReplaceObjectTags (shrink): %v", err)
+	}
+
+	n, err := s.CountObjectTags(ctx, "bucket/tagged")
+	if err != nil {
+		t.Fatalf("CountObjectTags: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("count = %d, want 1", n)
+	}
+}
+
+// TestCountObjectTags_UntaggedObject verifies an object holding no tags counts
+// zero rather than erroring. The read path asks this of every object it
+// serves, and most of them carry no tags at all.
+func TestCountObjectTags_UntaggedObject(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	seedObject(t, s, "bucket/plain", "backend-a")
+
+	n, err := s.CountObjectTags(context.Background(), "bucket/plain")
+	if err != nil {
+		t.Fatalf("CountObjectTags: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("count = %d, want 0", n)
+	}
+}
+
+// TestCountObjectTags_UnknownKey verifies a key the store has never held counts
+// zero too. The read path reaches the count only after the object has been
+// located, so a key with no rows is not a condition to report here.
+func TestCountObjectTags_UnknownKey(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+
+	n, err := s.CountObjectTags(context.Background(), "bucket/never-existed")
+	if err != nil {
+		t.Fatalf("CountObjectTags: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("count = %d, want 0", n)
+	}
+}
+
 // TestMultipartTags_SurviveCreateToComplete verifies the set supplied at
 // CreateMultipartUpload is held on the upload row and read back intact, which
 // is what lets CompleteMultipartUpload apply it to the assembled object hours

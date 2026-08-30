@@ -132,6 +132,7 @@ func (c *MemoryCache) PutBytes(key string, data []byte, meta EntryMeta) {
 		ETag:         meta.ETag,
 		LastModified: meta.LastModified,
 		Metadata:     meta.Metadata,
+		TagCount:     meta.TagCount,
 	}
 	entrySize := entry.Size()
 

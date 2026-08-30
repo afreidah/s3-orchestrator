@@ -69,6 +69,8 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        TEXT compression_level',
     '        SMALLINT compression_format_version',
     '        BIGINT logical_size',
+    '        BIGINT compression_probe_size',
+    '        TEXT compression_probe_level',
     '        BOOLEAN managed',
     '        TIMESTAMPTZ last_scrubbed_at',
     '        TIMESTAMPTZ created_at',
@@ -221,6 +223,8 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>compression_level</td><td>TEXT</td><td>Level the object was written at. Diagnostic only, since decoding does not need it, but a rewrite pass does (nullable)</td></tr>' +
         '<tr><td>compression_format_version</td><td>SMALLINT</td><td>On-disk layout version, so a later change is detectable rather than silently misread (nullable)</td></tr>' +
         '<tr><td>logical_size</td><td>BIGINT</td><td>Size of the object the client wrote. Distinct from plaintext_size: with both features on the stored bytes are ciphertext of compressed data, so plaintext_size is the pre-encryption (compressed) size and this is the original (nullable)</td></tr>' +
+        '<tr><td>compression_probe_size</td><td>BIGINT</td><td>What the encoder produced for a copy stored verbatim anyway, so a later pass reaches the same verdict without re-encoding it. Stored as the measurement rather than a declined flag, because min_ratio is applied at query time (nullable)</td></tr>' +
+        '<tr><td>compression_probe_level</td><td>TEXT</td><td>Level that probe was measured at, so a measurement taken under different settings is not reused as though it were current (nullable)</td></tr>' +
         '<tr><td>managed</td><td>BOOLEAN</td><td>False for objects reconcile found outside every virtual bucket prefix &mdash; they count toward quota but replication, rebalance, integrity and drain ignore them (default true)</td></tr>' +
         '<tr><td>last_scrubbed_at</td><td>TIMESTAMPTZ</td><td>When the scrubber last verified this copy. NULL means never verified; the scrub queue falls back to created_at so a fresh write sorts behind older unverified data (nullable)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Insert timestamp</td></tr></table>' +
@@ -239,8 +243,8 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>tag_value</td><td>TEXT</td><td>Max 256 UTF-16 code units, case sensitive</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK (object_key, tag_key) &bull; idx_object_tags_lookup (tag_key, tag_value)</p>' +
         '<p>No foreign key, because there is no table to point at: <code>object_locations</code> is keyed <code>(object_key, backend_name)</code> and nothing is keyed on object key alone, so <code>ON DELETE CASCADE</code> cannot express this. Core clears these rows instead, at every path that puts a new object at a key or removes the last copy of one. The PK already serves lookup and delete by object key; idx_object_tags_lookup is for the reverse direction.</p>' +
-        '<p>Used by: <a href="../tagging/">tagging</a> (PutObjectTagging, GetObjectTagging, DeleteObjectTagging), inline <code>x-amz-tagging</code> on the <a href="../write-path/">write path</a>, CopyObject tagging directive, admin API and TUI object inspector.</p>' +
-        '<p class="ac-metric">Key queries: ReplaceObjectTags, GetObjectTags, DeleteObjectTags, ClearTagsForKeys</p>'
+        '<p>Used by: <a href="../tagging/">tagging</a> (PutObjectTagging, GetObjectTagging, DeleteObjectTagging), inline <code>x-amz-tagging</code> on the <a href="../write-path/">write path</a>, CopyObject tagging directive, the <a href="../read-path/">read path</a> for the tagging count on GetObject and HeadObject, lifecycle expiration rules that filter on a tag, admin API and TUI object inspector.</p>' +
+        '<p class="ac-metric">Key queries: ReplaceObjectTags, GetObjectTags, CountObjectTags, DeleteObjectTags, ClearTagsForKeys</p>'
     },
     multipart_uploads: {
       title: 'multipart_uploads',
@@ -491,6 +495,6 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | `00015_object_last_scrubbed_at` | Add `last_scrubbed_at` to `object_locations` (nullable) plus a partial index for the scrub queue. Replaces random sampling, which on Postgres could not reach past the front of the table: `TABLESAMPLE` walks the heap in physical order and `LIMIT` halts the scan, so most of the fleet was never verified |
 | `00016_scrub_queue_last_touched` | Re-index the scrub queue on `COALESCE(last_scrubbed_at, created_at)` so a freshly written copy sorts behind an old unverified one. Ordering on the verified timestamp alone put every new write at the head, and a write rate above the scrub rate meant older data was never reached |
 | `00017_compression_columns` | Add `compression_algorithm`, `compression_level`, `compression_format_version` and `logical_size` to `object_locations` and `pending_objects`. Nullable throughout, and a NULL algorithm means the bytes are stored verbatim, which is what every pre-existing row is, so no backfill is needed |
-| `00018_compression_probe` | Record what the encoder produced for a copy it declined to store compressed, so a later pass reaches the same verdict without downloading and encoding it again. The measurement is stored rather than a declined flag, because `min_ratio` is applied at query time: loosening it returns those copies to the pass with no read at all, where a flag would have to be found and cleared |
+| `00018_compression_probe` | Add `compression_probe_size` and `compression_probe_level` to `object_locations`. Record what the encoder produced for a copy it declined to store compressed, so a later pass reaches the same verdict without downloading and encoding it again. The measurement is stored rather than a declined flag, because `min_ratio` is applied at query time: loosening it returns those copies to the pass with no read at all, where a flag would have to be found and cleared |
 | `00019_object_tags` | Add `object_tags` (`object_key`, `tag_key`, `tag_value`) with `idx_object_tags_lookup (tag_key, tag_value)`. Keyed by object key alone, because tags describe the object and per-replica rows would let copies of one key disagree. No foreign key: nothing is keyed on object key alone, so `ON DELETE CASCADE` cannot express it and core clears the rows instead |
 | `00020_multipart_tagging` | Add `tagging` to `multipart_uploads`, holding a query-string-encoded tag set from `CreateMultipartUpload` until completion. One column rather than a child table, since these are only ever read whole for one upload and never filtered by tag. Nullable, and NULL means the upload carried no tags, which is what every pre-existing row is |
