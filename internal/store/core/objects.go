@@ -335,6 +335,30 @@ func carryCompressionProbe(ctx context.Context, tx TxAdapter, src *ObjectLocatio
 
 // ImportObject records a pre-existing object in the database without
 // overwriting. Returns true if the object was newly imported, false if
+// ImportOutcome reports what an import did with a discovered key. A caller
+// that only wants a count still has to tell a suppressed import from a row
+// that was already there: the first says a delete is outstanding and the
+// bytes are an orphan, the second says nothing at all.
+type ImportOutcome int
+
+const (
+	ImportSkippedExisting ImportOutcome = iota
+	ImportInserted
+	ImportSkippedPendingCleanup
+)
+
+// String renders the outcome for logs.
+func (o ImportOutcome) String() string {
+	switch o {
+	case ImportInserted:
+		return "inserted"
+	case ImportSkippedPendingCleanup:
+		return "skipped_pending_cleanup"
+	default:
+		return "skipped_existing"
+	}
+}
+
 // it already existed for this backend. Used by reconcile and the sync
 // subcommand to bring existing bucket objects under proxy management.
 //
@@ -346,20 +370,35 @@ func carryCompressionProbe(ctx context.Context, tx TxAdapter, src *ObjectLocatio
 // form carries what the caller established about the bytes on the backend.
 // Passing nil records the object as plaintext, so callers that import bytes
 // they have not inspected will publish ciphertext as if it were the object.
-func ImportObject(ctx context.Context, runner Runner, key, backend string, size int64, unmanaged bool, form *StoredForm) (bool, error) {
-	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (bool, error) {
+// A key whose delete is still outstanding is left alone. The bytes are on the
+// backend because a delete could not reach it, not because the object is meant
+// to be there, and importing them undoes the delete: the object comes back
+// live, the replicator spreads it to reach the replication factor, and its
+// created_at restarts so any lifecycle rule that expired it waits another full
+// window. The cleanup queue already tracks the orphan and its bytes are already
+// counted against the backend, so leaving the row absent is the accurate state.
+func ImportObject(ctx context.Context, runner Runner, key, backend string, size int64, unmanaged bool, form *StoredForm) (ImportOutcome, error) {
+	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (ImportOutcome, error) {
+		pending, err := tx.HasPendingCleanup(ctx, key, backend)
+		if err != nil {
+			return ImportSkippedExisting, err
+		}
+		if pending {
+			return ImportSkippedPendingCleanup, nil
+		}
+
 		loc := objectFromStoredForm(key, backend, size, form)
 		loc.Unmanaged = unmanaged
 		inserted, err := tx.InsertObjectLocationIfNotExists(ctx, loc)
 		if err != nil {
-			return false, err
+			return ImportSkippedExisting, err
 		}
 		if !inserted {
-			return false, nil
+			return ImportSkippedExisting, nil
 		}
 		if err := tx.IncrementBackendQuota(ctx, backend, size); err != nil {
-			return false, err
+			return ImportSkippedExisting, err
 		}
-		return true, nil
+		return ImportInserted, nil
 	})
 }

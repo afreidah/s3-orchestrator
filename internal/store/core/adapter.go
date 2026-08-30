@@ -149,6 +149,13 @@ type CleanupTxAdapter interface {
 	// DeleteCleanupItem removes a cleanup_queue row by id. Used inside
 	// MoveCleanupToDLQ so the queue->DLQ move is atomic.
 	DeleteCleanupItem(ctx context.Context, id int64) error
+
+	// HasPendingCleanup reports whether a delete for (objectKey, backend)
+	// is still outstanding, in the retry queue or dead-lettered after
+	// exhausting its attempts. Read inside the import transaction so a
+	// cleanup that completes concurrently cannot slip between the check
+	// and the insert.
+	HasPendingCleanup(ctx context.Context, objectKey, backend string) (bool, error)
 }
 
 // TagsTxAdapter exposes the transactional operations on the object_tags

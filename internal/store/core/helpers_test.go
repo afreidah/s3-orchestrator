@@ -211,6 +211,8 @@ type quotaTxStub struct {
 	keyLockErr     error
 	existingCopies []ExistingCopy
 	existingErr    error
+	pendingCleanup bool
+	pendingErr     error
 }
 
 // storedCopy is the seed a tag test uses to say the object exists, since the
@@ -412,6 +414,12 @@ func (*quotaTxStub) InsertCleanupDLQ(context.Context, *CleanupQueueRow) error { 
 // full TxAdapter interface; only the quota-touching methods carry
 // real test fixtures.
 func (*quotaTxStub) DeleteCleanupItem(context.Context, int64) error { return nil }
+
+// HasPendingCleanup reports whatever the fixture was primed with, so an import
+// can be driven down the ordinary path, the suppressed path, or the error path.
+func (s *quotaTxStub) HasPendingCleanup(context.Context, string, string) (bool, error) {
+	return s.pendingCleanup, s.pendingErr
+}
 
 // DecrementOrphanBytes is a no-op stub on quotaTxStub so the type satisfies the
 // full TxAdapter interface; only the quota-touching methods carry

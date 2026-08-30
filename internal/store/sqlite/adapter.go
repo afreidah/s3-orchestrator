@@ -489,6 +489,22 @@ func (a *sqliteTxAdapter) DeleteCleanupItem(ctx context.Context, id int64) error
 	return nil
 }
 
+// HasPendingCleanup reports whether a delete for (objectKey, backend) is still
+// outstanding in either the retry queue or the dead-letter table.
+func (a *sqliteTxAdapter) HasPendingCleanup(ctx context.Context, objectKey, backend string) (bool, error) {
+	var pending bool
+	err := a.tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM cleanup_queue WHERE object_key = ? AND backend_name = ?
+			UNION ALL
+			SELECT 1 FROM cleanup_dlq   WHERE object_key = ? AND backend_name = ?
+		)`, objectKey, backend, objectKey, backend).Scan(&pending)
+	if err != nil {
+		return false, fmt.Errorf("check pending cleanup: %w", err)
+	}
+	return pending, nil
+}
+
 // -------------------------------------------------------------------------
 // QUOTA TX OPERATIONS
 // -------------------------------------------------------------------------

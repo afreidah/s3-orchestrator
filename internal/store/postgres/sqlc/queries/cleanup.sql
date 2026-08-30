@@ -109,6 +109,21 @@ SELECT COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes,
 FROM cleanup_queue
 WHERE object_key = $1 AND backend_name = $2;
 
+-- name: HasPendingCleanup :one
+-- Reports whether a delete for (object_key, backend_name) is still
+-- outstanding: either waiting in the retry queue or dead-lettered after
+-- exhausting its attempts. Both mean the bytes are still on the backend and
+-- the object is meant to be gone, which is what stops reconcile importing it
+-- back. Dead-lettered counts because retrying stopped, not because the delete
+-- was withdrawn.
+SELECT EXISTS (
+    SELECT 1 FROM cleanup_queue q
+     WHERE q.object_key = @object_key AND q.backend_name = @backend_name
+    UNION ALL
+    SELECT 1 FROM cleanup_dlq d
+     WHERE d.object_key = @object_key AND d.backend_name = @backend_name
+) AS pending;
+
 -- name: DeleteCleanupQueueByKey :execrows
 -- Removes every cleanup_queue row matching the given (object_key,
 -- backend_name) pair. Returns the number of rows deleted so the caller

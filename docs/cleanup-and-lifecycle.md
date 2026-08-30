@@ -26,6 +26,10 @@ Each enqueued item tracks the object's `size_bytes`. On enqueue, the backend's `
 
 The background worker runs every minute and retries with exponential backoff (1 minute to 24 hours). Scheduling a retry clears the row's claim so it is immediately re-eligible for the next tick. After 10 failed attempts, the row is graduated to the `cleanup_dlq` table via `core.MoveCleanupToDLQ` (single transaction: read the row, insert it into `cleanup_dlq`, delete it from `cleanup_queue`). `orphan_bytes` is intentionally NOT decremented during the move because the backend object is still on disk. The DLQ entry retains the full row payload (key, backend, size, reason, last_error) plus an `original_id` correlation column so an operator can find the original queue entry.
 
+**Reconcile does not undo a pending delete.** A key with a row in `cleanup_queue` or `cleanup_dlq` is still on the backend only because the delete could not reach it. Reconcile therefore skips importing such a key rather than adopting it, checked inside the import transaction so a cleanup finishing concurrently cannot slip between the check and the insert. Adopting it would resurrect the object: it would come back live, the replicator would spread it to reach the replication factor, and its `created_at` would restart so any lifecycle rule that had expired it would wait another full window.
+
+The suppression is scoped to the `(key, backend)` pair, so a copy that was removed cleanly on another backend is still importable. Suppressed keys are logged and reported as `suppressed_pending_cleanup` in the reconcile result — a run showing many of them is pointing at a cleanup queue that is not draining, not at a reconcile problem.
+
 **Monitoring:**
 
 - `s3o_cleanup_queue_depth` staying elevated — orphaned objects are accumulating in the active queue.

@@ -358,6 +358,19 @@ func (a *pgTxAdapter) DeleteCleanupItem(ctx context.Context, id int64) error {
 	return nil
 }
 
+// HasPendingCleanup reports whether a delete for (objectKey, backend) is still
+// outstanding in either the retry queue or the dead-letter table.
+func (a *pgTxAdapter) HasPendingCleanup(ctx context.Context, objectKey, backend string) (bool, error) {
+	pending, err := a.q.HasPendingCleanup(ctx, db.HasPendingCleanupParams{
+		ObjectKey:   objectKey,
+		BackendName: backend,
+	})
+	if err != nil {
+		return false, fmt.Errorf("check pending cleanup: %w", err)
+	}
+	return pending, nil
+}
+
 // -------------------------------------------------------------------------
 // QUOTA TX OPERATIONS
 // -------------------------------------------------------------------------

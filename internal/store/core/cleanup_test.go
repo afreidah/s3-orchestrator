@@ -59,6 +59,12 @@ func (t *cleanupTxStub) InsertCleanupDLQ(_ context.Context, row *CleanupQueueRow
 	return nil
 }
 
+// HasPendingCleanup reports no outstanding delete on cleanupTxStub; the
+// suppression behaviour it guards has its own fixtures in objects_test.go.
+func (*cleanupTxStub) HasPendingCleanup(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 // DeleteCleanupItem is a no-op stub on cleanupTxStub so the type satisfies the
 // full TxAdapter interface; only the cleanup-touching methods carry
 // real test fixtures.

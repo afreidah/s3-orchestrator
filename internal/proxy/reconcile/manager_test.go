@@ -228,8 +228,8 @@ func TestReconcileBackend_ImportsAndDeletes(t *testing.T) {
 		)).AnyTimes()
 
 	// a and c are backend-only; b matches; x is ledger-only.
-	stores.EXPECT().ImportObject(gomock.Any(), "vb/a", "b1", int64(1), false, gomock.Any()).Return(true, nil)
-	stores.EXPECT().ImportObject(gomock.Any(), "vb/c", "b1", int64(3), false, gomock.Any()).Return(true, nil)
+	stores.EXPECT().ImportObject(gomock.Any(), "vb/a", "b1", int64(1), false, gomock.Any()).Return(core.ImportInserted, nil)
+	stores.EXPECT().ImportObject(gomock.Any(), "vb/c", "b1", int64(3), false, gomock.Any()).Return(core.ImportInserted, nil)
 	stores.EXPECT().DeleteObjectLocation(gomock.Any(), "vb/x", "b1").Return(nil)
 	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), "vb/x", "b1").Return(int64(0), nil)
 	usage.EXPECT().APICalls("b1", gomock.Any()).Times(1)
@@ -285,7 +285,7 @@ func TestReconcileBackend_StrayImportedAsUnmanaged(t *testing.T) {
 	usage.EXPECT().APICalls(gomock.Any(), gomock.Any()).AnyTimes()
 
 	// unmanaged = true, and the key is untouched.
-	stores.EXPECT().ImportObject(gomock.Any(), "stray.txt", "b1", int64(9), true, gomock.Any()).Return(true, nil)
+	stores.EXPECT().ImportObject(gomock.Any(), "stray.txt", "b1", int64(9), true, gomock.Any()).Return(core.ImportInserted, nil)
 
 	res, err := m.ReconcileBackend(t.Context(), "b1", []string{"vb"})
 	if err != nil {
@@ -373,8 +373,8 @@ func TestReconcileBackend_CoversEveryVirtualBucket(t *testing.T) {
 	usage.EXPECT().APICalls(gomock.Any(), gomock.Any()).AnyTimes()
 
 	// Both buckets are imported as managed in the same pass.
-	stores.EXPECT().ImportObject(gomock.Any(), "one/a", "b1", int64(1), false, gomock.Any()).Return(true, nil)
-	stores.EXPECT().ImportObject(gomock.Any(), "two/b", "b1", int64(2), false, gomock.Any()).Return(true, nil)
+	stores.EXPECT().ImportObject(gomock.Any(), "one/a", "b1", int64(1), false, gomock.Any()).Return(core.ImportInserted, nil)
+	stores.EXPECT().ImportObject(gomock.Any(), "two/b", "b1", int64(2), false, gomock.Any()).Return(core.ImportInserted, nil)
 
 	res, err := m.ReconcileBackend(t.Context(), "b1", []string{"one", "two"})
 	if err != nil {
@@ -397,8 +397,8 @@ func TestSyncBackend_ImportsAndCountsSkips(t *testing.T) {
 	m, stores, backends, usage := newTestManager(t, ctrl)
 
 	backends.EXPECT().GetBackend("b1").Return(newPagedLister([][]backend.ListedObject{{{Key: "vb/new", SizeBytes: 1}, {Key: "vb/known", SizeBytes: 2}}}), nil).AnyTimes()
-	stores.EXPECT().ImportObject(gomock.Any(), "vb/new", "b1", int64(1), false, gomock.Any()).Return(true, nil)
-	stores.EXPECT().ImportObject(gomock.Any(), "vb/known", "b1", int64(2), false, gomock.Any()).Return(false, nil)
+	stores.EXPECT().ImportObject(gomock.Any(), "vb/new", "b1", int64(1), false, gomock.Any()).Return(core.ImportInserted, nil)
+	stores.EXPECT().ImportObject(gomock.Any(), "vb/known", "b1", int64(2), false, gomock.Any()).Return(core.ImportSkippedExisting, nil)
 	usage.EXPECT().APICalls("b1", int64(1)).Times(1)
 
 	imported, skipped, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"})
@@ -407,6 +407,28 @@ func TestSyncBackend_ImportsAndCountsSkips(t *testing.T) {
 	}
 	if imported != 1 || skipped != 1 {
 		t.Errorf("imported=%d skipped=%d, want 1/1", imported, skipped)
+	}
+}
+
+// TestSyncBackend_SkipsKeyWithPendingDelete asserts a key the store refuses
+// because its delete is still outstanding is counted as skipped rather than
+// imported. Counting it as imported would report a resurrection as success.
+func TestSyncBackend_SkipsKeyWithPendingDelete(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	m, stores, backends, usage := newTestManager(t, ctrl)
+
+	backends.EXPECT().GetBackend("b1").Return(newPagedLister([][]backend.ListedObject{{{Key: "vb/deleted", SizeBytes: 1}}}), nil).AnyTimes()
+	stores.EXPECT().ImportObject(gomock.Any(), "vb/deleted", "b1", int64(1), false, gomock.Any()).
+		Return(core.ImportSkippedPendingCleanup, nil)
+	usage.EXPECT().APICalls("b1", int64(1)).Times(1)
+
+	imported, skipped, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"})
+	if err != nil {
+		t.Fatalf("SyncBackend: %v", err)
+	}
+	if imported != 0 || skipped != 1 {
+		t.Errorf("imported=%d skipped=%d, want 0/1", imported, skipped)
 	}
 }
 
@@ -419,7 +441,7 @@ func TestSyncBackend_ImportErrorAborts(t *testing.T) {
 
 	backends.EXPECT().GetBackend(gomock.Any()).Return(newPagedLister([][]backend.ListedObject{{{Key: "vb/a", SizeBytes: 1}}}), nil).AnyTimes()
 	stores.EXPECT().ImportObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(false, errors.New("import boom"))
+		Return(core.ImportSkippedExisting, errors.New("import boom"))
 	usage.EXPECT().APICalls(gomock.Any(), gomock.Any()).AnyTimes()
 
 	if _, _, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"}); err == nil {
@@ -441,7 +463,7 @@ func TestSyncBackend_AccountsListingPages(t *testing.T) {
 		{{Key: "vb/c", SizeBytes: 3}},
 	}), nil).AnyTimes()
 	stores.EXPECT().ImportObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(true, nil).AnyTimes()
+		Return(core.ImportInserted, nil).AnyTimes()
 	usage.EXPECT().APICalls("b1", int64(3)).Times(1)
 
 	if _, _, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"}); err != nil {

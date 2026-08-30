@@ -32,7 +32,7 @@ import (
 // drop a stale row, walk the ledger in byte order, and sweep cleanup-queue
 // rows belonging to a key that no longer exists.
 type Stores interface {
-	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *core.StoredForm) (bool, error)
+	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *core.StoredForm) (core.ImportOutcome, error)
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 	DeleteObjectLocation(ctx context.Context, key, backendName string) error
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error)
@@ -151,13 +151,22 @@ func (m *Manager) importPage(
 ) (imported, skipped int, err error) {
 	for _, obj := range objects {
 		unmanaged := Unmanaged(obj.Key, bucketPrefixes)
-		inserted, importErr := m.importDiscovered(ctx, obj.Key, backendName, obj.SizeBytes, unmanaged)
+		outcome, importErr := m.importDiscovered(ctx, obj.Key, backendName, obj.SizeBytes, unmanaged)
 		if importErr != nil {
 			return imported, skipped, fmt.Errorf("failed to import %s: %w", obj.Key, importErr)
 		}
-		if inserted {
+		switch outcome {
+		case core.ImportInserted:
 			imported++
-		} else {
+		case core.ImportSkippedPendingCleanup:
+			// Logged rather than folded silently into the skipped count: a
+			// key here is one whose delete never reached the backend, and an
+			// operator seeing a run full of them is looking at a cleanup
+			// queue that is not draining.
+			m.logger().WarnContext(ctx, "skipping key with an outstanding delete",
+				"key", obj.Key, "backend", backendName)
+			skipped++
+		default:
 			skipped++
 		}
 	}
@@ -168,10 +177,10 @@ func (m *Manager) importPage(
 // whether its bytes are an encryption envelope and, if so, which existing row
 // holds the key that reads them. Satisfies ImporterFn, so the sorted-merge
 // reconcile and the bulk sync scan classify identically.
-func (m *Manager) importDiscovered(ctx context.Context, key, backendName string, size int64, unmanaged bool) (bool, error) {
+func (m *Manager) importDiscovered(ctx context.Context, key, backendName string, size int64, unmanaged bool) (core.ImportOutcome, error) {
 	be, err := m.backends.GetBackend(backendName)
 	if err != nil {
-		return false, err
+		return core.ImportSkippedExisting, err
 	}
 	form, err := ClassifyImport(ctx, ClassifyDeps{
 		Backend: be,
@@ -181,7 +190,7 @@ func (m *Manager) importDiscovered(ctx context.Context, key, backendName string,
 		Log:     m.logger(),
 	}, backendName, key, size)
 	if err != nil {
-		return false, err
+		return core.ImportSkippedExisting, err
 	}
 	return m.stores.ImportObject(ctx, key, backendName, size, unmanaged, form)
 }
