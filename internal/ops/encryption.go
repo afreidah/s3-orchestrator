@@ -61,33 +61,33 @@ type RotateKeyResult struct {
 
 // EncryptionDeps holds the collaborators Encryption requires.
 type EncryptionDeps struct {
-	Encryptor  *encryption.Encryptor
-	Store      EncryptionStore
-	Runtime    RuntimeOps
-	BackendOps BackendOps
+	Encryptor *encryption.Encryptor
+	Store     EncryptionStore
+	Runtime   RuntimeOps
+	Usage     UsageGate
 }
 
 // Encryption serves the fleet-wide encryption operations. Encryptor and Store
 // are nil when the orchestrator was started without encryption, which every
 // operation reports as ErrEncryptionDisabled.
 type Encryption struct {
-	log        *slog.Logger
-	encryptor  *encryption.Encryptor
-	store      EncryptionStore
-	runtime    RuntimeOps
-	backendOps BackendOps
+	log       *slog.Logger
+	encryptor *encryption.Encryptor
+	store     EncryptionStore
+	runtime   RuntimeOps
+	usage     UsageGate
 }
 
 // NewEncryption is the explicit-deps constructor.
 func NewEncryption(d EncryptionDeps) *Encryption {
 	must.NotNil("d.Runtime", d.Runtime)
-	must.NotNil("d.BackendOps", d.BackendOps)
+	must.NotNil("d.Usage", d.Usage)
 	return &Encryption{
-		log:        slog.Default().With(logfmt.Component("ops")),
-		encryptor:  d.Encryptor,
-		store:      d.Store,
-		runtime:    d.Runtime,
-		backendOps: d.BackendOps,
+		log:       slog.Default().With(logfmt.Component("ops")),
+		encryptor: d.Encryptor,
+		store:     d.Store,
+		runtime:   d.Runtime,
+		usage:     d.Usage,
 	}
 }
 
@@ -323,14 +323,14 @@ var errSkipRewrite = errors.New("rewrite declined")
 // running the pass. Declared so the driver serves the compression passes as
 // well as the encryption ones rather than being tied to either.
 type bulkRewriteEnv struct {
-	log        *slog.Logger
-	runtime    RuntimeOps
-	backendOps BackendOps
+	log     *slog.Logger
+	runtime RuntimeOps
+	usage   UsageGate
 }
 
 // rewriteEnv exposes this service's collaborators to the shared driver.
 func (e *Encryption) rewriteEnv() bulkRewriteEnv {
-	return bulkRewriteEnv{log: e.log, runtime: e.runtime, backendOps: e.backendOps}
+	return bulkRewriteEnv{log: e.log, runtime: e.runtime, usage: e.usage}
 }
 
 // rewriteOutcome is what one object's rewrite attempt produced.
@@ -476,7 +476,7 @@ func processBulkLocation[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Conte
 	// The read is charged at the row's size and the write at the same figure
 	// as an estimate, since the transform's output is not known yet. Both are
 	// re-charged with the real numbers once they are.
-	if !env.backendOps.AllowUsage(backendName, 2, sizeBytes, sizeBytes) {
+	if !env.usage.WithinLimits(backendName, 2, sizeBytes, sizeBytes) {
 		op.counter.WithLabelValues("skipped").Inc()
 		telemetry.BulkRewriteUsageDeclinedTotal.WithLabelValues(op.opName).Inc()
 		env.log.WarnContext(ctx, op.opName+": object declined by usage limits",
@@ -491,10 +491,10 @@ func processBulkLocation[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Conte
 
 	src, err := be.GetObject(ctx, key, "")
 	if err != nil {
-		env.backendOps.RecordUsage(backendName, 1, 0, 0)
+		env.usage.Record(backendName, 1, 0, 0)
 		return rewriteFailed(env, ctx, op, "download failed", key, backendName, err)
 	}
-	env.backendOps.RecordUsage(backendName, 1, src.Size, 0)
+	env.usage.Record(backendName, 1, src.Size, 0)
 
 	out, err := op.rewrite(ctx, src, loc)
 	if err != nil {
@@ -512,10 +512,10 @@ func processBulkLocation[L bulkRewriteRow](env bulkRewriteEnv, ctx context.Conte
 	_, err = be.PutObject(ctx, key, out.body, out.size, src.ContentType, src.Metadata)
 	src.Body.Close()
 	if err != nil {
-		env.backendOps.RecordUsage(backendName, 1, 0, 0)
+		env.usage.Record(backendName, 1, 0, 0)
 		return rewriteFailed(env, ctx, op, "re-upload failed", key, backendName, err)
 	}
-	env.backendOps.RecordUsage(backendName, 1, 0, out.size)
+	env.usage.Record(backendName, 1, 0, out.size)
 
 	if err := out.commit(); err != nil {
 		return rewriteFailed(env, ctx, op, "metadata update failed", key, backendName, err)

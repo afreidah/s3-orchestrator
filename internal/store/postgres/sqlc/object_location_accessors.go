@@ -115,8 +115,10 @@ func (r GetUnderReplicatedObjectsExcludingRow) GetEncryptionKey() []byte        
 func (r GetUnderReplicatedObjectsExcludingRow) GetKeyID() *string                { return r.KeyID }
 func (r GetUnderReplicatedObjectsExcludingRow) GetPlaintextSize() *int64         { return r.PlaintextSize }
 func (r GetUnderReplicatedObjectsExcludingRow) GetContentHash() *string          { return r.ContentHash }
-func (r GetUnderReplicatedObjectsExcludingRow) GetCompressionLevel() *string     { return r.CompressionLevel }
-func (r GetUnderReplicatedObjectsExcludingRow) GetLogicalSize() *int64           { return r.LogicalSize }
+func (r GetUnderReplicatedObjectsExcludingRow) GetCompressionLevel() *string {
+	return r.CompressionLevel
+}
+func (r GetUnderReplicatedObjectsExcludingRow) GetLogicalSize() *int64 { return r.LogicalSize }
 func (r GetUnderReplicatedObjectsExcludingRow) GetCompressionAlgorithm() *string {
 	return r.CompressionAlgorithm
 }

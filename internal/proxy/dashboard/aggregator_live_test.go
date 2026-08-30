@@ -9,7 +9,7 @@
 // cases are the ones where a dependency is absent or errors.
 //
 // These exercise the aggregator directly against a 7-method DashboardStore
-// mock instead of standing up a BackendManager and the 79-method union.
+// mock instead of standing up a full proxy stack and the 79-method union.
 // -------------------------------------------------------------------------------
 
 package dashboard

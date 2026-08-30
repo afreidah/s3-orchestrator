@@ -269,7 +269,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     VERIFY: {
       title: 'Wrap with VerifyingReader',
       badge: 'process', badgeText: 'integrity',
-      body: '<p><code>VerifyingReader</code> wraps the response body and computes SHA-256 incrementally as data streams through to the client.</p><p>When the reader reaches EOF, it compares the computed hash to the stored <code>content_hash</code>. On mismatch, the corrupted copy is enqueued for cleanup via <code>deleteOrEnqueue()</code>.</p><p>Verification is zero-copy and adds no buffering &mdash; it runs inline with the streaming read.</p><p class="ac-metric">Metrics: s3o_integrity_checks_total{operation="read"}, s3o_integrity_errors_total{operation="read"}</p>'
+      body: '<p><code>VerifyingReader</code> wraps the response body and computes SHA-256 incrementally as data streams through to the client.</p><p>When the reader reaches EOF, it compares the computed hash to the stored <code>content_hash</code>. On mismatch, the corrupted copy is enqueued for cleanup via <code>DeleteOrEnqueue()</code>.</p><p>Verification is zero-copy and adds no buffering &mdash; it runs inline with the streaming read.</p><p class="ac-metric">Metrics: s3o_integrity_checks_total{operation="read"}, s3o_integrity_errors_total{operation="read"}</p>'
     },
     STREAM: {
       title: 'Stream Body to Client',

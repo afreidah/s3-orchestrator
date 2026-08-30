@@ -59,7 +59,7 @@ func TestUsage_EncryptedPutChargesCiphertext(t *testing.T) {
 
 	var key, target string
 	var physical int64
-	deltas := fleetUsageDelta(env.manager, testBackendOrder, func() {
+	deltas := fleetUsageDelta(env.stack.Runtime, testBackendOrder, func() {
 		key, target, physical = putEncrypted(t, env, "usage-enc-put", body)
 	})
 
@@ -82,7 +82,7 @@ func TestUsage_EncryptedGetChargesCiphertext(t *testing.T) {
 	key, target, physical := putEncrypted(t, env, "usage-enc-get", body)
 
 	var got []byte
-	delta := usageDelta(env.manager, target, func() {
+	delta := usageDelta(env.stack.Runtime, target, func() {
 		out, err := env.proxyClient.GetObject(context.Background(), &s3.GetObjectInput{
 			Bucket: aws.String(virtualBucket),
 			Key:    aws.String(key),
@@ -120,7 +120,7 @@ func TestUsage_EncryptedRangeGetChargesFetchedChunks(t *testing.T) {
 
 	const want = 64
 	var got []byte
-	delta := usageDelta(env.manager, target, func() {
+	delta := usageDelta(env.stack.Runtime, target, func() {
 		out, err := env.proxyClient.GetObject(context.Background(), &s3.GetObjectInput{
 			Bucket: aws.String(virtualBucket),
 			Key:    aws.String(key),
@@ -166,7 +166,7 @@ func TestUsage_EncryptedPlacementReservesCiphertextSize(t *testing.T) {
 	setQuotaLimits(t, limit)
 
 	var err error
-	deltas := fleetUsageDelta(env.manager, testBackendOrder, func() {
+	deltas := fleetUsageDelta(env.stack.Runtime, testBackendOrder, func() {
 		_, err = env.proxyClient.PutObject(context.Background(), &s3.PutObjectInput{
 			Bucket:        aws.String(virtualBucket),
 			Key:           aws.String(uniqueKey(t, "usage-enc-placement")),
@@ -207,7 +207,7 @@ func TestUsage_EncryptedUploadPartChargesCiphertext(t *testing.T) {
 	uploadID := aws.ToString(create.UploadId)
 	target := queryMultipartBackend(t, uploadID)
 
-	delta := usageDelta(env.manager, target, func() {
+	delta := usageDelta(env.stack.Runtime, target, func() {
 		if _, err := env.proxyClient.UploadPart(ctx, &s3.UploadPartInput{
 			Bucket:        aws.String(virtualBucket),
 			Key:           aws.String(key),

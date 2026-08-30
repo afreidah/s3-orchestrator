@@ -30,9 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 
 	"go.uber.org/mock/gomock"
-
 	// serverMockBackend implements storage.ObjectBackend for server handler tests.
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 )
 
 // serverMockBackend is the in-memory ObjectBackend used by S3-handler
@@ -52,24 +50,19 @@ func newTestServer(t *testing.T, opts ...func(*storetest.MockMetadataStore)) (*h
 		Return("b1", nil).AnyTimes()
 	storetest.Permissive(mockStore)
 
-	mgr := proxytest.NewManager(t, mockStore, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: map[string]s3be.ObjectBackend{"b1": backend},
-			Order:    []string{"b1"},
-		},
-		Policies: proxy.PolicyConfig{
+	st := proxytest.New(t, mockStore, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        map[string]s3be.ObjectBackend{"b1": backend},
+			Order:           []string{"b1"},
 			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: mockStore,
-		},
+			Metrics:         mockStore,
+		}),
 	})
-	_ = proxytest.BuildWorkers(mgr, mockStore)
-	t.Cleanup(mgr.Close)
+	_ = proxytest.BuildWorkers(st, mockStore)
 
 	srv := &Server{
-		Objects:       mgr.Objects(),
-		Multipart:     mgr.Multipart(),
+		Objects:       st.Objects,
+		Multipart:     st.Multipart,
 		MaxObjectSize: 10 * 1024 * 1024, // 10MB
 	}
 
@@ -411,25 +404,20 @@ func TestPut_NoBackendCapacity_QuotaStatsErrFallsBack(t *testing.T) {
 func newCapacityHintTestServer(t *testing.T, mockStore *storetest.MockMetadataStore) *httptest.Server {
 	t.Helper()
 	backend := backendtest.NewInMemory()
-	mgr := proxytest.NewManager(t, mockStore, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: map[string]s3be.ObjectBackend{"b1": backend},
-			Order:    []string{"b1"},
-		},
-		Policies: proxy.PolicyConfig{
+	st := proxytest.New(t, mockStore, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        map[string]s3be.ObjectBackend{"b1": backend},
+			Order:           []string{"b1"},
 			MaxObjectSizes:  map[string]int64{"b1": 1},
 			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: mockStore,
-		},
+			Metrics:         mockStore,
+		}),
 	})
-	_ = proxytest.BuildWorkers(mgr, mockStore)
-	t.Cleanup(mgr.Close)
+	_ = proxytest.BuildWorkers(st, mockStore)
 
 	srv := &Server{
-		Objects:       mgr.Objects(),
-		Multipart:     mgr.Multipart(),
+		Objects:       st.Objects,
+		Multipart:     st.Multipart,
 		MaxObjectSize: 10 * 1024 * 1024,
 	}
 	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{

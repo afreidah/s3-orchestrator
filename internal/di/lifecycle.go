@@ -19,9 +19,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/debug"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -42,9 +43,9 @@ type lifecycleWorkerSet struct {
 // resolveLifecycleWorkers invokes every worker the lifecycle manager
 // registers a service for. drain.Manager is no longer invoked here
 // because di.WireManager owns that resolution; the wiring step runs
-// before resolveLifecycleWorkers as part of cli/serve's startup so
-// the drain manager is already installed on BackendManager by the
-// time the lifecycle manager assembles its service list.
+// before resolveLifecycleWorkers as part of cli/serve's startup so the
+// runtime already knows about the drain manager by the time the
+// lifecycle manager assembles its service list.
 func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 	r := newResolver(i)
 	ws := lifecycleWorkerSet{
@@ -70,15 +71,15 @@ func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 // registerWorkerServices registers the worker-mode lifecycle services
 // (multipart cleanup, cleanup queue, pending reaper, rebalancer,
 // replicator, over-replication, lifecycle, scrubber) on sm.
-func registerWorkerServices(sm *lifecycle.Manager, mgr *proxy.BackendManager, expirer *expiry.Manager, ws lifecycleWorkerSet, locker core.AdvisoryLocker, cfg *config.Config) {
-	sm.Register("multipart-cleanup", multipart.NewCleanupService(mgr.Multipart(), locker, cfg.CleanupQueue.MultipartStaleTimeout))
+func registerWorkerServices(sm *lifecycle.Manager, mp *multipart.Manager, rt *infra.BackendRuntime, expirer *expiry.Manager, ws lifecycleWorkerSet, locker core.AdvisoryLocker, cfg *config.Config) {
+	sm.Register("multipart-cleanup", multipart.NewCleanupService(mp, locker, cfg.CleanupQueue.MultipartStaleTimeout))
 	sm.Register("cleanup-queue", worker.NewCleanupQueueService(ws.cleanup, locker))
 	if svc := worker.NewPendingReaperService(ws.pendingReaper, locker, cfg.WritePath.PendingPattern.ReaperTick); svc != nil {
 		sm.Register("pending-reaper", svc)
 	}
-	sm.Register("rebalancer", worker.NewRebalancerService(mgr.Runtime(), ws.rebalancer, locker))
-	sm.Register("replicator", worker.NewReplicatorService(mgr.Runtime(), ws.replicator, locker))
-	sm.Register("over-replication", worker.NewOverReplicationService(mgr.Runtime(), ws.overRep, locker))
+	sm.Register("rebalancer", worker.NewRebalancerService(rt, ws.rebalancer, locker))
+	sm.Register("replicator", worker.NewReplicatorService(rt, ws.replicator, locker))
+	sm.Register("over-replication", worker.NewOverReplicationService(rt, ws.overRep, locker))
 	sm.Register("lifecycle", NewLifecycleService(expirer, locker))
 	sm.Register("scrubber", worker.NewScrubberService(ws.scrubber, locker))
 }
@@ -87,9 +88,11 @@ func registerWorkerServices(sm *lifecycle.Manager, mgr *proxy.BackendManager, ex
 func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	r := newResolver(i)
 	cfg := resolve[*config.Config](r)
-	manager := resolve[*proxy.BackendManager](r)
+	rt := resolve[*infra.BackendRuntime](r)
+	multipartManager := resolve[*multipart.Manager](r)
+	usageSvc := resolve[*usage.Service](r)
 	registry := resolve[*breaker.Registry](r)
-	locker := resolve[core.MetadataStore](r)
+	locker := resolve[core.AdvisoryLocker](r)
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -101,7 +104,12 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	}
 
 	sm := lifecycle.NewManager()
-	sm.Register("usage-flush", NewUsageFlushService(manager, locker))
+	sm.Register("usage-flush", NewUsageFlushService(&UsageFlushDeps{
+		Flusher: usageSvc,
+		Tracker: rt.Usage(),
+		Fleet:   rt,
+		Locker:  locker,
+	}))
 	sm.Register("cb-watchdog", breaker.NewWatchdog(registry))
 	if fr, err := do.Invoke[*debug.FlightRecorderService](i); err == nil {
 		sm.Register("flight-recorder", fr)
@@ -119,7 +127,7 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	registerWorkerServices(sm, manager, expirer, ws, locker, cfg)
+	registerWorkerServices(sm, multipartManager, rt, expirer, ws, locker, cfg)
 
 	if cfg.Reconcile.Enabled {
 		reconciler, err := do.Invoke[*worker.Reconciler](i)

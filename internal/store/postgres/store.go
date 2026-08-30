@@ -217,12 +217,8 @@ func (s *Store) WithTx(ctx context.Context, fn func(ctx context.Context, tx core
 	return nil
 }
 
-// Compile-time checks that *Store satisfies core.Runner and the wide
-// metadata-store contract every consumer depends on.
-var (
-	_ core.Runner        = (*Store)(nil)
-	_ core.MetadataStore = (*Store)(nil)
-)
+// Compile-time check that *Store implements every store role.
+var _ = core.AssertEngine[*Store]
 
 // slimObjectRow is the minimum surface of sqlc rows that project an
 // ObjectLocation without encryption columns. Implemented by the four list

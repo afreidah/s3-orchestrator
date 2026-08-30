@@ -25,7 +25,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
@@ -56,7 +55,7 @@ func TestOrphanBytes_OrphanBytesBlockWrite(t *testing.T) {
 	}
 
 	setOrphanBytes(t, "minio-1", 10)
-	testManager.Objects().LocationCache().Clear()
+	testStack.Objects.LocationCache().Clear()
 
 	overflowKey := uniqueKey(t, "orphan-block")
 	_, err = client.PutObject(ctx, &s3.PutObjectInput{
@@ -109,7 +108,7 @@ func TestOrphanBytes_OrphanBytesBlockAllBackends507(t *testing.T) {
 
 	setOrphanBytes(t, "minio-1", 24)
 	setOrphanBytes(t, "minio-2", 48)
-	testManager.Objects().LocationCache().Clear()
+	testStack.Objects.LocationCache().Clear()
 
 	tinyKey := uniqueKey(t, "orphan-507")
 	_, err = client.PutObject(ctx, &s3.PutObjectInput{
@@ -435,7 +434,7 @@ func TestOrphanBytes_ReplicationRespectsOrphanBytes(t *testing.T) {
 	}
 
 	setOrphanBytes(t, "minio-2", 148)
-	testManager.Objects().LocationCache().Clear()
+	testStack.Objects.LocationCache().Clear()
 
 	replCfg := config.ReplicationConfig{
 		Factor:    2,
@@ -547,25 +546,21 @@ func TestOrphanBytesSpreadRouting_SpreadRoutingRespectsOrphanBytes(t *testing.T)
 	ctx := context.Background()
 	_ = ctx
 	stores := newStores(testStore)
-	spreadManager := proxytest.NewManager(t, stores, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: testBackends,
-			Order:    testBackendOrder,
-		},
-		Policies: proxy.PolicyConfig{
-			CacheTTL:        60 * time.Second,
+	spreadStack := proxytest.New(t, stores, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        testBackends,
+			Order:           testBackendOrder,
 			BackendTimeout:  30 * time.Second,
 			RoutingStrategy: config.RoutingSpread,
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: newMetricsAdapter(testStore),
-		},
+			Metrics:         newMetricsAdapter(testStore),
+		}),
+		CacheTTL:       60 * time.Second,
+		BackendTimeout: 30 * time.Second,
 	})
-	_ = spreadManager
-	_ = proxytest.BuildWorkers(spreadManager, stores)
+	_ = proxytest.BuildWorkers(spreadStack, stores)
 	spreadSrv := &s3api.Server{
-		Objects:   spreadManager.Objects(),
-		Multipart: spreadManager.Multipart(),
+		Objects:   spreadStack.Objects,
+		Multipart: spreadStack.Multipart,
 	}
 	_ = spreadSrv
 	spreadSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{{
@@ -613,7 +608,7 @@ func TestOrphanBytesSpreadRouting_SpreadRoutingRespectsOrphanBytes(t *testing.T)
 	}
 
 	setOrphanBytes(t, "minio-2", 1500)
-	spreadManager.Objects().LocationCache().Clear()
+	spreadStack.Objects.LocationCache().Clear()
 
 	spreadKey := uniqueKey(t, "spread-orphan")
 	_, err = spreadClient.PutObject(ctx, &s3.PutObjectInput{

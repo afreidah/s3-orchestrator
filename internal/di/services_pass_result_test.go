@@ -28,35 +28,27 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
-// passResultManager builds the smallest BackendManager that
+// passResultManager builds the smallest BackendRuntime that
 // UpdateQuotaMetrics will accept. The mock store is permissive so the
 // success path can call UpdateQuotaMetrics without erroring.
-func passResultManager(t *testing.T) *proxy.BackendManager {
+func passResultManager(t *testing.T) *infra.BackendRuntime {
 	t.Helper()
 	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
 	// The metrics collector runs on every quota refresh; stub its reads so the
 	// test states only the pass-result behaviour it is about.
 	expectCollectorReads(mock)
-	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: map[string]backend.ObjectBackend{},
-			Order:    []string{},
-		},
-		Policies: proxy.PolicyConfig{
-			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: mock,
-		},
+	return proxytest.NewRuntime(&proxytest.RuntimeOptions{
+		Backends:        map[string]backend.ObjectBackend{},
+		Order:           []string{},
+		RoutingStrategy: config.RoutingPack,
+		Metrics:         mock,
 	})
-	t.Cleanup(mgr.Close)
-	return mgr
 }
 
 // TestHandlePassResult_NilErrZeroCount covers the dominant "nothing

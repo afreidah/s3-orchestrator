@@ -33,7 +33,6 @@ import (
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -750,7 +749,7 @@ func walkCommonPrefixes(t *testing.T, ctx context.Context, client *s3.Client, pr
 
 // TestListObjectsV2_DelimiterPaginationNoDuplicateCommonPrefix is the
 // end-to-end regression for issue #660. It seeds a deep CommonPrefix
-// group large enough to span the manager's store-page boundary, then
+// group large enough to span the object manager's store-page boundary, then
 // walks ListObjectsV2 with a delimiter via NextContinuationToken and
 // asserts no CommonPrefix appears in more than one paginated response.
 //
@@ -949,25 +948,21 @@ func TestSpreadWriteRouting_DistributesAcrossBackends(t *testing.T) {
 	ctx := context.Background()
 	_ = ctx
 	stores := newStores(testStore)
-	spreadManager := proxytest.NewManager(t, stores, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: testBackends,
-			Order:    testBackendOrder,
-		},
-		Policies: proxy.PolicyConfig{
-			CacheTTL:        60 * time.Second,
+	spreadStack := proxytest.New(t, stores, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        testBackends,
+			Order:           testBackendOrder,
 			BackendTimeout:  30 * time.Second,
 			RoutingStrategy: config.RoutingSpread,
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: newMetricsAdapter(testStore),
-		},
+			Metrics:         newMetricsAdapter(testStore),
+		}),
+		CacheTTL:       60 * time.Second,
+		BackendTimeout: 30 * time.Second,
 	})
-	_ = spreadManager
-	_ = proxytest.BuildWorkers(spreadManager, stores)
+	_ = proxytest.BuildWorkers(spreadStack, stores)
 	spreadSrv := &s3api.Server{
-		Objects:   spreadManager.Objects(),
-		Multipart: spreadManager.Multipart(),
+		Objects:   spreadStack.Objects,
+		Multipart: spreadStack.Multipart,
 	}
 	_ = spreadSrv
 	spreadSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{{
@@ -998,7 +993,7 @@ func TestSpreadWriteRouting_DistributesAcrossBackends(t *testing.T) {
 	_ = spreadClient
 
 	resetState(t)
-	spreadManager.Objects().LocationCache().Clear()
+	spreadStack.Objects.LocationCache().Clear()
 
 	keys := make([]string, 4)
 	for i := range keys {
@@ -1047,25 +1042,21 @@ func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
 	ctx := context.Background()
 	_ = ctx
 	stores := newStores(testStore)
-	spreadManager := proxytest.NewManager(t, stores, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: testBackends,
-			Order:    testBackendOrder,
-		},
-		Policies: proxy.PolicyConfig{
-			CacheTTL:        60 * time.Second,
+	spreadStack := proxytest.New(t, stores, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        testBackends,
+			Order:           testBackendOrder,
 			BackendTimeout:  30 * time.Second,
 			RoutingStrategy: config.RoutingSpread,
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: newMetricsAdapter(testStore),
-		},
+			Metrics:         newMetricsAdapter(testStore),
+		}),
+		CacheTTL:       60 * time.Second,
+		BackendTimeout: 30 * time.Second,
 	})
-	_ = spreadManager
-	_ = proxytest.BuildWorkers(spreadManager, stores)
+	_ = proxytest.BuildWorkers(spreadStack, stores)
 	spreadSrv := &s3api.Server{
-		Objects:   spreadManager.Objects(),
-		Multipart: spreadManager.Multipart(),
+		Objects:   spreadStack.Objects,
+		Multipart: spreadStack.Multipart,
 	}
 	_ = spreadSrv
 	spreadSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{{
@@ -1096,7 +1087,7 @@ func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
 	_ = spreadClient
 
 	resetState(t)
-	spreadManager.Objects().LocationCache().Clear()
+	spreadStack.Objects.LocationCache().Clear()
 
 	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "prefill"), Backend: "minio-1", Size: 512}); err != nil {
 		t.Fatalf("RecordObject prefill: %v", err)
@@ -1130,25 +1121,21 @@ func TestSpreadWriteRouting_ContrastWithPackBehavior(t *testing.T) {
 	ctx := context.Background()
 	_ = ctx
 	stores := newStores(testStore)
-	spreadManager := proxytest.NewManager(t, stores, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: testBackends,
-			Order:    testBackendOrder,
-		},
-		Policies: proxy.PolicyConfig{
-			CacheTTL:        60 * time.Second,
+	spreadStack := proxytest.New(t, stores, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        testBackends,
+			Order:           testBackendOrder,
 			BackendTimeout:  30 * time.Second,
 			RoutingStrategy: config.RoutingSpread,
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: newMetricsAdapter(testStore),
-		},
+			Metrics:         newMetricsAdapter(testStore),
+		}),
+		CacheTTL:       60 * time.Second,
+		BackendTimeout: 30 * time.Second,
 	})
-	_ = spreadManager
-	_ = proxytest.BuildWorkers(spreadManager, stores)
+	_ = proxytest.BuildWorkers(spreadStack, stores)
 	spreadSrv := &s3api.Server{
-		Objects:   spreadManager.Objects(),
-		Multipart: spreadManager.Multipart(),
+		Objects:   spreadStack.Objects,
+		Multipart: spreadStack.Multipart,
 	}
 	_ = spreadSrv
 	spreadSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{{
@@ -1179,8 +1166,8 @@ func TestSpreadWriteRouting_ContrastWithPackBehavior(t *testing.T) {
 	_ = spreadClient
 
 	resetState(t)
-	spreadManager.Objects().LocationCache().Clear()
-	testManager.Objects().LocationCache().Clear()
+	spreadStack.Objects.LocationCache().Clear()
+	testStack.Objects.LocationCache().Clear()
 
 	packClient := newS3Client(t)
 	packKeys := make([]string, 4)
@@ -1208,7 +1195,7 @@ func TestSpreadWriteRouting_ContrastWithPackBehavior(t *testing.T) {
 	}
 
 	resetState(t)
-	spreadManager.Objects().LocationCache().Clear()
+	spreadStack.Objects.LocationCache().Clear()
 
 	spreadKeys := make([]string, 4)
 	for i := range spreadKeys {
@@ -2187,7 +2174,7 @@ func TestOverReplicationBasic(t *testing.T) {
 	ctx := context.Background()
 	resetState(t)
 
-	_, workers := newThreeBackendManager(t)
+	_, workers := newThreeBackendStack(t)
 
 	key := uniqueKey(t, "overrepl-basic")
 	body := bytes.Repeat([]byte("O"), 100)
@@ -2270,7 +2257,7 @@ func TestOverReplicationMultipleObjects(t *testing.T) {
 	ctx := context.Background()
 	resetState(t)
 
-	_, workers := newThreeBackendManager(t)
+	_, workers := newThreeBackendStack(t)
 
 	keys := make([]string, 3)
 	for i := range keys {
@@ -2329,7 +2316,7 @@ func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 	ctx := context.Background()
 	resetState(t)
 
-	mgr, workers := newThreeBackendManager(t)
+	st, workers := newThreeBackendStack(t)
 
 	key := uniqueKey(t, "overrepl-drain")
 	body := bytes.Repeat([]byte("D"), 100)
@@ -2364,8 +2351,8 @@ func TestOverReplicationDrainingBackendRemovedFirst(t *testing.T) {
 	// without launching the real drain goroutine -- that would race the
 	// explicit Clean below and remove the copy itself.
 	drainTarget := backends[0]
-	mgr.Drain().SeedActiveForTest(drainTarget)
-	defer mgr.Drain().ClearState()
+	st.Drain.SeedActiveForTest(drainTarget)
+	defer st.Drain.ClearState()
 
 	// Clean with factor=2 -> should remove 1 copy, preferring the draining backend (score 0)
 	cleanSum, err := workers.OverReplicationCleaner.Clean(ctx, config.ReplicationConfig{
@@ -2403,7 +2390,7 @@ func TestOverReplicationQuotaFreed(t *testing.T) {
 	ctx := context.Background()
 	resetState(t)
 
-	_, workers := newThreeBackendManager(t)
+	_, workers := newThreeBackendStack(t)
 
 	key := uniqueKey(t, "overrepl-quota")
 	size := int64(100)
@@ -2486,7 +2473,7 @@ func TestOverReplicationCountPending(t *testing.T) {
 	ctx := context.Background()
 	resetState(t)
 
-	_, workers := newThreeBackendManager(t)
+	_, workers := newThreeBackendStack(t)
 
 	key := uniqueKey(t, "overrepl-count")
 
@@ -3303,8 +3290,8 @@ func TestAuthSigV4_ValidCredentials(t *testing.T) {
 		authSecret = "TESTSECRET0123456789abcdefghijklm"
 	)
 	authSrv := &s3api.Server{
-		Objects:   testManager.Objects(),
-		Multipart: testManager.Multipart(),
+		Objects:   testStack.Objects,
+		Multipart: testStack.Multipart,
 	}
 	_ = authSrv
 	authSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
@@ -3381,8 +3368,8 @@ func TestAuthSigV4_WrongCredentials403(t *testing.T) {
 		authSecret = "TESTSECRET0123456789abcdefghijklm"
 	)
 	authSrv := &s3api.Server{
-		Objects:   testManager.Objects(),
-		Multipart: testManager.Multipart(),
+		Objects:   testStack.Objects,
+		Multipart: testStack.Multipart,
 	}
 	_ = authSrv
 	authSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
@@ -3441,8 +3428,8 @@ func TestAuthSigV4_UnsignedRequest403(t *testing.T) {
 		authSecret = "TESTSECRET0123456789abcdefghijklm"
 	)
 	authSrv := &s3api.Server{
-		Objects:   testManager.Objects(),
-		Multipart: testManager.Multipart(),
+		Objects:   testStack.Objects,
+		Multipart: testStack.Multipart,
 	}
 	_ = authSrv
 	authSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
@@ -3504,8 +3491,8 @@ func TestAuthSigV4_SpecialCharKeysSigV4(t *testing.T) {
 		authSecret = "TESTSECRET0123456789abcdefghijklm"
 	)
 	authSrv := &s3api.Server{
-		Objects:   testManager.Objects(),
-		Multipart: testManager.Multipart(),
+		Objects:   testStack.Objects,
+		Multipart: testStack.Multipart,
 	}
 	_ = authSrv
 	authSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
@@ -3589,8 +3576,8 @@ func TestAuthSigV4_AccessDeniedDoesNotLeakBucketName(t *testing.T) {
 		authSecret = "TESTSECRET0123456789abcdefghijklm"
 	)
 	authSrv := &s3api.Server{
-		Objects:   testManager.Objects(),
-		Multipart: testManager.Multipart(),
+		Objects:   testStack.Objects,
+		Multipart: testStack.Multipart,
 	}
 	_ = authSrv
 	authSrv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
@@ -4171,7 +4158,7 @@ func TestDrainBackend(t *testing.T) {
 	assertObjectsOnBackend(t, keys, "minio-1")
 	ws.assertIntact(ctx, "before drain")
 
-	if err := testManager.Drain().StartDrain(ctx, "minio-1"); err != nil {
+	if err := testStack.Drain.StartDrain(ctx, "minio-1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 	waitDrainComplete(t, ctx, "minio-1", 30*time.Second)
@@ -4204,7 +4191,7 @@ func waitDrainComplete(t *testing.T, ctx context.Context, backend string, timeou
 			t.Fatalf("drain of %s did not complete within %s", backend, timeout)
 		default:
 		}
-		progress, err := testManager.Drain().GetDrainProgress(ctx, backend)
+		progress, err := testStack.Drain.GetDrainProgress(ctx, backend)
 		if err != nil {
 			t.Fatalf("GetDrainProgress: %v", err)
 		}
@@ -4251,7 +4238,7 @@ func TestDrainBackend_WriteExclusion(t *testing.T) {
 	}
 
 	// Start drain of minio-1.
-	if err := testManager.Drain().StartDrain(ctx, "minio-1"); err != nil {
+	if err := testStack.Drain.StartDrain(ctx, "minio-1"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
 	}
 
@@ -4279,7 +4266,7 @@ func TestDrainBackend_WriteExclusion(t *testing.T) {
 			t.Fatal("drain did not complete within 30s")
 		default:
 		}
-		progress, err := testManager.Drain().GetDrainProgress(ctx, "minio-1")
+		progress, err := testStack.Drain.GetDrainProgress(ctx, "minio-1")
 		if err != nil {
 			t.Fatalf("GetDrainProgress: %v", err)
 		}
@@ -4315,7 +4302,7 @@ func TestRemoveBackend(t *testing.T) {
 	}
 
 	// Remove without purge (just DB records).
-	if err := testManager.Drain().RemoveBackend(ctx, "minio-2", false, nil); err != nil {
+	if err := testStack.Drain.RemoveBackend(ctx, "minio-2", false, nil); err != nil {
 		t.Fatalf("RemoveBackend: %v", err)
 	}
 

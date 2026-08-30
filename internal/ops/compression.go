@@ -37,12 +37,12 @@ import (
 
 // CompressionDeps holds the collaborators Compression requires.
 type CompressionDeps struct {
-	Codec      CompressionCodec
-	Config     config.CompressionConfig
-	Encryptor  *encryption.Encryptor
-	Store      CompressionStore
-	Runtime    RuntimeOps
-	BackendOps BackendOps
+	Codec     CompressionCodec
+	Config    config.CompressionConfig
+	Encryptor *encryption.Encryptor
+	Store     CompressionStore
+	Runtime   RuntimeOps
+	Usage     UsageGate
 }
 
 // Compression serves the fleet-wide compression operations. Codec and Store are
@@ -52,33 +52,33 @@ type CompressionDeps struct {
 // Encryptor may be nil: a fleet with no encryption has no encrypted copies to
 // rewrite, and one that does is refused rather than rewritten blind.
 type Compression struct {
-	log        *slog.Logger
-	codec      CompressionCodec
-	cfg        config.CompressionConfig
-	encryptor  *encryption.Encryptor
-	store      CompressionStore
-	runtime    RuntimeOps
-	backendOps BackendOps
+	log       *slog.Logger
+	codec     CompressionCodec
+	cfg       config.CompressionConfig
+	encryptor *encryption.Encryptor
+	store     CompressionStore
+	runtime   RuntimeOps
+	usage     UsageGate
 }
 
 // NewCompression is the explicit-deps constructor.
 func NewCompression(d *CompressionDeps) *Compression {
 	must.NotNil("d.Runtime", d.Runtime)
-	must.NotNil("d.BackendOps", d.BackendOps)
+	must.NotNil("d.Usage", d.Usage)
 	return &Compression{
-		log:        slog.Default().With(logfmt.Component("ops")),
-		codec:      d.Codec,
-		cfg:        d.Config,
-		encryptor:  d.Encryptor,
-		store:      d.Store,
-		runtime:    d.Runtime,
-		backendOps: d.BackendOps,
+		log:       slog.Default().With(logfmt.Component("ops")),
+		codec:     d.Codec,
+		cfg:       d.Config,
+		encryptor: d.Encryptor,
+		store:     d.Store,
+		runtime:   d.Runtime,
+		usage:     d.Usage,
 	}
 }
 
 // rewriteEnv exposes this service's collaborators to the shared driver.
 func (c *Compression) rewriteEnv() bulkRewriteEnv {
-	return bulkRewriteEnv{log: c.log, runtime: c.runtime, backendOps: c.backendOps}
+	return bulkRewriteEnv{log: c.log, runtime: c.runtime, usage: c.usage}
 }
 
 // CompressExisting encodes every copy stored verbatim and records the new

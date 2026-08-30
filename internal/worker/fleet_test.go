@@ -6,7 +6,7 @@
 // Builds the two collaborators every worker takes - an Ops (the backend
 // runtime) and a Placement (the write coordinator) - directly from their own
 // constructors. Workers depend on those two interfaces and nothing else, so a
-// worker test needs no BackendManager and none of the composition around it.
+// worker test needs no proxy stack and none of the composition around it.
 // -------------------------------------------------------------------------------
 
 package worker
@@ -60,7 +60,7 @@ func (d drainingSet) IsDraining(name string) bool { return d[name] }
 // The store is the wide metadata store; each worker constructor narrows it to
 // its own role interface.
 func newFleet(
-	t *testing.T, store core.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
+	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
 ) (*infra.BackendRuntime, *writepath.Coordinator) {
 	t.Helper()
 	if opts == nil {
@@ -113,7 +113,7 @@ func newPermissiveStore(t *testing.T) *storetest.MockMetadataStore {
 // returning it with the runtime so a test can read the usage counters it
 // charged.
 func newCleanupFor(
-	t *testing.T, store core.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
+	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
 ) (*CleanupWorker, *infra.BackendRuntime) {
 	t.Helper()
 	rt, _ := newFleet(t, store, backends, opts)
@@ -125,7 +125,7 @@ func newCleanupFor(
 
 // newReplicatorFor builds a Replicator over a fleet of the named backends.
 func newReplicatorFor(
-	t *testing.T, store core.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
+	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
 ) *Replicator {
 	t.Helper()
 	rt, coord := newFleet(t, store, backends, opts)
@@ -134,7 +134,7 @@ func newReplicatorFor(
 
 // newRebalancerFor builds a Rebalancer over a fleet of the named backends.
 func newRebalancerFor(
-	t *testing.T, store core.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
+	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
 ) *Rebalancer {
 	t.Helper()
 	rt, coord := newFleet(t, store, backends, opts)
@@ -144,7 +144,7 @@ func newRebalancerFor(
 // newOverRepFor builds an OverReplicationCleaner over a fleet of the named
 // backends.
 func newOverRepFor(
-	t *testing.T, store core.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
+	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
 ) *OverReplicationCleaner {
 	t.Helper()
 	rt, coord := newFleet(t, store, backends, opts)

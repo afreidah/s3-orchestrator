@@ -210,9 +210,10 @@ internal/
     event/                   Notification event types + Emit hook
     logfmt/                  Slog handler wrapper (error attr handling, JSON sink)
 
-  proxy/                     Domain orchestration layer
-    manager.go               BackendManager root composition object
+  proxy/                     Domain orchestration layer; a namespace over the
+                             collaborators below, with no root object of its own
     infra/                   BackendRuntime: backend registry, usage, timeouts, admission, error classification
+    usage/                   Counter flush to the store + the drift reconcile that corrects it
     object/                  CRUD + read failover + broadcast reads + location cache
     multipart/               Multipart lifecycle + DEK cache
     writepath/               Shared write helpers: routing, pending intents, record-or-cleanup, recovery
@@ -230,7 +231,7 @@ internal/
     core/                    Engine-agnostic types + role interfaces + orchestration helpers (TxAdapter)
     postgres/                Postgres adapter (pgx/v5 + sqlc-generated queries)
     sqlite/                  SQLite adapter
-    storetest/               gomock-generated MetadataStore + Permissive() catch-all for tests
+    storetest/               Test-only role composite + gomock mock + Permissive() catch-all
 
   worker/                    Background services
     rebalancer.go            Moves objects between backends per strategy

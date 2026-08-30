@@ -25,7 +25,6 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -686,23 +685,18 @@ func newTestServerWithMultipartLimit(t *testing.T, maxUploads int, opts ...func(
 		Return("b1", nil).AnyTimes()
 	storetest.Permissive(mockStore)
 
-	mgr := proxytest.NewManager(t, mockStore, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: map[string]s3be.ObjectBackend{"b1": backend},
-			Order:    []string{"b1"},
-		},
-		Policies: proxy.PolicyConfig{
+	st := proxytest.New(t, mockStore, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        map[string]s3be.ObjectBackend{"b1": backend},
+			Order:           []string{"b1"},
 			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: mockStore,
-		},
+			Metrics:         mockStore,
+		}),
 	})
-	_ = proxytest.BuildWorkers(mgr, mockStore)
-	t.Cleanup(mgr.Close)
+	_ = proxytest.BuildWorkers(st, mockStore)
 
-	srv := &Server{Objects: mgr.Objects(),
-		Multipart: mgr.Multipart(), MaxObjectSize: 10 * 1024 * 1024}
+	srv := &Server{Objects: st.Objects,
+		Multipart: st.Multipart, MaxObjectSize: 10 * 1024 * 1024}
 	buckets := []config.BucketConfig{{
 		Name:                "mybucket",
 		MaxMultipartUploads: maxUploads,

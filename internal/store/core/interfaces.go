@@ -18,33 +18,18 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
-// MetadataStore is the union of every method the metadata-persistence
-// layer exposes. Both *postgres.Store and *sqlite.Store satisfy it, and
-// every consumer (proxy / transport / cli / worker) takes it as the one
-// dependency declaration. The narrow per-role interfaces below are kept
-// only as embedding sources for this composite; consumer code does not
-// reference them directly. CB protection lives in each driver's DBTX
-// chokepoint, so this single typed surface carries the breaker semantics
-// transparently.
-type MetadataStore interface {
-	ObjectStore
-	QuotaStore
-	MultipartStore
-	ReplicationStore
-	CleanupStore
-	PendingStore
-	IntegrityStore
-	ExpiredObjectsLister
-	BackendLifecycleStore
-	UsageFlusher
-	AdvisoryLocker
-	DashboardStore
-	LifecycleAdmin
-	EncryptionAdmin
-	CompressionAdmin
-	NotificationOutbox
-	TagStore
-}
+// The roles below are the whole persistence contract. Each consumer declares
+// its own dependency in terms of the ones it calls, and both *postgres.Store
+// and *sqlite.Store satisfy every role, asserted through AssertEngine.
+//
+// There is deliberately no interface unioning them. The union is not a fact
+// about the domain - it is a fact about there being one store type per engine
+// - so it exists only as the unexported engineRoles constraint in engine.go,
+// which no consumer can hold, and unexported in internal/di, which is the only
+// place that holds an opened engine before splitting it into these roles.
+//
+// CB protection lives in each driver's DBTX chokepoint, so every role carries
+// the breaker semantics transparently.
 
 // -------------------------------------------------------------------------
 // REQUEST-TIME ROLE INTERFACES

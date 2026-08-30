@@ -1,10 +1,10 @@
 // -------------------------------------------------------------------------------
-// Admin Handler Tests with a Real BackendManager
+// Admin Handler Tests with a Real Backend Runtime
 //
 // Author: Alex Freidah
 //
 // Extends handler_test.go, which only exercises the auth and input-validation
-// paths, with tests that route through a real BackendManager backed by the
+// paths, with tests that route through a real proxy stack backed by the
 // shared union store mock. Covers status, cleanup queue, replication,
 // drain, and integrity-skip branches of the admin API.
 // -------------------------------------------------------------------------------
@@ -28,7 +28,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store"
@@ -40,9 +39,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
-// newTestHandlerWithManager returns a Handler backed by a real BackendManager
+// newTestHandlerWithManager returns a Handler backed by a real proxy stack
 // wrapping the generated union store mock. Suitable for exercising handlers that reach
-// into manager or cb-store methods. Encryptor, rawStore, and reconciler are
+// into stack or cb-store methods. Encryptor, rawStore, and reconciler are
 // nil  -  handlers that require them should assert the documented nil-handling
 // behaviour rather than the happy path.
 func newTestHandlerWithManager(t *testing.T) *Handler {
@@ -52,19 +51,15 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{
 		FailureThreshold: 3,
 	})
-	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: map[string]backend.ObjectBackend{},
-			Order:    []string{},
-		},
-		Policies: proxy.PolicyConfig{
+	st := proxytest.New(t, mock, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        map[string]backend.ObjectBackend{},
+			Order:           []string{},
 			RoutingStrategy: config.RoutingPack,
-		},
-		Operations: proxy.OperationalDeps{
-			Metrics: mock,
-		},
+			Metrics:         mock,
+		}),
 	})
-	workers := proxytest.BuildWorkers(mgr, mock)
+	workers := proxytest.BuildWorkers(st, mock)
 	// Empty reloadable configs so Replicator.Config()/Scrubber.Config() return
 	// sentinel states the handlers can interpret.
 	workers.Replicator.SetConfig(&config.ReplicationConfig{Factor: 1})
@@ -72,17 +67,17 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
-	svc := testOps(mgr, workers, mock, nil)
+	svc := testOps(st, workers, mock, nil)
 	return &Handler{
 		log:          slog.Default().With(logfmt.Component("admin")),
-		backendOps:   mgr,
-		dashboardOps: dashboard.New(mock, mgr.Runtime().Usage(), nil, mgr.Runtime(), mgr.Drain()),
+		backendOps:   st.Usage,
+		dashboardOps: dashboard.New(mock, st.Runtime.Usage(), nil, st.Runtime, st.Drain),
 		objects:      svc.Objects,
 		integrity:    svc.Integrity,
 		replication:  svc.Replication,
 		rebalance:    svc.Rebalance,
 		encryption:   svc.Encryption,
-		drain:        mgr.Drain(),
+		drain:        st.Drain,
 		lifecycle:    mock,
 		dbHealthy:    cb.IsHealthy,
 		cleanup:      mock,
@@ -102,21 +97,22 @@ func objectsOver(t *testing.T, store ops.ObjectStore) *ops.Objects {
 	})
 }
 
-// testOps assembles the operations layer over the fixture's real manager and
+// testOps assembles the operations layer over the fixture's real stack and
 // workers, so a handler test drives the same code the process wires.
-func testOps(mgr *proxy.BackendManager, workers *proxytest.Workers, store core.MetadataStore, enc *encryption.Encryptor) *ops.Services {
+func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.MetadataStore, enc *encryption.Encryptor) *ops.Services {
 	return ops.New(&ops.Deps{
-		Objects:    mgr.Objects(),
-		Store:      store,
-		Encryptor:  enc,
-		EncStore:   store,
-		Runtime:    mgr.Runtime(),
-		BackendOps: mgr,
-		Replicator: workers.Replicator,
-		OverRep:    workers.OverReplicationCleaner,
-		Rebalancer: workers.Rebalancer,
-		Scrubber:   workers.Scrubber,
-		Cfg:        &config.Config{},
+		Objects:      st.Objects,
+		Store:        store,
+		Encryptor:    enc,
+		EncStore:     store,
+		Runtime:      st.Runtime,
+		Usage:        st.Runtime.Usage(),
+		IntegrityCfg: st.IntegrityCfg,
+		Replicator:   workers.Replicator,
+		OverRep:      workers.OverReplicationCleaner,
+		Rebalancer:   workers.Rebalancer,
+		Scrubber:     workers.Scrubber,
+		Cfg:          &config.Config{},
 	})
 }
 
@@ -616,12 +612,12 @@ func TestHandleCleanupQueue_PendingError(t *testing.T) {
 }
 
 // TestHandleUsageFlush_Error covers the FlushUsage error branch in
-// handleUsageFlush. The fixture's BackendManager wraps a MockStore
+// handleUsageFlush. The fixture's stack wraps a MockStore
 // whose FlushUsageDeltas call honours FlushUsageErr.
 func TestHandleUsageFlush_Error(t *testing.T) {
 	t.Parallel()
 	h := newTestHandlerWithManager(t)
-	// h.backendOps is a *proxy.BackendManager backed by a MockStore.
+	// h.backendOps is a *usage.Service backed by a MockStore.
 	// We cannot easily inject an error through it, so swap the
 	// BackendOps interface with a stub that fails FlushUsage.
 	h.backendOps = &flushUsageFailingOps{inner: h.backendOps}
@@ -861,21 +857,21 @@ func TestHandleStartDrain_AcknowledgementShape(t *testing.T) {
 	t.Parallel()
 	mock := storetest.NewMockMetadataStore(gomock.NewController(t))
 	storetest.Permissive(mock)
-	mgr := proxytest.NewManager(t, mock, &proxy.BackendManagerConfig{
-		Storage: proxy.StorageDeps{
-			Backends: map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()},
-			Order:    []string{"b1"},
-		},
-		Policies:   proxy.PolicyConfig{RoutingStrategy: config.RoutingPack},
-		Operations: proxy.OperationalDeps{Metrics: mock},
+	st := proxytest.New(t, mock, &proxytest.StackOptions{
+		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
+			Backends:        map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()},
+			Order:           []string{"b1"},
+			RoutingStrategy: config.RoutingPack,
+			Metrics:         mock,
+		}),
 	})
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	h := &Handler{
 		log:          slog.Default().With(logfmt.Component("admin")),
-		backendOps:   mgr,
-		dashboardOps: dashboard.New(mock, mgr.Runtime().Usage(), nil, mgr.Runtime(), mgr.Drain()),
-		drain:        mgr.Drain(),
+		backendOps:   st.Usage,
+		dashboardOps: dashboard.New(mock, st.Runtime.Usage(), nil, st.Runtime, st.Drain),
+		drain:        st.Drain,
 		lifecycle:    mock,
 		token:        "test-token",
 		logLevel:     &lv,

@@ -3,12 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// Owns the helpers that combine the per-role store views with the backendCore
-// infra primitives to record objects, promote pending intents, enqueue
-// cleanups, and pick write targets. ObjectManager and MultipartManager hold a
-// *Coordinator instead of a *BackendManager back-pointer, so each
-// manager is fully initialised at construction time without post-construction
-// patching.
+// Owns the helpers that combine the per-role store views with the backend
+// runtime primitives to record objects, promote pending intents, enqueue
+// cleanups, and pick write targets. The object and multipart managers hold a
+// *Coordinator directly, so each is fully initialised at construction time
+// without post-construction patching.
 // -------------------------------------------------------------------------------
 
 package writepath
@@ -38,10 +37,8 @@ import (
 
 // Coordinator bundles the infrastructure subset (WriteRuntime) with
 // the metadata-store contract and the pending-pattern flag so the
-// write-path helpers can be expressed as plain methods on a value owned
-// by BackendManager. The managers hold a *Coordinator rather than a
-// *BackendManager back-pointer, eliminating the post-construction
-// wiring step.
+// write-path helpers can be expressed as plain methods on one value every
+// consumer shares, with no post-construction wiring step.
 // CoordinatorStores is the narrow persistence surface the write coordinator needs:
 // object record/move, write-target selection (quota), pending-intent
 // insert/promote, and cleanup enqueue/recovery. Declared locally so
@@ -63,8 +60,8 @@ type Coordinator struct {
 }
 
 // New constructs a Coordinator. The supplied core must observe the same
-// admission, usage, drain, and backend state as the *infra.BackendRuntime
-// held by BackendManager (in production they are the same instance). The
+// admission, usage, drain, and backend state every other collaborator sees;
+// in production they are all handed the one *infra.BackendRuntime. The
 // component-scoped logger is built in the constructor body per the
 // project's logging convention.
 func New(core WriteRuntime, stores CoordinatorStores, pendingEnabled bool) *Coordinator {

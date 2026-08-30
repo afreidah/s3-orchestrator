@@ -28,9 +28,9 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/notify"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
@@ -55,13 +55,13 @@ func TestProviders_MissingConfigReturnsCleanError(t *testing.T) {
 		call func(do.Injector) error
 	}{
 		{"DatabaseBreaker", func(i do.Injector) error { _, err := ProvideDatabaseBreaker(i); return err }},
-		{"MetadataStore", func(i do.Injector) error { _, err := ProvideMetadataStore(i); return err }},
+		{"MetadataStore", func(i do.Injector) error { _, err := provideMetadataStore(i); return err }},
 		{"Backends", func(i do.Injector) error { _, err := ProvideBackends(i); return err }},
 		{"Encryptor", func(i do.Injector) error { _, err := ProvideEncryptor(i); return err }},
 		{"EncryptionProvider", func(i do.Injector) error { _, err := ProvideEncryptionProvider(i); return err }},
 		{"RedisCounterBackend", func(i do.Injector) error { _, err := ProvideRedisCounterBackend(i); return err }},
 		{"ObjectCache", func(i do.Injector) error { _, err := ProvideObjectCache(i); return err }},
-		{"BackendManager", func(i do.Injector) error { _, err := ProvideBackendManager(i); return err }},
+		{"UsageService", func(i do.Injector) error { _, err := ProvideUsageService(i); return err }},
 		{"LifecycleManager", func(i do.Injector) error { _, err := ProvideLifecycleManager(i); return err }},
 		{"Rebalancer", func(i do.Injector) error { _, err := ProvideRebalancer(i); return err }},
 		{"Replicator", func(i do.Injector) error { _, err := ProvideReplicator(i); return err }},
@@ -208,7 +208,7 @@ func TestProvideMetadataStore_SQLiteInMemory(t *testing.T) {
 		Backends: []config.BackendConfig{{Name: "b1", QuotaBytes: 1024}},
 	})
 	do.ProvideValue[*breaker.CircuitBreaker](inj, nil)
-	cs, err := ProvideMetadataStore(inj)
+	cs, err := provideMetadataStore(inj)
 	if err != nil {
 		t.Fatalf("ProvideMetadataStore: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestRegisterInfrastructure_StoreAliases(t *testing.T) {
 	t.Parallel()
 	inj := do.New()
 	registerInfrastructure(inj)
-	do.OverrideValue[core.MetadataStore](inj, storetest.NewMockMetadataStore(gomock.NewController(t)))
+	do.OverrideValue[metadataStore](inj, storetest.NewMockMetadataStore(gomock.NewController(t)))
 
 	if _, err := do.Invoke[core.LifecycleAdmin](inj); err != nil {
 		t.Errorf("LifecycleAdmin alias: %v", err)
@@ -426,12 +426,12 @@ func TestNewInjector_DefaultsRegisterRequiredOnly(t *testing.T) {
 	joined := strings.Join(listServiceNames(inj), ",")
 
 	for _, want := range []string{
-		"internal/store/core.MetadataStore",
+		"internal/di.metadataStore",
 		"internal/store/core.LifecycleAdmin",
 		"internal/store/core.EncryptionAdmin",
 		"internal/store/core.NotificationOutbox",
 		"internal/breaker.CircuitBreaker",
-		"internal/proxy.BackendManager",
+		"internal/proxy/usage.Service",
 		"internal/transport/s3api.Server",
 		"internal/lifecycle.Manager",
 	} {
@@ -467,7 +467,7 @@ func listServiceNames(inj do.Injector) []string {
 // -------------------------------------------------------------------------
 // FULL-INJECTOR HAPPY PATH
 //
-// Drives the big composite providers (Backends, BackendManager, S3Server,
+// Drives the big composite providers (Backends, UsageService, S3Server,
 // LifecycleManager, UIHandler, AdminHandler, Notifier) end-to-end against
 // an in-memory SQLite store and a fake S3 backend endpoint. The storage
 // calls never fire during construction  -  NewS3Backend only parses config  -
@@ -556,8 +556,8 @@ func TestNewInjector_HappyPathResolvesEverything(t *testing.T) {
 	if _, err := do.Invoke[*breaker.CircuitBreaker](inj); err != nil {
 		t.Errorf("CircuitBreaker: %v", err)
 	}
-	if _, err := do.Invoke[*proxy.BackendManager](inj); err != nil {
-		t.Errorf("BackendManager: %v", err)
+	if _, err := do.Invoke[*usage.Service](inj); err != nil {
+		t.Errorf("UsageService: %v", err)
 	}
 	if _, err := do.Invoke[*s3api.Server](inj); err != nil {
 		t.Errorf("S3Server: %v", err)
@@ -626,7 +626,7 @@ func TestNewInjector_WorkerModeResolvesLifecycle(t *testing.T) {
 }
 
 // TestNewInjector_RootsResolveInEveryMode builds the injector in each run
-// mode and resolves the always-registered roots. BackendManager and
+// mode and resolves the always-registered roots. usage.Service and
 // lifecycle.Manager are registered unconditionally and transitively pull
 // in the bulk of the graph, so a registered-but-unresolvable provider
 // surfaces here in CI rather than as a production startup panic after a
@@ -644,8 +644,8 @@ func TestNewInjector_RootsResolveInEveryMode(t *testing.T) {
 			inj := NewInjector(InjectorDeps{Config: cfg, Mode: mode, LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
 			t.Cleanup(func() { _ = inj.Shutdown() })
 
-			if _, err := do.Invoke[*proxy.BackendManager](inj); err != nil {
-				t.Fatalf("BackendManager: %v", err)
+			if _, err := do.Invoke[*usage.Service](inj); err != nil {
+				t.Fatalf("UsageService: %v", err)
 			}
 			if _, err := do.Invoke[*lifecycle.Manager](inj); err != nil {
 				t.Fatalf("lifecycle.Manager: %v", err)
@@ -752,17 +752,17 @@ func TestResolveAdminHandlerRequiredDeps_PartialDeps(t *testing.T) {
 	full := NewInjector(InjectorDeps{Config: cfg, Mode: "all", LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
 	t.Cleanup(func() { _ = full.Shutdown() })
 
-	mgr, err := do.Invoke[*proxy.BackendManager](full)
+	usageSvc, err := do.Invoke[*usage.Service](full)
 	if err != nil {
-		t.Fatalf("BackendManager: %v", err)
+		t.Fatalf("UsageService: %v", err)
 	}
 	cb, err := do.Invoke[*breaker.CircuitBreaker](full)
 	if err != nil {
 		t.Fatalf("DatabaseBreaker: %v", err)
 	}
-	stores, err := do.Invoke[core.MetadataStore](full)
+	stores, err := do.Invoke[metadataStore](full)
 	if err != nil {
-		t.Fatalf("MetadataStore: %v", err)
+		t.Fatalf("metadataStore: %v", err)
 	}
 	repl, err := do.Invoke[*worker.Replicator](full)
 	if err != nil {
@@ -786,31 +786,31 @@ func TestResolveAdminHandlerRequiredDeps_PartialDeps(t *testing.T) {
 		{"only-cfg", func(i do.Injector) {
 			do.ProvideValue(i, cfg)
 		}},
-		{"+manager", func(i do.Injector) {
+		{"+usage", func(i do.Injector) {
 			do.ProvideValue(i, cfg)
-			do.ProvideValue(i, mgr)
+			do.ProvideValue(i, usageSvc)
 		}},
 		{"+cb", func(i do.Injector) {
 			do.ProvideValue(i, cfg)
-			do.ProvideValue(i, mgr)
+			do.ProvideValue(i, usageSvc)
 			do.ProvideValue(i, cb)
 		}},
 		{"+encAdmin", func(i do.Injector) {
 			do.ProvideValue(i, cfg)
-			do.ProvideValue(i, mgr)
+			do.ProvideValue(i, usageSvc)
 			do.ProvideValue(i, cb)
 			do.ProvideValue[core.EncryptionAdmin](i, stores)
 		}},
 		{"+logLevel", func(i do.Injector) {
 			do.ProvideValue(i, cfg)
-			do.ProvideValue(i, mgr)
+			do.ProvideValue(i, usageSvc)
 			do.ProvideValue(i, cb)
 			do.ProvideValue[core.EncryptionAdmin](i, stores)
 			do.ProvideValue(i, new(slog.LevelVar))
 		}},
 		{"+stores", func(i do.Injector) {
 			do.ProvideValue(i, cfg)
-			do.ProvideValue(i, mgr)
+			do.ProvideValue(i, usageSvc)
 			do.ProvideValue(i, cb)
 			do.ProvideValue[core.EncryptionAdmin](i, stores)
 			do.ProvideValue(i, new(slog.LevelVar))
@@ -818,7 +818,7 @@ func TestResolveAdminHandlerRequiredDeps_PartialDeps(t *testing.T) {
 		}},
 		{"+replicator", func(i do.Injector) {
 			do.ProvideValue(i, cfg)
-			do.ProvideValue(i, mgr)
+			do.ProvideValue(i, usageSvc)
 			do.ProvideValue(i, cb)
 			do.ProvideValue[core.EncryptionAdmin](i, stores)
 			do.ProvideValue(i, new(slog.LevelVar))
@@ -827,7 +827,7 @@ func TestResolveAdminHandlerRequiredDeps_PartialDeps(t *testing.T) {
 		}},
 		{"+overRep", func(i do.Injector) {
 			do.ProvideValue(i, cfg)
-			do.ProvideValue(i, mgr)
+			do.ProvideValue(i, usageSvc)
 			do.ProvideValue(i, cb)
 			do.ProvideValue[core.EncryptionAdmin](i, stores)
 			do.ProvideValue(i, new(slog.LevelVar))
@@ -837,7 +837,7 @@ func TestResolveAdminHandlerRequiredDeps_PartialDeps(t *testing.T) {
 		}},
 		{"+scrubber", func(i do.Injector) {
 			do.ProvideValue(i, cfg)
-			do.ProvideValue(i, mgr)
+			do.ProvideValue(i, usageSvc)
 			do.ProvideValue(i, cb)
 			do.ProvideValue[core.EncryptionAdmin](i, stores)
 			do.ProvideValue(i, new(slog.LevelVar))
@@ -867,7 +867,7 @@ func TestProvideReconciler_PartialDeps(t *testing.T) {
 	if _, err := ProvideReconciler(do.New()); err == nil {
 		t.Error("expected error with no deps")
 	}
-	// Add only config: BackendManager missing.
+	// Add only config: BackendRuntime missing.
 	step1 := do.New()
 	do.ProvideValue(step1, &config.Config{Buckets: []config.BucketConfig{{Name: "b1"}}})
 	if _, err := ProvideReconciler(step1); err == nil {

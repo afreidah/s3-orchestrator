@@ -17,12 +17,11 @@
 //                       and telemetry side effects
 //   - admissionGate   : bounded-concurrency admission semaphore
 //
-// The public surface of *BackendRuntime is unchanged from before this split: it
-// still exposes Backends(), GetBackend(), WithTimeout(), and friends.
-// The methods are now thin forwards into the appropriate capability,
-// which keeps the consumer-declared interface pattern intact (callers
-// still see methods on *BackendRuntime, not new producer-side interfaces) and
-// makes each capability easy to test in isolation.
+// *BackendRuntime exposes Backends(), GetBackend(), WithTimeout(), and
+// friends as thin forwards into the appropriate capability, which keeps
+// the consumer-declared interface pattern intact (callers see methods on
+// *BackendRuntime, not producer-side interfaces) and makes each
+// capability easy to test in isolation.
 // -------------------------------------------------------------------------------
 
 // Package infra exposes the proxy-package backend infrastructure (backend
@@ -69,10 +68,10 @@ type Config struct {
 }
 
 // BackendRuntime composes the five capability services every proxy subpackage
-// needs. Per-role store views live on the root-package BackendManager;
-// *BackendRuntime deliberately holds none. For which methods belong here
-// versus on *BackendManager, see docs/style-guide.md "Where new methods
-// live: infra.BackendRuntime vs *BackendManager".
+// needs. It deliberately holds no store: each collaborator takes the store
+// roles it needs directly, which is what lets every worker reuse the runtime
+// without dragging persistence along. For which methods belong here versus on
+// a collaborator, see docs/style-guide.md "Where new methods live".
 type BackendRuntime struct {
 	registry         *backendRegistry
 	usage            *usagePolicy
@@ -87,7 +86,7 @@ type BackendRuntime struct {
 
 // New constructs a *BackendRuntime from cfg. The drain checker is wired
 // post-construction via SetDrainChecker to break the
-// BackendManager ↔ drain.Manager cycle. The accounting Recorder is
+// BackendRuntime <-> drain.Manager cycle. The accounting Recorder is
 // built here so every consumer of *BackendRuntime shares one instance that
 // observes the same usage tracker and the (later-wired) metrics
 // collector via the closure over c.RecordOperation.

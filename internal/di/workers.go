@@ -4,9 +4,8 @@
 // Author: Alex Freidah
 //
 // One Provide<Worker> per background worker. Each provider invokes the
-// central *proxy.BackendManager (which satisfies worker.Ops / CleanupOps /
-// ScrubberOps via promoted backendCore methods plus its own write-path
-// helpers) and the wide core.MetadataStore, which already satisfies every
+// backend runtime (which satisfies worker.Ops / CleanupOps / ScrubberOps),
+// the write coordinator, and the opened store, which already satisfies every
 // per-worker store contract via implicit interface satisfaction. The
 // resolveWorkerCore / resolveWorkerCoreWithCfg helpers centralize that
 // dependency pattern so each provider stays a single short call plus the
@@ -25,21 +24,20 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/instanceid"
-	"github.com/afreidah/s3-orchestrator/internal/proxy"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
-	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
 // workerCore bundles the dependencies every background worker needs.
 type workerCore struct {
-	Mgr    *proxy.BackendManager
-	Coord  *writepath.Coordinator
-	Stores core.MetadataStore
+	Runtime *infra.BackendRuntime
+	Coord   *writepath.Coordinator
+	Stores  metadataStore
 }
 
 // workerCoreWithCfg extends workerCore with *config.Config for workers
@@ -49,15 +47,15 @@ type workerCoreWithCfg struct {
 	Cfg *config.Config
 }
 
-// workerCoreFrom pulls the BackendManager + MetadataStore pair through an
+// workerCoreFrom pulls the runtime, coordinator and store through an
 // in-flight resolver, so a caller that needs more than the core resolves
 // everything in one batch. Errors are wrapped with the dependency name so a
 // missing provider points at the right registration site.
 func workerCoreFrom(r *resolver) workerCore {
 	return workerCore{
-		Mgr:    resolveNamed[*proxy.BackendManager](r, "BackendManager"),
-		Coord:  resolveNamed[*writepath.Coordinator](r, "WriteCoordinator"),
-		Stores: resolveNamed[core.MetadataStore](r, "MetadataStore"),
+		Runtime: resolveNamed[*infra.BackendRuntime](r, "BackendRuntime"),
+		Coord:   resolveNamed[*writepath.Coordinator](r, "WriteCoordinator"),
+		Stores:  resolveNamed[metadataStore](r, "MetadataStore"),
 	}
 }
 
@@ -69,7 +67,7 @@ func resolveWorkerCore(i do.Injector) (workerCore, error) {
 
 // resolveWorkerCoreWithCfg pulls *config.Config first, then the worker
 // core, mirroring the historic resolution order. Resolving config first
-// lets feature-gated providers short-circuit before touching the manager.
+// lets feature-gated providers short-circuit before touching the runtime.
 func resolveWorkerCoreWithCfg(i do.Injector) (workerCoreWithCfg, error) {
 	r := newResolver(i)
 	cfg := resolveNamed[*config.Config](r, "Config")
@@ -82,7 +80,7 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewRebalancer(c.Mgr.Runtime(), c.Coord, c.Stores), nil
+	return worker.NewRebalancer(c.Runtime, c.Coord, c.Stores), nil
 }
 
 // ProvideReplicator constructs the replication worker. It takes the encryptor
@@ -98,7 +96,7 @@ func ProvideReplicator(i do.Injector) (*worker.Replicator, error) {
 		return nil, err
 	}
 	return worker.NewReplicator(worker.ReplicatorDeps{
-		Ops:       c.Mgr.Runtime(),
+		Ops:       c.Runtime,
 		Placement: c.Coord,
 		Store:     c.Stores,
 		Encryptor: enc,
@@ -132,18 +130,18 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewOverReplicationCleaner(c.Mgr.Runtime(), c.Coord, c.Stores), nil
+	return worker.NewOverReplicationCleaner(c.Runtime, c.Coord, c.Stores), nil
 }
 
 // ProvideCleanupWorker constructs the cleanup-queue worker. It resolves
-// the backend runtime and store directly rather than through the manager
-// so the drain manager (which takes this worker's ProcessCleanupQueue
-// hook) can be built before the manager.
+// the backend runtime and store directly so the drain manager (which
+// takes this worker's ProcessCleanupQueue hook) can be built from the
+// same pieces without an ordering dependency between the two.
 func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 	r := newResolver(i)
 	cfg := resolveNamed[*config.Config](r, "Config")
 	rt := resolveNamed[*infra.BackendRuntime](r, "BackendRuntime")
-	stores := resolveNamed[core.MetadataStore](r, "MetadataStore")
+	stores := resolveNamed[metadataStore](r, "MetadataStore")
 	id := resolveNamed[instanceid.ID](r, "InstanceID")
 	if r.err != nil {
 		return nil, r.err
@@ -176,7 +174,7 @@ func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error) {
 		return nil, fmt.Errorf("pending pattern enabled but MetadataStore resolved to nil")
 	}
 	return worker.NewPendingReaper(worker.PendingReaperDeps{
-		Ops:       c.Mgr.Runtime(),
+		Ops:       c.Runtime,
 		Placement: c.Coord,
 		Store:     c.Stores,
 		MinAge:    c.Cfg.WritePath.PendingPattern.MinAge,
@@ -195,7 +193,7 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 		return nil, err
 	}
 	return worker.NewScrubber(worker.ScrubberDeps{
-		Ops:       c.Mgr.Runtime(),
+		Ops:       c.Runtime,
 		Placement: c.Coord,
 		Store:     c.Stores,
 		Encryptor: enc,
@@ -221,20 +219,28 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewReconciler(rec, c.Mgr, bktNames), nil
+	usageSvc, err := do.Invoke[*usage.Service](i)
+	if err != nil {
+		return nil, err
+	}
+	return worker.NewReconciler(&worker.ReconcilerDeps{
+		Syncer:      rec,
+		Fleet:       c.Runtime,
+		Usage:       usageSvc,
+		BucketNames: bktNames,
+	}), nil
 }
 
 // ProvideDrainManager constructs the drain manager from the backend
 // runtime (fleet/copy/delete primitives), the write coordinator (its
-// mover), the wide MetadataStore for the object/quota/lifecycle role
-// surfaces, the multipart manager's abort hook, and the cleanup worker's
-// queue flush. None of these is the BackendManager, so drain builds
-// before the manager and is injected into it.
+// mover), the opened store for the object/quota/lifecycle role surfaces,
+// the multipart manager's abort hook, and the cleanup worker's queue
+// flush.
 func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
 	r := newResolver(i)
 	rt := resolveNamed[*infra.BackendRuntime](r, "BackendRuntime")
 	coord := resolveNamed[*writepath.Coordinator](r, "WriteCoordinator")
-	stores := resolveNamed[core.MetadataStore](r, "MetadataStore")
+	stores := resolveNamed[metadataStore](r, "MetadataStore")
 	mp := resolveNamed[*multipart.Manager](r, "MultipartManager")
 	cleanup := resolveNamed[*worker.CleanupWorker](r, "CleanupWorker")
 	if r.err != nil {

@@ -138,12 +138,12 @@ Every `.go` file starts with a 79-char header block:
 //
 // Author: Alex Freidah
 //
-// Object-level CRUD operations on the BackendManager. Handles backend selection
-// via routing strategy, read failover across replicas, broadcast reads during
-// degraded mode, and usage limit enforcement on reads and writes.
+// Object-level CRUD operations. Handles backend selection via routing
+// strategy, read failover across replicas, broadcast reads during degraded
+// mode, and usage limit enforcement on reads and writes.
 // -------------------------------------------------------------------------------
 
-package proxy
+package object
 ```
 
 **Rules:**
@@ -215,18 +215,16 @@ Order: stdlib, internal packages, external packages.
 Group related fields with inline comments explaining non-obvious fields:
 
 ```go
-type BackendManager struct {
-    runtime          *infra.BackendRuntime  // backend fleet/admission/usage/metrics; expose via Runtime()
-    stores           Stores                 // narrow store-role view; see Stores interface
-    coord            *writepath.Coordinator // shared write-path helpers (also held by objectManager and multipartManager)
-    multipartManager *multipart.Manager     // multipart upload lifecycle; expose via Multipart()
-    objectManager    *object.Manager        // CRUD, read failover, broadcast reads; expose via Objects()
-    dashboard        *dashboard.Aggregator  // web UI data aggregation
-    drainManager     *drain.Manager         // nil-able; expose via Drain()
+type Manager struct {
+    core        ObjectRuntime          // infrastructure subset: backends, usage, timeout, metrics
+    coord       ObjectCoordinator      // write-path helpers, shared with the multipart manager
+    stores      ObjectStores           // direct store access for read paths and quota inspection
+    encryptor   *encryption.Encryptor  // nil when encryption is disabled
+    cache       *LocationCache         // key -> backend, consulted only in degraded mode
+    objectCache objcache.ObjectCache   // nil when object data caching is disabled
+    failover    *readpath.Failover     // per-key read failover + degraded-mode broadcast
 
-    usageFlushCfg syncutil.AtomicConfig[config.UsageFlushConfig]
-    lifecycleCfg  syncutil.AtomicConfig[config.LifecycleConfig]
-    integrityCfg  *syncutil.AtomicConfig[config.IntegrityConfig] // shared with objectManager
+    integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig] // shared with the multipart manager
 }
 ```
 
@@ -288,10 +286,15 @@ func New(core MultipartRuntime, coord MultipartCoordinator, ...) *Manager { ... 
 
 If none apply — single impl, single consumer, no test fake, no cycle, no boundary — pass the concrete `*Type` directly. Examples cut under #918: `readpath.ObjectLocationLister`, `multipart.MultipartCoordinator`, `multipart.StaleCleaner`, `accounting.UsageTracker`.
 
-**Special case: `core.MetadataStore` is composition-root-only.** `MetadataStore` is the union of every per-role store interface (`ObjectStore`, `QuotaStore`, `MultipartStore`, `PendingStore`, `CleanupStore`, etc.) — a god interface in the same way `*BackendManager` would be if every consumer took it whole. Treat it that way:
+**There is no exported union of the store roles.** A type that unions every per-role interface is a god interface, and an exported one in the package every consumer already imports is an invitation to take it as a dependency. So the union exists in exactly three places, none of them reachable from a feature package:
 
-- **OK to hold or accept:** `internal/di`, `internal/runtime`, `internal/lifecycle`, in-package test fixtures, and the proxy subtree's composition root (`BackendManagerConfig.Stores`). These are composition layers; their job is to route the concrete store into the narrow interfaces each consumer declares.
-- **Not OK to hold or accept:** every feature package under `internal/proxy/*`, `internal/worker/`, `internal/transport/*`, `internal/store/postgres`, etc. Each declares its own role-composite interface naming exactly the per-role store interfaces it needs:
+- `core.engineRoles`, unexported, and a generic constraint rather than an interface: `core.AssertEngine[*Store]` is how each engine states it implements everything, and a constraint cannot be a variable type, so nothing can depend on it.
+- `internal/di.metadataStore`, unexported, because the composition root genuinely has to hold one opened engine before aliasing it into roles.
+- `storetest.MetadataStore`, the mockgen target, so one generated mock stands in wherever a test needs a fully-populated store.
+
+The union is not a fact about the domain: nothing in persistence requires one object to implement all seventeen roles, and a design that split persistence across several objects would satisfy every role interface and violate nothing. What it encodes is that there happens to be one store type per engine, which is wiring rather than domain.
+
+Every feature package under `internal/proxy/*`, `internal/worker/`, `internal/transport/*` declares its own role-composite naming exactly the per-role interfaces it needs:
 
   ```go
   // internal/worker/scrubber.go
@@ -308,7 +311,7 @@ If none apply — single impl, single consumer, no test fake, no cycle, no bound
   }
   ```
 
-  The single concrete `MetadataStore` satisfies every such composite implicitly, so DI wiring stays one line per provider while each consumer's dependency footprint is documented in its own source file. This rule exists because a feature package that takes `MetadataStore` whole gives the misleading impression it might call any DB role — auditing the actual surface then requires reading the implementation, which defeats the point of consumer-declared interfaces.
+  Each concrete store satisfies every such composite implicitly, so DI wiring stays one line per provider while each consumer's dependency footprint is documented in its own source file. A package that took the whole surface would give the misleading impression it might call any DB role, and auditing what it actually touches would then mean reading the implementation.
 
 **Producer-side interfaces are an anti-pattern.** `*infra.BackendRuntime`, `*writepath.Coordinator`, `*object.Manager`, `*multipart.Manager` are exported as concrete pointer types with no sibling `Core`/`Coordinator`/`Manager` interface that mirrors their public surface. Producer-side interfaces force every consumer to mock the full producer API, which is exactly what this pattern is built to avoid.
 
@@ -329,7 +332,7 @@ For interfaces that exist to *provide* a value (typical "Acct" / "Stores" / "Con
 
 Multi-method interfaces are exempt: `worker.Ops`, `ObjectRuntime`, `MultipartCoordinator` describe a role (or a composite of sub-roles), not a single action, so the `-er` form does not apply.
 
-### Where new methods live: `infra.BackendRuntime` vs `*BackendManager`
+### Where new methods live
 
 The split is by **persistence coupling**:
 
@@ -338,13 +341,15 @@ The split is by **persistence coupling**:
   metrics — no `store.X` calls. Keeping them store-free is what lets every
   worker reuse the runtime through the role interfaces without dragging the
   metadata-store dependency along.
-- **`*BackendManager` methods** (typically in `manager_writepath.go` or a
-  sibling `manager_*.go`) own methods that read or write the metadata store,
-  open transactions, or coordinate multiple sub-managers.
+- **A collaborator under `internal/proxy/*`** owns methods that read or write
+  the metadata store, open transactions, or coordinate more than one of the
+  others. `object`, `multipart`, `writepath`, `drain` and `usage` each own a
+  slice of that, and each takes the store roles it needs directly.
 
-When in doubt: if the method needs the store, it is a manager method;
-otherwise it belongs on the runtime. The consumer interface for the method
-is declared by whichever side hosts it.
+When in doubt: if the method needs the store, it belongs to whichever
+collaborator owns that concern, not to the runtime. There is no root object
+to fall back on, which is the point — a method with no obvious owner is a sign
+the concern has no home yet, rather than a reason to make one type hold it.
 
 ### Per-Backend Accounting: Use the Recorder
 
@@ -364,7 +369,7 @@ Per-backend usage and per-operation metric accounting flow through one shared he
 The cardinal rule "every backend call costs one API-call charge regardless of outcome" lives in the method bodies, not in repeated inline comments at every call site. The argument-order risk of the bare `Record(b, 1, 0, size)` vs `Record(b, 1, size, 0)` form is eliminated because ingress vs egress is named in the method.
 
 Exceptions — *not* every Usage call goes through Recorder:
-- `BackendManager.RecordUsage(b, apiCalls, egress, ingress)` is the admin escape hatch that takes an arbitrary tuple. It bypasses the per-attempt rule on purpose and uses `Usage().Record` directly.
+- The operations layer's bulk passes take a `UsageGate` and call `Record(b, apiCalls, egress, ingress)` on the tracker with an arbitrary tuple. That bypasses the per-attempt rule on purpose: a fleet-wide rewrite asks once and spends in units the Recorder has no name for.
 - Tests that exercise the tracker's own semantics (`manager_usage_test.go`) call `Usage().Record` directly — they're verifying the tracker, not the accounting rule.
 
 ### Variable Naming
@@ -463,9 +468,14 @@ internal/
     ui/                      # Dashboard handlers + templates
     auth/                    # SigV4 verification + bucket auth
     httputil/                # Cross-cutting HTTP helpers (trusted proxies, login throttle, cert reload)
-  proxy/                     # Manager layer: routes requests, owns workers, glues store + backend
-    manager/                 # BackendManager + role-narrow sub-managers
-    metrics/                 # Manager-level metric collector
+  proxy/                     # Orchestration layer: a namespace over the collaborators below, with no root object
+    infra/                   # BackendRuntime: fleet, usage counters, admission, timeouts
+    object/                  # Object CRUD, read failover, broadcast reads
+    multipart/               # Multipart upload lifecycle
+    writepath/               # Shared write helpers: routing, pending intents, recovery
+    readpath/                # Read failover orchestrator
+    usage/                   # Counter flush to the store + the drift reconcile
+    metrics/                 # Per-backend metric collector
     drain/                   # Backend drain coordinator
     dashboard/               # Dashboard read aggregator
   worker/                    # Background services: replicator, rebalancer, cleanup, scrubber, reaper
@@ -536,14 +546,11 @@ needed; nothing is constructed until it is asked for.
 1. **Lazy providers**: a provider returns the dependency it builds; it
    never has side effects beyond construction. The injector calls it on
    the first `do.Invoke` and memoises the result for subsequent calls.
-2. **Wide composite store, consumer-defined narrow interfaces at the
-   boundary**: consumers receive the wide `core.MetadataStore` (a
-   composite that embeds every per-role interface) and either typehint-
-   narrow it at the field declaration or declare a local interface
-   listing only the methods they call. Producer-side narrow roles
-   (`ObjectStore`, `QuotaStore`, etc.) exist as embedding building
-   blocks for `MetadataStore`; consumer code does not import them
-   directly.
+2. **Role interfaces at the boundary**: `di` holds the opened engine as
+   the unexported `metadataStore` and passes it into each constructor,
+   where it lands in the narrow role composite that consumer declared.
+   Nothing outside `di` can name the wide type, so a consumer's
+   dependency footprint is whatever roles it wrote down.
 
 ### Provider Pattern
 
@@ -552,17 +559,13 @@ Every provider follows the same shape:
 ```go
 // ProvideRebalancer constructs the rebalancer worker.
 func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
-    mgr, err := do.Invoke[*proxy.BackendManager](i)
+    c, err := resolveWorkerCore(i)
     if err != nil {
         return nil, err
     }
-    stores, err := do.Invoke[core.MetadataStore](i)
-    if err != nil {
-        return nil, err
-    }
-    // Runtime primitives come from the backend runtime; the manager
+    // Fleet primitives come from the runtime; the write coordinator
     // supplies the Placement facet (target selection, delete/move).
-    return worker.NewRebalancer(mgr.Runtime(), mgr, stores), nil
+    return worker.NewRebalancer(c.Runtime, c.Coord, c.Stores), nil
 }
 ```
 
@@ -665,18 +668,18 @@ each argument and make transposition impossible. `context.Context` stays
 the first positional argument, never inside the struct; three or fewer
 distinct-typed parameters stay positional. Pass the struct by pointer when
 it is large (`gocritic` flags structs over ~80 bytes), by value otherwise.
-Capability sub-structs (the `BackendManagerConfig` Storage / Stores /
-Policies / Features / Operations grouping) are reserved for genuinely large
-configs whose fields come from different sources — a flat `Deps` is the
-default.
+A flat `Deps` is the default. Capability sub-structs, grouping fields by
+where they come from, are reserved for genuinely large configs — and are
+worth a second look before reaching for: the last one grew four sub-structs
+that nothing read, which stayed invisible because a config nobody reads still
+compiles.
 
 Constructors at the DI/wiring boundary panic on missing required
 dependencies via `internal/util/must`. The boundary is the set of
 constructors a DI provider or a test fixture builds directly:
-`proxy.NewBackendManager`, every `worker.New*`, every
-`transport/{s3api,admin,ui}.New*`, and the `proxy/{drain,readpath,
-multipart,object,writepath}` package constructors that take a `*Deps`
-or interface bag. Internal helpers that are only called from one
+every `worker.New*`, every `transport/{s3api,admin,ui}.New*`, and the
+`proxy/{drain,readpath,multipart,object,writepath,usage}` package
+constructors that take a `*Deps` or interface bag. Internal helpers that are only called from one
 already-validated site (`accounting.New`, `metrics.New`,
 `dashboard.New`, `infra.New`) trust their caller and skip the panic.
 
@@ -1316,7 +1319,7 @@ For branches without a linked issue, use a short kebab-case description of the t
 // to safely handle concurrent overwrites and deletes.
 // -------------------------------------------------------------------------------
 
-package proxy
+package worker
 
 // -------------------------------------------------------------------------
 // PUBLIC API
@@ -1324,12 +1327,12 @@ package proxy
 
 // Replicate finds under-replicated objects and creates additional copies to
 // reach the target replication factor. Returns the number of copies created.
-func (m *BackendManager) Replicate(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
+func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
     start := time.Now()
     ctx = audit.WithRequestID(ctx, audit.NewID())
 
     // Find under-replicated objects
-    locations, err := m.store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
+    locations, err := r.store.GetUnderReplicatedObjects(ctx, cfg.Factor, cfg.BatchSize)
     if err != nil {
         return 0, fmt.Errorf("failed to query under-replicated objects: %w", err)
     }
@@ -1350,10 +1353,10 @@ func (m *BackendManager) Replicate(ctx context.Context, cfg config.ReplicationCo
 // 3. Finally we record the results
 // ==================================
 
-package proxy
+package worker
 
 // Let's create the replicate function
-func (m *BackendManager) Replicate(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
+func (r *Replicator) Replicate(ctx context.Context, cfg config.ReplicationConfig) (int, error) {
     // get the start time
     start := time.Now()
     // ...

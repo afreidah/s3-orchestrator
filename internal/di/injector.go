@@ -71,23 +71,23 @@ func registerValues(inj do.Injector, cfg *config.Config, mode config.Mode, logLe
 // on (metadata store, lifecycle / encryption admin views, notification
 // outbox, database circuit breaker, instance id, metric deps).
 func registerInfrastructure(inj do.Injector) {
-	do.Provide(inj, ProvideMetadataStore)
+	do.Provide(inj, provideMetadataStore)
 	do.Provide(inj, ProvideDatabaseBreaker)
 	do.Provide(inj, ProvideInstanceID)
 
 	// Narrow role views of the wide metadata store: do.MustAs aliases the
 	// concrete under each consumer interface, and verifies the cast at
 	// registration instead of at first resolve.
-	do.MustAs[core.MetadataStore, core.LifecycleAdmin](inj)
-	do.MustAs[core.MetadataStore, core.EncryptionAdmin](inj)
-	do.MustAs[core.MetadataStore, core.NotificationOutbox](inj)
-	do.MustAs[core.MetadataStore, metrics.Deps](inj)
+	do.MustAs[metadataStore, core.AdvisoryLocker](inj)
+	do.MustAs[metadataStore, core.LifecycleAdmin](inj)
+	do.MustAs[metadataStore, core.EncryptionAdmin](inj)
+	do.MustAs[metadataStore, core.NotificationOutbox](inj)
+	do.MustAs[metadataStore, metrics.Deps](inj)
 }
 
-// registerBackendStack wires the storage-fleet root composition
-// objects: per-backend clients, the shared circuit-breaker registry,
-// and the BackendManager that orchestrates routing / replication /
-// drain across them.
+// registerBackendStack wires the storage-fleet composition objects:
+// per-backend clients, the shared circuit-breaker registry, and each
+// collaborator that routes, replicates or drains across them.
 func registerBackendStack(inj do.Injector) {
 	do.Provide(inj, ProvideBackends)
 	do.Provide(inj, ProvideBreakerRegistry)
@@ -99,7 +99,7 @@ func registerBackendStack(inj do.Injector) {
 	do.Provide(inj, ProvideDashboardAggregator)
 	do.Provide(inj, ProvideExpiryManager)
 	do.Provide(inj, ProvideReconcileManager)
-	do.Provide(inj, ProvideBackendManager)
+	do.Provide(inj, ProvideUsageService)
 }
 
 // registerWorkers wires the background workers and the drain manager.

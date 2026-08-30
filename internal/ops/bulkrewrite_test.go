@@ -147,14 +147,14 @@ func pagingEnv(t *testing.T) bulkRewriteEnv {
 
 	runtime := opstest.NewMockRuntimeOps(ctrl)
 	runtime.EXPECT().GetBackend(gomock.Any()).Return(&fakeBackend{payload: []byte("payload")}, nil).AnyTimes()
-	backendOps := opstest.NewMockBackendOps(ctrl)
-	backendOps.EXPECT().AllowUsage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
-	backendOps.EXPECT().RecordUsage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	usageGate := opstest.NewMockUsageGate(ctrl)
+	usageGate.EXPECT().WithinLimits(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
+	usageGate.EXPECT().Record(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	return bulkRewriteEnv{
-		log:        slog.New(slog.DiscardHandler),
-		runtime:    runtime,
-		backendOps: backendOps,
+		log:     slog.New(slog.DiscardHandler),
+		runtime: runtime,
+		usage:   usageGate,
 	}
 }
 
@@ -310,14 +310,14 @@ func TestRunBulkRewrite_DeclinesObjectsWithoutUsageHeadroom(t *testing.T) {
 	// GetBackend is allowed but must never be reached: admission comes first,
 	// so a declined object costs no backend call.
 	runtime.EXPECT().GetBackend(gomock.Any()).Return(be, nil).AnyTimes()
-	backendOps := opstest.NewMockBackendOps(ctrl)
-	backendOps.EXPECT().AllowUsage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(false).AnyTimes()
-	backendOps.EXPECT().RecordUsage(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	usageGate := opstest.NewMockUsageGate(ctrl)
+	usageGate.EXPECT().WithinLimits(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(false).AnyTimes()
+	usageGate.EXPECT().Record(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	env := bulkRewriteEnv{
-		log:        slog.New(slog.DiscardHandler),
-		runtime:    runtime,
-		backendOps: backendOps,
+		log:     slog.New(slog.DiscardHandler),
+		runtime: runtime,
+		usage:   usageGate,
 	}
 
 	res, err := runBulkRewrite(env, context.Background(), nil, bulkRewriteOp[*rewriteRow]{

@@ -392,7 +392,7 @@ func TestCompression_DrainMovesCompressedObjectsIntact(t *testing.T) {
 		h.assertEveryCopyDecodesTo(key, body, "before drain")
 	}
 
-	if err := h.mgr.Drain().StartDrain(ctx, source); err != nil {
+	if err := h.stack.Drain.StartDrain(ctx, source); err != nil {
 		t.Fatalf("StartDrain(%s): %v", source, err)
 	}
 	h.waitDrainComplete(source, 60*time.Second)
