@@ -101,7 +101,7 @@ s3o s3api get-object-tagging --bucket app1-files --key report.pdf
 s3o s3api delete-object-tagging --bucket app1-files --key report.pdf
 ```
 
-Tags describe the object, so all of its replicas share one set. `put-object-tagging` replaces the whole set rather than merging into it, and overwriting the key without `--tagging` leaves the new object untagged. Up to 10 tags per object. See [Object Tagging](tagging.md).
+Tags describe the object, so all of its replicas share one set. `put-object-tagging` replaces the whole set rather than merging into it, and overwriting the key without `--tagging` leaves the new object untagged. Up to 10 tags per object. A `get-object` or `head-object` reports how many tags the object carries in `x-amz-tagging-count`, so a client can skip fetching a set that is not there. See [Object Tagging](tagging.md).
 
 ### Sync a directory
 

@@ -170,7 +170,9 @@ func (o *Objects) Get(ctx context.Context, key string) (*s3be.GetObjectResult, e
 		}
 		return nil, err
 	}
-	return result, nil
+	// The operations layer moves bytes; the object-level metadata riding on the
+	// manager's result is for the S3 surface to render, not for this caller.
+	return result.GetObjectResult, nil
 }
 
 // Put stores one object and returns its ETag. size is the exact byte count of

@@ -48,3 +48,19 @@ func (s *Store) GetObjectTags(ctx context.Context, key string) ([]core.Tag, erro
 	}
 	return tags, nil
 }
+
+// CountObjectTags returns how many tags an object carries. An object with no
+// tags counts zero rather than erroring, for the same reason GetObjectTags
+// returns an empty set: the read path asks this of every object it serves,
+// and most of them are untagged.
+func (s *Store) CountObjectTags(ctx context.Context, key string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM object_tags WHERE object_key = ?`,
+		key,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count object tags: %w", err)
+	}
+	return n, nil
+}

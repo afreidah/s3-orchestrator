@@ -28,6 +28,18 @@ func (s *Store) GetObjectTags(ctx context.Context, key string) ([]core.Tag, erro
 	return mapSlice(rows, tagFromRow), nil
 }
 
+// CountObjectTags returns how many tags an object carries. An object with no
+// tags counts zero rather than erroring, for the same reason GetObjectTags
+// returns an empty set: the read path asks this of every object it serves,
+// and most of them are untagged.
+func (s *Store) CountObjectTags(ctx context.Context, key string) (int, error) {
+	n, err := s.queries.CountObjectTags(ctx, key)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count object tags: %w", err)
+	}
+	return int(n), nil
+}
+
 // tagFromRow converts a sqlc GetObjectTags row into the canonical core.Tag.
 func tagFromRow(r *db.GetObjectTagsRow) core.Tag {
 	return core.Tag{Key: r.TagKey, Value: r.TagValue}

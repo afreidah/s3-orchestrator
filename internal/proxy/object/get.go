@@ -38,7 +38,7 @@ import (
 // the primary copy first, then falls back to replicas if the primary
 // fails. When the object is encrypted, the response body is transparently
 // decrypted and the reported size reflects the original plaintext size.
-func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string) (*s3be.GetObjectResult, error) {
+func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string) (*GetResult, error) {
 	if cached, ok := o.tryGetObjectCache(ctx, key, rangeHeader); ok {
 		return cached, nil
 	}
@@ -75,16 +75,19 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 
 	pobserve.GetCompleted(ctx, key, backendName, result.Size)
 
-	if err := o.populateObjectCache(key, rangeHeader, result); err != nil {
+	// Counted before the cache tee is attached so the entry this read populates
+	// carries the count, and a later hit can answer without the store.
+	tagCount := o.countObjectTags(ctx, key)
+	if err := o.populateObjectCache(key, rangeHeader, result, tagCount); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &GetResult{GetObjectResult: result, TagCount: tagCount}, nil
 }
 
 // tryGetObjectCache returns a synthesized GetObjectResult when the object
 // data cache holds a non-range hit for this key. ok=false signals that the
 // caller must read from a backend.
-func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string) (*s3be.GetObjectResult, bool) {
+func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string) (*GetResult, bool) {
 	if o.objectCache == nil || rangeHeader != "" {
 		return nil, false
 	}
@@ -93,13 +96,16 @@ func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string
 		return nil, false
 	}
 	pobserve.GetCompleted(ctx, key, "cache", int64(len(entry.Data)))
-	return &s3be.GetObjectResult{
-		Body:         io.NopCloser(bytes.NewReader(entry.Data)),
-		Size:         int64(len(entry.Data)),
-		ContentType:  entry.ContentType,
-		ETag:         entry.ETag,
-		LastModified: entry.LastModified,
-		Metadata:     entry.Metadata,
+	return &GetResult{
+		GetObjectResult: &s3be.GetObjectResult{
+			Body:         io.NopCloser(bytes.NewReader(entry.Data)),
+			Size:         int64(len(entry.Data)),
+			ContentType:  entry.ContentType,
+			ETag:         entry.ETag,
+			LastModified: entry.LastModified,
+			Metadata:     entry.Metadata,
+		},
+		TagCount: entry.TagCount,
 	}, true
 }
 
@@ -325,7 +331,7 @@ func (o *Manager) dropCorruptedLocation(ctx context.Context, key, beName string)
 // client with zero proxy-side buffering, so a 5 GB GET with a 100 MB
 // max_object_size never allocates more than the read buffer worth of
 // heap.
-func (o *Manager) populateObjectCache(key, rangeHeader string, result *s3be.GetObjectResult) error {
+func (o *Manager) populateObjectCache(key, rangeHeader string, result *s3be.GetObjectResult, tagCount int) error {
 	if o.objectCache == nil || rangeHeader != "" || result.Size <= 0 {
 		return nil
 	}
@@ -337,6 +343,7 @@ func (o *Manager) populateObjectCache(key, rangeHeader string, result *s3be.GetO
 		ETag:         result.ETag,
 		LastModified: result.LastModified,
 		Metadata:     result.Metadata,
+		TagCount:     tagCount,
 	}
 	result.Body = newCacheTeeBody(result.Body, result.Size, func(data []byte) {
 		o.objectCache.PutBytes(key, data, meta)

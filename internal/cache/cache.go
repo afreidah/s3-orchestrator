@@ -63,13 +63,17 @@ type ObjectCache interface {
 // TYPES
 // -------------------------------------------------------------------------
 
-// Entry holds a cached object's data and metadata.
+// Entry holds a cached object's data and metadata. TagCount rides along
+// because a cache hit answers the whole GET without consulting the metadata
+// store, and the tagging-count header would otherwise be missing from exactly
+// the responses the cache serves. Tag writes invalidate the entry.
 type Entry struct {
 	Data         []byte
 	ContentType  string
 	ETag         string
 	LastModified time.Time
 	Metadata     map[string]string
+	TagCount     int
 }
 
 // Size returns the approximate memory footprint of this entry in bytes.
@@ -89,6 +93,7 @@ type EntryMeta struct {
 	ETag         string
 	LastModified time.Time
 	Metadata     map[string]string
+	TagCount     int
 }
 
 // Stats reports current cache utilization. Hits and Misses are lifetime

@@ -60,6 +60,67 @@ func assertNoTags(t *testing.T, s *Store, key, msg string) {
 	}
 }
 
+// TestStoreInt_CountObjectTags_MatchesTheSetSize verifies the count the read
+// path serves agrees with the set the tagging endpoint returns, and that it
+// follows the set down when a replace shrinks it. A count drifting from the
+// set is what sends clients after tags that are not there.
+func TestStoreInt_CountObjectTags_MatchesTheSetSize(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "tags-count")
+
+	seedTaggedObject(t, s, key, "backend-a", []core.Tag{
+		{Key: "a", Value: "1"},
+		{Key: "b", Value: "2"},
+		{Key: "c", Value: "3"},
+	})
+
+	n, err := s.CountObjectTags(ctx, key)
+	if err != nil {
+		t.Fatalf("CountObjectTags: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("count = %d, want 3", n)
+	}
+
+	if err := s.ReplaceObjectTags(ctx, key, []core.Tag{{Key: "a", Value: "1"}}); err != nil {
+		t.Fatalf("ReplaceObjectTags (shrink): %v", err)
+	}
+	if n, err = s.CountObjectTags(ctx, key); err != nil {
+		t.Fatalf("CountObjectTags after shrink: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("count after shrink = %d, want 1", n)
+	}
+}
+
+// TestStoreInt_CountObjectTags_UntaggedAndUnknown verifies both an object
+// holding no tags and a key the store has never held count zero rather than
+// erroring. The read path asks this of every object it serves, and reaches it
+// only once the object has been located.
+func TestStoreInt_CountObjectTags_UntaggedAndUnknown(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "tags-count-untagged")
+
+	seedTaggedObject(t, s, key, "backend-a", nil)
+
+	n, err := s.CountObjectTags(ctx, key)
+	if err != nil {
+		t.Fatalf("CountObjectTags: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("untagged count = %d, want 0", n)
+	}
+
+	if n, err = s.CountObjectTags(ctx, uniqueKey(t, "tags-count-absent")); err != nil {
+		t.Fatalf("CountObjectTags on an unknown key: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("unknown-key count = %d, want 0", n)
+	}
+}
+
 // TestStoreInt_ObjectTags_ReplaceAndRead covers the round trip and the
 // ordering the Tagging XML response depends on: the query sorts by key, so a
 // set written in reverse reads back sorted rather than in insertion order.
