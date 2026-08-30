@@ -109,9 +109,9 @@ func (e *Encryptor) Provider() KeyProvider { return e.provider }
 // -------------------------------------------------------------------------
 
 // Encrypt generates a random DEK, wraps it with the KeyProvider, and returns
-// a streaming ciphertext reader along with encryption metadata. The plaintext
-// is read from body and its MD5 digest is computed on the fly for ETag
-// generation.
+// a streaming ciphertext reader along with encryption metadata. The object's
+// ETag is not computed here: the write path digests the plaintext during the
+// pass that buffers it, before this layer sees the bytes.
 func (e *Encryptor) Encrypt(ctx context.Context, body io.Reader, plaintextSize int64) (*EncryptResult, error) {
 	// Generate random DEK
 	dek := make([]byte, 32)

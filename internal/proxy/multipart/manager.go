@@ -39,6 +39,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
 	pobserve "github.com/afreidah/s3-orchestrator/internal/proxy/observe"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -267,7 +268,12 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 		return "", core.ErrInsufficientStorage
 	}
 
-	uploadBody, uploadSize, form, err := mp.prepareUploadPartBody(ctx, mu, body, size)
+	// The part's own MD5 is taken off the client's bytes on their way to the
+	// backend, before any encryption layer: the object's ETag is the MD5 of
+	// the concatenated part digests, and a digest of the stored envelope would
+	// not be one S3 could have produced.
+	partDigest := etag.NewHasher()
+	uploadBody, uploadSize, form, err := mp.prepareUploadPartBody(ctx, mu, io.TeeReader(body, partDigest), size)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return "", err
@@ -277,14 +283,18 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	partKey := multipartPartKey(uploadID, partNumber)
 	bctx, bcancel := mp.core.WithTimeout(ctx)
 	defer bcancel()
-	etag, err := be.PutObject(bctx, partKey, uploadBody, uploadSize, "application/octet-stream", nil)
+	storedETag, err := be.PutObject(bctx, partKey, uploadBody, uploadSize, "application/octet-stream", nil)
 	if err != nil {
 		mp.core.Acct().APICall(mu.BackendName) // API call was made even on failure
 		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to upload part: %w", err)
 	}
 
-	if err := mp.stores.RecordPart(ctx, uploadID, partNumber, etag, uploadSize, form); err != nil {
+	plaintextETag := etag.Hex(partDigest)
+	if err := mp.stores.RecordPart(ctx, &core.RecordPartParams{
+		UploadID: uploadID, PartNumber: partNumber, ETag: storedETag,
+		PlaintextETag: plaintextETag, SizeBytes: uploadSize, Form: form,
+	}); err != nil {
 		mp.log.ErrorContext(ctx, "recordPart failed, cleaning up part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
 		mp.coord.RecoverFromRecordFailure(ctx, be, mu.BackendName, partKey, "orphan_part_record_failed", uploadSize)
@@ -297,7 +307,9 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	// difference once per part.
 	mp.core.Acct().PutSuccess(operation, mu.BackendName, uploadSize, start)
 	pobserve.UploadPartCompleted(ctx, span, mu.ObjectKey, mu.BackendName, uploadID, partNumber, size)
-	return etag, nil
+	// The client is given the MD5 of its own bytes, which is what S3 returns
+	// and what it will send back in the completion manifest.
+	return etag.Single(plaintextETag), nil
 }
 
 // physicalPartSize reports how many bytes a part of this size will occupy.
@@ -322,7 +334,12 @@ func (mp *Manager) ListMultipartUploads(ctx context.Context, prefix string, maxU
 	return mp.stores.ListMultipartUploads(ctx, prefix, maxUploads)
 }
 
-// GetParts returns all parts for a multipart upload.
+// GetParts returns all parts for a multipart upload, each reporting the ETag
+// UploadPart handed the client rather than the one the backend holds for the
+// stored part. A client that rebuilds its completion manifest from this list -
+// which is what a resumed upload does - has to get back the values completion
+// validates against, and those two differ as soon as the stored part is an
+// encryption envelope.
 func (mp *Manager) GetParts(ctx context.Context, bucket, key, uploadID string) ([]core.MultipartPart, error) {
 	const operation = "GetParts"
 	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation,
@@ -332,7 +349,14 @@ func (mp *Manager) GetParts(ctx context.Context, bucket, key, uploadID string) (
 	if _, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation); err != nil {
 		return nil, err
 	}
-	return mp.stores.GetParts(ctx, uploadID)
+	parts, err := mp.stores.GetParts(ctx, uploadID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range parts {
+		parts[i].ETag = clientPartETag(&parts[i])
+	}
+	return parts, nil
 }
 
 // uploadIDLockNamespace is OR'd into every multipart-upload advisory
@@ -477,8 +501,8 @@ func (mp *Manager) collectRequestedParts(ctx context.Context, span trace.Span, u
 		return nil, err
 	}
 	uploaded := make(map[int]bool, len(allParts))
-	for _, p := range allParts {
-		uploaded[p.PartNumber] = true
+	for i := range allParts {
+		uploaded[allParts[i].PartNumber] = true
 	}
 	var missing []int
 	for _, pn := range partNumbers {
@@ -497,9 +521,9 @@ func (mp *Manager) collectRequestedParts(ctx context.Context, span trace.Span, u
 		requested[pn] = true
 	}
 	var parts []core.MultipartPart
-	for _, p := range allParts {
-		if requested[p.PartNumber] {
-			parts = append(parts, p)
+	for i := range allParts {
+		if requested[allParts[i].PartNumber] {
+			parts = append(parts, allParts[i])
 		}
 	}
 	slices.SortFunc(parts, func(a, b core.MultipartPart) int {
@@ -560,9 +584,9 @@ func (mp *Manager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUp
 		return fmt.Errorf("failed to get parts for abort: %w", err)
 	}
 
-	for _, part := range parts {
-		partKey := multipartPartKey(uploadID, part.PartNumber)
-		mp.coord.DeleteOrEnqueue(ctx, be, mu.BackendName, partKey, "abort_part_cleanup", part.SizeBytes)
+	for i := range parts {
+		partKey := multipartPartKey(uploadID, parts[i].PartNumber)
+		mp.coord.DeleteOrEnqueue(ctx, be, mu.BackendName, partKey, "abort_part_cleanup", parts[i].SizeBytes)
 	}
 
 	if err := mp.stores.DeleteMultipartUpload(ctx, uploadID); err != nil {
@@ -724,6 +748,15 @@ func (mp *Manager) completeMultipartUploadLocked(
 
 	totalPlaintextSize := sumPlaintextSize(parts)
 
+	// The identity is known before the bytes move: the composite ETag is built
+	// from the part digests already recorded, so an intent the reaper promotes
+	// carries the same answer the client was given.
+	identity, err := assembledIdentity(mu, parts)
+	if err != nil {
+		observe.RecordSpanError(span, err)
+		return "", err
+	}
+
 	pr, pipeCancel := mp.streamPartsThroughPipe(ctx, be, uploadID, parts)
 	defer pipeCancel()
 
@@ -732,10 +765,15 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// regular PutObject path. Without this, the scrubber cannot verify
 	// multipart-completed objects.
 	hasher := mp.newIntegrityHasher()
-	assembleReader := io.Reader(pr)
-	if hasher != nil {
-		assembleReader = io.TeeReader(pr, hasher)
+	// An upload whose parts predate per-part digests has no composite, and the
+	// MD5 of the assembled bytes is the only ETag left to give it. Every other
+	// upload already knows its own and must not pay for a second pass over
+	// every byte it assembles.
+	var assemblyDigest hash.Hash
+	if identity.ETag == "" {
+		assemblyDigest = etag.NewHasher()
 	}
+	assembleReader := teeThrough(pr, assemblyDigest, hasher)
 
 	// Compression runs between the part pipe and the encryptor, the order the
 	// single-object path uses and the only one that works: ciphertext does not
@@ -764,7 +802,9 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// stream has drained, so an intent resolved by the reaper commits without
 	// one and the scrubber backfills it later. That matches every other
 	// reaper-promoted object.
-	intentID, err := mp.coord.InsertPendingIntent(ctx, mu.ObjectKey, mu.BackendName, uploadSize, form)
+	// The identity was built before the assembly started, so an intent the
+	// reaper promotes carries the same answer the client was given.
+	intentID, err := mp.coord.InsertPendingIntent(ctx, mu.ObjectKey, mu.BackendName, uploadSize, form, identity)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return "", err
@@ -777,7 +817,9 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// request) still wins.
 	wctx, wcancel := mp.core.WithTimeout(ctx)
 	defer wcancel()
-	etag, err := be.PutObject(wctx, mu.ObjectKey, uploadBody, uploadSize, mu.ContentType, mu.Metadata)
+	// The backend's ETag for the assembled object describes the bytes as
+	// stored and is discarded; the client is given the composite built above.
+	_, err = be.PutObject(wctx, mu.ObjectKey, uploadBody, uploadSize, mu.ContentType, mu.Metadata)
 	if err != nil {
 		pipeCancel()
 		pr.Close()
@@ -790,12 +832,15 @@ func (mp *Manager) completeMultipartUploadLocked(
 	pr.Close()
 
 	form = stampContentHash(form, hasher)
+	if identity.ETag == "" {
+		identity.ETag = etag.Single(etag.Hex(assemblyDigest))
+	}
 
 	// The tag set the create call carried lands with the assembled object, in
 	// the same transaction, so a completed upload is never briefly untagged.
 	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
 		Key: mu.ObjectKey, Backend: mu.BackendName, Size: uploadSize, Form: form,
-		Tags: mu.Tags, IntentID: intentID,
+		Identity: identity, Tags: mu.Tags, IntentID: intentID,
 	}); err != nil {
 		return "", err
 	}
@@ -811,14 +856,53 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// GETs; the N cleanup DELETEs of the part temp keys go through
 	// DeleteOrEnqueue, which records them itself.
 	mp.core.Acct().Operation(operation, mu.BackendName, start, nil)
-	for _, part := range parts {
-		mp.core.Acct().Egress(mu.BackendName, part.SizeBytes)
+	for i := range parts {
+		mp.core.Acct().Egress(mu.BackendName, parts[i].SizeBytes)
 	}
 	mp.core.Acct().Ingress(mu.BackendName, uploadSize)
 
 	pobserve.MultipartCompleted(ctx, span, mu.ObjectKey, mu.BackendName, uploadID, totalPlaintextSize, len(parts))
 	mp.invalidateCache(mu.ObjectKey)
-	return etag, nil
+	return identity.ETag, nil
+}
+
+// teeThrough returns r with every non-nil hasher fed from it, so one drain of
+// the assembly stream produces every digest the completion needs.
+func teeThrough(r io.Reader, hashers ...hash.Hash) io.Reader {
+	out := r
+	for _, h := range hashers {
+		if h != nil {
+			out = io.TeeReader(out, h)
+		}
+	}
+	return out
+}
+
+// assembledIdentity builds what a client is told the completed object is: the
+// AWS composite ETag over the part digests, plus the content type and user
+// metadata the create call carried.
+//
+// An upload with any part predating per-part digests cannot produce a
+// composite, so the ETag comes back empty here and the caller fills it with
+// the MD5 of the assembled bytes once the stream has drained.
+func assembledIdentity(mu *core.MultipartUpload, parts []core.MultipartPart) (*core.ObjectIdentity, error) {
+	digests := make([]string, len(parts))
+	for i := range parts {
+		digests[i] = parts[i].PlaintextETag
+	}
+	composite, err := etag.Multipart(digests)
+	if err != nil {
+		return nil, err
+	}
+	meta := mu.Metadata
+	if meta == nil {
+		meta = map[string]string{}
+	}
+	return &core.ObjectIdentity{
+		ETag:         composite,
+		ContentType:  mu.ContentType,
+		UserMetadata: meta,
+	}, nil
 }
 
 // cleanupCompletedUpload removes part objects and the multipart_uploads
@@ -829,9 +913,9 @@ func (mp *Manager) completeMultipartUploadLocked(
 // logs and continues so a single transient error cannot strand the
 // rest of the cleanup.
 func (mp *Manager) cleanupCompletedUpload(ctx context.Context, span trace.Span, be s3be.ObjectBackend, mu *core.MultipartUpload, uploadID string, parts []core.MultipartPart) {
-	for _, part := range parts {
-		partKey := multipartPartKey(uploadID, part.PartNumber)
-		mp.coord.DeleteOrEnqueue(ctx, be, mu.BackendName, partKey, "complete_part_cleanup", part.SizeBytes)
+	for i := range parts {
+		partKey := multipartPartKey(uploadID, parts[i].PartNumber)
+		mp.coord.DeleteOrEnqueue(ctx, be, mu.BackendName, partKey, "complete_part_cleanup", parts[i].SizeBytes)
 	}
 	if err := mp.stores.DeleteMultipartUpload(ctx, uploadID); err != nil {
 		span.RecordError(err)
@@ -876,11 +960,11 @@ func stampContentHash(form *core.StoredForm, hasher hash.Hash) *core.StoredForm 
 // SizeBytes.
 func sumPlaintextSize(parts []core.MultipartPart) int64 {
 	var total int64
-	for _, part := range parts {
-		if part.Encrypted {
-			total += part.PlaintextSize
+	for i := range parts {
+		if parts[i].Encrypted {
+			total += parts[i].PlaintextSize
 		} else {
-			total += part.SizeBytes
+			total += parts[i].SizeBytes
 		}
 	}
 	return total

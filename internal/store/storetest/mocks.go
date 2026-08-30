@@ -1163,18 +1163,32 @@ func (mr *MockMetadataStoreMockRecorder) RecordObject(ctx, req any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObject", reflect.TypeOf((*MockMetadataStore)(nil).RecordObject), ctx, req)
 }
 
-// RecordPart mocks base method.
-func (m *MockMetadataStore) RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, form *core.StoredForm) error {
+// RecordObjectIdentity mocks base method.
+func (m *MockMetadataStore) RecordObjectIdentity(ctx context.Context, key string, id *core.ObjectIdentity) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordPart", ctx, uploadID, partNumber, etag, size, form)
+	ret := m.ctrl.Call(m, "RecordObjectIdentity", ctx, key, id)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RecordObjectIdentity indicates an expected call of RecordObjectIdentity.
+func (mr *MockMetadataStoreMockRecorder) RecordObjectIdentity(ctx, key, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectIdentity", reflect.TypeOf((*MockMetadataStore)(nil).RecordObjectIdentity), ctx, key, id)
+}
+
+// RecordPart mocks base method.
+func (m *MockMetadataStore) RecordPart(ctx context.Context, p *core.RecordPartParams) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RecordPart", ctx, p)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RecordPart indicates an expected call of RecordPart.
-func (mr *MockMetadataStoreMockRecorder) RecordPart(ctx, uploadID, partNumber, etag, size, form any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) RecordPart(ctx, p any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordPart", reflect.TypeOf((*MockMetadataStore)(nil).RecordPart), ctx, uploadID, partNumber, etag, size, form)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordPart", reflect.TypeOf((*MockMetadataStore)(nil).RecordPart), ctx, p)
 }
 
 // RecordReplica mocks base method.

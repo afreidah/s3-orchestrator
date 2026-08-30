@@ -14,8 +14,9 @@
 INSERT INTO pending_objects (
     intent_id, object_key, backend_name, size_bytes,
     encrypted, encryption_key, key_id, plaintext_size, content_hash,
-    compression_algorithm, compression_level, compression_format_version, logical_size
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
+    compression_algorithm, compression_level, compression_format_version, logical_size,
+    etag, content_type, user_metadata
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16);
 
 -- name: DeletePendingObject :exec
 DELETE FROM pending_objects WHERE intent_id = $1;
@@ -25,7 +26,8 @@ DELETE FROM pending_objects WHERE intent_id = $1;
 -- Bounded by @max_keys per call so a backlog cannot starve other queries.
 SELECT intent_id, object_key, backend_name, size_bytes,
        encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at,
-       compression_algorithm, compression_level, compression_format_version, logical_size
+       compression_algorithm, compression_level, compression_format_version, logical_size,
+       etag, content_type, user_metadata
 FROM pending_objects
 WHERE created_at <= @older_than
 ORDER BY created_at ASC
@@ -46,7 +48,8 @@ DELETE FROM pending_objects WHERE backend_name = $1;
 -- treats that as a benign no-op.
 SELECT intent_id, object_key, backend_name, size_bytes,
        encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at,
-       compression_algorithm, compression_level, compression_format_version, logical_size
+       compression_algorithm, compression_level, compression_format_version, logical_size,
+       etag, content_type, user_metadata
 FROM pending_objects
 WHERE intent_id = $1
 FOR UPDATE;

@@ -81,7 +81,7 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.O
 		SELECT object_key, backend_name, size_bytes, encrypted, encryption_key,
 		       key_id, plaintext_size, content_hash,
 		       compression_algorithm, compression_level, compression_format_version, logical_size,
-		       created_at, last_scrubbed_at
+		       created_at, last_scrubbed_at, etag, content_type, user_metadata
 		FROM object_locations
 		WHERE object_key = ?
 		ORDER BY created_at ASC`, key)
@@ -92,7 +92,7 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.O
 
 	var locs []core.ObjectLocation
 	for rows.Next() {
-		loc, err := scanObjectLocation(rows)
+		loc, err := scanIdentifiedObjectLocation(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -125,7 +125,7 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 
 	// Subquery with GROUP BY + MIN(rowid) replaces DISTINCT ON (object_key).
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.created_at
+		SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.created_at, ol.etag
 		FROM object_locations ol
 		INNER JOIN (
 			SELECT object_key, MIN(rowid) AS min_rowid
@@ -141,7 +141,7 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 	}
 	defer rows.Close()
 
-	objects, err := scanSlimObjectLocations(rows)
+	objects, err := scanListedObjectLocations(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +200,7 @@ func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, sta
 					|| char(unicode(substr(w.k, length(:prefix) + instr(substr(w.k, length(:prefix) + 1), :delim) + length(:delim) - 1, 1)) + 1)
 				ELSE w.k
 			END AS skip_bound,
-			ol.backend_name, ol.size_bytes, ol.created_at
+			ol.backend_name, ol.size_bytes, ol.created_at, ol.etag
 		FROM walk w
 		LEFT JOIN object_locations ol ON ol.rowid = (
 			SELECT MIN(rowid) FROM object_locations o2
@@ -243,8 +243,9 @@ func scanDelimitedEntries(rows *sql.Rows) ([]core.DelimitedEntry, error) {
 			backend   sql.NullString
 			sizeBytes sql.NullInt64
 			createdAt sql.NullString
+			etag      sql.NullString
 		)
-		if err := rows.Scan(&key, &isPrefix, &commonPfx, &skipBound, &backend, &sizeBytes, &createdAt); err != nil {
+		if err := rows.Scan(&key, &isPrefix, &commonPfx, &skipBound, &backend, &sizeBytes, &createdAt, &etag); err != nil {
 			return nil, fmt.Errorf("failed to scan delimited entry: %w", err)
 		}
 		e := core.DelimitedEntry{IsPrefix: isPrefix != 0, CommonPrefix: commonPfx.String, SkipBound: skipBound}
@@ -257,6 +258,7 @@ func scanDelimitedEntries(rows *sql.Rows) ([]core.DelimitedEntry, error) {
 				return nil, fmt.Errorf(errInvalidTimestamp, createdAt.String, parseErr)
 			}
 			e.Leaf.CreatedAt = t
+			e.Leaf.Identity = listedIdentity(etag)
 		}
 		entries = append(entries, e)
 	}
@@ -362,6 +364,44 @@ func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, aft
 // ListObjects, ListExpiredObjects, and ListObjectsByBackend. Centralizes
 // the per-row scan + RFC3339 timestamp parse so the three list helpers
 // don't carry parallel loop bodies.
+// scanListedObjectLocations scans a listing row, which carries the ETag on top
+// of the slim columns because a Contents entry reports one. NULL leaves the
+// entry without an identity, which is what an object that has not learned its
+// ETag yet has.
+func scanListedObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
+	var locs []core.ObjectLocation
+	for rows.Next() {
+		var (
+			loc       core.ObjectLocation
+			createdAt string
+			etag      sql.NullString
+		)
+		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &createdAt, &etag); err != nil {
+			return nil, fmt.Errorf("failed to scan object location: %w", err)
+		}
+		var parseErr error
+		loc.CreatedAt, parseErr = parseTime(createdAt)
+		if parseErr != nil {
+			return nil, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
+		}
+		loc.Identity = listedIdentity(etag)
+		locs = append(locs, loc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate object locations: %w", err)
+	}
+	return locs, nil
+}
+
+// listedIdentity builds the identity a listing row carries: the ETag alone,
+// which is all a Contents entry reports.
+func listedIdentity(etag sql.NullString) *core.ObjectIdentity {
+	if !etag.Valid || etag.String == "" {
+		return nil
+	}
+	return &core.ObjectIdentity{ETag: etag.String}
+}
+
 func scanSlimObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
 	var locs []core.ObjectLocation
 	for rows.Next() {
@@ -570,62 +610,130 @@ func (s *Store) UpdateContentHash(ctx context.Context, key, backendName, hash st
 // ROW SCANNERS
 // -------------------------------------------------------------------------
 
+// scanIdentifiedObjectLocation scans a row that also selects the three
+// identity columns, which only the read path's own query does: a scrub or
+// replication row is about the bytes, not about what a client is told they
+// are. The identity columns come last so the shared scanner ahead of it stays
+// the one description of the rest of the row.
+func scanIdentifiedObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
+	var (
+		loc          core.ObjectLocation
+		cols         scannedObjectColumns
+		etag         sql.NullString
+		contentType  sql.NullString
+		userMetadata sql.NullString
+	)
+	dest := append(cols.scanDest(&loc), &etag, &contentType, &userMetadata)
+	if err := rows.Scan(dest...); err != nil {
+		return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
+	}
+	if err := cols.apply(&loc); err != nil {
+		return core.ObjectLocation{}, err
+	}
+	loc.Identity = identityFromColumns(etag, contentType, userMetadata)
+	return loc, nil
+}
+
 // scanObjectLocation scans a full object location row including all encryption
 // and integrity columns.
 func scanObjectLocation(rows *sql.Rows) (core.ObjectLocation, error) {
 	var (
-		loc           core.ObjectLocation
-		createdAt     string
-		keyID         *string
-		plaintextSize *int64
-		contentHash   *string
-		compAlgorithm *string
-		compLevel     *string
-		compVersion   *int64
-		logicalSize   *int64
-		lastScrubbed  *string
+		loc  core.ObjectLocation
+		cols scannedObjectColumns
 	)
-	if err := rows.Scan(
-		&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes,
-		&loc.Encrypted, &loc.EncryptionKey,
-		&keyID, &plaintextSize, &contentHash,
-		&compAlgorithm, &compLevel, &compVersion, &logicalSize,
-		&createdAt, &lastScrubbed,
-	); err != nil {
+	if err := rows.Scan(cols.scanDest(&loc)...); err != nil {
 		return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
 	}
+	if err := cols.apply(&loc); err != nil {
+		return core.ObjectLocation{}, err
+	}
+	return loc, nil
+}
+
+// scannedObjectColumns holds the nullable columns of an object_locations row
+// between the scan and the conversion. Both scanners share it, so the column
+// order and the NULL handling are each stated once - the identified scanner
+// appends its three columns to this list rather than restating it.
+type scannedObjectColumns struct {
+	createdAt     string
+	keyID         *string
+	plaintextSize *int64
+	contentHash   *string
+	compAlgorithm *string
+	compLevel     *string
+	compVersion   *int64
+	logicalSize   *int64
+	lastScrubbed  *string
+}
+
+// scanDest returns the scan targets in the order every object_locations query
+// selects them.
+func (c *scannedObjectColumns) scanDest(loc *core.ObjectLocation) []any {
+	return []any{
+		&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes,
+		&loc.Encrypted, &loc.EncryptionKey,
+		&c.keyID, &c.plaintextSize, &c.contentHash,
+		&c.compAlgorithm, &c.compLevel, &c.compVersion, &c.logicalSize,
+		&c.createdAt, &c.lastScrubbed,
+	}
+}
+
+// apply dereferences the scanned columns onto loc.
+func (c *scannedObjectColumns) apply(loc *core.ObjectLocation) error {
 	var parseErr error
-	loc.CreatedAt, parseErr = parseTime(createdAt)
+	loc.CreatedAt, parseErr = parseTime(c.createdAt)
 	if parseErr != nil {
-		return core.ObjectLocation{}, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
+		return fmt.Errorf(errInvalidTimestamp, c.createdAt, parseErr)
 	}
-	if keyID != nil {
-		loc.KeyID = *keyID
+	if c.keyID != nil {
+		loc.KeyID = *c.keyID
 	}
-	if plaintextSize != nil {
-		loc.PlaintextSize = *plaintextSize
+	if c.plaintextSize != nil {
+		loc.PlaintextSize = *c.plaintextSize
 	}
-	if contentHash != nil {
-		loc.ContentHash = *contentHash
+	if c.contentHash != nil {
+		loc.ContentHash = *c.contentHash
 	}
-	if compAlgorithm != nil {
-		loc.CompressionAlgorithm = *compAlgorithm
+	if c.compAlgorithm != nil {
+		loc.CompressionAlgorithm = *c.compAlgorithm
 	}
-	if compLevel != nil {
-		loc.CompressionLevel = *compLevel
+	if c.compLevel != nil {
+		loc.CompressionLevel = *c.compLevel
 	}
-	if compVersion != nil {
-		loc.CompressionFormatVersion = int(*compVersion)
+	if c.compVersion != nil {
+		loc.CompressionFormatVersion = int(*c.compVersion)
 	}
-	if logicalSize != nil {
-		loc.LogicalSize = *logicalSize
+	if c.logicalSize != nil {
+		loc.LogicalSize = *c.logicalSize
 	}
-	if lastScrubbed != nil {
-		scrubbed, err := parseTime(*lastScrubbed)
+	if c.lastScrubbed != nil {
+		scrubbed, err := parseTime(*c.lastScrubbed)
 		if err != nil {
-			return core.ObjectLocation{}, fmt.Errorf(errInvalidTimestamp, *lastScrubbed, err)
+			return fmt.Errorf(errInvalidTimestamp, *c.lastScrubbed, err)
 		}
 		loc.LastScrubbedAt = &scrubbed
 	}
-	return loc, nil
+	return nil
+}
+
+// RecordObjectIdentity fills the identity columns a read had to ask a backend
+// for. Applied to every copy of the key: a per-copy value is what lets a
+// failover change the ETag under a conditional request. Columns already set
+// are left alone, so what a write computed over the client's own bytes
+// outranks what a backend reports about the bytes as stored.
+func (s *Store) RecordObjectIdentity(ctx context.Context, key string, id *core.ObjectIdentity) error {
+	if id == nil {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE object_locations
+		SET etag          = COALESCE(etag, ?),
+		    content_type  = COALESCE(content_type, ?),
+		    user_metadata = COALESCE(user_metadata, ?)
+		WHERE object_key = ?`,
+		identityETag(id), identityContentType(id), identityMetadataJSON(id), key)
+	if err != nil {
+		return fmt.Errorf("record object identity: %w", err)
+	}
+	return nil
 }

@@ -314,6 +314,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_cache_evictions_total` | Counter | — | Object data cache evictions (LRU or TTL) |
 | `s3o_cache_size_bytes` | Gauge | — | Current memory used by cached objects |
 | `s3o_cache_entries` | Gauge | — | Current number of cached objects |
+| `s3o_head_served_from_metadata_total` | Counter | — | HEAD responses answered from the object ledger, each one a backend request and a metered API call avoided |
 | `s3o_cache_flush_total` | Counter | — | Admin-triggered object data cache flushes |
 | `s3o_cache_admin_invalidations_total` | Counter | — | Admin-triggered single-key cache invalidations |
 | `s3o_integrity_checks_total` | Counter | operation | Integrity hash verifications performed (read, scrub) |

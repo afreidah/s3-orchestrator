@@ -17,6 +17,32 @@ import "time"
 // OBJECT METADATA
 // -------------------------------------------------------------------------
 
+// ObjectIdentity is what the client sees an object as, independent of which
+// copy answers: the validator conditional requests compare against, the
+// content type it was written with, and the user metadata it carries. The
+// counterpart to StoredForm, which describes the bytes on the backend instead.
+//
+// ETag is the MD5 of the bytes the client wrote, or the AWS composite for a
+// multipart upload, and is therefore not what the backend reports once the
+// stored bytes are compressed or encrypted.
+//
+// A nil *ObjectIdentity means unknown - a row written before identity was
+// recorded, or an object imported from a backend - and a read falls back to
+// asking the backend. That is distinct from a present identity with an empty
+// ContentType or an empty UserMetadata, which are answers in themselves.
+type ObjectIdentity struct {
+	ETag         string
+	ContentType  string
+	UserMetadata map[string]string
+}
+
+// Complete reports whether the identity answers a HEAD on its own. An identity
+// missing the ETag cannot: the response has to carry a validator, and the only
+// place left to get one is the backend.
+func (i *ObjectIdentity) Complete() bool {
+	return i != nil && i.ETag != ""
+}
+
 // StoredForm describes how the bytes on a backend differ from the logical
 // object a client sees: whether they are compressed, whether they are an
 // encryption envelope, the key needed to read them back, and the sizes and
@@ -90,6 +116,7 @@ type ObjectLocation struct {
 	CompressionProbeLevel    string
 	LastScrubbedAt           *time.Time
 	Unmanaged                bool
+	Identity                 *ObjectIdentity
 }
 
 // ExistingCopy is the projection of an object_locations row that promotion
@@ -135,6 +162,7 @@ type PendingObject struct {
 	CompressionLevel         string
 	CompressionFormatVersion int
 	LogicalSize              int64
+	Identity                 *ObjectIdentity
 	CreatedAt                time.Time
 }
 
@@ -223,15 +251,33 @@ type MultipartUpload struct {
 // sqlc row's int32 value is widened by the engine adapter on read.
 // UploadID is omitted because parts are always queried in the context
 // of a specific upload.
+// ETag is what the backend returned for the part as stored; PlaintextETag is
+// the MD5 of the bytes the client sent for it. They differ once the stored
+// part is an encryption envelope, and only the second one can build the
+// object's composite ETag. PlaintextETag is empty for parts uploaded before it
+// was recorded.
 type MultipartPart struct {
 	PartNumber    int
 	ETag          string
+	PlaintextETag string
 	SizeBytes     int64
 	CreatedAt     time.Time
 	Encrypted     bool
 	EncryptionKey []byte
 	KeyID         string
 	PlaintextSize int64
+}
+
+// RecordPartParams is one RecordPart call's inputs. Bundled rather than passed
+// positionally: the two ETags and the two sizes are adjacent values of the same
+// types, which is exactly the shape a transposition hides in.
+type RecordPartParams struct {
+	UploadID      string
+	PartNumber    int
+	ETag          string
+	PlaintextETag string
+	SizeBytes     int64
+	Form          *StoredForm
 }
 
 // CompletePart is one entry of a client's CompleteMultipartUpload manifest:

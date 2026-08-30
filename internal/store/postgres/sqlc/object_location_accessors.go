@@ -83,6 +83,9 @@ func (r GetAllObjectLocationsRow) GetCompressionFormatVersion() *int16 {
 func (r GetAllObjectLocationsRow) GetLastScrubbedAt() pgtype.Timestamptz {
 	return r.LastScrubbedAt
 }
+func (r GetAllObjectLocationsRow) GetEtag() *string        { return r.Etag }
+func (r GetAllObjectLocationsRow) GetContentType() *string { return r.ContentType }
+func (r GetAllObjectLocationsRow) GetUserMetadata() []byte { return r.UserMetadata }
 
 // GetUnderReplicatedObjectsRow
 

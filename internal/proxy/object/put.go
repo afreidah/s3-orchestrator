@@ -23,6 +23,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
 
@@ -132,6 +133,7 @@ type putPlan struct {
 	logicalSize int64
 	storedSize  int64
 	contentHash string
+	etagDigest  string
 	compressed  bool
 	cleanup     func()
 }
@@ -164,7 +166,7 @@ func (o *Manager) physicalSize(storedSize int64) int64 {
 // settles: the encoded bytes have to replay on every failover attempt, and the
 // plaintext is what they were encoded from.
 func (o *Manager) preparePutBody(span trace.Span, src io.Reader, size int64) (*putPlan, error) {
-	mbody, contentHash, err := o.bufferPutBody(span, src, size)
+	mbody, etagDigest, contentHash, err := o.bufferPutBody(span, src, size)
 	if err != nil {
 		return nil, err
 	}
@@ -173,6 +175,7 @@ func (o *Manager) preparePutBody(span trace.Span, src io.Reader, size int64) (*p
 		logicalSize: size,
 		storedSize:  size,
 		contentHash: contentHash,
+		etagDigest:  etagDigest,
 		cleanup:     mbody.Cleanup,
 	}
 	if !o.compressOnWrite(size) {
@@ -247,25 +250,30 @@ type putAttemptResult struct {
 // bufferPutBody materializes the request body into a seekable form
 // (memory for small payloads, tempfile above materialize.MemThreshold)
 // so failover retries can replay the plaintext without holding the
-// full body on the heap. When integrity verification is enabled, the
-// SHA-256 is computed during the same single buffering pass via
-// io.MultiWriter so the body is not re-scanned after materialization.
+// full body on the heap. Both digests are computed during that single
+// buffering pass via io.MultiWriter so the body is not re-scanned
+// afterwards.
 //
-// Returns the materialized body, the content hash (empty when
-// integrity verification is disabled), and a cleanup the caller must
+// The ETag's MD5 is unconditional: it is what the client is told the object
+// is, so it cannot be gated on an operator's integrity setting the way the
+// verification SHA-256 is.
+//
+// Returns the materialized body, the ETag digest, the content hash (empty
+// when integrity verification is disabled), and a cleanup the caller must
 // invoke once the upload settles (safe to defer in every code path).
-func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*materialize.Body, string, error) {
+func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*materialize.Body, string, string, error) {
 	var hasher hash.Hash
 	icfg := o.integrityCfg.Load()
 	if icfg != nil && icfg.Enabled {
 		hasher = newSHA256()
 	}
-	mb, err := materialize.New(body, size, hasher)
+	etagHasher := etag.NewHasher()
+	mb, err := materialize.New(body, size, hasher, etagHasher)
 	if err != nil {
 		observe.RecordSpanError(span, err)
-		return nil, "", fmt.Errorf("buffer request body: %w", err)
+		return nil, "", "", fmt.Errorf("buffer request body: %w", err)
 	}
-	return mb, sha256Hex(hasher), nil
+	return mb, etag.Hex(etagHasher), sha256Hex(hasher), nil
 }
 
 // attemptPutOnBackend performs one backend PUT attempt: select a
@@ -299,14 +307,17 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	// commit failure after the bytes land has a recovery breadcrumb: the
 	// pending reaper promotes the intent on a later tick instead of the
 	// old failure path silently deleting the just-written copy.
-	intentID, err := o.coord.InsertPendingIntent(ctx, key, backendName, uploadSize, form)
+	identity := putIdentity(plan.etagDigest, req)
+	intentID, err := o.coord.InsertPendingIntent(ctx, key, backendName, uploadSize, form, identity)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
 
 	bctx, bcancel := o.core.WithTimeout(ctx)
-	etag, err := be.PutObject(bctx, key, uploadBody, uploadSize, req.ContentType, req.Metadata)
+	// The backend's ETag is discarded: it describes the bytes as stored, which
+	// are ciphertext or compressed frames whenever either feature is on.
+	_, err = be.PutObject(bctx, key, uploadBody, uploadSize, req.ContentType, req.Metadata)
 	bcancel()
 	if err != nil {
 		o.core.Acct().APICall(backendName)
@@ -334,11 +345,32 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	}
 
 	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
-		Key: key, Backend: backendName, Size: uploadSize, Form: form, Tags: req.Tags, IntentID: intentID,
+		Key: key, Backend: backendName, Size: uploadSize, Form: form, Identity: identity,
+		Tags: req.Tags, IntentID: intentID,
 	}); err != nil {
 		return putAttemptResult{backend: backendName, fatalErr: err}
 	}
-	return putAttemptResult{backend: backendName, etag: etag, uploadSize: uploadSize}
+	// The ETag the client is told is the one recorded, not the one the backend
+	// returned: with compression or encryption on those differ, and a later
+	// HEAD answers from the row.
+	return putAttemptResult{backend: backendName, etag: identity.ETag, uploadSize: uploadSize}
+}
+
+// putIdentity assembles what a later read reports for this object without
+// asking a backend: the ETag over the bytes the client sent, plus the content
+// type and user metadata the request carried. A nil map is normalised to an
+// empty one so a stored identity means "this object has no user metadata"
+// rather than "nobody looked".
+func putIdentity(digest string, req *PutObjectRequest) *core.ObjectIdentity {
+	meta := req.Metadata
+	if meta == nil {
+		meta = map[string]string{}
+	}
+	return &core.ObjectIdentity{
+		ETag:         etag.Single(digest),
+		ContentType:  req.ContentType,
+		UserMetadata: meta,
+	}
 }
 
 // errDrainRaceAborted is the sentinel putErr the attemptPutOnBackend

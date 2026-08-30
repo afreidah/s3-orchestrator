@@ -173,7 +173,7 @@ func (q *Queries) DeleteObjectsByKeys(ctx context.Context, objectKeys []string) 
 }
 
 const getAllObjectLocations = `-- name: GetAllObjectLocations :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at, last_scrubbed_at
+SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at, last_scrubbed_at
 FROM object_locations
 WHERE object_key = $1
 ORDER BY created_at ASC
@@ -192,6 +192,9 @@ type GetAllObjectLocationsRow struct {
 	CompressionLevel         *string
 	CompressionFormatVersion *int16
 	LogicalSize              *int64
+	Etag                     *string
+	ContentType              *string
+	UserMetadata             []byte
 	CreatedAt                pgtype.Timestamptz
 	LastScrubbedAt           pgtype.Timestamptz
 }
@@ -218,6 +221,9 @@ func (q *Queries) GetAllObjectLocations(ctx context.Context, objectKey string) (
 			&i.CompressionLevel,
 			&i.CompressionFormatVersion,
 			&i.LogicalSize,
+			&i.Etag,
+			&i.ContentType,
+			&i.UserMetadata,
 			&i.CreatedAt,
 			&i.LastScrubbedAt,
 		); err != nil {
@@ -556,8 +562,8 @@ func (q *Queries) GetObjectsWithoutHash(ctx context.Context, arg GetObjectsWitho
 }
 
 const insertObjectLocation = `-- name: InsertObjectLocation :exec
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
 `
 
 type InsertObjectLocationParams struct {
@@ -573,6 +579,9 @@ type InsertObjectLocationParams struct {
 	CompressionLevel         *string
 	CompressionFormatVersion *int16
 	LogicalSize              *int64
+	Etag                     *string
+	ContentType              *string
+	UserMetadata             []byte
 }
 
 func (q *Queries) InsertObjectLocation(ctx context.Context, arg InsertObjectLocationParams) error {
@@ -589,13 +598,16 @@ func (q *Queries) InsertObjectLocation(ctx context.Context, arg InsertObjectLoca
 		arg.CompressionLevel,
 		arg.CompressionFormatVersion,
 		arg.LogicalSize,
+		arg.Etag,
+		arg.ContentType,
+		arg.UserMetadata,
 	)
 	return err
 }
 
 const insertObjectLocationIfNotExists = `-- name: InsertObjectLocationIfNotExists :one
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, managed, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, managed, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING true AS inserted
 `
@@ -613,6 +625,9 @@ type InsertObjectLocationIfNotExistsParams struct {
 	CompressionLevel         *string
 	CompressionFormatVersion *int16
 	LogicalSize              *int64
+	Etag                     *string
+	ContentType              *string
+	UserMetadata             []byte
 	Managed                  bool
 }
 
@@ -630,6 +645,9 @@ func (q *Queries) InsertObjectLocationIfNotExists(ctx context.Context, arg Inser
 		arg.CompressionLevel,
 		arg.CompressionFormatVersion,
 		arg.LogicalSize,
+		arg.Etag,
+		arg.ContentType,
+		arg.UserMetadata,
 		arg.Managed,
 	)
 	var inserted bool
@@ -1043,7 +1061,7 @@ func (q *Queries) ListObjectsByBackendKeyAsc(ctx context.Context, arg ListObject
 }
 
 const listObjectsByPrefix = `-- name: ListObjectsByPrefix :many
-SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, size_bytes, created_at
+SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, size_bytes, etag, created_at
 FROM object_locations
 WHERE object_key LIKE $1::text || '%' ESCAPE '\'
   AND object_key COLLATE "C" > $2
@@ -1061,6 +1079,7 @@ type ListObjectsByPrefixRow struct {
 	ObjectKey   string
 	BackendName string
 	SizeBytes   int64
+	Etag        *string
 	CreatedAt   pgtype.Timestamptz
 }
 
@@ -1083,6 +1102,7 @@ func (q *Queries) ListObjectsByPrefix(ctx context.Context, arg ListObjectsByPref
 			&i.ObjectKey,
 			&i.BackendName,
 			&i.SizeBytes,
+			&i.Etag,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -1131,10 +1151,11 @@ SELECT
         ELSE w.k END)::text AS skip_bound,
     COALESCE(leaf.backend_name, '')::text AS backend_name,
     COALESCE(leaf.size_bytes, 0)::bigint AS size_bytes,
+    COALESCE(leaf.etag, '')::text AS etag,
     COALESCE(leaf.created_at, to_timestamp(0)) AS created_at
 FROM walk w
 LEFT JOIN LATERAL (
-    SELECT backend_name, size_bytes, created_at
+    SELECT backend_name, size_bytes, etag, created_at
       FROM object_locations o2
      WHERE o2.object_key = w.k
        AND position($2::text IN substr(w.k, length($1::text) + 1)) = 0
@@ -1161,6 +1182,7 @@ type ListObjectsDelimitedRow struct {
 	SkipBound    string
 	BackendName  string
 	SizeBytes    int64
+	Etag         string
 	CreatedAt    pgtype.Timestamptz
 }
 
@@ -1190,6 +1212,7 @@ func (q *Queries) ListObjectsDelimited(ctx context.Context, arg ListObjectsDelim
 			&i.SkipBound,
 			&i.BackendName,
 			&i.SizeBytes,
+			&i.Etag,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -1373,7 +1396,7 @@ func (q *Queries) LockObjectKeyForWrite(ctx context.Context, hashtext string) er
 const lockObjectOnBackend = `-- name: LockObjectOnBackend :one
 SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash,
        compression_algorithm, compression_level, compression_format_version, logical_size,
-       compression_probe_size, compression_probe_level
+       compression_probe_size, compression_probe_level, etag, content_type, user_metadata
 FROM object_locations
 WHERE object_key = $1 AND backend_name = $2
 FOR UPDATE
@@ -1397,6 +1420,9 @@ type LockObjectOnBackendRow struct {
 	LogicalSize              *int64
 	CompressionProbeSize     *int64
 	CompressionProbeLevel    *string
+	Etag                     *string
+	ContentType              *string
+	UserMetadata             []byte
 }
 
 // Every column describing the stored bytes, because the caller moving this row
@@ -1424,6 +1450,9 @@ func (q *Queries) LockObjectOnBackend(ctx context.Context, arg LockObjectOnBacke
 		&i.LogicalSize,
 		&i.CompressionProbeSize,
 		&i.CompressionProbeLevel,
+		&i.Etag,
+		&i.ContentType,
+		&i.UserMetadata,
 	)
 	return i, err
 }
@@ -1596,6 +1625,38 @@ func (q *Queries) RecordCompressionProbe(ctx context.Context, arg RecordCompress
 		arg.BackendName,
 		arg.CompressionProbeSize,
 		arg.CompressionProbeLevel,
+	)
+	return err
+}
+
+const recordObjectIdentity = `-- name: RecordObjectIdentity :exec
+UPDATE object_locations
+SET etag          = COALESCE(etag, $2),
+    content_type  = COALESCE(content_type, $3),
+    user_metadata = COALESCE(user_metadata, $4)
+WHERE object_key = $1
+`
+
+type RecordObjectIdentityParams struct {
+	ObjectKey    string
+	Etag         *string
+	ContentType  *string
+	UserMetadata []byte
+}
+
+// RecordObjectIdentity fills in what a read had to ask a backend for, so the
+// next one does not. Every copy of the key is written, not just the one that
+// answered: a per-copy value is what lets a failover change the ETag under a
+// conditional request, which is the divergence this column exists to end.
+//
+// Only NULL columns are filled. A recorded identity is what the write computed
+// over the client's own bytes, and a backend's answer must never overwrite it.
+func (q *Queries) RecordObjectIdentity(ctx context.Context, arg RecordObjectIdentityParams) error {
+	_, err := q.db.Exec(ctx, recordObjectIdentity,
+		arg.ObjectKey,
+		arg.Etag,
+		arg.ContentType,
+		arg.UserMetadata,
 	)
 	return err
 }

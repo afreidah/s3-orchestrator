@@ -28,7 +28,7 @@ import (
 // field.
 func TestObjectFromStoredForm_NilForm(t *testing.T) {
 	t.Parallel()
-	loc := objectFromStoredForm("k", "b1", 100, nil)
+	loc := objectFromStoredForm("k", "b1", 100, nil, nil)
 	if loc == nil {
 		t.Fatal("expected non-nil ObjectLocation")
 	}
@@ -51,7 +51,7 @@ func TestObjectFromStoredForm_EncryptedFields(t *testing.T) {
 		PlaintextSize: 90,
 		ContentHash:   "abc",
 	}
-	loc := objectFromStoredForm("k", "b1", 100, form)
+	loc := objectFromStoredForm("k", "b1", 100, form, nil)
 	if !loc.Encrypted || loc.KeyID != "kid-1" || loc.PlaintextSize != 90 || loc.ContentHash != "abc" {
 		t.Errorf("encryption fields not preserved: %+v", loc)
 	}
@@ -65,7 +65,7 @@ func TestObjectFromStoredForm_EncryptedFields(t *testing.T) {
 func TestObjectFromStoredForm_HashOnly(t *testing.T) {
 	t.Parallel()
 	form := &StoredForm{ContentHash: "abc123"}
-	loc := objectFromStoredForm("k", "b1", 100, form)
+	loc := objectFromStoredForm("k", "b1", 100, form, nil)
 	if loc.Encrypted {
 		t.Error("Encrypted = true, want false")
 	}
@@ -79,7 +79,7 @@ func TestObjectFromStoredForm_HashOnly(t *testing.T) {
 // produces the same shape as a nil StoredForm.
 func TestObjectFromStoredForm_PlaintextFormWithoutEncryption(t *testing.T) {
 	t.Parallel()
-	loc := objectFromStoredForm("k", "b1", 100, &StoredForm{})
+	loc := objectFromStoredForm("k", "b1", 100, &StoredForm{}, nil)
 	if loc.Encrypted || loc.EncryptionKey != nil || loc.ContentHash != "" {
 		t.Errorf("plaintext form did not yield zero encryption fields: %+v", loc)
 	}

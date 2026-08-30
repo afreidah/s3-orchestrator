@@ -141,6 +141,9 @@ func (a *pgTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, backen
 		CompressionProbeSize:     derefInt64(row.CompressionProbeSize),
 		CompressionProbeLevel:    derefStr(row.CompressionProbeLevel),
 	}
+	// Carried so a move keeps the object's identity: the bytes are the same
+	// bytes, so the client-facing answer does not change with their address.
+	loc.Identity, _ = core.IdentityFromColumns(derefStr(row.Etag), derefStr(row.ContentType), row.UserMetadata)
 	return loc, true, nil
 }
 

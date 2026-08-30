@@ -515,6 +515,20 @@ func (mr *MockCoordinatorStoresMockRecorder) RecordObject(ctx, req any) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObject", reflect.TypeOf((*MockCoordinatorStores)(nil).RecordObject), ctx, req)
 }
 
+// RecordObjectIdentity mocks base method.
+func (m *MockCoordinatorStores) RecordObjectIdentity(ctx context.Context, key string, id *core.ObjectIdentity) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RecordObjectIdentity", ctx, key, id)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RecordObjectIdentity indicates an expected call of RecordObjectIdentity.
+func (mr *MockCoordinatorStoresMockRecorder) RecordObjectIdentity(ctx, key, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectIdentity", reflect.TypeOf((*MockCoordinatorStores)(nil).RecordObjectIdentity), ctx, key, id)
+}
+
 // RequeueCleanupDLQ mocks base method.
 func (m *MockCoordinatorStores) RequeueCleanupDLQ(ctx context.Context, backend string) (int64, error) {
 	m.ctrl.T.Helper()

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -103,6 +104,17 @@ func validateManifestShape(manifest []core.CompletePart) error {
 	return nil
 }
 
+// clientPartETag returns the ETag UploadPart handed the client for this part:
+// the MD5 of the bytes they sent. Parts uploaded before that digest was
+// recorded fall back to the backend's value, which is what those clients were
+// given and therefore what they will send back.
+func clientPartETag(p *core.MultipartPart) string {
+	if p.PlaintextETag != "" {
+		return etag.Single(p.PlaintextETag)
+	}
+	return p.ETag
+}
+
 // validateManifestAgainstStored compares the manifest to the parts actually
 // held for the upload: every requested part must exist, its ETag must match,
 // and every part but the last must meet the minimum size. stored must be
@@ -130,7 +142,7 @@ func validateManifestAgainstStored(manifest []core.CompletePart, stored []core.M
 		// rejecting that outright would break callers this proxy has always
 		// accepted, so an omitted ETag skips the comparison and every
 		// supplied one is checked.
-		if want.ETag != "" && normalizeETag(want.ETag) != normalizeETag(got.ETag) {
+		if want.ETag != "" && normalizeETag(want.ETag) != normalizeETag(clientPartETag(got)) {
 			return &core.S3Error{
 				StatusCode: 400,
 				Code:       "InvalidPart",

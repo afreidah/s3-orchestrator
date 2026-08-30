@@ -42,12 +42,14 @@ func (s *Store) InsertPending(ctx context.Context, p *core.PendingObject) error 
 		   (intent_id, object_key, backend_name, size_bytes,
 		    encrypted, encryption_key, key_id, plaintext_size, content_hash,
 		    compression_algorithm, compression_level, compression_format_version, logical_size,
+		    etag, content_type, user_metadata,
 		    created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.IntentID, p.ObjectKey, p.BackendName, p.SizeBytes,
 		encrypted, p.EncryptionKey, keyID, plaintextSize, contentHash,
 		nullableString(p.CompressionAlgorithm), nullableString(p.CompressionLevel),
 		nullableInt64(int64(p.CompressionFormatVersion)), nullableInt64(p.LogicalSize),
+		identityETag(p.Identity), identityContentType(p.Identity), identityMetadataJSON(p.Identity),
 		now(),
 	); err != nil {
 		return fmt.Errorf("insert pending object: %w", err)
@@ -73,7 +75,8 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 		`SELECT intent_id, object_key, backend_name, size_bytes,
 		        encrypted, encryption_key, key_id, plaintext_size,
 		        content_hash, compression_algorithm, compression_level,
-		        compression_format_version, logical_size, created_at
+		        compression_format_version, logical_size, created_at,
+		        etag, content_type, user_metadata
 		   FROM pending_objects
 		  WHERE created_at <= ?
 		  ORDER BY created_at ASC
@@ -99,13 +102,18 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 			logicalSize   sql.NullInt64
 			createdAt     string
 			encKey        []byte
+			etag          sql.NullString
+			contentType   sql.NullString
+			userMetadata  sql.NullString
 		)
 		if err := rows.Scan(&p.IntentID, &p.ObjectKey, &p.BackendName, &p.SizeBytes,
 			&encrypted, &encKey, &keyID, &plaintextSize, &contentHash,
 			&compAlgorithm, &compLevel, &compVersion, &logicalSize, &createdAt,
+			&etag, &contentType, &userMetadata,
 		); err != nil {
 			return nil, fmt.Errorf("scan pending row: %w", err)
 		}
+		p.Identity = identityFromColumns(etag, contentType, userMetadata)
 		p.Encrypted = encrypted != 0
 		p.EncryptionKey = encKey
 		p.KeyID = nullStringValue(keyID)

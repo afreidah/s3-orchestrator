@@ -49,6 +49,13 @@ type ObjectStore interface {
 	MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error)
 	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *StoredForm) (ImportOutcome, error)
 	DeleteObjectLocation(ctx context.Context, key, backendName string) error
+
+	// RecordObjectIdentity fills in the identity columns a read had to ask a
+	// backend for, on every copy of the key so the answer stops depending on
+	// which one replies. Columns already set are left alone: what a write
+	// computed over the client's own bytes outranks what a backend reports
+	// about the bytes as stored.
+	RecordObjectIdentity(ctx context.Context, key string, id *ObjectIdentity) error
 }
 
 // TagStore defines object tag read and write operations. Writes are
@@ -84,7 +91,7 @@ type QuotaStore interface {
 type MultipartStore interface {
 	CreateMultipartUpload(ctx context.Context, params *CreateMultipartUploadParams) error
 	GetMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, error)
-	RecordPart(ctx context.Context, uploadID string, partNumber int, etag string, size int64, form *StoredForm) error
+	RecordPart(ctx context.Context, p *RecordPartParams) error
 	GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error)
 	DeleteMultipartUpload(ctx context.Context, uploadID string) error
 	ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error)

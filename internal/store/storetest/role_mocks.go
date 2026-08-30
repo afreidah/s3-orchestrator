@@ -222,6 +222,20 @@ func (mr *MockObjectStoreMockRecorder) RecordObject(ctx, req any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObject", reflect.TypeOf((*MockObjectStore)(nil).RecordObject), ctx, req)
 }
 
+// RecordObjectIdentity mocks base method.
+func (m *MockObjectStore) RecordObjectIdentity(ctx context.Context, key string, id *core.ObjectIdentity) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RecordObjectIdentity", ctx, key, id)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RecordObjectIdentity indicates an expected call of RecordObjectIdentity.
+func (mr *MockObjectStoreMockRecorder) RecordObjectIdentity(ctx, key, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordObjectIdentity", reflect.TypeOf((*MockObjectStore)(nil).RecordObjectIdentity), ctx, key, id)
+}
+
 // MockQuotaStore is a mock of QuotaStore interface.
 type MockQuotaStore struct {
 	ctrl     *gomock.Controller

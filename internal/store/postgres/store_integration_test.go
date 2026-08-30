@@ -361,10 +361,10 @@ func TestStoreInt_RecordPartAndGetParts(t *testing.T) {
 	uploadID, _ := seedMultipartUpload(t, s, "", nil)
 	ctx := context.Background()
 
-	if err := s.RecordPart(ctx, uploadID, 1, "etag-1", 1024, nil); err != nil {
+	if err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: uploadID, PartNumber: 1, ETag: "etag-1", SizeBytes: 1024, Form: nil}); err != nil {
 		t.Fatalf("RecordPart(1): %v", err)
 	}
-	if err := s.RecordPart(ctx, uploadID, 2, "etag-2", 2048, nil); err != nil {
+	if err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: uploadID, PartNumber: 2, ETag: "etag-2", SizeBytes: 2048, Form: nil}); err != nil {
 		t.Fatalf("RecordPart(2): %v", err)
 	}
 	parts, err := s.GetParts(ctx, uploadID)
@@ -437,10 +437,10 @@ func TestStoreInt_GetStaleMultipartUploads(t *testing.T) {
 // validation branch.
 func TestStoreInt_RecordPart_RejectsInvalidPartNumber(t *testing.T) {
 	s := adapterPgStore(t)
-	if err := s.RecordPart(context.Background(), "any", 0, "x", 0, nil); err == nil {
+	if err := s.RecordPart(context.Background(), &core.RecordPartParams{UploadID: "any", PartNumber: 0, ETag: "x"}); err == nil {
 		t.Error("expected error for partNumber=0")
 	}
-	if err := s.RecordPart(context.Background(), "any", 100001, "x", 0, nil); err == nil {
+	if err := s.RecordPart(context.Background(), &core.RecordPartParams{UploadID: "any", PartNumber: 100001, ETag: "x"}); err == nil {
 		t.Error("expected error for partNumber>10000")
 	}
 }
@@ -462,7 +462,7 @@ func TestStoreInt_RecordPart_PreservesEncryptionFields(t *testing.T) {
 	form := &core.StoredForm{
 		Encrypted: true, EncryptionKey: []byte("packed"), KeyID: "kid-1", PlaintextSize: 50,
 	}
-	if err := s.RecordPart(ctx, uploadID, 1, "etag", 1024, form); err != nil {
+	if err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: uploadID, PartNumber: 1, ETag: "etag", SizeBytes: 1024, Form: form}); err != nil {
 		t.Fatalf("RecordPart: %v", err)
 	}
 	parts, err := s.GetParts(ctx, uploadID)

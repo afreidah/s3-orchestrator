@@ -24,7 +24,7 @@ weight: 20
 
 PostgreSQL (or embedded SQLite) stores:
 
-- **`object_locations`** - every object's exact backend placement + content hash + per-copy size, plus a `managed` flag marking objects that count toward quota but that the workers do not act on
+- **`object_locations`** - every object's exact backend placement + content hash + per-copy size, plus a `managed` flag marking objects that count toward quota but that the workers do not act on, and the client-facing identity (ETag, content type, user metadata) that lets a HEAD answer without a backend request
 - **`backend_quotas`** — per-backend quota counters + orphan-bytes tracking
 - **`backend_usage`** - per-backend monthly API-call and egress counters
 - **`multipart_uploads`** / **`multipart_parts`** — multipart upload state

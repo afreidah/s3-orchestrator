@@ -90,7 +90,20 @@ func (s *Store) DeletePendingByBackend(ctx context.Context, backendName string) 
 // Pointer-typed columns stay nil when their string/int64 source is empty
 // so the database stores SQL NULL rather than the zero value.
 func pendingInsertParams(p *core.PendingObject) db.InsertPendingObjectParams {
+	var (
+		etag        *string
+		contentType *string
+		userMeta    []byte
+	)
+	if id := p.Identity; id != nil {
+		etag = strPtr(id.ETag)
+		contentType = strPtr(id.ContentType)
+		userMeta, _ = core.EncodeUserMetadata(id.UserMetadata)
+	}
 	return db.InsertPendingObjectParams{
+		Etag:                     etag,
+		ContentType:              contentType,
+		UserMetadata:             userMeta,
 		IntentID:                 p.IntentID,
 		ObjectKey:                p.ObjectKey,
 		BackendName:              p.BackendName,
@@ -110,7 +123,12 @@ func pendingInsertParams(p *core.PendingObject) db.InsertPendingObjectParams {
 // pendingFromRow maps a sqlc PendingObject row onto the package type,
 // dereferencing nullable columns to their zero value when SQL NULL.
 func pendingFromRow(row *db.PendingObject) core.PendingObject {
+	// A decode failure leaves the intent identity-less: the promotion then
+	// records an object a later read re-learns, which is the same state every
+	// pre-identity row is in.
+	id, _ := core.IdentityFromColumns(derefStr(row.Etag), derefStr(row.ContentType), row.UserMetadata)
 	return core.PendingObject{
+		Identity:                 id,
 		IntentID:                 row.IntentID,
 		ObjectKey:                row.ObjectKey,
 		BackendName:              row.BackendName,

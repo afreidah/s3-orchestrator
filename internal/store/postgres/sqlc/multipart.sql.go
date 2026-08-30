@@ -167,7 +167,7 @@ func (q *Queries) GetMultipartUploadsByBackend(ctx context.Context, backendName 
 }
 
 const getParts = `-- name: GetParts :many
-SELECT part_number, etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
+SELECT part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
 FROM multipart_parts
 WHERE upload_id = $1
 ORDER BY part_number
@@ -176,6 +176,7 @@ ORDER BY part_number
 type GetPartsRow struct {
 	PartNumber    int32
 	Etag          string
+	PlaintextEtag *string
 	SizeBytes     int64
 	Encrypted     bool
 	EncryptionKey []byte
@@ -196,6 +197,7 @@ func (q *Queries) GetParts(ctx context.Context, uploadID string) ([]GetPartsRow,
 		if err := rows.Scan(
 			&i.PartNumber,
 			&i.Etag,
+			&i.PlaintextEtag,
 			&i.SizeBytes,
 			&i.Encrypted,
 			&i.EncryptionKey,
@@ -305,16 +307,17 @@ func (q *Queries) ListMultipartUploadsByPrefix(ctx context.Context, arg ListMult
 }
 
 const upsertPart = `-- name: UpsertPart :exec
-INSERT INTO multipart_parts (upload_id, part_number, etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+INSERT INTO multipart_parts (upload_id, part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
 ON CONFLICT (upload_id, part_number) DO UPDATE SET
-    etag = $3, size_bytes = $4, encrypted = $5, encryption_key = $6, key_id = $7, plaintext_size = $8, created_at = NOW()
+    etag = $3, plaintext_etag = $4, size_bytes = $5, encrypted = $6, encryption_key = $7, key_id = $8, plaintext_size = $9, created_at = NOW()
 `
 
 type UpsertPartParams struct {
 	UploadID      string
 	PartNumber    int32
 	Etag          string
+	PlaintextEtag *string
 	SizeBytes     int64
 	Encrypted     bool
 	EncryptionKey []byte
@@ -327,6 +330,7 @@ func (q *Queries) UpsertPart(ctx context.Context, arg UpsertPartParams) error {
 		arg.UploadID,
 		arg.PartNumber,
 		arg.Etag,
+		arg.PlaintextEtag,
 		arg.SizeBytes,
 		arg.Encrypted,
 		arg.EncryptionKey,

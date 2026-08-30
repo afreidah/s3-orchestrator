@@ -379,10 +379,13 @@ func assertETagAndStorageClass(t *testing.T, contents []listContentForAssertion)
 		byKey[c.Key] = c
 	}
 	if got := byKey["file1.txt"].ETag; got != `"d41d8cd98f00b204e9800998ecf8427e"` {
-		t.Errorf("file1 ETag = %q, want quoted hash", got)
+		t.Errorf("file1 ETag = %q, want the object's recorded ETag", got)
 	}
+	// file2 carries a content hash and no identity: the hash is the integrity
+	// SHA-256 of the stored bytes and must never be published as an ETag,
+	// which is what a listing did before objects had one of their own.
 	if got := byKey["file2.txt"].ETag; got != `""` {
-		t.Errorf("file2 ETag = %q, want quoted empty string", got)
+		t.Errorf("file2 ETag = %q, want quoted empty string rather than the content hash", got)
 	}
 	for _, c := range contents {
 		if c.StorageClass != "STANDARD" {
@@ -405,8 +408,14 @@ func TestListObjects_IncludesETagAndStorageClass(t *testing.T) {
 		m.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(&core.ListObjectsResult{
 				Objects: []core.ObjectLocation{
-					{ObjectKey: "mybucket/file1.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: now, ContentHash: "d41d8cd98f00b204e9800998ecf8427e"},
-					{ObjectKey: "mybucket/file2.txt", BackendName: "b1", SizeBytes: 200, CreatedAt: now},
+					{
+						ObjectKey: "mybucket/file1.txt", BackendName: "b1", SizeBytes: 100, CreatedAt: now,
+						Identity: &core.ObjectIdentity{ETag: `"d41d8cd98f00b204e9800998ecf8427e"`},
+					},
+					{
+						ObjectKey: "mybucket/file2.txt", BackendName: "b1", SizeBytes: 200, CreatedAt: now,
+						ContentHash: "0a9b7c6d5e4f30211122334455667788990011223344556677889900aabbccdd",
+					},
 				},
 			}, nil).AnyTimes()
 	})

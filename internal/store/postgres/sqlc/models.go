@@ -62,6 +62,7 @@ type MultipartPart struct {
 	EncryptionKey []byte
 	KeyID         *string
 	PlaintextSize *int64
+	PlaintextEtag *string
 }
 
 type MultipartUpload struct {
@@ -105,6 +106,9 @@ type ObjectLocation struct {
 	LogicalSize              *int64
 	CompressionProbeSize     *int64
 	CompressionProbeLevel    *string
+	Etag                     *string
+	ContentType              *string
+	UserMetadata             []byte
 }
 
 type ObjectTag struct {
@@ -128,4 +132,7 @@ type PendingObject struct {
 	CompressionLevel         *string
 	CompressionFormatVersion *int16
 	LogicalSize              *int64
+	Etag                     *string
+	ContentType              *string
+	UserMetadata             []byte
 }

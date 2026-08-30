@@ -80,6 +80,17 @@ var (
 		},
 	)
 
+	// HeadServedFromMetadataTotal counts HEAD responses answered from the
+	// object ledger, each one a backend round trip and a metered API call
+	// that did not happen. Rises as pre-identity objects are read once and
+	// learn their identity.
+	HeadServedFromMetadataTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3o_head_served_from_metadata_total",
+			Help: "HEAD responses answered from stored metadata without a backend request",
+		},
+	)
+
 	// --- Redis metrics ---
 
 	// RedisOperationsTotal counts Redis counter backend operations.

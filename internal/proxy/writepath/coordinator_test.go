@@ -197,7 +197,7 @@ func TestInsertPendingIntent_CopiesStoredForm(t *testing.T) {
 		ContentHash:   "deadbeef",
 	}
 
-	intentID, err := coord.InsertPendingIntent(context.Background(), "k", "b1", 4096, form)
+	intentID, err := coord.InsertPendingIntent(context.Background(), "k", "b1", 4096, form, nil)
 	if err != nil {
 		t.Fatalf("InsertPendingIntent: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestInsertPendingIntent_CopiesCompression(t *testing.T) {
 		LogicalSize:              8192,
 	}
 
-	if _, err := coord.InsertPendingIntent(context.Background(), "k", "b1", 4096, form); err != nil {
+	if _, err := coord.InsertPendingIntent(context.Background(), "k", "b1", 4096, form, nil); err != nil {
 		t.Fatalf("InsertPendingIntent: %v", err)
 	}
 	if got.CompressionAlgorithm != "zstd" {
@@ -272,7 +272,7 @@ func TestInsertPendingIntent_StoreError(t *testing.T) {
 
 	coord := newCoordinatorWithStore(store, true)
 
-	intentID, err := coord.InsertPendingIntent(context.Background(), "k", "b1", 4096, nil)
+	intentID, err := coord.InsertPendingIntent(context.Background(), "k", "b1", 4096, nil, nil)
 	if err == nil {
 		t.Fatal("expected error from InsertPending failure")
 	}

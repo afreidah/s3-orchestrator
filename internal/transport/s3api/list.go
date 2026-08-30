@@ -83,9 +83,13 @@ type xmlListResultV2 struct {
 func buildListContents(objects []core.ObjectLocation, prefixes []string, prefixLen int) ([]xmlContent, []xmlCommonPrefix) {
 	contents := make([]xmlContent, 0, len(objects))
 	for i := range objects {
+		// The object's own ETag, not the integrity hash: that one is a SHA-256
+		// of the stored bytes and never was an ETag. An object that has not
+		// learned one yet reports the empty pair of quotes, which is what
+		// clients that dereference the element without a nil check need.
 		etag := `""`
-		if objects[i].ContentHash != "" {
-			etag = `"` + objects[i].ContentHash + `"`
+		if id := objects[i].Identity; id.Complete() {
+			etag = id.ETag
 		}
 		contents = append(contents, xmlContent{
 			Key:          objects[i].ObjectKey[prefixLen:],

@@ -99,7 +99,7 @@ func (r *Replicator) verifyReplica(ctx context.Context, target string, source *c
 	}
 
 	telemetry.IntegrityChecksTotal.WithLabelValues(integrityOpReplicate).Inc()
-	if actual == source.ContentHash {
+	if actual.SHA256 == source.ContentHash {
 		return replicaVerified
 	}
 

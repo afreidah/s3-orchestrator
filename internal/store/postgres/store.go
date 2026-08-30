@@ -152,7 +152,7 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 
 // ExpectedSchemaVersion is the migration version this binary expects.
 // Updated when new migration files are added.
-const ExpectedSchemaVersion = 20
+const ExpectedSchemaVersion = 21
 
 // VerifySchemaVersion checks that the database schema version matches
 // what this binary expects. Returns an error if the schema is older
@@ -253,6 +253,16 @@ type verifiableObjectRow interface {
 	GetLastScrubbedAt() pgtype.Timestamptz
 }
 
+// identifiedObjectRow is a verifiable row that also selects the client-facing
+// identity columns. Only the read path's own query needs them: a replication
+// or scrub row is about the bytes, not about what a client is told they are.
+type identifiedObjectRow interface {
+	verifiableObjectRow
+	GetEtag() *string
+	GetContentType() *string
+	GetUserMetadata() []byte
+}
+
 // toSlimObjectLocations converts a slice of slim sqlc rows. Encryption and
 // content-hash fields stay zero-valued.
 func toSlimObjectLocations[T slimObjectRow](rows []T) []core.ObjectLocation {
@@ -318,6 +328,25 @@ func toFatObjectLocations[T fatObjectRow](rows []T) []core.ObjectLocation {
 // than testing for it at runtime means a query that selects the column but
 // omits the accessor fails to compile, instead of silently reporting every copy
 // as never verified.
+// toIdentifiedObjectLocations converts rows from the read path's own query,
+// which selects the identity columns on top of everything the verifiable
+// conversion covers.
+//
+// A decode failure on the metadata column leaves that copy's identity nil,
+// which costs a backend round trip rather than failing the read: the object is
+// still perfectly readable, and the row can be re-learned.
+func toIdentifiedObjectLocations[T identifiedObjectRow](rows []T) []core.ObjectLocation {
+	out := toVerifiableObjectLocations(rows)
+	for i := range rows {
+		id, err := core.IdentityFromColumns(derefStr(rows[i].GetEtag()), derefStr(rows[i].GetContentType()), rows[i].GetUserMetadata())
+		if err != nil {
+			continue
+		}
+		out[i].Identity = id
+	}
+	return out
+}
+
 func toVerifiableObjectLocations[T verifiableObjectRow](rows []T) []core.ObjectLocation {
 	out := toFatObjectLocations(rows)
 	for i := range rows {

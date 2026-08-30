@@ -3163,7 +3163,7 @@ func TestStore_RecordPart_InvalidPartNumber(t *testing.T) {
 	resetState(t)
 
 	for _, pn := range []int{0, -1, 10001, 1 << 20} {
-		err := testStore.RecordPart(ctx, "upload-invalid", pn, "\"etag\"", 100, nil)
+		err := testStore.RecordPart(ctx, &core.RecordPartParams{UploadID: "upload-invalid", PartNumber: pn, ETag: "\"etag\"", SizeBytes: 100})
 		if err == nil {
 			t.Errorf("RecordPart(%d) should fail, got nil", pn)
 		}

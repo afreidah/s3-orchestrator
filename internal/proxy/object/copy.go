@@ -102,6 +102,12 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 	}
 	span.SetAttributes(telemetry.AttrObjectSize.Int64(size))
 
+	// A copy holds the same bytes the source does, so it carries the same
+	// identity: the ETag names the object's content, and re-deriving one from
+	// the destination backend's answer would give two identical objects two
+	// different validators.
+	srcIdentity := copyIdentity(locations, contentType, metadata)
+
 	destBackendName, err := o.coord.SelectWriteTarget(ctx, span, operation, size)
 	if err != nil {
 		return "", err
@@ -130,6 +136,7 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 			contentType:     contentType,
 			metadata:        metadata,
 			srcForm:         srcForm,
+			identity:        srcIdentity,
 			tags:            tags,
 			start:           start,
 		}
@@ -167,9 +174,29 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 		destBackendName: destBackendName,
 		size:            size,
 		srcForm:         srcForm,
+		identity:        srcIdentity,
 		tags:            tags,
 		start:           start,
 	}, etag)
+}
+
+// copyIdentity gives the destination the source's identity when the source has
+// one. The content type and metadata are the ones the copy is written with, so
+// they hold whether or not the source row carried an ETag; without that ETag
+// there is nothing worth recording, and the destination learns its own on the
+// first read that has to ask.
+func copyIdentity(locations []core.ObjectLocation, contentType string, metadata map[string]string) *core.ObjectIdentity {
+	if len(locations) == 0 || !locations[0].Identity.Complete() {
+		return nil
+	}
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	return &core.ObjectIdentity{
+		ETag:         locations[0].Identity.ETag,
+		ContentType:  contentType,
+		UserMetadata: metadata,
+	}
 }
 
 // sameBackendCopyEligible reports whether the source has at least one
@@ -231,6 +258,7 @@ type materializedCopyContext struct {
 	destBackendName string
 	size            int64
 	srcForm         *core.StoredForm
+	identity        *core.ObjectIdentity
 	tags            []core.Tag
 	start           time.Time
 }
@@ -245,6 +273,7 @@ type nativeCopyContext struct {
 	contentType     string
 	metadata        map[string]string
 	srcForm         *core.StoredForm
+	identity        *core.ObjectIdentity
 	tags            []core.Tag
 	start           time.Time
 }
