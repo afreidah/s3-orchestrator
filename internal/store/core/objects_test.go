@@ -304,3 +304,64 @@ func TestDeleteObjectLocation_QuotaError(t *testing.T) {
 		t.Errorf("expected quota error, got %v", err)
 	}
 }
+
+// -------------------------------------------------------------------------
+// IMPORT OBJECT
+// -------------------------------------------------------------------------
+
+// TestImportOutcome_String covers the log rendering of each outcome. A passing
+// run never formats one, so without this the method is dead to coverage while
+// still being what an operator reads in a reconcile log line.
+func TestImportOutcome_String(t *testing.T) {
+	t.Parallel()
+	cases := map[ImportOutcome]string{
+		ImportInserted:              "inserted",
+		ImportSkippedExisting:       "skipped_existing",
+		ImportSkippedPendingCleanup: "skipped_pending_cleanup",
+		ImportOutcome(99):           "skipped_existing",
+	}
+	for outcome, want := range cases {
+		if got := outcome.String(); got != want {
+			t.Errorf("ImportOutcome(%d).String() = %q, want %q", outcome, got, want)
+		}
+	}
+}
+
+// TestImportObject_SuppressedByPendingCleanup asserts a key whose delete is
+// still outstanding is refused before the insert is attempted. Importing it
+// would undo the delete, so the check has to come first rather than being an
+// after-the-fact correction.
+func TestImportObject_SuppressedByPendingCleanup(t *testing.T) {
+	t.Parallel()
+	stub := &quotaTxStub{pendingCleanup: true}
+
+	outcome, err := ImportObject(context.Background(), &stubRunner{tx: stub},
+		"k", "b1", 100, false, nil)
+	if err != nil {
+		t.Fatalf("ImportObject: %v", err)
+	}
+	if outcome != ImportSkippedPendingCleanup {
+		t.Errorf("outcome = %s, want skipped_pending_cleanup", outcome)
+	}
+	if len(stub.ops) != 0 {
+		t.Errorf("quota was touched for a suppressed import: %+v", stub.ops)
+	}
+}
+
+// TestImportObject_PendingCleanupCheckError asserts a failed check aborts the
+// import rather than falling through to the insert. Treating an unreadable
+// cleanup queue as "nothing pending" would resurrect exactly the objects the
+// check exists to protect.
+func TestImportObject_PendingCleanupCheckError(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("queue unreadable")
+	stub := &quotaTxStub{pendingErr: sentinel}
+
+	if _, err := ImportObject(context.Background(), &stubRunner{tx: stub},
+		"k", "b1", 100, false, nil); !errors.Is(err, sentinel) {
+		t.Errorf("err = %v, want the check error to abort the import", err)
+	}
+	if len(stub.ops) != 0 {
+		t.Errorf("quota was touched after a failed check: %+v", stub.ops)
+	}
+}

@@ -617,8 +617,8 @@ func TestS3KeyStream_ContextCancelTerminates(t *testing.T) {
 // the counter when ImportObject reports the row was created (true).
 func TestImportHandler_CountsCreatedNotSkipped(t *testing.T) {
 	res := &Result{}
-	importer := func(_ context.Context, _, _ string, _ int64, _ bool) (bool, error) {
-		return false, nil // already exists; should NOT be counted
+	importer := func(_ context.Context, _, _ string, _ int64, _ bool) (core.ImportOutcome, error) {
+		return core.ImportSkippedExisting, nil // already exists; should NOT be counted
 	}
 	h := ImportHandler(slog.Default(), "b1", importer, res)
 	if err := h(context.Background(), e("vb/foo", 1)); err != nil {
@@ -629,13 +629,34 @@ func TestImportHandler_CountsCreatedNotSkipped(t *testing.T) {
 	}
 }
 
+// TestImportHandler_CountsSuppressedSeparately verifies a key refused because
+// its delete is still outstanding is counted on its own rather than folded in
+// with rows that were already present. The two mean different things: one says
+// the cleanup queue is not draining, the other says nothing at all.
+func TestImportHandler_CountsSuppressedSeparately(t *testing.T) {
+	res := &Result{}
+	importer := func(_ context.Context, _, _ string, _ int64, _ bool) (core.ImportOutcome, error) {
+		return core.ImportSkippedPendingCleanup, nil
+	}
+	h := ImportHandler(slog.Default(), "b1", importer, res)
+	if err := h(context.Background(), e("vb/foo", 1)); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if res.Imported != 0 {
+		t.Errorf("imported = %d, want 0 for a suppressed key", res.Imported)
+	}
+	if res.SuppressedPendingCleanup != 1 {
+		t.Errorf("suppressed = %d, want 1", res.SuppressedPendingCleanup)
+	}
+}
+
 // TestImportHandler_SwallowsErrorButContinues verifies an import failure
 // is logged but does not abort the merge  -  the merge would otherwise stop
 // on the first transient row failure.
 func TestImportHandler_SwallowsErrorButContinues(t *testing.T) {
 	res := &Result{}
-	importer := func(_ context.Context, _, _ string, _ int64, _ bool) (bool, error) {
-		return false, errors.New("transient")
+	importer := func(_ context.Context, _, _ string, _ int64, _ bool) (core.ImportOutcome, error) {
+		return core.ImportSkippedExisting, errors.New("transient")
 	}
 	h := ImportHandler(slog.Default(), "b1", importer, res)
 	if err := h(context.Background(), e("vb/foo", 1)); err != nil {

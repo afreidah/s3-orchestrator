@@ -409,21 +409,111 @@ func TestImportObject(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	imported, err := s.ImportObject(ctx, "bucket/new", "backend-a", 500, false, nil)
+	outcome, err := s.ImportObject(ctx, "bucket/new", "backend-a", 500, false, nil)
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
-	if !imported {
-		t.Error("expected imported=true for new object")
+	if outcome != core.ImportInserted {
+		t.Errorf("outcome = %s, want inserted for a new object", outcome)
 	}
 
 	// Import again should be a no-op
-	imported, err = s.ImportObject(ctx, "bucket/new", "backend-a", 500, false, nil)
+	outcome, err = s.ImportObject(ctx, "bucket/new", "backend-a", 500, false, nil)
 	if err != nil {
 		t.Fatalf("ImportObject duplicate: %v", err)
 	}
-	if imported {
-		t.Error("expected imported=false for duplicate")
+	if outcome != core.ImportSkippedExisting {
+		t.Errorf("outcome = %s, want skipped_existing for a duplicate", outcome)
+	}
+}
+
+// TestImportObject_SuppressedByPendingCleanup verifies a key whose delete is
+// still outstanding is not imported back. Without this, a delete that could
+// not reach a backend is undone the next time reconcile walks it: the object
+// returns live, the replicator spreads it, and its created_at restarts so a
+// lifecycle rule that expired it waits another full window.
+func TestImportObject_SuppressedByPendingCleanup(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	const (
+		key     = "bucket/deleted"
+		backend = "backend-a"
+	)
+
+	if err := s.EnqueueCleanup(ctx, backend, key, "delete_failed", 500); err != nil {
+		t.Fatalf("EnqueueCleanup: %v", err)
+	}
+
+	outcome, err := s.ImportObject(ctx, key, backend, 500, false, nil)
+	if err != nil {
+		t.Fatalf("ImportObject: %v", err)
+	}
+	if outcome != core.ImportSkippedPendingCleanup {
+		t.Errorf("outcome = %s, want skipped_pending_cleanup", outcome)
+	}
+
+	if _, err := s.GetAllObjectLocations(ctx, key); !errors.Is(err, core.ErrObjectNotFound) {
+		t.Errorf("ledger error = %v, want ErrObjectNotFound for a suppressed import", err)
+	}
+}
+
+// TestImportObject_SuppressedByDeadLetteredCleanup verifies the suppression
+// also covers a cleanup that exhausted its retries. Retrying stopped because
+// the backend would not take the delete, not because the delete was withdrawn,
+// so the bytes are still an orphan awaiting an operator.
+func TestImportObject_SuppressedByDeadLetteredCleanup(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	const (
+		key     = "bucket/dead-lettered"
+		backend = "backend-a"
+	)
+
+	if err := s.EnqueueCleanup(ctx, backend, key, "delete_failed", 500); err != nil {
+		t.Fatalf("EnqueueCleanup: %v", err)
+	}
+	items, err := s.GetPendingCleanups(ctx, 10)
+	if err != nil || len(items) == 0 {
+		t.Fatalf("GetPendingCleanups: %v (got %d)", err, len(items))
+	}
+	if _, err := s.MoveCleanupToDLQ(ctx, items[0].ID, "gave up"); err != nil {
+		t.Fatalf("MoveCleanupToDLQ: %v", err)
+	}
+
+	outcome, err := s.ImportObject(ctx, key, backend, 500, false, nil)
+	if err != nil {
+		t.Fatalf("ImportObject: %v", err)
+	}
+	if outcome != core.ImportSkippedPendingCleanup {
+		t.Errorf("outcome = %s, want skipped_pending_cleanup", outcome)
+	}
+}
+
+// TestImportObject_OtherBackendUnaffected verifies suppression is scoped to
+// the backend the delete is outstanding on. A copy that was removed cleanly
+// elsewhere must still be importable, or one stuck cleanup would block the
+// whole key from ever being reconciled.
+func TestImportObject_OtherBackendUnaffected(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	const key = "bucket/partial"
+
+	if err := s.EnqueueCleanup(ctx, "backend-a", key, "delete_failed", 500); err != nil {
+		t.Fatalf("EnqueueCleanup: %v", err)
+	}
+
+	outcome, err := s.ImportObject(ctx, key, "backend-b", 500, false, nil)
+	if err != nil {
+		t.Fatalf("ImportObject: %v", err)
+	}
+	if outcome != core.ImportInserted {
+		t.Errorf("outcome = %s, want inserted on a backend with no pending delete", outcome)
 	}
 }
 

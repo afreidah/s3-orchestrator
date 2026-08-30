@@ -162,7 +162,7 @@ func loadConfig(path, backendName string) (*config.Config, *config.BackendConfig
 // to: a single ImportObject per backend row. Declared locally so the
 // command owns its own dependency contract.
 type importer interface {
-	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *core.StoredForm) (bool, error)
+	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *core.StoredForm) (core.ImportOutcome, error)
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 }
 
@@ -303,14 +303,22 @@ func importPage(ctx context.Context, s3b backend.ObjectBackend, run *importRun, 
 		if err != nil {
 			return imported, skipped, bytes, err
 		}
-		ok, err := run.Store.ImportObject(ctx, obj.Key, backendName, obj.SizeBytes, unmanaged, form)
+		outcome, err := run.Store.ImportObject(ctx, obj.Key, backendName, obj.SizeBytes, unmanaged, form)
 		if err != nil {
 			return imported, skipped, bytes, fmt.Errorf("failed to import %s: %w", obj.Key, err)
 		}
-		if ok {
+		switch outcome {
+		case core.ImportInserted:
 			imported++
 			bytes += obj.SizeBytes
-		} else {
+		case core.ImportSkippedPendingCleanup:
+			// Reported rather than counted silently: the bytes are on the
+			// backend because a delete could not reach it, so importing
+			// them would undo that delete.
+			synccmdLogger().WarnContext(ctx, "skipping object with an outstanding delete",
+				"key", obj.Key, "backend", backendName)
+			skipped++
+		default:
 			skipped++
 		}
 	}

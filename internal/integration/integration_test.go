@@ -2633,12 +2633,12 @@ func assertProxy404ForAll(t *testing.T, ctx context.Context, proxyClient *s3.Cli
 func importAllToMinio1(t *testing.T, ctx context.Context, keys []string, sizeBytes int64) {
 	t.Helper()
 	for _, key := range keys {
-		imported, err := testStore.ImportObject(ctx, internalKey(key), "minio-1", sizeBytes, false, nil)
+		outcome, err := testStore.ImportObject(ctx, internalKey(key), "minio-1", sizeBytes, false, nil)
 		if err != nil {
 			t.Fatalf("ImportObject(%q): %v", key, err)
 		}
-		if !imported {
-			t.Errorf("ImportObject(%q) = false, want true", key)
+		if outcome != core.ImportInserted {
+			t.Errorf("ImportObject(%q) = %s, want inserted", key, outcome)
 		}
 	}
 }
@@ -2689,16 +2689,16 @@ func TestImportPreExistingObjects_ImportIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportObject first: %v", err)
 	}
-	if !imported {
-		t.Error("first ImportObject = false, want true")
+	if imported != core.ImportInserted {
+		t.Errorf("first ImportObject = %s, want inserted", imported)
 	}
 
 	imported, err = store.ImportObject(ctx, internalKey(key), "minio-1", 200, false, nil)
 	if err != nil {
 		t.Fatalf("ImportObject second: %v", err)
 	}
-	if imported {
-		t.Error("second ImportObject = true, want false (idempotent skip)")
+	if imported != core.ImportSkippedExisting {
+		t.Errorf("second ImportObject = %s, want skipped_existing (idempotent skip)", imported)
 	}
 
 	if used := queryQuotaUsed(t, "minio-1"); used != 200 {
@@ -2738,8 +2738,8 @@ func TestImportPreExistingObjects_ImportDoesNotOverwriteProxyObject(t *testing.T
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
-	if imported {
-		t.Error("ImportObject should skip existing proxy object")
+	if imported != core.ImportSkippedExisting {
+		t.Errorf("ImportObject = %s, want it to skip an existing proxy object", imported)
 	}
 
 	if used := queryQuotaUsed(t, backend); used != 150 {
@@ -3242,11 +3242,11 @@ func runSyncPipeline(ctx context.Context, backend *s3be.S3Backend, prefix string
 	var imported, skipped int
 	err := backend.ListObjects(ctx, prefix, func(objects []s3be.ListedObject) error {
 		for _, obj := range objects {
-			ok, err := testStore.ImportObject(ctx, obj.Key, "minio-1", obj.SizeBytes, false, nil)
+			outcome, err := testStore.ImportObject(ctx, obj.Key, "minio-1", obj.SizeBytes, false, nil)
 			if err != nil {
 				return fmt.Errorf("ImportObject(%s): %w", obj.Key, err)
 			}
-			if ok {
+			if outcome == core.ImportInserted {
 				imported++
 			} else {
 				skipped++

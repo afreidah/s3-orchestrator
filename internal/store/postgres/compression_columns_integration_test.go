@@ -127,8 +127,8 @@ func TestPgInsertPaths_PreserveRepresentation(t *testing.T) {
 				if err != nil {
 					t.Fatalf("ImportObject: %v", err)
 				}
-				if !inserted {
-					t.Fatal("ImportObject reported no insert")
+				if inserted != core.ImportInserted {
+					t.Fatalf("ImportObject outcome = %s, want inserted", inserted)
 				}
 			},
 		},

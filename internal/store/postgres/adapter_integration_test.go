@@ -554,11 +554,11 @@ func TestPgAdapter_InsertObjectLocationIfNotExists_BothBranches(t *testing.T) {
 	key := uniqueKey(t, "k")
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
-	if got, err := s.ImportObject(ctx, key, "backend-a", 50, false, nil); err != nil || !got {
-		t.Fatalf("ImportObject(insert): got=%v err=%v, want (true, nil)", got, err)
+	if got, err := s.ImportObject(ctx, key, "backend-a", 50, false, nil); err != nil || got != core.ImportInserted {
+		t.Fatalf("ImportObject(insert): got=%s err=%v, want inserted", got, err)
 	}
-	if got, err := s.ImportObject(ctx, key, "backend-a", 50, false, nil); err != nil || got {
-		t.Errorf("ImportObject(idempotent): got=%v err=%v, want (false, nil)", got, err)
+	if got, err := s.ImportObject(ctx, key, "backend-a", 50, false, nil); err != nil || got != core.ImportSkippedExisting {
+		t.Errorf("ImportObject(idempotent): got=%s err=%v, want skipped_existing", got, err)
 	}
 }
 
@@ -807,8 +807,8 @@ func TestPgAdapter_ImportObject_PreservesEncryptionMetadata(t *testing.T) {
 		t.Fatalf("ImportObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
-	if !inserted {
-		t.Fatal("ImportObject reported no insert")
+	if inserted != core.ImportInserted {
+		t.Fatalf("ImportObject outcome = %s, want inserted", inserted)
 	}
 
 	locs, err := s.GetAllObjectLocations(ctx, key)
@@ -852,8 +852,8 @@ func TestPgAdapter_ImportObject_KeylessEncryptedRow(t *testing.T) {
 		t.Fatalf("ImportObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
-	if !inserted {
-		t.Fatal("ImportObject reported no insert")
+	if inserted != core.ImportInserted {
+		t.Fatalf("ImportObject outcome = %s, want inserted", inserted)
 	}
 
 	locs, err := s.GetAllObjectLocations(ctx, key)

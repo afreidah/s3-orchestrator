@@ -51,8 +51,8 @@ type errorObjectStore struct {
 // ImportObject records the import call so the test can assert it
 // happened. The first return value mirrors the real store's
 // inserted=true semantics for a fresh row.
-func (e errorObjectStore) ImportObject(context.Context, string, string, int64, bool, *core.StoredForm) (bool, error) {
-	return false, e.err
+func (e errorObjectStore) ImportObject(context.Context, string, string, int64, bool, *core.StoredForm) (core.ImportOutcome, error) {
+	return core.ImportSkippedExisting, e.err
 }
 
 // GetAllObjectLocations reports no existing copies, so a discovered object is
@@ -276,6 +276,33 @@ func TestImportPage_PropagatesError(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("expected error to propagate")
+	}
+}
+
+// suppressedObjectStore refuses every import the way the store does for a key
+// whose delete is still outstanding.
+type suppressedObjectStore struct{ errorObjectStore }
+
+// ImportObject reports the key as suppressed rather than imported.
+func (suppressedObjectStore) ImportObject(context.Context, string, string, int64, bool, *core.StoredForm) (core.ImportOutcome, error) {
+	return core.ImportSkippedPendingCleanup, nil
+}
+
+// TestImportPage_SkipsKeyWithPendingDelete asserts a key refused because its
+// delete is still outstanding counts as skipped and contributes no bytes.
+// Counting it as imported would report a resurrection as a successful sync.
+func TestImportPage_SkipsKeyWithPendingDelete(t *testing.T) {
+	_, _ = freshStore(t)
+	page := []backend.ListedObject{{Key: "x", SizeBytes: 7}}
+	imp, skip, bytesIn, err := importPage(
+		context.Background(), syncTestBackend(page),
+		testImportRun(suppressedObjectStore{}, &Options{BucketName: "vb"}), page,
+	)
+	if err != nil {
+		t.Fatalf("importPage: %v", err)
+	}
+	if imp != 0 || skip != 1 || bytesIn != 0 {
+		t.Errorf("imported=%d skipped=%d bytes=%d, want 0/1/0", imp, skip, bytesIn)
 	}
 }
 

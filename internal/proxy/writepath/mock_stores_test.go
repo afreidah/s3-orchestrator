@@ -307,10 +307,10 @@ func (mr *MockCoordinatorStoresMockRecorder) GetStalePending(ctx, olderThan, lim
 }
 
 // ImportObject mocks base method.
-func (m *MockCoordinatorStores) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *core.StoredForm) (bool, error) {
+func (m *MockCoordinatorStores) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *core.StoredForm) (core.ImportOutcome, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ImportObject", ctx, key, backend, size, unmanaged, form)
-	ret0, _ := ret[0].(bool)
+	ret0, _ := ret[0].(core.ImportOutcome)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

@@ -432,13 +432,18 @@ func (d *DBCursorStream) Stop() {
 // failure should not stop the diff for thousands of other keys.
 func ImportHandler(log *slog.Logger, backendName string, importer ImporterFn, result *Result) func(context.Context, Entry) error {
 	return func(ctx context.Context, e Entry) error {
-		imported, err := importer(ctx, e.key, backendName, e.size, e.unmanaged)
+		outcome, err := importer(ctx, e.key, backendName, e.size, e.unmanaged)
 		if err != nil {
 			log.WarnContext(ctx, "import failed", "key", e.key, "backend", backendName, "error", err)
 			return nil
 		}
-		if imported {
+		switch outcome {
+		case core.ImportInserted:
 			result.Imported++
+		case core.ImportSkippedPendingCleanup:
+			log.WarnContext(ctx, "skipping key with an outstanding delete",
+				"key", e.key, "backend", backendName)
+			result.SuppressedPendingCleanup++
 		}
 		return nil
 	}
@@ -462,15 +467,16 @@ func DeleteHandler(log *slog.Logger, backendName string, deleter DeleterFn, resu
 // delete callbacks. Promoted to a struct so tests can assert on it
 // without importing internal/worker.
 type Result struct {
-	Imported int64
-	Removed  int64
+	Imported                 int64
+	Removed                  int64
+	SuppressedPendingCleanup int64
 }
 
 // ImporterFn imports a backend-listed key into the metadata store.
-// Returns (inserted, error). inserted is false when the row already
-// existed, which the reconciler treats as a benign no-op. Carrier
-// type so tests can substitute a fake importer.
-type ImporterFn func(ctx context.Context, key, backendName string, size int64, unmanaged bool) (bool, error)
+// A row that already existed is a benign no-op; a key whose delete is
+// still outstanding is refused rather than imported. Carrier type so
+// tests can substitute a fake importer.
+type ImporterFn func(ctx context.Context, key, backendName string, size int64, unmanaged bool) (core.ImportOutcome, error)
 
 // DeleterFn removes a metadata row whose backend confirmed it does not
 // hold the key. Carrier type so tests can substitute a fake deleter.

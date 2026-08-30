@@ -722,6 +722,47 @@ func TestStoreInt_ListExpiredObjects(t *testing.T) {
 	}
 }
 
+// TestStoreInt_ImportSuppressedByPendingCleanup proves the suppression against
+// real Postgres, where the check is a UNION over cleanup_queue and cleanup_dlq
+// rather than the SQLite variant the unit tests cover.
+//
+// Without it a delete that could not reach a backend is undone the next time
+// reconcile walks it: the object returns live, the replicator spreads it, and
+// its created_at restarts so a lifecycle rule that expired it waits another
+// full window.
+func TestStoreInt_ImportSuppressedByPendingCleanup(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := t.Name() + "/deleted"
+
+	if err := s.EnqueueCleanup(ctx, "backend-a", key, "delete_failed", 500); err != nil {
+		t.Fatalf("EnqueueCleanup: %v", err)
+	}
+
+	outcome, err := s.ImportObject(ctx, key, "backend-a", 500, false, nil)
+	if err != nil {
+		t.Fatalf("ImportObject: %v", err)
+	}
+	if outcome != core.ImportSkippedPendingCleanup {
+		t.Errorf("outcome = %s, want skipped_pending_cleanup", outcome)
+	}
+
+	if _, err := s.GetAllObjectLocations(ctx, key); !errors.Is(err, core.ErrObjectNotFound) {
+		t.Errorf("ledger error = %v, want ErrObjectNotFound for a suppressed import", err)
+	}
+
+	// Scoped to the backend the delete is outstanding on: a copy removed
+	// cleanly elsewhere must still be importable, or one stuck cleanup would
+	// block the whole key from ever being reconciled.
+	other, err := s.ImportObject(ctx, key, "backend-b", 500, false, nil)
+	if err != nil {
+		t.Fatalf("ImportObject(backend-b): %v", err)
+	}
+	if other != core.ImportInserted {
+		t.Errorf("outcome = %s, want inserted on a backend with no pending delete", other)
+	}
+}
+
 // expiredKeysPg runs one query against real Postgres and returns the keys it
 // selected, sorted, so a test can compare against a literal.
 func expiredKeysPg(t *testing.T, s *Store, q core.ExpiredObjectsQuery) []string {
