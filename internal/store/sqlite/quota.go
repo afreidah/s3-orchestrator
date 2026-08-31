@@ -133,25 +133,21 @@ func (s *Store) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to query quota stats: %w", err)
 	}
-	defer rows.Close()
-
-	stats := make(map[string]core.QuotaStat)
-	for rows.Next() {
-		var qs core.QuotaStat
-		var updatedAt string
+	return collectMap(rows, "quota stats", func(rows *sql.Rows) (string, core.QuotaStat, error) {
+		var (
+			qs        core.QuotaStat
+			updatedAt string
+		)
 		if err := rows.Scan(&qs.BackendName, &qs.BytesUsed, &qs.BytesLimit, &qs.OrphanBytes, &updatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan quota stat: %w", err)
+			return "", core.QuotaStat{}, fmt.Errorf("failed to scan quota stat: %w", err)
 		}
-		qs.UpdatedAt, err = parseTime(updatedAt)
+		parsed, err := parseTime(updatedAt)
 		if err != nil {
-			return nil, fmt.Errorf("invalid updated_at timestamp %q: %w", updatedAt, err)
+			return "", core.QuotaStat{}, fmt.Errorf("invalid updated_at timestamp %q: %w", updatedAt, err)
 		}
-		stats[qs.BackendName] = qs
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate quota stats: %w", err)
-	}
-	return stats, nil
+		qs.UpdatedAt = parsed
+		return qs.BackendName, qs, nil
+	})
 }
 
 // GetObjectCounts returns the number of objects stored on each backend.
@@ -179,21 +175,7 @@ func (s *Store) countObjectsByBackend(ctx context.Context, whereClause, errLabel
 	if err != nil {
 		return nil, fmt.Errorf("failed to query %s: %w", errLabel, err)
 	}
-	defer rows.Close()
-
-	counts := make(map[string]int64)
-	for rows.Next() {
-		var name string
-		var count int64
-		if err := rows.Scan(&name, &count); err != nil {
-			return nil, fmt.Errorf("failed to scan %s: %w", errLabel, err)
-		}
-		counts[name] = count
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate %s: %w", errLabel, err)
-	}
-	return counts, nil
+	return collectMap(rows, errLabel, scanNameValue)
 }
 
 // -------------------------------------------------------------------------
@@ -262,19 +244,14 @@ func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[strin
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	stats := make(map[string]core.UsageStat)
-	for rows.Next() {
-		var name string
-		var us core.UsageStat
+	return collectMap(rows, "usage stats", func(rows *sql.Rows) (string, core.UsageStat, error) {
+		var (
+			name string
+			us   core.UsageStat
+		)
 		if err := rows.Scan(&name, &us.APIRequests, &us.EgressBytes, &us.IngressBytes); err != nil {
-			return nil, fmt.Errorf("failed to scan usage stat: %w", err)
+			return "", core.UsageStat{}, fmt.Errorf("failed to scan usage stat: %w", err)
 		}
-		stats[name] = us
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate usage stats: %w", err)
-	}
-	return stats, nil
+		return name, us, nil
+	})
 }

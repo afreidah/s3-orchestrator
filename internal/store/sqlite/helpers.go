@@ -4,14 +4,17 @@
 // Author: Alex Freidah
 //
 // Common helper functions used across multiple SQLite store files: timestamp
-// formatting, time parsing, and nullable column conversions for round-tripping
-// optional string/int64 fields between core domain types and sql.Null*.
+// formatting, time parsing, nullable column conversions for round-tripping
+// optional string/int64 fields between core domain types and sql.Null*, and the
+// row collection every query body drains its result through.
 // -------------------------------------------------------------------------------
 
 package sqlite
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -113,6 +116,82 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// -------------------------------------------------------------------------
+// ROW COLLECTION
+// -------------------------------------------------------------------------
+
+// rowsObjectLocations names object_locations rows for the iteration error the
+// several queries that read them share.
+const rowsObjectLocations = "object locations"
+
+// collectRows drains rows into a slice, calling scan once per row. It owns the
+// parts of a scan loop that are the same everywhere and are only ever wrong by
+// omission: closing the rows, and checking the iteration error that Next
+// reports by returning false rather than by returning an error.
+//
+// The per-row error is passed through untouched, because the scan closure is
+// what knows which row it failed to read. what names the rows for the
+// iteration error alone.
+func collectRows[T any](rows *sql.Rows, what string, scan func(*sql.Rows) (T, error)) ([]T, error) {
+	defer func() { _ = rows.Close() }()
+	var out []T
+	for rows.Next() {
+		v, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate %s: %w", what, err)
+	}
+	return out, nil
+}
+
+// countRows runs a single-value COUNT query and labels its failure. Every
+// depth and count in this package is otherwise the same three lines around a
+// different string.
+func (s *Store) countRows(ctx context.Context, what, query string, args ...any) (int64, error) {
+	var count int64
+	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to count %s: %w", what, err)
+	}
+	return count, nil
+}
+
+// collectMap is collectRows for the queries that come back keyed - one row per
+// backend, per period, per name - where the scan yields the key alongside the
+// value it maps to.
+func collectMap[T any](rows *sql.Rows, what string, scan func(*sql.Rows) (string, T, error)) (map[string]T, error) {
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]T)
+	for rows.Next() {
+		key, value, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[key] = value
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate %s: %w", what, err)
+	}
+	return out, nil
+}
+
+// scanNameValue reads the (name, number) pair every per-backend total in this
+// package selects. A NULL sum reads as zero, since a backend with no rows has
+// no bytes rather than an unknown number of them.
+func scanNameValue(rows *sql.Rows) (string, int64, error) {
+	var (
+		name  string
+		value sql.NullInt64
+	)
+	if err := rows.Scan(&name, &value); err != nil {
+		return "", 0, fmt.Errorf("failed to scan per-backend total: %w", err)
+	}
+	return name, nullInt64Value(value), nil
 }
 
 // -------------------------------------------------------------------------

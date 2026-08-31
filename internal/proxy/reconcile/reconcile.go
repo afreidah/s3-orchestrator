@@ -68,11 +68,16 @@ func Sorted(
 	onImport func(ctx context.Context, e Entry) error,
 	onDelete func(ctx context.Context, key string) error,
 ) error {
-	s := &mergeState{s3: s3, db: dbIter, onImport: onImport, onDelete: onDelete}
-	if err := s.advanceS3(ctx); err != nil {
+	s := &mergeState{
+		s3:       cursor{src: s3, side: sideBackend},
+		db:       cursor{src: dbIter, side: sideLedger},
+		onImport: onImport,
+		onDelete: onDelete,
+	}
+	if err := s.s3.advance(ctx); err != nil {
 		return err
 	}
-	if err := s.advanceDB(ctx); err != nil {
+	if err := s.db.advance(ctx); err != nil {
 		return err
 	}
 	for !s.done() {
@@ -83,30 +88,52 @@ func Sorted(
 	return nil
 }
 
-// mergeState holds the rolling cursor pair plus the callbacks the
-// merge loop dispatches to. Bundling the four-variable cursor state
-// lets per-branch advancement live in methods on mergeState rather
-// than free functions taking pointers to every cursor.
+// cursor is one side of the merge: the stream, the entry it currently holds,
+// and whether it holds one at all. Both sides behave identically, so the
+// advance rule is written once and each side carries the name it is reported
+// under.
+type cursor struct {
+	src  keySource
+	cur  Entry
+	ok   bool
+	side string
+}
+
+// advance pulls the next entry into the cursor, refusing a stream that goes
+// backwards: the merge only produces the right answer while both sides ascend.
+func (c *cursor) advance(ctx context.Context) error {
+	next, ok, err := c.src.Next(ctx)
+	if err != nil {
+		return err
+	}
+	if ok && c.ok {
+		if err := checkAscending(c.side, c.cur.key, next.key); err != nil {
+			return err
+		}
+	}
+	c.cur, c.ok = next, ok
+	return nil
+}
+
+// mergeState holds the two cursors plus the callbacks the merge loop
+// dispatches to. Bundling the cursor state lets per-branch advancement live in
+// methods rather than free functions taking pointers to every cursor.
 type mergeState struct {
-	s3, db   keySource
-	s3Cur    Entry
-	dbCur    Entry
-	s3OK     bool
-	dbOK     bool
+	s3, db   cursor
 	onImport func(ctx context.Context, e Entry) error
 	onDelete func(ctx context.Context, key string) error
 }
 
 // done reports whether both streams are exhausted.
-func (s *mergeState) done() bool { return !s.s3OK && !s.dbOK }
+func (s *mergeState) done() bool { return !s.s3.ok && !s.db.ok }
 
 // step advances exactly one merge round, picking the branch (import,
 // delete, or match) based on which side currently holds the smaller key.
 func (s *mergeState) step(ctx context.Context) error {
 	switch {
-	case !s.dbOK || (s.s3OK && s.s3Cur.key < s.dbCur.key):
+	case !s.db.ok || (s.s3.ok && s.s3.cur.key < s.db.cur.key):
 		return s.importStep(ctx)
-	case !s.s3OK || s.s3Cur.key > s.dbCur.key:
+	case !s.s3.ok || s.s3.cur.key > s.db.cur.key:
 		return s.deleteStep(ctx)
 	default:
 		return s.matchStep(ctx)
@@ -117,59 +144,29 @@ func (s *mergeState) step(ctx context.Context) error {
 // one. Used when the DB cursor is exhausted or the S3 key sorts before
 // the DB key.
 func (s *mergeState) importStep(ctx context.Context) error {
-	if err := s.onImport(ctx, s.s3Cur); err != nil {
+	if err := s.onImport(ctx, s.s3.cur); err != nil {
 		return err
 	}
-	return s.advanceS3(ctx)
+	return s.s3.advance(ctx)
 }
 
 // deleteStep fires onDelete for the current DB key then pulls the next DB
 // row. Used when the S3 stream is exhausted or the DB key sorts before
 // the S3 key.
 func (s *mergeState) deleteStep(ctx context.Context) error {
-	if err := s.onDelete(ctx, s.dbCur.key); err != nil {
+	if err := s.onDelete(ctx, s.db.cur.key); err != nil {
 		return err
 	}
-	return s.advanceDB(ctx)
+	return s.db.advance(ctx)
 }
 
 // matchStep advances both cursors. Used when the keys match  -  the row is
 // present on both sides and no callback fires.
 func (s *mergeState) matchStep(ctx context.Context) error {
-	if err := s.advanceS3(ctx); err != nil {
+	if err := s.s3.advance(ctx); err != nil {
 		return err
 	}
-	return s.advanceDB(ctx)
-}
-
-// advanceS3 pulls the next entry from the S3 stream into the cursor pair.
-func (s *mergeState) advanceS3(ctx context.Context) error {
-	cur, ok, err := s.s3.Next(ctx)
-	if err != nil {
-		return err
-	}
-	if ok && s.s3OK {
-		if err := checkAscending(sideBackend, s.s3Cur.key, cur.key); err != nil {
-			return err
-		}
-	}
-	s.s3Cur, s.s3OK = cur, ok
-	return nil
-}
-
-// advanceDB pulls the next entry from the DB stream into the cursor pair.
-func (s *mergeState) advanceDB(ctx context.Context) error {
-	cur, ok, err := s.db.Next(ctx)
-	if err != nil {
-		return err
-	}
-	if ok && s.dbOK {
-		if err := checkAscending(sideLedger, s.dbCur.key, cur.key); err != nil {
-			return err
-		}
-	}
-	s.dbCur, s.dbOK = cur, ok
-	return nil
+	return s.db.advance(ctx)
 }
 
 // The two sides of the merge, named in the ascending-order failure so an

@@ -63,6 +63,21 @@ func ComponentLogger(slug string) *slog.Logger {
 	return slog.Default().With(logfmt.Component(slug))
 }
 
+// QueueWork adapts a queue-draining pass into a Config.Work function. Both
+// queue workers report the same way: run one pass, and say what it did only if
+// it did something. A quiet queue is the normal state, so logging every tick
+// would write a line a minute per instance forever and bury the ticks that
+// matter.
+func QueueWork(log *slog.Logger, msg string, pass func(ctx context.Context) (succeeded, failed int)) func(context.Context) error {
+	return func(ctx context.Context) error {
+		succeeded, failed := pass(ctx)
+		if succeeded > 0 || failed > 0 {
+			log.InfoContext(ctx, msg, "processed", succeeded, "failed", failed)
+		}
+		return nil
+	}
+}
+
 // HandlePassResult is the shared post-call handling for the three
 // nearly-identical "pass" workers (rebalance, over-replication,
 // replication). Each one returns (count, err) from a worker call and

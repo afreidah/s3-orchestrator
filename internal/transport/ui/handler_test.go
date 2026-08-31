@@ -775,87 +775,59 @@ func TestUpdateConfig_ReflectsInDashboard(t *testing.T) {
 // DELETE / UPLOAD AUTH GATING
 // -------------------------------------------------------------------------
 
-// TestAPIDelete_RequiresAuth verifies the apidelete requires auth contract.
-// Asserts that status = , want 401.
-func TestAPIDelete_RequiresAuth(t *testing.T) {
+// TestAPIRequestRejections covers what the UI's JSON endpoints refuse before
+// they reach the store: an unauthenticated caller, the wrong method, a body
+// that is not JSON, and a request that names nothing to act on. Each endpoint
+// applies the same four rules, so they are stated once as data.
+func TestAPIRequestRejections(t *testing.T) {
 	t.Parallel()
-	_, mux := newTestHandler(t)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/api/delete", strings.NewReader(`{"key":"test"}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Result().StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", w.Result().StatusCode)
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		authed bool
+		want   int
+	}{
+		{"delete without a session", http.MethodPost, "/ui/api/delete", `{"key":"test"}`, false, http.StatusUnauthorized},
+		{"delete-prefix without a session", http.MethodPost, "/ui/api/delete-prefix", `{"prefix":"test-bucket/"}`, false, http.StatusUnauthorized},
+		{"upload without a session", http.MethodPost, "/ui/api/upload", "", false, http.StatusUnauthorized},
+		{"delete with the wrong method", http.MethodGet, "/ui/api/delete", "", true, http.StatusMethodNotAllowed},
+		{"delete-prefix with the wrong method", http.MethodGet, "/ui/api/delete-prefix", "", true, http.StatusMethodNotAllowed},
+		{"upload with the wrong method", http.MethodGet, "/ui/api/upload", "", true, http.StatusMethodNotAllowed},
+		{"delete with a malformed body", http.MethodPost, "/ui/api/delete", "{bad", true, http.StatusBadRequest},
+		{"delete-prefix with a malformed body", http.MethodPost, "/ui/api/delete-prefix", "{bad", true, http.StatusBadRequest},
+		{"delete naming no key", http.MethodPost, "/ui/api/delete", `{"key":""}`, true, http.StatusBadRequest},
+		{"delete-prefix naming no prefix", http.MethodPost, "/ui/api/delete-prefix", `{"prefix":""}`, true, http.StatusBadRequest},
 	}
-}
 
-// TestAPIUpload_RequiresAuth verifies the apiupload requires auth contract.
-// Asserts that status = , want 401.
-func TestAPIUpload_RequiresAuth(t *testing.T) {
-	t.Parallel()
-	_, mux := newTestHandler(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h, mux := newTestHandler(t)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/api/upload", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+			var body io.Reader
+			if tt.body != "" {
+				body = strings.NewReader(tt.body)
+			}
+			req := httptest.NewRequestWithContext(context.Background(), tt.method, tt.path, body)
+			if tt.authed {
+				req = authedRequest(t, h, mux, tt.method, tt.path, body)
+			}
+			req.Header.Set("Content-Type", "application/json")
 
-	if w.Result().StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", w.Result().StatusCode)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			if w.Result().StatusCode != tt.want {
+				t.Fatalf("status = %d, want %d", w.Result().StatusCode, tt.want)
+			}
+		})
 	}
 }
 
 // -------------------------------------------------------------------------
 // DELETE API TESTS
 // -------------------------------------------------------------------------
-
-// TestAPIDelete_WrongMethod verifies the apidelete wrong method contract.
-// Asserts that status = , want 405.
-func TestAPIDelete_WrongMethod(t *testing.T) {
-	t.Parallel()
-	h, mux := newTestHandler(t)
-
-	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/delete", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Result().StatusCode != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d, want 405", w.Result().StatusCode)
-	}
-}
-
-// TestAPIDelete_BadJSON verifies the apidelete bad json contract.
-// Asserts that status = , want 400.
-func TestAPIDelete_BadJSON(t *testing.T) {
-	t.Parallel()
-	h, mux := newTestHandler(t)
-
-	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete", strings.NewReader("{bad"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Result().StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", w.Result().StatusCode)
-	}
-}
-
-// TestAPIDelete_EmptyKey verifies the apidelete empty key contract.
-// Asserts that status = , want 400.
-func TestAPIDelete_EmptyKey(t *testing.T) {
-	t.Parallel()
-	h, mux := newTestHandler(t)
-
-	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete", strings.NewReader(`{"key":""}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Result().StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", w.Result().StatusCode)
-	}
-}
 
 // TestAPIDelete_Success verifies the apidelete success contract.
 // Asserts that status = , want 200; body =.
@@ -906,71 +878,6 @@ func TestAPIDelete_ManagerError(t *testing.T) {
 // -------------------------------------------------------------------------
 // DELETE PREFIX API TESTS
 // -------------------------------------------------------------------------
-
-// TestAPIDeletePrefix_RequiresAuth verifies the apidelete prefix requires auth contract.
-// Asserts that status = , want 401.
-func TestAPIDeletePrefix_RequiresAuth(t *testing.T) {
-	t.Parallel()
-	_, mux := newTestHandler(t)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/api/delete-prefix",
-		strings.NewReader(`{"prefix":"test-bucket/"}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Result().StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", w.Result().StatusCode)
-	}
-}
-
-// TestAPIDeletePrefix_WrongMethod verifies the apidelete prefix wrong method contract.
-// Asserts that status = , want 405.
-func TestAPIDeletePrefix_WrongMethod(t *testing.T) {
-	t.Parallel()
-	h, mux := newTestHandler(t)
-
-	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/delete-prefix", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Result().StatusCode != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d, want 405", w.Result().StatusCode)
-	}
-}
-
-// TestAPIDeletePrefix_BadJSON verifies the apidelete prefix bad json contract.
-// Asserts that status = , want 400.
-func TestAPIDeletePrefix_BadJSON(t *testing.T) {
-	t.Parallel()
-	h, mux := newTestHandler(t)
-
-	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix", strings.NewReader("{bad"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Result().StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", w.Result().StatusCode)
-	}
-}
-
-// TestAPIDeletePrefix_EmptyPrefix verifies the apidelete prefix empty prefix contract.
-// Asserts that status = , want 400.
-func TestAPIDeletePrefix_EmptyPrefix(t *testing.T) {
-	t.Parallel()
-	h, mux := newTestHandler(t)
-
-	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",
-		strings.NewReader(`{"prefix":""}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Result().StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", w.Result().StatusCode)
-	}
-}
 
 // TestAPIDeletePrefix_Success verifies the apidelete prefix success contract.
 // Asserts that status = , want 200; body =.
@@ -1122,21 +1029,6 @@ func multipartForm(t *testing.T, key, filename string, fileContent []byte) (*byt
 		t.Fatal(err)
 	}
 	return &buf, w.FormDataContentType()
-}
-
-// TestAPIUpload_WrongMethod verifies the apiupload wrong method contract.
-// Asserts that status = , want 405.
-func TestAPIUpload_WrongMethod(t *testing.T) {
-	t.Parallel()
-	h, mux := newTestHandler(t)
-
-	req := authedRequest(t, h, mux, http.MethodGet, "/ui/api/upload", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Result().StatusCode != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d, want 405", w.Result().StatusCode)
-	}
 }
 
 // TestAPIUpload_MissingKey verifies the apiupload missing key contract.

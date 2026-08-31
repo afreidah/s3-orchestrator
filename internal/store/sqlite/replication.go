@@ -121,8 +121,7 @@ func (s *Store) GetOverReplicatedObjects(ctx context.Context, factor, limit int)
 // CountOverReplicatedObjects returns the total number of objects with more
 // copies than the target replication factor.
 func (s *Store) CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error) {
-	var count int64
-	err := s.db.QueryRowContext(ctx,
+	return s.countRows(ctx, "over-replicated objects",
 		`SELECT COUNT(*) FROM (
 		     SELECT object_key
 		     FROM object_locations
@@ -130,18 +129,12 @@ func (s *Store) CountOverReplicatedObjects(ctx context.Context, factor int) (int
 		     GROUP BY object_key
 		     HAVING COUNT(*) > ?
 		 )`,
-		factor,
-	).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count over-replicated objects: %w", err)
-	}
-	return count, nil
+		factor)
 }
 
 // scanObjectLocations converts sql.Rows into a slice of ObjectLocation.
 func scanObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
-	var locs []core.ObjectLocation
-	for rows.Next() {
+	return collectRows(rows, rowsObjectLocations, func(rows *sql.Rows) (core.ObjectLocation, error) {
 		var (
 			loc           core.ObjectLocation
 			keyID         sql.NullString
@@ -158,7 +151,7 @@ func scanObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
 			&loc.EncryptionKey, &keyID, &ptSize, &contentHash,
 			&compAlgorithm, &compLevel, &compVersion, &logicalSize, &createdAt,
 		); err != nil {
-			return nil, fmt.Errorf("failed to scan object location: %w", err)
+			return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
 		}
 		loc.KeyID = nullStringValue(keyID)
 		loc.PlaintextSize = nullInt64Value(ptSize)
@@ -170,9 +163,8 @@ func scanObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
 		var parseErr error
 		loc.CreatedAt, parseErr = parseTime(createdAt)
 		if parseErr != nil {
-			return nil, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, parseErr)
+			return core.ObjectLocation{}, fmt.Errorf("invalid created_at timestamp %q: %w", createdAt, parseErr)
 		}
-		locs = append(locs, loc)
-	}
-	return locs, rows.Err()
+		return loc, nil
+	})
 }
