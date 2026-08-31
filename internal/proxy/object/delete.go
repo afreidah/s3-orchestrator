@@ -31,7 +31,6 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 	const operation = "DeleteObject"
 	start := time.Now()
 
-	// --- Start tracing span ---
 	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
 		telemetry.AttrObjectKey.String(key),
 	)

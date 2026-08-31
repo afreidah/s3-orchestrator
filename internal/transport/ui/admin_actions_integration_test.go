@@ -138,8 +138,8 @@ func TestHandleAPIReplicate_HappyPathReturnsCount(t *testing.T) {
 	if !res.OK || res.Skipped != "" {
 		t.Errorf("result = %+v, want OK and no Skipped reason", res)
 	}
-	if res.Count != 0 {
-		t.Errorf("Count = %d, want 0 (empty store)", res.Count)
+	if res.Counts.Count != 0 {
+		t.Errorf("Count = %d, want 0 (empty store)", res.Counts.Count)
 	}
 
 	statusReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/replicate/status", nil)

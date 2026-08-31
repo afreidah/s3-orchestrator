@@ -11,28 +11,16 @@
 
 package adminapi
 
-// BulkCompressionOutcome is the part both compression passes report
-// identically. It carries skipped alongside failed because a compression pass
-// declines objects on purpose - too small, or too incompressible to be worth
-// encoding - and an operator reading a run needs that separate from work that
-// went wrong.
-type BulkCompressionOutcome struct {
-	Status  string `json:"status"`
-	Skipped int    `json:"skipped"`
-	Failed  int    `json:"failed"`
-	Total   int    `json:"total"`
-}
-
 // CompressExistingResponse reports a compress-existing pass: how many
 // previously verbatim objects were stored as an encoding instead.
 type CompressExistingResponse struct {
-	BulkCompressionOutcome
+	BulkRewriteOutcome
 	Compressed int `json:"compressed"`
 }
 
 // DecompressExistingResponse reports a decompress-existing pass: how many
 // encoded objects were rewritten back to the bytes the client wrote.
 type DecompressExistingResponse struct {
-	BulkCompressionOutcome
+	BulkRewriteOutcome
 	Decompressed int `json:"decompressed"`
 }

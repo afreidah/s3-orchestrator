@@ -95,7 +95,7 @@ func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observe
 	if c.codec == nil || c.store == nil {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
-	return runBulkRewrite(c.rewriteEnv(), ctx, obs, bulkRewriteOp[*rewriteRow]{
+	return runBulkRewrite(ctx, c.rewriteEnv(), obs, bulkRewriteOp[*rewriteRow]{
 		opName:      "compress-existing",
 		resultLabel: "compressed",
 		counter:     telemetry.CompressExistingObjectsTotal,
@@ -125,7 +125,7 @@ func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Obser
 	if c.codec == nil || c.store == nil {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
-	return runBulkRewrite(c.rewriteEnv(), ctx, obs, bulkRewriteOp[*rewriteRow]{
+	return runBulkRewrite(ctx, c.rewriteEnv(), obs, bulkRewriteOp[*rewriteRow]{
 		opName:      "decompress-existing",
 		resultLabel: "decompressed",
 		counter:     telemetry.DecompressExistingObjectsTotal,

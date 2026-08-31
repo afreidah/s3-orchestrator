@@ -56,6 +56,8 @@ const (
 	paramPrefix     = "prefix"
 	descBackendName = "Backend name"
 	descObjectKey   = "Object key, including its bucket prefix"
+
+	descBulkRewriteMax = "Cap the objects rewritten by this request; 0 converts the whole fleet"
 )
 
 // Parameter locations and types, mirrored by the generator.
@@ -327,18 +329,26 @@ func (h *Handler) routes() []route {
 			Method: http.MethodPost, Pattern: "/admin/api/encrypt-existing", Handler: h.handleEncryptExisting,
 			Summary:  "Encrypt every plaintext object in place",
 			Response: adminapi.EncryptExistingResponse{},
+			Params: []param{
+				{Name: paramMax, In: inQuery, Type: typeInteger, Description: descBulkRewriteMax},
+			},
+			Stream: adminstream.Event{},
 		},
 		{
 			Method: http.MethodPost, Pattern: "/admin/api/decrypt-existing", Handler: h.handleDecryptExisting,
 			Summary:  "Rewrite every encrypted object back to plaintext",
 			Response: adminapi.DecryptExistingResponse{},
+			Params: []param{
+				{Name: paramMax, In: inQuery, Type: typeInteger, Description: descBulkRewriteMax},
+			},
+			Stream: adminstream.Event{},
 		},
 		{
 			Method: http.MethodPost, Pattern: "/admin/api/compress-existing", Handler: h.handleCompressExisting,
 			Summary:  "Store every uncompressed object as chunked zstd",
 			Response: adminapi.CompressExistingResponse{},
 			Params: []param{
-				{Name: paramMax, In: inQuery, Type: typeInteger, Description: "Cap the objects rewritten by this request; 0 converts the whole fleet"},
+				{Name: paramMax, In: inQuery, Type: typeInteger, Description: descBulkRewriteMax},
 			},
 			Stream: adminstream.Event{},
 		},
@@ -347,7 +357,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Rewrite every compressed object back to its stored bytes",
 			Response: adminapi.DecompressExistingResponse{},
 			Params: []param{
-				{Name: paramMax, In: inQuery, Type: typeInteger, Description: "Cap the objects rewritten by this request; 0 converts the whole fleet"},
+				{Name: paramMax, In: inQuery, Type: typeInteger, Description: descBulkRewriteMax},
 			},
 			Stream: adminstream.Event{},
 		},

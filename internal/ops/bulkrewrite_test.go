@@ -173,7 +173,7 @@ func TestRunBulkRewrite_ProcessesEveryRowAsTheSetShrinks(t *testing.T) {
 	t.Parallel()
 	set := newShrinkingSet(pagingRows)
 
-	res, err := runBulkRewrite(pagingEnv(t), context.Background(), nil, bulkRewriteOp[*rewriteRow]{
+	res, err := runBulkRewrite(context.Background(), pagingEnv(t), nil, bulkRewriteOp[*rewriteRow]{
 		opName:      "paging-test",
 		resultLabel: "rewritten",
 		counter:     pagingCounter(),
@@ -211,7 +211,7 @@ func TestRunBulkRewrite_TerminatesWhenRowsStay(t *testing.T) {
 	t.Parallel()
 	set := newShrinkingSet(pagingRows)
 
-	res, err := runBulkRewrite(pagingEnv(t), context.Background(), nil, bulkRewriteOp[*rewriteRow]{
+	res, err := runBulkRewrite(context.Background(), pagingEnv(t), nil, bulkRewriteOp[*rewriteRow]{
 		opName:      "paging-test",
 		resultLabel: "rewritten",
 		counter:     pagingCounter(),
@@ -253,7 +253,7 @@ func TestRunBulkRewrite_MixedOutcomesStillCoverTheSet(t *testing.T) {
 		return n%3 == 0
 	}
 
-	res, err := runBulkRewrite(pagingEnv(t), context.Background(), nil, bulkRewriteOp[*rewriteRow]{
+	res, err := runBulkRewrite(context.Background(), pagingEnv(t), nil, bulkRewriteOp[*rewriteRow]{
 		opName:      "paging-test",
 		resultLabel: "rewritten",
 		counter:     pagingCounter(),
@@ -320,7 +320,7 @@ func TestRunBulkRewrite_DeclinesObjectsWithoutUsageHeadroom(t *testing.T) {
 		usage:   usageGate,
 	}
 
-	res, err := runBulkRewrite(env, context.Background(), nil, bulkRewriteOp[*rewriteRow]{
+	res, err := runBulkRewrite(context.Background(), env, nil, bulkRewriteOp[*rewriteRow]{
 		opName:      "paging-test",
 		resultLabel: "rewritten",
 		counter:     pagingCounter(),
@@ -385,7 +385,7 @@ func TestRunBulkRewrite_CapSpanningPagesStopsExactly(t *testing.T) {
 	const capRewrites = bulkRewriteBatchSize + 50
 	set := newShrinkingSet(pagingRows)
 
-	res, err := runBulkRewrite(pagingEnv(t), context.Background(), nil, bulkRewriteOp[*rewriteRow]{
+	res, err := runBulkRewrite(context.Background(), pagingEnv(t), nil, bulkRewriteOp[*rewriteRow]{
 		opName:      "paging-test",
 		resultLabel: "rewritten",
 		counter:     pagingCounter(),
@@ -438,7 +438,7 @@ func TestRunBulkRewrite_CapCountsRewritesNotRowsConsidered(t *testing.T) {
 	// Declining every other row means reaching the cap has to walk twice as
 	// many rows as it converts.
 	var considered int
-	res, err := runBulkRewrite(pagingEnv(t), context.Background(), nil, bulkRewriteOp[*rewriteRow]{
+	res, err := runBulkRewrite(context.Background(), pagingEnv(t), nil, bulkRewriteOp[*rewriteRow]{
 		opName:      "paging-test",
 		resultLabel: "rewritten",
 		counter:     pagingCounter(),
