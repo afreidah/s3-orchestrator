@@ -5,7 +5,7 @@
 //
 // Surfaces the structured contract every reloadable subsystem implements
 // (Hook), the per-hook outcome record (HookOutcome), and the aggregate
-// reload result (ReloadResult) operators consume through the admin API.
+// reload result (Result) operators consume through the admin API.
 // Status enums are stable strings so reload status can be exported to
 // metrics, logged, and JSON-rendered without further translation.
 // -------------------------------------------------------------------------------
@@ -41,10 +41,10 @@ type HookOutcome struct {
 	Error string `json:"error,omitempty"`
 }
 
-// ReloadStatus describes the overall outcome of a reload pass.
-type ReloadStatus string
+// Status describes the overall outcome of a reload pass.
+type Status string
 
-// ReloadStatus values:
+// Status values:
 //   - FullSuccess: every hook returned Applied or Skipped.
 //   - PartialApplied: at least one hook returned Failed, but the Check
 //     pass succeeded so the config was still swapped in.
@@ -53,19 +53,19 @@ type ReloadStatus string
 //   - LoadFailed: the YAML file failed to load or validate; no
 //     hooks ran, generation unchanged.
 const (
-	ReloadFullSuccess      ReloadStatus = "full_success"
-	ReloadPartialApplied   ReloadStatus = "partial_applied"
-	ReloadValidationFailed ReloadStatus = "validation_failed"
-	ReloadLoadFailed       ReloadStatus = "load_failed"
+	ReloadFullSuccess      Status = "full_success"
+	ReloadPartialApplied   Status = "partial_applied"
+	ReloadValidationFailed Status = "validation_failed"
+	ReloadLoadFailed       Status = "load_failed"
 )
 
-// ReloadResult is the aggregate report from a single reload pass. The
+// Result is the aggregate report from a single reload pass. The
 // coordinator stores the most recent result atomically; the admin API
 // exposes it for operator inspection. Generation is monotonic and only
 // advances on a successful Apply pass (FullSuccess or PartialApplied).
-type ReloadResult struct {
-	Generation int64        `json:"generation"`
-	Status     ReloadStatus `json:"status"`
+type Result struct {
+	Generation int64  `json:"generation"`
+	Status     Status `json:"status"`
 	// Outcomes lists every hook the coordinator considered, in apply
 	// order. Skipped hooks are recorded too so operators can see which
 	// subsystems were not part of the reload.

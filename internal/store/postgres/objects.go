@@ -66,7 +66,6 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 		maxKeys = 1000
 	}
 
-	// --- Escape LIKE wildcards in prefix ---
 	escapedPrefix := likeEscaper.Replace(prefix)
 
 	// Fetch one extra to detect truncation

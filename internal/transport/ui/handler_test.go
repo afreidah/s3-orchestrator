@@ -27,6 +27,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -1219,19 +1220,17 @@ func TestAPIRebalance_ManagerError(t *testing.T) {
 		t.Fatalf("status = %d, want 202", w.Result().StatusCode)
 	}
 
-	// Wait briefly for background goroutine to complete
-	time.Sleep(100 * time.Millisecond)
-
-	// Poll status to see the error
-	req2 := authedRequest(t, h, mux, http.MethodGet, "/ui/api/rebalance/status", nil)
-	w2 := httptest.NewRecorder()
-	mux.ServeHTTP(w2, req2)
-
+	// The failure surfaces on the status endpoint once the background
+	// goroutine finishes, which is its own schedule rather than a fixed wait.
 	var result map[string]any
-	_ = json.NewDecoder(w2.Body).Decode(&result)
-	if result["status"] != "error" {
-		t.Errorf("expected status=error, got %v", result)
-	}
+	testx.Eventually(t, 2*time.Second, func() bool {
+		req2 := authedRequest(t, h, mux, http.MethodGet, "/ui/api/rebalance/status", nil)
+		w2 := httptest.NewRecorder()
+		mux.ServeHTTP(w2, req2)
+		result = nil
+		_ = json.NewDecoder(w2.Body).Decode(&result)
+		return result["status"] == "error"
+	}, "expected status=error, got %v", result)
 }
 
 // -------------------------------------------------------------------------

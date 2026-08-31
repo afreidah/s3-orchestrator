@@ -73,7 +73,7 @@ type InMemory struct {
 	LastDeleteDeadline    time.Time
 
 	// Native-copy support. CopyObject always exists so InMemory satisfies
-	// backend.BackendCopier, but it reports ErrCopyNotSupported until a test
+	// backend.Copier, but it reports ErrCopyNotSupported until a test
 	// sets CopyEnabled, leaving callers on the materialized-copy path.
 	CopyEnabled bool
 	CopyCalls   int
@@ -258,7 +258,7 @@ func (m *InMemory) DeleteObject(ctx context.Context, key string) error {
 	return nil
 }
 
-// CopyObject satisfies backend.BackendCopier. Reports ErrCopyNotSupported
+// CopyObject satisfies backend.Copier. Reports ErrCopyNotSupported
 // until CopyEnabled is set, so callers stay on the materialized-copy path
 // unless a test opts into the native one.
 func (m *InMemory) CopyObject(_ context.Context, srcKey, dstKey, _ string, _ map[string]string) (string, error) {

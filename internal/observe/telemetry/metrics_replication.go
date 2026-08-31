@@ -16,7 +16,6 @@ import (
 
 // ReplicationPending and related package-level variables used by this package.
 var (
-	// --- Replication metrics ---
 
 	// ReplicationPending tracks objects currently below the target replication factor.
 	ReplicationPending = promauto.NewGauge(
@@ -68,8 +67,6 @@ var (
 			Help: "Replica copies created to replace copies on circuit-broken backends",
 		},
 	)
-
-	// --- Over-replication cleanup metrics ---
 
 	// OverReplicationPending tracks objects currently above the target replication factor.
 	OverReplicationPending = promauto.NewGauge(

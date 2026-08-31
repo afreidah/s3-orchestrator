@@ -53,7 +53,7 @@ type fleetOpts struct {
 	// Codec and Compression turn on at-rest compression of the assembled
 	// object. It is encoded only when both are set, mirroring production
 	// wiring.
-	Codec       MultipartCodec
+	Codec       Codec
 	Compression config.CompressionConfig
 	// ObjectCache attaches a cache so completion-time invalidation runs.
 	ObjectCache objcache.ObjectCache
@@ -83,7 +83,7 @@ type fleet struct {
 func (f *fleet) SetIntegrityConfig(cfg *config.IntegrityConfig) { f.Integrity.Store(cfg) }
 
 // newFleet builds a multipart Manager over the supplied backends. store is the
-// wide metadata store; New narrows it to MultipartStores.
+// wide metadata store; New narrows it to Stores.
 func newFleet(
 	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
 ) *fleet {

@@ -1629,7 +1629,7 @@ func TestCopyObject_Success(t *testing.T) {
 // TestCopyObject_SameBackendFastPath_UsesNativeCopy verifies the
 // same-be fast path: when the destination ends up on the same
 // be that holds a source replica and the be implements
-// BackendCopier, the orchestrator calls native CopyObject once and
+// Copier, the orchestrator calls native CopyObject once and
 // skips the materialize-then-PUT round trip.
 func TestCopyObject_SameBackendFastPath_UsesNativeCopy(t *testing.T) {
 	t.Parallel()

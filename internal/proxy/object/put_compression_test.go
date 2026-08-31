@@ -345,17 +345,17 @@ func TestPut_EligibilityUsesStoredSize(t *testing.T) {
 	}
 }
 
-// noDecode supplies the decode half of ObjectCodec for write-path fakes, which
+// noDecode supplies the decode half of Codec for write-path fakes, which
 // never reach it. Embedded rather than repeated so a fake states only the
 // behaviour its test is about.
 type noDecode struct{}
 
-// DecompressRanged implements ObjectCodec.
+// DecompressRanged implements Codec.
 func (noDecode) DecompressRanged(context.Context, compression.RangeFetcher, int64) (compression.RangedReader, error) {
 	return nil, errors.New("decode is not reached on the write path")
 }
 
-// failingCodec fails every encode. It is why ObjectCodec is an interface: the
+// failingCodec fails every encode. It is why Codec is an interface: the
 // concrete codec only fails on inputs the write path cannot produce, so the
 // mid-upload failure branch is unreachable without a fake.
 type failingCodec struct {
@@ -363,7 +363,7 @@ type failingCodec struct {
 	err error
 }
 
-// Compress implements ObjectCodec by consuming nothing and failing.
+// Compress implements Codec by consuming nothing and failing.
 func (f failingCodec) Compress(io.Writer, io.Reader) (int64, error) { return 0, f.err }
 
 // shortCodec reports having written more bytes than it did, standing in for a
@@ -373,7 +373,7 @@ type shortCodec struct {
 	claim int64
 }
 
-// Compress implements ObjectCodec.
+// Compress implements Codec.
 func (s shortCodec) Compress(dst io.Writer, _ io.Reader) (int64, error) {
 	_, err := dst.Write([]byte("short"))
 	return s.claim, err

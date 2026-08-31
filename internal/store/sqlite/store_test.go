@@ -235,7 +235,7 @@ func TestDeleteObject(t *testing.T) {
 	}
 
 	_, err = s.GetAllObjectLocations(ctx, "bucket/key1")
-	if err != core.ErrObjectNotFound {
+	if !errors.Is(err, core.ErrObjectNotFound) {
 		t.Errorf("expected ErrObjectNotFound, got %v", err)
 	}
 }
@@ -247,7 +247,7 @@ func TestDeleteObject_NotFound(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := s.DeleteObject(ctx, "bucket/nonexistent")
-	if err != core.ErrObjectNotFound {
+	if !errors.Is(err, core.ErrObjectNotFound) {
 		t.Errorf("expected ErrObjectNotFound, got %v", err)
 	}
 }
@@ -626,7 +626,7 @@ func TestMoveObjectLocation_QuotaExceeded(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	_, err = s.MoveObjectLocation(ctx, "bucket/huge", "big", "small")
-	if err != core.ErrNoSpaceAvailable {
+	if !errors.Is(err, core.ErrNoSpaceAvailable) {
 		t.Errorf("expected ErrNoSpaceAvailable, got %v", err)
 	}
 }
@@ -649,7 +649,7 @@ func TestRecordObject_QuotaExceeded(t *testing.T) {
 		t.Fatalf("SyncQuotaLimits: %v", err)
 	}
 	_, err = s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/over", Backend: "tight", Size: 500})
-	if err != core.ErrNoSpaceAvailable {
+	if !errors.Is(err, core.ErrNoSpaceAvailable) {
 		t.Errorf("expected ErrNoSpaceAvailable, got %v", err)
 	}
 }
@@ -935,7 +935,7 @@ func TestMultipartUpload_Lifecycle(t *testing.T) {
 	}
 
 	_, err = s.GetMultipartUpload(ctx, "upload-1")
-	if err != core.ErrMultipartUploadNotFound {
+	if !errors.Is(err, core.ErrMultipartUploadNotFound) {
 		t.Errorf("expected ErrMultipartUploadNotFound, got %v", err)
 	}
 }

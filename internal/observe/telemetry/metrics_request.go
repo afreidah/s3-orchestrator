@@ -16,7 +16,6 @@ import (
 
 // RequestsTotal and related package-level variables used by this package.
 var (
-	// --- Request metrics ---
 
 	// RequestsTotal counts all HTTP requests by method and status code.
 	RequestsTotal = promauto.NewCounterVec(
@@ -66,8 +65,6 @@ var (
 		[]string{"method"},
 	)
 
-	// --- Backend metrics ---
-
 	// BackendRequestsTotal counts backend operations by operation type and status.
 	BackendRequestsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
@@ -87,8 +84,6 @@ var (
 		[]string{"operation", "backend"},
 	)
 
-	// --- Manager metrics ---
-
 	// ManagerRequestsTotal counts manager-level operations.
 	ManagerRequestsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
@@ -107,8 +102,6 @@ var (
 		},
 		[]string{"operation", "backend"},
 	)
-
-	// --- Rate limit metrics ---
 
 	// RateLimitRejectionsTotal counts requests rejected by the per-IP rate limiter.
 	RateLimitRejectionsTotal = promauto.NewCounter(

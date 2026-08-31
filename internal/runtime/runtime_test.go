@@ -266,7 +266,7 @@ func TestToAdminReloadStatus_CopiesResult(t *testing.T) {
 	t.Parallel()
 	started := time.Unix(1700000000, 0).UTC()
 	ended := started.Add(2 * time.Second)
-	res := &reload.ReloadResult{
+	res := &reload.Result{
 		Generation: 4,
 		Status:     reload.ReloadPartialApplied,
 		Outcomes: []reload.HookOutcome{
@@ -310,7 +310,7 @@ func TestToAdminReloadStatus_CopiesResult(t *testing.T) {
 // not-yet placeholder.
 func TestToAdminReloadStatus_ZeroGenerationSurvives(t *testing.T) {
 	t.Parallel()
-	got := toAdminReloadStatus(&reload.ReloadResult{
+	got := toAdminReloadStatus(&reload.Result{
 		Generation: 0,
 		Status:     reload.ReloadValidationFailed,
 	})

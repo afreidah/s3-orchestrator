@@ -36,7 +36,6 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 	)
 	defer span.End()
 
-	// --- Delete all copies from store ---
 	copies, err := o.stores.DeleteObject(ctx, key)
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
@@ -56,7 +55,6 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 	// this key but keeps every mutation path ending with one helper.
 	o.cache.Delete(key)
 
-	// --- Delete from each backend that held a copy (fan out concurrently) ---
 	workerpool.Run(ctx, len(copies), copies, func(ctx context.Context, cp core.DeletedCopy) {
 		backend, ok := o.core.Backends()[cp.BackendName]
 		if !ok {

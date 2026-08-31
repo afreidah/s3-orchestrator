@@ -16,7 +16,6 @@ import (
 
 // CircuitBreakerState and related package-level variables used by this package.
 var (
-	// --- Circuit breaker metrics ---
 
 	// CircuitBreakerState tracks the current circuit breaker state per component.
 	// 0=closed (healthy), 1=open (down), 2=half-open (probing).

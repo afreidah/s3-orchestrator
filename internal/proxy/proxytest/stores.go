@@ -60,7 +60,7 @@ type RuntimeOptions struct {
 	RoutingStrategy config.RoutingStrategy
 	MaxObjectSizes  map[string]int64
 	AdmissionSem    chan struct{}
-	CounterBackend  counter.CounterBackend
+	Backend         counter.Backend
 	// Metrics, when set, installs a collector. ReplicationFactor feeds the
 	// under-replication gauge and is only read when Metrics is set.
 	Metrics           metrics.Deps
@@ -72,7 +72,7 @@ type RuntimeOptions struct {
 type StackOptions struct {
 	Runtime     *infra.BackendRuntime
 	Encryptor   *encryption.Encryptor
-	Codec       object.ObjectCodec
+	Codec       object.Codec
 	Compression config.CompressionConfig
 	ObjectCache objcache.ObjectCache
 	CacheTTL    time.Duration
@@ -101,7 +101,7 @@ func NewRuntime(opts *RuntimeOptions) *infra.BackendRuntime {
 			names = append(names, name)
 		}
 	}
-	counters := opts.CounterBackend
+	counters := opts.Backend
 	if counters == nil {
 		counters = counter.NewLocalCounterBackend(names)
 	}

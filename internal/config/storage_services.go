@@ -76,8 +76,8 @@ type WritePathConfig struct {
 
 // MultipartConfig gates the S3 protocol invariants enforced at multipart
 // completion. Part-number range, ordering, duplicate and ETag checks are
-// always enforced; only the minimum non-final part size is optional, because
-// turning it on rejects manifests this proxy previously accepted.
+// always enforced; only the minimum non-final part size is optional, because a
+// deployment whose writers split more finely than S3 allows needs it off.
 type MultipartConfig struct {
 	// EnforceMinPartSize requires every part but the last to be at least
 	// 5 MiB, matching S3. Default: true. Set to false for a deployment with

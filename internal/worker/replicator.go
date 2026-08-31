@@ -139,10 +139,8 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 		slog.Int("batch_size", cfg.BatchSize),
 	)
 
-	// --- Identify sustained-unhealthy backends ---
 	excluded := r.UnhealthyBackends(cfg.UnhealthyThreshold)
 
-	// --- Find under-replicated objects ---
 	var locations []core.ObjectLocation
 	var err error
 	if len(excluded) > 0 {

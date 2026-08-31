@@ -108,7 +108,6 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 		}
 	}
 
-	// --- Conditional write: If-None-Match: * fails when the key exists ---
 	// Best-effort precondition check before the body upload so a doomed
 	// request does not transmit. Matches AWS S3's documented behavior:
 	// the check is not a hard guarantee under contention, but eliminates
@@ -117,7 +116,6 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 		return status, err
 	}
 
-	// --- Early rejection before body transmission (Expect: 100-Continue) ---
 	// Check backend capacity before reading the request body. When the
 	// client sends Expect: 100-continue, Go's net/http delays the 100
 	// Continue response until the first r.Body.Read(). Rejecting here
@@ -140,7 +138,6 @@ func (s *Server) handlePut(ctx context.Context, w http.ResponseWriter, r *http.R
 		return writeTaggingError(w, err), err
 	}
 
-	// --- Add size to span ---
 	span := trace.SpanFromContext(ctx)
 	span.SetAttributes(
 		telemetry.AttrObjectSize.Int64(r.ContentLength),
@@ -178,7 +175,6 @@ func (s *Server) handleGet(ctx context.Context, w http.ResponseWriter, r *http.R
 	}
 	defer func() { _ = result.Body.Close() }()
 
-	// --- Add size to span ---
 	span := trace.SpanFromContext(ctx)
 	span.SetAttributes(
 		telemetry.AttrObjectSize.Int64(result.Size),
@@ -245,7 +241,6 @@ func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.
 		return writeStorageError(w, err, "Failed to retrieve object metadata"), err
 	}
 
-	// --- Add size to span ---
 	span := trace.SpanFromContext(ctx)
 	span.SetAttributes(
 		telemetry.AttrObjectSize.Int64(result.Size),
@@ -266,7 +261,6 @@ func (s *Server) handleHead(ctx context.Context, w http.ResponseWriter, r *http.
 	}
 	setTaggingCountHeader(w, result.TagCount)
 
-	// --- Conditional request evaluation ---
 	if status, done := checkConditionals(r, result.ETag, result.LastModified); done {
 		w.WriteHeader(status)
 		return status, nil
@@ -292,7 +286,6 @@ func (s *Server) handleDelete(ctx context.Context, w http.ResponseWriter, _ *htt
 // across backends, with atomic quota tracking. Only same-bucket copies are
 // allowed (no cross-bucket copying).
 func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, destInternalKey, copySource string) (int, error) {
-	// --- Parse x-amz-copy-source header (may be URL-encoded) ---
 	decoded, err := url.PathUnescape(copySource)
 	if err != nil {
 		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "Invalid x-amz-copy-source encoding")
@@ -305,7 +298,6 @@ func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r 
 		return http.StatusBadRequest, fmt.Errorf("invalid copy source: %s", copySource)
 	}
 
-	// --- Validate source bucket matches authorized bucket (same-bucket only) ---
 	if sourceBucket != bucket {
 		writeS3Error(w, http.StatusForbidden, "AccessDenied", "Cross-bucket copy is not allowed")
 		return http.StatusForbidden, fmt.Errorf("cross-bucket copy denied: %s != %s", sourceBucket, bucket)

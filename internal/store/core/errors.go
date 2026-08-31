@@ -10,7 +10,10 @@
 
 package core
 
-import "errors"
+import (
+	"errors"
+	"net/http"
+)
 
 // -------------------------------------------------------------------------
 // STRUCTURED ERROR
@@ -60,7 +63,7 @@ var (
 	// ErrObjectNotFound is returned when an object is not in the
 	// location table.
 	ErrObjectNotFound = &S3Error{
-		StatusCode: 404,
+		StatusCode: http.StatusNotFound,
 		Code:       "NoSuchKey",
 		Message:    "object not found",
 	}
@@ -68,7 +71,7 @@ var (
 	// ErrMultipartUploadNotFound is returned when a multipart upload
 	// ID is not found.
 	ErrMultipartUploadNotFound = &S3Error{
-		StatusCode: 404,
+		StatusCode: http.StatusNotFound,
 		Code:       "NoSuchUpload",
 		Message:    "multipart upload not found",
 	}
@@ -77,7 +80,7 @@ var (
 	// any byte of the object, such as a suffix range against a zero-length
 	// object.
 	ErrInvalidRange = &S3Error{
-		StatusCode: 416,
+		StatusCode: http.StatusRequestedRangeNotSatisfiable,
 		Code:       "InvalidRange",
 		Message:    "the requested range is not satisfiable",
 	}
@@ -85,7 +88,7 @@ var (
 	// ErrServiceUnavailable is returned to S3 clients when writes are
 	// rejected during a database outage.
 	ErrServiceUnavailable = &S3Error{
-		StatusCode: 503,
+		StatusCode: http.StatusServiceUnavailable,
 		Code:       "ServiceUnavailable",
 		Message:    "database unavailable, writes are temporarily rejected",
 	}
@@ -93,7 +96,7 @@ var (
 	// ErrInsufficientStorage is returned when no backend has enough
 	// quota at the manager-routing layer.
 	ErrInsufficientStorage = &S3Error{
-		StatusCode: 507,
+		StatusCode: http.StatusInsufficientStorage,
 		Code:       "InsufficientStorage",
 		Message:    "no backend has sufficient quota",
 	}
@@ -101,7 +104,7 @@ var (
 	// ErrUsageLimitExceeded is returned when all backends holding an
 	// object have exceeded their monthly usage limits.
 	ErrUsageLimitExceeded = &S3Error{
-		StatusCode: 429,
+		StatusCode: http.StatusTooManyRequests,
 		Code:       "SlowDown",
 		Message:    "monthly usage limit exceeded for all backends holding this object",
 	}

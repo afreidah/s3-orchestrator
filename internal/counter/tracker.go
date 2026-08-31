@@ -32,11 +32,11 @@ import (
 
 // UsageTracker tracks per-backend usage counters, enforces monthly usage
 // limits, and flushes accumulated deltas to the database. Counter storage
-// is delegated to a CounterBackend (local atomics or shared Redis). The
+// is delegated to a Backend (local atomics or shared Redis). The
 // limits and baseline maps live behind atomic.Pointer snapshots so reads
 // require no locking and writes copy-on-write.
 type UsageTracker struct {
-	backend  CounterBackend
+	backend  Backend
 	limits   atomic.Pointer[map[string]core.UsageLimits]
 	baseline atomic.Pointer[map[string]core.UsageStat]
 
@@ -49,7 +49,7 @@ type UsageTracker struct {
 // NewUsageTracker creates a usage tracker with the given counter backend
 // and per-backend limits. The counter backend determines whether deltas
 // are stored locally (default) or in a shared store like Redis.
-func NewUsageTracker(backend CounterBackend, limits map[string]core.UsageLimits) *UsageTracker {
+func NewUsageTracker(backend Backend, limits map[string]core.UsageLimits) *UsageTracker {
 	if limits == nil {
 		limits = make(map[string]core.UsageLimits)
 	}
@@ -93,7 +93,7 @@ func (u *UsageTracker) WithinLimits(backendName string, apiCalls, egress, ingres
 // BackendsWithinLimits loads the snapshots once and passes them in so
 // every per-backend check sees a consistent view and the atomic Loads
 // do not repeat per iteration.
-func withinLimitsSnapshot(backend CounterBackend, limits map[string]core.UsageLimits, baseline map[string]core.UsageStat, name string, apiCalls, egress, ingress int64) bool {
+func withinLimitsSnapshot(backend Backend, limits map[string]core.UsageLimits, baseline map[string]core.UsageStat, name string, apiCalls, egress, ingress int64) bool {
 	lim, ok := limits[name]
 	if !ok {
 		return true // no limits configured
@@ -290,7 +290,7 @@ func (u *UsageTracker) FlushUsage(ctx context.Context, store usageFlusher, skip 
 	return lastErr
 }
 
-// Backend returns the underlying CounterBackend (local or Redis).
-func (u *UsageTracker) Backend() CounterBackend {
+// Backend returns the underlying Backend (local or Redis).
+func (u *UsageTracker) Backend() Backend {
 	return u.backend
 }

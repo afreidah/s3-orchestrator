@@ -43,10 +43,9 @@ func resolutionError(label string, err error) error {
 	return fmt.Errorf("%s resolution failed: %w", label, err)
 }
 
-// defaultHooks returns the standard set of reload hooks the runtime
-// wires in. Order matches the historical applyReload sequence so
-// existing behaviour is preserved. The cert reloader is passed
-// directly because it is not registered in the injector.
+// defaultHooks returns the standard set of reload hooks the runtime wires in,
+// in the order they must run. The cert reloader is passed directly because it
+// is not registered in the injector.
 func defaultHooks(inj do.Injector, certReloader *httputil.CertReloader, logLevel *slog.LevelVar) []Hook {
 	return []Hook{
 		&tlsCertHook{reloader: certReloader},
@@ -289,9 +288,9 @@ func (h *workerConfigsHook) Apply(_ context.Context, _, newCfg *config.Config) (
 
 // runtimeConfigHook updates the UsageFlush, Lifecycle, and Integrity
 // per-section configs on the collaborators that read them, and refreshes
-// Prometheus quota gauges. The metrics refresh is the only fallible step; a failure
-// there returns HookFailed but the AtomicConfig swaps already
-// happened, matching historical best-effort semantics.
+// Prometheus quota gauges. The metrics refresh is the only fallible step, and
+// it is best-effort: a failure there returns HookFailed, but the AtomicConfig
+// swaps have already happened and are not rolled back.
 type runtimeConfigHook struct {
 	inj do.Injector
 }

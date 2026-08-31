@@ -16,7 +16,6 @@ import (
 
 // RebalanceObjectsMoved and related package-level variables used by this package.
 var (
-	// --- Rebalancer metrics ---
 
 	// RebalanceObjectsMoved counts objects moved by the rebalancer.
 	RebalanceObjectsMoved = promauto.NewCounterVec(

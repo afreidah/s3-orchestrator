@@ -3,7 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Implements CounterBackend using Redis INCRBY/GET/GETSET for shared usage
+// Implements Backend using Redis INCRBY/GET/GETSET for shared usage
 // counters across multiple instances. Includes a circuit breaker that falls
 // back to an embedded LocalCounterBackend when Redis is unavailable, and a
 // health probe goroutine that recovers automatically when Redis returns.
