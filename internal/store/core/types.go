@@ -494,6 +494,19 @@ type CompressedUpdate struct {
 	KeyID         string
 }
 
+// EncryptedUpdate is the new description of a copy an encryption pass has
+// rewritten. PlaintextSize is what the encryptor was handed and CiphertextSize
+// is what now occupies the backend, so the difference between them is what the
+// envelope cost and what the backend's counter has to move by.
+type EncryptedUpdate struct {
+	ObjectKey      string
+	BackendName    string
+	EncryptionKey  []byte
+	KeyID          string
+	PlaintextSize  int64
+	CiphertextSize int64
+}
+
 // -------------------------------------------------------------------------
 // LISTING RESULTS
 // -------------------------------------------------------------------------

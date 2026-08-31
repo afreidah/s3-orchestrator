@@ -11,6 +11,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -33,18 +34,20 @@ func (s *Store) GetObjectTags(ctx context.Context, key string) ([]core.Tag, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to get object tags: %w", err)
 	}
-	defer rows.Close()
-
-	tags := []core.Tag{}
-	for rows.Next() {
+	tags, err := collectRows(rows, "object tags", func(rows *sql.Rows) (core.Tag, error) {
 		var t core.Tag
 		if err := rows.Scan(&t.Key, &t.Value); err != nil {
-			return nil, fmt.Errorf("failed to scan object tag: %w", err)
+			return core.Tag{}, fmt.Errorf("failed to scan object tag: %w", err)
 		}
-		tags = append(tags, t)
+		return t, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate object tags: %w", err)
+	// An untagged object has an empty set, not a nil one: the caller renders
+	// this straight into a TagSet and a nil would encode as absent.
+	if tags == nil {
+		tags = []core.Tag{}
 	}
 	return tags, nil
 }

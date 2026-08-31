@@ -157,12 +157,12 @@
         <tr>
           <td>Oldest unverified</td>
           <td class="num">{{if ne .Data.OldestUnverifiedAge 0}}{{formatDuration .Data.OldestUnverifiedAge}}{{else}}&mdash;{{end}}</td>
-          <td>How long ago the least recently checked copy was verified. Rises when the scrubber cannot keep pace with the fleet.</td>
+          <td>How long the most overdue copy has gone unverified. A copy that has never been checked counts from when it was written, so this reflects the whole backlog rather than only the copies the sweep has already reached. Rises when the scrubber cannot keep pace with the fleet.</td>
         </tr>
         <tr>
           <td>Never verified</td>
           <td class="num">{{if ne .Data.NeverVerifiedCopies 0}}<span class="orphan-value">{{formatNumber .Data.NeverVerifiedCopies}}</span>{{else}}&mdash;{{end}}</td>
-          <td>Copies that have a content hash but have never been checked against it. On a busy fleet this stays non-zero: newly written copies are unverified until the sweep reaches them, and they are deliberately queued behind older data. A steady value is healthy; a climbing one is not.</td>
+          <td>Copies that have a content hash but have never been checked against it. On a busy fleet this stays non-zero: newly written copies are unverified until the sweep reaches them, and they are deliberately queued behind older data. Backfill Checksums moves objects out of the No Hash column and into this one, so it climbs by exactly what that pass processed. A steady value is healthy; a climbing one you did not cause is not.</td>
         </tr>
       </tbody>
     </table>

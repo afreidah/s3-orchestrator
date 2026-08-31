@@ -1577,7 +1577,7 @@ func (q *Queries) MarkObjectScrubbed(ctx context.Context, arg MarkObjectScrubbed
 
 const oldestUnverifiedAge = `-- name: OldestUnverifiedAge :one
 SELECT
-    COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(last_scrubbed_at))), 0)::bigint AS age_seconds,
+    COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(COALESCE(last_scrubbed_at, created_at)))), 0)::bigint AS age_seconds,
     COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL)::bigint AS never_verified
 FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
@@ -1588,9 +1588,14 @@ type OldestUnverifiedAgeRow struct {
 	NeverVerified int64
 }
 
-// Age in seconds of the least recently verified copy, which is the figure that
-// says whether integrity checking is keeping up. Never-verified copies count
-// as infinitely old, so they dominate until the first full sweep completes.
+// Age in seconds of the copy at the head of the scrub queue, which is the
+// figure that says whether integrity checking is keeping up, and how many
+// copies have never been verified at all.
+//
+// The age falls back to created_at exactly as the queue ordering does, so a
+// never-verified copy is measured from when it was written. Taking MIN over
+// last_scrubbed_at alone skips those rows entirely, which reports a fleet that
+// has never been scrubbed as an age of zero.
 func (q *Queries) OldestUnverifiedAge(ctx context.Context) (OldestUnverifiedAgeRow, error) {
 	row := q.db.QueryRow(ctx, oldestUnverifiedAge)
 	var i OldestUnverifiedAgeRow

@@ -141,10 +141,7 @@ func (s *Store) GetParts(ctx context.Context, uploadID string) ([]core.Multipart
 	if err != nil {
 		return nil, fmt.Errorf("failed to get parts: %w", err)
 	}
-	defer rows.Close()
-
-	var parts []core.MultipartPart
-	for rows.Next() {
+	return collectRows(rows, "parts", func(rows *sql.Rows) (core.MultipartPart, error) {
 		var (
 			p         core.MultipartPart
 			ptETag    sql.NullString
@@ -153,18 +150,18 @@ func (s *Store) GetParts(ctx context.Context, uploadID string) ([]core.Multipart
 			createdAt string
 		)
 		if err := rows.Scan(&p.PartNumber, &p.ETag, &ptETag, &p.SizeBytes, &p.Encrypted, &p.EncryptionKey, &keyID, &ptSize, &createdAt); err != nil {
-			return nil, fmt.Errorf("failed to scan part: %w", err)
+			return core.MultipartPart{}, fmt.Errorf("failed to scan part: %w", err)
 		}
 		p.PlaintextETag = nullStringValue(ptETag)
 		p.KeyID = nullStringValue(keyID)
 		p.PlaintextSize = nullInt64Value(ptSize)
-		p.CreatedAt, err = parseTime(createdAt)
+		created, err := parseTime(createdAt)
 		if err != nil {
-			return nil, fmt.Errorf("invalid part created_at timestamp %q: %w", createdAt, err)
+			return core.MultipartPart{}, fmt.Errorf("invalid part created_at timestamp %q: %w", createdAt, err)
 		}
-		parts = append(parts, p)
-	}
-	return parts, rows.Err()
+		p.CreatedAt = created
+		return p, nil
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -201,26 +198,23 @@ func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUplo
 	if err != nil {
 		return nil, fmt.Errorf("failed to list multipart uploads: %w", err)
 	}
-	defer rows.Close()
-
-	var uploads []core.MultipartUpload
-	for rows.Next() {
+	return collectRows(rows, "multipart uploads", func(rows *sql.Rows) (core.MultipartUpload, error) {
 		var (
 			mu          core.MultipartUpload
 			contentType sql.NullString
 			createdAt   string
 		)
 		if err := rows.Scan(&mu.UploadID, &mu.ObjectKey, &contentType, &createdAt); err != nil {
-			return nil, fmt.Errorf("failed to scan multipart upload: %w", err)
+			return core.MultipartUpload{}, fmt.Errorf("failed to scan multipart upload: %w", err)
 		}
 		mu.ContentType = nullStringValue(contentType)
-		mu.CreatedAt, err = parseTime(createdAt)
+		created, err := parseTime(createdAt)
 		if err != nil {
-			return nil, fmt.Errorf(errInvalidTimestamp, createdAt, err)
+			return core.MultipartUpload{}, fmt.Errorf(errInvalidTimestamp, createdAt, err)
 		}
-		uploads = append(uploads, mu)
-	}
-	return uploads, rows.Err()
+		mu.CreatedAt = created
+		return mu, nil
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -230,18 +224,10 @@ func (s *Store) ListMultipartUploads(ctx context.Context, prefix string, maxUplo
 // CountActiveMultipartUploads returns the number of in-progress multipart
 // uploads whose key starts with the given bucket prefix.
 func (s *Store) CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error) {
-	escapedPrefix := likeEscape(bucketPrefix)
-
-	var count int64
-	err := s.db.QueryRowContext(ctx,
+	return s.countRows(ctx, "active multipart uploads",
 		`SELECT COUNT(*) FROM multipart_uploads
 		 WHERE object_key LIKE ? || '%' ESCAPE '\'`,
-		escapedPrefix,
-	).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count active multipart uploads: %w", err)
-	}
-	return count, nil
+		likeEscape(bucketPrefix))
 }
 
 // GetStaleMultipartUploads returns uploads older than the given duration.
@@ -290,26 +276,15 @@ func (s *Store) GetActiveMultipartCounts(ctx context.Context) (map[string]int64,
 	if err != nil {
 		return nil, fmt.Errorf("failed to query multipart counts: %w", err)
 	}
-	defer rows.Close()
-
-	counts := make(map[string]int64)
-	for rows.Next() {
-		var backend string
-		var count int64
-		if err := rows.Scan(&backend, &count); err != nil {
-			return nil, fmt.Errorf("failed to scan multipart count: %w", err)
-		}
-		counts[backend] = count
-	}
-	return counts, rows.Err()
+	return collectMap(rows, "multipart counts", scanNameValue)
 }
 
-// rowScanner is the common subset of *sql.Row and *sql.Rows used by
 // -------------------------------------------------------------------------
 // ROW SCANNERS
 // -------------------------------------------------------------------------
 
-// scanMultipartUploadRow so single-row and multi-row callers share one
+// rowScanner is the common subset of *sql.Row and *sql.Rows used by
+// scanMultipartUploadRow, so single-row and multi-row callers share one
 // column-mapping body.
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -366,15 +341,13 @@ func scanMultipartUploadRow(s rowScanner) (core.MultipartUpload, error) {
 // scanMultipartUploads loops sql.Rows through scanMultipartUploadRow,
 // surfacing the standard "failed to scan" error wrap on per-row failures.
 func scanMultipartUploads(rows *sql.Rows) ([]core.MultipartUpload, error) {
-	var uploads []core.MultipartUpload
-	for rows.Next() {
+	return collectRows(rows, "multipart uploads", func(rows *sql.Rows) (core.MultipartUpload, error) {
 		mu, err := scanMultipartUploadRow(rows)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan multipart upload: %w", err)
+			return core.MultipartUpload{}, fmt.Errorf("failed to scan multipart upload: %w", err)
 		}
-		uploads = append(uploads, mu)
-	}
-	return uploads, rows.Err()
+		return mu, nil
+	})
 }
 
 // likeEscape escapes SQL LIKE wildcards in prefix strings.

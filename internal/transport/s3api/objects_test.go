@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -587,208 +588,44 @@ func TestGet_LastModifiedHeader(t *testing.T) {
 	}
 }
 
-// TestGet_ConditionalIfNoneMatch verifies the get conditional if none match contract.
-// Asserts that status = , want 304.
-func TestGet_ConditionalIfNoneMatch(t *testing.T) {
+// TestConditionalRequests covers the precondition headers on GET and HEAD:
+// which verdict each one reaches against a known ETag and modification time,
+// and the status that verdict produces. The cases differ only in what they ask
+// about the same object, so they are stated as data rather than as one
+// function each.
+func TestConditionalRequests(t *testing.T) {
 	t.Parallel()
-	ts, _, backend := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
-			Return([]core.ObjectLocation{
-				{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
-			}, nil).AnyTimes()
-	})
+	ts, modified := condServer(t)
 
-	backend.Objects["mybucket/testkey"] = backendtest.Object{
-		Data: []byte("hello"), ContentType: "text/plain", ETag: `"abc"`,
-	}
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
-	req.Header.Set("If-None-Match", `"abc"`)
-	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
+	// Stated relative to the object's own modification time, which is what
+	// makes each expected verdict readable without doing date arithmetic.
+	httpTime := func(t time.Time) string { return t.UTC().Format(http.TimeFormat) }
 
-	if resp.StatusCode != http.StatusNotModified {
-		t.Fatalf("status = %d, want 304", resp.StatusCode)
+	tests := []struct {
+		name   string
+		method string
+		header string
+		value  string
+		want   int
+	}{
+		{"if-none-match matching etag", http.MethodGet, "If-None-Match", `"abc"`, http.StatusNotModified},
+		{"if-none-match other etag", http.MethodGet, "If-None-Match", `"different"`, http.StatusOK},
+		{"if-match other etag", http.MethodGet, "If-Match", `"wrong"`, http.StatusPreconditionFailed},
+		{"head if-none-match matching etag", http.MethodHead, "If-None-Match", `"abc"`, http.StatusNotModified},
+		{"if-modified-since after the write", http.MethodGet, "If-Modified-Since", httpTime(modified.Add(time.Hour)), http.StatusNotModified},
+		{"if-modified-since before the write", http.MethodGet, "If-Modified-Since", httpTime(modified.Add(-time.Hour)), http.StatusOK},
+		{"if-unmodified-since before the write", http.MethodGet, "If-Unmodified-Since", httpTime(modified.Add(-time.Hour)), http.StatusPreconditionFailed},
 	}
-}
 
-// TestGet_ConditionalIfNoneMatchMismatch verifies the get conditional if none match mismatch contract.
-// Asserts that status = , want 200.
-func TestGet_ConditionalIfNoneMatchMismatch(t *testing.T) {
-	t.Parallel()
-	ts, _, backend := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
-			Return([]core.ObjectLocation{
-				{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
-			}, nil).AnyTimes()
-	})
-
-	backend.Objects["mybucket/testkey"] = backendtest.Object{
-		Data: []byte("hello"), ContentType: "text/plain", ETag: `"abc"`,
-	}
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
-	req.Header.Set("If-None-Match", `"different"`)
-	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-}
-
-// TestGet_ConditionalIfMatch verifies the get conditional if match contract.
-// Asserts that status = , want 412.
-func TestGet_ConditionalIfMatch(t *testing.T) {
-	t.Parallel()
-	ts, _, backend := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
-			Return([]core.ObjectLocation{
-				{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
-			}, nil).AnyTimes()
-	})
-
-	backend.Objects["mybucket/testkey"] = backendtest.Object{
-		Data: []byte("hello"), ContentType: "text/plain", ETag: `"abc"`,
-	}
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
-	req.Header.Set("If-Match", `"wrong"`)
-	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusPreconditionFailed {
-		t.Fatalf("status = %d, want 412", resp.StatusCode)
-	}
-}
-
-// TestHead_ConditionalIfNoneMatch verifies the head conditional if none match contract.
-// Asserts that status = , want 304.
-func TestHead_ConditionalIfNoneMatch(t *testing.T) {
-	t.Parallel()
-	ts, _, backend := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
-			Return([]core.ObjectLocation{
-				{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
-			}, nil).AnyTimes()
-	})
-
-	backend.Objects["mybucket/testkey"] = backendtest.Object{
-		Data: []byte("hello"), ContentType: "text/plain", ETag: `"abc"`,
-	}
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodHead, ts.URL+"/mybucket/testkey", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
-	req.Header.Set("If-None-Match", `"abc"`)
-	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNotModified {
-		t.Fatalf("status = %d, want 304", resp.StatusCode)
-	}
-}
-
-// TestGet_ConditionalIfModifiedSince verifies the get conditional if modified since contract.
-// Asserts that status = , want 304.
-func TestGet_ConditionalIfModifiedSince(t *testing.T) {
-	t.Parallel()
-	ts, _, backend := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
-			Return([]core.ObjectLocation{
-				{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
-			}, nil).AnyTimes()
-	})
-
-	objTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
-	backend.Objects["mybucket/testkey"] = backendtest.Object{
-		Data: []byte("hello"), ContentType: "text/plain", ETag: `"abc"`,
-		LastModified: objTime,
-	}
-	// Request with a time after the object's last modification -> 304
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
-	req.Header.Set("If-Modified-Since", objTime.Add(time.Hour).UTC().Format(http.TimeFormat))
-	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNotModified {
-		t.Fatalf("status = %d, want 304", resp.StatusCode)
-	}
-}
-
-// TestGet_ConditionalIfModifiedSinceNewer verifies the get conditional if modified since newer contract.
-// Asserts that status = , want 200.
-func TestGet_ConditionalIfModifiedSinceNewer(t *testing.T) {
-	t.Parallel()
-	ts, _, backend := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
-			Return([]core.ObjectLocation{
-				{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
-			}, nil).AnyTimes()
-	})
-
-	objTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
-	backend.Objects["mybucket/testkey"] = backendtest.Object{
-		Data: []byte("hello"), ContentType: "text/plain", ETag: `"abc"`,
-		LastModified: objTime,
-	}
-	// Request with a time before the object's last modification -> 200
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
-	req.Header.Set("If-Modified-Since", objTime.Add(-time.Hour).UTC().Format(http.TimeFormat))
-	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-}
-
-// TestGet_ConditionalIfUnmodifiedSince verifies the get conditional if unmodified since contract.
-// Asserts that status = , want 412.
-func TestGet_ConditionalIfUnmodifiedSince(t *testing.T) {
-	t.Parallel()
-	ts, _, backend := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
-			Return([]core.ObjectLocation{
-				{ObjectKey: "mybucket/testkey", BackendName: "b1", SizeBytes: 5},
-			}, nil).AnyTimes()
-	})
-
-	objTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
-	backend.Objects["mybucket/testkey"] = backendtest.Object{
-		Data: []byte("hello"), ContentType: "text/plain", ETag: `"abc"`,
-		LastModified: objTime,
-	}
-	// Object was modified after the given time -> 412
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
-	req.Header.Set("If-Unmodified-Since", objTime.Add(-time.Hour).UTC().Format(http.TimeFormat))
-	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusPreconditionFailed {
-		t.Fatalf("status = %d, want 412", resp.StatusCode)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			resp := condReq(t, ts, tt.method, map[string]string{tt.header: tt.value})
+			defer resp.Body.Close()
+			if resp.StatusCode != tt.want {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.want)
+			}
+		})
 	}
 }
 
@@ -1445,9 +1282,9 @@ func TestBucketOnlyGET_RoutesToList(t *testing.T) {
 // RANGE + CONDITIONAL HEADERS
 // -------------------------------------------------------------------------
 
-// rangeCondServer serves one 11-byte object with a known ETag and
-// Last-Modified, which is all the conditional cases need.
-func rangeCondServer(t *testing.T) (*httptest.Server, time.Time) {
+// condServer serves one 11-byte object with a known ETag and Last-Modified,
+// which is all any conditional case needs, ranged or not.
+func condServer(t *testing.T) (*httptest.Server, time.Time) {
 	t.Helper()
 	modified := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	ts, _, backend := newTestServer(t, func(m *storetest.MockMetadataStore) {
@@ -1465,12 +1302,11 @@ func rangeCondServer(t *testing.T) (*httptest.Server, time.Time) {
 	return ts, modified
 }
 
-// rangeCondGet issues a ranged GET carrying the supplied conditional headers.
-func rangeCondGet(t *testing.T, ts *httptest.Server, headers map[string]string) *http.Response {
+// condReq issues one request against the fixed key with the supplied headers.
+func condReq(t *testing.T, ts *httptest.Server, method string, headers map[string]string) *http.Response {
 	t.Helper()
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), method, ts.URL+"/mybucket/testkey", nil)
 	req.Header.Set("X-Proxy-Token", "test-token")
-	req.Header.Set("Range", "bytes=0-4")
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
@@ -1481,13 +1317,21 @@ func rangeCondGet(t *testing.T, ts *httptest.Server, headers map[string]string) 
 	return resp
 }
 
+// rangeCondGet issues a ranged GET carrying the supplied conditional headers.
+func rangeCondGet(t *testing.T, ts *httptest.Server, headers map[string]string) *http.Response {
+	t.Helper()
+	withRange := map[string]string{"Range": "bytes=0-4"}
+	maps.Copy(withRange, headers)
+	return condReq(t, ts, http.MethodGet, withRange)
+}
+
 // TestGet_RangeHonorsPreconditions pins the fix for the corruption case: a
 // failed precondition aborts the request even when only a range was asked
 // for. Serving 206 here let a resumable download splice bytes from a
 // replaced object onto what it had already fetched.
 func TestGet_RangeHonorsPreconditions(t *testing.T) {
 	t.Parallel()
-	ts, modified := rangeCondServer(t)
+	ts, modified := condServer(t)
 
 	for _, c := range []struct {
 		name    string
@@ -1527,7 +1371,7 @@ func TestGet_RangeHonorsPreconditions(t *testing.T) {
 // stored validator instead of discarding the entry.
 func TestGet_NotModifiedCarriesValidators(t *testing.T) {
 	t.Parallel()
-	ts, _ := rangeCondServer(t)
+	ts, _ := condServer(t)
 
 	resp := rangeCondGet(t, ts, map[string]string{"If-None-Match": `"abc"`})
 	defer resp.Body.Close()
@@ -1548,7 +1392,7 @@ func TestGet_NotModifiedCarriesValidators(t *testing.T) {
 // partial the client would have spliced onto bytes from another version.
 func TestGet_IfRange(t *testing.T) {
 	t.Parallel()
-	ts, modified := rangeCondServer(t)
+	ts, modified := condServer(t)
 
 	for _, c := range []struct {
 		name     string
@@ -1592,7 +1436,7 @@ func TestGet_IfRange(t *testing.T) {
 // over-reaching: a plain ranged GET is unaffected.
 func TestGet_RangeWithoutConditionalsStillPartial(t *testing.T) {
 	t.Parallel()
-	ts, _ := rangeCondServer(t)
+	ts, _ := condServer(t)
 
 	resp := rangeCondGet(t, ts, nil)
 	defer resp.Body.Close()

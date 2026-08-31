@@ -42,9 +42,16 @@ func newAPIClient(baseAddr, token string) *apiClient {
 // ListObjects fetches one delimiter-grouped page under prefix. A non-empty
 // continuation resumes a previously truncated page.
 func (c *apiClient) ListObjects(ctx context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error) {
+	return c.listObjects(ctx, prefix, "/", continuation)
+}
+
+// listObjects fetches one page under prefix. The delimiter is always sent,
+// including empty: omitting it asks for a hierarchical listing, so the flat
+// listing has to say so explicitly rather than leave it out.
+func (c *apiClient) listObjects(ctx context.Context, prefix, delimiter, continuation string) (*adminapi.ObjectListResponse, error) {
 	q := url.Values{}
 	q.Set("prefix", prefix)
-	q.Set("delimiter", "/")
+	q.Set("delimiter", delimiter)
 	if continuation != "" {
 		q.Set("continuation", continuation)
 	}
@@ -129,17 +136,9 @@ func (c *apiClient) RequeueCleanupDLQ(ctx context.Context, backend string) (*adm
 	return adminclient.Post[adminapi.CleanupDLQRequeueResponse](ctx, c.c, "/admin/api/cleanup-dlq/requeue", q, nil)
 }
 
-// ListObjectsFlat fetches one page of every key under prefix, ungrouped. The
-// empty delimiter is sent explicitly, since omitting it asks for a
-// hierarchical listing instead.
+// ListObjectsFlat fetches one page of every key under prefix, ungrouped.
 func (c *apiClient) ListObjectsFlat(ctx context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error) {
-	q := url.Values{}
-	q.Set("prefix", prefix)
-	q.Set("delimiter", "")
-	if continuation != "" {
-		q.Set("continuation", continuation)
-	}
-	return adminclient.Get[adminapi.ObjectListResponse](ctx, c.c, objectsPath, q)
+	return c.listObjects(ctx, prefix, "", continuation)
 }
 
 // DownloadObject streams one object and returns the open body alongside its

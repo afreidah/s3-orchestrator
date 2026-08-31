@@ -39,17 +39,13 @@ func (s *Store) ListEncryptedLocations(ctx context.Context, keyID string, limit,
 	if err != nil {
 		return nil, fmt.Errorf("list encrypted locations: %w", err)
 	}
-	defer rows.Close()
-
-	var locs []core.EncryptedLocation
-	for rows.Next() {
+	return collectRows(rows, "encrypted locations", func(rows *sql.Rows) (core.EncryptedLocation, error) {
 		var loc core.EncryptedLocation
 		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.EncryptionKey, &loc.KeyID); err != nil {
-			return nil, fmt.Errorf("scan encrypted location: %w", err)
+			return core.EncryptedLocation{}, fmt.Errorf("scan encrypted location: %w", err)
 		}
-		locs = append(locs, loc)
-	}
-	return locs, rows.Err()
+		return loc, nil
+	})
 }
 
 // UpdateEncryptionKey updates the wrapped DEK and key ID for a single object
@@ -102,52 +98,12 @@ func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after c
 	if err != nil {
 		return nil, fmt.Errorf("list unencrypted locations: %w", err)
 	}
-	defer rows.Close()
-
-	var locs []core.UnencryptedLocation
-	for rows.Next() {
+	return collectRows(rows, "unencrypted locations", func(rows *sql.Rows) (core.UnencryptedLocation, error) {
 		var loc core.UnencryptedLocation
 		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes); err != nil {
-			return nil, fmt.Errorf("scan unencrypted location: %w", err)
+			return core.UnencryptedLocation{}, fmt.Errorf("scan unencrypted location: %w", err)
 		}
-		locs = append(locs, loc)
-	}
-	return locs, rows.Err()
-}
-
-// MarkObjectEncrypted updates an object location to record that it has been
-// encrypted in-place. Updates the size to the ciphertext size and stores the
-// encryption metadata.
-func (s *Store) MarkObjectEncrypted(ctx context.Context, objectKey, backendName string, encryptionKey []byte, keyID string, plaintextSize, ciphertextSize int64) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
-			UPDATE object_locations
-			SET encrypted = 1, encryption_key = ?, key_id = ?,
-			    plaintext_size = ?, size_bytes = ?
-			WHERE object_key = ? AND backend_name = ?`,
-			encryptionKey, keyID, plaintextSize, ciphertextSize, objectKey, backendName,
-		)
-		if err != nil {
-			return fmt.Errorf("mark encrypted: %w", err)
-		}
-
-		sizeDelta := ciphertextSize - plaintextSize
-		if sizeDelta != 0 {
-			// No bytes_limit guard: the on-disk byte count is reality and the
-			// counter follows it whether or not the limit would be exceeded.
-			// MAX(0, ...) clamps so a stale size cannot leave the counter
-			// negative, which would over-admit every later write.
-			_, err = tx.ExecContext(ctx, `
-				UPDATE backend_quotas
-				SET bytes_used = MAX(0, bytes_used + ?), updated_at = ?
-				WHERE backend_name = ?`,
-				sizeDelta, now(), backendName,
-			)
-			if err != nil {
-				return fmt.Errorf("adjust quota for encryption: %w", err)
-			}
-		}
-		return nil
+		return loc, nil
 	})
 }
 
@@ -172,61 +128,12 @@ func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit int, after 
 	if err != nil {
 		return nil, fmt.Errorf("list all encrypted locations: %w", err)
 	}
-	defer rows.Close()
-
-	var locs []core.DecryptableLocation
-	for rows.Next() {
+	return collectRows(rows, "decryptable locations", func(rows *sql.Rows) (core.DecryptableLocation, error) {
 		var loc core.DecryptableLocation
 		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &loc.EncryptionKey, &loc.KeyID, &loc.PlaintextSize); err != nil {
-			return nil, fmt.Errorf("scan decryptable location: %w", err)
+			return core.DecryptableLocation{}, fmt.Errorf("scan decryptable location: %w", err)
 		}
-		locs = append(locs, loc)
-	}
-	return locs, rows.Err()
-}
-
-// MarkObjectDecrypted updates an object location to record that it has been
-// decrypted in-place. Clears encryption metadata and restores the plaintext
-// size.
-func (s *Store) MarkObjectDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		var currentSize int64
-		err := tx.QueryRowContext(ctx, `
-			SELECT size_bytes FROM object_locations
-			WHERE object_key = ? AND backend_name = ?`,
-			objectKey, backendName,
-		).Scan(&currentSize)
-		if err != nil {
-			return fmt.Errorf("read current size: %w", err)
-		}
-
-		_, err = tx.ExecContext(ctx, `
-			UPDATE object_locations
-			SET encrypted = 0, encryption_key = NULL, key_id = NULL,
-			    plaintext_size = NULL, size_bytes = ?
-			WHERE object_key = ? AND backend_name = ?`,
-			plaintextSize, objectKey, backendName,
-		)
-		if err != nil {
-			return fmt.Errorf("mark decrypted: %w", err)
-		}
-
-		sizeDelta := plaintextSize - currentSize
-		if sizeDelta != 0 {
-			// Same clamp as the encrypt path, and this is the direction that
-			// needs it: sizeDelta is negative whenever decryption shrinks the
-			// copy, so a stale currentSize underflows the counter.
-			_, err = tx.ExecContext(ctx, `
-				UPDATE backend_quotas
-				SET bytes_used = MAX(0, bytes_used + ?), updated_at = ?
-				WHERE backend_name = ?`,
-				sizeDelta, now(), backendName,
-			)
-			if err != nil {
-				return fmt.Errorf("adjust quota for decryption: %w", err)
-			}
-		}
-		return nil
+		return loc, nil
 	})
 }
 
@@ -261,17 +168,13 @@ func (s *Store) GetPendingNotifications(ctx context.Context, limit int) ([]core.
 	if err != nil {
 		return nil, fmt.Errorf("get pending notifications: %w", err)
 	}
-	defer rows.Close()
-
-	var notifs []core.NotificationRow
-	for rows.Next() {
+	return collectRows(rows, "notifications", func(rows *sql.Rows) (core.NotificationRow, error) {
 		var n core.NotificationRow
 		if err := rows.Scan(&n.ID, &n.EventType, &n.Payload, &n.EndpointURL, &n.Attempts); err != nil {
-			return nil, fmt.Errorf("scan notification: %w", err)
+			return core.NotificationRow{}, fmt.Errorf("scan notification: %w", err)
 		}
-		notifs = append(notifs, n)
-	}
-	return notifs, rows.Err()
+		return n, nil
+	})
 }
 
 // CompleteNotification removes a successfully delivered notification from the

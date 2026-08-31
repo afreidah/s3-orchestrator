@@ -78,11 +78,13 @@ var (
 	)
 
 	// IntegrityOldestUnverifiedSeconds rises when the scrubber cannot keep
-	// pace with the fleet, so it is the figure to alert on.
+	// pace with the fleet, so it is the figure to alert on. A copy that has
+	// never been verified counts from when it was written, so a fleet the
+	// sweep has not reached is visible here rather than reading as zero.
 	IntegrityOldestUnverifiedSeconds = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "s3o_integrity_oldest_unverified_seconds",
-			Help: "Age of the least recently verified object copy",
+			Help: "How long the most overdue object copy has gone unverified",
 		},
 	)
 

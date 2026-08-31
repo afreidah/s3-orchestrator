@@ -52,24 +52,22 @@ func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]core.Clean
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pending cleanups: %w", err)
 	}
-	defer rows.Close()
-
-	var items []core.CleanupItem
-	for rows.Next() {
-		var item core.CleanupItem
-		var claimedAt sql.NullString
-		var claimedBy sql.NullString
+	return collectRows(rows, "cleanup items", func(rows *sql.Rows) (core.CleanupItem, error) {
+		var (
+			item      core.CleanupItem
+			claimedAt sql.NullString
+			claimedBy sql.NullString
+		)
 		if err := rows.Scan(&item.ID, &item.BackendName, &item.ObjectKey, &item.Reason, &item.Attempts, &item.SizeBytes, &claimedAt, &claimedBy); err != nil {
-			return nil, fmt.Errorf("failed to scan cleanup item: %w", err)
+			return core.CleanupItem{}, fmt.Errorf("failed to scan cleanup item: %w", err)
 		}
 		item.ClaimedAt = parseNullableTime(claimedAt)
 		if claimedBy.Valid {
 			cb := claimedBy.String
 			item.ClaimedBy = &cb
 		}
-		items = append(items, item)
-	}
-	return items, rows.Err()
+		return item, nil
+	})
 }
 
 // ClaimPendingCleanups atomically claims a batch of pending rows for the
@@ -118,20 +116,13 @@ func selectClaimableRows(ctx context.Context, tx *sql.Tx, now, cutoff string, li
 	if err != nil {
 		return nil, fmt.Errorf("select cleanup candidates: %w", err)
 	}
-	defer rows.Close()
-
-	var items []core.CleanupItem
-	for rows.Next() {
+	return collectRows(rows, "cleanup candidates", func(rows *sql.Rows) (core.CleanupItem, error) {
 		var item core.CleanupItem
 		if err := rows.Scan(&item.ID, &item.BackendName, &item.ObjectKey, &item.Reason, &item.Attempts, &item.SizeBytes, &item.Reclaimed); err != nil {
-			return nil, fmt.Errorf("scan cleanup candidate: %w", err)
+			return core.CleanupItem{}, fmt.Errorf("scan cleanup candidate: %w", err)
 		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate cleanup candidates: %w", err)
-	}
-	return items, nil
+		return item, nil
+	})
 }
 
 // stampClaims marks each row in items as claimed by instanceID. The
@@ -224,28 +215,15 @@ func parseNullableTime(s sql.NullString) *time.Time {
 // CleanupQueueDepth returns the number of items still pending in the queue
 // (fewer than 10 attempts).
 func (s *Store) CleanupQueueDepth(ctx context.Context) (int64, error) {
-	var count int64
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM cleanup_queue WHERE attempts < 10`,
-	).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count pending cleanups: %w", err)
-	}
-	return count, nil
+	return s.countRows(ctx, "pending cleanups",
+		`SELECT COUNT(*) FROM cleanup_queue WHERE attempts < 10`)
 }
 
 // CleanupDLQDepth returns the number of rows currently in cleanup_dlq.
 // Surfaces the count of unrecoverable orphans so the dashboard and the
 // cleanup_dlq_depth gauge can flag operator-visible work.
 func (s *Store) CleanupDLQDepth(ctx context.Context) (int64, error) {
-	var count int64
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM cleanup_dlq`,
-	).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count cleanup DLQ rows: %w", err)
-	}
-	return count, nil
+	return s.countRows(ctx, "cleanup DLQ rows", `SELECT COUNT(*) FROM cleanup_dlq`)
 }
 
 // ListCleanupDLQ returns dead-lettered cleanup rows for operator inspection,
@@ -261,10 +239,7 @@ func (s *Store) ListCleanupDLQ(ctx context.Context, backend string, limit int) (
 	if err != nil {
 		return nil, fmt.Errorf("list cleanup dlq: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	var out []core.CleanupDLQItem
-	for rows.Next() {
+	return collectRows(rows, "cleanup dlq rows", func(rows *sql.Rows) (core.CleanupDLQItem, error) {
 		var (
 			it              core.CleanupDLQItem
 			firstEnq, moved string
@@ -272,14 +247,13 @@ func (s *Store) ListCleanupDLQ(ctx context.Context, backend string, limit int) (
 		)
 		if err := rows.Scan(&it.BackendName, &it.ObjectKey, &it.Reason, &it.SizeBytes,
 			&it.Attempts, &firstEnq, &moved, &lastErr); err != nil {
-			return nil, fmt.Errorf("scan cleanup dlq row: %w", err)
+			return core.CleanupDLQItem{}, fmt.Errorf("scan cleanup dlq row: %w", err)
 		}
 		it.FirstEnqueued, _ = time.Parse(time.RFC3339Nano, firstEnq)
 		it.MovedAt, _ = time.Parse(time.RFC3339Nano, moved)
 		it.LastError = lastErr.String
-		out = append(out, it)
-	}
-	return out, rows.Err()
+		return it, nil
+	})
 }
 
 // RequeueCleanupDLQ moves dead-lettered rows back into cleanup_queue inside a

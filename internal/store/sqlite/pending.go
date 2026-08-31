@@ -86,10 +86,7 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 	if err != nil {
 		return nil, fmt.Errorf("get stale pending objects: %w", err)
 	}
-	defer rows.Close()
-
-	var out []core.PendingObject
-	for rows.Next() {
+	return collectRows(rows, "pending rows", func(rows *sql.Rows) (core.PendingObject, error) {
 		var (
 			p             core.PendingObject
 			encrypted     int
@@ -111,7 +108,7 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 			&compAlgorithm, &compLevel, &compVersion, &logicalSize, &createdAt,
 			&etag, &contentType, &userMetadata,
 		); err != nil {
-			return nil, fmt.Errorf("scan pending row: %w", err)
+			return core.PendingObject{}, fmt.Errorf("scan pending row: %w", err)
 		}
 		p.Identity = identityFromColumns(etag, contentType, userMetadata)
 		p.Encrypted = encrypted != 0
@@ -126,12 +123,8 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 		if t, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
 			p.CreatedAt = t
 		}
-		out = append(out, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate pending rows: %w", err)
-	}
-	return out, nil
+		return p, nil
+	})
 }
 
 // -------------------------------------------------------------------------
@@ -140,11 +133,7 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 
 // PendingDepth returns the total number of pending intents.
 func (s *Store) PendingDepth(ctx context.Context) (int64, error) {
-	var depth int64
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pending_objects`).Scan(&depth); err != nil {
-		return 0, fmt.Errorf("count pending objects: %w", err)
-	}
-	return depth, nil
+	return s.countRows(ctx, "pending objects", `SELECT COUNT(*) FROM pending_objects`)
 }
 
 // DeletePendingByBackend removes every intent for a backend. Used during

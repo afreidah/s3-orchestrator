@@ -1015,17 +1015,17 @@ func (mr *MockMetadataStoreMockRecorder) MarkObjectDecrypted(ctx, objectKey, bac
 }
 
 // MarkObjectEncrypted mocks base method.
-func (m *MockMetadataStore) MarkObjectEncrypted(ctx context.Context, objectKey, backendName string, encryptionKey []byte, keyID string, plaintextSize, ciphertextSize int64) error {
+func (m *MockMetadataStore) MarkObjectEncrypted(ctx context.Context, u *core.EncryptedUpdate) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MarkObjectEncrypted", ctx, objectKey, backendName, encryptionKey, keyID, plaintextSize, ciphertextSize)
+	ret := m.ctrl.Call(m, "MarkObjectEncrypted", ctx, u)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // MarkObjectEncrypted indicates an expected call of MarkObjectEncrypted.
-func (mr *MockMetadataStoreMockRecorder) MarkObjectEncrypted(ctx, objectKey, backendName, encryptionKey, keyID, plaintextSize, ciphertextSize any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) MarkObjectEncrypted(ctx, u any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkObjectEncrypted", reflect.TypeOf((*MockMetadataStore)(nil).MarkObjectEncrypted), ctx, objectKey, backendName, encryptionKey, keyID, plaintextSize, ciphertextSize)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkObjectEncrypted", reflect.TypeOf((*MockMetadataStore)(nil).MarkObjectEncrypted), ctx, u)
 }
 
 // MarkObjectScrubbed mocks base method.

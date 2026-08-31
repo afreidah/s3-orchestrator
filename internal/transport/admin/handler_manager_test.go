@@ -275,68 +275,53 @@ func TestHandleObjectLocations_NotFound(t *testing.T) {
 	}
 }
 
-// TestHandleUsageFlush_Success exercises the usage-flush POST path.
-func TestHandleUsageFlush_Success(t *testing.T) {
+// TestManagerRouteOutcomes covers the routes whose contract on a default,
+// nothing-configured handler is a status code: the worker triggers that
+// short-circuit, the drain routes asked about a backend that does not exist,
+// and the endpoints whose subsystem is not wired. Cases that also inspect the
+// response body keep their own test.
+func TestManagerRouteOutcomes(t *testing.T) {
 	t.Parallel()
-	h := newTestHandlerWithManager(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/usage-flush", ""))
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		// want is the exact status expected, or 0 when the contract is only
+		// that the handler answers rather than crashing: those routes may
+		// legitimately return a 200 or a well-formed error.
+		want int
+	}{
+		{"usage flush", http.MethodPost, "/admin/api/usage-flush", http.StatusOK},
+		{"replicate with replication unconfigured", http.MethodPost, "/admin/api/replicate", 0},
+		{"over-replication status with no backends", http.MethodGet, "/admin/api/over-replication", http.StatusOK},
+		{"over-replication clean with no backends", http.MethodPost, "/admin/api/over-replication", http.StatusOK},
+		{"backfill checksums with integrity disabled", http.MethodPost, "/admin/api/backfill-checksums", http.StatusOK},
+		{"reconcile with no reconciler", http.MethodPost, "/admin/api/reconcile", http.StatusServiceUnavailable},
+		{"drain an unknown backend", http.MethodPost, "/admin/api/backends/nope/drain", http.StatusBadRequest},
+		{"progress for an unknown backend", http.MethodGet, "/admin/api/backends/nope/drain", 0},
+		{"cancel a drain that never started", http.MethodDelete, "/admin/api/backends/nope/drain", http.StatusBadRequest},
 	}
-}
 
-// TestHandleReplicate_NoReplicationConfigured hits replicate when the
-// reloadable replication config is at factor=1; worker should short-circuit.
-func TestHandleReplicate_NoReplicationConfigured(t *testing.T) {
-	t.Parallel()
-	h := newTestHandlerWithManager(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := newTestHandlerWithManager(t)
+			mux := http.NewServeMux()
+			h.Register(mux)
 
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/replicate", ""))
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, doAuth(tt.method, tt.path, ""))
 
-	// Either 200 (no-op) or a well-formed error; never a crash or 500 from
-	// a nil-deref.
-	if w.Code >= 500 {
-		t.Fatalf("status = %d, want <500; body=%s", w.Code, w.Body.String())
-	}
-}
-
-// TestHandleOverReplicationStatus_EmptyBackends covers over-replication
-// status with no backends.
-func TestHandleOverReplicationStatus_EmptyBackends(t *testing.T) {
-	t.Parallel()
-	h := newTestHandlerWithManager(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/over-replication", ""))
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
-	}
-}
-
-// TestHandleOverReplicationClean_EmptyBackends covers over-replication
-// cleanup with no backends.
-func TestHandleOverReplicationClean_EmptyBackends(t *testing.T) {
-	t.Parallel()
-	h := newTestHandlerWithManager(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/over-replication", ""))
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+			if tt.want == 0 {
+				if w.Code >= 500 {
+					t.Fatalf("status = %d, want <500; body=%s", w.Code, w.Body.String())
+				}
+				return
+			}
+			if w.Code != tt.want {
+				t.Fatalf("status = %d, want %d; body=%s", w.Code, tt.want, w.Body.String())
+			}
+		})
 	}
 }
 
@@ -364,88 +349,6 @@ func TestHandleScrub_IntegrityDisabled(t *testing.T) {
 	// them, so both branches of the endpoint carry one shape.
 	if resp.Checked != 0 || resp.Failed != 0 {
 		t.Errorf("got checked=%d failed=%d, want both zero", resp.Checked, resp.Failed)
-	}
-}
-
-// TestHandleBackfillChecksums_IntegrityDisabled mirrors scrub: the
-// integrity-disabled short-circuit returns status=skipped.
-func TestHandleBackfillChecksums_IntegrityDisabled(t *testing.T) {
-	t.Parallel()
-	h := newTestHandlerWithManager(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/backfill-checksums", ""))
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
-	}
-}
-
-// TestHandleReconcile_NilReconciler covers the 503 path taken when no
-// reconciler is wired up (the common single-instance default).
-func TestHandleReconcile_NilReconciler(t *testing.T) {
-	t.Parallel()
-	h := newTestHandlerWithManager(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/reconcile", ""))
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503; body=%s", w.Code, w.Body.String())
-	}
-}
-
-// TestHandleStartDrain_UnknownBackend drains a backend that doesn't exist;
-// DrainManager should return an error and handleStartDrain translates to 400.
-func TestHandleStartDrain_UnknownBackend(t *testing.T) {
-	t.Parallel()
-	h := newTestHandlerWithManager(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/backends/nope/drain", ""))
-
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
-	}
-}
-
-// TestHandleDrainProgress_UnknownBackend asks for progress on a backend
-// that was never drained. DrainManager.GetDrainProgress may return 404 or
-// a well-formed "not draining" response; accept either as long as it's not
-// a 5xx crash.
-func TestHandleDrainProgress_UnknownBackend(t *testing.T) {
-	t.Parallel()
-	h := newTestHandlerWithManager(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/backends/nope/drain", ""))
-
-	if w.Code >= 500 {
-		t.Fatalf("status = %d, want <500; body=%s", w.Code, w.Body.String())
-	}
-}
-
-// TestHandleCancelDrain_NoActiveDrain cancels a drain that was never started;
-// handler returns 400 per its contract.
-func TestHandleCancelDrain_NoActiveDrain(t *testing.T) {
-	t.Parallel()
-	h := newTestHandlerWithManager(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodDelete, "/admin/api/backends/nope/drain", ""))
-
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
 	}
 }
 

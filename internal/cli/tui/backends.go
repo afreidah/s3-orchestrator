@@ -112,51 +112,59 @@ func (m *model) loadStatus() tea.Cmd {
 	}
 }
 
+// backendCmd builds the command every per-backend admin action is: call the
+// endpoint off the main loop and hand the result to toMsg.
+//
+// Callers pass a bound method value, so the client is read while Update still
+// holds the model. The returned function runs afterwards and must not touch
+// the model at all.
+func backendCmd[T any](backend string, call func(context.Context, string) (T, error), toMsg func(T, error) tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := call(context.Background(), backend)
+		return toMsg(resp, err)
+	}
+}
+
 // startDrain returns a command that asks the instance to drain one backend.
 func (m *model) startDrain(backend string) tea.Cmd {
-	client := m.client
-	return func() tea.Msg {
-		_, err := client.StartDrain(context.Background(), backend)
-		return drainStartedMsg{backend: backend, err: err}
-	}
+	return backendCmd(backend, m.client.StartDrain,
+		func(_ *adminapi.BackendOperationResponse, err error) tea.Msg {
+			return drainStartedMsg{backend: backend, err: err}
+		})
 }
 
 // pollDrain returns a command that reads one backend's drain progress.
 func (m *model) pollDrain(backend string) tea.Cmd {
-	client := m.client
-	return func() tea.Msg {
-		resp, err := client.DrainProgress(context.Background(), backend)
-		return drainProgressMsg{backend: backend, progress: resp, err: err}
-	}
+	return backendCmd(backend, m.client.DrainProgress,
+		func(resp *adminapi.DrainProgressResponse, err error) tea.Msg {
+			return drainProgressMsg{backend: backend, progress: resp, err: err}
+		})
 }
 
 // cancelDrain returns a command that aborts the drain on one backend.
 func (m *model) cancelDrain(backend string) tea.Cmd {
-	client := m.client
-	return func() tea.Msg {
-		_, err := client.CancelDrain(context.Background(), backend)
-		return drainCancelledMsg{backend: backend, err: err}
-	}
+	return backendCmd(backend, m.client.CancelDrain,
+		func(_ *adminapi.BackendOperationResponse, err error) tea.Msg {
+			return drainCancelledMsg{backend: backend, err: err}
+		})
 }
 
 // reconcileBackend returns a command that reconciles metadata against one
 // backend's storage.
 func (m *model) reconcileBackend(backend string) tea.Cmd {
-	client := m.client
-	return func() tea.Msg {
-		resp, err := client.ReconcileBackend(context.Background(), backend)
-		return backendReconciledMsg{backend: backend, resp: resp, err: err}
-	}
+	return backendCmd(backend, m.client.ReconcileBackend,
+		func(resp *adminapi.ReconcileResponse, err error) tea.Msg {
+			return backendReconciledMsg{backend: backend, resp: resp, err: err}
+		})
 }
 
 // requeueBackendDLQ returns a command that requeues one backend's
 // dead-lettered cleanup rows.
 func (m *model) requeueBackendDLQ(backend string) tea.Cmd {
-	client := m.client
-	return func() tea.Msg {
-		resp, err := client.RequeueCleanupDLQ(context.Background(), backend)
-		return backendRequeuedMsg{backend: backend, resp: resp, err: err}
-	}
+	return backendCmd(backend, m.client.RequeueCleanupDLQ,
+		func(resp *adminapi.CleanupDLQRequeueResponse, err error) tea.Msg {
+			return backendRequeuedMsg{backend: backend, resp: resp, err: err}
+		})
 }
 
 // drainTick schedules the next progress poll.

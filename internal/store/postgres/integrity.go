@@ -70,8 +70,10 @@ func (s *Store) MarkObjectScrubbed(ctx context.Context, key, backendName string)
 	return nil
 }
 
-// OldestUnverifiedAge reports how stale the least recently verified copy is,
-// and how many copies have never been verified at all.
+// OldestUnverifiedAge reports how long the copy at the head of the scrub queue
+// has gone unverified, and how many copies have never been verified at all.
+// A never-verified copy is measured from when it was written, matching the
+// fallback the queue ordering itself uses.
 func (s *Store) OldestUnverifiedAge(ctx context.Context) (time.Duration, int64, error) {
 	row, err := s.queries.OldestUnverifiedAge(ctx)
 	if err != nil {

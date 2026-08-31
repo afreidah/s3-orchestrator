@@ -94,17 +94,7 @@ func (s *Store) listRewritable(ctx context.Context, predicate string, limit int,
 	if err != nil {
 		return nil, fmt.Errorf("list rewritable locations: %w", err)
 	}
-	defer rows.Close()
-
-	var locs []core.RewritableLocation
-	for rows.Next() {
-		loc, err := scanRewritable(rows)
-		if err != nil {
-			return nil, err
-		}
-		locs = append(locs, loc)
-	}
-	return locs, rows.Err()
+	return collectRows(rows, "rewritable locations", scanRewritable)
 }
 
 // scanRewritable reads one row of the rewritable projection.
@@ -146,20 +136,16 @@ func (s *Store) CompressionStats(ctx context.Context) (map[string]core.Compressi
 	if err != nil {
 		return nil, fmt.Errorf("compression stats: %w", err)
 	}
-	defer rows.Close()
-
-	out := make(map[string]core.CompressionStat)
-	for rows.Next() {
+	return collectMap(rows, "compression stats", func(rows *sql.Rows) (string, core.CompressionStat, error) {
 		var (
 			name string
 			stat core.CompressionStat
 		)
 		if err := rows.Scan(&name, &stat.Objects, &stat.LogicalBytes, &stat.StoredBytes); err != nil {
-			return nil, fmt.Errorf("scan compression stats: %w", err)
+			return "", core.CompressionStat{}, fmt.Errorf("scan compression stats: %w", err)
 		}
-		out[name] = stat
-	}
-	return out, rows.Err()
+		return name, stat, nil
+	})
 }
 
 // RecordCompressionProbe stores what the encoder produced for a copy it
@@ -175,49 +161,4 @@ func (s *Store) RecordCompressionProbe(ctx context.Context, probe *core.Compress
 		return fmt.Errorf("record compression probe: %w", err)
 	}
 	return nil
-}
-
-// MarkObjectCompressed records the new stored form of a rewritten copy and
-// moves the backend's quota by the difference between what the copy occupied
-// before and what it occupies now.
-//
-// The envelope columns are rewritten too: re-encrypting an object mints a new
-// base nonce and wrapped key, so leaving the old ones would describe bytes
-// nothing can decrypt.
-func (s *Store) MarkObjectCompressed(ctx context.Context, u *core.CompressedUpdate, previousSize int64) error {
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
-			UPDATE object_locations
-			SET compression_algorithm = ?, compression_level = ?,
-			    compression_format_version = ?, logical_size = ?,
-			    size_bytes = ?, plaintext_size = ?,
-			    encryption_key = ?, key_id = ?
-			WHERE object_key = ? AND backend_name = ?`,
-			nullableString(u.Algorithm), nullableString(u.Level),
-			nullableInt64(int64(u.FormatVersion)), nullableInt64(u.LogicalSize),
-			u.SizeBytes, nullableInt64(u.PlaintextSize),
-			u.EncryptionKey, nullableString(u.KeyID),
-			u.ObjectKey, u.BackendName,
-		)
-		if err != nil {
-			return fmt.Errorf("mark compressed: %w", err)
-		}
-
-		sizeDelta := u.SizeBytes - previousSize
-		if sizeDelta == 0 {
-			return nil
-		}
-		// MAX(0, ...) for the same reason the encryption pass clamps: a stale
-		// size must not leave the counter negative, which would over-admit
-		// every later write.
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE backend_quotas
-			SET bytes_used = MAX(0, bytes_used + ?), updated_at = ?
-			WHERE backend_name = ?`,
-			sizeDelta, now(), u.BackendName,
-		); err != nil {
-			return fmt.Errorf("adjust quota for compression: %w", err)
-		}
-		return nil
-	})
 }

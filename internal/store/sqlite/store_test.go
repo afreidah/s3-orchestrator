@@ -1706,7 +1706,10 @@ func TestEncryptionAdmin_MarkAndList(t *testing.T) {
 	}
 
 	// Mark encrypted
-	if err := s.MarkObjectEncrypted(ctx, "bucket/plain", "backend-a", []byte("dek"), "key-1", 1024, 1100); err != nil {
+	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
+		ObjectKey: "bucket/plain", BackendName: "backend-a", EncryptionKey: []byte("dek"),
+		KeyID: "key-1", PlaintextSize: 1024, CiphertextSize: 1100,
+	}); err != nil {
 		t.Fatalf("MarkObjectEncrypted: %v", err)
 	}
 
@@ -2927,8 +2930,8 @@ func keysOf(locs []core.ObjectLocation) []string {
 }
 
 // TestOldestUnverifiedAge_ReportsCoverage verifies the figures the dashboard
-// and the alerting rule read: how stale the oldest verified copy is, and how
-// many have never been verified.
+// and the alerting rule read: how long the most overdue copy has gone
+// unverified, and how many have never been verified.
 func TestOldestUnverifiedAge_ReportsCoverage(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -2950,16 +2953,22 @@ func TestOldestUnverifiedAge_ReportsCoverage(t *testing.T) {
 		}
 	}
 
-	// Hashed but unverified: both count as never verified.
-	_, never, err = s.OldestUnverifiedAge(ctx)
+	// Hashed but unverified: both count, and the age reports the backlog from
+	// when they were written rather than reading as zero for want of a stamp.
+	backdateCreatedAt(t, s, "bucket/a", "backend-a", 48*time.Hour)
+	age, never, err = s.OldestUnverifiedAge(ctx)
 	if err != nil {
 		t.Fatalf("OldestUnverifiedAge: %v", err)
 	}
 	if never != 2 {
 		t.Errorf("never verified = %d, want 2", never)
 	}
+	if age < 47*time.Hour {
+		t.Errorf("age = %s, want at least the 48h-old never-verified copy", age)
+	}
 
-	// Verifying one leaves the other outstanding and starts the age clock.
+	// Verifying the backlogged copy retires it from both figures, so the age
+	// falls back to the copy still outstanding.
 	if err := s.MarkObjectScrubbed(ctx, "bucket/a", "backend-a"); err != nil {
 		t.Fatalf("MarkObjectScrubbed: %v", err)
 	}
@@ -2970,8 +2979,20 @@ func TestOldestUnverifiedAge_ReportsCoverage(t *testing.T) {
 	if never != 1 {
 		t.Errorf("never verified = %d, want 1", never)
 	}
-	if age < 0 {
-		t.Errorf("age = %s, want a non-negative span", age)
+	if age >= 47*time.Hour {
+		t.Errorf("age = %s, want the stamped copy to have left the head of the queue", age)
+	}
+}
+
+// backdateCreatedAt ages one copy's write timestamp so a test can assert on a
+// backlog without waiting for one.
+func backdateCreatedAt(t *testing.T, s *Store, key, backend string, by time.Duration) {
+	t.Helper()
+	if _, err := s.db.ExecContext(context.Background(),
+		`UPDATE object_locations SET created_at = ? WHERE object_key = ? AND backend_name = ?`,
+		formatTime(time.Now().Add(-by)), key, backend,
+	); err != nil {
+		t.Fatalf("backdating created_at for %s/%s: %v", key, backend, err)
 	}
 }
 
@@ -3321,8 +3342,10 @@ func TestCountUnencryptedLocations(t *testing.T) {
 	mustRecordObject(t, s, "bucket/plain-a", "backend-a", 100)
 	mustRecordObject(t, s, "bucket/plain-b", "backend-a", 100)
 	mustRecordObject(t, s, "bucket/secret", "backend-a", 100)
-	if err := s.MarkObjectEncrypted(ctx, "bucket/secret", "backend-a",
-		[]byte("wrapped"), "key-0", 100, 132); err != nil {
+	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
+		ObjectKey: "bucket/secret", BackendName: "backend-a", EncryptionKey: []byte("wrapped"),
+		KeyID: "key-0", PlaintextSize: 100, CiphertextSize: 132,
+	}); err != nil {
 		t.Fatalf("MarkObjectEncrypted: %v", err)
 	}
 
@@ -3424,8 +3447,10 @@ func TestMarkObjectDecrypted_DoesNotDriveQuotaNegative(t *testing.T) {
 	ctx := context.Background()
 
 	mustRecordObject(t, s, "bucket/secret", "backend-a", 100)
-	if err := s.MarkObjectEncrypted(ctx, "bucket/secret", "backend-a",
-		[]byte("dek"), "key-1", 100, 900); err != nil {
+	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
+		ObjectKey: "bucket/secret", BackendName: "backend-a", EncryptionKey: []byte("dek"),
+		KeyID: "key-1", PlaintextSize: 100, CiphertextSize: 900,
+	}); err != nil {
 		t.Fatalf("MarkObjectEncrypted: %v", err)
 	}
 
@@ -3463,8 +3488,10 @@ func TestMarkObjectEncrypted_DoesNotDriveQuotaNegative(t *testing.T) {
 	}
 
 	// 900 plaintext -> 100 ciphertext is a -800 delta against a counter of 50.
-	if err := s.MarkObjectEncrypted(ctx, "bucket/plain", "backend-a",
-		[]byte("dek"), "key-1", 900, 100); err != nil {
+	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
+		ObjectKey: "bucket/plain", BackendName: "backend-a", EncryptionKey: []byte("dek"),
+		KeyID: "key-1", PlaintextSize: 900, CiphertextSize: 100,
+	}); err != nil {
 		t.Fatalf("MarkObjectEncrypted: %v", err)
 	}
 	if used := quotaBytesUsed(t, s, "backend-a"); used != 0 {
@@ -3482,8 +3509,10 @@ func TestMarkObjectEncrypted_ChargesTheCiphertextGrowth(t *testing.T) {
 	mustRecordObject(t, s, "bucket/plain", "backend-a", 1000)
 	before := quotaBytesUsed(t, s, "backend-a")
 
-	if err := s.MarkObjectEncrypted(ctx, "bucket/plain", "backend-a",
-		[]byte("dek"), "key-1", 1000, 1100); err != nil {
+	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
+		ObjectKey: "bucket/plain", BackendName: "backend-a", EncryptionKey: []byte("dek"),
+		KeyID: "key-1", PlaintextSize: 1000, CiphertextSize: 1100,
+	}); err != nil {
 		t.Fatalf("MarkObjectEncrypted: %v", err)
 	}
 	if got := quotaBytesUsed(t, s, "backend-a") - before; got != 100 {

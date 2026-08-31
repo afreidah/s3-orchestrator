@@ -12,6 +12,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"slices"
 	"strings"
@@ -102,22 +103,17 @@ func queryDirectoryStats(ctx context.Context, s *Store, prefix, escapedPrefix st
 	if err != nil {
 		return nil, fmt.Errorf("directory stats: %w", err)
 	}
-	defer rows.Close()
-
-	var stats []dirStat
-	for rows.Next() {
-		var ds dirStat
-		var isDirInt int
+	return collectRows(rows, "directory stats", func(rows *sql.Rows) (dirStat, error) {
+		var (
+			ds       dirStat
+			isDirInt int
+		)
 		if err := rows.Scan(&ds.Name, &isDirInt, &ds.FileCount, &ds.TotalSize); err != nil {
-			return nil, fmt.Errorf("scan directory stat: %w", err)
+			return dirStat{}, fmt.Errorf("scan directory stat: %w", err)
 		}
 		ds.IsDir = isDirInt == 1
-		stats = append(stats, ds)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate directory stats: %w", err)
-	}
-	return stats, nil
+		return ds, nil
+	})
 }
 
 // queryDirectFileDetails pages through the direct-child files (entries
@@ -146,28 +142,39 @@ func queryDirectFileDetails(ctx context.Context, s *Store, prefix, escapedPrefix
 	if err != nil {
 		return nil, nil, fmt.Errorf("list direct children: %w", err)
 	}
-	defer rows.Close()
-
-	lookup := make(map[string]fileDetail)
-	var keys []string
-	for rows.Next() {
-		var objectKey, backendList, createdAt string
-		var sizeBytes int64
-		if err := rows.Scan(&objectKey, &backendList, &sizeBytes, &createdAt); err != nil {
-			return nil, nil, fmt.Errorf("scan file detail: %w", err)
+	files, err := collectRows(rows, "file details", func(rows *sql.Rows) (directFile, error) {
+		var (
+			df          directFile
+			backendList string
+			createdAt   string
+		)
+		if err := rows.Scan(&df.objectKey, &backendList, &df.detail.SizeBytes, &createdAt); err != nil {
+			return directFile{}, fmt.Errorf("scan file detail: %w", err)
 		}
-		relName := objectKey[len(prefix):]
-		lookup[relName] = fileDetail{
-			Backends:  splitAndSort(backendList),
-			SizeBytes: sizeBytes,
-			CreatedAt: formatTimestamp(createdAt),
-		}
-		keys = append(keys, objectKey)
+		df.detail.Backends = splitAndSort(backendList)
+		df.detail.CreatedAt = formatTimestamp(createdAt)
+		return df, nil
+	})
+	if err != nil {
+		return nil, nil, err
 	}
-	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("iterate file details: %w", err)
+
+	// The caller needs both shapes of the same page: the details keyed by the
+	// name shown in the listing, and the object keys in order for the cursor.
+	lookup := make(map[string]fileDetail, len(files))
+	keys := make([]string, 0, len(files))
+	for _, f := range files {
+		lookup[f.objectKey[len(prefix):]] = f.detail
+		keys = append(keys, f.objectKey)
 	}
 	return lookup, keys, nil
+}
+
+// directFile is one row of the direct-children page, holding the object key
+// until the caller splits the page into its keyed and ordered halves.
+type directFile struct {
+	objectKey string
+	detail    fileDetail
 }
 
 // buildDirectoryEntries merges stats roll-ups with per-file details,

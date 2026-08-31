@@ -86,10 +86,7 @@ func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, object
 	if err != nil {
 		return nil, fmt.Errorf("query existing copies: %w", err)
 	}
-	defer rows.Close()
-
-	var out []core.ExistingCopy
-	for rows.Next() {
+	return collectRows(rows, "existing copies", func(rows *sql.Rows) (core.ExistingCopy, error) {
 		var (
 			ec        core.ExistingCopy
 			createdAt string
@@ -97,19 +94,15 @@ func (a *sqliteTxAdapter) GetExistingCopiesForUpdate(ctx context.Context, object
 			hasDEK    int
 		)
 		if err := rows.Scan(&ec.BackendName, &ec.SizeBytes, &createdAt, &encrypted, &hasDEK); err != nil {
-			return nil, fmt.Errorf("scan existing copy: %w", err)
+			return core.ExistingCopy{}, fmt.Errorf("scan existing copy: %w", err)
 		}
 		ec.Encrypted = encrypted != 0
 		ec.HasDEK = hasDEK != 0
 		if t, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
 			ec.CreatedAt = t
 		}
-		out = append(out, ec)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate existing copies: %w", err)
-	}
-	return out, nil
+		return ec, nil
+	})
 }
 
 // GetCopiesForKeysForUpdate returns every (key, backend, size) row
@@ -133,19 +126,13 @@ func (a *sqliteTxAdapter) GetCopiesForKeysForUpdate(ctx context.Context, keys []
 	if err != nil {
 		return nil, fmt.Errorf("get copies for keys: %w", err)
 	}
-	defer rows.Close()
-	var out []core.KeyedExistingCopy
-	for rows.Next() {
+	return collectRows(rows, "keyed copies", func(rows *sql.Rows) (core.KeyedExistingCopy, error) {
 		var ec core.KeyedExistingCopy
 		if err := rows.Scan(&ec.ObjectKey, &ec.BackendName, &ec.SizeBytes); err != nil {
-			return nil, fmt.Errorf("scan keyed copy: %w", err)
+			return core.KeyedExistingCopy{}, fmt.Errorf("scan keyed copy: %w", err)
 		}
-		out = append(out, ec)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate keyed copies: %w", err)
-	}
-	return out, nil
+		return ec, nil
+	})
 }
 
 // DeleteObjectsByKeys bulk-deletes object_locations rows for every
@@ -570,23 +557,7 @@ func (a *sqliteTxAdapter) AllBackendBytesUsed(ctx context.Context) (map[string]i
 	if err != nil {
 		return nil, fmt.Errorf("read all bytes_used: %w", err)
 	}
-	defer rows.Close()
-
-	out := make(map[string]int64)
-	for rows.Next() {
-		var (
-			name string
-			used int64
-		)
-		if err := rows.Scan(&name, &used); err != nil {
-			return nil, fmt.Errorf("scan bytes_used: %w", err)
-		}
-		out[name] = used
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate bytes_used: %w", err)
-	}
-	return out, nil
+	return collectMap(rows, "bytes_used", scanNameValue)
 }
 
 // SumObjectSizesByBackend returns SUM(size_bytes) per backend from the
@@ -597,23 +568,7 @@ func (a *sqliteTxAdapter) SumObjectSizesByBackend(ctx context.Context) (map[stri
 	if err != nil {
 		return nil, fmt.Errorf("sum object sizes by backend: %w", err)
 	}
-	defer rows.Close()
-
-	out := make(map[string]int64)
-	for rows.Next() {
-		var (
-			name  string
-			total int64
-		)
-		if err := rows.Scan(&name, &total); err != nil {
-			return nil, fmt.Errorf("scan object size sum: %w", err)
-		}
-		out[name] = total
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate object size sums: %w", err)
-	}
-	return out, nil
+	return collectMap(rows, "object size sums", scanNameValue)
 }
 
 // SetBackendBytesUsed overwrites bytes_used with the authoritative value.
@@ -626,6 +581,87 @@ func (a *sqliteTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName s
 		return fmt.Errorf("set backend bytes_used: %w", err)
 	}
 	return nil
+}
+
+// AdjustBackendBytesUsed applies a signed delta to bytes_used. MAX(0, ...)
+// clamps it: a stale size must not leave the counter negative, which would
+// over-admit every later write.
+func (a *sqliteTxAdapter) AdjustBackendBytesUsed(ctx context.Context, backendName string, delta int64) error {
+	if _, err := a.tx.ExecContext(ctx, `
+		UPDATE backend_quotas
+		SET bytes_used = MAX(0, bytes_used + ?), updated_at = ?
+		WHERE backend_name = ?`, delta, now(), backendName); err != nil {
+		return fmt.Errorf("adjust backend bytes_used: %w", err)
+	}
+	return nil
+}
+
+// -------------------------------------------------------------------------
+// STORED-FORM REWRITES
+// -------------------------------------------------------------------------
+
+// UpdateCompressedForm records the stored form a recompression pass left on
+// one copy. The envelope columns are rewritten too: re-encrypting mints a new
+// base nonce and wrapped key, so leaving the old ones would describe bytes
+// nothing can decrypt.
+func (a *sqliteTxAdapter) UpdateCompressedForm(ctx context.Context, u *core.CompressedUpdate) error {
+	if _, err := a.tx.ExecContext(ctx, `
+		UPDATE object_locations
+		SET compression_algorithm = ?, compression_level = ?,
+		    compression_format_version = ?, logical_size = ?,
+		    size_bytes = ?, plaintext_size = ?,
+		    encryption_key = ?, key_id = ?
+		WHERE object_key = ? AND backend_name = ?`,
+		nullableString(u.Algorithm), nullableString(u.Level),
+		nullableInt64(int64(u.FormatVersion)), nullableInt64(u.LogicalSize),
+		u.SizeBytes, nullableInt64(u.PlaintextSize),
+		u.EncryptionKey, nullableString(u.KeyID),
+		u.ObjectKey, u.BackendName,
+	); err != nil {
+		return fmt.Errorf("update compressed form: %w", err)
+	}
+	return nil
+}
+
+// MarkCopyEncrypted records the envelope columns for a copy encrypted in place.
+func (a *sqliteTxAdapter) MarkCopyEncrypted(ctx context.Context, u *core.EncryptedUpdate) error {
+	if _, err := a.tx.ExecContext(ctx, `
+		UPDATE object_locations
+		SET encrypted = 1, encryption_key = ?, key_id = ?,
+		    plaintext_size = ?, size_bytes = ?
+		WHERE object_key = ? AND backend_name = ?`,
+		u.EncryptionKey, u.KeyID, u.PlaintextSize, u.CiphertextSize, u.ObjectKey, u.BackendName,
+	); err != nil {
+		return fmt.Errorf("mark copy encrypted: %w", err)
+	}
+	return nil
+}
+
+// MarkCopyDecrypted clears the envelope columns for a copy decrypted in place.
+func (a *sqliteTxAdapter) MarkCopyDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error {
+	if _, err := a.tx.ExecContext(ctx, `
+		UPDATE object_locations
+		SET encrypted = 0, encryption_key = NULL, key_id = NULL,
+		    plaintext_size = NULL, size_bytes = ?
+		WHERE object_key = ? AND backend_name = ?`,
+		plaintextSize, objectKey, backendName,
+	); err != nil {
+		return fmt.Errorf("mark copy decrypted: %w", err)
+	}
+	return nil
+}
+
+// GetCopySizeBytes reads the size a copy currently reports.
+func (a *sqliteTxAdapter) GetCopySizeBytes(ctx context.Context, objectKey, backendName string) (int64, error) {
+	var size int64
+	if err := a.tx.QueryRowContext(ctx, `
+		SELECT size_bytes FROM object_locations
+		WHERE object_key = ? AND backend_name = ?`,
+		objectKey, backendName,
+	).Scan(&size); err != nil {
+		return 0, fmt.Errorf("get copy size_bytes: %w", err)
+	}
+	return size, nil
 }
 
 // Compile-time check that *sqliteTxAdapter satisfies core.TxAdapter.
