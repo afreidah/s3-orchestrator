@@ -101,6 +101,17 @@ func RunErr(ctx context.Context, op Op, fn func(context.Context) error) error {
 	return err
 }
 
+// RunValue is the variant for work that reports a result but cannot fail -
+// the background passes that tally their own outcomes and return a summary
+// rather than an error. The span always reports success, because the work has
+// no failure to report; anything that went wrong inside is in the summary.
+func RunValue[R any](ctx context.Context, op Op, fn func(context.Context) R) R {
+	result, _ := Run(ctx, op, func(ctx context.Context) (R, error) {
+		return fn(ctx), nil
+	})
+	return result
+}
+
 // RecordSpanError marks the span as failed with err and records the error
 // as a span event. Use this at every error return path in hand-rolled
 // span scopes so the trace consistently carries both the status and the

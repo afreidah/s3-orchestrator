@@ -448,7 +448,7 @@ func TestEncryptExisting_SkippedWithoutEncryptor(t *testing.T) {
 	t.Parallel()
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, nil, nil)
 
-	res, err := svc.Encryption.EncryptExisting(context.Background())
+	res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0)
 	assertSkipped(t, err)
 	if res.Succeeded != 0 || res.Failed != 0 || res.Total != 0 {
 		t.Errorf("counts = (%d, %d, %d), want all 0", res.Succeeded, res.Failed, res.Total)
@@ -461,7 +461,7 @@ func TestEncryptExisting_EmptyStore(t *testing.T) {
 	t.Parallel()
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, testEncryptor(t), emptyEncAdmin{})
 
-	res, err := svc.Encryption.EncryptExisting(context.Background())
+	res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0)
 	if err != nil {
 		t.Fatalf("EncryptExisting: %v", err)
 	}
@@ -482,7 +482,7 @@ func TestEncryptExisting_OneRow(t *testing.T) {
 	}}
 	svc := testServices(t, map[string]s3be.ObjectBackend{"backend-a": fake}, testEncryptor(t), encStore)
 
-	res, err := svc.Encryption.EncryptExisting(context.Background())
+	res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0)
 	if err != nil {
 		t.Fatalf("EncryptExisting: %v", err)
 	}
@@ -571,7 +571,7 @@ func TestDecryptExisting_OneRow(t *testing.T) {
 	}}
 	svc := testServices(t, map[string]s3be.ObjectBackend{"backend-a": fake}, enc, store)
 
-	res, err := svc.Encryption.DecryptExisting(context.Background())
+	res, err := svc.Encryption.DecryptExisting(context.Background(), nil, 0)
 	if err != nil {
 		t.Fatalf("DecryptExisting: %v", err)
 	}
@@ -658,7 +658,7 @@ func TestEncryptExisting_FailureModesAreCountedPerObject(t *testing.T) {
 			}
 			svc := testServices(t, map[string]s3be.ObjectBackend{"backend-a": be}, testEncryptor(t), store)
 
-			res, err := svc.Encryption.EncryptExisting(context.Background())
+			res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0)
 			if err != nil {
 				t.Fatalf("EncryptExisting: %v", err)
 			}
@@ -820,7 +820,7 @@ func TestEncryptExisting_CountsUnreachableBackend(t *testing.T) {
 	}}
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, testEncryptor(t), encStore)
 
-	res, err := svc.Encryption.EncryptExisting(context.Background())
+	res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0)
 	if err != nil {
 		t.Fatalf("EncryptExisting: %v", err)
 	}
@@ -1092,7 +1092,7 @@ func TestDecryptExisting_EmptyStore(t *testing.T) {
 	t.Parallel()
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, testEncryptor(t), emptyEncAdmin{})
 
-	res, err := svc.Encryption.DecryptExisting(context.Background())
+	res, err := svc.Encryption.DecryptExisting(context.Background(), nil, 0)
 	if err != nil {
 		t.Fatalf("DecryptExisting: %v", err)
 	}

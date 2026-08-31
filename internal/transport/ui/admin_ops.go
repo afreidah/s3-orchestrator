@@ -27,36 +27,38 @@ import (
 func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	if !httputil.RequireMethod(w, r, http.MethodPost) {
-		return
+	startAdminAction(h, w, r, h.rebalanceOp())
+}
+
+// rebalanceStatus reports a rebalance cycle. The dashboard keys on moved.
+type rebalanceStatus struct {
+	adminActionState
+	Moved int `json:"moved"`
+}
+
+// rebalanceOp is the rebalance action, shared by its trigger and its poll.
+func (h *Handler) rebalanceOp() adminActionOp[rebalanceStatus] {
+	return adminActionOp[rebalanceStatus]{
+		name: opRebalance,
+		run: func(ctx context.Context) (adminActionCounts, string, error) {
+			res, err := h.rebalance.Run(ctx, nil)
+			if reason, skipped := skipReason(err); skipped {
+				return adminActionCounts{}, reason, nil
+			}
+			if err != nil {
+				return adminActionCounts{}, "", err
+			}
+			return adminActionCounts{Count: res.Moved}, "", nil
+		},
+		render: func(s adminActionState, c adminActionCounts) rebalanceStatus {
+			return rebalanceStatus{adminActionState: s, Moved: c.Count}
+		},
 	}
-
-	if !h.asyncOps.TryStart(opRebalance) {
-		httputil.WriteJSON(w, http.StatusConflict, map[string]string{"error": "rebalance already running"})
-		return
-	}
-
-	go func() {
-		ctx := context.Background()
-		res, err := h.rebalance.Run(ctx, nil)
-		if reason, skipped := skipReason(err); skipped {
-			h.asyncOps.Complete(opRebalance, &asyncResult{OK: true, Skipped: reason})
-			return
-		}
-		if err != nil {
-			h.log.ErrorContext(ctx, "rebalance failed", "error", err)
-			h.asyncOps.Complete(opRebalance, &asyncResult{Error: "rebalance failed"})
-			return
-		}
-		h.asyncOps.Complete(opRebalance, &asyncResult{OK: true, Count: res.Moved})
-	}()
-
-	httputil.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "started"})
 }
 
 // handleAPIRebalanceStatus returns the status of a running or completed rebalance.
 func (h *Handler) handleAPIRebalanceStatus(w http.ResponseWriter, _ *http.Request) {
-	h.writeAdminActionStatus(w, opRebalance, "moved")
+	writeAdminActionStatus(h, w, h.rebalanceOp())
 }
 
 // handleAPICleanExcess triggers an on-demand over-replication cleanup in the
@@ -64,40 +66,40 @@ func (h *Handler) handleAPIRebalanceStatus(w http.ResponseWriter, _ *http.Reques
 func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	if !httputil.RequireMethod(w, r, http.MethodPost) {
-		return
+	startAdminAction(h, w, r, h.cleanExcessOp())
+}
+
+// cleanExcessStatus reports an over-replication cleanup. The dashboard keys on
+// removed.
+type cleanExcessStatus struct {
+	adminActionState
+	Removed int `json:"removed"`
+	Failed  int `json:"failed"`
+}
+
+// cleanExcessOp is the clean-excess action, shared by its trigger and its poll.
+func (h *Handler) cleanExcessOp() adminActionOp[cleanExcessStatus] {
+	return adminActionOp[cleanExcessStatus]{
+		name: opCleanExcess,
+		run: func(ctx context.Context) (adminActionCounts, string, error) {
+			res, err := h.replication.CleanExcess(ctx, 0, nil)
+			if reason, skipped := skipReason(err); skipped {
+				return adminActionCounts{}, reason, nil
+			}
+			if err != nil {
+				return adminActionCounts{}, "", err
+			}
+			return adminActionCounts{Count: res.CopiesRemoved, Failed: res.Failed}, "", nil
+		},
+		render: func(s adminActionState, c adminActionCounts) cleanExcessStatus {
+			return cleanExcessStatus{adminActionState: s, Removed: c.Count, Failed: c.Failed}
+		},
 	}
-
-	if !h.asyncOps.TryStart(opCleanExcess) {
-		httputil.WriteJSON(w, http.StatusConflict, map[string]string{"error": "cleanup already running"})
-		return
-	}
-
-	go func() {
-		ctx := context.Background()
-		res, err := h.replication.CleanExcess(ctx, 0, nil)
-		if reason, skipped := skipReason(err); skipped {
-			h.asyncOps.Complete(opCleanExcess, &asyncResult{OK: true, Skipped: reason})
-			return
-		}
-		if err != nil {
-			h.log.ErrorContext(ctx, "over-replication cleanup failed", "error", err)
-			h.asyncOps.Complete(opCleanExcess, &asyncResult{Error: "cleanup failed"})
-			return
-		}
-		h.asyncOps.Complete(opCleanExcess, &asyncResult{
-			OK:    true,
-			Count: res.CopiesRemoved,
-			Extra: map[string]any{"failed": res.Failed},
-		})
-	}()
-
-	httputil.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "started"})
 }
 
 // handleAPICleanExcessStatus returns the status of a running or completed cleanup.
 func (h *Handler) handleAPICleanExcessStatus(w http.ResponseWriter, _ *http.Request) {
-	h.writeAdminActionStatus(w, opCleanExcess, "removed")
+	writeAdminActionStatus(h, w, h.cleanExcessOp())
 }
 
 // handleAPISync triggers a backend sync to import pre-existing objects.

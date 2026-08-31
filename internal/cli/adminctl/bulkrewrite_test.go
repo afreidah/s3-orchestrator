@@ -1,13 +1,16 @@
 // -------------------------------------------------------------------------------
-// Admin CLI - Bulk Compression Flag Tests
+// Admin CLI - Bulk Rewrite Flag Tests
 //
 // Author: Alex Freidah
 //
-// compress-existing and decompress-existing carry -max, which converts part of
-// a fleet and stops. The flag is the whole reason a fleet-sized conversion can
-// be spread across maintenance windows, so what these tests hold is that the
+// All four fleet-wide rewrite commands carry -max, which converts part of a
+// fleet and stops. The flag is the whole reason a fleet-sized conversion can be
+// spread across maintenance windows, so what these tests hold is that the
 // requested cap actually reaches the server: a -max the CLI drops silently
 // looks like a bounded run and converts the entire fleet.
+//
+// Every command is checked rather than one, because they share a single flag
+// set and a regression that drops the value drops it for all four.
 // -------------------------------------------------------------------------------
 
 package adminctl
@@ -20,18 +23,20 @@ import (
 	"testing"
 )
 
-// bulkCompressionCommands are the two commands sharing the -max flag set.
-var bulkCompressionCommands = []struct {
+// bulkRewriteCommands are the four commands sharing the -max flag set.
+var bulkRewriteCommands = []struct {
 	cmd      string
 	wantPath string
 }{
 	{"compress-existing", "/admin/api/compress-existing"},
 	{"decompress-existing", "/admin/api/decompress-existing"},
+	{"encrypt-existing", "/admin/api/encrypt-existing"},
+	{"decrypt-existing", "/admin/api/decrypt-existing"},
 }
 
-// runBulkCompressionCmd drives one command against a stub server and reports
-// the exit code alongside the path and raw query the server actually saw.
-func runBulkCompressionCmd(t *testing.T, cmd string, args []string) (code int, path, query string) {
+// runBulkRewriteCmd drives one command against a stub server and reports the
+// exit code alongside the path and raw query the server actually saw.
+func runBulkRewriteCmd(t *testing.T, cmd string, args []string) (code int, path, query string) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path, query = r.URL.Path, r.URL.RawQuery
@@ -47,15 +52,14 @@ func runBulkCompressionCmd(t *testing.T, cmd string, args []string) (code int, p
 	return code, path, query
 }
 
-// TestBulkCompression_MaxReachesTheServer verifies -max=N is sent as the max
-// query parameter. Both commands are checked because they share one flag set:
-// a regression that drops the value would drop it for both.
-func TestBulkCompression_MaxReachesTheServer(t *testing.T) {
+// TestBulkRewrite_MaxReachesTheServer verifies -max=N is sent as the max query
+// parameter.
+func TestBulkRewrite_MaxReachesTheServer(t *testing.T) {
 	t.Parallel()
-	for _, tc := range bulkCompressionCommands {
+	for _, tc := range bulkRewriteCommands {
 		t.Run(tc.cmd, func(t *testing.T) {
 			t.Parallel()
-			_, path, query := runBulkCompressionCmd(t, tc.cmd, []string{"-max", "250"})
+			_, path, query := runBulkRewriteCmd(t, tc.cmd, []string{"-max", "250"})
 			if path != tc.wantPath {
 				t.Errorf("path = %q, want %q", path, tc.wantPath)
 			}
@@ -66,16 +70,16 @@ func TestBulkCompression_MaxReachesTheServer(t *testing.T) {
 	}
 }
 
-// TestBulkCompression_NoMaxSendsNoQuery verifies the whole-fleet form posts a
-// bare path. A cap of zero has to reach the server as an absent parameter
-// rather than max=0, which the handler would have to special-case.
-func TestBulkCompression_NoMaxSendsNoQuery(t *testing.T) {
+// TestBulkRewrite_NoMaxSendsNoQuery verifies the whole-fleet form posts a bare
+// path. A cap of zero has to reach the server as an absent parameter rather
+// than max=0, which the handler would have to special-case.
+func TestBulkRewrite_NoMaxSendsNoQuery(t *testing.T) {
 	t.Parallel()
-	for _, tc := range bulkCompressionCommands {
+	for _, tc := range bulkRewriteCommands {
 		t.Run(tc.cmd, func(t *testing.T) {
 			t.Parallel()
 			for _, args := range [][]string{nil, {"-max", "0"}, {"-max", "-5"}} {
-				_, path, query := runBulkCompressionCmd(t, tc.cmd, args)
+				_, path, query := runBulkRewriteCmd(t, tc.cmd, args)
 				if path != tc.wantPath {
 					t.Errorf("args %v: path = %q, want %q", args, path, tc.wantPath)
 				}
@@ -87,12 +91,12 @@ func TestBulkCompression_NoMaxSendsNoQuery(t *testing.T) {
 	}
 }
 
-// TestBulkCompression_RejectsBadFlags verifies an unparseable flag set exits 1
+// TestBulkRewrite_RejectsBadFlags verifies an unparseable flag set exits 1
 // without reaching the server. A typo'd cap must not fall through to an
 // unbounded pass over the fleet.
-func TestBulkCompression_RejectsBadFlags(t *testing.T) {
+func TestBulkRewrite_RejectsBadFlags(t *testing.T) {
 	t.Parallel()
-	for _, tc := range bulkCompressionCommands {
+	for _, tc := range bulkRewriteCommands {
 		t.Run(tc.cmd, func(t *testing.T) {
 			t.Parallel()
 			for _, args := range [][]string{{"-nonexistent-flag"}, {"-max", "not-a-number"}} {

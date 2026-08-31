@@ -93,11 +93,15 @@ func NewReconciler(d *ReconcilerDeps) *Reconciler {
 // Run performs a full reconciliation pass: for each backend, list all objects
 // and import any that are not tracked in the metadata database.
 func (r *Reconciler) Run(ctx context.Context) {
+	runTickCycle(ctx, "Reconcile", "reconcile", func(ctx context.Context) struct{} {
+		r.run(ctx)
+		return struct{}{}
+	})
+}
+
+// run is the body of Run after the span is open.
+func (r *Reconciler) run(ctx context.Context) {
 	start := time.Now()
-	ctx, span := telemetry.StartSpan(ctx, "Reconcile",
-		telemetry.AttrOperation.String("reconcile"),
-	)
-	defer span.End()
 
 	if len(r.bucketNames) == 0 {
 		r.log.ErrorContext(ctx, "no buckets configured, skipping")

@@ -74,6 +74,8 @@ func (m *Manager) logger() *slog.Logger {
 func (m *Manager) ProcessRules(ctx context.Context, rules []config.LifecycleRule) (deleted, failed int) {
 	batchSize := batchSizeFor(m.Config())
 
+	// Left hand-written: Run and its variants carry one result, and folding two
+	// counts into one to satisfy that reads worse than the four lines it saves.
 	ctx, span := telemetry.StartSpan(ctx, "ProcessLifecycleRules",
 		telemetry.AttrOperation.String("lifecycle"),
 	)

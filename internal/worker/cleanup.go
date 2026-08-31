@@ -95,11 +95,11 @@ func CleanupBackoff(attempts int32) time.Duration {
 // ProcessCleanupQueue fetches pending cleanup items and attempts to
 // delete the orphaned objects from their respective backends.
 func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) WorkSummary {
-	ctx, span := telemetry.StartSpan(ctx, "ProcessCleanupQueue",
-		telemetry.AttrOperation.String("cleanup_queue"),
-	)
-	defer span.End()
+	return runTickCycle(ctx, "ProcessCleanupQueue", "cleanup_queue", w.processCleanupQueue)
+}
 
+// processCleanupQueue is the body of ProcessCleanupQueue after the span is open.
+func (w *CleanupWorker) processCleanupQueue(ctx context.Context) WorkSummary {
 	graceCutoff := time.Now().Add(-w.claimGracePeriod)
 	items, err := w.store.ClaimPendingCleanups(ctx, 50, w.instanceID, graceCutoff)
 	if err != nil {

@@ -99,11 +99,11 @@ func NewPendingReaper(deps PendingReaperDeps) *PendingReaper {
 // reports. Returns the number of intents that completed (committed or
 // dropped) and the number that failed (left for the next tick).
 func (r *PendingReaper) ProcessPendingQueue(ctx context.Context) WorkSummary {
-	ctx, span := telemetry.StartSpan(ctx, "ProcessPendingQueue",
-		telemetry.AttrOperation.String("pending_queue"),
-	)
-	defer span.End()
+	return runTickCycle(ctx, "ProcessPendingQueue", "pending_queue", r.processPendingQueue)
+}
 
+// processPendingQueue is the body of ProcessPendingQueue after the span is open.
+func (r *PendingReaper) processPendingQueue(ctx context.Context) WorkSummary {
 	cutoff := time.Now().Add(-r.minAge)
 	intents, err := r.store.GetStalePending(ctx, cutoff, r.batchSize)
 	if err != nil {

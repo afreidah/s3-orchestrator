@@ -163,25 +163,23 @@ func (o CopyOutcome) String() string {
 // discarded and the ledger row dropped, so the replicator rebuilds from a
 // healthy copy.
 func (s *Scrubber) ScrubKey(ctx context.Context, key string) ([]CopyVerification, error) {
-	ctx = audit.WithRequestID(ctx, audit.NewID())
-	ctx, span := telemetry.StartSpan(ctx, "ScrubKey")
-	defer span.End()
+	return runOpsCycle(ctx, "ScrubKey", "scrub_key", func(ctx context.Context) ([]CopyVerification, error) {
+		locations, err := s.store.GetAllObjectLocations(ctx, key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to look up copies of %s: %w", key, err)
+		}
 
-	locations, err := s.store.GetAllObjectLocations(ctx, key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to look up copies of %s: %w", key, err)
-	}
+		results := make([]CopyVerification, 0, len(locations))
+		for i := range locations {
+			results = append(results, s.verifyCopy(ctx, &locations[i]))
+		}
 
-	results := make([]CopyVerification, 0, len(locations))
-	for i := range locations {
-		results = append(results, s.verifyCopy(ctx, &locations[i]))
-	}
-
-	audit.Log(ctx, "integrity.scrub_key",
-		slog.String("key", key),
-		slog.Int("copies", len(results)),
-	)
-	return results, nil
+		audit.Log(ctx, "integrity.scrub_key",
+			slog.String("key", key),
+			slog.Int("copies", len(results)),
+		)
+		return results, nil
+	})
 }
 
 // verifyCopy maps one copy's verification onto the reported outcome. A copy
@@ -205,9 +203,13 @@ func (s *Scrubber) verifyCopy(ctx context.Context, loc *core.ObjectLocation) Cop
 // number of objects checked and the number of hash mismatches found.
 func (s *Scrubber) Scrub(ctx context.Context, batchSize int, observer progress.Observer) WorkSummary {
 	ctx = audit.WithRequestID(ctx, audit.NewID())
-	ctx, span := telemetry.StartSpan(ctx, "Scrub")
-	defer span.End()
+	return runTickCycle(ctx, "Scrub", "scrub", func(ctx context.Context) WorkSummary {
+		return s.scrub(ctx, batchSize, observer)
+	})
+}
 
+// scrub is the body of Scrub after the span is open.
+func (s *Scrubber) scrub(ctx context.Context, batchSize int, observer progress.Observer) WorkSummary {
 	affordable, declined := s.affordableBackends()
 
 	locs, err := s.store.GetLeastRecentlyScrubbedObjects(ctx, batchSize, affordable)
