@@ -25,16 +25,33 @@ import (
 	"log/slog"
 )
 
-// noopOp returns an adminActionOp whose run closure does nothing useful;
-// used to exercise control-flow paths that exit before the goroutine fires.
-func noopOp(name string) adminActionOp {
-	return adminActionOp{
-		name:      name,
-		resultKey: "count",
-		run: func(_ context.Context) (int, map[string]any, string, error) {
-			return 0, nil, "", nil
+// fakeStatus stands in for a real action's response type: the shared state
+// plus one named count, which is the shape every action publishes.
+type fakeStatus struct {
+	adminActionState
+	Count  int `json:"count"`
+	Failed int `json:"failed"`
+	Total  int `json:"total"`
+}
+
+// fakeOp wraps run in an adminActionOp rendering fakeStatus, so the dispatcher
+// tests exercise the generic paths without depending on a real operation.
+func fakeOp(name string, run func(context.Context) (adminActionCounts, string, error)) adminActionOp[fakeStatus] {
+	return adminActionOp[fakeStatus]{
+		name: name,
+		run:  run,
+		render: func(s adminActionState, c adminActionCounts) fakeStatus {
+			return fakeStatus{adminActionState: s, Count: c.Count, Failed: c.Failed, Total: c.Total}
 		},
 	}
+}
+
+// noopOp returns an adminActionOp whose run closure does nothing useful;
+// used to exercise control-flow paths that exit before the goroutine fires.
+func noopOp(name string) adminActionOp[fakeStatus] {
+	return fakeOp(name, func(context.Context) (adminActionCounts, string, error) {
+		return adminActionCounts{}, "", nil
+	})
 }
 
 // TestStartAdminAction_MethodNotAllowed asserts that non-POST requests are
@@ -45,7 +62,7 @@ func TestStartAdminAction_MethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/replicate", nil)
 	w := httptest.NewRecorder()
 
-	h.startAdminAction(w, req, noopOp("replicate"))
+	startAdminAction(h, w, req, noopOp("replicate"))
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
@@ -64,30 +81,27 @@ func TestStartAdminAction_AlreadyRunning(t *testing.T) {
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/replicate", nil)
 	w := httptest.NewRecorder()
-	h.startAdminAction(w, req, noopOp("replicate"))
+	startAdminAction(h, w, req, noopOp("replicate"))
 
 	if w.Code != http.StatusConflict {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusConflict)
 	}
 }
 
-// TestStartAdminAction_AcceptedStoresExtra asserts the happy path: 202 is
-// returned immediately, the op runs in the background, and counts plus
-// op-specific Extra fields end up on the asyncResult for the poller.
-func TestStartAdminAction_AcceptedStoresExtra(t *testing.T) {
+// TestStartAdminAction_AcceptedStoresCounts asserts the happy path: 202 is
+// returned immediately, the op runs in the background, and every count it
+// reported ends up on the asyncResult for the poller.
+func TestStartAdminAction_AcceptedStoresCounts(t *testing.T) {
 	t.Parallel()
 	h := &Handler{log: slog.Default()}
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/encrypt-existing", nil)
 	w := httptest.NewRecorder()
 
-	h.startAdminAction(w, req, adminActionOp{
-		name:      "encrypt-existing-test",
-		resultKey: "encrypted",
-		run: func(_ context.Context) (int, map[string]any, string, error) {
-			return 7, map[string]any{"failed": 1, "total": 8}, "", nil
-		},
-	})
+	startAdminAction(h, w, req, fakeOp("encrypt-existing-test",
+		func(context.Context) (adminActionCounts, string, error) {
+			return adminActionCounts{Count: 7, Failed: 1, Total: 8}, "", nil
+		}))
 
 	if w.Code != http.StatusAccepted {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusAccepted)
@@ -97,11 +111,9 @@ func TestStartAdminAction_AcceptedStoresExtra(t *testing.T) {
 	if !res.OK {
 		t.Errorf("result.OK = false, want true")
 	}
-	if res.Count != 7 {
-		t.Errorf("result.Count = %d, want 7", res.Count)
-	}
-	if got, ok := res.Extra["failed"].(int); !ok || got != 1 {
-		t.Errorf("result.Extra[failed] = %v, want int 1", res.Extra["failed"])
+	want := adminActionCounts{Count: 7, Failed: 1, Total: 8}
+	if res.Counts != want {
+		t.Errorf("result.Counts = %+v, want %+v", res.Counts, want)
 	}
 }
 
@@ -114,13 +126,10 @@ func TestStartAdminAction_SkippedReason(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/scrub", nil)
 	w := httptest.NewRecorder()
 
-	h.startAdminAction(w, req, adminActionOp{
-		name:      "scrub-test",
-		resultKey: "checked",
-		run: func(_ context.Context) (int, map[string]any, string, error) {
-			return 0, nil, "integrity verification is not enabled", nil
-		},
-	})
+	startAdminAction(h, w, req, fakeOp("scrub-test",
+		func(context.Context) (adminActionCounts, string, error) {
+			return adminActionCounts{}, "integrity verification is not enabled", nil
+		}))
 
 	res := waitForResult(t, h, "scrub-test")
 	if res.Skipped != "integrity verification is not enabled" {
@@ -136,13 +145,10 @@ func TestStartAdminAction_ErrorPropagates(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/replicate", nil)
 	w := httptest.NewRecorder()
 
-	h.startAdminAction(w, req, adminActionOp{
-		name:      "replicate-err-test",
-		resultKey: "copies_created",
-		run: func(_ context.Context) (int, map[string]any, string, error) {
-			return 0, nil, "", errors.New("boom")
-		},
-	})
+	startAdminAction(h, w, req, fakeOp("replicate-err-test",
+		func(context.Context) (adminActionCounts, string, error) {
+			return adminActionCounts{}, "", errors.New("boom")
+		}))
 
 	res := waitForResult(t, h, "replicate-err-test")
 	if res.Error == "" {
@@ -160,7 +166,7 @@ func TestWriteAdminActionStatus_Idle(t *testing.T) {
 	t.Parallel()
 	h := &Handler{log: slog.Default()}
 	w := httptest.NewRecorder()
-	h.writeAdminActionStatus(w, "never-started", "k")
+	writeAdminActionStatus(h, w, noopOp("never-started"))
 
 	got := decodeBody(t, w)
 	if got["status"] != "idle" {
@@ -177,7 +183,7 @@ func TestWriteAdminActionStatus_Running(t *testing.T) {
 		t.Fatal("test pre-condition: TryStart")
 	}
 	w := httptest.NewRecorder()
-	h.writeAdminActionStatus(w, "running-op", "k")
+	writeAdminActionStatus(h, w, noopOp("running-op"))
 
 	got := decodeBody(t, w)
 	if got["status"] != "running" {
@@ -185,23 +191,22 @@ func TestWriteAdminActionStatus_Running(t *testing.T) {
 	}
 }
 
-// TestWriteAdminActionStatus_Done_PropagatesExtra asserts that op-specific
-// Extra fields (e.g. failed/total for encrypt-existing) appear in the
-// status JSON payload alongside the resultKey.
-func TestWriteAdminActionStatus_Done_PropagatesExtra(t *testing.T) {
+// TestWriteAdminActionStatus_Done_PropagatesCounts asserts that every count the
+// operation reported appears in the status JSON, under the names the action's
+// own response type gives them.
+func TestWriteAdminActionStatus_Done_PropagatesCounts(t *testing.T) {
 	t.Parallel()
 	h := &Handler{log: slog.Default()}
 	if !h.asyncOps.TryStart("done-op") {
 		t.Fatal("test pre-condition: TryStart")
 	}
 	h.asyncOps.Complete("done-op", &asyncResult{
-		OK:    true,
-		Count: 5,
-		Extra: map[string]any{"failed": 2, "total": 7},
+		OK:     true,
+		Counts: adminActionCounts{Count: 5, Failed: 2, Total: 7},
 	})
 
 	w := httptest.NewRecorder()
-	h.writeAdminActionStatus(w, "done-op", "checked")
+	writeAdminActionStatus(h, w, noopOp("done-op"))
 
 	got := decodeBody(t, w)
 	if got["status"] != "done" {
@@ -210,8 +215,8 @@ func TestWriteAdminActionStatus_Done_PropagatesExtra(t *testing.T) {
 	if got["ok"] != true {
 		t.Errorf("ok = %v, want true", got["ok"])
 	}
-	if got["checked"] != float64(5) {
-		t.Errorf("checked = %v, want 5", got["checked"])
+	if got["count"] != float64(5) {
+		t.Errorf("count = %v, want 5", got["count"])
 	}
 	if got["failed"] != float64(2) {
 		t.Errorf("failed = %v, want 2", got["failed"])
@@ -232,7 +237,7 @@ func TestWriteAdminActionStatus_Skipped(t *testing.T) {
 	h.asyncOps.Complete("skip-op", &asyncResult{OK: true, Skipped: "factor <= 1"})
 
 	w := httptest.NewRecorder()
-	h.writeAdminActionStatus(w, "skip-op", "k")
+	writeAdminActionStatus(h, w, noopOp("skip-op"))
 
 	got := decodeBody(t, w)
 	if got["status"] != "skipped" {
@@ -254,7 +259,7 @@ func TestWriteAdminActionStatus_Error(t *testing.T) {
 	h.asyncOps.Complete("err-op", &asyncResult{Error: "boom"})
 
 	w := httptest.NewRecorder()
-	h.writeAdminActionStatus(w, "err-op", "k")
+	writeAdminActionStatus(h, w, noopOp("err-op"))
 
 	got := decodeBody(t, w)
 	if got["status"] != "error" {

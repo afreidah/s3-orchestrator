@@ -136,6 +136,8 @@ func TestRoutes_StreamingEntriesDeclareTheEventType(t *testing.T) {
 		"POST /admin/api/reconcile":           true,
 		"POST /admin/api/compress-existing":   true,
 		"POST /admin/api/decompress-existing": true,
+		"POST /admin/api/encrypt-existing":    true,
+		"POST /admin/api/decrypt-existing":    true,
 		"DELETE /admin/api/backends/{name}":   true,
 	}
 	for _, rt := range newTestHandler(t).routes() {

@@ -63,7 +63,7 @@ func TestAsyncOpTracker_Complete(t *testing.T) {
 	var tr asyncOpTracker
 
 	tr.TryStart("rebalance")
-	tr.Complete("rebalance", &asyncResult{OK: true, Count: 42})
+	tr.Complete("rebalance", &asyncResult{OK: true, Counts: adminActionCounts{Count: 42}})
 
 	result, running := tr.Status("rebalance")
 	if running {
@@ -72,7 +72,7 @@ func TestAsyncOpTracker_Complete(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
-	if !result.OK || result.Count != 42 {
+	if !result.OK || result.Counts.Count != 42 {
 		t.Errorf("result = %+v, want OK=true Count=42", result)
 	}
 }
@@ -98,7 +98,7 @@ func TestAsyncOpTracker_RestartAfterComplete(t *testing.T) {
 	var tr asyncOpTracker
 
 	tr.TryStart("rebalance")
-	tr.Complete("rebalance", &asyncResult{OK: true, Count: 5})
+	tr.Complete("rebalance", &asyncResult{OK: true, Counts: adminActionCounts{Count: 5}})
 
 	if !tr.TryStart("rebalance") {
 		t.Fatal("expected TryStart to succeed after completion")

@@ -18,17 +18,18 @@ import (
 	"fmt"
 )
 
-// cmdEncryptExisting implements `s3-orchestrator admin encrypt-existing`.
-// Encrypts every unencrypted object in place; requires encryption enabled.
-func cmdEncryptExisting(_ []string, c *client) int {
-	return c.post("/admin/api/encrypt-existing", "", nil)
+// cmdEncryptExisting implements `s3-orchestrator admin encrypt-existing
+// [-max=N]`. Encrypts every unencrypted object in place, or the first N of
+// them; requires encryption enabled.
+func cmdEncryptExisting(args []string, c *client) int {
+	return runBulkRewrite(args, c, "encrypt-existing", "/admin/api/encrypt-existing")
 }
 
-// cmdDecryptExisting implements `s3-orchestrator admin decrypt-existing`.
-// Decrypts every encrypted object back to plaintext; requires encryption
-// enabled for key access.
-func cmdDecryptExisting(_ []string, c *client) int {
-	return c.post("/admin/api/decrypt-existing", "", nil)
+// cmdDecryptExisting implements `s3-orchestrator admin decrypt-existing
+// [-max=N]`. Decrypts every encrypted object back to plaintext, or the first N
+// of them; requires encryption enabled for key access.
+func cmdDecryptExisting(args []string, c *client) int {
+	return runBulkRewrite(args, c, "decrypt-existing", "/admin/api/decrypt-existing")
 }
 
 // cmdRotateEncryptionKey implements `s3-orchestrator admin

@@ -136,6 +136,28 @@ func TestRunErr_PropagatesError(t *testing.T) {
 	}
 }
 
+// TestRunValue_ReturnsResultAndReportsSuccess pins the variant the background
+// passes use: the result comes back untouched and the span always closes Ok,
+// since work that cannot fail has no failure to report.
+func TestRunValue_ReturnsResultAndReportsSuccess(t *testing.T) {
+	sr := newSpanRecorder(t)
+
+	got := RunValue(context.Background(), Internal("tick", nil, nil), func(_ context.Context) int {
+		return 42
+	})
+	if got != 42 {
+		t.Errorf("result = %d, want 42", got)
+	}
+
+	spans := sr.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("recorded %d spans, want 1", len(spans))
+	}
+	if status := spans[0].Status(); status.Code != codes.Ok {
+		t.Errorf("status = %v, want Ok", status.Code)
+	}
+}
+
 // newSpanRecorder installs an in-memory span recorder as the global
 // tracer provider and returns it. Tests use the recorded spans to assert
 // status code, status description, and event count after invoking the

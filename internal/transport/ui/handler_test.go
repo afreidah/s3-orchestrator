@@ -2066,8 +2066,8 @@ func TestAPICleanExcess_FactorLeOne(t *testing.T) {
 	if res.Skipped == "" {
 		t.Error("skip reason is empty; want an explanation for the dashboard banner")
 	}
-	if res.Count != 0 {
-		t.Errorf("removed = %d, want 0", res.Count)
+	if res.Counts.Count != 0 {
+		t.Errorf("removed = %d, want 0", res.Counts.Count)
 	}
 }
 

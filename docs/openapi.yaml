@@ -315,6 +315,13 @@ paths:
         post:
             summary: Rewrite every encrypted object back to plaintext
             operationId: postDecryptExisting
+            parameters:
+                - name: max
+                  in: query
+                  description: Cap the objects rewritten by this request; 0 converts the whole fleet
+                  required: false
+                  schema:
+                    type: integer
             responses:
                 "200":
                     description: Success
@@ -322,12 +329,23 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/DecryptExistingResponse'
+                        application/x-ndjson:
+                            description: One JSON object per line while the operation runs
+                            schema:
+                                $ref: '#/components/schemas/Event'
                 "401":
                     description: Missing or invalid admin token
     /admin/api/encrypt-existing:
         post:
             summary: Encrypt every plaintext object in place
             operationId: postEncryptExisting
+            parameters:
+                - name: max
+                  in: query
+                  description: Cap the objects rewritten by this request; 0 converts the whole fleet
+                  required: false
+                  schema:
+                    type: integer
             responses:
                 "200":
                     description: Success
@@ -335,6 +353,10 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/EncryptExistingResponse'
+                        application/x-ndjson:
+                            description: One JSON object per line while the operation runs
+                            schema:
+                                $ref: '#/components/schemas/Event'
                 "401":
                     description: Missing or invalid admin token
     /admin/api/log-level:
@@ -1123,6 +1145,9 @@ components:
                 failed:
                     format: int64
                     type: integer
+                skipped:
+                    format: int64
+                    type: integer
                 status:
                     type: string
                 total:
@@ -1130,6 +1155,7 @@ components:
                     type: integer
             required:
                 - status
+                - skipped
                 - failed
                 - total
                 - decrypted
@@ -1163,6 +1189,9 @@ components:
                 failed:
                     format: int64
                     type: integer
+                skipped:
+                    format: int64
+                    type: integer
                 status:
                     type: string
                 total:
@@ -1170,6 +1199,7 @@ components:
                     type: integer
             required:
                 - status
+                - skipped
                 - failed
                 - total
                 - encrypted

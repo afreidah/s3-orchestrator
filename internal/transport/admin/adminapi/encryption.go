@@ -11,38 +11,30 @@
 
 package adminapi
 
-// BulkEncryptionOutcome is the part every bulk encryption pass reports
-// identically: the terminal status plus the failure and attempt counts. The
-// per-operation responses embed it and add their own success count.
-//
-// The three operations name that success count differently on the wire
-// (rotated, encrypted, decrypted) even though each reports the same quantity.
-// The names are kept because they are already published; sharing the rest of
-// the shape is what stops the three from drifting apart further.
-type BulkEncryptionOutcome struct {
-	Status string `json:"status"`
-	Failed int    `json:"failed"`
-	Total  int    `json:"total"`
-}
-
 // RotateEncryptionKeyResponse reports a key-rotation pass: how many DEKs were
 // re-wrapped under the current primary key.
+//
+// Rotation does not embed BulkRewriteOutcome. It re-wraps a DEK without reading
+// or writing the object's bytes, so it is not a rewrite pass and has nothing a
+// skipped count would describe.
 type RotateEncryptionKeyResponse struct {
-	BulkEncryptionOutcome
-	Rotated int `json:"rotated"`
+	Status  string `json:"status"`
+	Failed  int    `json:"failed"`
+	Total   int    `json:"total"`
+	Rotated int    `json:"rotated"`
 }
 
 // EncryptExistingResponse reports an encrypt-existing pass: how many
 // previously plaintext objects were encrypted in place.
 type EncryptExistingResponse struct {
-	BulkEncryptionOutcome
+	BulkRewriteOutcome
 	Encrypted int `json:"encrypted"`
 }
 
 // DecryptExistingResponse reports a decrypt-existing pass: how many encrypted
 // objects were rewritten back to plaintext.
 type DecryptExistingResponse struct {
-	BulkEncryptionOutcome
+	BulkRewriteOutcome
 	Decrypted int `json:"decrypted"`
 }
 
