@@ -65,7 +65,7 @@ type fleetOpts struct {
 	Encryptor *encryption.Encryptor
 	// Codec and Compression turn on at-rest compression. Compression is
 	// applied only when both are set, mirroring production wiring.
-	Codec       ObjectCodec
+	Codec       Codec
 	Compression config.CompressionConfig
 	// ObjectCache attaches a cache so read-through and invalidation run.
 	ObjectCache objcache.ObjectCache
@@ -105,7 +105,7 @@ type fleet struct {
 func (f *fleet) SetIntegrityConfig(cfg *config.IntegrityConfig) { f.Integrity.Store(cfg) }
 
 // newFleet builds an object Manager over the supplied backends. store is the
-// wide metadata store; New narrows it to ObjectStores.
+// wide metadata store; New narrows it to Stores.
 func newFleet(
 	t *testing.T, store storetest.MetadataStore, backends map[string]backend.ObjectBackend, opts *fleetOpts,
 ) *fleet {

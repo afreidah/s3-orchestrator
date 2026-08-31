@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"log/slog"
+
+	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 )
 
 // fakeStatus stands in for a real action's response type: the shared state
@@ -279,15 +281,16 @@ func TestWriteAdminActionStatus_Error(t *testing.T) {
 // so individual tests stay focused on assertions.
 func waitForResult(t *testing.T, h *Handler, name string) *asyncResult {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if result, running := h.asyncOps.Status(name); !running && result != nil {
-			return result
+	var result *asyncResult
+	testx.Eventually(t, 2*time.Second, func() bool {
+		res, running := h.asyncOps.Status(name)
+		if running || res == nil {
+			return false
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("op %q did not complete within deadline", name)
-	return nil
+		result = res
+		return true
+	}, "op %q did not complete", name)
+	return result
 }
 
 // decodeBody parses the recorded JSON response, failing the test on any

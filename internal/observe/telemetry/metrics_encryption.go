@@ -16,7 +16,6 @@ import (
 
 // EncryptionOpsTotal and related package-level variables used by this package.
 var (
-	// --- Encryption metrics ---
 
 	// EncryptionOpsTotal counts encryption operations by type.
 	EncryptionOpsTotal = promauto.NewCounterVec(
@@ -44,8 +43,6 @@ var (
 			Help: "Decryption attempts with unknown keyID (primary key fallback)",
 		},
 	)
-
-	// --- Integrity verification metrics ---
 
 	// IntegrityErrorsTotal counts hash mismatches detected during read,
 	// replication, or background scrubbing.

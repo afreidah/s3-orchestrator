@@ -18,6 +18,7 @@ package multipart
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
@@ -60,14 +61,14 @@ func normalizeETag(etag string) string {
 func validateManifestShape(manifest []core.CompletePart) error {
 	if len(manifest) == 0 {
 		return &core.S3Error{
-			StatusCode: 400,
+			StatusCode: http.StatusBadRequest,
 			Code:       "InvalidRequest",
 			Message:    "You must specify at least one part",
 		}
 	}
 	if len(manifest) > MaxPartCount {
 		return &core.S3Error{
-			StatusCode: 400,
+			StatusCode: http.StatusBadRequest,
 			Code:       "InvalidRequest",
 			Message:    fmt.Sprintf("Too many parts: %d exceeds the maximum of %d", len(manifest), MaxPartCount),
 		}
@@ -76,7 +77,7 @@ func validateManifestShape(manifest []core.CompletePart) error {
 	for i, p := range manifest {
 		if p.PartNumber < MinPartNumber || p.PartNumber > MaxPartNumber {
 			return &core.S3Error{
-				StatusCode: 400,
+				StatusCode: http.StatusBadRequest,
 				Code:       "InvalidPart",
 				Message: fmt.Sprintf("Part number %d is outside the valid range %d-%d",
 					p.PartNumber, MinPartNumber, MaxPartNumber),
@@ -88,14 +89,14 @@ func validateManifestShape(manifest []core.CompletePart) error {
 		prev := manifest[i-1].PartNumber
 		if p.PartNumber == prev {
 			return &core.S3Error{
-				StatusCode: 400,
+				StatusCode: http.StatusBadRequest,
 				Code:       "InvalidPart",
 				Message:    fmt.Sprintf("Duplicate part number %d", p.PartNumber),
 			}
 		}
 		if p.PartNumber < prev {
 			return &core.S3Error{
-				StatusCode: 400,
+				StatusCode: http.StatusBadRequest,
 				Code:       "InvalidPartOrder",
 				Message:    "The list of parts was not in ascending order",
 			}
@@ -133,7 +134,7 @@ func validateManifestAgainstStored(manifest []core.CompletePart, stored []core.M
 		got, ok := byNumber[want.PartNumber]
 		if !ok {
 			return &core.S3Error{
-				StatusCode: 400,
+				StatusCode: http.StatusBadRequest,
 				Code:       "InvalidPart",
 				Message:    fmt.Sprintf("Part number %d was not uploaded", want.PartNumber),
 			}
@@ -144,7 +145,7 @@ func validateManifestAgainstStored(manifest []core.CompletePart, stored []core.M
 		// supplied one is checked.
 		if want.ETag != "" && normalizeETag(want.ETag) != normalizeETag(clientPartETag(got)) {
 			return &core.S3Error{
-				StatusCode: 400,
+				StatusCode: http.StatusBadRequest,
 				Code:       "InvalidPart",
 				Message: fmt.Sprintf("Part number %d has ETag %s, which does not match the uploaded part",
 					want.PartNumber, want.ETag),
@@ -155,7 +156,7 @@ func validateManifestAgainstStored(manifest []core.CompletePart, stored []core.M
 		isFinal := i == len(manifest)-1
 		if enforceMinSize && !isFinal && got.SizeBytes < MinPartSizeBytes {
 			return &core.S3Error{
-				StatusCode: 400,
+				StatusCode: http.StatusBadRequest,
 				Code:       "EntityTooSmall",
 				Message: fmt.Sprintf("Part number %d is %d bytes, below the %d byte minimum for a non-final part",
 					want.PartNumber, got.SizeBytes, MinPartSizeBytes),

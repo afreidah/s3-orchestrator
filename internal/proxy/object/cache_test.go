@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 )
 
 // TestLocationCache_SetGet verifies the location cache set get contract.
@@ -85,12 +87,10 @@ func TestLocationCache_Eviction(t *testing.T) {
 
 	c.Set("key1", "backend-a")
 
-	// Wait for eviction goroutine to run (ticks every TTL)
-	time.Sleep(150 * time.Millisecond)
-
-	if count := c.Len(); count != 0 {
-		t.Errorf("entries after eviction = %d, want 0", count)
-	}
+	// The eviction goroutine ticks every TTL, so the entry goes on its own
+	// schedule rather than on a deadline this test can pick.
+	testx.Eventually(t, 2*time.Second, func() bool { return c.Len() == 0 },
+		"entry was never evicted; Len = %d", c.Len())
 }
 
 // TestLocationCache_ZeroTTL_NoEvictionGoroutine verifies the location cache zero ttl no eviction goroutine path by exercising c.Close, c.Set, c.Get.

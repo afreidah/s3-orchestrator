@@ -36,6 +36,7 @@ import (
 // Not parallel: NewNotifier writes the process-global event.Emit hook.
 func TestDampening_SuppressesRepeatedCapacityWarning(t *testing.T) {
 	n := NewNotifier(&config.NotificationConfig{}, &mockOutboxStore{})
+	t.Cleanup(n.Close)
 
 	dampenKey := event.BackendCapacityWarning + ":oci"
 
@@ -56,7 +57,7 @@ func TestDampening_SuppressesRepeatedCapacityWarning(t *testing.T) {
 // Not parallel: NewNotifier writes the process-global event.Emit hook.
 func TestDampening_TTLCacheEvicts(t *testing.T) {
 	n := NewNotifier(&config.NotificationConfig{}, &mockOutboxStore{})
-	defer n.dampener.Close()
+	defer n.Close()
 
 	// The cache exists and is functional.
 	n.dampener.Set("key", struct{}{})
@@ -306,7 +307,7 @@ func TestNewNotifier_SetsEmitHook(t *testing.T) {
 		Endpoints: []config.NotificationEndpoint{{URL: "https://example.com"}},
 	}
 	ms := &mockOutboxStore{}
-	_ = NewNotifier(cfg, ms)
+	t.Cleanup(NewNotifier(cfg, ms).Close)
 
 	if event.Emit == nil {
 		t.Error("NewNotifier should set event.Emit hook")

@@ -39,8 +39,8 @@ type CircuitBreakerConfig struct {
 	ParallelBroadcast bool          `yaml:"parallel_broadcast"` // Fan-out reads to all backends in parallel during degraded mode (default: false)
 	// DegradedBroadcastParallelism caps the number of backends probed
 	// concurrently during a parallel degraded-mode broadcast. 0 means no
-	// cap (every configured backend is probed at once, the historical
-	// behaviour). With a positive value, probes run as a rolling window:
+	// cap: every configured backend is probed at once. With a positive
+	// value, probes run as a rolling window:
 	// the first N are launched immediately, and each failure replenishes
 	// the next pending backend so at most N goroutines are in flight at
 	// any time. Only meaningful when ParallelBroadcast is true.
@@ -68,7 +68,7 @@ func (r *RateLimitConfig) setDefaultsAndValidate() []error {
 	// rate limiting.
 	for _, cidr := range r.TrustedProxies {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {
-			errs = append(errs, fmt.Errorf("%w: %q: %v", ErrInvalidCIDR, cidr, err))
+			errs = append(errs, fmt.Errorf("%w: %q: %w", ErrInvalidCIDR, cidr, err))
 		}
 	}
 
@@ -96,11 +96,11 @@ func (cb *CircuitBreakerConfig) setDefaults() {
 	cb.FailureThreshold = defaulted(cb.FailureThreshold, 3)
 	cb.OpenTimeout = defaulted(cb.OpenTimeout, 15*time.Second)
 	cb.CacheTTL = defaulted(cb.CacheTTL, 60*time.Second)
-	// DegradedBroadcastParallelism intentionally has no positive
-	// default: zero preserves the historical "fan out to every backend"
-	// behaviour; operators opt into the rolling-window cap by setting a
-	// positive value. A negative value is normalised to zero so a typo
-	// cannot accidentally disable the broadcast entirely.
+	// DegradedBroadcastParallelism intentionally has no positive default:
+	// zero means fan out to every backend, and operators opt into the
+	// rolling-window cap by setting a positive value. A negative value is
+	// normalised to zero so a typo cannot accidentally disable the
+	// broadcast entirely.
 	if cb.DegradedBroadcastParallelism < 0 {
 		cb.DegradedBroadcastParallelism = 0
 	}

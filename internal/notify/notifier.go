@@ -208,6 +208,8 @@ func (n *Notifier) Run(ctx context.Context) error {
 	ticker := time.NewTicker(drainInterval)
 	defer ticker.Stop()
 
+	defer n.Close()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -215,6 +217,16 @@ func (n *Notifier) Run(ctx context.Context) error {
 		case <-ticker.C:
 			n.drainOnce(ctx)
 		}
+	}
+}
+
+// Close releases what the notifier holds beyond its own stack: the dampener's
+// eviction goroutine. Run defers it, so a notifier the lifecycle manager stops
+// needs nothing further; a caller that builds one without running it calls this
+// itself, or leaves a goroutine behind per notifier.
+func (n *Notifier) Close() {
+	if n.dampener != nil {
+		n.dampener.Close()
 	}
 }
 

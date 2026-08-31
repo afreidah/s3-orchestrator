@@ -511,12 +511,12 @@ func TestUIHandlerHook_AppliedPushesNewConfig(t *testing.T) {
 // pushes the new limits and returns HookApplied.
 func TestRateLimitHook_AppliedPushesNewLimits(t *testing.T) {
 	inj := do.New()
-	do.Provide(inj, func(do.Injector) (*s3api.RateLimiter, error) {
-		return s3api.NewRateLimiter(config.RateLimitConfig{
-			RequestsPerSec: 1,
-			Burst:          1,
-		}), nil
+	rl := s3api.NewRateLimiter(config.RateLimitConfig{
+		RequestsPerSec: 1,
+		Burst:          1,
 	})
+	t.Cleanup(rl.Close)
+	do.Provide(inj, func(do.Injector) (*s3api.RateLimiter, error) { return rl, nil })
 	h := &rateLimitHook{inj: inj}
 	cfg := &config.Config{}
 	cfg.RateLimit.Enabled = true

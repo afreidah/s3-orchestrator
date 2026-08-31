@@ -22,6 +22,7 @@ import (
 	"hash/fnv"
 	"io"
 	"log/slog"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -64,21 +65,21 @@ const spanPrefix = "Manager "
 // existence. Concurrent UploadPart calls on the same uploadID with a
 // cold cache will each issue their own Unwrap; the design accepts that
 // minor cold-start cost in exchange for not pulling in singleflight.
-// MultipartStores is the narrow persistence surface multipart needs: multipart
+// Stores is the narrow persistence surface multipart needs: multipart
 // row/part operations and the advisory lock used to serialize stale-upload
 // sweeps. Declared locally so multipart does not pull in the full
 // MetadataStore.
-type MultipartStores interface {
+type Stores interface {
 	core.MultipartStore
 	core.AdvisoryLocker
 }
 
 type Manager struct {
-	core               MultipartRuntime       // infrastructure subset: backends, usage, timeout, error classification, metrics
+	core               Runtime                // infrastructure subset: backends, usage, timeout, error classification, metrics
 	coord              *writepath.Coordinator // write-path helpers shared with the object manager
-	stores             MultipartStores        // multipart row/part operations and WithAdvisoryLock
+	stores             Stores                 // multipart row/part operations and WithAdvisoryLock
 	encryptor          *encryption.Encryptor
-	codec              MultipartCodec
+	codec              Codec
 	compression        config.CompressionConfig
 	objectCache        objcache.ObjectCache
 	dekCache           *syncutil.TTLCache[string, []byte]
@@ -120,11 +121,11 @@ func New(deps *Deps) *Manager {
 // config. Codec is supplied whether or not Compression.Enabled, matching the
 // object manager: an assembled object is encoded only when both are set.
 type Deps struct {
-	Core         MultipartRuntime
+	Core         Runtime
 	Coord        *writepath.Coordinator
-	Stores       MultipartStores
+	Stores       Stores
 	Encryptor    *encryption.Encryptor // nil when encryption is disabled
-	Codec        MultipartCodec        // nil when no codec is configured
+	Codec        Codec                 // nil when no codec is configured
 	Compression  config.CompressionConfig
 	ObjectCache  objcache.ObjectCache // nil when object caching is disabled
 	DEKCacheTTL  time.Duration
@@ -245,7 +246,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	defer span.End()
 
 	if partNumber < 1 || partNumber > 10000 {
-		err := &core.S3Error{StatusCode: 400, Code: "InvalidArgument", Message: "Part number must be between 1 and 10000"}
+		err := &core.S3Error{StatusCode: http.StatusBadRequest, Code: "InvalidArgument", Message: "Part number must be between 1 and 10000"}
 		observe.MarkSpanError(span, err.Message)
 		return "", err
 	}
@@ -513,7 +514,7 @@ func (mp *Manager) collectRequestedParts(ctx context.Context, span trace.Span, u
 	if len(missing) > 0 {
 		msg := "parts not uploaded: " + formatPartNumbers(missing)
 		observe.MarkSpanError(span, msg)
-		return nil, &core.S3Error{StatusCode: 400, Code: "InvalidPart", Message: msg}
+		return nil, &core.S3Error{StatusCode: http.StatusBadRequest, Code: "InvalidPart", Message: msg}
 	}
 
 	requested := make(map[int]bool, len(partNumbers))
@@ -690,7 +691,7 @@ func (mp *Manager) CompleteMultipartUpload(ctx context.Context, bucket, key, upl
 	if !acquired {
 		observe.MarkSpanError(span, "another CompleteMultipartUpload in flight")
 		return "", &core.S3Error{
-			StatusCode: 409,
+			StatusCode: http.StatusConflict,
 			Code:       "OperationAborted",
 			Message:    "Another CompleteMultipartUpload is already in progress for this upload",
 		}

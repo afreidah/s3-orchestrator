@@ -23,12 +23,12 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// ObjectWriteRuntime is the subset of *infra.BackendRuntime the write-path Manager
+// WriteRuntime is the subset of *infra.BackendRuntime the write-path Manager
 // methods (put, copy, delete, mutation_finalize) reach for. IsDraining
 // is here for the post-PUT drain-race re-check in attemptPutOnBackend
 // (the upstream EligibleForWrite filter is racy; the re-check closes
 // the window).
-type ObjectWriteRuntime interface {
+type WriteRuntime interface {
 	GetBackend(name string) (backend.ObjectBackend, error)
 	IsDraining(name string) bool
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
@@ -37,7 +37,7 @@ type ObjectWriteRuntime interface {
 	Acct() *accounting.Recorder
 }
 
-// ObjectCodec is the compression surface the Manager uses: encode on write,
+// Codec is the compression surface the Manager uses: encode on write,
 // decode on read. A role rather than a single action, so it takes a role name;
 // while it held Compress alone the -er form applied and it was Compressor.
 //
@@ -45,7 +45,7 @@ type ObjectWriteRuntime interface {
 // inputs the concrete codec cannot be made to produce - a mid-upload encode
 // failure, a stored object that will not decode. A fake here is what lets
 // those paths be tested at all.
-type ObjectCodec interface {
+type Codec interface {
 	Compress(dst io.Writer, src io.Reader) (int64, error)
 	DecompressRanged(ctx context.Context, f compression.RangeFetcher, compressedSize int64) (compression.RangedReader, error)
 }
@@ -59,11 +59,11 @@ type RangeFetchRuntime interface {
 	Acct() *accounting.Recorder
 }
 
-// ObjectReadRuntime is the subset of *infra.BackendRuntime the read-path Manager
+// ReadRuntime is the subset of *infra.BackendRuntime the read-path Manager
 // methods (get, head, list, materialize) reach for. Usage() is still
 // needed for WithinLimits pre-flight checks; per-backend Record calls
 // flow through Acct.
-type ObjectReadRuntime interface {
+type ReadRuntime interface {
 	RangeFetchRuntime
 	Backends() map[string]backend.ObjectBackend
 	GetBackend(name string) (backend.ObjectBackend, error)
@@ -71,17 +71,17 @@ type ObjectReadRuntime interface {
 	HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error)
 }
 
-// ObjectRuntime composes the read and write role interfaces above into the
+// Runtime composes the read and write role interfaces above into the
 // single dependency object.Manager holds. *infra.BackendRuntime satisfies both
 // implicitly, so production wiring stays one field; tests and future
 // consumers may depend on the narrower role that matches their actual
 // call surface. BackendOrder() is intentionally NOT included here — it
 // is only used by *readpath.Failover, which receives its own
 // readpath.ReadRuntime via Deps.BroadcastCore so the transitive requirement
-// does not bleed into ObjectRuntime.
-type ObjectRuntime interface {
-	ObjectWriteRuntime
-	ObjectReadRuntime
+// does not bleed into Runtime.
+type Runtime interface {
+	WriteRuntime
+	ReadRuntime
 }
 
 // WriteRouter is the routing subset of *writepath.Coordinator: pick a
@@ -113,12 +113,12 @@ type CleanupWriter interface {
 	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
 }
 
-// ObjectCoordinator composes the three role interfaces above into the
+// Coordinator composes the three role interfaces above into the
 // single dependency object.Manager holds. *writepath.Coordinator
 // satisfies all three implicitly, so production wiring stays a single
 // field, while tests and future consumers may depend on whichever
 // narrower role matches their actual call surface.
-type ObjectCoordinator interface {
+type Coordinator interface {
 	WriteRouter
 	PendingWriter
 	CleanupWriter

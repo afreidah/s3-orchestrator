@@ -174,7 +174,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	// Drain any late listener error so the goroutine exits cleanly.
 	select {
 	case err := <-serverErr:
-		if err != nil && err != http.ErrServerClosed {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
 	default:
@@ -314,7 +314,7 @@ func (r *Runtime) logStartup() {
 // toAdminReloadStatus copies a reload result into the admin wire type so no
 // internal/reload type reaches the API surface. Returns nil before the first
 // reload, which the handler reports as its not-yet placeholder.
-func toAdminReloadStatus(res *reload.ReloadResult) *adminapi.ReloadStatusResponse {
+func toAdminReloadStatus(res *reload.Result) *adminapi.ReloadStatusResponse {
 	if res == nil {
 		return nil
 	}
