@@ -612,7 +612,10 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	}
 
 	// Mark as encrypted.
-	if err := s.MarkObjectEncrypted(ctx, key, "backend-a", []byte("packed"), "kid-1", 80, 100); err != nil {
+	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
+		ObjectKey: key, BackendName: "backend-a", EncryptionKey: []byte("packed"),
+		KeyID: "kid-1", PlaintextSize: 80, CiphertextSize: 100,
+	}); err != nil {
 		t.Fatalf("MarkObjectEncrypted: %v", err)
 	}
 
@@ -1287,7 +1290,10 @@ func TestStoreInt_CountUnencryptedLocations(t *testing.T) {
 
 	// Encrypting the copy removes it from the count, so the figure falls as an
 	// operator works through the backlog rather than staying put.
-	if err := s.MarkObjectEncrypted(ctx, key, "backend-a", []byte("wrapped"), "key-0", 100, 132); err != nil {
+	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
+		ObjectKey: key, BackendName: "backend-a", EncryptionKey: []byte("wrapped"),
+		KeyID: "key-0", PlaintextSize: 100, CiphertextSize: 132,
+	}); err != nil {
 		t.Fatalf("MarkObjectEncrypted: %v", err)
 	}
 	encrypted, err := s.CountUnencryptedLocations(ctx)
@@ -1360,5 +1366,56 @@ func TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 	}
 	if verified.ContentHash == "" || never.ContentHash == "" {
 		t.Error("both copies should carry a hash, so the hash alone cannot tell them apart")
+	}
+}
+
+// TestStoreInt_OldestUnverifiedAge_CountsNeverVerifiedCopies pins the figure the
+// dashboard reads to the backlog rather than to the copies the sweep already
+// reached. A copy with no scrub stamp is measured from when it was written, the
+// same fallback the scrub queue orders on; taking MIN over the stamp alone skips
+// it, and a fleet the sweep has never touched then reports an age of zero.
+//
+// The suite shares one database, so the assertion is a lower bound: other rows
+// can only be younger than the backdated copy, so they cannot mask it.
+func TestStoreInt_OldestUnverifiedAge_CountsNeverVerifiedCopies(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+
+	key := uniqueKey(t, "unverified-age")
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	if err := s.UpdateContentHash(ctx, key, "backend-a", "abc123"); err != nil {
+		t.Fatalf("UpdateContentHash: %v", err)
+	}
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE object_locations SET created_at = NOW() - INTERVAL '48 hours'
+		 WHERE object_key = $1 AND backend_name = $2`, key, "backend-a",
+	); err != nil {
+		t.Fatalf("backdating created_at: %v", err)
+	}
+
+	age, never, err := s.OldestUnverifiedAge(ctx)
+	if err != nil {
+		t.Fatalf("OldestUnverifiedAge: %v", err)
+	}
+	if never < 1 {
+		t.Errorf("never verified = %d, want at least the copy just written", never)
+	}
+	if age < 47*time.Hour {
+		t.Errorf("age = %s, want at least the 48h-old never-verified copy", age)
+	}
+
+	// Verifying it retires it from both figures.
+	if err := s.MarkObjectScrubbed(ctx, key, "backend-a"); err != nil {
+		t.Fatalf("MarkObjectScrubbed: %v", err)
+	}
+	age, _, err = s.OldestUnverifiedAge(ctx)
+	if err != nil {
+		t.Fatalf("OldestUnverifiedAge after stamping: %v", err)
+	}
+	if age >= 47*time.Hour {
+		t.Errorf("age = %s, want the stamped copy to have left the head of the queue", age)
 	}
 }

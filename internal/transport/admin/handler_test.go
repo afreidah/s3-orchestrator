@@ -27,56 +27,50 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
-// TestRequireToken_Missing verifies the require token missing contract.
-// Asserts that status = , want.
-func TestRequireToken_Missing(t *testing.T) {
+// TestRouteGuards covers what the admin routes answer before any handler
+// body runs: the token check on every route, the method each one accepts, and
+// the query parameters a route cannot work without. One request each, so they
+// are stated as a table rather than as a function apiece.
+func TestRouteGuards(t *testing.T) {
 	t.Parallel()
-	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
+	const validToken = "test-token"
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/status", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		token  string
+		want   int
+	}{
+		{"no token", http.MethodGet, "/admin/api/status", "", http.StatusUnauthorized},
+		{"wrong token", http.MethodGet, "/admin/api/status", "wrong-token", http.StatusUnauthorized},
+		{"valid token", http.MethodGet, "/admin/api/log-level", validToken, http.StatusOK},
+		{"status rejects POST", http.MethodPost, "/admin/api/status", validToken, http.StatusMethodNotAllowed},
+		{"log-level rejects DELETE", http.MethodDelete, "/admin/api/log-level", validToken, http.StatusMethodNotAllowed},
+		{"usage-flush rejects GET", http.MethodGet, "/admin/api/usage-flush", validToken, http.StatusMethodNotAllowed},
+		{"replicate rejects GET", http.MethodGet, "/admin/api/replicate", validToken, http.StatusMethodNotAllowed},
+		{"decrypt-existing rejects GET", http.MethodGet, "/admin/api/decrypt-existing", validToken, http.StatusMethodNotAllowed},
+		{"object-locations without a key", http.MethodGet, "/admin/api/object-locations", validToken, http.StatusBadRequest},
 	}
-}
 
-// TestRequireToken_Wrong verifies the require token wrong contract.
-// Asserts that status = , want.
-func TestRequireToken_Wrong(t *testing.T) {
-	t.Parallel()
-	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := newTestHandler(t)
+			mux := http.NewServeMux()
+			h.Register(mux)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/status", nil)
-	req.Header.Set("X-Admin-Token", "wrong-token")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+			req := httptest.NewRequestWithContext(context.Background(), tt.method, tt.path, nil)
+			if tt.token != "" {
+				req.Header.Set("X-Admin-Token", tt.token)
+			}
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
-	}
-}
-
-// TestRequireToken_Valid verifies the require token valid contract.
-// Asserts that status = , want.
-func TestRequireToken_Valid(t *testing.T) {
-	t.Parallel()
-	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/log-level", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+			if w.Code != tt.want {
+				t.Errorf("status = %d, want %d", w.Code, tt.want)
+			}
+		})
 	}
 }
 
@@ -157,24 +151,6 @@ func TestLogLevel_PutInvalidJSON(t *testing.T) {
 	}
 }
 
-// TestLogLevel_MethodNotAllowed verifies the log level method not allowed contract.
-// Asserts that status = , want.
-func TestLogLevel_MethodNotAllowed(t *testing.T) {
-	t.Parallel()
-	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/log-level", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
-	}
-}
-
 // TestReloadStatus_NoReloadYet returns a placeholder when the
 // reload provider has not been wired (no SIGHUP has happened yet).
 func TestReloadStatus_NoReloadYet(t *testing.T) {
@@ -222,78 +198,6 @@ func TestReloadStatus_ReturnsProvidedResult(t *testing.T) {
 	}
 	if resp.Generation == nil || *resp.Generation != 7 || resp.Status != "full_success" {
 		t.Errorf("got generation=%v status=%q, want 7/full_success", resp.Generation, resp.Status)
-	}
-}
-
-// TestStatus_MethodNotAllowed verifies the status method not allowed contract.
-// Asserts that status = , want.
-func TestStatus_MethodNotAllowed(t *testing.T) {
-	t.Parallel()
-	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/status", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
-	}
-}
-
-// TestObjectLocations_MissingKey verifies the object locations missing key contract.
-// Asserts that status = , want.
-func TestObjectLocations_MissingKey(t *testing.T) {
-	t.Parallel()
-	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/object-locations", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-}
-
-// TestUsageFlush_MethodNotAllowed verifies the usage flush method not allowed contract.
-// Asserts that status = , want.
-func TestUsageFlush_MethodNotAllowed(t *testing.T) {
-	t.Parallel()
-	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/usage-flush", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
-	}
-}
-
-// TestReplicate_MethodNotAllowed verifies the replicate method not allowed contract.
-// Asserts that status = , want.
-func TestReplicate_MethodNotAllowed(t *testing.T) {
-	t.Parallel()
-	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/replicate", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
 	}
 }
 
@@ -662,24 +566,6 @@ func TestDecryptExisting_NoEncryptor(t *testing.T) {
 	}
 	if resp["error"] != "encryption not enabled" {
 		t.Errorf("error = %q, want %q", resp["error"], "encryption not enabled")
-	}
-}
-
-// TestDecryptExisting_MethodNotAllowed verifies the decrypt existing method not allowed contract.
-// Asserts that status = , want.
-func TestDecryptExisting_MethodNotAllowed(t *testing.T) {
-	t.Parallel()
-	h := newTestHandler(t)
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/decrypt-existing", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
 	}
 }
 

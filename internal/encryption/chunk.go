@@ -151,6 +151,29 @@ func (r *encryptReader) returnBufs() {
 	release()
 }
 
+// readChunk fills buf from src and reports which of the three endings
+// io.ReadFull distinguishes it hit: a clean end of stream (0, io.EOF), a
+// partial final chunk (n>0, io.ErrUnexpectedEOF), or a real error from the
+// source. done covers the first two; the error is returned as io.EOF only for
+// the first.
+//
+// The bug class this defends against is squashing the third case to io.EOF,
+// which would let a transient backend failure land in storage as a
+// truncated-but-valid object. Both directions of the stream read through here
+// so neither can drift into doing that.
+func readChunk(src io.Reader, buf []byte, what string) (n int, done bool, err error) {
+	n, err = io.ReadFull(src, buf)
+	switch {
+	case n == 0 && errors.Is(err, io.EOF):
+		return 0, true, io.EOF
+	case errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF):
+		return n, true, nil
+	case err != nil:
+		return 0, false, fmt.Errorf("read %s: %w", what, err)
+	}
+	return n, false, nil
+}
+
 // Read implements io.Reader. Emits the header followed by encrypted chunks.
 func (r *encryptReader) Read(p []byte) (int, error) {
 	if r.bufs == nil {
@@ -176,22 +199,15 @@ func (r *encryptReader) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	// Read one plaintext chunk into the reusable buffer. io.ReadFull
-	// returns (0, io.EOF) for a clean end of stream, (n>0, io.ErrUnexpectedEOF)
-	// for a partial final chunk, and (0, err) for any real error from the
-	// source. The bug class this code defends against is silently squashing
-	// the third case to io.EOF, which would let a transient backend failure
-	// land in storage as a truncated-but-valid object.
-	n, err := io.ReadFull(r.src, r.bufs.plain)
-	switch {
-	case n == 0 && errors.Is(err, io.EOF):
+	n, done, err := readChunk(r.src, r.bufs.plain, "plaintext")
+	if done {
 		r.srcDone = true
-		r.returnBufs()
-		return 0, io.EOF
-	case errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF):
-		r.srcDone = true
-	case err != nil:
-		return 0, fmt.Errorf("read plaintext: %w", err)
+	}
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			r.returnBufs()
+		}
+		return 0, err
 	}
 	plain := r.bufs.plain[:n]
 
@@ -289,20 +305,16 @@ func (r *decryptReader) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	// Read one ciphertext chunk into the reusable framed buffer. See
-	// the matching comment in encryptReader.Read for the failure
-	// modes distinguished here.
 	chunkBuf := r.bufs.framed[:cap(r.bufs.framed)]
-	n, err := io.ReadFull(r.src, chunkBuf)
-	switch {
-	case n == 0 && errors.Is(err, io.EOF):
+	n, done, err := readChunk(r.src, chunkBuf, "ciphertext")
+	if done {
 		r.srcDone = true
-		r.returnBufs()
-		return 0, io.EOF
-	case errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF):
-		r.srcDone = true
-	case err != nil:
-		return 0, fmt.Errorf("read ciphertext: %w", err)
+	}
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			r.returnBufs()
+		}
+		return 0, err
 	}
 	chunk := chunkBuf[:n]
 

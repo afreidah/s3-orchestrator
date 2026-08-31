@@ -122,7 +122,14 @@ func (e *Encryption) EncryptExisting(ctx context.Context) (BulkRewriteResult, er
 				size: encResult.CiphertextSize,
 				commit: func() error {
 					keyData := encryption.PackKeyData(encResult.BaseNonce, encResult.WrappedDEK)
-					return e.store.MarkObjectEncrypted(ctx, loc.ObjectKey, loc.BackendName, keyData, encResult.KeyID, loc.SizeBytes, encResult.CiphertextSize)
+					return e.store.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
+						ObjectKey:      loc.ObjectKey,
+						BackendName:    loc.BackendName,
+						EncryptionKey:  keyData,
+						KeyID:          encResult.KeyID,
+						PlaintextSize:  loc.SizeBytes,
+						CiphertextSize: encResult.CiphertextSize,
+					})
 				},
 			}, nil
 		},

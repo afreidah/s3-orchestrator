@@ -271,7 +271,7 @@ func TestReconcileSorted_MatchStepS3AdvanceErrorAborts(t *testing.T) {
 	s3 := &sliceKeySource{
 		entries: []Entry{e("a", 1)},
 		err:     want,
-		errAt:   1, // fail when advanceS3 runs after the match
+		errAt:   1, // fail when the S3 cursor advances after the match
 	}
 	dbIter := &sliceKeySource{entries: []Entry{e("a", 0), e("b", 0)}}
 	_, _, err := runMerge(t, s3, dbIter)

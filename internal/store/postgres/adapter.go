@@ -425,11 +425,21 @@ func (a *pgTxAdapter) AllBackendBytesUsed(ctx context.Context) (map[string]int64
 	if err != nil {
 		return nil, fmt.Errorf("read all quota stats: %w", err)
 	}
+	return totalsByBackend(rows, func(r db.GetAllQuotaStatsRow) (string, int64) {
+		return r.BackendName, r.BytesUsed
+	}), nil
+}
+
+// totalsByBackend folds a per-backend result set into the map its caller
+// returns, so the two callers state only which columns carry the name and the
+// total.
+func totalsByBackend[T any](rows []T, split func(T) (string, int64)) map[string]int64 {
 	out := make(map[string]int64, len(rows))
-	for _, r := range rows {
-		out[r.BackendName] = r.BytesUsed
+	for i := range rows {
+		name, total := split(rows[i])
+		out[name] = total
 	}
-	return out, nil
+	return out
 }
 
 // SumObjectSizesByBackend returns SUM(size_bytes) per backend from the
@@ -439,11 +449,9 @@ func (a *pgTxAdapter) SumObjectSizesByBackend(ctx context.Context) (map[string]i
 	if err != nil {
 		return nil, fmt.Errorf("sum object sizes by backend: %w", err)
 	}
-	out := make(map[string]int64, len(rows))
-	for _, r := range rows {
-		out[r.BackendName] = r.TotalBytes
-	}
-	return out, nil
+	return totalsByBackend(rows, func(r db.SumObjectSizesByBackendRow) (string, int64) {
+		return r.BackendName, r.TotalBytes
+	}), nil
 }
 
 // SetBackendBytesUsed overwrites bytes_used with the authoritative value.
@@ -455,6 +463,81 @@ func (a *pgTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName strin
 		return fmt.Errorf("set backend bytes_used: %w", err)
 	}
 	return nil
+}
+
+// AdjustBackendBytesUsed applies a signed delta to bytes_used, clamped at zero
+// and without the bytes_limit guard.
+func (a *pgTxAdapter) AdjustBackendBytesUsed(ctx context.Context, backendName string, delta int64) error {
+	if err := a.q.AdjustBackendBytesUsed(ctx, db.AdjustBackendBytesUsedParams{
+		Delta:       delta,
+		BackendName: backendName,
+	}); err != nil {
+		return fmt.Errorf("adjust backend bytes_used: %w", err)
+	}
+	return nil
+}
+
+// -------------------------------------------------------------------------
+// STORED-FORM REWRITES
+// -------------------------------------------------------------------------
+
+// UpdateCompressedForm records the stored form a recompression pass left on
+// one copy.
+func (a *pgTxAdapter) UpdateCompressedForm(ctx context.Context, u *core.CompressedUpdate) error {
+	if err := a.q.MarkObjectCompressed(ctx, db.MarkObjectCompressedParams{
+		ObjectKey:                u.ObjectKey,
+		BackendName:              u.BackendName,
+		CompressionAlgorithm:     strPtr(u.Algorithm),
+		CompressionLevel:         strPtr(u.Level),
+		CompressionFormatVersion: int16Ptr(u.FormatVersion),
+		LogicalSize:              int64Ptr(u.LogicalSize),
+		SizeBytes:                u.SizeBytes,
+		PlaintextSize:            int64Ptr(u.PlaintextSize),
+		EncryptionKey:            u.EncryptionKey,
+		KeyID:                    strPtr(u.KeyID),
+	}); err != nil {
+		return fmt.Errorf("update compressed form: %w", err)
+	}
+	return nil
+}
+
+// MarkCopyEncrypted records the envelope columns for a copy encrypted in place.
+func (a *pgTxAdapter) MarkCopyEncrypted(ctx context.Context, u *core.EncryptedUpdate) error {
+	if err := a.q.MarkObjectEncrypted(ctx, db.MarkObjectEncryptedParams{
+		ObjectKey:     u.ObjectKey,
+		BackendName:   u.BackendName,
+		EncryptionKey: u.EncryptionKey,
+		KeyID:         &u.KeyID,
+		PlaintextSize: &u.PlaintextSize,
+		SizeBytes:     u.CiphertextSize,
+	}); err != nil {
+		return fmt.Errorf("mark copy encrypted: %w", err)
+	}
+	return nil
+}
+
+// MarkCopyDecrypted clears the envelope columns for a copy decrypted in place.
+func (a *pgTxAdapter) MarkCopyDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error {
+	if err := a.q.MarkObjectDecrypted(ctx, db.MarkObjectDecryptedParams{
+		ObjectKey:   objectKey,
+		BackendName: backendName,
+		SizeBytes:   plaintextSize,
+	}); err != nil {
+		return fmt.Errorf("mark copy decrypted: %w", err)
+	}
+	return nil
+}
+
+// GetCopySizeBytes reads the size a copy currently reports.
+func (a *pgTxAdapter) GetCopySizeBytes(ctx context.Context, objectKey, backendName string) (int64, error) {
+	size, err := a.q.GetObjectSizeBytes(ctx, db.GetObjectSizeBytesParams{
+		ObjectKey:   objectKey,
+		BackendName: backendName,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("get copy size_bytes: %w", err)
+	}
+	return size, nil
 }
 
 // Compile-time check that *pgTxAdapter satisfies core.TxAdapter.

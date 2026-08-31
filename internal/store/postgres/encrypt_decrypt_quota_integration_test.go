@@ -23,6 +23,20 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// encUpdate describes one copy on backend-a rewritten by the encrypt pass. The
+// envelope itself is not what these tests are about, so every case uses the
+// same key material and varies only the sizes the quota has to follow.
+func encUpdate(key string, plaintextSize, ciphertextSize int64) *core.EncryptedUpdate {
+	return &core.EncryptedUpdate{
+		ObjectKey:      key,
+		BackendName:    "backend-a",
+		EncryptionKey:  []byte("k"),
+		KeyID:          "test-key",
+		PlaintextSize:  plaintextSize,
+		CiphertextSize: ciphertextSize,
+	}
+}
+
 // TestStoreInt_MarkObjectEncrypted_AdjustsBytesUsed asserts that marking an
 // object encrypted advances backend_quotas.bytes_used by ciphertextSize -
 // plaintextSize so the counter reflects the new on-disk byte count.
@@ -42,7 +56,7 @@ func TestStoreInt_MarkObjectEncrypted_AdjustsBytesUsed(t *testing.T) {
 	}
 	before := readBytesUsed(t, s, "backend-a")
 
-	if err := s.MarkObjectEncrypted(ctx, key, "backend-a", []byte("k"), "test-key", plaintextSize, ciphertextSize); err != nil {
+	if err := s.MarkObjectEncrypted(ctx, encUpdate(key, plaintextSize, ciphertextSize)); err != nil {
 		t.Fatalf("MarkObjectEncrypted: %v", err)
 	}
 
@@ -69,7 +83,7 @@ func TestStoreInt_MarkObjectDecrypted_AdjustsBytesUsed(t *testing.T) {
 	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: plaintextSize}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if err := s.MarkObjectEncrypted(ctx, key, "backend-a", []byte("k"), "test-key", plaintextSize, ciphertextSize); err != nil {
+	if err := s.MarkObjectEncrypted(ctx, encUpdate(key, plaintextSize, ciphertextSize)); err != nil {
 		t.Fatalf("MarkObjectEncrypted: %v", err)
 	}
 	beforeDecrypt := readBytesUsed(t, s, "backend-a")
@@ -100,7 +114,7 @@ func TestStoreInt_MarkObjectEncrypted_ZeroDeltaNoOp(t *testing.T) {
 	}
 	before := readBytesUsed(t, s, "backend-a")
 
-	if err := s.MarkObjectEncrypted(ctx, key, "backend-a", []byte("k"), "test-key", size, size); err != nil {
+	if err := s.MarkObjectEncrypted(ctx, encUpdate(key, size, size)); err != nil {
 		t.Fatalf("MarkObjectEncrypted: %v", err)
 	}
 
@@ -134,7 +148,7 @@ func TestStoreInt_MarkObjectEncrypted_BatchSumsCorrectly(t *testing.T) {
 	before := readBytesUsed(t, s, "backend-a")
 
 	for i, k := range keys {
-		if err := s.MarkObjectEncrypted(ctx, k, "backend-a", []byte("k"), "test-key", plaintextSize, ciphertextSize); err != nil {
+		if err := s.MarkObjectEncrypted(ctx, encUpdate(k, plaintextSize, ciphertextSize)); err != nil {
 			t.Fatalf("MarkObjectEncrypted %d: %v", i, err)
 		}
 	}

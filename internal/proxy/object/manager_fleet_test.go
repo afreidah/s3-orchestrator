@@ -444,25 +444,34 @@ func TestBackendCapacityStats_DBFailureReturnsNil(t *testing.T) {
 	}
 }
 
-// TestPutObject_QuotaExhausted surfaces the no-space branch.
-func TestPutObject_QuotaExhausted(t *testing.T) {
+// TestPutObject_PlacementErrors pins what a write reports when placement
+// cannot answer: the store's failure is translated into the sentinel the
+// transport turns into a status, and the two are not the same failure.
+func TestPutObject_PlacementErrors(t *testing.T) {
 	t.Parallel()
-	store := putObjectErrStore(t, core.ErrNoSpaceAvailable)
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
-
-	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("x")), Size: 1}); !errors.Is(err, core.ErrInsufficientStorage) {
-		t.Fatalf("expected st.ErrInsufficientStorage, got %v", err)
+	tests := []struct {
+		name      string
+		storeErr  error
+		wantSent  error
+		wantWhyOf string
+	}{
+		{"no backend has room", core.ErrNoSpaceAvailable, core.ErrInsufficientStorage, "insufficient storage"},
+		{"the ledger is down", core.ErrDBUnavailable, core.ErrServiceUnavailable, "service unavailable"},
 	}
-}
 
-// TestPutObject_DBUnavailable surfaces the DB-down branch.
-func TestPutObject_DBUnavailable(t *testing.T) {
-	t.Parallel()
-	store := putObjectErrStore(t, core.ErrDBUnavailable)
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := putObjectErrStore(t, tt.storeErr)
+			mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 
-	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("x")), Size: 1}); !errors.Is(err, core.ErrServiceUnavailable) {
-		t.Fatalf("expected st.ErrServiceUnavailable, got %v", err)
+			_, err := mgr.PutObject(context.Background(), &PutObjectRequest{
+				Key: "key", Body: bytes.NewReader([]byte("x")), Size: 1,
+			})
+			if !errors.Is(err, tt.wantSent) {
+				t.Fatalf("err = %v, want %s", err, tt.wantWhyOf)
+			}
+		})
 	}
 }
 

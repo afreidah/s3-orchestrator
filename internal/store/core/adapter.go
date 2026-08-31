@@ -112,6 +112,18 @@ type ObjectsTxAdapter interface {
 	// preserves an existing row. Returns true if a row was inserted.
 	InsertObjectLocationIfNotExists(ctx context.Context, loc *ObjectLocation) (inserted bool, err error)
 
+	// UpdateCompressedForm, MarkCopyEncrypted and MarkCopyDecrypted record
+	// what a stored-form rewrite left behind on one copy. They only write
+	// the row: the quota that has to move with it is the caller's, so the
+	// two halves cannot be applied in separate transactions.
+	UpdateCompressedForm(ctx context.Context, u *CompressedUpdate) error
+	MarkCopyEncrypted(ctx context.Context, u *EncryptedUpdate) error
+	MarkCopyDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error
+
+	// GetCopySizeBytes returns the size_bytes a copy currently reports, read
+	// inside the transaction that is about to overwrite it.
+	GetCopySizeBytes(ctx context.Context, objectKey, backendName string) (int64, error)
+
 	// InsertReplicaConditional inserts a replica row only if the
 	// source copy still exists. Returns the size_bytes the row was
 	// inserted with (read from the source row inside the same
@@ -207,4 +219,10 @@ type QuotaTxAdapter interface {
 	// value. Unlike Increment/Decrement it carries no bytes_limit guard:
 	// the recomputed ledger total is reality and the counter must follow.
 	SetBackendBytesUsed(ctx context.Context, backendName string, value int64) error
+
+	// AdjustBackendBytesUsed applies a signed delta to bytes_used, clamped
+	// at zero and with no bytes_limit guard. Used by the stored-form
+	// rewrites, where the bytes already changed on the backend and the
+	// counter has to follow them in either direction.
+	AdjustBackendBytesUsed(ctx context.Context, backendName string, delta int64) error
 }

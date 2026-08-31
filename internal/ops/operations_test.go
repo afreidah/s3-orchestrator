@@ -106,7 +106,7 @@ func (emptyEncAdmin) ListUnencryptedLocations(_ context.Context, _ int, _ core.C
 }
 
 // MarkObjectEncrypted is a no-op.
-func (emptyEncAdmin) MarkObjectEncrypted(_ context.Context, _, _ string, _ []byte, _ string, _, _ int64) error {
+func (emptyEncAdmin) MarkObjectEncrypted(_ context.Context, _ *core.EncryptedUpdate) error {
 	return nil
 }
 
@@ -138,7 +138,7 @@ func (r *rowEncAdmin) ListUnencryptedLocations(_ context.Context, _ int, _ core.
 
 // MarkObjectEncrypted records that the post-encrypt metadata update ran, or
 // fails when the fixture is configured to.
-func (r *rowEncAdmin) MarkObjectEncrypted(_ context.Context, _, _ string, _ []byte, _ string, _, _ int64) error {
+func (r *rowEncAdmin) MarkObjectEncrypted(_ context.Context, _ *core.EncryptedUpdate) error {
 	if r.markErr != nil {
 		return r.markErr
 	}

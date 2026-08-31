@@ -289,7 +289,7 @@ type EncryptionAdmin interface {
 	UpdateEncryptionKey(ctx context.Context, objectKey, backendName string, newEncryptionKey []byte, newKeyID string) error
 	ListUnencryptedLocations(ctx context.Context, limit int, after Cursor) ([]UnencryptedLocation, error)
 	CountUnencryptedLocations(ctx context.Context) (int64, error)
-	MarkObjectEncrypted(ctx context.Context, objectKey, backendName string, encryptionKey []byte, keyID string, plaintextSize, ciphertextSize int64) error
+	MarkObjectEncrypted(ctx context.Context, u *EncryptedUpdate) error
 	ListAllEncryptedLocations(ctx context.Context, limit int, after Cursor) ([]DecryptableLocation, error)
 	MarkObjectDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error
 }

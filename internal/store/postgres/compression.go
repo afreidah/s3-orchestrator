@@ -80,37 +80,6 @@ func (s *Store) CompressionStats(ctx context.Context) (map[string]core.Compressi
 	return out, nil
 }
 
-// MarkObjectCompressed records the new stored form of a rewritten copy and
-// moves the backend's quota by the difference between what the copy occupied
-// before and what it occupies now.
-func (s *Store) MarkObjectCompressed(ctx context.Context, u *core.CompressedUpdate, previousSize int64) error {
-	return s.withTx(ctx, func(qtx *db.Queries) error {
-		if err := qtx.MarkObjectCompressed(ctx, db.MarkObjectCompressedParams{
-			ObjectKey:                u.ObjectKey,
-			BackendName:              u.BackendName,
-			CompressionAlgorithm:     strPtr(u.Algorithm),
-			CompressionLevel:         strPtr(u.Level),
-			CompressionFormatVersion: int16Ptr(u.FormatVersion),
-			LogicalSize:              int64Ptr(u.LogicalSize),
-			SizeBytes:                u.SizeBytes,
-			PlaintextSize:            int64Ptr(u.PlaintextSize),
-			EncryptionKey:            u.EncryptionKey,
-			KeyID:                    strPtr(u.KeyID),
-		}); err != nil {
-			return fmt.Errorf("mark compressed: %w", err)
-		}
-		if delta := u.SizeBytes - previousSize; delta != 0 {
-			if err := qtx.AdjustBackendBytesUsed(ctx, db.AdjustBackendBytesUsedParams{
-				Delta:       delta,
-				BackendName: u.BackendName,
-			}); err != nil {
-				return fmt.Errorf("adjust quota for compression: %w", err)
-			}
-		}
-		return nil
-	})
-}
-
 // RecordCompressionProbe stores what the encoder produced for a copy it
 // declined to store compressed, so a later pass can reach the same verdict
 // from the row rather than downloading and encoding the object again.

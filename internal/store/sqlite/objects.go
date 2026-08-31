@@ -59,19 +59,28 @@ func (s *Store) GetObjectBackendsForKeys(ctx context.Context, keys []string) (ma
 	if err != nil {
 		return nil, fmt.Errorf("failed to get object backends for keys: %w", err)
 	}
-	defer rows.Close()
-	out := make(map[string][]string, len(keys))
-	for rows.Next() {
-		var key, backend string
-		if err := rows.Scan(&key, &backend); err != nil {
-			return nil, fmt.Errorf("failed to scan key/backend pair: %w", err)
+	pairs, err := collectRows(rows, "key/backend rows", func(rows *sql.Rows) (keyBackend, error) {
+		var kb keyBackend
+		if err := rows.Scan(&kb.key, &kb.backend); err != nil {
+			return keyBackend{}, fmt.Errorf("failed to scan key/backend pair: %w", err)
 		}
-		out[key] = append(out[key], backend)
+		return kb, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate key/backend rows: %w", err)
+	out := make(map[string][]string, len(keys))
+	for _, kb := range pairs {
+		out[kb.key] = append(out[kb.key], kb.backend)
 	}
 	return out, nil
+}
+
+// keyBackend is one (object_key, backend_name) row, grouped into the
+// key -> backends map the caller asked for once the page has been read.
+type keyBackend struct {
+	key     string
+	backend string
 }
 
 // GetAllObjectLocations returns all copies of an object, ordered by created_at
@@ -88,20 +97,10 @@ func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.O
 	if err != nil {
 		return nil, fmt.Errorf("failed to get object locations: %w", err)
 	}
-	defer rows.Close()
-
-	var locs []core.ObjectLocation
-	for rows.Next() {
-		loc, err := scanIdentifiedObjectLocation(rows)
-		if err != nil {
-			return nil, err
-		}
-		locs = append(locs, loc)
+	locs, err := collectRows(rows, rowsObjectLocations, scanIdentifiedObjectLocation)
+	if err != nil {
+		return nil, err
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate object locations: %w", err)
-	}
-
 	if len(locs) == 0 {
 		return nil, core.ErrObjectNotFound
 	}
@@ -233,8 +232,7 @@ func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, sta
 // scanDelimitedEntries reads the loose-index-scan rows. Leaf columns are NULL on
 // CommonPrefix rows (the LEFT JOIN only matches leaves).
 func scanDelimitedEntries(rows *sql.Rows) ([]core.DelimitedEntry, error) {
-	var entries []core.DelimitedEntry
-	for rows.Next() {
+	return collectRows(rows, "delimited entries", func(rows *sql.Rows) (core.DelimitedEntry, error) {
 		var (
 			key       string
 			isPrefix  int
@@ -246,7 +244,7 @@ func scanDelimitedEntries(rows *sql.Rows) ([]core.DelimitedEntry, error) {
 			etag      sql.NullString
 		)
 		if err := rows.Scan(&key, &isPrefix, &commonPfx, &skipBound, &backend, &sizeBytes, &createdAt, &etag); err != nil {
-			return nil, fmt.Errorf("failed to scan delimited entry: %w", err)
+			return core.DelimitedEntry{}, fmt.Errorf("failed to scan delimited entry: %w", err)
 		}
 		e := core.DelimitedEntry{IsPrefix: isPrefix != 0, CommonPrefix: commonPfx.String, SkipBound: skipBound}
 		if !e.IsPrefix {
@@ -255,17 +253,13 @@ func scanDelimitedEntries(rows *sql.Rows) ([]core.DelimitedEntry, error) {
 			e.Leaf.SizeBytes = sizeBytes.Int64
 			t, parseErr := parseTime(createdAt.String)
 			if parseErr != nil {
-				return nil, fmt.Errorf(errInvalidTimestamp, createdAt.String, parseErr)
+				return core.DelimitedEntry{}, fmt.Errorf(errInvalidTimestamp, createdAt.String, parseErr)
 			}
 			e.Leaf.CreatedAt = t
 			e.Leaf.Identity = listedIdentity(etag)
 		}
-		entries = append(entries, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate delimited entries: %w", err)
-	}
-	return entries, nil
+		return e, nil
+	})
 }
 
 // ListExpiredObjects returns one row per unique key matching the query's
@@ -359,38 +353,28 @@ func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, aft
 	return scanSlimObjectLocations(rows)
 }
 
-// scanSlimObjectLocations consumes a *sql.Rows holding the slim
-// (object_key, backend_name, size_bytes, created_at) projection used by
-// ListObjects, ListExpiredObjects, and ListObjectsByBackend. Centralizes
-// the per-row scan + RFC3339 timestamp parse so the three list helpers
-// don't carry parallel loop bodies.
 // scanListedObjectLocations scans a listing row, which carries the ETag on top
 // of the slim columns because a Contents entry reports one. NULL leaves the
 // entry without an identity, which is what an object that has not learned its
 // ETag yet has.
 func scanListedObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
-	var locs []core.ObjectLocation
-	for rows.Next() {
+	return collectRows(rows, rowsObjectLocations, func(rows *sql.Rows) (core.ObjectLocation, error) {
 		var (
 			loc       core.ObjectLocation
 			createdAt string
 			etag      sql.NullString
 		)
 		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &createdAt, &etag); err != nil {
-			return nil, fmt.Errorf("failed to scan object location: %w", err)
+			return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
 		}
 		var parseErr error
 		loc.CreatedAt, parseErr = parseTime(createdAt)
 		if parseErr != nil {
-			return nil, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
+			return core.ObjectLocation{}, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
 		}
 		loc.Identity = listedIdentity(etag)
-		locs = append(locs, loc)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate object locations: %w", err)
-	}
-	return locs, nil
+		return loc, nil
+	})
 }
 
 // listedIdentity builds the identity a listing row carries: the ETag alone,
@@ -402,25 +386,26 @@ func listedIdentity(etag sql.NullString) *core.ObjectIdentity {
 	return &core.ObjectIdentity{ETag: etag.String}
 }
 
+// scanSlimObjectLocations consumes a *sql.Rows holding the slim
+// (object_key, backend_name, size_bytes, created_at) projection used by
+// ListObjectsByBackend and its key-ordered twin. Centralizes the per-row scan
+// and timestamp parse so those callers don't carry parallel loop bodies.
 func scanSlimObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
-	var locs []core.ObjectLocation
-	for rows.Next() {
-		var loc core.ObjectLocation
-		var createdAt string
+	return collectRows(rows, rowsObjectLocations, func(rows *sql.Rows) (core.ObjectLocation, error) {
+		var (
+			loc       core.ObjectLocation
+			createdAt string
+		)
 		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &createdAt); err != nil {
-			return nil, fmt.Errorf("failed to scan object location: %w", err)
+			return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
 		}
 		var parseErr error
 		loc.CreatedAt, parseErr = parseTime(createdAt)
 		if parseErr != nil {
-			return nil, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
+			return core.ObjectLocation{}, fmt.Errorf(errInvalidTimestamp, createdAt, parseErr)
 		}
-		locs = append(locs, loc)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate object locations: %w", err)
-	}
-	return locs, nil
+		return loc, nil
+	})
 }
 
 // BackendObjectStats returns the object count and total bytes stored on a backend.
@@ -490,20 +475,7 @@ func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get least recently scrubbed objects: %w", err)
 	}
-	defer rows.Close()
-
-	var locs []core.ObjectLocation
-	for rows.Next() {
-		loc, err := scanObjectLocation(rows)
-		if err != nil {
-			return nil, err
-		}
-		locs = append(locs, loc)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate least recently scrubbed objects: %w", err)
-	}
-	return locs, nil
+	return collectRows(rows, "least recently scrubbed objects", scanObjectLocation)
 }
 
 // CountScrubCandidatesOnBackends reports how many scrubbable copies live on the
@@ -516,16 +488,11 @@ func (s *Store) CountScrubCandidatesOnBackends(ctx context.Context, backends []s
 	if err != nil {
 		return 0, fmt.Errorf("encode scrub backend list: %w", err)
 	}
-	var n int64
-	err = s.db.QueryRowContext(ctx, `
+	return s.countRows(ctx, "scrub candidates", `
 		SELECT count(*)
 		FROM object_locations
 		WHERE content_hash IS NOT NULL AND managed
-		  AND backend_name IN (SELECT value FROM json_each(?))`, string(backendsJSON)).Scan(&n)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count scrub candidates: %w", err)
-	}
-	return n, nil
+		  AND backend_name IN (SELECT value FROM json_each(?))`, string(backendsJSON))
 }
 
 // MarkObjectScrubbed records that a copy was examined, which is what advances
@@ -542,13 +509,18 @@ func (s *Store) MarkObjectScrubbed(ctx context.Context, key, backendName string)
 	return nil
 }
 
-// OldestUnverifiedAge reports how stale the least recently verified copy is,
-// and how many copies have never been verified at all.
+// OldestUnverifiedAge reports how long the copy at the head of the scrub queue
+// has gone unverified, and how many copies have never been verified at all.
+//
+// The age falls back to created_at exactly as the queue ordering does, so a
+// never-verified copy is measured from when it was written. Taking MIN over
+// last_scrubbed_at alone skips those rows entirely, which reports a fleet that
+// has never been scrubbed as an age of zero.
 func (s *Store) OldestUnverifiedAge(ctx context.Context) (time.Duration, int64, error) {
 	var oldest sql.NullString
 	var neverVerified int64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT MIN(last_scrubbed_at),
+		`SELECT MIN(COALESCE(last_scrubbed_at, created_at)),
 		        COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL)
 		 FROM object_locations
 		 WHERE content_hash IS NOT NULL AND managed`,
@@ -561,7 +533,7 @@ func (s *Store) OldestUnverifiedAge(ctx context.Context) (time.Duration, int64, 
 	}
 	ts, err := time.Parse(time.RFC3339Nano, oldest.String)
 	if err != nil {
-		return 0, neverVerified, fmt.Errorf("failed to parse last_scrubbed_at %q: %w", oldest.String, err)
+		return 0, neverVerified, fmt.Errorf("failed to parse scrub queue head timestamp %q: %w", oldest.String, err)
 	}
 	return time.Since(ts), neverVerified, nil
 }
@@ -581,20 +553,7 @@ func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([
 	if err != nil {
 		return nil, fmt.Errorf("failed to get objects without hash: %w", err)
 	}
-	defer rows.Close()
-
-	var locs []core.ObjectLocation
-	for rows.Next() {
-		loc, err := scanObjectLocation(rows)
-		if err != nil {
-			return nil, err
-		}
-		locs = append(locs, loc)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate objects without hash: %w", err)
-	}
-	return locs, nil
+	return collectRows(rows, "objects without hash", scanObjectLocation)
 }
 
 // UpdateContentHash sets the content hash for an object location.

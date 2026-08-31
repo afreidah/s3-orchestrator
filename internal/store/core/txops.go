@@ -105,3 +105,21 @@ func (o TxOps) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
 func (o TxOps) PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []DeletedCopy, error) {
 	return PromotePending(ctx, o.runner, p)
 }
+
+// MarkObjectCompressed records the stored form of a recompressed copy and
+// moves the backend's quota by the size difference.
+func (o TxOps) MarkObjectCompressed(ctx context.Context, u *CompressedUpdate, previousSize int64) error {
+	return MarkObjectCompressed(ctx, o.runner, u, previousSize)
+}
+
+// MarkObjectEncrypted records that a copy now holds an encryption envelope and
+// charges the backend the bytes it added.
+func (o TxOps) MarkObjectEncrypted(ctx context.Context, u *EncryptedUpdate) error {
+	return MarkObjectEncrypted(ctx, o.runner, u)
+}
+
+// MarkObjectDecrypted records that a copy is plaintext again and credits the
+// backend the bytes the envelope cost.
+func (o TxOps) MarkObjectDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error {
+	return MarkObjectDecrypted(ctx, o.runner, objectKey, backendName, plaintextSize)
+}

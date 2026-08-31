@@ -72,114 +72,53 @@ func TestConfigValidation_MissingRequired(t *testing.T) {
 	}
 }
 
-// TestConfigValidation_DuplicateBackendNames verifies the config validation duplicate backend names path by exercising cfg.SetDefaultsAndValidate.
-func TestConfigValidation_DuplicateBackendNames(t *testing.T) {
+// TestConfigValidation_FieldRules covers the per-field rules
+// SetDefaultsAndValidate enforces. Every case starts from a config that
+// validates, changes one thing, and says whether the result is still allowed -
+// so the rule under test is the line of the table, not a function of its own.
+func TestConfigValidation_FieldRules(t *testing.T) {
 	t.Parallel()
-	cfg := validBaseConfig()
-	cfg.Backends = []BackendConfig{
-		{Name: "dup", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1},
-		{Name: "dup", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1},
+	tests := []struct {
+		name    string
+		mutate  func(*Config)
+		wantErr bool
+	}{
+		{"duplicate backend names", func(c *Config) {
+			dup := BackendConfig{Name: "dup", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s", QuotaBytes: 1}
+			c.Backends = []BackendConfig{dup, dup}
+		}, true},
+		{"negative quota", func(c *Config) { c.Backends[0].QuotaBytes = -1 }, true},
+		{"negative max_concurrent_requests", func(c *Config) { c.Server.MaxConcurrentRequests = -1 }, true},
+		{"negative max_concurrent_reads", func(c *Config) { c.Server.MaxConcurrentReads = -1 }, true},
+		{"negative max_concurrent_writes", func(c *Config) { c.Server.MaxConcurrentWrites = -1 }, true},
+		{"load_shed_threshold at or above 1.0", func(c *Config) { c.Server.LoadShedThreshold = 1.5 }, true},
+		{"negative load_shed_threshold", func(c *Config) { c.Server.LoadShedThreshold = -0.5 }, true},
+		{"load_shed_threshold in range", func(c *Config) { c.Server.LoadShedThreshold = 0.8 }, false},
+		{"negative admission_wait", func(c *Config) { c.Server.AdmissionWait = -1 * time.Second }, true},
+		{"negative api_request_limit", func(c *Config) { c.Backends[0].APIRequestLimit = -1 }, true},
+		{"negative egress_byte_limit", func(c *Config) { c.Backends[0].EgressByteLimit = -1 }, true},
+		{"negative ingress_byte_limit", func(c *Config) { c.Backends[0].IngressByteLimit = -1 }, true},
+		{"zero usage limits mean unlimited", func(c *Config) {
+			c.Backends[0].APIRequestLimit = 0
+			c.Backends[0].EgressByteLimit = 0
+			c.Backends[0].IngressByteLimit = 0
+		}, false},
 	}
 
-	err := cfg.SetDefaultsAndValidate()
-	if err == nil {
-		t.Error("duplicate backend names should fail validation")
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := validBaseConfig()
+			tt.mutate(&cfg)
 
-// TestConfigValidation_NegativeQuota verifies the config validation negative quota path by exercising cfg.SetDefaultsAndValidate.
-func TestConfigValidation_NegativeQuota(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfig()
-	cfg.Backends[0].QuotaBytes = -1
-
-	err := cfg.SetDefaultsAndValidate()
-	if err == nil {
-		t.Error("negative quota should fail validation")
-	}
-}
-
-// TestConfigValidation_NegativeMaxConcurrentRequests verifies the config validation negative max concurrent requests path by exercising cfg.SetDefaultsAndValidate.
-func TestConfigValidation_NegativeMaxConcurrentRequests(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfig()
-	cfg.Server.MaxConcurrentRequests = -1
-
-	err := cfg.SetDefaultsAndValidate()
-	if err == nil {
-		t.Error("negative max_concurrent_requests should fail validation")
-	}
-}
-
-// TestConfigValidation_NegativeMaxConcurrentReads verifies the config validation negative max concurrent reads path by exercising cfg.SetDefaultsAndValidate.
-func TestConfigValidation_NegativeMaxConcurrentReads(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfig()
-	cfg.Server.MaxConcurrentReads = -1
-
-	err := cfg.SetDefaultsAndValidate()
-	if err == nil {
-		t.Error("negative max_concurrent_reads should fail validation")
-	}
-}
-
-// TestConfigValidation_NegativeMaxConcurrentWrites verifies the config validation negative max concurrent writes path by exercising cfg.SetDefaultsAndValidate.
-func TestConfigValidation_NegativeMaxConcurrentWrites(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfig()
-	cfg.Server.MaxConcurrentWrites = -1
-
-	err := cfg.SetDefaultsAndValidate()
-	if err == nil {
-		t.Error("negative max_concurrent_writes should fail validation")
-	}
-}
-
-// TestConfigValidation_InvalidLoadShedThreshold verifies the config validation invalid load shed threshold path by exercising cfg.SetDefaultsAndValidate.
-func TestConfigValidation_InvalidLoadShedThreshold(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfig()
-	cfg.Server.LoadShedThreshold = 1.5
-
-	err := cfg.SetDefaultsAndValidate()
-	if err == nil {
-		t.Error("load_shed_threshold >= 1.0 should fail validation")
-	}
-}
-
-// TestConfigValidation_NegativeLoadShedThreshold verifies the config validation negative load shed threshold path by exercising cfg.SetDefaultsAndValidate.
-func TestConfigValidation_NegativeLoadShedThreshold(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfig()
-	cfg.Server.LoadShedThreshold = -0.5
-
-	err := cfg.SetDefaultsAndValidate()
-	if err == nil {
-		t.Error("negative load_shed_threshold should fail validation")
-	}
-}
-
-// TestConfigValidation_ValidLoadShedThreshold verifies the config validation valid load shed threshold contract.
-// Asserts that valid load_shed_threshold 0.8 should pass:.
-func TestConfigValidation_ValidLoadShedThreshold(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfig()
-	cfg.Server.LoadShedThreshold = 0.8
-
-	if err := cfg.SetDefaultsAndValidate(); err != nil {
-		t.Errorf("valid load_shed_threshold 0.8 should pass: %v", err)
-	}
-}
-
-// TestConfigValidation_NegativeAdmissionWait verifies the config validation negative admission wait path by exercising cfg.SetDefaultsAndValidate.
-func TestConfigValidation_NegativeAdmissionWait(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfig()
-	cfg.Server.AdmissionWait = -1 * time.Second
-
-	err := cfg.SetDefaultsAndValidate()
-	if err == nil {
-		t.Error("negative admission_wait should fail validation")
+			err := cfg.SetDefaultsAndValidate()
+			if tt.wantErr && err == nil {
+				t.Error("expected validation to fail")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("expected validation to pass, got %v", err)
+			}
+		})
 	}
 }
 
@@ -782,57 +721,6 @@ func TestConfigValidation_MultiBackendNoReplicationWarns(t *testing.T) {
 	// Should pass validation (warning, not error)  -  replication.factor=1 is valid
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Errorf("multi-backend with factor=1 should pass validation (warn only): %v", err)
-	}
-}
-
-// TestConfigValidation_NegativeAPIRequestLimit verifies the config validation negative apirequest limit path by exercising cfg.SetDefaultsAndValidate.
-func TestConfigValidation_NegativeAPIRequestLimit(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfig()
-	cfg.Backends[0].APIRequestLimit = -1
-
-	err := cfg.SetDefaultsAndValidate()
-	if err == nil {
-		t.Error("negative api_request_limit should fail validation")
-	}
-}
-
-// TestConfigValidation_NegativeEgressByteLimit verifies the config validation negative egress byte limit path by exercising cfg.SetDefaultsAndValidate.
-func TestConfigValidation_NegativeEgressByteLimit(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfig()
-	cfg.Backends[0].EgressByteLimit = -1
-
-	err := cfg.SetDefaultsAndValidate()
-	if err == nil {
-		t.Error("negative egress_byte_limit should fail validation")
-	}
-}
-
-// TestConfigValidation_NegativeIngressByteLimit verifies the config validation negative ingress byte limit path by exercising cfg.SetDefaultsAndValidate.
-func TestConfigValidation_NegativeIngressByteLimit(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfig()
-	cfg.Backends[0].IngressByteLimit = -1
-
-	err := cfg.SetDefaultsAndValidate()
-	if err == nil {
-		t.Error("negative ingress_byte_limit should fail validation")
-	}
-}
-
-// TestConfigValidation_ZeroUsageLimitsMeansUnlimited verifies the config validation zero usage limits means unlimited contract.
-// Asserts that zero usage limits (unlimited) should pass validation:.
-func TestConfigValidation_ZeroUsageLimitsMeansUnlimited(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfig()
-	// All zero  -  should pass (unlimited)
-	cfg.Backends[0].APIRequestLimit = 0
-	cfg.Backends[0].EgressByteLimit = 0
-	cfg.Backends[0].IngressByteLimit = 0
-
-	if err := cfg.SetDefaultsAndValidate(); err != nil {
-		t.Errorf("zero usage limits (unlimited) should pass validation: %v", err)
 	}
 }
 
