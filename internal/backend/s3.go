@@ -118,7 +118,6 @@ func NewS3Backend(ctx context.Context, cfg *config.BackendConfig) (*S3Backend, e
 	if err != nil {
 		return nil, fmt.Errorf("resolve credentials for backend %q: %w", cfg.Name, err)
 	}
-	// --- Create S3 client with custom endpoint and transport ---
 	opts := s3.Options{
 		Region:       cfg.Region,
 		Credentials:  creds,

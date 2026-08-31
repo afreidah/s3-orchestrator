@@ -14,6 +14,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -71,7 +72,7 @@ func (s *Store) GetMultipartUpload(ctx context.Context, uploadID string) (*core.
 	)
 	var tagging sql.NullString
 	mu, err := scanMultipartUploadRow(taggedRowScanner{row: row, tagging: &tagging})
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, core.ErrMultipartUploadNotFound
 	}
 	if err != nil {

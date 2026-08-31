@@ -115,7 +115,7 @@ func validateMasterKey(masterKey string) []error {
 	}
 	keyBytes, err := base64.StdEncoding.DecodeString(masterKey)
 	if err != nil {
-		return []error{fmt.Errorf("encryption.master_key: %w: %v", ErrInvalidBase64Key, err)}
+		return []error{fmt.Errorf("encryption.master_key: %w: %w", ErrInvalidBase64Key, err)}
 	}
 	if len(keyBytes) != 32 {
 		return []error{fmt.Errorf("encryption.master_key: %w: got %d bytes", ErrInvalidKeyLength, len(keyBytes))}
@@ -131,7 +131,7 @@ func validateMasterKeyFile(path string) []error {
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return []error{fmt.Errorf("%w: %v", ErrInvalidKeyFile, err)}
+		return []error{fmt.Errorf("%w: %w", ErrInvalidKeyFile, err)}
 	}
 	if info.Size() != 32 {
 		return []error{fmt.Errorf("encryption.master_key_file: %w: got %d bytes", ErrInvalidKeyLength, info.Size())}
@@ -147,7 +147,7 @@ func validatePreviousKeys(keys []string) []error {
 	for i, pk := range keys {
 		keyBytes, err := base64.StdEncoding.DecodeString(pk)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("encryption.previous_keys[%d]: %w: %v", i, ErrPreviousKeyInvalid, err))
+			errs = append(errs, fmt.Errorf("encryption.previous_keys[%d]: %w: %w", i, ErrPreviousKeyInvalid, err))
 			continue
 		}
 		if len(keyBytes) != 32 {

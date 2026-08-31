@@ -3,11 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// Config validators previously returned errors as joined strings, forcing
-// tests to match on substrings. That made error messages de-facto APIs  -
-// a harmless reword would silently break test assertions.
+// Every config validator wraps a sentinel defined below rather than returning
+// a joined string. A string forces tests to match on substrings, which makes
+// the message a de-facto API: a harmless reword silently breaks assertions.
 //
-// Each validator now wraps a sentinel defined below using fmt.Errorf("%w:
+// Each validator wraps its sentinel using fmt.Errorf("%w:
 // <detail>", ErrX), and tests check with errors.Is(err, ErrX). Rewording the
 // detail suffix is free; only the sentinel value is the contract.
 // -------------------------------------------------------------------------------

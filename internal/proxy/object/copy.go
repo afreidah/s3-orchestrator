@@ -305,7 +305,7 @@ type nativeCopyContext struct {
 // copy server-side but the response was lost (timeout, dropped connection)
 // - falling back blindly would duplicate the work.
 func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyContext) (string, bool, error) {
-	copier, ok := req.destBackend.(s3be.BackendCopier)
+	copier, ok := req.destBackend.(s3be.Copier)
 	if !ok {
 		return "", false, nil
 	}

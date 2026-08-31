@@ -277,15 +277,18 @@ circuit_breaker:
   failure_threshold: 3           # consecutive DB failures before opening (default: 3)
   open_timeout: "15s"            # delay before probing recovery (default: 15s)
   cache_ttl: "60s"               # key→backend cache TTL during degraded reads (default: 60s)
+  degraded_reads_enabled: true   # serve reads from backends while the DB is down (default: true)
   parallel_broadcast: false      # fan-out reads to all backends in parallel (default: false)
   degraded_broadcast_parallelism: 0 # cap concurrent probes during parallel broadcast; 0 = no cap (default: 0)
 ```
+
+Set `degraded_reads_enabled: false` to fail reads with `503` during a database outage instead of broadcasting to the backends. That trades availability for cost and blast radius: a broadcast spends one API call per backend per read, so a long outage under read load can burn a metered backend's monthly allowance before anyone notices.
 
 When the database is unreachable, the orchestrator enters degraded mode: reads broadcast to all backends (with caching), writes return `503`. The circuit automatically recovers when the database comes back.
 
 By default, degraded reads try each backend sequentially. When `parallel_broadcast` is enabled, all backends are tried concurrently and the first success wins — reducing worst-case read latency from `N * backend_timeout` to roughly the fastest backend's response time. Enable this if read latency during outages is critical, but note that each parallel broadcast sends API requests to all backends simultaneously, which counts against monthly usage limits.
 
-For fleets with many configured backends, set `degraded_broadcast_parallelism` to cap how many backends are probed at once. With a positive value, probes run as a rolling window: the first N launch immediately and each failure replenishes the slot with the next pending backend, so at most N goroutines (and at most N concurrent backend API calls / TLS handshakes) are in flight at any time. The default of `0` preserves the historical "fan out to every backend at once" behaviour.
+For fleets with many configured backends, set `degraded_broadcast_parallelism` to cap how many backends are probed at once. With a positive value, probes run as a rolling window: the first N launch immediately and each failure replenishes the slot with the next pending backend, so at most N goroutines (and at most N concurrent backend API calls / TLS handshakes) are in flight at any time. The default of `0` means fan out to every backend at once.
 
 `backend_timeout` also bounds the cleanup of losing probes after a winner is declared, so a backend that hangs instead of honouring cancellation cannot strand a goroutine. The `s3o_degraded_broadcast_drain_timeout_total` metric increments whenever that bound is hit, surfacing a misbehaving backend.
 
@@ -419,7 +422,11 @@ write_path:
     reaper_tick: 1m      # how often PendingReaper sweeps unresolved intents (default: 1m)
     min_age: 5m          # only intents older than this are eligible (default: 5m) — avoids racing in-flight PUTs
     batch_size: 50       # rows claimed per tick (default: 50)
+  multipart:
+    enforce_min_part_size: true  # require every part but the last to be >= 5 MiB (default: true)
 ```
+
+**`multipart.enforce_min_part_size`** is the one S3 multipart invariant that is optional. Part-number range, ordering, duplicate and ETag checks are always enforced; the 5 MiB floor is not, because a deployment with existing writers that split more finely than S3 allows needs it off to accept their manifests. Leave it on unless you have such a writer.
 
 **How recovery works.** On every tick the `PendingReaper` worker (`internal/worker/pending.go`) claims a batch of `pending_objects` rows older than `min_age`, HEADs the backend at the recorded key, and resolves each one:
 
@@ -605,11 +612,16 @@ encryption:
   vault:
     address: "http://vault.service.consul:8200"
     token: "${VAULT_TOKEN}"
+    token_file: "/secrets/vault_token"  # optional; re-read on each renewal tick
     key_name: "s3-orchestrator"
     mount_path: "transit"     # default: transit
+    ca_cert: "/etc/ssl/vault-ca.pem"    # optional; PEM CA bundle for verifying Vault's TLS
+    renew_interval: "5m"      # how often the token is renewed / re-read (default: 5m)
 ```
 
 The Vault Transit engine handles wrapping and unwrapping DEKs — the orchestrator never sees the master key material. The `key_name` must reference an existing key in the Transit engine.
+
+Set `ca_cert` when Vault presents a certificate signed by a private CA; without it the system trust store is used. `token_file` suits Nomad or Kubernetes workload identity, where the token is rotated on disk by the platform: it is re-read on every `renew_interval` tick rather than only at startup.
 
 **Key rotation support:**
 

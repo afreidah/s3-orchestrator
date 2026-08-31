@@ -16,7 +16,6 @@ import (
 
 // CacheHitsTotal and related package-level variables used by this package.
 var (
-	// --- Cache metrics ---
 
 	// CacheHitsTotal counts object data cache hits.
 	CacheHitsTotal = promauto.NewCounter(
@@ -90,8 +89,6 @@ var (
 			Help: "HEAD responses answered from stored metadata without a backend request",
 		},
 	)
-
-	// --- Redis metrics ---
 
 	// RedisOperationsTotal counts Redis counter backend operations.
 	RedisOperationsTotal = promauto.NewCounterVec(

@@ -3,7 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Implements CounterBackend using per-backend atomic.Int64 counters stored in
+// Implements Backend using per-backend atomic.Int64 counters stored in
 // local memory. This is the default backend when Redis is not configured. Each
 // instance maintains independent counters that are periodically flushed to
 // PostgreSQL by the usage flush service.

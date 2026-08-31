@@ -536,10 +536,10 @@ func TestCompressExisting_WithoutCodec(t *testing.T) {
 		Usage:   opstest.NewMockUsageGate(ctrl),
 	})
 
-	if _, err := svc.CompressExisting(context.Background(), nil, 0); err != ErrCompressionUnavailable {
+	if _, err := svc.CompressExisting(context.Background(), nil, 0); !errors.Is(err, ErrCompressionUnavailable) {
 		t.Errorf("err = %v, want ErrCompressionUnavailable", err)
 	}
-	if _, err := svc.DecompressExisting(context.Background(), nil, 0); err != ErrCompressionUnavailable {
+	if _, err := svc.DecompressExisting(context.Background(), nil, 0); !errors.Is(err, ErrCompressionUnavailable) {
 		t.Errorf("err = %v, want ErrCompressionUnavailable", err)
 	}
 }

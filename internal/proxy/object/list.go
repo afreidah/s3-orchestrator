@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe"
@@ -100,7 +101,7 @@ func (o *Manager) listPage(ctx context.Context, prefix, delimiter, startAfter st
 func listObjectsError(span trace.Span, err error) error {
 	if errors.Is(err, core.ErrDBUnavailable) {
 		observe.MarkSpanError(span, "database unavailable")
-		return &core.S3Error{StatusCode: 503, Code: "ServiceUnavailable", Message: "listing unavailable during database outage"}
+		return &core.S3Error{StatusCode: http.StatusServiceUnavailable, Code: "ServiceUnavailable", Message: "listing unavailable during database outage"}
 	}
 	observe.RecordSpanError(span, err)
 	return fmt.Errorf("failed to list objects: %w", err)

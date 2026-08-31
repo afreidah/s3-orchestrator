@@ -87,7 +87,6 @@ func (ac *AdmissionController) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sem := ac.semFor(r.Method)
 
-		// --- Active load shedding ---
 		if ac.shedThreshold > 0 && ac.shouldShed(sem) {
 			telemetry.LoadShedTotal.Inc()
 			audit.Log(r.Context(), "s3.LoadShed",
@@ -99,7 +98,6 @@ func (ac *AdmissionController) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// --- Try non-blocking acquire ---
 		select {
 		case sem <- struct{}{}:
 			defer func() { <-sem }()
@@ -108,7 +106,6 @@ func (ac *AdmissionController) Middleware(next http.Handler) http.Handler {
 		default:
 		}
 
-		// --- Brief wait before rejection ---
 		if ac.admissionWait > 0 {
 			timer := time.NewTimer(ac.admissionWait)
 			defer timer.Stop()

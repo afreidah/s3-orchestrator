@@ -16,7 +16,6 @@ import (
 
 // BuildInfo and related package-level variables used by this package.
 var (
-	// --- Info metric ---
 
 	// BuildInfo exposes version information.
 	BuildInfo = promauto.NewGaugeVec(
@@ -26,8 +25,6 @@ var (
 		},
 		[]string{"version", "go_version"},
 	)
-
-	// --- Notification metrics ---
 
 	// NotificationSentTotal counts successfully delivered webhook notifications.
 	NotificationSentTotal = promauto.NewCounterVec(

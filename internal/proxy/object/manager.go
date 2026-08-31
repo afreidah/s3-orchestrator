@@ -37,10 +37,10 @@ import (
 // GetObject") in the same end-to-end trace.
 const managerSpanPrefix = "Manager "
 
-// ObjectStores is the narrow persistence surface object.Manager needs: object
+// Stores is the narrow persistence surface object.Manager needs: object
 // CRUD + list, plus quota stats. Declared locally so the manager does
 // not pull in the full MetadataStore.
-type ObjectStores interface {
+type Stores interface {
 	core.ObjectStore
 	core.QuotaStore
 	core.TagStore
@@ -49,11 +49,11 @@ type ObjectStores interface {
 // Manager handles object-level CRUD operations with read failover,
 // broadcast reads during degraded mode, and location caching.
 type Manager struct {
-	core              ObjectRuntime     // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics
-	coord             ObjectCoordinator // write-path helpers shared with the multipart manager
-	stores            ObjectStores      // direct store access for read paths and quota inspection
+	core              Runtime     // infrastructure subset: backends, usage, timeout, eligibility, error classification, metrics
+	coord             Coordinator // write-path helpers shared with the multipart manager
+	stores            Stores      // direct store access for read paths and quota inspection
 	encryptor         *encryption.Encryptor
-	codec             ObjectCodec
+	codec             Codec
 	compression       config.CompressionConfig
 	cache             *LocationCache
 	objectCache       objcache.ObjectCache // nil when object data caching is disabled
@@ -68,16 +68,16 @@ type Manager struct {
 // consumer-declared interfaces; the concrete *infra.BackendRuntime and
 // *writepath.Coordinator that DI builds satisfy them implicitly.
 type Deps struct {
-	Core          ObjectRuntime
+	Core          Runtime
 	BroadcastCore readpath.ReadRuntime // narrow consumer interface for the failover broadcaster; satisfied by the same *infra.BackendRuntime that backs Core
-	Coord         ObjectCoordinator
-	Stores        ObjectStores
+	Coord         Coordinator
+	Stores        Stores
 	Encryptor     *encryption.Encryptor
 	// Codec encodes new objects when Compression.Enabled and decodes stored
 	// ones on read. It is supplied whether or not compression is enabled for
 	// writes, because objects already written compressed still have to be read
 	// back. Nil disables both.
-	Codec             ObjectCodec
+	Codec             Codec
 	Compression       config.CompressionConfig
 	LocationCache     *LocationCache
 	ObjectCache       objcache.ObjectCache

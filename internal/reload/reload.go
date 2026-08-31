@@ -8,14 +8,14 @@
 // the Apply pass collecting per-hook outcomes. A monotonic generation
 // counter advances on every successful Apply pass (full or partial) so
 // operators can correlate reload events with the version each component
-// is running. The most recent ReloadResult is held atomically and
+// is running. The most recent Result is held atomically and
 // exposed via LastResult() for admin status surfaces.
 // -------------------------------------------------------------------------------
 
 // Package reload owns SIGHUP-driven configuration reload. The
 // coordinator runs a two-phase Check / Apply pass over a sequence of
 // hooks, swaps the atomic config on success, and reports full /
-// partial / validation / load outcomes via ReloadResult.
+// partial / validation / load outcomes via Result.
 package reload
 
 import (
@@ -71,7 +71,7 @@ type Coordinator struct {
 	log   *slog.Logger
 
 	generation atomic.Int64
-	lastResult atomic.Pointer[ReloadResult]
+	lastResult atomic.Pointer[Result]
 
 	hupChan chan os.Signal
 	hupDone chan struct{}
@@ -129,7 +129,7 @@ func (c *Coordinator) Shutdown() {
 
 // LastResult returns the most recent reload result, or nil if no
 // reload has been attempted yet.
-func (c *Coordinator) LastResult() *ReloadResult {
+func (c *Coordinator) LastResult() *Result {
 	return c.lastResult.Load()
 }
 
@@ -143,7 +143,7 @@ func (c *Coordinator) Generation() int64 {
 // surfaces can trigger a reload without sending a real signal.
 // Returns the result of the pass; the same value is stored on the
 // coordinator and reachable via LastResult.
-func (c *Coordinator) Reload() *ReloadResult {
+func (c *Coordinator) Reload() *Result {
 	started := time.Now()
 	ctx := context.Background()
 	currentGen := c.generation.Load()
@@ -153,7 +153,7 @@ func (c *Coordinator) Reload() *ReloadResult {
 
 	newCfg, err := config.LoadConfig(c.deps.ConfigPath)
 	if err != nil {
-		return c.finalize(ctx, &ReloadResult{
+		return c.finalize(ctx, &Result{
 			Generation: currentGen,
 			Status:     ReloadLoadFailed,
 			LoadError:  err.Error(),
@@ -161,7 +161,7 @@ func (c *Coordinator) Reload() *ReloadResult {
 		})
 	}
 
-	result := &ReloadResult{
+	result := &Result{
 		Generation:      currentGen,
 		StartedAt:       started,
 		RequiresRestart: config.NonReloadableFieldsChanged(c.deps.CfgPtr.Load(), newCfg),
@@ -169,7 +169,6 @@ func (c *Coordinator) Reload() *ReloadResult {
 
 	currentCfg := c.deps.CfgPtr.Load()
 
-	// --- Check pass: any error aborts before any Apply runs ---
 	for _, h := range c.hooks {
 		if err := h.Check(currentCfg, newCfg); err != nil {
 			result.Status = ReloadValidationFailed
@@ -182,7 +181,6 @@ func (c *Coordinator) Reload() *ReloadResult {
 		}
 	}
 
-	// --- Apply pass: best-effort, collect outcomes ---
 	applyCtx, cancel := context.WithTimeout(ctx, applyTimeout)
 	defer cancel()
 
@@ -215,7 +213,7 @@ func (c *Coordinator) Reload() *ReloadResult {
 
 // finalize stamps EndedAt, logs the outcome at the appropriate level,
 // stores the result, and returns it.
-func (c *Coordinator) finalize(ctx context.Context, r *ReloadResult) *ReloadResult {
+func (c *Coordinator) finalize(ctx context.Context, r *Result) *Result {
 	r.EndedAt = time.Now()
 	c.lastResult.Store(r)
 
@@ -251,7 +249,7 @@ func (c *Coordinator) finalize(ctx context.Context, r *ReloadResult) *ReloadResu
 }
 
 // failedHookNames returns the names of hooks whose outcome is Failed.
-func failedHookNames(r *ReloadResult) []string {
+func failedHookNames(r *Result) []string {
 	var names []string
 	for _, o := range r.Outcomes {
 		if o.Status == HookFailed {
@@ -264,7 +262,7 @@ func failedHookNames(r *ReloadResult) []string {
 // firstFailedHookName returns the name of the first failed hook in the
 // outcomes slice. Used in the validation-failure log line where there
 // is exactly one failure.
-func firstFailedHookName(r *ReloadResult) string {
+func firstFailedHookName(r *Result) string {
 	for _, o := range r.Outcomes {
 		if o.Status == HookFailed {
 			return o.Name

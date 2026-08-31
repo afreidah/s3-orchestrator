@@ -1,9 +1,9 @@
 // -------------------------------------------------------------------------------
-// CounterBackend - Abstraction for Usage Counter Storage
+// Backend - Abstraction for Usage Counter Storage
 //
 // Author: Alex Freidah
 //
-// Defines the CounterBackend interface that abstracts per-backend usage counter
+// Defines the Backend interface that abstracts per-backend usage counter
 // storage. Two implementations exist: LocalCounterBackend (in-memory atomics,
 // default) and RedisCounterBackend (shared Redis counters for multi-instance
 // deployments). The UsageTracker calls this interface instead of touching
@@ -15,13 +15,13 @@
 // Redis-backed shared counters for multi-instance deployments.
 package counter
 
-//go:generate mockgen -destination=mock_counter_test.go -package=counter github.com/afreidah/s3-orchestrator/internal/counter CounterBackend
+//go:generate mockgen -destination=mock_counter_test.go -package=counter github.com/afreidah/s3-orchestrator/internal/counter Backend
 
 // -------------------------------------------------------------------------
 // FIELD CONSTANTS
 // -------------------------------------------------------------------------
 
-// Counter field names used as keys in CounterBackend operations.
+// Counter field names used as keys in Backend operations.
 const (
 	FieldAPIRequests  = "api_requests"
 	FieldEgressBytes  = "egress_bytes"
@@ -32,10 +32,10 @@ const (
 // INTERFACE
 // -------------------------------------------------------------------------
 
-// CounterBackend abstracts the storage of per-backend usage deltas. Each
+// Backend abstracts the storage of per-backend usage deltas. Each
 // backend (identified by name) tracks three counters: API requests, egress
 // bytes, and ingress bytes. Implementations must be safe for concurrent use.
-type CounterBackend interface {
+type Backend interface {
 	// Backends returns the names of all tracked backends.
 	Backends() []string
 
@@ -62,7 +62,7 @@ type CounterBackend interface {
 // TYPES
 // -------------------------------------------------------------------------
 
-// LoadAllResult holds the values returned by CounterBackend.LoadAll.
+// LoadAllResult holds the values returned by Backend.LoadAll.
 type LoadAllResult struct {
 	APIRequests  int64
 	EgressBytes  int64

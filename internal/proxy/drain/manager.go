@@ -33,11 +33,11 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
-// DrainRuntime is the backend-runtime slice the Manager needs: fleet
+// Runtime is the backend-runtime slice the Manager needs: fleet
 // enumeration, per-backend copy/delete primitives, and usage accounting.
 // Defined here at the consumer so *infra.BackendRuntime satisfies it
 // structurally without the drain package importing infra.
-type DrainRuntime interface {
+type Runtime interface {
 	Backends() map[string]backend.ObjectBackend
 	GetBackend(name string) (backend.ObjectBackend, error)
 	BackendOrder() []string
@@ -95,7 +95,7 @@ type Progress struct {
 // Manager handles draining and removing backends.
 type Manager struct {
 	log              *slog.Logger
-	infra            DrainRuntime
+	infra            Runtime
 	mover            Mover
 	objects          core.ObjectStore
 	quota            core.QuotaStore
@@ -109,7 +109,7 @@ type Manager struct {
 
 // New creates a Manager.
 func New(
-	infra DrainRuntime,
+	infra Runtime,
 	mover Mover,
 	objects core.ObjectStore,
 	quota core.QuotaStore,

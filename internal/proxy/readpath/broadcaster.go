@@ -66,7 +66,6 @@ func broadcastRead[T any](ctx context.Context, b *Broadcaster, op readOp, probe 
 			Observe(time.Since(bcStart).Seconds())
 	}()
 
-	// --- Check location cache first ---
 	if cachedBackend, ok := b.cache.Get(op.key); ok {
 		if be, exists := b.core.Backends()[cachedBackend]; exists {
 			// Degraded mode: no DB row available, probe must handle nil loc.

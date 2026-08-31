@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"io"
 	"testing"
 )
@@ -481,7 +482,7 @@ func TestEncryptReader_ReleaseFiresExactlyOnce(t *testing.T) {
 
 	// Extra Read after EOF must be a no-op for the release counter.
 	buf := make([]byte, 16)
-	if _, err := er.Read(buf); err != io.EOF {
+	if _, err := er.Read(buf); !errors.Is(err, io.EOF) {
 		t.Fatalf("post-EOF Read err = %v, want io.EOF", err)
 	}
 	if releases != 1 {
@@ -530,7 +531,7 @@ func TestDecryptReader_ReleaseFiresExactlyOnce(t *testing.T) {
 	}
 
 	buf := make([]byte, 16)
-	if _, err := dr.Read(buf); err != io.EOF {
+	if _, err := dr.Read(buf); !errors.Is(err, io.EOF) {
 		t.Fatalf("post-EOF Read err = %v, want io.EOF", err)
 	}
 	if releases != 1 {

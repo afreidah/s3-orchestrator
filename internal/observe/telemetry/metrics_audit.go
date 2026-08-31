@@ -16,7 +16,6 @@ import (
 
 // AuditEventsTotal and related package-level variables used by this package.
 var (
-	// --- Audit metrics ---
 
 	// AuditEventsTotal counts audit log entries by event type.
 	AuditEventsTotal = promauto.NewCounterVec(

@@ -42,8 +42,8 @@ const (
 
 // CopyError tags a stream-copy failure with the phase that produced it
 // and preserves the underlying error for errors.Is / errors.As walks.
-// Error renders as "<phase>: <underlying>" so log output matches the
-// historical string-prefix shape.
+// Error renders as "<phase>: <underlying>", so a log line names the phase
+// before the cause.
 type CopyError struct {
 	Phase CopyPhase
 	Err   error

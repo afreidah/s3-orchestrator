@@ -41,11 +41,10 @@ type lifecycleWorkerSet struct {
 }
 
 // resolveLifecycleWorkers invokes every worker the lifecycle manager
-// registers a service for. drain.Manager is no longer invoked here
-// because di.WireManager owns that resolution; the wiring step runs
-// before resolveLifecycleWorkers as part of cli/serve's startup so the
-// runtime already knows about the drain manager by the time the
-// lifecycle manager assembles its service list.
+// registers a service for. drain.Manager is not among them: di.WireManager
+// owns that resolution and runs first, as part of cli/serve's startup, so the
+// runtime already knows about the drain manager by the time the lifecycle
+// manager assembles its service list.
 func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 	r := newResolver(i)
 	ws := lifecycleWorkerSet{

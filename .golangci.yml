@@ -15,12 +15,14 @@ linters:
     - copyloopvar
     - depguard
     - errcheck
+    - errorlint
     - gocognit
     - gocritic
     - gosec
     - intrange
     - misspell
     - noctx
+    - revive
     - sloglint
     - staticcheck
   settings:
@@ -35,6 +37,13 @@ linters:
       enabled-tags:
         - diagnostic
         - performance
+    revive:
+      # Only the two rules that catch documentation drift. revive's default
+      # set is much wider and overlaps what staticcheck and gocritic already
+      # report, so enabling it whole would be noise for no new signal.
+      rules:
+        - name: package-comments
+        - name: exported
     sloglint:
       context: "all"
       # `logfmt.Err` returns a slog.Attr that callers may mix with
@@ -59,8 +68,8 @@ linters:
           # Mechanically enforce the architectural rule that the
           # concrete metadata-store implementations are only imported by
           # the DI providers, the sync CLI, and the store package
-          # itself. Worker / handler / proxy code must depend on
-          # core.MetadataStore (or its narrow role interfaces) resolved
+          # itself. Worker / handler / proxy code must depend on the
+          # narrow role interfaces in internal/store/core, resolved
           # through DI, so a refactor that swaps the implementation
           # does not cascade across the codebase.
           list-mode: lax
@@ -73,12 +82,16 @@ linters:
             - "!**_test.go"
           deny:
             - pkg: github.com/afreidah/s3-orchestrator/internal/store/sqlite
-              desc: depend on core.MetadataStore via DI; concrete stores are only constructed in internal/di and internal/cli
+              desc: depend on the narrow store roles in internal/store/core via DI; concrete stores are only constructed in internal/di and internal/cli
             - pkg: github.com/afreidah/s3-orchestrator/internal/store/postgres
-              desc: depend on core.MetadataStore via DI; concrete stores are only constructed in internal/di and internal/cli
+              desc: depend on the narrow store roles in internal/store/core via DI; concrete stores are only constructed in internal/di and internal/cli
   exclusions:
     generated: lax
     presets:
+      # Keeps revive to the two things it is here for: package docs that
+      # describe the wrong package, and exported names that stutter. Dropping
+      # this preset would instead demand a doc comment on every exported
+      # symbol, which is fifty new comments and no new signal.
       - comments
       - common-false-positives
       - legacy

@@ -52,7 +52,6 @@ func InitTracer(ctx context.Context, cfg config.TracingConfig) (func(context.Con
 		return func(context.Context) error { return nil }, nil
 	}
 
-	// --- Create OTLP exporter ---
 	opts := []otlptracegrpc.Option{
 		otlptracegrpc.WithEndpoint(cfg.Endpoint),
 	}
@@ -64,7 +63,6 @@ func InitTracer(ctx context.Context, cfg config.TracingConfig) (func(context.Con
 		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
 	}
 
-	// --- Create resource with service info ---
 	res, err := resource.Merge(
 		resource.Default(),
 		resource.NewSchemaless(
@@ -76,7 +74,6 @@ func InitTracer(ctx context.Context, cfg config.TracingConfig) (func(context.Con
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
-	// --- Configure sampler ---
 	var sampler sdktrace.Sampler
 	switch {
 	case cfg.SampleRate >= 1.0:
@@ -87,17 +84,14 @@ func InitTracer(ctx context.Context, cfg config.TracingConfig) (func(context.Con
 		sampler = sdktrace.TraceIDRatioBased(cfg.SampleRate)
 	}
 
-	// --- Create trace provider ---
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sampler),
 	)
 
-	// --- Set global tracer provider ---
 	otel.SetTracerProvider(tp)
 
-	// --- Set propagator for context propagation ---
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
 		propagation.Baggage{},

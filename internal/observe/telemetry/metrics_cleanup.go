@@ -15,7 +15,6 @@ import (
 
 // CleanupQueueEnqueuedTotal and related package-level variables used by this package.
 var (
-	// --- Cleanup queue metrics ---
 
 	// CleanupQueueEnqueuedTotal counts items added to the cleanup retry queue.
 	CleanupQueueEnqueuedTotal = promauto.NewCounterVec(
@@ -97,8 +96,6 @@ var (
 		[]string{"backend"},
 	)
 
-	// --- Pending objects (write-path PUT-before-COMMIT pattern) ---
-
 	// PendingIntentsEnqueuedTotal counts pending intents inserted by the
 	// write path before the backend PUT.
 	PendingIntentsEnqueuedTotal = promauto.NewCounter(
@@ -128,8 +125,6 @@ var (
 		},
 	)
 
-	// --- Lifecycle metrics ---
-
 	// LifecycleDeletedTotal counts objects deleted by lifecycle expiration rules.
 	LifecycleDeletedTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
@@ -154,8 +149,6 @@ var (
 		},
 		[]string{"status"},
 	)
-
-	// --- Drain metrics ---
 
 	// DrainObjectsMoved counts objects moved during backend drain operations.
 	DrainObjectsMoved = promauto.NewCounter(

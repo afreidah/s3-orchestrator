@@ -27,15 +27,15 @@ import (
 
 // newListTestManager wires a Manager with only what ListObjects touches: the
 // store and a no-op accounting recorder.
-func newListTestManager(store ObjectStores) *Manager {
+func newListTestManager(store Stores) *Manager {
 	rec := accounting.New(nil, func(_, _ string, _ time.Time, _ error) {})
 	return &Manager{stores: store, core: listTestRuntime{acct: rec}, log: slog.Default()}
 }
 
-// listTestRuntime is a minimal ObjectRuntime: ListObjects only reaches the
+// listTestRuntime is a minimal Runtime: ListObjects only reaches the
 // runtime through Acct().Operation.
 type listTestRuntime struct {
-	ObjectRuntime // embedded nil; only Acct is implemented
+	Runtime // embedded nil; only Acct is implemented
 
 	acct *accounting.Recorder
 }

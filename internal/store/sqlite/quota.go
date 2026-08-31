@@ -14,6 +14,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -42,7 +43,7 @@ func (s *Store) GetBackendWithSpace(ctx context.Context, size int64, backendOrde
 				GROUP BY mu.backend_name
 			) m ON m.backend_name = q.backend_name
 			WHERE q.backend_name = ?`, name).Scan(&available)
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
 		if err != nil {
@@ -92,7 +93,7 @@ func (s *Store) GetLeastUtilizedBackend(ctx context.Context, size int64, eligibl
 
 	var backendName string
 	err = s.db.QueryRowContext(ctx, query, string(eligibleJSON), size).Scan(&backendName)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", core.ErrNoSpaceAvailable
 	}
 	if err != nil {

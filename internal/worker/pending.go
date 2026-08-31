@@ -32,20 +32,13 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// PendingReaperStore is the narrow persistence surface the pending reaper
-// needs. Declared locally so the worker does not pull in the full
-// MetadataStore.
-type PendingReaperStore interface {
-	core.PendingStore
-}
-
 // PendingReaper resolves abandoned PUT intents by inspecting the destination
 // backend. The min-age window protects in-flight PUTs whose commit has not
 // yet had a chance to clear the intent on the synchronous path.
 type PendingReaper struct {
 	deps        CleanupOps
 	placement   Placement
-	store       PendingReaperStore
+	store       core.PendingStore
 	log         *slog.Logger
 	concurrency int
 	minAge      time.Duration
@@ -58,7 +51,7 @@ type PendingReaper struct {
 type PendingReaperDeps struct {
 	Ops         CleanupOps
 	Placement   Placement
-	Store       PendingReaperStore
+	Store       core.PendingStore
 	Concurrency int
 	MinAge      time.Duration
 	BatchSize   int

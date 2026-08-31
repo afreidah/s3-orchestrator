@@ -187,17 +187,17 @@ func TestComplete_CompressesAssembledObject(t *testing.T) {
 // countingCodec delegates to a real codec and counts both halves, so a test can
 // tell an encoding that was made and thrown away from one that was never made.
 type countingCodec struct {
-	inner            MultipartCodec
+	inner            Codec
 	encodes, decodes int
 }
 
-// Compress implements MultipartCodec.
+// Compress implements Codec.
 func (c *countingCodec) Compress(dst io.Writer, src io.Reader) (int64, error) {
 	c.encodes++
 	return c.inner.Compress(dst, src)
 }
 
-// Decompress implements MultipartCodec.
+// Decompress implements Codec.
 func (c *countingCodec) Decompress(rs io.ReadSeeker) (io.ReadCloser, error) {
 	c.decodes++
 	return c.inner.Decompress(rs)
@@ -282,10 +282,10 @@ func TestComplete_DisabledLeavesBytesVerbatim(t *testing.T) {
 // the real codec cannot be made to produce.
 type failingCodec struct{ err error }
 
-// Compress implements MultipartCodec.
+// Compress implements Codec.
 func (f failingCodec) Compress(_ io.Writer, _ io.Reader) (int64, error) { return 0, f.err }
 
-// Decompress implements MultipartCodec.
+// Decompress implements Codec.
 func (f failingCodec) Decompress(_ io.ReadSeeker) (io.ReadCloser, error) { return nil, f.err }
 
 // TestComplete_EncodeFailureLeavesUploadRetryable checks the ordering contract

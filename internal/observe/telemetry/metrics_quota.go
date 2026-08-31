@@ -16,7 +16,6 @@ import (
 
 // QuotaBytesUsed and related package-level variables used by this package.
 var (
-	// --- Quota metrics ---
 
 	// QuotaBytesUsed tracks current bytes used per backend.
 	QuotaBytesUsed = promauto.NewGaugeVec(
@@ -64,8 +63,6 @@ var (
 		},
 	)
 
-	// --- Object metrics ---
-
 	// ObjectCount tracks the number of objects stored per backend.
 	ObjectCount = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -75,8 +72,6 @@ var (
 		[]string{"backend"},
 	)
 
-	// --- Multipart metrics ---
-
 	// ActiveMultipartUploads tracks in-progress multipart uploads per backend.
 	ActiveMultipartUploads = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -85,8 +80,6 @@ var (
 		},
 		[]string{"backend"},
 	)
-
-	// --- Usage tracking metrics ---
 
 	// UsageAPIRequests tracks the current month's API request count per backend.
 	UsageAPIRequests = promauto.NewGaugeVec(
@@ -114,8 +107,6 @@ var (
 		},
 		[]string{"backend"},
 	)
-
-	// --- Usage limit metrics ---
 
 	// UsageLimitRejectionsTotal counts operations rejected due to monthly usage limits.
 	UsageLimitRejectionsTotal = promauto.NewCounterVec(
