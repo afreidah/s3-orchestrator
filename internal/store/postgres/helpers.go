@@ -12,6 +12,8 @@
 package postgres
 
 import (
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
@@ -151,5 +153,6 @@ func objectInsertIfNotExistsParams(loc *core.ObjectLocation) db.InsertObjectLoca
 		ContentType:              p.ContentType,
 		UserMetadata:             p.UserMetadata,
 		Managed:                  !loc.Unmanaged,
+		CreatedAt:                pgtype.Timestamptz{Time: loc.CreatedAt, Valid: !loc.CreatedAt.IsZero()},
 	}
 }

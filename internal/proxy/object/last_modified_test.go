@@ -1,16 +1,18 @@
 // -------------------------------------------------------------------------------
-// Object Manager - Last-Modified Fallback Tests
+// Object Manager - Last-Modified Resolution Tests
 //
 // Author: Alex Freidah
 //
-// Covers the read-path guard that keeps Last-Modified from ever leaving the
-// backend as a zero time. A backend that reports no modification time (the
-// in-memory fake's PutObject leaves it zero, matching a real backend that
-// returns nil) must fall back to the location row's CreatedAt so the transport
-// always has a valid timestamp to emit. The fallback fires only when the
-// backend value is zero and a location row is present: a backend-supplied time
-// is never overwritten, and a degraded broadcast with no location row leaves
-// the zero value untouched.
+// Covers which timestamp a read answers with. The stored CreatedAt wins
+// whenever a location row is present, including when the backend reported a
+// time of its own: the stored value is the object's write time and is the same
+// on every copy, where a backend reports when it received the copy that
+// happened to answer. Preferring the backend is what let an unmodified object
+// change its Last-Modified on failover.
+//
+// Only the degraded broadcast path, serving with the database down and no row
+// to consult, keeps the backend's value - and a backend that reports nothing
+// there still leaves it zero, which is the one case the transport drops.
 // -------------------------------------------------------------------------------
 
 package object
@@ -70,9 +72,11 @@ func TestHeadObject_ZeroLastModified_FallsBackToCreatedAt(t *testing.T) {
 	}
 }
 
-// TestHeadObject_BackendLastModified_NotOverridden asserts a backend-supplied
-// modification time survives - the fallback only fills a zero value.
-func TestHeadObject_BackendLastModified_NotOverridden(t *testing.T) {
+// TestHeadObject_StoredLastModifiedWinsOverBackend asserts the stored write
+// time is reported even when the backend supplied one of its own. Two copies
+// of an unmodified object report different backend times, so answering with
+// the backend's makes Last-Modified depend on which one served the read.
+func TestHeadObject_StoredLastModifiedWinsOverBackend(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
 	be.Put("key", &backendtest.Object{
@@ -86,8 +90,8 @@ func TestHeadObject_BackendLastModified_NotOverridden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HeadObject: %v", err)
 	}
-	if !result.LastModified.Equal(lmBackendTime) {
-		t.Errorf("last-modified = %v, want backend value %v (fallback must not override)", result.LastModified, lmBackendTime)
+	if !result.LastModified.Equal(lmCreatedAt) {
+		t.Errorf("last-modified = %v, want stored value %v (the backend's must not win)", result.LastModified, lmCreatedAt)
 	}
 }
 
@@ -131,9 +135,9 @@ func TestGetObject_ZeroLastModified_FallsBackToCreatedAt(t *testing.T) {
 	}
 }
 
-// TestGetObject_BackendLastModified_NotOverridden asserts a backend-supplied
-// modification time survives the GET read path.
-func TestGetObject_BackendLastModified_NotOverridden(t *testing.T) {
+// TestGetObject_StoredLastModifiedWinsOverBackend asserts the GET read path
+// answers with the stored write time rather than the backend's.
+func TestGetObject_StoredLastModifiedWinsOverBackend(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
 	be.Put("key", &backendtest.Object{
@@ -148,8 +152,8 @@ func TestGetObject_BackendLastModified_NotOverridden(t *testing.T) {
 		t.Fatalf("GetObject: %v", err)
 	}
 	defer func() { _ = result.Body.Close() }()
-	if !result.LastModified.Equal(lmBackendTime) {
-		t.Errorf("last-modified = %v, want backend value %v (fallback must not override)", result.LastModified, lmBackendTime)
+	if !result.LastModified.Equal(lmCreatedAt) {
+		t.Errorf("last-modified = %v, want stored value %v (the backend's must not win)", result.LastModified, lmCreatedAt)
 	}
 }
 
@@ -184,9 +188,10 @@ func TestGetObject_CacheHit_CarriesFallbackLastModified(t *testing.T) {
 	}
 }
 
-// TestGetObject_CacheHit_CarriesBackendLastModified asserts a real backend
-// modification time also survives the cache round-trip unchanged.
-func TestGetObject_CacheHit_CarriesBackendLastModified(t *testing.T) {
+// TestGetObject_CacheHit_CarriesStoredLastModified asserts the cache stores
+// the resolved timestamp, not the backend's: a hit must answer with the same
+// value the miss did, or the reported time would depend on cache residency.
+func TestGetObject_CacheHit_CarriesStoredLastModified(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
 	be.Put("key", &backendtest.Object{
@@ -208,8 +213,8 @@ func TestGetObject_CacheHit_CarriesBackendLastModified(t *testing.T) {
 		t.Fatalf("second GetObject (cache hit): %v", err)
 	}
 	defer func() { _ = r2.Body.Close() }()
-	if !r2.LastModified.Equal(lmBackendTime) {
-		t.Errorf("cache-hit last-modified = %v, want backend value %v", r2.LastModified, lmBackendTime)
+	if !r2.LastModified.Equal(lmCreatedAt) {
+		t.Errorf("cache-hit last-modified = %v, want stored value %v", r2.LastModified, lmCreatedAt)
 	}
 }
 

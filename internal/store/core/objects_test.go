@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 // runDeleteLocation invokes DeleteObjectLocation against the stub.
@@ -336,7 +337,7 @@ func TestImportObject_SuppressedByPendingCleanup(t *testing.T) {
 	stub := &quotaTxStub{pendingCleanup: true}
 
 	outcome, err := ImportObject(context.Background(), &stubRunner{tx: stub},
-		"k", "b1", 100, false, nil)
+		&ImportObjectRequest{Key: "k", Backend: "b1", Size: 100})
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
@@ -345,6 +346,48 @@ func TestImportObject_SuppressedByPendingCleanup(t *testing.T) {
 	}
 	if len(stub.ops) != 0 {
 		t.Errorf("quota was touched for a suppressed import: %+v", stub.ops)
+	}
+}
+
+// TestImportObject_KeepsBackendWriteTime asserts a reported modification time
+// becomes the row's CreatedAt. A discovered object was written before the
+// orchestrator knew about it, so stamping the moment it was found would report
+// a Last-Modified years newer than the object.
+func TestImportObject_KeepsBackendWriteTime(t *testing.T) {
+	t.Parallel()
+	stub := &quotaTxStub{}
+	written := time.Date(2024, 3, 9, 8, 15, 0, 0, time.UTC)
+
+	if _, err := ImportObject(context.Background(), &stubRunner{tx: stub},
+		&ImportObjectRequest{Key: "k", Backend: "b1", Size: 100, WrittenAt: written}); err != nil {
+		t.Fatalf("ImportObject: %v", err)
+	}
+	if stub.importedLoc == nil {
+		t.Fatal("no row was inserted")
+	}
+	if !stub.importedLoc.CreatedAt.Equal(written) {
+		t.Errorf("CreatedAt = %v, want the backend's %v", stub.importedLoc.CreatedAt, written)
+	}
+}
+
+// TestImportObject_StampsWhenBackendReportsNoTime asserts a zero time becomes
+// the moment of discovery rather than reaching the row as a zero timestamp.
+// Not every backend reports a modification time, and an object dated to the
+// zero year is worse than one dated to when it was found.
+func TestImportObject_StampsWhenBackendReportsNoTime(t *testing.T) {
+	t.Parallel()
+	stub := &quotaTxStub{}
+	before := time.Now()
+
+	if _, err := ImportObject(context.Background(), &stubRunner{tx: stub},
+		&ImportObjectRequest{Key: "k", Backend: "b1", Size: 100}); err != nil {
+		t.Fatalf("ImportObject: %v", err)
+	}
+	if stub.importedLoc == nil {
+		t.Fatal("no row was inserted")
+	}
+	if stub.importedLoc.CreatedAt.Before(before) {
+		t.Errorf("CreatedAt = %v, want a stamp at or after %v", stub.importedLoc.CreatedAt, before)
 	}
 }
 
@@ -358,7 +401,7 @@ func TestImportObject_PendingCleanupCheckError(t *testing.T) {
 	stub := &quotaTxStub{pendingErr: sentinel}
 
 	if _, err := ImportObject(context.Background(), &stubRunner{tx: stub},
-		"k", "b1", 100, false, nil); !errors.Is(err, sentinel) {
+		&ImportObjectRequest{Key: "k", Backend: "b1", Size: 100}); !errors.Is(err, sentinel) {
 		t.Errorf("err = %v, want the check error to abort the import", err)
 	}
 	if len(stub.ops) != 0 {

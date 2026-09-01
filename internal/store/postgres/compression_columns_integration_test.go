@@ -123,7 +123,9 @@ func TestPgInsertPaths_PreserveRepresentation(t *testing.T) {
 		{
 			name: "ImportObject",
 			write: func(t *testing.T, key string) {
-				inserted, err := s.ImportObject(ctx, key, "backend-a", 1024, false, form)
+				inserted, err := s.ImportObject(ctx, &core.ImportObjectRequest{
+					Key: key, Backend: "backend-a", Size: 1024, Form: form,
+				})
 				if err != nil {
 					t.Fatalf("ImportObject: %v", err)
 				}

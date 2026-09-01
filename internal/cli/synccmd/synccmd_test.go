@@ -51,7 +51,7 @@ type errorObjectStore struct {
 // ImportObject records the import call so the test can assert it
 // happened. The first return value mirrors the real store's
 // inserted=true semantics for a fresh row.
-func (e errorObjectStore) ImportObject(context.Context, string, string, int64, bool, *core.StoredForm) (core.ImportOutcome, error) {
+func (e errorObjectStore) ImportObject(context.Context, *core.ImportObjectRequest) (core.ImportOutcome, error) {
 	return core.ImportSkippedExisting, e.err
 }
 
@@ -284,7 +284,7 @@ func TestImportPage_PropagatesError(t *testing.T) {
 type suppressedObjectStore struct{ errorObjectStore }
 
 // ImportObject reports the key as suppressed rather than imported.
-func (suppressedObjectStore) ImportObject(context.Context, string, string, int64, bool, *core.StoredForm) (core.ImportOutcome, error) {
+func (suppressedObjectStore) ImportObject(context.Context, *core.ImportObjectRequest) (core.ImportOutcome, error) {
 	return core.ImportSkippedPendingCleanup, nil
 }
 

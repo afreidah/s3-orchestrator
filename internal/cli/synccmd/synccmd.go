@@ -162,7 +162,7 @@ func loadConfig(path, backendName string) (*config.Config, *config.BackendConfig
 // to: a single ImportObject per backend row. Declared locally so the
 // command owns its own dependency contract.
 type importer interface {
-	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *core.StoredForm) (core.ImportOutcome, error)
+	ImportObject(ctx context.Context, req *core.ImportObjectRequest) (core.ImportOutcome, error)
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 }
 
@@ -303,7 +303,14 @@ func importPage(ctx context.Context, s3b backend.ObjectBackend, run *importRun, 
 		if err != nil {
 			return imported, skipped, bytes, err
 		}
-		outcome, err := run.Store.ImportObject(ctx, obj.Key, backendName, obj.SizeBytes, unmanaged, form)
+		outcome, err := run.Store.ImportObject(ctx, &core.ImportObjectRequest{
+			Key:       obj.Key,
+			Backend:   backendName,
+			Size:      obj.SizeBytes,
+			Unmanaged: unmanaged,
+			Form:      form,
+			WrittenAt: obj.LastModified,
+		})
 		if err != nil {
 			return imported, skipped, bytes, fmt.Errorf("failed to import %s: %w", obj.Key, err)
 		}

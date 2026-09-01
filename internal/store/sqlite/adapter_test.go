@@ -417,6 +417,46 @@ func TestAdapter_InsertReplicaConditional_InsertsWhenSourceExists(t *testing.T) 
 	})
 }
 
+// TestAdapter_InsertReplicaConditional_CarriesSourceCreatedAt asserts the
+// replica inherits the source row's timestamp instead of being stamped at the
+// moment it was made. It reaches clients as Last-Modified, so a per-copy stamp
+// makes an unmodified object report a different time once a read fails over.
+func TestAdapter_InsertReplicaConditional_CarriesSourceCreatedAt(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	mustRecordObject(t, s, "bucket/k", "backend-a", 100)
+
+	withAdapter(t, s, func(a *sqliteTxAdapter) {
+		before, err := a.GetExistingCopiesForUpdate(ctx, "bucket/k")
+		if err != nil {
+			t.Fatalf("GetExistingCopiesForUpdate(source): %v", err)
+		}
+		if len(before) != 1 {
+			t.Fatalf("expected 1 source copy, got %d", len(before))
+		}
+		sourceCreatedAt := before[0].CreatedAt
+
+		if _, _, err := a.InsertReplicaConditional(ctx, "bucket/k", "backend-b", "backend-a"); err != nil {
+			t.Fatalf("InsertReplicaConditional: %v", err)
+		}
+
+		after, err := a.GetExistingCopiesForUpdate(ctx, "bucket/k")
+		if err != nil {
+			t.Fatalf("GetExistingCopiesForUpdate(after): %v", err)
+		}
+		if len(after) != 2 {
+			t.Fatalf("expected 2 copies after replica, got %d", len(after))
+		}
+		for i := range after {
+			if !after[i].CreatedAt.Equal(sourceCreatedAt) {
+				t.Errorf("copy on %s has CreatedAt %v, want the source's %v",
+					after[i].BackendName, after[i].CreatedAt, sourceCreatedAt)
+			}
+		}
+	})
+}
+
 // TestAdapter_InsertReplicaConditional_FalseWhenSourceMissing verifies
 // the replica insert is skipped (without error) when the source row
 // has been removed.

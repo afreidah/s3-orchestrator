@@ -607,7 +607,7 @@ func (q *Queries) InsertObjectLocation(ctx context.Context, arg InsertObjectLoca
 
 const insertObjectLocationIfNotExists = `-- name: InsertObjectLocationIfNotExists :one
 INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, managed, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING true AS inserted
 `
@@ -629,6 +629,7 @@ type InsertObjectLocationIfNotExistsParams struct {
 	ContentType              *string
 	UserMetadata             []byte
 	Managed                  bool
+	CreatedAt                pgtype.Timestamptz
 }
 
 func (q *Queries) InsertObjectLocationIfNotExists(ctx context.Context, arg InsertObjectLocationIfNotExistsParams) (bool, error) {
@@ -649,6 +650,7 @@ func (q *Queries) InsertObjectLocationIfNotExists(ctx context.Context, arg Inser
 		arg.ContentType,
 		arg.UserMetadata,
 		arg.Managed,
+		arg.CreatedAt,
 	)
 	var inserted bool
 	err := row.Scan(&inserted)

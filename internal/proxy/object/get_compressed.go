@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -29,6 +30,28 @@ import (
 // never consults a separate flag that could disagree with it.
 func isCompressed(loc *core.ObjectLocation) bool {
 	return loc != nil && loc.CompressionAlgorithm != ""
+}
+
+// resolveLastModified reports the Last-Modified a read should answer with,
+// given what the backend said and the row for the copy that served it.
+//
+// The stored time wins whenever there is a row. It is the object's write time,
+// identical on every copy, where a backend reports when it received the copy
+// that answered - so preferring the backend makes an unmodified object change
+// its Last-Modified on failover, and If-Modified-Since and If-Range compare
+// against a value that moves. Only the degraded path, serving with the database
+// down and no row to consult, falls back to the backend's.
+//
+// A backend that reports nothing is the case this started as: the transport
+// drops an empty Last-Modified and clients like Tempo's blocklist poller reject
+// the response outright. A stored time that is somehow zero therefore still
+// yields to the backend's, so the guarantee that every response carries a
+// timestamp holds no matter which side is missing one.
+func resolveLastModified(backendValue time.Time, loc *core.ObjectLocation) time.Time {
+	if loc != nil && !loc.CreatedAt.IsZero() {
+		return loc.CreatedAt
+	}
+	return backendValue
 }
 
 // logicalSize reports the size the client wrote. For a compressed copy that is
@@ -111,11 +134,7 @@ func (o *Manager) compressedResult(reader io.ReadSeekCloser, fetcher *storedRang
 		r.ContentType, r.ETag = attrs.ContentType, attrs.ETag
 		r.LastModified, r.Metadata = attrs.LastModified, attrs.Metadata
 	}
-	// Backends that report no modification time leave LastModified zero, which
-	// the transport then drops from the response entirely.
-	if r.LastModified.IsZero() && loc != nil {
-		r.LastModified = loc.CreatedAt
-	}
+	r.LastModified = resolveLastModified(r.LastModified, loc)
 	if rangeHeader == "" {
 		return r, nil
 	}

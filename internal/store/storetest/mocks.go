@@ -735,18 +735,18 @@ func (mr *MockMetadataStoreMockRecorder) GetUsageForPeriod(ctx, period any) *gom
 }
 
 // ImportObject mocks base method.
-func (m *MockMetadataStore) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *core.StoredForm) (core.ImportOutcome, error) {
+func (m *MockMetadataStore) ImportObject(ctx context.Context, req *core.ImportObjectRequest) (core.ImportOutcome, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ImportObject", ctx, key, backend, size, unmanaged, form)
+	ret := m.ctrl.Call(m, "ImportObject", ctx, req)
 	ret0, _ := ret[0].(core.ImportOutcome)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ImportObject indicates an expected call of ImportObject.
-func (mr *MockMetadataStoreMockRecorder) ImportObject(ctx, key, backend, size, unmanaged, form any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) ImportObject(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportObject", reflect.TypeOf((*MockMetadataStore)(nil).ImportObject), ctx, key, backend, size, unmanaged, form)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportObject", reflect.TypeOf((*MockMetadataStore)(nil).ImportObject), ctx, req)
 }
 
 // IncrementOrphanBytes mocks base method.
