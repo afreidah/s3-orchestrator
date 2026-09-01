@@ -68,6 +68,12 @@ backends:
     # api_request_limit: 0         # Monthly API request cap (0 = unlimited)
     # egress_byte_limit: 0         # Monthly egress cap (0 = unlimited)
     # ingress_byte_limit: 0        # Monthly ingress cap (0 = unlimited)
+    # http:                        # Per-backend transport tuning; 0 means "use the default"
+    #   max_idle_conns: 100
+    #   max_idle_conns_per_host: 100
+    #   max_conns_per_host: 200
+    #   response_header_timeout: 30s
+    #   force_http2: true          # false drops this backend to HTTP/1.1 (see docs/configuration.md)
 
   # Example: EC2 instance role / SSO / STS (no long-lived keys in YAML).
   # - name: aws-prod
