@@ -21,11 +21,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/samber/do/v2"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -52,6 +55,17 @@ type Server struct {
 	metrics      *http.Server
 	certReloader *httputil.CertReloader
 	log          *slog.Logger
+
+	// requireMetrics aborts startup when the metrics listener cannot bind,
+	// rather than serving S3 traffic with no metrics.
+	requireMetrics bool
+
+	// Bound sockets, held between Listen and Run. Listening separately from
+	// serving is what makes an address conflict a startup failure instead of a
+	// goroutine that logs and exits after the process has already reported
+	// itself ready.
+	mainLn    net.Listener
+	metricsLn net.Listener
 }
 
 // New constructs the HTTP server with all routes mounted and TLS
@@ -100,10 +114,11 @@ func New(deps Deps) (*Server, error) {
 	main.TLSConfig = tlsCfg
 
 	return &Server{
-		main:         main,
-		metrics:      metricsSrv,
-		certReloader: reloader,
-		log:          slog.Default().With(logfmt.Component("httpserver")),
+		main:           main,
+		metrics:        metricsSrv,
+		certReloader:   reloader,
+		requireMetrics: deps.Cfg.Telemetry.Metrics.ListenerRequired(),
+		log:            slog.Default().With(logfmt.Component("httpserver")),
 	}, nil
 }
 
@@ -114,31 +129,116 @@ func (s *Server) CertReloader() *httputil.CertReloader {
 	return s.certReloader
 }
 
-// Run starts the metrics listener (if separate) and the main listener.
-// It blocks until either listener returns. The error channel returned by
-// the main listener is forwarded so the runtime can distinguish a
-// natural shutdown (http.ErrServerClosed) from a real failure.
-func (s *Server) Run(ctx context.Context) error {
-	if s.metrics != nil {
-		go func() {
-			s.log.InfoContext(ctx, "metrics endpoint enabled on separate listener",
-				"listen", s.metrics.Addr)
-			if err := s.metrics.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				s.log.ErrorContext(ctx, "metrics listener failed", "error", err)
-			}
-		}()
+// Listen binds every socket the server will serve on, without accepting
+// anything yet. Call it before reporting the process ready: a bind that fails
+// here is a startup error the caller can act on, where the same failure
+// discovered inside Run is a goroutine exiting after readiness has already
+// been announced and the orchestrator is taking traffic.
+//
+// A metrics bind failure aborts unless telemetry.metrics.require_listener is
+// false, which is the dev and embedded case where the port may well be taken
+// and best-effort metrics are fine.
+func (s *Server) Listen(ctx context.Context) error {
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", s.main.Addr)
+	if err != nil {
+		return fmt.Errorf("bind %s: %w", s.main.Addr, err)
+	}
+	s.mainLn = ln
+
+	if s.metrics == nil {
+		return nil
 	}
 
-	var err error
-	if s.main.TLSConfig != nil {
-		err = s.main.ListenAndServeTLS("", "")
-	} else {
-		err = s.main.ListenAndServe()
+	metricsLn, err := lc.Listen(ctx, "tcp", s.metrics.Addr)
+	if err != nil {
+		if s.requireMetrics {
+			_ = ln.Close()
+			s.mainLn = nil
+			return fmt.Errorf("bind metrics listener %s: %w", s.metrics.Addr, err)
+		}
+		// Opted out of requiring it: carry on without metrics, but say so at
+		// WARN rather than leaving an operator to infer it from an empty graph.
+		s.log.WarnContext(ctx, "metrics listener could not bind; continuing without it",
+			"listen", s.metrics.Addr, "error", err,
+			"detail", "set telemetry.metrics.require_listener to make this fail startup instead")
+		s.metrics = nil
+		return nil
 	}
-	if err != nil && err != http.ErrServerClosed {
-		return err
-	}
+	s.metricsLn = metricsLn
 	return nil
+}
+
+// Run serves on the sockets Listen bound and blocks until one of them stops.
+// Whichever stops first, the other is shut down with it: an orchestrator
+// serving S3 traffic with a dead metrics listener looks healthy while
+// Prometheus receives nothing, which is the failure this reports rather than
+// logs.
+//
+// A shutdown initiated through Shutdown closes both listeners and surfaces as
+// http.ErrServerClosed on each, which is not an error and is not returned.
+func (s *Server) Run(ctx context.Context) error {
+	if s.mainLn == nil {
+		if err := s.Listen(ctx); err != nil {
+			return err
+		}
+	}
+
+	// Whichever listener stops first stops the other, so Wait cannot block on a
+	// survivor. Done here rather than by watching the errgroup's context: that
+	// context is only cancelled once Wait returns, which is precisely the thing
+	// waiting on it.
+	var once sync.Once
+	stopAll := func() {
+		once.Do(func() {
+			shutCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
+			defer cancel()
+			s.closeListeners(shutCtx)
+		})
+	}
+
+	var g errgroup.Group
+
+	if s.metricsLn != nil {
+		s.log.InfoContext(ctx, "metrics endpoint enabled on separate listener", "listen", s.metrics.Addr)
+		g.Go(func() error {
+			defer stopAll()
+			if err := s.metrics.Serve(s.metricsLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return fmt.Errorf("metrics listener: %w", err)
+			}
+			return nil
+		})
+	}
+
+	g.Go(func() error {
+		defer stopAll()
+		var err error
+		if s.main.TLSConfig != nil {
+			err = s.main.ServeTLS(s.mainLn, "", "")
+		} else {
+			err = s.main.Serve(s.mainLn)
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("main listener: %w", err)
+		}
+		return nil
+	})
+
+	return g.Wait()
+}
+
+// shutdownGrace bounds the teardown of the surviving listener when its sibling
+// has already failed. Short: the process is on its way down either way, and the
+// runtime's own shutdown sequence is what drains connections properly.
+const shutdownGrace = 5 * time.Second
+
+// closeListeners stops both HTTP servers, ignoring the errors: this runs on a
+// path that is already failing, and the caller reports that failure.
+func (s *Server) closeListeners(ctx context.Context) {
+	if s.metrics != nil {
+		_ = s.metrics.Shutdown(ctx)
+	}
+	_ = s.main.Shutdown(ctx)
 }
 
 // Shutdown drains the main listener (with the supplied context's

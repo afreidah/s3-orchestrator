@@ -278,6 +278,7 @@ telemetry:
     enabled: true
     path: "/metrics"             # default: /metrics
     # listen: "127.0.0.1:9091"  # serve on separate address (keeps /metrics off the public port)
+    # require_listener: true    # default; fail startup if that address cannot be bound
   tracing:
     enabled: false
     endpoint: "localhost:4317"   # OTLP gRPC endpoint
@@ -285,7 +286,15 @@ telemetry:
     sample_rate: 1.0             # fraction of requests that generate traces (use 0.01–0.1 in production)
 ```
 
-Metrics are served on the same port as the S3 API. Tracing exports spans via gRPC OTLP (e.g., to Tempo or Jaeger).
+Metrics are served on the same port as the S3 API unless `listen` is set. Tracing exports spans via gRPC OTLP (e.g., to Tempo or Jaeger).
+
+**`require_listener`** decides what happens when a configured `listen` address cannot be bound — a port conflict, a permission problem, an address that does not exist on the host. It defaults to `true`: startup fails and says why.
+
+That default is deliberate. The alternative is an orchestrator that serves S3 traffic and reports itself healthy while Prometheus receives nothing, which looks correct from every angle except a graph nobody is watching yet. Both sockets are bound before the process reports ready, so the conflict surfaces as a startup error rather than after the load balancer has been told to send traffic.
+
+Set it to `false` for development or embedded use, where the port may well be taken and best-effort metrics are fine. Startup then proceeds with a warning naming the address that failed. The setting only applies to a separate `listen` address; metrics served inline share the main socket and have nothing of their own to fail.
+
+A metrics listener that dies *after* startup also stops the process, for the same reason.
 
 **Production sample rate guidance:** A `sample_rate` of 1.0 traces every request, which is appropriate for development and low-traffic deployments. For production workloads above ~100 RPS, reduce to 0.01–0.1 to avoid overwhelming the trace backend with storage, network, and CPU overhead. Metrics and logs are unaffected by sample rate.
 
