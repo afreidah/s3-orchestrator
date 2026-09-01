@@ -104,9 +104,9 @@ type Notifier struct {
 	dampener  *syncutil.TTLCache[string, struct{}]
 }
 
-// NewNotifier creates a notifier backed by the given outbox store. Sets the
-// package-level event.Emit hook so all packages can emit notifications via
-// the same mechanism.
+// NewNotifier creates a notifier backed by the given outbox store. Registers
+// itself as the process-wide event emitter so every package can publish
+// notifications through the same mechanism.
 func NewNotifier(cfg *config.NotificationConfig, store OutboxStore) *Notifier {
 	n := &Notifier{
 		log:       slog.Default().With(logfmt.Component("notifier")),
@@ -117,7 +117,7 @@ func NewNotifier(cfg *config.NotificationConfig, store OutboxStore) *Notifier {
 		},
 		dampener: syncutil.NewTTLCache[string, struct{}](dampenTTL),
 	}
-	event.Emit = n.emit
+	event.SetEmitter(n.emit)
 	return n
 }
 
@@ -126,7 +126,7 @@ func NewNotifier(cfg *config.NotificationConfig, store OutboxStore) *Notifier {
 // -------------------------------------------------------------------------
 
 // emit persists an event to the outbox for each matching endpoint. Called
-// via the package-level event.Emit hook from any package in the codebase.
+// through event.Publish from any package in the codebase.
 func (n *Notifier) emit(ev event.Event) { //nolint:gocritic // Event is passed by value to allow callers to construct inline
 	fillCloudEventDefaults(&ev)
 	if n.isDampened(&ev) {
@@ -225,6 +225,10 @@ func (n *Notifier) Run(ctx context.Context) error {
 // needs nothing further; a caller that builds one without running it calls this
 // itself, or leaves a goroutine behind per notifier.
 func (n *Notifier) Close() {
+	// Deregistered first: an event published after this point has no notifier
+	// to deliver it, and leaving the hook installed would hand it to one whose
+	// dampener has already stopped.
+	event.SetEmitter(nil)
 	if n.dampener != nil {
 		n.dampener.Close()
 	}

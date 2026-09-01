@@ -297,23 +297,34 @@ func TestDeliver_HMACSignature(t *testing.T) {
 	}
 }
 
-// TestNewNotifier_SetsEmitHook verifies the new notifier sets emit hook behaviour described by the test name.
-// Not parallel: mutates the process-global event.Emit hook.
-func TestNewNotifier_SetsEmitHook(t *testing.T) {
-	// Reset the global hook before test
-	event.Emit = nil
+// TestNewNotifier_RegistersAndDeregisters asserts a constructed notifier
+// receives what any package publishes, and stops receiving once it is closed.
+// Asserted through the outbox rather than by reading the hook: registration is
+// only worth anything if an event actually lands somewhere.
+//
+// Not parallel: registration is process-global.
+func TestNewNotifier_RegistersAndDeregisters(t *testing.T) {
+	event.SetEmitter(nil)
+	t.Cleanup(func() { event.SetEmitter(nil) })
 
 	cfg := &config.NotificationConfig{
-		Endpoints: []config.NotificationEndpoint{{URL: "https://example.com"}},
+		Endpoints: []config.NotificationEndpoint{{URL: "https://example.com", Events: []string{"*"}}},
 	}
 	ms := &mockOutboxStore{}
-	t.Cleanup(NewNotifier(cfg, ms).Close)
+	n := NewNotifier(cfg, ms)
 
-	if event.Emit == nil {
-		t.Error("NewNotifier should set event.Emit hook")
+	event.Publish(event.ServiceStarted, "", nil)
+	if got := ms.inserts(); got != 1 {
+		t.Fatalf("outbox rows after publish = %d, want 1; the notifier did not register", got)
 	}
-	// Clean up
-	event.Emit = nil
+
+	// Close deregisters. An event published after shutdown has no notifier to
+	// take it, and must not reach one whose dampener has already stopped.
+	n.Close()
+	event.Publish(event.ServiceStopping, "", nil)
+	if got := ms.inserts(); got != 1 {
+		t.Errorf("outbox rows after close = %d, want no further inserts", got)
+	}
 }
 
 // mockOutboxStore is a minimal stub for notify tests. The notifier's

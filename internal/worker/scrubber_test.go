@@ -115,9 +115,8 @@ func TestScrub_HashMismatch(t *testing.T) {
 	}, func() {}, nil)
 
 	var emitted []event.Event
-	prevEmit := event.Emit
-	event.Emit = func(ev event.Event) { emitted = append(emitted, ev) }
-	t.Cleanup(func() { event.Emit = prevEmit })
+	event.SetEmitter(func(ev event.Event) { emitted = append(emitted, ev) })
+	t.Cleanup(func() { event.SetEmitter(nil) })
 
 	scrubSum := s.Scrub(context.Background(), 10, nil)
 	checked, failed := scrubSum.Attempted, scrubSum.Failed

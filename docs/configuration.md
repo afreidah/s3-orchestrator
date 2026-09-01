@@ -35,6 +35,7 @@ server:
   listen_addr: "0.0.0.0:9000"    # required
   log_level: "info"               # debug, info, warn, error (default: info, reloadable via SIGHUP)
   max_object_size: 5368709120     # 5 GB default
+  # spill_dir: "/var/lib/s3-orchestrator/spill"  # where bodies over 32 MiB buffer (default: OS temp dir)
   max_concurrent_requests: 0      # max concurrent S3 requests (0 with no read/write split = 1000)
   # max_concurrent_reads: 0       # separate limit for GET/HEAD (0 = use global limit)
   # max_concurrent_writes: 0      # separate limit for PUT/POST/DELETE (0 = use global limit)
@@ -50,6 +51,7 @@ server:
 
 - `listen_addr` is the only required field.
 - `max_object_size` caps single-PUT uploads. Larger objects should use multipart upload (most clients do this automatically). PutObject materializes the body so a write can fail over to another backend, but only bodies up to 32 MiB are held in memory; anything larger spills to a temporary file. Peak memory from uploads is therefore bounded by `32 MiB x max_concurrent_writes` rather than by `max_object_size`, at the cost of disk for the spilled ones.
+- `spill_dir` is where those spill files are written. The default is the OS temp directory, which is `/tmp` on Linux — and `/tmp` is tmpfs under the systemd default and in most container images, which means the spill that exists to keep large objects off the heap puts them straight back in RAM. **If your objects exceed 32 MiB, point this at real disk**, or size the host for `max_object_size x max_concurrent_writes` after all. The directory must exist at startup; the orchestrator refuses to start otherwise rather than failing the first large upload. Files are unlinked as soon as they are created, so nothing survives a crash and the directory needs no cleaning.
 - `max_concurrent_requests` limits the number of S3 requests processed simultaneously. When the limit is reached, new requests are rejected with `503 SlowDown` and `Retry-After: 1`. Set to 2-3x `database.max_conns` for load shedding.
 
   **There is no unlimited mode.** Leaving all three of `max_concurrent_requests`, `max_concurrent_reads` and `max_concurrent_writes` at `0` applies a default of 1000 combined requests rather than disabling admission control. A deployment sized on the assumption that it has no cap is one that will meet `503 SlowDown` without knowing where it came from. Set the value explicitly if 1000 is not what you want.

@@ -137,6 +137,11 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 		s3Handler = rl.Middleware(s3Handler)
 	}
 
+	limits := s3api.AdmissionLimits{
+		ShedThreshold: cfg.Server.LoadShedThreshold,
+		Wait:          cfg.Server.AdmissionWait,
+	}
+
 	var ac *s3api.AdmissionController
 	switch {
 	case cfg.Server.MaxConcurrentReads > 0 && cfg.Server.MaxConcurrentWrites > 0:
@@ -144,19 +149,13 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 		// the runtime's sem as the write+workers pool. See the func
 		// doc above for the full model.
 		readSem := make(chan struct{}, cfg.Server.MaxConcurrentReads)
-		ac = s3api.NewSplitAdmissionControllerFromSem(readSem, rt.AdmissionSem())
+		ac = s3api.NewSplitAdmissionControllerFromSem(readSem, rt.AdmissionSem(), limits)
 	case cfg.Server.MaxConcurrentRequests > 0:
 		// Merged-pool: every request and every worker shares the
 		// runtime's sem.
-		ac = s3api.NewAdmissionControllerFromSem(rt.AdmissionSem())
+		ac = s3api.NewAdmissionControllerFromSem(rt.AdmissionSem(), limits)
 	}
 	if ac != nil {
-		if cfg.Server.LoadShedThreshold > 0 {
-			ac.SetShedThreshold(cfg.Server.LoadShedThreshold)
-		}
-		if cfg.Server.AdmissionWait > 0 {
-			ac.SetAdmissionWait(cfg.Server.AdmissionWait)
-		}
 		s3Handler = ac.Middleware(s3Handler)
 	}
 

@@ -42,30 +42,41 @@ type AdmissionController struct {
 // CONSTRUCTORS AND CONFIG
 // -------------------------------------------------------------------------
 
+// AdmissionLimits shapes how a full pool is handled. ShedThreshold is the
+// fraction of pool capacity (0.0-1.0) past which requests are probabilistically
+// rejected before the hard limit; Wait is how long to hold a request at a full
+// semaphore before rejecting it. Both zero - the useful default - means no
+// early shedding and instant rejection.
+//
+// Passed to the constructor rather than set afterwards. The middleware reads
+// these on every request from whichever goroutine served it, so a setter is
+// only safe while nothing is being served yet; that was true here by wiring
+// order alone, and nothing said so.
+type AdmissionLimits struct {
+	ShedThreshold float64
+	Wait          time.Duration
+}
+
 // NewAdmissionControllerFromSem creates an admission controller backed by
 // an externally owned semaphore. Use this when background services should
 // share the same concurrency budget as HTTP requests.
-func NewAdmissionControllerFromSem(sem chan struct{}) *AdmissionController {
-	return &AdmissionController{sem: sem}
+func NewAdmissionControllerFromSem(sem chan struct{}, lim AdmissionLimits) *AdmissionController {
+	return &AdmissionController{
+		sem:           sem,
+		shedThreshold: lim.ShedThreshold,
+		admissionWait: lim.Wait,
+	}
 }
 
 // NewSplitAdmissionControllerFromSem creates an admission controller backed
 // by externally owned read and write semaphores.
-func NewSplitAdmissionControllerFromSem(readSem, writeSem chan struct{}) *AdmissionController {
-	return &AdmissionController{readSem: readSem, writeSem: writeSem}
-}
-
-// SetShedThreshold configures the pressure threshold at which active load
-// shedding begins. Value is a fraction of pool capacity (0.0-1.0). Zero
-// disables shedding (default).
-func (ac *AdmissionController) SetShedThreshold(t float64) {
-	ac.shedThreshold = t
-}
-
-// SetAdmissionWait configures a brief wait duration before rejecting when
-// the semaphore is full. Zero means instant rejection (default).
-func (ac *AdmissionController) SetAdmissionWait(d time.Duration) {
-	ac.admissionWait = d
+func NewSplitAdmissionControllerFromSem(readSem, writeSem chan struct{}, lim AdmissionLimits) *AdmissionController {
+	return &AdmissionController{
+		readSem:       readSem,
+		writeSem:      writeSem,
+		shedThreshold: lim.ShedThreshold,
+		admissionWait: lim.Wait,
+	}
 }
 
 // isWriteMethod reports whether the HTTP method is a write operation.

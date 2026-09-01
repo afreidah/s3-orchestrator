@@ -89,6 +89,7 @@ var (
 	ErrInvalidTLSConfig  = errors.New("both cert_file and key_file are required for TLS")
 	ErrInvalidTLSVersion = errors.New("invalid TLS min_version")
 	ErrInvalidLogLevel   = errors.New("invalid log_level")
+	ErrSpillDirUnusable  = errors.New("server.spill_dir is not a usable directory")
 )
 
 // UI / auth errors.

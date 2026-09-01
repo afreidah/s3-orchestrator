@@ -56,14 +56,13 @@ func toComparable(m map[string]any) map[string]string {
 	return out
 }
 
-// swapEmit installs hook as the package-level Emit for one test and restores
-// whatever was there afterwards. The hook is process-global, so a test that
-// left it set would leak into every later one.
+// swapEmit registers hook as the emitter for one test and clears it afterwards.
+// The emitter is process-global, so a test that left one installed would leak
+// into every later one.
 func swapEmit(t *testing.T, hook func(Event)) {
 	t.Helper()
-	prev := Emit
-	Emit = hook
-	t.Cleanup(func() { Emit = prev })
+	SetEmitter(hook)
+	t.Cleanup(func() { SetEmitter(nil) })
 }
 
 // TestMatchesFilter verifies the matches filter contract.
