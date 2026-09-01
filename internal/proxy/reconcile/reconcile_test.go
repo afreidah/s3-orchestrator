@@ -612,7 +612,7 @@ func TestS3KeyStream_ContextCancelTerminates(t *testing.T) {
 // the counter when ImportObject reports the row was created (true).
 func TestImportHandler_CountsCreatedNotSkipped(t *testing.T) {
 	res := &Result{}
-	importer := func(_ context.Context, _, _ string, _ int64, _ bool) (core.ImportOutcome, error) {
+	importer := func(_ context.Context, _ *core.ImportObjectRequest) (core.ImportOutcome, error) {
 		return core.ImportSkippedExisting, nil // already exists; should NOT be counted
 	}
 	h := ImportHandler(slog.Default(), "b1", importer, res)
@@ -630,7 +630,7 @@ func TestImportHandler_CountsCreatedNotSkipped(t *testing.T) {
 // the cleanup queue is not draining, the other says nothing at all.
 func TestImportHandler_CountsSuppressedSeparately(t *testing.T) {
 	res := &Result{}
-	importer := func(_ context.Context, _, _ string, _ int64, _ bool) (core.ImportOutcome, error) {
+	importer := func(_ context.Context, _ *core.ImportObjectRequest) (core.ImportOutcome, error) {
 		return core.ImportSkippedPendingCleanup, nil
 	}
 	h := ImportHandler(slog.Default(), "b1", importer, res)
@@ -650,7 +650,7 @@ func TestImportHandler_CountsSuppressedSeparately(t *testing.T) {
 // on the first transient row failure.
 func TestImportHandler_SwallowsErrorButContinues(t *testing.T) {
 	res := &Result{}
-	importer := func(_ context.Context, _, _ string, _ int64, _ bool) (core.ImportOutcome, error) {
+	importer := func(_ context.Context, _ *core.ImportObjectRequest) (core.ImportOutcome, error) {
 		return core.ImportSkippedExisting, errors.New("transient")
 	}
 	h := ImportHandler(slog.Default(), "b1", importer, res)

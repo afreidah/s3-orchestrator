@@ -742,7 +742,7 @@ func TestStoreInt_ImportSuppressedByPendingCleanup(t *testing.T) {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 
-	outcome, err := s.ImportObject(ctx, key, "backend-a", 500, false, nil)
+	outcome, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: "backend-a", Size: 500})
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
@@ -757,7 +757,7 @@ func TestStoreInt_ImportSuppressedByPendingCleanup(t *testing.T) {
 	// Scoped to the backend the delete is outstanding on: a copy removed
 	// cleanly elsewhere must still be importable, or one stuck cleanup would
 	// block the whole key from ever being reconciled.
-	other, err := s.ImportObject(ctx, key, "backend-b", 500, false, nil)
+	other, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: "backend-b", Size: 500})
 	if err != nil {
 		t.Fatalf("ImportObject(backend-b): %v", err)
 	}

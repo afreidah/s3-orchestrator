@@ -25,6 +25,8 @@ weight: 20
 PostgreSQL (or embedded SQLite) stores:
 
 - **`object_locations`** - every object's exact backend placement + content hash + per-copy size, plus a `managed` flag marking objects that count toward quota but that the workers do not act on, and the client-facing identity (ETag, content type, user metadata) that lets a HEAD answer without a backend request
+
+  `created_at` is the **object's write time, not the copy's**, and every copy of a key carries the same value. A replica inherits it from the source rather than being stamped when it was made, and a discovered object takes whatever modification time the backend reported, falling back to the moment of discovery when the backend reports none. It is what reads return as `Last-Modified`, in preference to whatever the serving backend says, so an unmodified object reports the same time no matter which copy answered - the same reason ETag is stored per object rather than read from the backend. Note that this makes `created_at` unsuitable as a per-copy age: the scrub queue tracks that separately in `last_scrubbed_at`.
 - **`backend_quotas`** — per-backend quota counters + orphan-bytes tracking
 - **`backend_usage`** - per-backend monthly API-call and egress counters
 - **`multipart_uploads`** / **`multipart_parts`** — multipart upload state

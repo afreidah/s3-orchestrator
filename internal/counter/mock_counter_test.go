@@ -15,56 +15,56 @@ import (
 	gomock "go.uber.org/mock/gomock"
 )
 
-// MockCounterBackend is a mock of Backend interface.
-type MockCounterBackend struct {
+// MockBackend is a mock of Backend interface.
+type MockBackend struct {
 	ctrl     *gomock.Controller
-	recorder *MockCounterBackendMockRecorder
+	recorder *MockBackendMockRecorder
 	isgomock struct{}
 }
 
-// MockCounterBackendMockRecorder is the mock recorder for MockCounterBackend.
-type MockCounterBackendMockRecorder struct {
-	mock *MockCounterBackend
+// MockBackendMockRecorder is the mock recorder for MockBackend.
+type MockBackendMockRecorder struct {
+	mock *MockBackend
 }
 
-// NewMockCounterBackend creates a new mock instance.
-func NewMockCounterBackend(ctrl *gomock.Controller) *MockCounterBackend {
-	mock := &MockCounterBackend{ctrl: ctrl}
-	mock.recorder = &MockCounterBackendMockRecorder{mock}
+// NewMockBackend creates a new mock instance.
+func NewMockBackend(ctrl *gomock.Controller) *MockBackend {
+	mock := &MockBackend{ctrl: ctrl}
+	mock.recorder = &MockBackendMockRecorder{mock}
 	return mock
 }
 
 // EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockCounterBackend) EXPECT() *MockCounterBackendMockRecorder {
+func (m *MockBackend) EXPECT() *MockBackendMockRecorder {
 	return m.recorder
 }
 
 // Add mocks base method.
-func (m *MockCounterBackend) Add(backend, field string, delta int64) {
+func (m *MockBackend) Add(backend, field string, delta int64) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "Add", backend, field, delta)
 }
 
 // Add indicates an expected call of Add.
-func (mr *MockCounterBackendMockRecorder) Add(backend, field, delta any) *gomock.Call {
+func (mr *MockBackendMockRecorder) Add(backend, field, delta any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Add", reflect.TypeOf((*MockCounterBackend)(nil).Add), backend, field, delta)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Add", reflect.TypeOf((*MockBackend)(nil).Add), backend, field, delta)
 }
 
 // AddAll mocks base method.
-func (m *MockCounterBackend) AddAll(backend string, apiReqs, egress, ingress int64) {
+func (m *MockBackend) AddAll(backend string, apiReqs, egress, ingress int64) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "AddAll", backend, apiReqs, egress, ingress)
 }
 
 // AddAll indicates an expected call of AddAll.
-func (mr *MockCounterBackendMockRecorder) AddAll(backend, apiReqs, egress, ingress any) *gomock.Call {
+func (mr *MockBackendMockRecorder) AddAll(backend, apiReqs, egress, ingress any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddAll", reflect.TypeOf((*MockCounterBackend)(nil).AddAll), backend, apiReqs, egress, ingress)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddAll", reflect.TypeOf((*MockBackend)(nil).AddAll), backend, apiReqs, egress, ingress)
 }
 
 // Backends mocks base method.
-func (m *MockCounterBackend) Backends() []string {
+func (m *MockBackend) Backends() []string {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Backends")
 	ret0, _ := ret[0].([]string)
@@ -72,13 +72,13 @@ func (m *MockCounterBackend) Backends() []string {
 }
 
 // Backends indicates an expected call of Backends.
-func (mr *MockCounterBackendMockRecorder) Backends() *gomock.Call {
+func (mr *MockBackendMockRecorder) Backends() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Backends", reflect.TypeOf((*MockCounterBackend)(nil).Backends))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Backends", reflect.TypeOf((*MockBackend)(nil).Backends))
 }
 
 // Load mocks base method.
-func (m *MockCounterBackend) Load(backend, field string) int64 {
+func (m *MockBackend) Load(backend, field string) int64 {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Load", backend, field)
 	ret0, _ := ret[0].(int64)
@@ -86,13 +86,13 @@ func (m *MockCounterBackend) Load(backend, field string) int64 {
 }
 
 // Load indicates an expected call of Load.
-func (mr *MockCounterBackendMockRecorder) Load(backend, field any) *gomock.Call {
+func (mr *MockBackendMockRecorder) Load(backend, field any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Load", reflect.TypeOf((*MockCounterBackend)(nil).Load), backend, field)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Load", reflect.TypeOf((*MockBackend)(nil).Load), backend, field)
 }
 
 // LoadAll mocks base method.
-func (m *MockCounterBackend) LoadAll(backend string) LoadAllResult {
+func (m *MockBackend) LoadAll(backend string) LoadAllResult {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "LoadAll", backend)
 	ret0, _ := ret[0].(LoadAllResult)
@@ -100,13 +100,13 @@ func (m *MockCounterBackend) LoadAll(backend string) LoadAllResult {
 }
 
 // LoadAll indicates an expected call of LoadAll.
-func (mr *MockCounterBackendMockRecorder) LoadAll(backend any) *gomock.Call {
+func (mr *MockBackendMockRecorder) LoadAll(backend any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadAll", reflect.TypeOf((*MockCounterBackend)(nil).LoadAll), backend)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadAll", reflect.TypeOf((*MockBackend)(nil).LoadAll), backend)
 }
 
 // Swap mocks base method.
-func (m *MockCounterBackend) Swap(backend, field string) int64 {
+func (m *MockBackend) Swap(backend, field string) int64 {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Swap", backend, field)
 	ret0, _ := ret[0].(int64)
@@ -114,7 +114,7 @@ func (m *MockCounterBackend) Swap(backend, field string) int64 {
 }
 
 // Swap indicates an expected call of Swap.
-func (mr *MockCounterBackendMockRecorder) Swap(backend, field any) *gomock.Call {
+func (mr *MockBackendMockRecorder) Swap(backend, field any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Swap", reflect.TypeOf((*MockCounterBackend)(nil).Swap), backend, field)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Swap", reflect.TypeOf((*MockBackend)(nil).Swap), backend, field)
 }

@@ -13,9 +13,11 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
+	"time"
 )
 
 // -------------------------------------------------------------------------
@@ -334,6 +336,22 @@ func carryCompressionProbe(ctx context.Context, tx TxAdapter, src *ObjectLocatio
 // IMPORT OBJECT
 // -------------------------------------------------------------------------
 
+// ImportObjectRequest is one object discovered on a backend: where it was
+// found, how big it is, how its bytes are stored, and the write time to record
+// for it.
+//
+// WrittenAt is the modification time the backend reported. Zero means it
+// reported none, and the import stamps the moment of discovery instead, which
+// is the only other answer available.
+type ImportObjectRequest struct {
+	Key       string
+	Backend   string
+	Size      int64
+	Unmanaged bool
+	Form      *StoredForm
+	WrittenAt time.Time
+}
+
 // ImportObject records a pre-existing object in the database without
 // overwriting. Returns true if the object was newly imported, false if
 // ImportOutcome reports what an import did with a discovered key. A caller
@@ -363,14 +381,6 @@ func (o ImportOutcome) String() string {
 // it already existed for this backend. Used by reconcile and the sync
 // subcommand to bring existing bucket objects under proxy management.
 //
-// unmanaged marks an object that lives outside every configured virtual
-// bucket prefix. It is still recorded, because it occupies backend quota
-// that placement decisions have to account for, but the workers leave it
-// alone.
-//
-// form carries what the caller established about the bytes on the backend.
-// Passing nil records the object as plaintext, so callers that import bytes
-// they have not inspected will publish ciphertext as if it were the object.
 // A key whose delete is still outstanding is left alone. The bytes are on the
 // backend because a delete could not reach it, not because the object is meant
 // to be there, and importing them undoes the delete: the object comes back
@@ -378,9 +388,9 @@ func (o ImportOutcome) String() string {
 // created_at restarts so any lifecycle rule that expired it waits another full
 // window. The cleanup queue already tracks the orphan and its bytes are already
 // counted against the backend, so leaving the row absent is the accurate state.
-func ImportObject(ctx context.Context, runner Runner, key, backend string, size int64, unmanaged bool, form *StoredForm) (ImportOutcome, error) {
+func ImportObject(ctx context.Context, runner Runner, req *ImportObjectRequest) (ImportOutcome, error) {
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (ImportOutcome, error) {
-		pending, err := tx.HasPendingCleanup(ctx, key, backend)
+		pending, err := tx.HasPendingCleanup(ctx, req.Key, req.Backend)
 		if err != nil {
 			return ImportSkippedExisting, err
 		}
@@ -393,8 +403,9 @@ func ImportObject(ctx context.Context, runner Runner, key, backend string, size 
 		// copy. The first read that has to ask the backend records what it got
 		// for every copy, so the value settles on first use instead of being
 		// guessed at import.
-		loc := objectFromStoredForm(key, backend, size, form, nil)
-		loc.Unmanaged = unmanaged
+		loc := objectFromStoredForm(req.Key, req.Backend, req.Size, req.Form, nil)
+		loc.Unmanaged = req.Unmanaged
+		loc.CreatedAt = cmp.Or(req.WrittenAt, time.Now())
 		inserted, err := tx.InsertObjectLocationIfNotExists(ctx, loc)
 		if err != nil {
 			return ImportSkippedExisting, err
@@ -402,7 +413,7 @@ func ImportObject(ctx context.Context, runner Runner, key, backend string, size 
 		if !inserted {
 			return ImportSkippedExisting, nil
 		}
-		if err := tx.IncrementBackendQuota(ctx, backend, size); err != nil {
+		if err := tx.IncrementBackendQuota(ctx, req.Backend, req.Size); err != nil {
 			return ImportSkippedExisting, err
 		}
 		return ImportInserted, nil

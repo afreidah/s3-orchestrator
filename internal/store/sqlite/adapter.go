@@ -158,7 +158,15 @@ func (a *sqliteTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string
 // InsertObjectLocation writes a new object_locations row carrying the
 // encryption and integrity metadata on loc.
 func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.ObjectLocation) error {
-	now := now()
+	// An explicit time is the object's write time, carried from the source copy
+	// on a replicate or reported by the backend on an import, and the row has to
+	// keep it: stamping every copy separately is what makes an unmodified object
+	// report a different Last-Modified depending on which one answered. A fresh
+	// write leaves it zero and gets stamped here.
+	created := now()
+	if !loc.CreatedAt.IsZero() {
+		created = formatTime(loc.CreatedAt)
+	}
 	if _, err := a.tx.ExecContext(ctx,
 		`INSERT INTO object_locations
 		   (object_key, backend_name, size_bytes, encrypted, encryption_key,
@@ -174,7 +182,7 @@ func (a *sqliteTxAdapter) InsertObjectLocation(ctx context.Context, loc *core.Ob
 		nullableInt64(int64(loc.CompressionFormatVersion)), nullableInt64(loc.LogicalSize),
 		identityETag(loc.Identity), identityContentType(loc.Identity), identityMetadataJSON(loc.Identity),
 		boolToInt(!loc.Unmanaged),
-		now,
+		created,
 	); err != nil {
 		return fmt.Errorf("insert object location: %w", err)
 	}
@@ -225,17 +233,18 @@ func (a *sqliteTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, ba
 		logicalSize   sql.NullInt64
 		probeSize     sql.NullInt64
 		probeLevel    sql.NullString
+		createdAt     sql.NullString
 	)
 	err := a.tx.QueryRowContext(ctx,
 		`SELECT size_bytes, encrypted, encryption_key,
 		        key_id, plaintext_size, content_hash,
 		        compression_algorithm, compression_level, compression_format_version, logical_size,
-		        compression_probe_size, compression_probe_level
+		        compression_probe_size, compression_probe_level, created_at
 		 FROM object_locations
 		 WHERE object_key = ? AND backend_name = ?`,
 		objectKey, backend,
 	).Scan(&size, &encrypted, &encryptionKey, &keyID, &plaintextSize, &contentHash,
-		&compAlgorithm, &compLevel, &compVersion, &logicalSize, &probeSize, &probeLevel)
+		&compAlgorithm, &compLevel, &compVersion, &logicalSize, &probeSize, &probeLevel, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -257,6 +266,12 @@ func (a *sqliteTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, ba
 		LogicalSize:              nullInt64Value(logicalSize),
 		CompressionProbeSize:     nullInt64Value(probeSize),
 		CompressionProbeLevel:    nullStringValue(probeLevel),
+	}
+	// Carried so a replica built from this row inherits the object's write time
+	// rather than being stamped when the copy was made. An unparseable value
+	// leaves it zero, which the insert reads as "stamp your own".
+	if t, err := time.Parse(time.RFC3339Nano, nullStringValue(createdAt)); err == nil {
+		loc.CreatedAt = t
 	}
 	return loc, true, nil
 }

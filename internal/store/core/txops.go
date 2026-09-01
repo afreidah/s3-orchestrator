@@ -62,8 +62,8 @@ func (o TxOps) DeleteObjectTags(ctx context.Context, key string) error {
 
 // ImportObject records bytes discovered on a backend, leaving an existing row
 // untouched.
-func (o TxOps) ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *StoredForm) (ImportOutcome, error) {
-	return ImportObject(ctx, o.runner, key, backend, size, unmanaged, form)
+func (o TxOps) ImportObject(ctx context.Context, req *ImportObjectRequest) (ImportOutcome, error) {
+	return ImportObject(ctx, o.runner, req)
 }
 
 // MoveObjectLocation repoints a copy at a different backend and moves the

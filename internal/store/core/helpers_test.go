@@ -214,6 +214,7 @@ type quotaTxStub struct {
 	existingErr    error
 	pendingCleanup bool
 	pendingErr     error
+	importedLoc    *ObjectLocation
 
 	adjustments []quotaOp
 	adjustErr   error
@@ -390,6 +391,16 @@ func (*quotaTxStub) DeleteCleanupItem(context.Context, int64) error { return nil
 // can be driven down the ordinary path, the suppressed path, or the error path.
 func (s *quotaTxStub) HasPendingCleanup(context.Context, string, string) (bool, error) {
 	return s.pendingCleanup, s.pendingErr
+}
+
+// InsertObjectLocationIfNotExists records the row an import built so a test can
+// assert on the timestamp it carried, and reports it as newly inserted.
+func (s *quotaTxStub) InsertObjectLocationIfNotExists(_ context.Context, loc *ObjectLocation) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	captured := *loc
+	s.importedLoc = &captured
+	return true, nil
 }
 
 // DecrementOrphanBytes is a no-op stub on quotaTxStub so the type satisfies the

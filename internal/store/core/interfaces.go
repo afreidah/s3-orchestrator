@@ -47,7 +47,7 @@ type ObjectStore interface {
 	ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]ObjectLocation, error)
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]ObjectLocation, error)
 	MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error)
-	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *StoredForm) (ImportOutcome, error)
+	ImportObject(ctx context.Context, req *ImportObjectRequest) (ImportOutcome, error)
 	DeleteObjectLocation(ctx context.Context, key, backendName string) error
 
 	// RecordObjectIdentity fills in the identity columns a read had to ask a

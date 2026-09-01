@@ -416,7 +416,7 @@ func TestImportObject(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	outcome, err := s.ImportObject(ctx, "bucket/new", "backend-a", 500, false, nil)
+	outcome, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: "bucket/new", Backend: "backend-a", Size: 500})
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
@@ -425,7 +425,7 @@ func TestImportObject(t *testing.T) {
 	}
 
 	// Import again should be a no-op
-	outcome, err = s.ImportObject(ctx, "bucket/new", "backend-a", 500, false, nil)
+	outcome, err = s.ImportObject(ctx, &core.ImportObjectRequest{Key: "bucket/new", Backend: "backend-a", Size: 500})
 	if err != nil {
 		t.Fatalf("ImportObject duplicate: %v", err)
 	}
@@ -453,7 +453,7 @@ func TestImportObject_SuppressedByPendingCleanup(t *testing.T) {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 
-	outcome, err := s.ImportObject(ctx, key, backend, 500, false, nil)
+	outcome, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: backend, Size: 500})
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestImportObject_SuppressedByDeadLetteredCleanup(t *testing.T) {
 		t.Fatalf("MoveCleanupToDLQ: %v", err)
 	}
 
-	outcome, err := s.ImportObject(ctx, key, backend, 500, false, nil)
+	outcome, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: backend, Size: 500})
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
@@ -515,7 +515,7 @@ func TestImportObject_OtherBackendUnaffected(t *testing.T) {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 
-	outcome, err := s.ImportObject(ctx, key, "backend-b", 500, false, nil)
+	outcome, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: "backend-b", Size: 500})
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
@@ -2784,10 +2784,10 @@ func TestImportObject_UnmanagedCountsForQuotaButNotForWork(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, err := s.ImportObject(ctx, "bucket/owned", "backend-a", 100, false, nil); err != nil {
+	if _, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: "bucket/owned", Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("ImportObject(managed): %v", err)
 	}
-	if _, err := s.ImportObject(ctx, "stray.txt", "backend-a", 400, true, nil); err != nil {
+	if _, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: "stray.txt", Backend: "backend-a", Size: 400, Unmanaged: true}); err != nil {
 		t.Fatalf("ImportObject(unmanaged): %v", err)
 	}
 

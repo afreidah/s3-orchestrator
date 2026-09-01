@@ -33,7 +33,7 @@ import (
 // drop a stale row, walk the ledger in byte order, and sweep cleanup-queue
 // rows belonging to a key that no longer exists.
 type Stores interface {
-	ImportObject(ctx context.Context, key, backend string, size int64, unmanaged bool, form *core.StoredForm) (core.ImportOutcome, error)
+	ImportObject(ctx context.Context, req *core.ImportObjectRequest) (core.ImportOutcome, error)
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 	DeleteObjectLocation(ctx context.Context, key, backendName string) error
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error)
@@ -202,7 +202,13 @@ func (m *Manager) importPage(
 ) (imported, skipped int, err error) {
 	for _, obj := range objects {
 		unmanaged := Unmanaged(obj.Key, bucketPrefixes)
-		outcome, importErr := m.importDiscovered(ctx, obj.Key, backendName, obj.SizeBytes, unmanaged)
+		outcome, importErr := m.importDiscovered(ctx, &core.ImportObjectRequest{
+			Key:       obj.Key,
+			Backend:   backendName,
+			Size:      obj.SizeBytes,
+			Unmanaged: unmanaged,
+			WrittenAt: obj.LastModified,
+		})
 		if importErr != nil {
 			return imported, skipped, fmt.Errorf("failed to import %s: %w", obj.Key, importErr)
 		}
@@ -228,8 +234,8 @@ func (m *Manager) importPage(
 // whether its bytes are an encryption envelope and, if so, which existing row
 // holds the key that reads them. Satisfies ImporterFn, so the sorted-merge
 // reconcile and the bulk sync scan classify identically.
-func (m *Manager) importDiscovered(ctx context.Context, key, backendName string, size int64, unmanaged bool) (core.ImportOutcome, error) {
-	be, err := m.backends.GetBackend(backendName)
+func (m *Manager) importDiscovered(ctx context.Context, req *core.ImportObjectRequest) (core.ImportOutcome, error) {
+	be, err := m.backends.GetBackend(req.Backend)
 	if err != nil {
 		return core.ImportSkippedExisting, err
 	}
@@ -239,11 +245,12 @@ func (m *Manager) importDiscovered(ctx context.Context, key, backendName string,
 		Codec:   m.codec,
 		Source:  "reconcile",
 		Log:     m.logger(),
-	}, backendName, key, size)
+	}, req.Backend, req.Key, req.Size)
 	if err != nil {
 		return core.ImportSkippedExisting, err
 	}
-	return m.stores.ImportObject(ctx, key, backendName, size, unmanaged, form)
+	req.Form = form
+	return m.stores.ImportObject(ctx, req)
 }
 
 // ReconcileBackend reconciles a backend against the ledger using the

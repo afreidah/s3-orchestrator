@@ -171,7 +171,7 @@ func runReconcile(t *testing.T, s *Store, backendName string, keys []string) rec
 	defer db.Stop()
 
 	var res reconcile.Result
-	importer := func(_ context.Context, _, _ string, _ int64, _ bool) (core.ImportOutcome, error) {
+	importer := func(_ context.Context, _ *core.ImportObjectRequest) (core.ImportOutcome, error) {
 		return core.ImportInserted, nil
 	}
 	deleter := func(_ context.Context, _, _ string) error { return nil }

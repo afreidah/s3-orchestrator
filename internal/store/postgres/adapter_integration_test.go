@@ -554,10 +554,10 @@ func TestPgAdapter_InsertObjectLocationIfNotExists_BothBranches(t *testing.T) {
 	key := uniqueKey(t, "k")
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 
-	if got, err := s.ImportObject(ctx, key, "backend-a", 50, false, nil); err != nil || got != core.ImportInserted {
+	if got, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: "backend-a", Size: 50}); err != nil || got != core.ImportInserted {
 		t.Fatalf("ImportObject(insert): got=%s err=%v, want inserted", got, err)
 	}
-	if got, err := s.ImportObject(ctx, key, "backend-a", 50, false, nil); err != nil || got != core.ImportSkippedExisting {
+	if got, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: "backend-a", Size: 50}); err != nil || got != core.ImportSkippedExisting {
 		t.Errorf("ImportObject(idempotent): got=%s err=%v, want skipped_existing", got, err)
 	}
 }
@@ -802,7 +802,7 @@ func TestPgAdapter_ImportObject_PreservesEncryptionMetadata(t *testing.T) {
 		PlaintextSize: 1024,
 		ContentHash:   "abc123",
 	}
-	inserted, err := s.ImportObject(ctx, key, "backend-a", 1100, false, form)
+	inserted, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: "backend-a", Size: 1100, Form: form})
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
@@ -846,8 +846,9 @@ func TestPgAdapter_ImportObject_KeylessEncryptedRow(t *testing.T) {
 	ctx := context.Background()
 	key := uniqueKey(t, "unreadable")
 
-	inserted, err := s.ImportObject(ctx, key, "backend-a", 508, false,
-		&core.StoredForm{Encrypted: true})
+	inserted, err := s.ImportObject(ctx, &core.ImportObjectRequest{
+		Key: key, Backend: "backend-a", Size: 508, Form: &core.StoredForm{Encrypted: true},
+	})
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
@@ -879,7 +880,7 @@ func TestPgAdapter_ImportObject_PlaintextStaysPlaintext(t *testing.T) {
 	ctx := context.Background()
 	key := uniqueKey(t, "plain")
 
-	if _, err := s.ImportObject(ctx, key, "backend-a", 100, false, nil); err != nil {
+	if _, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()

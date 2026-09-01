@@ -438,9 +438,14 @@ func (b *S3Backend) CopyObject(ctx context.Context, srcKey, dstKey, contentType 
 // -------------------------------------------------------------------------
 
 // ListedObject holds metadata for a single object returned by S3 ListObjects.
+// LastModified is what the backend reports for the object, and is zero when
+// it reports nothing. Reconcile records it as the write time of a discovered
+// object, which is the only place that time can come from; a zero value means
+// the import has to stamp its own.
 type ListedObject struct {
-	Key       string
-	SizeBytes int64
+	Key          string
+	SizeBytes    int64
+	LastModified time.Time
 }
 
 // ListObjects iterates all objects in the backend bucket with the given
@@ -507,7 +512,11 @@ func convertListPage(page *s3.ListObjectsV2Output) []ListedObject {
 		if obj.Size != nil {
 			size = *obj.Size
 		}
-		objects[i] = ListedObject{Key: key, SizeBytes: size}
+		var lastModified time.Time
+		if obj.LastModified != nil {
+			lastModified = *obj.LastModified
+		}
+		objects[i] = ListedObject{Key: key, SizeBytes: size, LastModified: lastModified}
 	}
 	return objects
 }

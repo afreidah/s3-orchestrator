@@ -168,12 +168,7 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 		return fail, 0, fmt.Errorf("backend %s egress: %w", beName, readpath.ErrUsageLimitSkip)
 	}
 
-	// Backends that report no modification time leave LastModified zero, which
-	// the transport then drops from the response entirely. Fall back to the
-	// stored creation time so every object carries a valid Last-Modified.
-	if r.LastModified.IsZero() && loc != nil {
-		r.LastModified = loc.CreatedAt
-	}
+	r.LastModified = resolveLastModified(r.LastModified, loc)
 
 	if err := verifyStoredEnvelope(r, loc, actualRange); err != nil {
 		telemetry.EncryptionFlagMismatchTotal.WithLabelValues("get").Inc()
