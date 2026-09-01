@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	goruntime "runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -458,6 +459,60 @@ func TestConfigureMetrics_SeparateListener_PprofEnabled(t *testing.T) {
 	}
 }
 
+// TestConfigureMetrics_Pprof_GoroutineLeak asserts that Go 1.27's
+// goroutineleak profile is served by the same mount, even though
+// mountPprof never names it: pprof.Index dispatches named runtime
+// profiles off the prefix route. Worth pinning because the leak
+// profile is the one operators reach for during a slow goroutine
+// climb, and a silent 404 there sends them looking in the wrong place.
+//
+// Not parallel: serving this profile runs a stop-the-world leak-detection
+// GC, which is not something to overlap with the rest of the package.
+func TestConfigureMetrics_Pprof_GoroutineLeak(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := configureMetrics(mux, &config.MetricsConfig{
+		Enabled: true,
+		Listen:  fmt.Sprintf("127.0.0.1:%d", freePort(t)),
+		Path:    "/metrics",
+		Pprof:   true,
+	})
+	if srv == nil {
+		t.Fatal("expected separate metrics server")
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/debug/pprof/goroutineleak?debug=1", nil)
+	srv.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("/debug/pprof/goroutineleak status = %d, want 200", w.Code)
+	}
+	if got := w.Body.String(); !strings.Contains(got, "goroutineleak profile:") {
+		t.Errorf("body is not a goroutineleak profile: %q", got)
+	}
+}
+
+// TestConfigureMetrics_PprofDisabled_GoroutineLeak is the other half:
+// the leak profile must stay behind the same opt-in as the rest of the
+// debug surface, not leak out through the prefix route.
+func TestConfigureMetrics_PprofDisabled_GoroutineLeak(t *testing.T) {
+	t.Parallel()
+	mux := http.NewServeMux()
+	srv := configureMetrics(mux, &config.MetricsConfig{
+		Enabled: true,
+		Listen:  fmt.Sprintf("127.0.0.1:%d", freePort(t)),
+		Path:    "/metrics",
+	})
+	if srv == nil {
+		t.Fatal("expected separate metrics server")
+	}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/debug/pprof/goroutineleak", nil)
+	srv.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("goroutineleak must NOT be exposed when Pprof=false (status = %d, want 404)", w.Code)
+	}
+}
+
 // TestConfigureMetrics_Inline_PprofIgnored covers the warn path:
 // when cfg.Pprof=true is paired with an empty Listen (inline form),
 // pprof is silently dropped rather than mounted on the public S3
@@ -583,6 +638,51 @@ func TestNew_HealthRoutesMounted(t *testing.T) {
 	srv.main.Handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("/health/ready status = %d, want 200", w.Code)
+	}
+}
+
+// TestNew_HeaderLimitsWired asserts the request-header caps reach
+// http.Server: first the values config validation fills in for an
+// unconfigured deployment, then an explicit override. Wiring these
+// wrong is invisible until a client trips the limit, which is a bad
+// time to discover the knob was never connected.
+func TestNew_HeaderLimitsWired(t *testing.T) {
+	cfg := loadCfg(t, validTestConfigYAML)
+	inj, cleanup := resolvedInjector(t, cfg, config.ModeAll)
+	defer cleanup()
+
+	var ready atomic.Bool
+	ready.Store(true)
+	deps := Deps{
+		Cfg:       cfg,
+		Mode:      "all",
+		Injector:  inj,
+		Ready:     &ready,
+		DBBreaker: func() *breaker.CircuitBreaker { return nil },
+	}
+
+	srv, err := New(deps)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if got := srv.main.MaxHeaderBytes; got != http.DefaultMaxHeaderBytes {
+		t.Errorf("MaxHeaderBytes = %d, want stdlib default %d", got, http.DefaultMaxHeaderBytes)
+	}
+	if got := srv.main.MaxHeaderValueCount; got != http.DefaultMaxHeaderValueCount {
+		t.Errorf("MaxHeaderValueCount = %d, want stdlib default %d", got, http.DefaultMaxHeaderValueCount)
+	}
+
+	cfg.Server.MaxHeaderBytes = 4096
+	cfg.Server.MaxHeaderValueCount = 20
+	srv, err = New(deps)
+	if err != nil {
+		t.Fatalf("New with overrides: %v", err)
+	}
+	if got := srv.main.MaxHeaderBytes; got != 4096 {
+		t.Errorf("MaxHeaderBytes = %d, want 4096", got)
+	}
+	if got := srv.main.MaxHeaderValueCount; got != 20 {
+		t.Errorf("MaxHeaderValueCount = %d, want 20", got)
 	}
 }
 

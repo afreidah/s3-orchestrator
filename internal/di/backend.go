@@ -127,8 +127,8 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 // itself free of type-assertions and keeps DI as the single wiring point.
 func ProvideBreakerRegistry(i do.Injector) (*breaker.Registry, error) {
 	r := newResolver(i)
-	dbCB := resolve[*breaker.CircuitBreaker](r)
-	br := resolve[*BackendsResult](r)
+	dbCB := r.Resolve[*breaker.CircuitBreaker]()
+	br := r.Resolve[*BackendsResult]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -197,8 +197,8 @@ func ProvideEncryptionProvider(i do.Injector) (encryption.KeyProvider, error) {
 // ProvideRedisCounterBackend creates the shared Redis counter backend.
 func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, error) {
 	r := newResolver(i)
-	cfg := resolve[*config.Config](r)
-	br := resolve[*BackendsResult](r)
+	cfg := r.Resolve[*config.Config]()
+	br := r.Resolve[*BackendsResult]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -264,9 +264,9 @@ func ProvideIntegrityConfig(_ do.Injector) (*syncutil.AtomicConfig[config.Integr
 // object manager, and drain manager all route writes through.
 func ProvideWriteCoordinator(i do.Injector) (*writepath.Coordinator, error) {
 	r := newResolver(i)
-	cfg := resolve[*config.Config](r)
-	rt := resolve[*infra.BackendRuntime](r)
-	stores := resolve[metadataStore](r)
+	cfg := r.Resolve[*config.Config]()
+	rt := r.Resolve[*infra.BackendRuntime]()
+	stores := r.Resolve[metadataStore]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -292,11 +292,11 @@ type writePathDeps struct {
 func resolveWritePathDeps(i do.Injector) (*writePathDeps, error) {
 	r := newResolver(i)
 	d := &writePathDeps{
-		cfg:          resolve[*config.Config](r),
-		rt:           resolve[*infra.BackendRuntime](r),
-		coord:        resolve[*writepath.Coordinator](r),
-		stores:       resolve[metadataStore](r),
-		integrityCfg: resolve[*syncutil.AtomicConfig[config.IntegrityConfig]](r),
+		cfg:          r.Resolve[*config.Config](),
+		rt:           r.Resolve[*infra.BackendRuntime](),
+		coord:        r.Resolve[*writepath.Coordinator](),
+		stores:       r.Resolve[metadataStore](),
+		integrityCfg: r.Resolve[*syncutil.AtomicConfig[config.IntegrityConfig]](),
 	}
 	if r.err != nil {
 		return nil, r.err
@@ -349,9 +349,9 @@ func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
 // that workers, drain and every proxy collaborator share.
 func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 	r := newResolver(i)
-	cfg := resolve[*config.Config](r)
-	br := resolve[*BackendsResult](r)
-	metricsDeps := resolve[metrics.Deps](r)
+	cfg := r.Resolve[*config.Config]()
+	br := r.Resolve[*BackendsResult]()
+	metricsDeps := r.Resolve[metrics.Deps]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -441,9 +441,9 @@ func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
 // and UI transports read dashboard data from a dependency of their own.
 func ProvideDashboardAggregator(i do.Injector) (*dashboard.Aggregator, error) {
 	r := newResolver(i)
-	rt := resolve[*infra.BackendRuntime](r)
-	br := resolve[*BackendsResult](r)
-	stores := resolve[metadataStore](r)
+	rt := r.Resolve[*infra.BackendRuntime]()
+	br := r.Resolve[*BackendsResult]()
+	stores := r.Resolve[metadataStore]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -462,9 +462,9 @@ func ProvideDashboardAggregator(i do.Injector) (*dashboard.Aggregator, error) {
 // talk to it directly.
 func ProvideExpiryManager(i do.Injector) (*expiry.Manager, error) {
 	r := newResolver(i)
-	cfg := resolve[*config.Config](r)
-	objects := resolve[*object.Manager](r)
-	stores := resolve[metadataStore](r)
+	cfg := r.Resolve[*config.Config]()
+	objects := r.Resolve[*object.Manager]()
+	stores := r.Resolve[metadataStore]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -478,8 +478,8 @@ func ProvideExpiryManager(i do.Injector) (*expiry.Manager, error) {
 // manager's union.
 func ProvideReconcileManager(i do.Injector) (*reconcile.Manager, error) {
 	r := newResolver(i)
-	rt := resolve[*infra.BackendRuntime](r)
-	stores := resolve[metadataStore](r)
+	rt := r.Resolve[*infra.BackendRuntime]()
+	stores := r.Resolve[metadataStore]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -505,9 +505,9 @@ func ProvideReconcileManager(i do.Injector) (*reconcile.Manager, error) {
 // call through it on every flush.
 func ProvideUsageService(i do.Injector) (*usage.Service, error) {
 	r := newResolver(i)
-	rt := resolve[*infra.BackendRuntime](r)
-	stores := resolve[metadataStore](r)
-	drainManager := resolve[*drain.Manager](r)
+	rt := r.Resolve[*infra.BackendRuntime]()
+	stores := r.Resolve[metadataStore]()
+	drainManager := r.Resolve[*drain.Manager]()
 	if r.err != nil {
 		return nil, r.err
 	}

@@ -83,28 +83,28 @@ func isBackendError(err error) bool {
 
 // PutObject uploads an object to the backend with circuit breaker protection.
 func (cb *CircuitBreakerBackend) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
-	return breaker.CBCall(cb.CircuitBreaker, func() (string, error) {
+	return cb.Call(func() (string, error) {
 		return cb.real.PutObject(ctx, key, body, size, contentType, metadata)
 	})
 }
 
 // GetObject retrieves an object from the backend with circuit breaker protection.
 func (cb *CircuitBreakerBackend) GetObject(ctx context.Context, key string, rangeHeader string) (*GetObjectResult, error) {
-	return breaker.CBCall(cb.CircuitBreaker, func() (*GetObjectResult, error) {
+	return cb.Call(func() (*GetObjectResult, error) {
 		return cb.real.GetObject(ctx, key, rangeHeader)
 	})
 }
 
 // HeadObject retrieves object metadata with circuit breaker protection.
 func (cb *CircuitBreakerBackend) HeadObject(ctx context.Context, key string) (*HeadObjectResult, error) {
-	return breaker.CBCall(cb.CircuitBreaker, func() (*HeadObjectResult, error) {
+	return cb.Call(func() (*HeadObjectResult, error) {
 		return cb.real.HeadObject(ctx, key)
 	})
 }
 
 // DeleteObject removes an object from the backend with circuit breaker protection.
 func (cb *CircuitBreakerBackend) DeleteObject(ctx context.Context, key string) error {
-	return breaker.CBCallNoResult(cb.CircuitBreaker, func() error {
+	return cb.CallNoResult(func() error {
 		return cb.real.DeleteObject(ctx, key)
 	})
 }
@@ -120,7 +120,7 @@ func (cb *CircuitBreakerBackend) CopyObject(ctx context.Context, srcKey, dstKey,
 	if !ok {
 		return "", ErrCopyNotSupported
 	}
-	return breaker.CBCall(cb.CircuitBreaker, func() (string, error) {
+	return cb.Call(func() (string, error) {
 		return copier.CopyObject(ctx, srcKey, dstKey, contentType, metadata)
 	})
 }

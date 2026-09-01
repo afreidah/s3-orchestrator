@@ -77,9 +77,9 @@ type adminActionOp[R any] struct {
 // isn't already running, then fires the work in a goroutine and returns
 // 202 Accepted.
 //
-// A free function rather than a method because Go methods cannot take type
-// parameters, and the response type is what makes each action's payload typed.
-func startAdminAction[R any](h *Handler, w http.ResponseWriter, r *http.Request, op adminActionOp[R]) {
+// The type parameter is the response type, which is what makes each action's
+// payload typed rather than a map.
+func (h *Handler) startAdminAction[R any](w http.ResponseWriter, r *http.Request, op adminActionOp[R]) {
 	setSecurityHeaders(w)
 	if !httputil.RequireMethod(w, r, http.MethodPost) {
 		return
@@ -115,7 +115,7 @@ func startAdminAction[R any](h *Handler, w http.ResponseWriter, r *http.Request,
 // writeAdminActionStatus serialises the polling response for an admin action.
 // The three states that carry no counts render without the action's own type;
 // only a finished run reaches render.
-func writeAdminActionStatus[R any](h *Handler, w http.ResponseWriter, op adminActionOp[R]) {
+func (h *Handler) writeAdminActionStatus[R any](w http.ResponseWriter, op adminActionOp[R]) {
 	setSecurityHeaders(w)
 	w.Header().Set(headerContentType, contentTypeJSON)
 	enc := json.NewEncoder(w)
@@ -172,14 +172,14 @@ func (h *Handler) replicateOp() adminActionOp[replicateStatus] {
 
 // handleAPIReplicate triggers one replication cycle in the background.
 func (h *Handler) handleAPIReplicate(w http.ResponseWriter, r *http.Request) {
-	startAdminAction(h, w, r, h.replicateOp())
+	h.startAdminAction(w, r, h.replicateOp())
 }
 
 // handleAPIReplicateStatus returns the latest progress payload for the
 // replicate admin action so the dashboard can poll without re-issuing the
 // trigger.
 func (h *Handler) handleAPIReplicateStatus(w http.ResponseWriter, _ *http.Request) {
-	writeAdminActionStatus(h, w, h.replicateOp())
+	h.writeAdminActionStatus(w, h.replicateOp())
 }
 
 // -------------------------------------------------------------------------
@@ -215,13 +215,13 @@ func (h *Handler) scrubOp() adminActionOp[scrubStatus] {
 
 // handleAPIScrub triggers one integrity-verification scrub pass.
 func (h *Handler) handleAPIScrub(w http.ResponseWriter, r *http.Request) {
-	startAdminAction(h, w, r, h.scrubOp())
+	h.startAdminAction(w, r, h.scrubOp())
 }
 
 // handleAPIScrubStatus returns the latest progress payload for the scrub admin
 // action so the dashboard can poll without re-triggering.
 func (h *Handler) handleAPIScrubStatus(w http.ResponseWriter, _ *http.Request) {
-	writeAdminActionStatus(h, w, h.scrubOp())
+	h.writeAdminActionStatus(w, h.scrubOp())
 }
 
 // -------------------------------------------------------------------------
@@ -259,13 +259,13 @@ func (h *Handler) backfillOp() adminActionOp[backfillStatus] {
 // handleAPIBackfillChecksums triggers a checksum backfill pass over every
 // object that lacks a content hash.
 func (h *Handler) handleAPIBackfillChecksums(w http.ResponseWriter, r *http.Request) {
-	startAdminAction(h, w, r, h.backfillOp())
+	h.startAdminAction(w, r, h.backfillOp())
 }
 
 // handleAPIBackfillChecksumsStatus returns the latest progress payload for the
 // backfill-checksums admin action.
 func (h *Handler) handleAPIBackfillChecksumsStatus(w http.ResponseWriter, _ *http.Request) {
-	writeAdminActionStatus(h, w, h.backfillOp())
+	h.writeAdminActionStatus(w, h.backfillOp())
 }
 
 // -------------------------------------------------------------------------
@@ -321,14 +321,14 @@ func (h *Handler) encryptOp(maxObjects int) adminActionOp[encryptExistingStatus]
 // The optional max query parameter caps how many objects this run rewrites, 0
 // or absent meaning the whole fleet.
 func (h *Handler) handleAPIEncryptExisting(w http.ResponseWriter, r *http.Request) {
-	startAdminAction(h, w, r, h.encryptOp(httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))))
+	h.startAdminAction(w, r, h.encryptOp(httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))))
 }
 
 // handleAPIEncryptExistingStatus returns the latest progress payload for the
 // encrypt-existing admin action. The cap only shapes the run, so polling passes
 // none.
 func (h *Handler) handleAPIEncryptExistingStatus(w http.ResponseWriter, _ *http.Request) {
-	writeAdminActionStatus(h, w, h.encryptOp(0))
+	h.writeAdminActionStatus(w, h.encryptOp(0))
 }
 
 // compressExistingStatus reports a compress-existing pass.
@@ -366,13 +366,13 @@ func (h *Handler) compressOp(maxObjects int) adminActionOp[compressExistingStatu
 // The optional max query parameter caps how many objects this run rewrites, 0
 // or absent meaning the whole fleet.
 func (h *Handler) handleAPICompressExisting(w http.ResponseWriter, r *http.Request) {
-	startAdminAction(h, w, r, h.compressOp(httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))))
+	h.startAdminAction(w, r, h.compressOp(httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))))
 }
 
 // handleAPICompressExistingStatus returns the latest progress payload for the
 // compress-existing admin action.
 func (h *Handler) handleAPICompressExistingStatus(w http.ResponseWriter, _ *http.Request) {
-	writeAdminActionStatus(h, w, h.compressOp(0))
+	h.writeAdminActionStatus(w, h.compressOp(0))
 }
 
 // decompressExistingStatus reports a decompress-existing pass.
@@ -404,13 +404,13 @@ func (h *Handler) decompressOp(maxObjects int) adminActionOp[decompressExistingS
 // the client wrote, which is how an operator takes the feature back out. Takes
 // the same optional max as the forward pass.
 func (h *Handler) handleAPIDecompressExisting(w http.ResponseWriter, r *http.Request) {
-	startAdminAction(h, w, r, h.decompressOp(httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))))
+	h.startAdminAction(w, r, h.decompressOp(httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))))
 }
 
 // handleAPIDecompressExistingStatus returns the latest progress payload for the
 // decompress-existing admin action.
 func (h *Handler) handleAPIDecompressExistingStatus(w http.ResponseWriter, _ *http.Request) {
-	writeAdminActionStatus(h, w, h.decompressOp(0))
+	h.writeAdminActionStatus(w, h.decompressOp(0))
 }
 
 // -------------------------------------------------------------------------
@@ -448,11 +448,11 @@ func (h *Handler) lifecycleOp() adminActionOp[lifecycleStatus] {
 // operator can confirm a rule they just wrote matches something without
 // waiting out the hourly tick.
 func (h *Handler) handleAPILifecycle(w http.ResponseWriter, r *http.Request) {
-	startAdminAction(h, w, r, h.lifecycleOp())
+	h.startAdminAction(w, r, h.lifecycleOp())
 }
 
 // handleAPILifecycleStatus returns the latest progress payload for the
 // lifecycle admin action.
 func (h *Handler) handleAPILifecycleStatus(w http.ResponseWriter, _ *http.Request) {
-	writeAdminActionStatus(h, w, h.lifecycleOp())
+	h.writeAdminActionStatus(w, h.lifecycleOp())
 }

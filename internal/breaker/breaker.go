@@ -403,8 +403,8 @@ func (cb *CircuitBreaker) transition(to State) {
 // GENERIC CALL HELPERS
 // -------------------------------------------------------------------------
 
-// CBCall wraps a call that returns (T, error) with circuit breaker logic.
-func CBCall[T any](cb *CircuitBreaker, fn func() (T, error)) (T, error) {
+// Call wraps a call that returns (T, error) with circuit breaker logic.
+func (cb *CircuitBreaker) Call[T any](fn func() (T, error)) (T, error) {
 	var zero T
 	if err := cb.PreCheck(); err != nil {
 		return zero, err
@@ -413,8 +413,8 @@ func CBCall[T any](cb *CircuitBreaker, fn func() (T, error)) (T, error) {
 	return result, cb.PostCheck(err)
 }
 
-// CBCallNoResult wraps a call that returns only error with circuit breaker logic.
-func CBCallNoResult(cb *CircuitBreaker, fn func() error) error {
+// CallNoResult wraps a call that returns only error with circuit breaker logic.
+func (cb *CircuitBreaker) CallNoResult(fn func() error) error {
 	if err := cb.PreCheck(); err != nil {
 		return err
 	}

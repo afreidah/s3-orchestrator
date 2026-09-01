@@ -151,7 +151,25 @@ curl -o /tmp/heap.pb.gz "http://127.0.0.1:9001/debug/pprof/heap"
 go tool pprof -top -cum -inuse_space /tmp/heap.pb.gz
 ```
 
-The standard `net/http/pprof` endpoints are available: `/debug/pprof/`, `/debug/pprof/profile`, `/debug/pprof/heap`, `/debug/pprof/allocs`, `/debug/pprof/goroutine`, `/debug/pprof/block`, `/debug/pprof/mutex`, `/debug/pprof/trace`, `/debug/pprof/cmdline`, `/debug/pprof/symbol`.
+The standard `net/http/pprof` endpoints are available: `/debug/pprof/`, `/debug/pprof/profile`, `/debug/pprof/heap`, `/debug/pprof/allocs`, `/debug/pprof/goroutine`, `/debug/pprof/goroutineleak`, `/debug/pprof/block`, `/debug/pprof/mutex`, `/debug/pprof/trace`, `/debug/pprof/cmdline`, `/debug/pprof/symbol`.
+
+#### Goroutine leak profile
+
+`/debug/pprof/goroutineleak` is a Go 1.27 addition and answers a different question from `/debug/pprof/goroutine`. The goroutine profile lists every goroutine that exists; the leak profile lists only those the runtime can prove are permanently blocked - goroutines waiting on a channel or mutex that nothing reachable can ever signal. On a slow goroutine climb this is the difference between a few thousand stacks to read through and the handful that are actually stuck.
+
+```bash
+# Human-readable list of leaked goroutines
+curl "http://127.0.0.1:9001/debug/pprof/goroutineleak?debug=1"
+
+# Same, as a pprof profile
+curl -o /tmp/leak.pb.gz "http://127.0.0.1:9001/debug/pprof/goroutineleak"
+go tool pprof -top /tmp/leak.pb.gz
+```
+
+Two things to know before reaching for it in production:
+
+- **Serving it runs a leak-detection garbage collection**, repeatedly, until the set of leaked goroutines stops growing. That is far more expensive than any other profile endpoint - it is a stop-the-world pass, not a sample - and the request does not return until it converges. Treat it like `/debug/pprof/profile?seconds=300`: fine for an investigation, not something to scrape on an interval.
+- **The count on the `/debug/pprof/` index page is stale until you fetch the profile at least once.** The index reports the number of goroutines currently *marked* leaked, and nothing marks them until a leak-detection GC runs. A fresh process therefore shows `0` no matter how many goroutines are stuck. Fetch the profile, then reload the index if you want the number.
 
 Key metrics to alert on:
 

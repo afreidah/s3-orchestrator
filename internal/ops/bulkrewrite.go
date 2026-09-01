@@ -132,7 +132,7 @@ func (o rewriteOutcome) status() string {
 	}
 }
 
-// runBulkRewrite is the shared driver for every bulk rewrite pass. A listing
+// run is the shared driver for every bulk rewrite pass. A listing
 // failure stops the run and returns the counts gathered so far alongside the
 // error, so a caller can report partial progress.
 //
@@ -147,7 +147,7 @@ func (o rewriteOutcome) status() string {
 // gap - a full fleet decompress skips every other page and stops early, having
 // reported success. The cursor names the last row seen, so rows leaving the set
 // behind it move nothing.
-func runBulkRewrite[L bulkRewriteRow](ctx context.Context, env bulkRewriteEnv, obs progress.Observer, op bulkRewriteOp[L]) (BulkRewriteResult, error) {
+func (op bulkRewriteOp[L]) run(ctx context.Context, env bulkRewriteEnv, obs progress.Observer) (BulkRewriteResult, error) {
 	var res BulkRewriteResult
 	var after core.Cursor
 	for {
@@ -161,7 +161,7 @@ func runBulkRewrite[L bulkRewriteRow](ctx context.Context, env bulkRewriteEnv, o
 			break
 		}
 
-		stop, err := runBulkRewritePage(ctx, env, obs, op, rows, &res, &after)
+		stop, err := op.runPage(ctx, env, obs, rows, &res, &after)
 		if err != nil {
 			return res, err
 		}
@@ -184,9 +184,9 @@ func runBulkRewrite[L bulkRewriteRow](ctx context.Context, env bulkRewriteEnv, o
 	return res, nil
 }
 
-// runBulkRewritePage processes one listing page, advancing res and the cursor.
+// runPage processes one listing page, advancing res and the cursor.
 // Reports whether the pass should stop because it reached its cap.
-func runBulkRewritePage[L bulkRewriteRow](ctx context.Context, env bulkRewriteEnv, obs progress.Observer, op bulkRewriteOp[L], rows []L, res *BulkRewriteResult, after *core.Cursor) (bool, error) {
+func (op bulkRewriteOp[L]) runPage(ctx context.Context, env bulkRewriteEnv, obs progress.Observer, rows []L, res *BulkRewriteResult, after *core.Cursor) (bool, error) {
 	for _, row := range rows {
 		// Checked per row rather than per page: without it a cancelled pass
 		// runs out the rest of the page, failing every remaining copy's
@@ -197,7 +197,7 @@ func runBulkRewritePage[L bulkRewriteRow](ctx context.Context, env bulkRewriteEn
 		res.Total++
 		outcome := rewriteErrored
 		progress.Track(obs, row.rewriteKey(), func() string {
-			outcome = processBulkLocation(ctx, env, op, row)
+			outcome = op.processLocation(ctx, env, row)
 			return outcome.status()
 		})
 		res.tally(outcome)
@@ -233,7 +233,7 @@ func bulkRewritePageSize(maxRewrites, rewritten int) int {
 	return bulkRewriteBatchSize
 }
 
-// processBulkLocation runs one rewrite step for a single location: admit the
+// processLocation runs one rewrite step for a single location: admit the
 // work against the backend's usage limits, download, transform, re-upload,
 // account for what it spent, then update metadata. Failures are logged and
 // counted rather than returned, so one bad object does not end the pass.
@@ -242,7 +242,7 @@ func bulkRewritePageSize(maxRewrites, rewritten int) int {
 // egress in the system and the one most able to exhaust a metered backend. It
 // is admitted per object rather than once per run because the budget is spent
 // as it goes: a run that fits when it starts can stop fitting halfway through.
-func processBulkLocation[L bulkRewriteRow](ctx context.Context, env bulkRewriteEnv, op bulkRewriteOp[L], loc L) rewriteOutcome {
+func (op bulkRewriteOp[L]) processLocation(ctx context.Context, env bulkRewriteEnv, loc L) rewriteOutcome {
 	key, backendName, sizeBytes := loc.rewriteKey(), loc.rewriteBackend(), loc.rewriteSize()
 
 	if op.declines != nil && op.declines(loc) {
@@ -263,13 +263,13 @@ func processBulkLocation[L bulkRewriteRow](ctx context.Context, env bulkRewriteE
 
 	be, err := env.runtime.GetBackend(backendName)
 	if err != nil {
-		return rewriteFailed(ctx, env, op, "backend not found", key, backendName, err)
+		return op.failed(ctx, env, "backend not found", key, backendName, err)
 	}
 
 	src, err := be.GetObject(ctx, key, "")
 	if err != nil {
 		env.usage.Record(backendName, 1, 0, 0)
-		return rewriteFailed(ctx, env, op, "download failed", key, backendName, err)
+		return op.failed(ctx, env, "download failed", key, backendName, err)
 	}
 	env.usage.Record(backendName, 1, src.Size, 0)
 
@@ -280,7 +280,7 @@ func processBulkLocation[L bulkRewriteRow](ctx context.Context, env bulkRewriteE
 			op.counter.WithLabelValues("skipped").Inc()
 			return rewriteSkipped
 		}
-		return rewriteFailed(ctx, env, op, "transform failed", key, backendName, err)
+		return op.failed(ctx, env, "transform failed", key, backendName, err)
 	}
 	if out.release != nil {
 		defer out.release()
@@ -290,21 +290,20 @@ func processBulkLocation[L bulkRewriteRow](ctx context.Context, env bulkRewriteE
 	src.Body.Close()
 	if err != nil {
 		env.usage.Record(backendName, 1, 0, 0)
-		return rewriteFailed(ctx, env, op, "re-upload failed", key, backendName, err)
+		return op.failed(ctx, env, "re-upload failed", key, backendName, err)
 	}
 	env.usage.Record(backendName, 1, 0, out.size)
 
 	if err := out.commit(); err != nil {
-		return rewriteFailed(ctx, env, op, "metadata update failed", key, backendName, err)
+		return op.failed(ctx, env, "metadata update failed", key, backendName, err)
 	}
 
 	op.counter.WithLabelValues("success").Inc()
 	return rewriteDone
 }
 
-// rewriteFailed records one non-fatal rewrite failure. A free function rather
-// than a method, since it is parameterised by row type.
-func rewriteFailed[L bulkRewriteRow](ctx context.Context, env bulkRewriteEnv, op bulkRewriteOp[L], msg, key, backendName string, err error) rewriteOutcome {
+// failed records one non-fatal rewrite failure.
+func (op bulkRewriteOp[L]) failed(ctx context.Context, env bulkRewriteEnv, msg, key, backendName string, err error) rewriteOutcome {
 	env.log.WarnContext(ctx, op.opName+": "+msg, "key", key, "backend", backendName, "error", err)
 	op.counter.WithLabelValues("error").Inc()
 	return rewriteErrored

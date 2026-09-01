@@ -69,8 +69,8 @@ type metadataStore interface {
 // provider does no wrapping of its own.
 func provideMetadataStore(i do.Injector) (metadataStore, error) {
 	r := newResolver(i)
-	cfg := resolve[*config.Config](r)
-	cb := resolve[*breaker.CircuitBreaker](r)
+	cfg := r.Resolve[*config.Config]()
+	cb := r.Resolve[*breaker.CircuitBreaker]()
 	if r.err != nil {
 		return nil, r.err
 	}
