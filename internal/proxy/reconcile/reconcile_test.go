@@ -26,7 +26,6 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
@@ -520,9 +519,8 @@ func TestS3KeyStream_EmitsEveryKeyUntouched(t *testing.T) {
 		{{Key: "other/x", SizeBytes: 9}, {Key: "test.txt", SizeBytes: 2}},
 		{{Key: "vb/a", SizeBytes: 1}, {Key: "vb/z", SizeBytes: 3}},
 	}
-	var apiPages atomic.Int64
 	s3 := NewS3KeyStream(context.Background(),
-		&fakeLister2{pages: pages}, []string{"vb/", "other/"}, &apiPages)
+		&fakeLister2{pages: pages}, []string{"vb/", "other/"}, nil, "")
 	defer s3.Stop()
 
 	got := drainStream(t, s3)
@@ -530,16 +528,13 @@ func TestS3KeyStream_EmitsEveryKeyUntouched(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	if got := apiPages.Load(); got != 2 {
-		t.Errorf("apiPages = %d, want 2", got)
-	}
 }
 
 // TestS3KeyStream_TagsUnmanagedKeys confirms the stream carries the
 // classification the importer needs, rather than encoding it in the key.
 func TestS3KeyStream_TagsUnmanagedKeys(t *testing.T) {
 	pages := [][]backend.ListedObject{{{Key: "test.txt"}, {Key: "vb/a"}}}
-	s3 := NewS3KeyStream(context.Background(), &fakeLister2{pages: pages}, []string{"vb/"}, nil)
+	s3 := NewS3KeyStream(context.Background(), &fakeLister2{pages: pages}, []string{"vb/"}, nil, "")
 	defer s3.Stop()
 
 	stray, _, _ := s3.Next(context.Background())
@@ -560,7 +555,7 @@ func TestS3KeyStream_PropagatesListerError(t *testing.T) {
 		&fakeLister2{
 			pages: [][]backend.ListedObject{{{Key: "vb/a", SizeBytes: 1}}},
 			err:   want,
-		}, []string{"vb/"}, nil)
+		}, []string{"vb/"}, nil, "")
 	defer s3.Stop()
 
 	// First entry comes through cleanly.
@@ -581,7 +576,7 @@ func TestS3KeyStream_StopUnblocksGoroutine(t *testing.T) {
 		{{Key: "vb/a", SizeBytes: 1}, {Key: "vb/b", SizeBytes: 2}},
 	}
 	s3 := NewS3KeyStream(context.Background(),
-		&fakeLister2{pages: pages}, []string{"vb/"}, nil)
+		&fakeLister2{pages: pages}, []string{"vb/"}, nil, "")
 
 	// Pull one entry, then stop without draining.
 	if _, ok, err := s3.Next(context.Background()); err != nil || !ok {
@@ -601,7 +596,7 @@ func TestS3KeyStream_ContextCancelTerminates(t *testing.T) {
 	cancel()
 	s3 := NewS3KeyStream(ctx, &fakeLister2{
 		pages: [][]backend.ListedObject{{{Key: "vb/a", SizeBytes: 1}}},
-	}, []string{"vb/"}, nil)
+	}, []string{"vb/"}, nil, "")
 	defer s3.Stop()
 
 	if _, _, err := s3.Next(ctx); err == nil {
