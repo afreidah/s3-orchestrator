@@ -131,6 +131,8 @@ func maintenanceActions() []opsAction {
 			"Backfill missing object checksums?", nil),
 		post("Reconcile metadata", "/admin/api/reconcile",
 			"Reconcile metadata against backends?", nil),
+		post("Expire objects (lifecycle rules)", "/admin/api/lifecycle",
+			"Apply every lifecycle rule now instead of waiting for the hourly sweep?", decodeOneShot[lifecycleResult]),
 		post("Reconcile usage counters", "/admin/api/usage-reconcile",
 			"Reconcile usage counters across all backends?", decodeOneShot[usageReconcileResult]),
 		post("Flush usage counters to the database", "/admin/api/usage-flush",

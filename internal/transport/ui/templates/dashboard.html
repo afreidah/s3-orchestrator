@@ -73,6 +73,7 @@
       <button id="sync-btn" class="btn-action" title="Scan a backend bucket and register objects that exist in storage but are missing from the orchestrator's metadata, mapping them into a virtual bucket.">Sync</button>
       <button id="replicate-btn" class="btn-action" title="Run one immediate replication pass to copy under-replicated objects to additional backends until they meet the configured replication factor.">Replicate Now</button>
       {{if .Config.IntegrityEnabled}}
+      <button id="lifecycle-btn" class="btn-action" title="Apply every configured lifecycle rule once, instead of waiting for the hourly sweep. Reports deleted and failed counts, so a rule that matches nothing is distinguishable from one that ran and found nothing expired. Reports skipped when no rules are configured.">Expire Now</button>
       <button id="scrub-btn" class="btn-action" title="Verify stored object checksums against backend data to detect corruption. Reports number checked and number failed.">Scrub</button>
       <button id="backfill-checksums-btn" class="btn-action" title="Compute and persist content hashes for objects that don't yet have one (e.g. uploaded before checksumming was enabled).">Backfill Checksums</button>
       {{end}}

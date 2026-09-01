@@ -39,6 +39,7 @@ var (
 	ErrReplicationDisabled   = &SkipError{Reason: "replication not configured or factor <= 1"}
 	ErrEncryptionDisabled    = &SkipError{Reason: "encryption not enabled"}
 	ErrRebalancerUnavailable = &SkipError{Reason: "rebalancer not available"}
+	ErrLifecycleUnavailable  = &SkipError{Reason: "lifecycle manager not available"}
 
 	// ErrCompressionUnavailable reports no codec, which is a different state
 	// from compression being disabled for writes: a codec is built either way

@@ -359,6 +359,19 @@ paths:
                                 $ref: '#/components/schemas/Event'
                 "401":
                     description: Missing or invalid admin token
+    /admin/api/lifecycle:
+        post:
+            summary: Run one lifecycle expiration sweep
+            operationId: postLifecycle
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/LifecycleResponse'
+                "401":
+                    description: Missing or invalid admin token
     /admin/api/log-level:
         get:
             summary: Current runtime log level
@@ -1243,6 +1256,23 @@ components:
                 - oldest_unverified_seconds
                 - never_verified_copies
                 - plaintext_copies
+            type: object
+        LifecycleResponse:
+            properties:
+                deleted:
+                    format: int64
+                    type: integer
+                failed:
+                    format: int64
+                    type: integer
+                reason:
+                    type: string
+                status:
+                    type: string
+            required:
+                - status
+                - deleted
+                - failed
             type: object
         LogEntry:
             properties:

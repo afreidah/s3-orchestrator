@@ -412,3 +412,47 @@ func (h *Handler) handleAPIDecompressExisting(w http.ResponseWriter, r *http.Req
 func (h *Handler) handleAPIDecompressExistingStatus(w http.ResponseWriter, _ *http.Request) {
 	writeAdminActionStatus(h, w, h.decompressOp(0))
 }
+
+// -------------------------------------------------------------------------
+// LIFECYCLE
+// -------------------------------------------------------------------------
+
+// lifecycleStatus reports an expiration sweep. The dashboard keys on deleted.
+type lifecycleStatus struct {
+	adminActionState
+	Deleted int `json:"deleted"`
+	Failed  int `json:"failed"`
+}
+
+// lifecycleOp is the lifecycle action, shared by its trigger and its poll.
+func (h *Handler) lifecycleOp() adminActionOp[lifecycleStatus] {
+	return adminActionOp[lifecycleStatus]{
+		name: opLifecycle,
+		run: func(ctx context.Context) (adminActionCounts, string, error) {
+			res, err := h.expiry.Run(ctx)
+			if reason, skipped := skipReason(err); skipped {
+				return adminActionCounts{}, reason, nil
+			}
+			if err != nil {
+				return adminActionCounts{}, "", err
+			}
+			return adminActionCounts{Count: res.Deleted, Failed: res.Failed}, "", nil
+		},
+		render: func(s adminActionState, c adminActionCounts) lifecycleStatus {
+			return lifecycleStatus{adminActionState: s, Deleted: c.Count, Failed: c.Failed}
+		},
+	}
+}
+
+// handleAPILifecycle runs one expiration sweep in the background, so an
+// operator can confirm a rule they just wrote matches something without
+// waiting out the hourly tick.
+func (h *Handler) handleAPILifecycle(w http.ResponseWriter, r *http.Request) {
+	startAdminAction(h, w, r, h.lifecycleOp())
+}
+
+// handleAPILifecycleStatus returns the latest progress payload for the
+// lifecycle admin action.
+func (h *Handler) handleAPILifecycleStatus(w http.ResponseWriter, _ *http.Request) {
+	writeAdminActionStatus(h, w, h.lifecycleOp())
+}

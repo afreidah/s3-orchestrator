@@ -222,6 +222,16 @@ func TestNewOneShotResults_Describe(t *testing.T) {
 			want: "decrypted 1 object, 1 failed",
 		},
 		{
+			name: "lifecycle sweep",
+			res:  lifecycleResult{adminapi.LifecycleResponse{Status: "ok", Deleted: 9}},
+			want: "9 objects expired",
+		},
+		{
+			name: "lifecycle sweep with failures",
+			res:  lifecycleResult{adminapi.LifecycleResponse{Status: "ok", Deleted: 1, Failed: 2}},
+			want: "1 object expired, 2 failures",
+		},
+		{
 			name: "rotate key",
 			res: rotateKeyResult{adminapi.RotateEncryptionKeyResponse{
 				Status: "complete", Total: 5,
@@ -252,6 +262,28 @@ func TestNewOneShotResults_ReportSkips(t *testing.T) {
 		Status: statusSkipped,
 	}}
 	if got := res.skipReason(); got != statusSkipped {
+		t.Errorf("skipReason = %q, want %q", got, statusSkipped)
+	}
+}
+
+// TestLifecycleResult_SkipSurfacesTheServersReason asserts the lifecycle skip
+// carries the server's explanation rather than the bare status. "no lifecycle
+// rules are configured" is the answer an operator checking a rule they just
+// wrote actually needs; "skipped" on its own tells them nothing.
+func TestLifecycleResult_SkipSurfacesTheServersReason(t *testing.T) {
+	t.Parallel()
+	res := lifecycleResult{adminapi.LifecycleResponse{
+		Status: statusSkipped,
+		Reason: "no lifecycle rules are configured",
+	}}
+	if got := res.skipReason(); got != "no lifecycle rules are configured" {
+		t.Errorf("skipReason = %q, want the server's reason", got)
+	}
+
+	// A skip with no reason still has to read as a skip rather than as a
+	// completed sweep of zero.
+	bare := lifecycleResult{adminapi.LifecycleResponse{Status: statusSkipped}}
+	if got := bare.skipReason(); got != statusSkipped {
 		t.Errorf("skipReason = %q, want %q", got, statusSkipped)
 	}
 }
