@@ -147,6 +147,22 @@ loose index scan (recursive CTE skip-scan), so latency tracks the number of
 prefixes returned rather than the namespace size; it should stay roughly flat
 across these rows.
 
+Plain prefix listings are served index-only from
+`idx_object_locations_key_collate_c_covering`, which carries
+`(object_key COLLATE "C", created_at)` as its key and the projected
+`backend_name`, `size_bytes` and `etag` as payload. Both halves matter, because
+`DISTINCT ON` walks every replica row per key and emits one: the payload is what
+keeps those rows off the heap, and `created_at` in the key is what lets the
+first row of each group win without a sort. On 360 K rows (120 K keys x 3
+copies), one 1000-key page reads 51 buffers instead of 3017.
+
+The remaining caveat is the visibility map. An index-only scan still fetches
+from the heap for rows on pages not marked all-visible, and `object_locations`
+is churned constantly by the replicator and the cleanup queue. Expect a listing
+on a busy fleet to land somewhere between the two figures above rather than at
+the floor, and autovacuum settings to matter more than they would on a
+read-mostly table.
+
 ### Scenario 5 - Concurrent multipart
 
 **Environment:** _fill_
