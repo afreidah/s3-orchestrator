@@ -349,6 +349,14 @@
         </div>
       </div>
       <div class="config-card">
+        <div class="label">Compression</div>
+        <div class="value">
+          {{if .Config.CompressionEnabled}}enabled
+          {{else}}disabled
+          {{end}}
+        </div>
+      </div>
+      <div class="config-card">
         <div class="label">Integrity</div>
         <div class="value">
           {{if .Config.IntegrityEnabled}}enabled

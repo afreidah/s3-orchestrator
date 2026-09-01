@@ -656,7 +656,9 @@ genuinely missing dependency surfaces at boot, not at first use.
 - Storing the injector as a field on a non-handler struct. Workers,
   managers, and stores receive their dependencies as constructor args
   resolved in the provider; only handlers (HTTP/CLI entry points) carry
-  the injector itself.
+  the injector itself. Adding a store method has its own mechanical
+  checklist, in
+  [`docs/contributing/store.md`](contributing/store.md).
 
 ### Constructor Patterns
 

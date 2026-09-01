@@ -3,7 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// One helper per storage operation that bundles audit.Log + event.Emit +
+// One helper per storage operation that bundles audit.Log + event.Publish +
 // span.SetStatus so the audit signature for "storage.PutObject" lives in
 // exactly one place and cannot drift across the object/, multipart/, and
 // writepath/ call sites. Accounting and cache invalidation are NOT here:
@@ -43,20 +43,14 @@ func PutCompleted(ctx context.Context, span trace.Span, key, backend string, siz
 		slog.String("backend", backend),
 		slog.Int64("size", size),
 	)
-	if event.Emit != nil {
-		bucket, userKey := internalkey.Split(key)
-		event.Emit(event.Event{
-			Type:    event.ObjectCreatedPut,
-			Subject: userKey,
-			Data: map[string]any{
-				"bucket":     bucket,
-				"key":        userKey,
-				"backend":    backend,
-				"size":       size,
-				"request_id": audit.RequestID(ctx),
-			},
-		})
-	}
+	bucket, userKey := internalkey.Split(key)
+	event.Publish(event.ObjectCreatedPut, userKey, map[string]any{
+		"bucket":     bucket,
+		"key":        userKey,
+		"backend":    backend,
+		"size":       size,
+		"request_id": audit.RequestID(ctx),
+	})
 	span.SetStatus(codes.Ok, "")
 }
 
@@ -71,21 +65,15 @@ func CopyCompleted(ctx context.Context, span trace.Span, sourceKey, destKey, sou
 		slog.String("dest_backend", destBackend),
 		slog.Int64("size", size),
 	)
-	if event.Emit != nil {
-		bucket, userKey := internalkey.Split(destKey)
-		event.Emit(event.Event{
-			Type:    event.ObjectCreatedCopy,
-			Subject: userKey,
-			Data: map[string]any{
-				"bucket":     bucket,
-				"key":        userKey,
-				"source_key": sourceKey,
-				"backend":    destBackend,
-				"size":       size,
-				"request_id": audit.RequestID(ctx),
-			},
-		})
-	}
+	bucket, userKey := internalkey.Split(destKey)
+	event.Publish(event.ObjectCreatedCopy, userKey, map[string]any{
+		"bucket":     bucket,
+		"key":        userKey,
+		"source_key": sourceKey,
+		"backend":    destBackend,
+		"size":       size,
+		"request_id": audit.RequestID(ctx),
+	})
 	span.SetStatus(codes.Ok, "")
 }
 
@@ -97,19 +85,13 @@ func DeleteCompleted(ctx context.Context, span trace.Span, key string, copiesDel
 		slog.String("key", key),
 		slog.Int("copies_deleted", copiesDeleted),
 	)
-	if event.Emit != nil {
-		bucket, userKey := internalkey.Split(key)
-		event.Emit(event.Event{
-			Type:    event.ObjectRemovedDelete,
-			Subject: userKey,
-			Data: map[string]any{
-				"bucket":         bucket,
-				"key":            userKey,
-				"copies_deleted": copiesDeleted,
-				"request_id":     audit.RequestID(ctx),
-			},
-		})
-	}
+	bucket, userKey := internalkey.Split(key)
+	event.Publish(event.ObjectRemovedDelete, userKey, map[string]any{
+		"bucket":         bucket,
+		"key":            userKey,
+		"copies_deleted": copiesDeleted,
+		"request_id":     audit.RequestID(ctx),
+	})
 	span.SetStatus(codes.Ok, "")
 }
 
@@ -124,17 +106,12 @@ func DeleteBatchCompleted(ctx context.Context, span trace.Span, totalKeys, delet
 		slog.Int("deleted", deleted),
 		slog.Int("errors", errors),
 	)
-	if event.Emit != nil {
-		event.Emit(event.Event{
-			Type: event.ObjectRemovedDeleteBatch,
-			Data: map[string]any{
-				"total_keys": totalKeys,
-				"deleted":    deleted,
-				"errors":     errors,
-				"request_id": audit.RequestID(ctx),
-			},
-		})
-	}
+	event.Publish(event.ObjectRemovedDeleteBatch, "", map[string]any{
+		"total_keys": totalKeys,
+		"deleted":    deleted,
+		"errors":     errors,
+		"request_id": audit.RequestID(ctx),
+	})
 	span.SetStatus(codes.Ok, "")
 }
 
@@ -236,21 +213,15 @@ func MultipartCompleted(ctx context.Context, span trace.Span, key, backend, uplo
 		slog.Int64("total_size", totalSize),
 		slog.Int("parts_count", partsCount),
 	)
-	if event.Emit != nil {
-		bucket, userKey := internalkey.Split(key)
-		event.Emit(event.Event{
-			Type:    event.ObjectCreatedCompleteMultipartUpload,
-			Subject: userKey,
-			Data: map[string]any{
-				"bucket":      bucket,
-				"key":         userKey,
-				"backend":     backend,
-				"size":        totalSize,
-				"parts_count": partsCount,
-				"upload_id":   uploadID,
-				"request_id":  audit.RequestID(ctx),
-			},
-		})
-	}
+	bucket, userKey := internalkey.Split(key)
+	event.Publish(event.ObjectCreatedCompleteMultipartUpload, userKey, map[string]any{
+		"bucket":      bucket,
+		"key":         userKey,
+		"backend":     backend,
+		"size":        totalSize,
+		"parts_count": partsCount,
+		"upload_id":   uploadID,
+		"request_id":  audit.RequestID(ctx),
+	})
 	span.SetStatus(codes.Ok, "")
 }

@@ -174,18 +174,11 @@ func (mc *Collector) maybeEmitCapacityWarning(ctx context.Context, name string, 
 		"utilization_pct", int(utilization*100),
 		"bytes_available", available,
 		"bytes_limit", stat.BytesLimit)
-	if event.Emit == nil {
-		return
-	}
-	event.Emit(event.Event{
-		Type:    event.BackendCapacityWarning,
-		Subject: name,
-		Data: map[string]any{
-			"backend":         name,
-			"utilization_pct": int(utilization * 100),
-			"bytes_available": available,
-			"bytes_limit":     stat.BytesLimit,
-		},
+	event.Publish(event.BackendCapacityWarning, name, map[string]any{
+		"backend":         name,
+		"utilization_pct": int(utilization * 100),
+		"bytes_available": available,
+		"bytes_limit":     stat.BytesLimit,
 	})
 }
 

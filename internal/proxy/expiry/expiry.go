@@ -22,7 +22,9 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -153,6 +155,13 @@ func (m *Manager) deleteBatch(ctx context.Context, rule config.LifecycleRule, ob
 			slog.String("prefix", rule.Prefix),
 			slog.Int("expiration_days", rule.ExpirationDays),
 		)
+		bucket, userKey := internalkey.Split(key)
+		event.Publish(event.LifecycleDelete, userKey, map[string]any{
+			"bucket":          bucket,
+			"key":             userKey,
+			"prefix":          rule.Prefix,
+			"expiration_days": rule.ExpirationDays,
+		})
 		telemetry.LifecycleDeletedTotal.Inc()
 		deleted++
 	}

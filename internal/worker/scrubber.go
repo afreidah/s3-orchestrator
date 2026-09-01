@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
@@ -362,6 +363,13 @@ func (s *Scrubber) verifyObject(ctx context.Context, loc *core.ObjectLocation) (
 			"key", loc.ObjectKey, "backend", loc.BackendName,
 			"expected_hash", loc.ContentHash, "actual_hash", actual.SHA256)
 		telemetry.IntegrityErrorsTotal.WithLabelValues("scrub").Inc()
+		event.Publish(event.IntegrityCorruptionFound, loc.ObjectKey, map[string]any{
+			"key":           loc.ObjectKey,
+			"backend":       loc.BackendName,
+			"expected_hash": loc.ContentHash,
+			"actual_hash":   actual.SHA256,
+			"size_bytes":    loc.SizeBytes,
+		})
 		if be != nil {
 			s.placement.DeleteOrEnqueue(ctx, be, loc.BackendName, loc.ObjectKey,
 				"integrity_scrub_failed", loc.SizeBytes)

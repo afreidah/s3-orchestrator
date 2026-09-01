@@ -31,6 +31,7 @@ import (
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -135,6 +136,11 @@ func (c *Coordinator) LastResult() *Result {
 
 // Generation returns the monotonic generation counter. Starts at 0;
 // advances on every successful Apply pass (full or partial).
+//
+// The admin API reports the same number through LastResult, which carries the
+// rest of the pass with it. This accessor answers the narrower question without
+// a result to unpack, and is nil-safe before the first reload, where
+// LastResult is not.
 func (c *Coordinator) Generation() int64 {
 	return c.generation.Load()
 }
@@ -239,11 +245,21 @@ func (c *Coordinator) finalize(ctx context.Context, r *Result) *Result {
 			"generation", r.Generation,
 			"failed_hook", firstFailedHookName(r),
 		)
+		event.Publish(event.ConfigReloadFailed, "", map[string]any{
+			"generation":   r.Generation,
+			"status":       string(r.Status),
+			"failed_hooks": failedHookNames(r),
+		})
 	case ReloadLoadFailed:
 		c.log.ErrorContext(ctx, "config reload aborted, keeping current config",
 			"generation", r.Generation,
 			"error", r.LoadError,
 		)
+		event.Publish(event.ConfigReloadFailed, "", map[string]any{
+			"generation": r.Generation,
+			"status":     string(r.Status),
+			"error":      r.LoadError,
+		})
 	}
 	return r
 }

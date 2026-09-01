@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -98,8 +99,8 @@ func TestScrub_MatchingHash(t *testing.T) {
 
 // TestScrub_HashMismatch verifies the scrub hash mismatch contract.
 // Asserts that expected 1 checked, got.
+// Not parallel: the assertion swaps the process-global event.Emit hook.
 func TestScrub_HashMismatch(t *testing.T) {
-	t.Parallel()
 	s, ops, pl, be, ms := setupScrubber(t)
 
 	ms.randomHashedObjects = []core.ObjectLocation{
@@ -113,6 +114,11 @@ func TestScrub_HashMismatch(t *testing.T) {
 		Size: 11,
 	}, func() {}, nil)
 
+	var emitted []event.Event
+	prevEmit := event.Emit
+	event.Emit = func(ev event.Event) { emitted = append(emitted, ev) }
+	t.Cleanup(func() { event.Emit = prevEmit })
+
 	scrubSum := s.Scrub(context.Background(), 10, nil)
 	checked, failed := scrubSum.Attempted, scrubSum.Failed
 	if checked != 1 {
@@ -120,6 +126,19 @@ func TestScrub_HashMismatch(t *testing.T) {
 	}
 	if failed != 1 {
 		t.Errorf("expected 1 failed, got %d", failed)
+	}
+
+	// Discovering corruption is the one thing an operator most needs told
+	// about out of band; a mismatch that only reaches the logs is one nobody
+	// finds until they try to read the object.
+	if len(emitted) != 1 || emitted[0].Type != event.IntegrityCorruptionFound {
+		t.Fatalf("emitted = %+v, want one %s event", emitted, event.IntegrityCorruptionFound)
+	}
+	if emitted[0].Subject != "bucket/key1" {
+		t.Errorf("subject = %q, want the corrupted key", emitted[0].Subject)
+	}
+	if emitted[0].Data["backend"] != "b1" || emitted[0].Data["expected_hash"] != "badhash" {
+		t.Errorf("data = %v, want the backend and the hash that did not match", emitted[0].Data)
 	}
 }
 

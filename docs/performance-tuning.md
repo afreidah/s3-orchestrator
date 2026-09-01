@@ -408,6 +408,8 @@ Prometheus metrics always capture 100% of requests regardless of sample rate —
 
 The `loadtest/` directory contains tools for benchmarking the orchestrator under realistic S3 traffic. All tools handle SigV4 authentication automatically.
 
+To characterise a deployment end to end rather than tune one knob, [`performance-envelope.md`](performance-envelope.md) is the runbook: it defines the scenarios these tools drive and gives result tables to fill in for your own hardware.
+
 ### Tools
 
 **vegeta (Go)** — constant-rate latency profiling. Best for answering "what is P99 latency at N requests/second?"

@@ -40,7 +40,7 @@ var errBoom = errors.New("boom")
 func TestOptional_Disabled(t *testing.T) {
 	inj := do.New()
 	res := Optional[*optionalProbe](inj)
-	if !res.Disabled() {
+	if res.Resolution != ResolutionDisabled {
 		t.Fatalf("expected Disabled, got %s", res.Resolution)
 	}
 	if res.Value != nil {
@@ -59,7 +59,7 @@ func TestOptional_Applied(t *testing.T) {
 		return &optionalProbe{name: "ok"}, nil
 	})
 	res := Optional[*optionalProbe](inj)
-	if !res.Applied() {
+	if res.Resolution != ResolutionApplied {
 		t.Fatalf("expected Applied, got %s (err=%v)", res.Resolution, res.Err)
 	}
 	if res.Value == nil || res.Value.name != "ok" {
@@ -113,7 +113,7 @@ func TestOptional_FailedTransitiveDep(t *testing.T) {
 // nil injector in reduced run modes.
 func TestOptional_NilInjector(t *testing.T) {
 	res := Optional[*optionalProbe](nil)
-	if !res.Disabled() {
+	if res.Resolution != ResolutionDisabled {
 		t.Fatalf("expected Disabled, got %s", res.Resolution)
 	}
 }

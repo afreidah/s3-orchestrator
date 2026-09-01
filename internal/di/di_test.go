@@ -674,7 +674,7 @@ func TestNewInjector_PendingReaperDisabled(t *testing.T) {
 		t.Error("PendingReaper should NOT be registered when feature disabled")
 	}
 	res := Optional[*worker.PendingReaper](inj)
-	if !res.Disabled() {
+	if res.Resolution != ResolutionDisabled {
 		t.Errorf("Optional[*worker.PendingReaper].Resolution = %s, want disabled", res.Resolution)
 	}
 	if res.Failed() {

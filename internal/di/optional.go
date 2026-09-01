@@ -46,12 +46,6 @@ type OptionalResult[T any] struct {
 	Err        error
 }
 
-// Disabled reports whether the underlying provider was not registered.
-func (r OptionalResult[T]) Disabled() bool { return r.Resolution == ResolutionDisabled }
-
-// Applied reports whether the provider resolved cleanly.
-func (r OptionalResult[T]) Applied() bool { return r.Resolution == ResolutionApplied }
-
 // Failed reports whether the provider was registered but failed to
 // construct (or one of its transitive dependencies failed).
 func (r OptionalResult[T]) Failed() bool { return r.Resolution == ResolutionFailed }

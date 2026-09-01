@@ -53,28 +53,17 @@ func NewDatabaseBreakerHook(name string) func(breaker.StateChangeInfo) {
 // event for the closed->open and *->closed transitions. Other transitions
 // are state-machine internals and not user-visible.
 func emitCircuitEvent(info breaker.StateChangeInfo) {
-	if event.Emit == nil {
-		return
-	}
 	switch {
 	case info.To == breaker.StateOpen && info.From == breaker.StateClosed:
-		event.Emit(event.Event{
-			Type:    event.BackendCircuitOpened,
-			Subject: info.Name,
-			Data: map[string]any{
-				"backend":   info.Name,
-				"failures":  info.Failures,
-				"threshold": info.Threshold,
-			},
+		event.Publish(event.BackendCircuitOpened, info.Name, map[string]any{
+			"backend":   info.Name,
+			"failures":  info.Failures,
+			"threshold": info.Threshold,
 		})
 	case info.To == breaker.StateClosed:
-		event.Emit(event.Event{
-			Type:    event.BackendCircuitClosed,
-			Subject: info.Name,
-			Data: map[string]any{
-				"backend":           info.Name,
-				"degraded_duration": info.OpenDuration.Round(time.Millisecond).String(),
-			},
+		event.Publish(event.BackendCircuitClosed, info.Name, map[string]any{
+			"backend":           info.Name,
+			"degraded_duration": info.OpenDuration.Round(time.Millisecond).String(),
 		})
 	}
 }
