@@ -128,6 +128,23 @@ aws configure set s3.multipart_chunksize 16MB --profile orchestrator
 
 No special configuration is needed — multipart uploads work transparently.
 
+An upload that is interrupted leaves its parts on the backend, consuming quota
+without a completed object to show for it. `ListMultipartUploads` is how you
+find those, and it works here:
+
+```bash
+# Show uploads that were started and never completed
+aws s3api list-multipart-uploads --bucket app1-files --profile orchestrator
+
+# Abandon one, releasing its parts
+aws s3api abort-multipart-upload --bucket app1-files \
+  --key large-file.bin --upload-id "<UploadId>" --profile orchestrator
+```
+
+Anything left behind is aborted automatically after 24 hours
+(`multipart_stale_timeout`), so this is for reclaiming space sooner rather than
+for preventing a leak.
+
 ## rclone
 
 ### Setup
@@ -524,7 +541,7 @@ curl -H "X-Request-Id: my-trace-123" \
 The orchestrator implements a practical subset of the S3 API. A few things to be aware of:
 
 - **Same-bucket copies only** — `CopyObject` requires source and destination to be in the same bucket.
-- **No bucket management** — Buckets are configured server-side. `CreateBucket`, `DeleteBucket`, and `ListBuckets` are not supported.
+- **No bucket creation or deletion** — Buckets are configured server-side, so `CreateBucket` and `DeleteBucket` are not supported. `ListBuckets` is: it returns the one bucket the presented credential is authorized for, which is what lets a client that lists before it works pick the right target. `HeadBucket`, `GetBucketLocation` and `GetBucketVersioning` answer as well; versioning always reports disabled.
 - **No ACLs or policies** — Access control is handled entirely through the credential-to-bucket mapping in the server config.
 - **No object versioning** — Each key holds exactly one object. Uploading to an existing key overwrites it. Concurrent PUTs to the same key are last-writer-wins, matching native S3 semantics. The orchestrator's per-key advisory lock keeps location metadata consistent across replicas, and bytes from the losing writer are enqueued for backend cleanup. Clients that need conflict detection should send `If-None-Match: *` (see [Conditional Writes](#conditional-writes)).
 - **Max object size** — Configurable server-side (default: 5 GB). For larger objects, use multipart upload (most clients do this automatically).

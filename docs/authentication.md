@@ -24,7 +24,7 @@ Multiple services can share a bucket by each having their own credentials that a
 
 Authentication is always required — every bucket must have at least one credential set.
 
-For client usage examples (AWS CLI, rclone, boto3, Go SDK), see the [User Guide](docs/user-guide.md).
+For client usage examples (AWS CLI, rclone, boto3, Go SDK), see the [User Guide](user-guide.md).
 For credential rotation procedures, see [docs/operations.md](operations.md#rotating-client-credentials).
 
 ## Bucket configuration
