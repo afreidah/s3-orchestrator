@@ -32,6 +32,7 @@ func TestCommand_ParityVerbsAndPaths(t *testing.T) {
 		wantPath   string
 	}{
 		{"rebalance", nil, http.MethodPost, "/admin/api/rebalance"},
+		{"lifecycle", nil, http.MethodPost, "/admin/api/lifecycle"},
 		{"encrypt-existing", nil, http.MethodPost, "/admin/api/encrypt-existing"},
 		{"decrypt-existing", nil, http.MethodPost, "/admin/api/decrypt-existing"},
 		{"compress-existing", nil, http.MethodPost, "/admin/api/compress-existing"},

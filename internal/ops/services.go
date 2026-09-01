@@ -34,6 +34,7 @@ type Deps struct {
 	Replicator   ReplicatorOps
 	OverRep      OverReplicationOps
 	Rebalancer   RebalancerOps
+	Expiry       LifecycleOps
 	Scrubber     ScrubberOps
 	Cfg          *config.Config
 }
@@ -46,6 +47,7 @@ type Services struct {
 	Integrity   *Integrity
 	Replication *Replication
 	Rebalance   *Rebalance
+	Lifecycle   *Lifecycle
 	Encryption  *Encryption
 	Compression *Compression
 }
@@ -75,6 +77,7 @@ func New(d *Deps) *Services {
 			Runtime:    d.Runtime,
 			Config:     cfg,
 		}),
+		Lifecycle: NewLifecycle(LifecycleDeps{Expiry: d.Expiry}),
 		Encryption: NewEncryption(EncryptionDeps{
 			Encryptor: d.Encryptor,
 			Store:     d.EncStore,

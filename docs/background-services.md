@@ -16,12 +16,20 @@ The orchestrator runs a set of long-running background workers that keep the met
 | **Rebalancer** | configurable (default 6h) | Yes | Moves objects between backends per strategy. Only runs when enabled. |
 | **Replicator** | configurable (default 5m) | Yes | Creates copies of under-replicated objects. Only runs when factor > 1. Runs once at startup. |
 | **Over-replication cleaner** | configurable (default 5m) | Yes | Removes excess copies of objects that exceed the replication factor. Only runs when factor > 1. |
-| **Lifecycle** | 1h | Yes | Deletes objects matching lifecycle rules whose `created_at` exceeds `expiration_days`. Only runs when rules are configured. |
+| **Lifecycle** | 1h | Yes | Deletes objects matching lifecycle rules whose `created_at` exceeds `expiration_days`. Only runs when rules are configured. Trigger one on demand with `POST /admin/api/lifecycle` or `s3-orchestrator admin lifecycle`. |
 | **Reconciler** | configurable (default 24h) | Yes | Diffs each backend's key listing against the object ledger, importing objects the ledger is missing and removing rows for objects the backend no longer holds. A key whose delete is still outstanding - waiting in `cleanup_queue` or dead-lettered to `cleanup_dlq` - is left alone rather than imported, because those bytes are an orphan awaiting cleanup and importing them would undo the delete. Such keys are logged and counted as `suppressed_pending_cleanup`. An imported object is classified by its bytes: a seek table marks it as compressed and supplies the logical size, since nothing else can once every row for it is gone. One pass covers every virtual bucket sharing the backend. Only runs when `reconcile.enabled: true`. |
 | **Pending reaper** | configurable (default 1m) | Yes | Resolves PUT-before-COMMIT intents that survived a failed metadata commit. HEADs the destination backend and either promotes the row into `object_locations` (object present) or drops the intent (object absent). Skips intents younger than `min_age` so in-flight PUTs are not interrupted. |
 | **Scrubber** | configurable (default 6h) | Yes | Works through the copies least recently verified, re-hashes them, and discards any whose bytes no longer match the stored `content_hash`. The stored form is undone before hashing, in the reverse of the order it was applied - decrypt, then decompress - because `content_hash` covers the bytes the client wrote. A copy it cannot decode at all is reported as unreadable rather than corrupt and left alone, since a copy that was never read has not been judged. Only runs when `integrity.enabled: true` and `scrubber_interval > 0`, and only on a tick - never at startup, so an interval longer than the process lifetime means it never runs. Backends that have spent their usage allowance are excluded from the batch and their copies reported as deferred, which leaves the coverage age climbing rather than reporting an unverified fleet as checked. |
 | **Notification drainer** | 5s | No | Drains `notification_outbox` rows by POSTing CloudEvents JSON to configured webhook endpoints. Optional HMAC signing per endpoint. |
 | **CB watchdog** | 1m | No | Checks all circuit breakers for stale half-open probes. If a probe has been in flight longer than 2 minutes, resets the circuit to open so a new probe can be dispatched. Prevents circuits from getting stuck half-open when traffic stops. |
+
+## Manual triggers
+
+Every worker above can be run on demand rather than waited for, from the admin API, `adminctl`, the TUI and the dashboard: rebalance, replicate, over-replication, scrub, backfill-checksums, reconcile, usage-flush and lifecycle.
+
+A manual pass deliberately does not take the advisory lock the scheduled tick holds, so it can overlap a scheduled one. Every pass is idempotent — a repeated delete of the same key is a no-op — so the overlap costs a little duplicated work rather than correctness.
+
+Lifecycle is the one where this matters most in practice. Its tick is hourly and a restart adds up to half that again as jitter, so a rule you have just written can take 90 minutes to prove itself. Until it runs, a rule that matches nothing looks exactly like a rule that ran and found nothing expired; the trigger reports deleted and failed counts separately so you can tell those apart immediately.
 
 ## Concurrency
 

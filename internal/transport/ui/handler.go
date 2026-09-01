@@ -62,6 +62,7 @@ const (
 	errLoginRenderFailed = "failed to render login page"
 	opCleanExcess        = "clean-excess"
 	opRebalance          = "rebalance"
+	opLifecycle          = "lifecycle"
 )
 
 // BackendSyncer is the backend-sync surface the UI's admin actions pane
@@ -86,6 +87,7 @@ type Deps struct {
 	Integrity     *ops.Integrity
 	Replication   *ops.Replication
 	Rebalance     *ops.Rebalance
+	Expiry        *ops.Lifecycle
 	Encryption    *ops.Encryption
 	Compression   *ops.Compression
 	DBHealthy     func() bool
@@ -103,6 +105,7 @@ type Handler struct {
 	integrity      *ops.Integrity
 	replication    *ops.Replication
 	rebalance      *ops.Rebalance
+	expiry         *ops.Lifecycle
 	encryption     *ops.Encryption
 	compression    *ops.Compression
 	dbHealthy      func() bool
@@ -139,6 +142,7 @@ func New(d *Deps) *Handler {
 		integrity:      d.Integrity,
 		replication:    d.Replication,
 		rebalance:      d.Rebalance,
+		expiry:         d.Expiry,
 		encryption:     d.Encryption,
 		compression:    d.Compression,
 		dbHealthy:      d.DBHealthy,
