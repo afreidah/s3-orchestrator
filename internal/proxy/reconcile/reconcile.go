@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
@@ -33,9 +34,10 @@ import (
 // them in byte order, and prepending a prefix to only some of them would break
 // the ordering the whole design rests on.
 type Entry struct {
-	key       string
-	size      int64
-	unmanaged bool
+	key          string
+	size         int64
+	unmanaged    bool
+	lastModified time.Time
 }
 
 // keySource is a forward, lex-ordered, bounded-memory iterator over keys
@@ -267,9 +269,10 @@ func (s *S3KeyStream) emitPage(ctx context.Context, objects []backend.ListedObje
 		obj := &objects[i]
 		select {
 		case s.ch <- Entry{
-			key:       obj.Key,
-			size:      obj.SizeBytes,
-			unmanaged: Unmanaged(obj.Key, bucketPrefixes),
+			key:          obj.Key,
+			size:         obj.SizeBytes,
+			unmanaged:    Unmanaged(obj.Key, bucketPrefixes),
+			lastModified: obj.LastModified,
 		}:
 		case <-ctx.Done():
 			return ctx.Err()
@@ -437,7 +440,13 @@ func (d *DBCursorStream) Stop() {
 // failure should not stop the diff for thousands of other keys.
 func ImportHandler(log *slog.Logger, backendName string, importer ImporterFn, result *Result) func(context.Context, Entry) error {
 	return func(ctx context.Context, e Entry) error {
-		outcome, err := importer(ctx, e.key, backendName, e.size, e.unmanaged)
+		outcome, err := importer(ctx, &core.ImportObjectRequest{
+			Key:       e.key,
+			Backend:   backendName,
+			Size:      e.size,
+			Unmanaged: e.unmanaged,
+			WrittenAt: e.lastModified,
+		})
 		if err != nil {
 			log.WarnContext(ctx, "import failed", "key", e.key, "backend", backendName, "error", err)
 			return nil
@@ -481,7 +490,7 @@ type Result struct {
 // A row that already existed is a benign no-op; a key whose delete is
 // still outstanding is refused rather than imported. Carrier type so
 // tests can substitute a fake importer.
-type ImporterFn func(ctx context.Context, key, backendName string, size int64, unmanaged bool) (core.ImportOutcome, error)
+type ImporterFn func(ctx context.Context, req *core.ImportObjectRequest) (core.ImportOutcome, error)
 
 // DeleterFn removes a metadata row whose backend confirmed it does not
 // hold the key. Carrier type so tests can substitute a fake deleter.

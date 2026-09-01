@@ -2620,7 +2620,7 @@ func assertProxy404ForAll(t *testing.T, ctx context.Context, proxyClient *s3.Cli
 func importAllToMinio1(t *testing.T, ctx context.Context, keys []string, sizeBytes int64) {
 	t.Helper()
 	for _, key := range keys {
-		outcome, err := testStore.ImportObject(ctx, internalKey(key), "minio-1", sizeBytes, false, nil)
+		outcome, err := testStore.ImportObject(ctx, &core.ImportObjectRequest{Key: internalKey(key), Backend: "minio-1", Size: sizeBytes})
 		if err != nil {
 			t.Fatalf("ImportObject(%q): %v", key, err)
 		}
@@ -2672,7 +2672,7 @@ func TestImportPreExistingObjects_ImportIdempotent(t *testing.T) {
 
 	store := testStore
 
-	imported, err := store.ImportObject(ctx, internalKey(key), "minio-1", 200, false, nil)
+	imported, err := store.ImportObject(ctx, &core.ImportObjectRequest{Key: internalKey(key), Backend: "minio-1", Size: 200})
 	if err != nil {
 		t.Fatalf("ImportObject first: %v", err)
 	}
@@ -2680,7 +2680,7 @@ func TestImportPreExistingObjects_ImportIdempotent(t *testing.T) {
 		t.Errorf("first ImportObject = %s, want inserted", imported)
 	}
 
-	imported, err = store.ImportObject(ctx, internalKey(key), "minio-1", 200, false, nil)
+	imported, err = store.ImportObject(ctx, &core.ImportObjectRequest{Key: internalKey(key), Backend: "minio-1", Size: 200})
 	if err != nil {
 		t.Fatalf("ImportObject second: %v", err)
 	}
@@ -2721,7 +2721,7 @@ func TestImportPreExistingObjects_ImportDoesNotOverwriteProxyObject(t *testing.T
 	backend := queryObjectBackend(t, key)
 
 	store := testStore
-	imported, err := store.ImportObject(ctx, internalKey(key), backend, 150, false, nil)
+	imported, err := store.ImportObject(ctx, &core.ImportObjectRequest{Key: internalKey(key), Backend: backend, Size: 150})
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
@@ -3229,7 +3229,7 @@ func runSyncPipeline(ctx context.Context, backend *s3be.S3Backend, prefix string
 	var imported, skipped int
 	err := backend.ListObjects(ctx, prefix, func(objects []s3be.ListedObject) error {
 		for _, obj := range objects {
-			outcome, err := testStore.ImportObject(ctx, obj.Key, "minio-1", obj.SizeBytes, false, nil)
+			outcome, err := testStore.ImportObject(ctx, &core.ImportObjectRequest{Key: obj.Key, Backend: "minio-1", Size: obj.SizeBytes})
 			if err != nil {
 				return fmt.Errorf("ImportObject(%s): %w", obj.Key, err)
 			}

@@ -58,7 +58,27 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.101.x (current)
+### v0.117.x (current)
+
+**`Last-Modified` is now the object's write time, not the serving copy's ([#1356](https://github.com/afreidah/s3-orchestrator/issues/1356), v0.117.0)**
+
+An object's `Last-Modified` used to depend on which copy answered the request. A GET reported the serving backend's own modification time, so failing over to a replica changed it; a listing reported `MIN(created_at)` across copies, which was a third value again. Nothing about the object had changed in either case. Conditional requests are built on this header, so `If-Modified-Since` and `If-Range` were comparing against a value that moved on its own.
+
+Three things changed. Replication now carries the source row's `created_at` to the new copy instead of stamping the moment the copy was made. Reconcile and `sync` record the modification time the backend reported for a discovered object, falling back to the moment of discovery when the backend reports none. Reads now prefer the stored timestamp over the backend's, which is the same precedence [#1340](https://github.com/afreidah/s3-orchestrator/issues/1340) established for ETag.
+
+This also removes the failure mode that the fallback was originally added for ([#1182](https://github.com/afreidah/s3-orchestrator/issues/1182)): a backend that omits a modification time on GET can no longer produce an empty `Last-Modified`, because the stored value is always present and is now consulted first.
+
+Fixing the write paths alone would not have repaired anything already stored, because a read answers from whichever copy served it: an object replicated under an older version would keep reporting a different time per copy, just sourced from the ledger instead of the backend. Migration `00022` therefore aligns existing rows, setting every copy of a key to `MIN(created_at)` across its copies. That is the correct target rather than an arbitrary pick - the copy the client's own write created is the one stamped at the write, and every later value belongs to a replica.
+
+**Operator action items after upgrade:**
+
+- No config change required. The backfill runs automatically as part of the usual startup migration and needs no operator step.
+- **The backfill only moves timestamps backwards.** Lifecycle expiry reads the same column, so an object whose replicas were carrying a later stamp now ages from its real write time. That is the intended behaviour, but it can put an object closer to expiry than its pre-migration value suggested. If you run lifecycle rules with short windows, review `expiration_days` against the objects in your fleet before upgrading.
+- The migration is not reversible. The per-copy stamps it replaces are not recoverable, and its `Down` is a no-op.
+- Objects discovered by reconcile before this version were stamped at discovery time rather than their backend modification time. The backfill aligns their copies with each other but cannot recover the original write time; re-running reconcile will not correct them either, since the rows already exist and import leaves existing rows alone.
+- `created_at` is now the object's write time on every copy, so it is no longer a per-copy age. The scrub queue was already using `last_scrubbed_at` for that and is unaffected.
+
+### v0.101.x
 
 **`integrity.verify_on_replicate` now does something ([#1292](https://github.com/afreidah/s3-orchestrator/issues/1292), v0.101.0)**
 

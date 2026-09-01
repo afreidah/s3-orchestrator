@@ -34,7 +34,7 @@ var migrationFS embed.FS
 // expectedSchemaVersion is the SQLite schema version this binary expects. Bump
 // it when adding a migration, and keep schema.sql's own INSERT INTO
 // schema_version in step so a fresh database and an upgraded one agree.
-const expectedSchemaVersion = 11
+const expectedSchemaVersion = 12
 
 // migration is one numbered step, parsed from its embedded file name.
 type migration struct {

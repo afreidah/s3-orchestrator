@@ -254,7 +254,7 @@ func (q *Queries) GetUnderReplicatedObjectsExcluding(ctx context.Context, arg Ge
 
 const insertReplicaConditional = `-- name: InsertReplicaConditional :one
 INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at)
-SELECT $1, $2, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.etag, ol.content_type, ol.user_metadata, NOW()
+SELECT $1, $2, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.etag, ol.content_type, ol.user_metadata, ol.created_at
 FROM object_locations ol
 WHERE ol.object_key = $1 AND ol.backend_name = $3
 ON CONFLICT (object_key, backend_name) DO NOTHING
@@ -276,6 +276,12 @@ type InsertReplicaConditionalParams struct {
 // between GetUnderReplicatedObjects and the conditional insert).
 // ON CONFLICT or missing source returns no rows; the caller treats that
 // as inserted=false.
+//
+// created_at is carried from the source rather than stamped NOW(): it is the
+// object's write time, and it reaches clients as Last-Modified. Stamping it
+// per copy makes an unmodified object report a different time depending on
+// which replica answered, and moves that time again whenever the oldest copy
+// is rebalanced away.
 func (q *Queries) InsertReplicaConditional(ctx context.Context, arg InsertReplicaConditionalParams) (int64, error) {
 	row := q.db.QueryRow(ctx, insertReplicaConditional, arg.ObjectKey, arg.BackendName, arg.BackendName_2)
 	var size_bytes int64
