@@ -464,7 +464,9 @@ func TestSyncBackend_AccountsListingPages(t *testing.T) {
 	}), nil).AnyTimes()
 	stores.EXPECT().ImportObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(core.ImportInserted, nil).AnyTimes()
-	usage.EXPECT().APICalls("b1", int64(3)).Times(1)
+	// One charge per page, as each is consumed. A single lump charge of 3 is
+	// what let a walk finish before anything noticed it had gone over.
+	usage.EXPECT().APICalls("b1", int64(1)).Times(3)
 
 	if _, _, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"}); err != nil {
 		t.Fatalf("SyncBackend: %v", err)
@@ -542,5 +544,87 @@ func TestBucketPrefixes(t *testing.T) {
 	}
 	if len(BucketPrefixes(nil)) != 0 {
 		t.Error("no buckets should yield no prefixes")
+	}
+}
+
+// TestSyncBackend_StopsAtTheAPIBudget is the regression pin for a walk that ran
+// thousands of list calls past an exhausted budget and only recorded them once
+// it was done. The second page must not be listed at all.
+func TestSyncBackend_StopsAtTheAPIBudget(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	stores := NewMockStores(ctrl)
+	backends := NewMockBackendResolver(ctrl)
+	usage := NewMockUsageRecorder(ctrl)
+	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage})
+
+	lister := newPagedLister([][]backend.ListedObject{
+		{{Key: "vb/a", SizeBytes: 1}},
+		{{Key: "vb/b", SizeBytes: 2}},
+	})
+	backends.EXPECT().GetBackend("b1").Return(lister, nil).AnyTimes()
+
+	// Entry price, then the first page's charge reports no headroom left.
+	gomock.InOrder(
+		usage.EXPECT().Allow("b1", int64(1), int64(0), int64(0)).Return(true),
+		usage.EXPECT().Allow("b1", int64(1), int64(0), int64(0)).Return(false),
+	)
+	// Charged once, for the page that was actually fetched.
+	usage.EXPECT().APICalls("b1", int64(1)).Times(1)
+	stores.EXPECT().ImportObject(gomock.Any(), "vb/a", "b1", int64(1), false, gomock.Any()).
+		Return(core.ImportInserted, nil)
+
+	imported, _, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"})
+	if err != nil {
+		t.Fatalf("a pass that stopped at the limit did the work it could afford; want no error, got %v", err)
+	}
+	if imported != 1 {
+		t.Errorf("imported = %d, want the single page the budget allowed", imported)
+	}
+}
+
+// TestSyncBackend_ChargesEachPageAsItGoes holds the accounting shape: one
+// charge per page, as it is consumed, not one lump at the end.
+func TestSyncBackend_ChargesEachPageAsItGoes(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	m, stores, backends, usage := newTestManager(t, ctrl)
+
+	lister := newPagedLister([][]backend.ListedObject{
+		{{Key: "vb/a", SizeBytes: 1}},
+		{{Key: "vb/b", SizeBytes: 2}},
+		{{Key: "vb/c", SizeBytes: 3}},
+	})
+	backends.EXPECT().GetBackend("b1").Return(lister, nil).AnyTimes()
+	stores.EXPECT().ImportObject(gomock.Any(), gomock.Any(), "b1", gomock.Any(), false, gomock.Any()).
+		Return(core.ImportInserted, nil).Times(3)
+
+	// Three pages, three single-page charges. A lump charge would arrive as
+	// one call for 3, which is what let the overage go unnoticed until it had
+	// already happened.
+	usage.EXPECT().APICalls("b1", int64(1)).Times(3)
+
+	if _, _, err := m.SyncBackend(t.Context(), "b1", "vb", []string{"vb"}); err != nil {
+		t.Fatalf("SyncBackend: %v", err)
+	}
+}
+
+// TestReconcileBackend_RefusesAnExhaustedBackend pins the entry check this path
+// never had: a reconcile could previously start against a backend with nothing
+// left and walk it in full.
+func TestReconcileBackend_RefusesAnExhaustedBackend(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	stores := NewMockStores(ctrl)
+	backends := NewMockBackendResolver(ctrl)
+	usage := NewMockUsageRecorder(ctrl)
+	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage})
+
+	backends.EXPECT().GetBackend("b1").Return(newPagedLister(nil), nil).AnyTimes()
+	usage.EXPECT().Allow("b1", int64(1), int64(0), int64(0)).Return(false)
+
+	_, err := m.ReconcileBackend(t.Context(), "b1", []string{"vb"})
+	if !errors.Is(err, core.ErrUsageLimitExceeded) {
+		t.Errorf("err = %v, want ErrUsageLimitExceeded", err)
 	}
 }

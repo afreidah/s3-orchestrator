@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync/atomic"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/internalkey"
@@ -223,11 +222,16 @@ type S3KeyStream struct {
 // NewS3KeyStream starts the goroutine that walks the backend and returns a
 // keySource. The caller must invoke stop when done so a partial walk does
 // not leak goroutines.
+// usage and backendName meter the walk: each listing page is charged as it is
+// consumed, and the stream ends when the backend can no longer afford another.
+// A nil usage leaves the walk unmetered, which is what a caller with no tracker
+// to charge against passes.
 func NewS3KeyStream(
 	ctx context.Context,
 	s3b ObjectLister,
 	bucketPrefixes []string,
-	apiPages *atomic.Int64,
+	usage UsageRecorder,
+	backendName string,
 ) *S3KeyStream {
 	streamCtx, cancel := context.WithCancel(ctx)
 	s := &S3KeyStream{
@@ -236,17 +240,17 @@ func NewS3KeyStream(
 		cancel: cancel,
 	}
 
-	go s.run(streamCtx, s3b, bucketPrefixes, apiPages)
+	go s.run(streamCtx, s3b, bucketPrefixes, pageBudget{usage: usage, backendName: backendName})
 
 	return s
 }
 
 // run drives the backing ListObjects walk on the stream goroutine, forwarding
 // each page through emitPage and surfacing any non-cancellation error on errCh.
-func (s *S3KeyStream) run(ctx context.Context, s3b ObjectLister, bucketPrefixes []string, apiPages *atomic.Int64) {
+func (s *S3KeyStream) run(ctx context.Context, s3b ObjectLister, bucketPrefixes []string, budget pageBudget) {
 	defer close(s.ch)
 	err := s3b.ListObjects(ctx, "", func(objects []backend.ListedObject) error {
-		return s.emitPage(ctx, objects, bucketPrefixes, apiPages)
+		return s.emitPage(ctx, objects, bucketPrefixes, budget)
 	})
 	if err != nil && !errors.Is(err, context.Canceled) {
 		s.errCh <- err
@@ -257,10 +261,8 @@ func (s *S3KeyStream) run(ctx context.Context, s3b ObjectLister, bucketPrefixes 
 // emitPage sends one ListObjects page onto the channel, counting the page and
 // bailing out when the stream is cancelled. Keys pass through untouched, so the
 // emitted sequence preserves the backend's byte ordering.
-func (s *S3KeyStream) emitPage(ctx context.Context, objects []backend.ListedObject, bucketPrefixes []string, apiPages *atomic.Int64) error {
-	if apiPages != nil {
-		apiPages.Add(1)
-	}
+func (s *S3KeyStream) emitPage(ctx context.Context, objects []backend.ListedObject, bucketPrefixes []string, budget pageBudget) error {
+	canContinue := budget.charge()
 	for i := range objects {
 		obj := &objects[i]
 		select {
@@ -272,6 +274,12 @@ func (s *S3KeyStream) emitPage(ctx context.Context, objects []backend.ListedObje
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	}
+	// Reported after the page is emitted, so the merge still sees everything
+	// this page paid for. Stopping the walk here ends the reconcile at the
+	// limit instead of carrying it thousands of requests past.
+	if !canContinue {
+		return errBudgetExhausted
 	}
 	return nil
 }
