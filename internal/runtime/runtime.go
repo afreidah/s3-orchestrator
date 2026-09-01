@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/reload"
@@ -153,6 +154,15 @@ func (r *Runtime) Run(ctx context.Context) error {
 	r.ready.Store(true)
 	r.logStartup()
 
+	// Published after the notifier is among the started services, so the
+	// first event a subscriber sees is the one saying the instance is up.
+	event.Publish(event.ServiceStarted, "", map[string]any{
+		"version":     telemetry.Version,
+		"mode":        r.opts.Mode,
+		"listen_addr": r.cfg.Server.ListenAddr,
+		"backends":    len(r.cfg.Backends),
+	})
+
 	serverErr := make(chan error, 1)
 	go func() {
 		serverErr <- r.http.Run(ctx)
@@ -213,6 +223,10 @@ func (r *Runtime) startBackgroundServices() {
 func (r *Runtime) shutdown() {
 	ctx := context.Background()
 	r.log.InfoContext(ctx, "shutting down")
+
+	// Published first: the notifier is one of the services stopped below, and
+	// an event queued after it stops has nothing to deliver it.
+	event.Publish(event.ServiceStopping, "", map[string]any{"version": telemetry.Version})
 
 	// Deferred so DI-managed resources (providers implementing
 	// do.Shutdownable) are always released, even if an earlier step

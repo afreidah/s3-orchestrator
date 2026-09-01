@@ -443,8 +443,6 @@ dialog#confirm-delete::backdrop {
   font-size: 0.8rem;
 }
 
-.upload-success { color: #4ade80; }
-.upload-error { color: #ef4444; }
 
 /* --- Upload dialog --- */
 dialog#upload-dialog {

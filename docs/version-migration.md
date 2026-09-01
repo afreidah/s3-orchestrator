@@ -187,7 +187,7 @@ The audit / metric / span completion logic for `PutObject`, `GetObject`, `Delete
 
 **Cancel losing degraded-read probes ([#867](https://github.com/afreidah/s3-orchestrator/pull/867), v0.52.1)**
 
-When the read path is in degraded mode (one source unhealthy) it fires probe reads against multiple backends and serves the first one back. The losing probes were previously left to run to completion, wasting backend API calls and egress against quotas. They are now cancelled the moment a winner is declared. The visible effect is a drop in `s3o_usage_api_calls{backend=...}` during degraded operation, with no change to correctness or latency.
+When the read path is in degraded mode (one source unhealthy) it fires probe reads against multiple backends and serves the first one back. The losing probes were previously left to run to completion, wasting backend API calls and egress against quotas. They are now cancelled the moment a winner is declared. The visible effect is a drop in `s3o_usage_api_requests{backend=...}` during degraded operation, with no change to correctness or latency.
 
 **Operator action items:** none.
 

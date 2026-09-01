@@ -103,6 +103,11 @@ type Codec struct {
 // The chunk size is fixed for the lifetime of the data it writes. Changing it
 // affects new objects only; existing ones carry their own layout in their seek
 // table and stay readable.
+//
+// The orchestrator itself builds codecs through NewCodecForLevel, since config
+// names levels rather than numbering them. This numeric form is kept for
+// callers that already hold a zstd level, and is deliberately exported rather
+// than left as an accident of refactoring.
 func NewCodec(level, chunkSize int) (*Codec, error) {
 	return newCodec(zstd.EncoderLevelFromZstd(level), chunkSize)
 }

@@ -24,6 +24,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
@@ -353,6 +354,11 @@ func (d *Manager) abortDrainWithError(name string, state *drainState, err error)
 	state.setErr(err)
 	d.draining.Delete(name)
 	state.decrementActiveGauge()
+	event.Publish(event.BackendDrainFailed, name, map[string]any{
+		"backend":       name,
+		"objects_moved": state.moved.Load(),
+		"error":         err.Error(),
+	})
 }
 
 // finalizeDrain runs after a successful migration. Flushes pending cleanup
@@ -378,6 +384,10 @@ func (d *Manager) finalizeDrain(ctx context.Context, name string, state *drainSt
 		slog.String("backend", name),
 		slog.Int64("objects_moved", state.moved.Load()),
 	)
+	event.Publish(event.BackendDrainCompleted, name, map[string]any{
+		"backend":       name,
+		"objects_moved": state.moved.Load(),
+	})
 	d.log.InfoContext(ctx, "backend drain complete", "backend", name, "objects_moved", state.moved.Load())
 }
 
@@ -526,6 +536,10 @@ func (d *Manager) RemoveBackend(ctx context.Context, name string, purge bool, ob
 		slog.String("backend", name),
 		slog.Bool("purge", purge),
 	)
+	event.Publish(event.BackendRemoved, name, map[string]any{
+		"backend": name,
+		"purge":   purge,
+	})
 	d.log.InfoContext(ctx, "backend removed", "backend", name, "purge", purge)
 
 	return nil

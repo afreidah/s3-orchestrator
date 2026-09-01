@@ -250,20 +250,14 @@ func (w *CleanupWorker) exhaustCleanupToDLQ(
 			slog.Int64("size_bytes", item.SizeBytes),
 			slog.String("last_error", delErr.Error()),
 		)
-		if event.Emit != nil {
-			event.Emit(event.Event{
-				Type:    event.CleanupExhausted,
-				Subject: item.BackendName,
-				Data: map[string]any{
-					"backend":    item.BackendName,
-					"object_key": item.ObjectKey,
-					"reason":     item.Reason,
-					"attempts":   int(newAttempts),
-					"size_bytes": item.SizeBytes,
-					"last_error": delErr.Error(),
-				},
-			})
-		}
+		event.Publish(event.CleanupExhausted, item.BackendName, map[string]any{
+			"backend":    item.BackendName,
+			"object_key": item.ObjectKey,
+			"reason":     item.Reason,
+			"attempts":   int(newAttempts),
+			"size_bytes": item.SizeBytes,
+			"last_error": delErr.Error(),
+		})
 	}
 	telemetry.CleanupQueueProcessedTotal.WithLabelValues("exhausted").Inc()
 }

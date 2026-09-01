@@ -17,6 +17,7 @@ import (
 	"log/slog"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
@@ -105,6 +106,10 @@ func (r *Replication) Replicate(ctx context.Context, observer progress.Observer)
 		r.log.WarnContext(ctx, "failed to update quota metrics after replicate", "error", mErr)
 	}
 
+	event.Publish(event.ReplicationCompleted, "", map[string]any{
+		"copies_created": sum.CopiesCreated,
+		"objects_failed": sum.Failed,
+	})
 	r.log.InfoContext(ctx, "replication cycle completed",
 		"copies_created", sum.CopiesCreated, "objects_failed", sum.Failed)
 	return ReplicateResult{CopiesCreated: sum.CopiesCreated, Failed: sum.Failed}, nil
