@@ -33,6 +33,24 @@ type MetricsConfig struct {
 	Path    string `yaml:"path"`
 	Listen  string `yaml:"listen"` // Separate listener address (e.g. "127.0.0.1:9091"); if empty, metrics are served on the main listener
 	Pprof   bool   `yaml:"pprof"`  // Mount /debug/pprof/* on the metrics listener. Off by default; requires Listen to be set.
+
+	// RequireListener fails startup when the separate metrics listener cannot
+	// bind, rather than serving S3 traffic with no metrics. Defaults to true:
+	// a production deployment that reports healthy while Prometheus silently
+	// receives nothing is the worse of the two failures, because nothing about
+	// it looks wrong until someone goes looking for a graph.
+	//
+	// Set false for dev and embedded use, where the port may well be taken and
+	// best-effort metrics are fine. A pointer so an explicit false is
+	// distinguishable from an omitted field.
+	RequireListener *bool `yaml:"require_listener"`
+}
+
+// ListenerRequired reports whether a metrics bind failure should abort startup.
+// Only meaningful when Listen is set; metrics served on the main listener share
+// its socket and have nothing separate to fail.
+func (m MetricsConfig) ListenerRequired() bool {
+	return m.RequireListener == nil || *m.RequireListener
 }
 
 // TracingConfig holds OpenTelemetry tracing settings.

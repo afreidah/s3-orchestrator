@@ -158,6 +158,13 @@ func (r *Runtime) Run(ctx context.Context) error {
 	r.startBackgroundServices()
 	r.reload.Watch()
 
+	// Bound before readiness is announced, so an address already in use fails
+	// startup here rather than surfacing after the orchestrator has told its
+	// load balancer it is taking traffic.
+	if err := r.http.Listen(ctx); err != nil {
+		return fmt.Errorf("bind listeners: %w", err)
+	}
+
 	r.ready.Store(true)
 	r.logStartup()
 

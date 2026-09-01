@@ -238,6 +238,8 @@ backends:
 #     # listener. Bind to an internal-only interface (127.0.0.1 or a
 #     # private network address) for production deployments.
 #     # listen: "127.0.0.1:9001"
+#     # require_listener: true   # default; fail startup when that address cannot be bound.
+#     #                          # Set false for dev, where the port may be taken.
 #   tracing:
 #     enabled: false
 #     endpoint: ${TRACING_ENDPOINT}
