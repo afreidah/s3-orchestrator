@@ -357,6 +357,31 @@ Per-backend circuit breakers stop sending traffic to a backend after `failure_th
 
 A sustained `state=1` for a backend means it's been unreachable. Check the backend's credentials and connectivity.
 
+## Upload Buffering Memory
+
+Every PUT is materialized before it reaches a backend, so a failed write can be retried against another one without asking the client to resend. Bodies up to 32 MiB are held in memory; larger ones spill to a temporary file.
+
+That makes the upload footprint `32 MiB x max_concurrent_writes` — but only if the spill lands on disk. The default spill location is the OS temp directory, and `/tmp` is tmpfs under the systemd default and in most container images. On those hosts the spill is still RAM, and the real worst case goes back to being the size of the objects in flight:
+
+```yaml
+server:
+  spill_dir: "/var/lib/s3-orchestrator/spill"   # real disk, not tmpfs
+  max_concurrent_writes: 16
+```
+
+Two ways to size this, and it is worth deciding which one you are doing:
+
+- **Spill to disk.** Point `spill_dir` at a real filesystem and budget `32 MiB x max_concurrent_writes` of RAM (512 MiB at 16 writers) plus enough disk for the largest objects in flight at once.
+- **Keep everything in RAM.** Leave the default and budget `largest_object x max_concurrent_writes`. At a 5 GB `max_object_size` and 16 writers that is 80 GB, which is not a budget - it is an OOM waiting for a large enough upload.
+
+The bulk rewrite passes (compress-existing, encrypt-existing and their reverses) materialize every object they touch, so a fleet-wide pass over large objects is the most reliable way to find out which of the two you actually configured.
+
+Check what `/tmp` is before assuming:
+
+```bash
+findmnt -no FSTYPE /tmp    # tmpfs means the spill is RAM
+```
+
 ## Rate Limiter Memory
 
 ```yaml

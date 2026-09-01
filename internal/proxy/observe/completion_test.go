@@ -44,14 +44,13 @@ func captureAudit(t *testing.T, fn func()) map[string]any {
 	return entry
 }
 
-// captureEvent swaps event.Emit for the duration of fn and returns the
+// captureEvent registers an emitter for the duration of fn and returns the
 // emitted event (or nil if none was emitted).
 func captureEvent(t *testing.T, fn func()) *event.Event {
 	t.Helper()
 	var got *event.Event
-	prev := event.Emit
-	event.Emit = func(e event.Event) { got = &e }
-	defer func() { event.Emit = prev }()
+	event.SetEmitter(func(e event.Event) { got = &e })
+	defer event.SetEmitter(nil)
 	fn()
 	return got
 }
@@ -71,9 +70,8 @@ func TestPutCompleted(t *testing.T) {
 	ctx := reqCtx()
 
 	var emitted *event.Event
-	prev := event.Emit
-	event.Emit = func(e event.Event) { emitted = &e }
-	defer func() { event.Emit = prev }()
+	event.SetEmitter(func(e event.Event) { emitted = &e })
+	defer event.SetEmitter(nil)
 
 	entry := captureAudit(t, func() {
 		PutCompleted(ctx, sp, "bucket/photos/cat.jpg", "minio-1", 12345)

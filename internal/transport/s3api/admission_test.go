@@ -30,13 +30,20 @@ import (
 // one budget with HTTP requests; these helpers keep that shape without each test
 // spelling out the channel.
 func newAdmissionFor(maxConcurrent int) *AdmissionController {
-	return NewAdmissionControllerFromSem(make(chan struct{}, maxConcurrent))
+	return newAdmissionWithLimits(maxConcurrent, AdmissionLimits{})
+}
+
+// newAdmissionWithLimits is newAdmissionFor for the tests that exercise
+// shedding or the admission wait, which are constructor arguments rather than
+// something a test can set after the fact.
+func newAdmissionWithLimits(maxConcurrent int, lim AdmissionLimits) *AdmissionController {
+	return NewAdmissionControllerFromSem(make(chan struct{}, maxConcurrent), lim)
 }
 
 // newSplitAdmissionFor is newAdmissionFor for the split read/write variant.
 func newSplitAdmissionFor(maxReads, maxWrites int) *AdmissionController {
 	return NewSplitAdmissionControllerFromSem(
-		make(chan struct{}, maxReads), make(chan struct{}, maxWrites))
+		make(chan struct{}, maxReads), make(chan struct{}, maxWrites), AdmissionLimits{})
 }
 
 // TestAdmissionController_AllowsWithinLimit verifies the admission controller allows within limit contract.
@@ -287,8 +294,7 @@ func TestSplitAdmission_ReadFull_WriteAllowed(t *testing.T) {
 // Asserts that shed /1000 at 80 occupancy (threshold 50), expected ~600.
 func TestAdmissionController_LoadShedding(t *testing.T) {
 	t.Parallel()
-	ac := newAdmissionFor(10)
-	ac.SetShedThreshold(0.5)
+	ac := newAdmissionWithLimits(10, AdmissionLimits{ShedThreshold: 0.5})
 
 	// Fill 8 of 10 slots -> 80% occupancy, above 50% threshold
 	for range 8 {
@@ -314,11 +320,10 @@ func TestAdmissionController_LoadShedding(t *testing.T) {
 	}
 }
 
-// TestAdmissionController_NoSheddingBelowThreshold verifies the admission controller no shedding below threshold path by exercising ac.SetShedThreshold.
+// TestAdmissionController_NoSheddingBelowThreshold verifies the admission controller no shedding below threshold path by exercising the shed threshold.
 func TestAdmissionController_NoSheddingBelowThreshold(t *testing.T) {
 	t.Parallel()
-	ac := newAdmissionFor(10)
-	ac.SetShedThreshold(0.8)
+	ac := newAdmissionWithLimits(10, AdmissionLimits{ShedThreshold: 0.8})
 
 	// 0% occupancy, well below 80% threshold  -  should never shed
 	for range 100 {
@@ -334,8 +339,7 @@ func TestAdmissionController_SheddingStartsAtThreshold(t *testing.T) {
 	t.Parallel()
 	// With capacity=10 and threshold=0.5, int(0.5*10) = 5.
 	// Shedding should start when occupancy reaches 5 (not 6).
-	ac := newAdmissionFor(10)
-	ac.SetShedThreshold(0.5)
+	ac := newAdmissionWithLimits(10, AdmissionLimits{ShedThreshold: 0.5})
 
 	// Fill exactly to threshold (5 of 10)
 	for range 5 {
@@ -425,8 +429,7 @@ func TestSplitAdmission_DeleteUsesWritePool(t *testing.T) {
 func TestAdmissionController_WaitAcquiresSlot(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		ac := newAdmissionFor(1)
-		ac.SetAdmissionWait(200 * time.Millisecond)
+		ac := newAdmissionWithLimits(1, AdmissionLimits{Wait: 200 * time.Millisecond})
 
 		hold := make(chan struct{})
 		entered := make(chan struct{}, 1)
@@ -468,8 +471,7 @@ func TestAdmissionController_WaitAcquiresSlot(t *testing.T) {
 // Asserts that timed-out request: got , want 503.
 func TestAdmissionController_WaitTimesOut(t *testing.T) {
 	t.Parallel()
-	ac := newAdmissionFor(1)
-	ac.SetAdmissionWait(20 * time.Millisecond)
+	ac := newAdmissionWithLimits(1, AdmissionLimits{Wait: 20 * time.Millisecond})
 
 	hold := make(chan struct{})
 	entered := make(chan struct{}, 1)
@@ -506,10 +508,9 @@ func TestAdmissionController_WaitTimesOut(t *testing.T) {
 func TestAdmissionController_ClientCancelDuringWaitNotCountedAsRejection(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		ac := newAdmissionFor(1)
 		// Generous wait so the test reliably observes the client-cancel branch
 		// rather than racing the timer.
-		ac.SetAdmissionWait(2 * time.Second)
+		ac := newAdmissionWithLimits(1, AdmissionLimits{Wait: 2 * time.Second})
 
 		hold := make(chan struct{})
 		entered := make(chan struct{}, 1)

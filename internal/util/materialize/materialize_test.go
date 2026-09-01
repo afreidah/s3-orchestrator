@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -144,5 +145,44 @@ func TestReaderResetsBetweenCalls(t *testing.T) {
 		if !bytes.Equal(got, payload) {
 			t.Errorf("attempt %d: got %q want %q", attempt, got, payload)
 		}
+	}
+}
+
+// TestSpillDir_LargeBodiesUseTheConfiguredDirectory pins the knob that bounds a
+// deployment's memory footprint. The default lands in the OS temp directory,
+// which is tmpfs under the systemd default and in most container images, so a
+// spill that exists to keep large objects off the heap puts them straight back
+// in RAM unless this points somewhere real.
+//
+// Asserted by pointing it at a directory that does not exist: the spill then
+// has to fail, which it can only do if the setting reached os.CreateTemp. The
+// file itself is unlinked on creation, so there is nothing on disk to look for.
+//
+// Not parallel: the spill directory is process-wide.
+func TestSpillDir_LargeBodiesUseTheConfiguredDirectory(t *testing.T) {
+	SetSpillDir(filepath.Join(t.TempDir(), "no-such-directory"))
+	t.Cleanup(func() { SetSpillDir("") })
+
+	if _, err := NewEmpty(int64(MemThreshold) + 1); err == nil {
+		t.Error("a body too large for memory should have failed to spill into a missing directory")
+	}
+
+	// A body small enough to stay in memory never touches the directory, so it
+	// must be unaffected by one that cannot be written to.
+	mb, err := NewEmpty(int64(MemThreshold))
+	if err != nil {
+		t.Fatalf("in-memory body should not consult the spill directory: %v", err)
+	}
+	mb.Cleanup()
+}
+
+// TestSpillDir_EmptyRestoresTheOSDefault holds the reset path, which every test
+// that sets the directory relies on for isolation.
+func TestSpillDir_EmptyRestoresTheOSDefault(t *testing.T) {
+	SetSpillDir(t.TempDir())
+	SetSpillDir("")
+
+	if got := spillTarget(); got != "" {
+		t.Errorf("spillTarget() = %q, want empty so os.CreateTemp picks the OS default", got)
 	}
 }

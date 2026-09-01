@@ -4,20 +4,22 @@
 // Author: Alex Freidah
 //
 // Leaf package with zero internal dependencies. Defines notification event
-// types, the Event struct, and the package-level Emit hook. Every package in
-// the codebase can import this without creating cycles. The notifier sets the
-// Emit function at startup; callers nil-check before calling.
+// types, the Event struct, and the emitter hook every package publishes
+// through. Every package in the codebase can import this without creating
+// cycles. The notifier registers itself at startup; Publish is a no-op until
+// it does.
 // -------------------------------------------------------------------------------
 
 // Package event defines the CloudEvents-shaped notification types the
 // orchestrator emits when objects are created, deleted, or otherwise
-// mutated, plus the package-level Emit hook other layers call to
-// publish them. The package has zero internal dependencies so any
+// mutated, plus the Publish entry point other layers call to emit
+// them. The package has zero internal dependencies so any
 // caller can import it without creating a cycle.
 package event
 
 import (
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,10 +27,25 @@ import (
 // EMIT HOOK
 // -------------------------------------------------------------------------
 
-// Emit is the package-level hook for emitting notification events. Nil when
-// notifications are not configured. Use Publish rather than calling it
-// directly, so no emit site has to remember the nil check.
-var Emit func(Event)
+// emitter holds the notifier's delivery hook, or nil when the deployment has
+// no notifications configured.
+//
+// Atomic, and unexported so the only ways to touch it are SetEmitter and
+// Publish. The hook is written once during wiring and read from every request
+// and worker goroutine in the process; a plain func var is a data race the
+// moment anything writes it after startup, which registering the notifier from
+// a reload hook would do. audit.onEvent is the same shape for the same reason.
+var emitter atomic.Pointer[func(Event)]
+
+// SetEmitter registers the hook Publish delivers through. Pass nil to clear a
+// previously registered one, which is what a notifier does when it stops.
+func SetEmitter(fn func(Event)) {
+	if fn == nil {
+		emitter.Store(nil)
+		return
+	}
+	emitter.Store(&fn)
+}
 
 // Publish sends one event to the configured notifier, or does nothing when the
 // deployment has none. The envelope fields a CloudEvent needs are filled in by
@@ -37,10 +54,11 @@ var Emit func(Event)
 // subject is the resource the event is about - a backend name, an object key -
 // and is empty for fleet-wide events that name no single one.
 func Publish(eventType, subject string, data map[string]any) {
-	if Emit == nil {
+	fn := emitter.Load()
+	if fn == nil {
 		return
 	}
-	Emit(Event{Type: eventType, Subject: subject, Data: data})
+	(*fn)(Event{Type: eventType, Subject: subject, Data: data})
 }
 
 // -------------------------------------------------------------------------

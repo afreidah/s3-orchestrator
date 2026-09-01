@@ -43,6 +43,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httpserver"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
+	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
@@ -95,6 +96,12 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 	// production handler chain (ErrAttrHandler wrapping the JSON
 	// handler) rather than the bare default.
 	r.log = slog.Default().With(logfmt.Component("runtime"))
+
+	// Applied here, before anything is wired that could serve a PUT. Config
+	// validation has already established the directory exists, so a failure
+	// past this point is a runtime one worth surfacing per write, not a
+	// startup misconfiguration.
+	materialize.SetSpillDir(cfg.Server.SpillDir)
 
 	r.inj = di.NewInjector(di.InjectorDeps{Config: cfg, Mode: opts.Mode, LogLevel: &r.logLevel, LogBuffer: obs.LogBuffer})
 
