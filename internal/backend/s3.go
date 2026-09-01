@@ -91,20 +91,26 @@ type S3Backend struct {
 // Each backend gets its own transport so connection pools are isolated and
 // sized for the proxy's concurrent workload (rebalancer, replicator, parallel
 // PUTs/GETs). IdleConnTimeout bounds DNS staleness: idle connections are
-// recycled within 90 s, forcing a fresh DNS resolution on the next dial.
-func newBackendTransport() *http.Transport {
+// recycled within 60 s, forcing a fresh DNS resolution on the next dial.
+//
+// The pool sizes, the response-header timeout and whether HTTP/2 is attempted
+// come from the backend's own config, defaulted by the config layer, so one
+// backend can be tuned or dropped to HTTP/1.1 without touching the others. The
+// dial and TLS-handshake timeouts stay fixed: they bound how long a broken
+// endpoint can hold a request, which is not a per-deployment judgement.
+func newBackendTransport(httpCfg config.BackendHTTPConfig) *http.Transport {
 	return &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   100,
-		MaxConnsPerHost:       200,
+		MaxIdleConns:          httpCfg.MaxIdleConns,
+		MaxIdleConnsPerHost:   httpCfg.MaxIdleConnsPerHost,
+		MaxConnsPerHost:       httpCfg.MaxConnsPerHost,
 		IdleConnTimeout:       60 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-		ForceAttemptHTTP2:     true,
+		ResponseHeaderTimeout: httpCfg.ResponseHeaderTimeout,
+		ForceAttemptHTTP2:     httpCfg.HTTP2Enabled(),
 	}
 }
 
@@ -123,7 +129,7 @@ func NewS3Backend(ctx context.Context, cfg *config.BackendConfig) (*S3Backend, e
 		Credentials:  creds,
 		BaseEndpoint: aws.String(cfg.Endpoint),
 		UsePathStyle: cfg.ForcePathStyle,
-		HTTPClient:   &http.Client{Transport: newBackendTransport()},
+		HTTPClient:   &http.Client{Transport: newBackendTransport(cfg.HTTP)},
 	}
 	if cfg.DisableChecksum {
 		opts.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired

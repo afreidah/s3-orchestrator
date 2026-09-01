@@ -3522,3 +3522,78 @@ func TestSpillDir_EmptyIsAccepted(t *testing.T) {
 		t.Errorf("config without spill_dir should validate, got %v", err)
 	}
 }
+
+// TestBackendHTTP_DefaultsPreserveTheOldFixedValues holds the compatibility
+// promise: a config that never mentions the http block is dialled exactly as it
+// was before the block existed.
+func TestBackendHTTP_DefaultsPreserveTheOldFixedValues(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("SetDefaultsAndValidate: %v", err)
+	}
+
+	got := cfg.Backends[0].HTTP
+	if got.MaxIdleConns != DefaultMaxIdleConns ||
+		got.MaxIdleConnsPerHost != DefaultMaxIdleConnsPerHost ||
+		got.MaxConnsPerHost != DefaultMaxConnsPerHost ||
+		got.ResponseHeaderTimeout != DefaultResponseHeaderTimeout {
+		t.Errorf("http = %+v, want the documented defaults", got)
+	}
+	if !got.HTTP2Enabled() {
+		t.Error("HTTP/2 should be attempted when force_http2 is unset")
+	}
+}
+
+// TestBackendHTTP_ExplicitValuesSurviveDefaulting asserts a configured value is
+// not overwritten by the default, which cmp.Or would do for anything the
+// operator deliberately set to a smaller number.
+func TestBackendHTTP_ExplicitValuesSurviveDefaulting(t *testing.T) {
+	t.Parallel()
+	off := false
+	cfg := validBaseConfig()
+	cfg.Backends[0].HTTP = BackendHTTPConfig{
+		MaxIdleConns:          4,
+		MaxIdleConnsPerHost:   2,
+		MaxConnsPerHost:       8,
+		ResponseHeaderTimeout: time.Second,
+		ForceHTTP2:            &off,
+	}
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("SetDefaultsAndValidate: %v", err)
+	}
+
+	got := cfg.Backends[0].HTTP
+	if got.MaxIdleConns != 4 || got.MaxIdleConnsPerHost != 2 || got.MaxConnsPerHost != 8 {
+		t.Errorf("pool sizes = %d/%d/%d, want 4/2/8",
+			got.MaxIdleConns, got.MaxIdleConnsPerHost, got.MaxConnsPerHost)
+	}
+	if got.ResponseHeaderTimeout != time.Second {
+		t.Errorf("ResponseHeaderTimeout = %s, want 1s", got.ResponseHeaderTimeout)
+	}
+	if got.HTTP2Enabled() {
+		t.Error("an explicit force_http2: false must survive defaulting")
+	}
+}
+
+// TestBackendHTTP_RejectsNegativeValues covers the validation the acceptance
+// criteria call for. Zero is legal and means "use the default"; negative is
+// not, and no transport field accepts it.
+func TestBackendHTTP_RejectsNegativeValues(t *testing.T) {
+	t.Parallel()
+	for name, http := range map[string]BackendHTTPConfig{
+		"max_idle_conns":          {MaxIdleConns: -1},
+		"max_idle_conns_per_host": {MaxIdleConnsPerHost: -1},
+		"max_conns_per_host":      {MaxConnsPerHost: -1},
+		"response_header_timeout": {ResponseHeaderTimeout: -time.Second},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg := validBaseConfig()
+			cfg.Backends[0].HTTP = http
+			if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrNegativeHTTPSetting) {
+				t.Errorf("err = %v, want ErrNegativeHTTPSetting", err)
+			}
+		})
+	}
+}

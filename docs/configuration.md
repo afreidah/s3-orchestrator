@@ -194,6 +194,23 @@ backends:
 
 When a backend exceeds a usage limit, writes overflow to the next eligible backend. Limits reset each month automatically.
 
+**HTTP transport:** Each backend gets its own connection pool. The defaults suit a proxy serving concurrent client traffic alongside the rebalancer and replicator, but deployments range from a Raspberry Pi to a high-concurrency gateway, so they can be tuned per backend:
+
+```yaml
+    http:
+      max_idle_conns: 100             # default: 100
+      max_idle_conns_per_host: 100    # default: 100
+      max_conns_per_host: 200         # default: 200
+      response_header_timeout: 30s    # default: 30s
+      force_http2: true               # default: true
+```
+
+Every field is optional and omitting the block leaves the backend dialled exactly as before. A value of `0` means "use the default" rather than "unlimited"; negative values are rejected at startup.
+
+Set `force_http2: false` to make one backend negotiate HTTP/1.1. HTTP/2 against some proxy and gateway combinations collapses throughput by most of an order of magnitude — one report measured about 10 MiB/s through the orchestrator against about 74 MiB/s direct to the same backend, with HTTP/1.1 restoring 60-80 MiB/s. The interaction has not been isolated to any single component, so this is an escape hatch rather than a fix. It is the targeted form of the process-wide `GODEBUG=http2client=0`: only the backend you set it on is affected, and every other one keeps HTTP/2.
+
+If throughput to one backend is far below what you measure against it directly, this is the first thing to try.
+
 **Unsigned payload:** By default, uploads stream directly to backends without buffering the entire body in memory. The AWS SDK normally buffers the request body to compute a SigV4 payload hash (SHA-256), but the orchestrator uses `UNSIGNED-PAYLOAD` to skip this. Without streaming, large uploads (multipart completion, replication) can cause out-of-memory kills.
 
 For HTTPS endpoints, unsigned payload is enabled by default. For plain HTTP endpoints, it is auto-disabled unless explicitly set — AWS S3 rejects unsigned payloads over HTTP, but most S3-compatible backends (MinIO, R2, etc.) accept them. Set `unsigned_payload: true` on HTTP backends to enable streaming:
@@ -779,6 +796,7 @@ kill -HUP $(pidof s3-orchestrator)
 | `backends[].api_request_limit` | Yes | |
 | `backends[].egress_byte_limit` | Yes | |
 | `backends[].ingress_byte_limit` | Yes | |
+| `backends[].http` (pool sizes, `force_http2`) | No | The transport is built when the backend client is constructed; a reload reports the change and keeps the running one |
 | `rebalance` | Yes | Strategy, interval, threshold, concurrency, enabled/disabled |
 | `replication` | Yes | Factor, worker interval, batch size |
 | `usage_flush` | Yes | Interval, adaptive enabled/threshold/fast interval |

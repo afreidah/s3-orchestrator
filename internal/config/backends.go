@@ -15,6 +15,7 @@ package config
 import (
 	"cmp"
 	"fmt"
+	"time"
 )
 
 // CredentialSourceStatic and friends enumerate the supported credential_source values.
@@ -44,6 +45,80 @@ type BackendConfig struct {
 	APIRequestLimit  int64  `yaml:"api_request_limit"`  // Monthly API request limit (0 = unlimited)
 	EgressByteLimit  int64  `yaml:"egress_byte_limit"`  // Monthly egress byte limit (0 = unlimited)
 	IngressByteLimit int64  `yaml:"ingress_byte_limit"` // Monthly ingress byte limit (0 = unlimited)
+
+	HTTP BackendHTTPConfig `yaml:"http"` // Per-backend HTTP transport tuning
+}
+
+// Defaults for BackendHTTPConfig, applied per backend when the block is
+// omitted or a field is left at zero. Sized for a proxy serving concurrent
+// client traffic alongside the rebalancer and replicator.
+const (
+	DefaultMaxIdleConns          = 100
+	DefaultMaxIdleConnsPerHost   = 100
+	DefaultMaxConnsPerHost       = 200
+	DefaultResponseHeaderTimeout = 30 * time.Second
+)
+
+// BackendHTTPConfig tunes the HTTP transport of one backend. Every field is
+// optional; a zero value takes the default above, so an existing config that
+// never mentions the block behaves exactly as it did.
+//
+// The pool sizes are per backend, and deployments range from a Raspberry Pi to
+// a high-concurrency gateway: one fixed setting either over-allocates file
+// descriptors on a small box or starves throughput on a large one.
+//
+// ForceHTTP2 is a pointer so an explicit false is distinguishable from an
+// omitted field. Setting it false makes this backend negotiate HTTP/1.1, which
+// is the targeted form of the GODEBUG=http2client=0 workaround: HTTP/2 against
+// some proxy and gateway combinations collapses throughput by most of an order
+// of magnitude, and an operator who hits that needs a way out that does not
+// change how every other backend is dialled.
+type BackendHTTPConfig struct {
+	MaxIdleConns          int           `yaml:"max_idle_conns"`
+	MaxIdleConnsPerHost   int           `yaml:"max_idle_conns_per_host"`
+	MaxConnsPerHost       int           `yaml:"max_conns_per_host"`
+	ResponseHeaderTimeout time.Duration `yaml:"response_header_timeout"`
+	ForceHTTP2            *bool         `yaml:"force_http2"`
+}
+
+// HTTP2Enabled reports whether this backend should attempt HTTP/2, which it
+// does unless the operator turned it off.
+func (h BackendHTTPConfig) HTTP2Enabled() bool {
+	return h.ForceHTTP2 == nil || *h.ForceHTTP2
+}
+
+// setDefaults fills each unset field with its default. Zero means unset
+// rather than "no limit": Go's transport reads zero as unlimited for some of
+// these and as its own small default for others, and neither is what an
+// operator who omitted the field is asking for.
+func (h *BackendHTTPConfig) setDefaults() {
+	h.MaxIdleConns = cmp.Or(h.MaxIdleConns, DefaultMaxIdleConns)
+	h.MaxIdleConnsPerHost = cmp.Or(h.MaxIdleConnsPerHost, DefaultMaxIdleConnsPerHost)
+	h.MaxConnsPerHost = cmp.Or(h.MaxConnsPerHost, DefaultMaxConnsPerHost)
+	h.ResponseHeaderTimeout = cmp.Or(h.ResponseHeaderTimeout, DefaultResponseHeaderTimeout)
+}
+
+// validate rejects negative values, which no transport field accepts. Fields
+// are checked in a fixed order so an operator with several typos sees them
+// listed the same way every run.
+func (h BackendHTTPConfig) validate(prefix string) []error {
+	fields := []struct {
+		name  string
+		value int64
+	}{
+		{"http.max_idle_conns", int64(h.MaxIdleConns)},
+		{"http.max_idle_conns_per_host", int64(h.MaxIdleConnsPerHost)},
+		{"http.max_conns_per_host", int64(h.MaxConnsPerHost)},
+		{"http.response_header_timeout", int64(h.ResponseHeaderTimeout)},
+	}
+
+	var errs []error
+	for _, f := range fields {
+		if f.value < 0 {
+			errs = append(errs, prefixedDetail(prefix, ErrNegativeHTTPSetting, f.name))
+		}
+	}
+	return errs
 }
 
 // validateBackends checks every BackendConfig in the configured list,
@@ -84,6 +159,8 @@ func validateBackend(idx int, b *BackendConfig, seenNames map[string]bool) []err
 
 	errs = append(errs, requiredBackendStringErrs(prefix, b)...)
 	errs = append(errs, credentialSourceErrs(prefix, b)...)
+	errs = append(errs, b.HTTP.validate(prefix)...)
+	b.HTTP.setDefaults()
 	errs = append(errs, nonNegativeBackendFieldErrs(prefix, b)...)
 	return errs
 }
