@@ -3485,3 +3485,40 @@ func TestConfigValidation_EmptyTokensAccepted(t *testing.T) {
 		t.Errorf("credentials without tokens must validate, got: %v", err)
 	}
 }
+
+// TestSpillDir_RejectedWhenNotAUsableDirectory pins the startup check. Without
+// it a typo'd spill directory is discovered on the first object too large to
+// hold in memory, which is the worst moment for writes to start failing.
+func TestSpillDir_RejectedWhenNotAUsableDirectory(t *testing.T) {
+	t.Parallel()
+
+	file := filepath.Join(t.TempDir(), "a-file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	for name, dir := range map[string]string{
+		"missing":   filepath.Join(t.TempDir(), "no-such-directory"),
+		"not-a-dir": file,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg := validBaseConfig()
+			cfg.Server.SpillDir = dir
+			err := cfg.SetDefaultsAndValidate()
+			if !errors.Is(err, ErrSpillDirUnusable) {
+				t.Errorf("err = %v, want ErrSpillDirUnusable", err)
+			}
+		})
+	}
+}
+
+// TestSpillDir_EmptyIsAccepted holds that the knob stays optional: a config
+// that never mentions it keeps the OS temp directory rather than failing.
+func TestSpillDir_EmptyIsAccepted(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("config without spill_dir should validate, got %v", err)
+	}
+}

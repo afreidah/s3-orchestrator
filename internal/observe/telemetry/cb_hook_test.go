@@ -35,8 +35,8 @@ func gaugeValue(t *testing.T) float64 {
 // transition emits a BackendCircuitOpened event with failure context.
 func TestNewCircuitBreakerHook_EmitsOpenEvent(t *testing.T) {
 	var emitted []event.Event
-	event.Emit = func(ev event.Event) { emitted = append(emitted, ev) }
-	defer func() { event.Emit = nil }()
+	event.SetEmitter(func(ev event.Event) { emitted = append(emitted, ev) })
+	defer event.SetEmitter(nil)
 
 	hook := NewCircuitBreakerHook("test-open")
 	hook(breaker.StateChangeInfo{
@@ -65,8 +65,8 @@ func TestNewCircuitBreakerHook_EmitsOpenEvent(t *testing.T) {
 // transition emits a BackendCircuitClosed event with degraded duration.
 func TestNewCircuitBreakerHook_EmitsClosedEvent(t *testing.T) {
 	var emitted []event.Event
-	event.Emit = func(ev event.Event) { emitted = append(emitted, ev) }
-	defer func() { event.Emit = nil }()
+	event.SetEmitter(func(ev event.Event) { emitted = append(emitted, ev) })
+	defer event.SetEmitter(nil)
 
 	hook := NewCircuitBreakerHook("test-closed")
 	hook(breaker.StateChangeInfo{
@@ -89,8 +89,8 @@ func TestNewCircuitBreakerHook_EmitsClosedEvent(t *testing.T) {
 // only operator-visible state changes go on the bus.
 func TestNewCircuitBreakerHook_QuietForInternalTransitions(t *testing.T) {
 	var emitted []event.Event
-	event.Emit = func(ev event.Event) { emitted = append(emitted, ev) }
-	defer func() { event.Emit = nil }()
+	event.SetEmitter(func(ev event.Event) { emitted = append(emitted, ev) })
+	defer event.SetEmitter(nil)
 
 	hook := NewCircuitBreakerHook("test-quiet")
 	hook(breaker.StateChangeInfo{Name: "test-quiet", From: breaker.StateOpen, To: breaker.StateHalfOpen})
@@ -104,7 +104,7 @@ func TestNewCircuitBreakerHook_QuietForInternalTransitions(t *testing.T) {
 // TestNewCircuitBreakerHook_NilEmitIsSafe confirms the hook does not
 // panic when no event bus has been wired up.
 func TestNewCircuitBreakerHook_NilEmitIsSafe(t *testing.T) {
-	event.Emit = nil
+	event.SetEmitter(nil)
 	hook := NewCircuitBreakerHook("test-nil")
 	hook(breaker.StateChangeInfo{
 		Name: "test-nil",
@@ -116,7 +116,7 @@ func TestNewCircuitBreakerHook_NilEmitIsSafe(t *testing.T) {
 // TestNewDatabaseBreakerHook_GaugeFollowsState pins the DegradedModeActive
 // gauge to the DB breaker: 1 on open/half-open, 0 on closed.
 func TestNewDatabaseBreakerHook_GaugeFollowsState(t *testing.T) {
-	event.Emit = nil
+	event.SetEmitter(nil)
 	hook := NewDatabaseBreakerHook("db")
 	if got := gaugeValue(t); got != 0 {
 		t.Fatalf("initial gauge = %v, want 0", got)

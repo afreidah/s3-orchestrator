@@ -17,6 +17,7 @@ package config
 import (
 	"cmp"
 	"fmt"
+	"os"
 	"time"
 )
 
@@ -29,6 +30,7 @@ type ServerConfig struct {
 	ListenAddr            string        `yaml:"listen_addr"`
 	LogLevel              string        `yaml:"log_level"`               // Log level: debug, info, warn, error (default: info)
 	MaxObjectSize         int64         `yaml:"max_object_size"`         // Max upload size in bytes (default: 5GB)
+	SpillDir              string        `yaml:"spill_dir"`               // Directory for large-payload spill files (default: OS temp dir)
 	MaxConcurrentRequests int           `yaml:"max_concurrent_requests"` // Max concurrent S3 requests (default: 1000)
 	MaxConcurrentReads    int           `yaml:"max_concurrent_reads"`    // Max concurrent read requests (0 = use global limit)
 	MaxConcurrentWrites   int           `yaml:"max_concurrent_writes"`   // Max concurrent write requests (0 = use global limit)
@@ -82,7 +84,26 @@ func (s *ServerConfig) validateBasics() []error {
 		errs = append(errs, fmt.Errorf("%w: %q (want one of debug, info, warn, error)", ErrInvalidLogLevel, s.LogLevel))
 	}
 	s.MaxObjectSize = cmp.Or(s.MaxObjectSize, 5*1024*1024*1024) // 5 GB
+	errs = append(errs, s.validateSpillDir()...)
 	return errs
+}
+
+// validateSpillDir checks that a configured spill directory exists and is one.
+// Checked at startup because the alternative is discovering the typo on the
+// first object too large to hold in memory, which is the worst moment for a
+// write to start failing.
+func (s *ServerConfig) validateSpillDir() []error {
+	if s.SpillDir == "" {
+		return nil
+	}
+	info, err := os.Stat(s.SpillDir)
+	if err != nil {
+		return []error{fmt.Errorf("%w: %s: %w", ErrSpillDirUnusable, s.SpillDir, err)}
+	}
+	if !info.IsDir() {
+		return []error{fmt.Errorf("%w: %s is not a directory", ErrSpillDirUnusable, s.SpillDir)}
+	}
+	return nil
 }
 
 // validateConcurrency checks concurrency-limit fields and applies the

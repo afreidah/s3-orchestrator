@@ -17,6 +17,7 @@ import (
 	"hash"
 	"io"
 	"os"
+	"sync/atomic"
 
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 )
@@ -26,6 +27,39 @@ import (
 // heuristic for the PUT signing path. Not a config knob because the choice
 // is an implementation detail, not an operator concern.
 const MemThreshold = 32 * 1024 * 1024
+
+// spillDir is where a payload too large for memory is written, or empty for
+// the OS temp directory.
+//
+// Where the spill lands is very much an operator concern, unlike the threshold
+// above: the default is /tmp, which is tmpfs under the systemd default and in
+// most container images, so the spill that exists to keep large objects off the
+// heap puts them straight back in RAM. Pointing this at real disk is the only
+// way to bound the footprint of a fleet-wide pass.
+//
+// Atomic because it is read from every goroutine serving a PUT. Written once
+// during startup, before any of them exist, but a value only safe because of
+// when it happens to be written is what this pattern exists to avoid.
+var spillDir atomic.Pointer[string]
+
+// SetSpillDir points large-payload spills at dir. An empty string restores the
+// OS temp directory. Call during startup, before serving.
+func SetSpillDir(dir string) {
+	if dir == "" {
+		spillDir.Store(nil)
+		return
+	}
+	spillDir.Store(&dir)
+}
+
+// spillTarget returns the directory to create tempfiles in, empty meaning the
+// OS default, which is what os.CreateTemp already interprets that way.
+func spillTarget() string {
+	if d := spillDir.Load(); d != nil {
+		return *d
+	}
+	return ""
+}
 
 // Body holds a payload buffered into memory or onto disk, and serves
 // io.Readers positioned at offset 0 on each call. The caller invokes Cleanup
@@ -73,7 +107,7 @@ func NewEmpty(size int64) (*Body, error) {
 	if size <= MemThreshold {
 		return &Body{buf: &bytes.Buffer{}}, nil
 	}
-	f, err := os.CreateTemp("", "s3o-put-*")
+	f, err := os.CreateTemp(spillTarget(), "s3o-put-*")
 	if err != nil {
 		return nil, fmt.Errorf("create materialize tempfile: %w", err)
 	}
