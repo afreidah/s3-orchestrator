@@ -166,7 +166,7 @@ func runReconcile(t *testing.T, s *Store, backendName string, keys []string) rec
 
 	fake := &fakeObjectLister{keys: keys}
 	db := reconcile.NewDBCursorStream(reconcile.DBCursorStreamDeps{Store: s, BackendName: backendName})
-	s3 := reconcile.NewS3KeyStream(ctx, fake, nil, nil)
+	s3 := reconcile.NewS3KeyStream(ctx, fake, nil, nil, "")
 	defer s3.Stop()
 	defer db.Stop()
 

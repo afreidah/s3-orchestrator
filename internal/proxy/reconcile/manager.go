@@ -17,11 +17,12 @@ package reconcile
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"sync/atomic"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
@@ -49,13 +50,55 @@ type BackendResolver interface {
 // quota, so a listing pass shows up in the same counters a client request
 // would and is held to the same limits.
 //
-// Allow is asked before a walk starts rather than per page: a reconcile of a
+// Allow is asked per page rather than once before the walk: a reconcile of a
 // large bucket is thousands of list requests, and a pass that runs the
 // provider past its monthly request quota leaves client traffic to be refused
 // on the budget it consumed.
 type UsageRecorder interface {
 	Allow(backendName string, apiCalls, egress, ingress int64) bool
 	APICalls(backendName string, n int64)
+}
+
+// errBudgetExhausted stops a listing walk that has spent the backend's API
+// budget. Returned from the page callback, which is the only way to end a walk
+// early, and unwrapped by the caller: a pass that stopped at the limit did the
+// work it could afford and is not a failure.
+var errBudgetExhausted = errors.New("backend API budget exhausted mid-walk")
+
+// pageBudget charges a backend's API quota one listing page at a time and
+// reports whether the walk may continue.
+//
+// Charged as each page is consumed rather than accumulated for a single charge
+// at the end. A walk that only records what it spent once it has finished
+// cannot be stopped at the limit, and a bucket large enough to matter is
+// thousands of requests - so the overage arrives as one step, after the fact,
+// against a budget the rest of the fleet still has to share.
+type pageBudget struct {
+	usage       UsageRecorder
+	backendName string
+}
+
+// charge records the page just consumed and reports whether the backend can
+// afford another. The page is charged either way: the request already happened,
+// and refusing to count it is how the ledger drifts from the provider's.
+func (b pageBudget) charge() bool {
+	// The zero value is unmetered, which is what a caller with no usage tracker
+	// to charge against passes - the collation harness and the stream's own
+	// tests, neither of which is talking to a real provider.
+	if b.usage == nil {
+		return true
+	}
+	b.usage.APICalls(b.backendName, 1)
+	return b.usage.Allow(b.backendName, 1, 0, 0)
+}
+
+// reportBudgetStop records a walk that ended at the backend's usage limit. The
+// counts are what the pass managed before stopping, not what the backend holds.
+func (m *Manager) reportBudgetStop(ctx context.Context, op, backendName string) {
+	telemetry.UsageLimitRejectionsTotal.WithLabelValues(op, "list").Inc()
+	m.logger().WarnContext(ctx, op+" stopped at the backend's API usage limit",
+		"backend", backendName,
+		"detail", "the pass covered only part of the bucket; it resumes on the next run once the budget allows")
 }
 
 // Manager orchestrates sync and reconcile passes for one fleet.
@@ -108,9 +151,9 @@ func (m *Manager) SyncBackend(ctx context.Context, backendName, bucket string, k
 		return 0, 0, err
 	}
 
-	// One page of headroom is the entry price. The walk is unbounded, so the
-	// per-page charges below are what actually hold it to the limit; this only
-	// keeps a pass from starting against a backend that is already spent.
+	// One page of headroom is the entry price, so a pass does not start against
+	// a backend that is already spent. The per-page charge inside the walk is
+	// what holds it to the limit from there.
 	if !m.usage.Allow(backendName, 1, 0, 0) {
 		return 0, 0, fmt.Errorf("backend %s: %w", backendName, core.ErrUsageLimitExceeded)
 	}
@@ -118,19 +161,27 @@ func (m *Manager) SyncBackend(ctx context.Context, backendName, bucket string, k
 	m.logger().InfoContext(ctx, "starting backend sync", "backend", backendName, "bucket", bucket)
 
 	prefixes := BucketPrefixes(knownBuckets)
-	var apiPages int64
+	budget := pageBudget{usage: m.usage, backendName: backendName}
 
 	err = s3b.ListObjects(ctx, "", func(objects []backend.ListedObject) error {
-		apiPages++
+		// Charged before the import so the page is paid for even if importing
+		// it fails: the listing request reached the provider either way.
+		canContinue := budget.charge()
 		pImported, pSkipped, pErr := m.importPage(ctx, backendName, prefixes, objects)
 		imported += pImported
 		skipped += pSkipped
-		return pErr
+		if pErr != nil {
+			return pErr
+		}
+		if !canContinue {
+			return errBudgetExhausted
+		}
+		return nil
 	})
 
-	// Each listing page is one API request against the provider's quota.
-	if apiPages > 0 {
-		m.usage.APICalls(backendName, apiPages)
+	if errors.Is(err, errBudgetExhausted) {
+		m.reportBudgetStop(ctx, "sync", backendName)
+		return imported, skipped, nil
 	}
 	if err != nil {
 		return imported, skipped, err
@@ -214,8 +265,13 @@ func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, know
 		return nil, err
 	}
 
-	var apiPages atomic.Int64
-	s3 := NewS3KeyStream(ctx, s3b, BucketPrefixes(knownBuckets), &apiPages)
+	// The same entry price SyncBackend pays, which this path did not ask for at
+	// all: a reconcile could start against a backend with nothing left.
+	if !m.usage.Allow(backendName, 1, 0, 0) {
+		return nil, fmt.Errorf("backend %s: %w", backendName, core.ErrUsageLimitExceeded)
+	}
+
+	s3 := NewS3KeyStream(ctx, s3b, BucketPrefixes(knownBuckets), m.usage, backendName)
 	defer s3.Stop()
 
 	dbIter := NewDBCursorStream(DBCursorStreamDeps{Store: m.stores, BackendName: backendName})
@@ -228,8 +284,9 @@ func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, know
 		DeleteHandler(m.logger(), backendName, m.deleter(), res),
 	)
 
-	if pages := apiPages.Load(); pages > 0 {
-		m.usage.APICalls(backendName, pages)
+	if errors.Is(mergeErr, errBudgetExhausted) {
+		m.reportBudgetStop(ctx, "reconcile", backendName)
+		return res, nil
 	}
 	if mergeErr != nil {
 		return res, fmt.Errorf("reconcile %s: %w", backendName, mergeErr)
