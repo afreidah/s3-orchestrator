@@ -6,7 +6,8 @@
 // Defines ServerConfig - the HTTP listener block - plus the TLS, admin
 // API, request-id, admission control, and timeout sub-blocks. Carries
 // the listen address, optional Unix socket, hard admission cap, load-
-// shedding threshold, and read/write/header timeouts. Validators enforce
+// shedding threshold, request-header limits, and read/write/header
+// timeouts. Validators enforce
 // that admission limits are non-zero when configured and that the TLS
 // cert and key are both present (or both absent) so partial TLS
 // configuration cannot start.
@@ -17,6 +18,7 @@ package config
 import (
 	"cmp"
 	"fmt"
+	"net/http"
 	"os"
 	"time"
 )
@@ -34,6 +36,8 @@ type ServerConfig struct {
 	MaxConcurrentRequests int           `yaml:"max_concurrent_requests"` // Max concurrent S3 requests (default: 1000)
 	MaxConcurrentReads    int           `yaml:"max_concurrent_reads"`    // Max concurrent read requests (0 = use global limit)
 	MaxConcurrentWrites   int           `yaml:"max_concurrent_writes"`   // Max concurrent write requests (0 = use global limit)
+	MaxHeaderBytes        int           `yaml:"max_header_bytes"`        // Max total request header size in bytes (default: 1MB)
+	MaxHeaderValueCount   int           `yaml:"max_header_value_count"`  // Max number of header values per request (default: 500)
 	LoadShedThreshold     float64       `yaml:"load_shed_threshold"`     // Active shedding threshold (0.0-1.0, 0 = disabled)
 	AdmissionWait         time.Duration `yaml:"admission_wait"`          // Brief wait before rejection (0 = instant reject)
 	BackendTimeout        time.Duration `yaml:"backend_timeout"`         // Per-operation timeout for backend S3 calls (default: 30s)
@@ -64,6 +68,7 @@ func (s *ServerConfig) setDefaultsAndValidate() []error {
 	var errs []error
 	errs = append(errs, s.validateBasics()...)
 	errs = append(errs, s.validateConcurrency()...)
+	errs = append(errs, s.validateHeaderLimits()...)
 	s.applyTimeoutDefaults()
 	errs = append(errs, s.validateTimeouts()...)
 	errs = append(errs, s.validateTLS()...)
@@ -128,6 +133,23 @@ func (s *ServerConfig) validateConcurrency() []error {
 	if s.AdmissionWait < 0 {
 		errs = append(errs, fmt.Errorf("server.admission_wait must not be negative"))
 	}
+	return errs
+}
+
+// validateHeaderLimits applies the net/http defaults to the request-header
+// limits and rejects negative values. The defaults are pinned to the stdlib
+// constants rather than literals so a future Go release that retunes them
+// carries through instead of silently diverging from unconfigured servers.
+func (s *ServerConfig) validateHeaderLimits() []error {
+	var errs []error
+	if s.MaxHeaderBytes < 0 {
+		errs = append(errs, fmt.Errorf("server.max_header_bytes must not be negative"))
+	}
+	if s.MaxHeaderValueCount < 0 {
+		errs = append(errs, fmt.Errorf("server.max_header_value_count must not be negative"))
+	}
+	s.MaxHeaderBytes = cmp.Or(s.MaxHeaderBytes, http.DefaultMaxHeaderBytes)
+	s.MaxHeaderValueCount = cmp.Or(s.MaxHeaderValueCount, http.DefaultMaxHeaderValueCount)
 	return errs
 }
 

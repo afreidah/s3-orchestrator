@@ -255,7 +255,7 @@ Provide the environment variables via systemd `EnvironmentFile`, Vault agent inj
 
   When `listen` is set, `/metrics` is not served on the main S3 port. Prometheus scrapes from the internal address instead.
 
-- **Pprof endpoints** (`/debug/pprof/*`) expose deep runtime state — stack frames, command-line flags, on-demand CPU profiles that double as DoS amplifiers (`/debug/pprof/profile?seconds=300`). They are **off by default** and only mounted when both `telemetry.metrics.listen` is set AND `telemetry.metrics.pprof: true`. Inline-metrics deployments (no dedicated listener) never get pprof regardless of the flag. Enable temporarily for profiling investigations only, and keep the metrics listener bound to an internal-only interface.
+- **Pprof endpoints** (`/debug/pprof/*`) expose deep runtime state — stack frames, command-line flags, on-demand CPU profiles that double as DoS amplifiers (`/debug/pprof/profile?seconds=300`). They are **off by default** and only mounted when both `telemetry.metrics.listen` is set AND `telemetry.metrics.pprof: true`. Inline-metrics deployments (no dedicated listener) never get pprof regardless of the flag. Enable temporarily for profiling investigations only, and keep the metrics listener bound to an internal-only interface. `/debug/pprof/goroutineleak` belongs in the amplifier category too: serving it runs repeated stop-the-world leak-detection garbage collections until they converge. See [Monitoring](monitoring.md#goroutine-leak-profile).
 
 ### Kubernetes Hardening
 
@@ -320,6 +320,18 @@ server:
 ```
 
 When the limit is reached, new requests receive `503 SlowDown` with a `Retry-After: 1` header. Split read/write pools prevent write storms from starving reads. Active load shedding provides smooth degradation before the hard limit. A good starting point for the global limit is 2-3x your `database.max_conns` value. See [Performance Tuning](performance-tuning.md#admission-control) for detailed guidance.
+
+### Request header limits
+
+Admission control bounds how many requests run at once; these bound how much a single request can cost before it gets that far:
+
+```yaml
+server:
+  max_header_bytes: 65536        # total header size (default: 1 MiB)
+  max_header_value_count: 100    # header values per request (default: 500)
+```
+
+Both default to the `net/http` values, which are generous - an S3 client sends on the order of 20 headers, not 500. Tightening them costs nothing in compatibility and rejects oversized header sets during parsing, before routing, authentication, or any database work. Neither is reloadable; they are applied to the listener at startup.
 
 ## Rate Limiting
 

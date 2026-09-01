@@ -32,6 +32,11 @@ import (
 // dedicated metrics listener is configured (typically bound to an
 // internal-only interface); operators who run inline metrics on the
 // main S3 listener intentionally do not get pprof.
+//
+// Only the five handler-backed endpoints need explicit routes. Every named
+// runtime profile - heap, goroutine, goroutineleak, mutex and the rest - is
+// dispatched by pprof.Index off the "/debug/pprof/" prefix, so they come
+// along without being listed here.
 func mountPprof(mux *http.ServeMux) {
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)

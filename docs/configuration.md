@@ -41,6 +41,8 @@ server:
   # max_concurrent_writes: 0      # separate limit for PUT/POST/DELETE (0 = use global limit)
   # load_shed_threshold: 0        # active shedding threshold (0.0-1.0, 0 = disabled)
   # admission_wait: "0s"          # brief wait before rejection (0 = instant)
+  # max_header_bytes: 1048576     # max total request header size (default: 1 MiB)
+  # max_header_value_count: 500   # max header values per request (default: 500)
   backend_timeout: "30s"          # per-operation timeout for backend S3 calls
   read_header_timeout: "10s"      # max time to read request headers (default: 10s)
   read_timeout: "5m"              # max time to read entire request including body (default: 5m)
@@ -58,6 +60,7 @@ server:
 - `max_concurrent_reads` and `max_concurrent_writes` provide separate concurrency limits for reads (GET, HEAD) and writes (PUT, POST, DELETE). When both are set, they replace `max_concurrent_requests` with independent pools so write storms cannot starve reads. **Background workers contend with HTTP writes, not reads** — cleanup, replication, rebalance, pending reaper, and over-replication acquire admission slots from the same pool sized to `max_concurrent_writes`. In merged mode (`max_concurrent_requests` only), every HTTP request and every background worker shares the single global pool. Size `max_concurrent_writes` to accommodate both peak HTTP write traffic and the worst-case overlap of background worker activity (typically the replication factor × replicator concurrency for the dominant case). See issue #835 for the design rationale.
 - `load_shed_threshold` enables active load shedding. When in-flight requests exceed this fraction of pool capacity (e.g. `0.8`), new requests are probabilistically rejected before the hard limit, providing smooth degradation instead of a cliff.
 - `admission_wait` adds a brief wait before rejecting when the semaphore is full (e.g. `50ms`). Smooths micro-bursts without adding latency during sustained overload. Default `0` means instant rejection.
+- `max_header_bytes` caps the total size of a request's headers, and `max_header_value_count` caps how many header values one request may carry. Both default to the `net/http` values (1 MiB and 500), so leaving them unset gives the same behaviour as any other Go server. They exist for deployments that want a tighter bound than the stdlib's: a request with thousands of small headers costs the server memory and parsing time before any handler sees it, and the default 500 is well above what an S3 client sends. Exceeding either limit fails the request during header parsing, before routing or authentication. Both are non-reloadable - they are set on the listener at startup, so changing them needs a restart.
 - `backend_timeout` bounds individual S3 API calls to backends. Increase if you have slow backends or large objects.
 - `read_header_timeout` protects against slow-read attacks that hold connections open by sending headers slowly. The 10-second default is generous for any legitimate client.
 - `read_timeout` and `write_timeout` bound the total time for reading/writing entire requests and responses. The 5-minute defaults accommodate large object transfers. Streaming admin operations are exempt from `write_timeout`: a scrub or compress-existing pass holds its NDJSON response open for the life of the run, which on a real fleet is longer than any timeout worth applying to a request meant to finish. Every other response is still bound by it, so there is no need to raise the value to accommodate a long pass.
@@ -817,6 +820,8 @@ kill -HUP $(pidof s3-orchestrator)
 | `server.max_concurrent_writes` | No | Requires restart |
 | `server.load_shed_threshold` | No | Requires restart |
 | `server.admission_wait` | No | Requires restart |
+| `server.max_header_bytes` | No | Requires restart |
+| `server.max_header_value_count` | No | Requires restart |
 | `server` timeouts | No | `read_header_timeout`, `read_timeout`, `write_timeout`, `idle_timeout`, `shutdown_delay` |
 | `server.tls` | No | Requires restart |
 | `database` | No | Requires restart |

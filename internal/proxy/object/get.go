@@ -55,7 +55,7 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 	// crosses whole chunks to serve a slice.
 	var selfMetered atomic.Bool
 	var wireBytes atomic.Int64
-	result, backendName, err := readpath.Read(ctx, o.failover, "GetObject", key,
+	result, backendName, err := o.failover.Read(ctx, "GetObject", key,
 		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.GetObjectResult], error) {
 			if isCompressed(loc) {
 				selfMetered.Store(true)

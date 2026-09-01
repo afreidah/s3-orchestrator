@@ -105,6 +105,9 @@ func New(deps Deps) (*Server, error) {
 		ReadTimeout:       deps.Cfg.Server.ReadTimeout,
 		WriteTimeout:      deps.Cfg.Server.WriteTimeout,
 		IdleTimeout:       deps.Cfg.Server.IdleTimeout,
+
+		MaxHeaderBytes:      deps.Cfg.Server.MaxHeaderBytes,
+		MaxHeaderValueCount: deps.Cfg.Server.MaxHeaderValueCount,
 	}
 
 	tlsCfg, reloader, err := buildTLSConfig(&deps.Cfg.Server.TLS)
