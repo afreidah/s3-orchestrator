@@ -58,7 +58,7 @@ server:
 - `admission_wait` adds a brief wait before rejecting when the semaphore is full (e.g. `50ms`). Smooths micro-bursts without adding latency during sustained overload. Default `0` means instant rejection.
 - `backend_timeout` bounds individual S3 API calls to backends. Increase if you have slow backends or large objects.
 - `read_header_timeout` protects against slow-read attacks that hold connections open by sending headers slowly. The 10-second default is generous for any legitimate client.
-- `read_timeout` and `write_timeout` bound the total time for reading/writing entire requests and responses. The 5-minute defaults accommodate large object transfers.
+- `read_timeout` and `write_timeout` bound the total time for reading/writing entire requests and responses. The 5-minute defaults accommodate large object transfers. Streaming admin operations are exempt from `write_timeout`: a scrub or compress-existing pass holds its NDJSON response open for the life of the run, which on a real fleet is longer than any timeout worth applying to a request meant to finish. Every other response is still bound by it, so there is no need to raise the value to accommodate a long pass.
 - `idle_timeout` controls how long keep-alive connections stay open waiting for the next request.
 - `shutdown_delay` adds a pause between marking the instance as not-ready and starting the HTTP drain on SIGTERM. Set this to ~5s in environments where service deregistration is asynchronous (Consul, Kubernetes) so load balancers stop routing before connections are closed. Default `0` means no delay.
 

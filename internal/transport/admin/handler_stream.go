@@ -87,7 +87,21 @@ func (h *Handler) streamSteps(w http.ResponseWriter, op, verb string, sequential
 // that encodes one Event per line and flushes after each so progress reaches
 // the client immediately. The flush is best-effort: a ResponseWriter that does
 // not implement http.Flusher still receives every line, just buffered.
+//
+// The write deadline is cleared first. server.write_timeout bounds an ordinary
+// response, and a stream is not one: it stays open for the whole pass, which on
+// a real fleet outlasts any timeout worth applying to a request that is meant
+// to finish. The deadline is absolute rather than idle-based, so flushing
+// progress does not hold it off - it fires mid-pass, the server resets the
+// stream, and the client reports INTERNAL_ERROR having seen the work running
+// fine moments earlier.
+//
+// Cleared per response rather than by widening the server timeout, so every
+// request that is not a stream keeps the protection. Cancellation is unaffected:
+// it arrives through the request context when the client disconnects, which is
+// what the passes already stop on.
 func newEventStream(w http.ResponseWriter) func(adminstream.Event) {
+	clearWriteDeadline(w)
 	w.Header().Set("Content-Type", adminstream.ContentType)
 	enc := json.NewEncoder(w)
 	flusher, canFlush := w.(http.Flusher)
@@ -100,4 +114,15 @@ func newEventStream(w http.ResponseWriter) func(adminstream.Event) {
 			flusher.Flush()
 		}
 	}
+}
+
+// clearWriteDeadline lifts the server's write timeout for one response.
+//
+// Best-effort by design: a ResponseWriter that does not support deadlines
+// (httptest's recorder, a middleware that wraps without forwarding
+// Unwrap) returns http.ErrNotSupported, and there is nothing to lift there
+// anyway. Failing the stream over it would break the handler for exactly the
+// writers that were never subject to the deadline.
+func clearWriteDeadline(w http.ResponseWriter) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 }
