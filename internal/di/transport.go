@@ -32,6 +32,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
@@ -106,6 +107,7 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 	overRep := r.Resolve[*worker.OverReplicationCleaner]()
 	rebalancer := r.Resolve[*worker.Rebalancer]()
 	scrubber := r.Resolve[*worker.Scrubber]()
+	expirer := r.Resolve[*expiry.Manager]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -136,6 +138,7 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 		OverRep:      overRep,
 		Rebalancer:   rebalancer,
 		Scrubber:     scrubber,
+		Expiry:       expirer,
 		Cfg:          cfg,
 	}), nil
 }
