@@ -58,7 +58,21 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.117.x (current)
+### v0.118.x (current)
+
+**Prefix listings are served index-only ([#1341](https://github.com/afreidah/s3-orchestrator/issues/1341), v0.118.0)**
+
+`ListObjectsByPrefix` dedups replicas with `DISTINCT ON`, so it walks every copy row per key and emits one. The index backing it held only the key, which cost a heap fetch per row walked plus a sort per key group to pick the winner. Migration `00023` replaces it with `idx_object_locations_key_collate_c_covering` on `(object_key COLLATE "C", created_at)` including `backend_name`, `size_bytes` and `etag`, which removes both. On 360 K rows a 1000-key page reads 51 buffers instead of 3017.
+
+`created_at` is a key column rather than `INCLUDE` payload deliberately: `INCLUDE` columns are unordered and satisfy the projection but not the `ORDER BY`, so keeping it there would have left the per-group sort in place.
+
+**Operator action items after upgrade:**
+
+- No config change required. The index is built with `CREATE INDEX CONCURRENTLY` and the old one dropped concurrently, so the migration does not lock the table for writes.
+- **The new index is wider** - roughly 45 MB against 10 MB at 360 K rows - and every write to `object_locations` pays that. It replaces the previous index rather than joining it, so the number of indexes on the table is unchanged.
+- Index-only scans depend on the visibility map, and `object_locations` is a write-heavy table. If listings are slower than expected, check `pg_stat_user_tables.n_dead_tup` and consider a more aggressive `autovacuum_vacuum_scale_factor` for the table before assuming the index is not being used.
+
+### v0.117.x
 
 **`Last-Modified` is now the object's write time, not the serving copy's ([#1356](https://github.com/afreidah/s3-orchestrator/issues/1356), v0.117.0)**
 
