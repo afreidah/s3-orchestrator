@@ -254,6 +254,11 @@ func (h *Handler) routes() []route {
 			Stream:   adminstream.Event{},
 		},
 		{
+			Method: http.MethodPost, Pattern: "/admin/api/lifecycle", Handler: h.handleLifecycle,
+			Summary:  "Run one lifecycle expiration sweep",
+			Response: adminapi.LifecycleResponse{},
+		},
+		{
 			Method: http.MethodGet, Pattern: "/admin/api/replication", Handler: h.handleReplicationStatus,
 			Summary:  "Replication backlog snapshot",
 			Response: adminapi.ReplicationStatusResponse{},

@@ -75,6 +75,7 @@ Commands:
   scrub               Trigger an on-demand integrity scrub cycle (-batch-size to override, -key to verify one object now)
   backfill-checksums  Compute and store content hashes for unhashed objects (use -max and -delay-ms to bound and pace each run)
   reconcile           Reconcile DB against backend (use -backend to scope to one backend)
+  lifecycle           Run one lifecycle expiration sweep now instead of waiting for the hourly tick
   usage-reconcile     Recompute bytes_used from the object ledger to correct quota drift
   encrypt-existing    Encrypt all unencrypted objects in place, or -max=N of them (requires encryption enabled)
   decrypt-existing    Decrypt all encrypted objects back to plaintext, or -max=N of them (requires encryption enabled)
@@ -142,6 +143,7 @@ var handlers = map[string]handler{
 	"usage-flush":             cmdUsageFlush,
 	"replicate":               cmdReplicate,
 	"rebalance":               cmdRebalance,
+	"lifecycle":               cmdLifecycle,
 	"over-replication":        cmdOverReplication,
 	"log-level":               cmdLogLevel,
 	"drain":                   cmdDrain,

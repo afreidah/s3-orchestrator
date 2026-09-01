@@ -42,6 +42,7 @@ type Handler struct {
 	integrity    *ops.Integrity
 	replication  *ops.Replication
 	rebalance    *ops.Rebalance
+	expiry       *ops.Lifecycle
 	encryption   *ops.Encryption
 	compression  *ops.Compression
 	drain        *drain.Manager
@@ -75,6 +76,7 @@ type Deps struct {
 	Integrity    *ops.Integrity
 	Replication  *ops.Replication
 	Rebalance    *ops.Rebalance
+	Expiry       *ops.Lifecycle
 	Encryption   *ops.Encryption
 	Compression  *ops.Compression
 	Drain        *drain.Manager
@@ -113,6 +115,7 @@ func New(d *Deps) *Handler {
 		integrity:    d.Integrity,
 		replication:  d.Replication,
 		rebalance:    d.Rebalance,
+		expiry:       d.Expiry,
 		encryption:   d.Encryption,
 		compression:  d.Compression,
 		drain:        d.Drain,

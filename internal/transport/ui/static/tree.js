@@ -544,6 +544,7 @@
     { id: 'rebalance-btn', path: 'api/rebalance', label: 'Rebalance', countKey: 'moved', noun: 'moved', reload: true },
     { id: 'clean-excess-btn', path: 'api/clean-excess', label: 'Clean Excess', countKey: 'removed', noun: 'removed', reload: true },
     { id: 'replicate-btn', path: 'api/replicate', label: 'Replicate Now', countKey: 'copies_created', noun: 'copies created', reload: true },
+    { id: 'lifecycle-btn', path: 'api/lifecycle', label: 'Expire Now', countKey: 'deleted', noun: 'deleted', reload: true },
     { id: 'scrub-btn', path: 'api/scrub', label: 'Scrub', countKey: 'checked', noun: 'checked' },
     { id: 'backfill-checksums-btn', path: 'api/backfill-checksums', label: 'Backfill Checksums', countKey: 'processed', noun: 'processed' },
     {

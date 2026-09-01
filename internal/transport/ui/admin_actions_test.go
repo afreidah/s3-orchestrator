@@ -24,6 +24,8 @@ import (
 
 	"log/slog"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 )
 
@@ -379,5 +381,96 @@ func TestAdminActionWrappers_MethodNotAllowed(t *testing.T) {
 				t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
 			}
 		})
+	}
+}
+
+// lifecycleHandler builds a UI handler whose expiry service is backed by stub.
+func lifecycleHandler(t *testing.T, stub *uiExpiryStub) *Handler {
+	t.Helper()
+	var deps ops.LifecycleDeps
+	if stub != nil {
+		deps.Expiry = stub
+	}
+	return &Handler{log: slog.Default(), expiry: ops.NewLifecycle(deps)}
+}
+
+// uiExpiryStub stands in for *expiry.Manager with a fixed outcome.
+type uiExpiryStub struct {
+	cfg     *config.LifecycleConfig
+	deleted int
+	failed  int
+}
+
+// Config returns the configured rules, or nil when none are configured.
+func (s *uiExpiryStub) Config() *config.LifecycleConfig { return s.cfg }
+
+// ProcessRules reports the fixed outcome.
+func (s *uiExpiryStub) ProcessRules(context.Context, []config.LifecycleRule) (int, int) {
+	return s.deleted, s.failed
+}
+
+// TestHandleAPILifecycle_ReportsCountsThroughStatus drives the dashboard's
+// path end to end: the trigger returns 202 and the poll reports what the sweep
+// removed, under the key the button reads.
+//
+// Not parallel: the async tracker is per-handler but the op name is shared.
+func TestHandleAPILifecycle_ReportsCountsThroughStatus(t *testing.T) {
+	h := lifecycleHandler(t, &uiExpiryStub{
+		cfg:     &config.LifecycleConfig{Rules: []config.LifecycleRule{{Prefix: "tmp/", ExpirationDays: 7}}},
+		deleted: 9,
+		failed:  1,
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/lifecycle", nil)
+	w := httptest.NewRecorder()
+	h.handleAPILifecycle(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("trigger status = %d, want 202", w.Code)
+	}
+
+	res := waitForResult(t, h, opLifecycle)
+	if !res.OK || res.Skipped != "" {
+		t.Fatalf("result = %+v, want a completed sweep", res)
+	}
+
+	statusW := httptest.NewRecorder()
+	h.handleAPILifecycleStatus(statusW, httptest.NewRequestWithContext(
+		context.Background(), http.MethodGet, "/api/lifecycle/status", nil))
+
+	got := decodeBody(t, statusW)
+	if got["status"] != "done" {
+		t.Errorf("status = %v, want done", got["status"])
+	}
+	if got["deleted"] != float64(9) {
+		t.Errorf("deleted = %v, want 9; the dashboard button keys on this", got["deleted"])
+	}
+	if got["failed"] != float64(1) {
+		t.Errorf("failed = %v, want 1", got["failed"])
+	}
+}
+
+// TestHandleAPILifecycle_NoRulesSurfacesTheReason holds the skip path: a
+// deployment with no rules must say so rather than report a sweep of zero,
+// which is the distinction the trigger exists to make.
+//
+// Not parallel: shares the op name with the test above.
+func TestHandleAPILifecycle_NoRulesSurfacesTheReason(t *testing.T) {
+	h := lifecycleHandler(t, &uiExpiryStub{})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/lifecycle", nil)
+	h.handleAPILifecycle(httptest.NewRecorder(), req)
+
+	res := waitForResult(t, h, opLifecycle)
+	if res.Skipped == "" {
+		t.Fatalf("result = %+v, want a skip naming the reason", res)
+	}
+
+	statusW := httptest.NewRecorder()
+	h.handleAPILifecycleStatus(statusW, httptest.NewRequestWithContext(
+		context.Background(), http.MethodGet, "/api/lifecycle/status", nil))
+
+	got := decodeBody(t, statusW)
+	if got["status"] != "skipped" || got["reason"] == "" {
+		t.Errorf("status body = %v, want skipped with a reason", got)
 	}
 }

@@ -122,6 +122,15 @@ type RebalancerOps interface {
 	Rebalance(ctx context.Context, cfg config.RebalanceConfig, observer progress.Observer) (worker.RebalanceSummary, error)
 }
 
+// LifecycleOps is the slice of *expiry.Manager the on-demand expiration sweep
+// uses. Config returns nil when no lifecycle block is configured, which is
+// distinct from one configured with no rules; ProcessRules applies every rule
+// once and reports what it deleted against what it could not.
+type LifecycleOps interface {
+	Config() *config.LifecycleConfig
+	ProcessRules(ctx context.Context, rules []config.LifecycleRule) (deleted, failed int)
+}
+
 // OverReplicationOps is the slice of *worker.OverReplicationCleaner the
 // surplus-copy operations use. Clean reports the copies it removed alongside
 // the per-item tally, so an object it could not clean is visible rather than

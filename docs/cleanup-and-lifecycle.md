@@ -135,6 +135,25 @@ lifecycle:
 - Deletions go through the standard `DeleteObject` path — all copies removed, quotas decremented, failed deletes enqueued to the cleanup queue.
 - Hot-reloadable via `SIGHUP`.
 
+### Running a sweep now
+
+The scheduled sweep is hourly, and a restart adds up to half an interval of jitter before the first one, so a rule you have just written can take 90 minutes to prove itself. Until it runs, a rule matching nothing is indistinguishable from a rule that ran and found nothing expired.
+
+Trigger one immediately instead:
+
+```bash
+s3-orchestrator admin lifecycle
+```
+
+```
+POST /admin/api/lifecycle
+{"status":"ok","deleted":12,"failed":0}
+```
+
+`deleted` and `failed` are separate because a sweep that removed nothing since every delete failed is a different answer from one that found nothing to expire. A deployment with no rules configured reports `{"status":"skipped","reason":"no lifecycle rules are configured"}` rather than a sweep of zero — that distinguishes a rule that does not match from config that never reached the process.
+
+The manual sweep does not take the advisory lock the scheduled one holds, matching every other manual trigger, so it can overlap a scheduled tick. Rule application is idempotent and a repeated delete of the same key is a no-op, so the overlap costs duplicated work rather than correctness.
+
 ### How a filter matches
 
 Every condition a rule sets must hold, so a rule carrying both a prefix and tags selects their intersection. Several tags are likewise an "and": the object has to carry all of them, matching on the value and not the key alone.
