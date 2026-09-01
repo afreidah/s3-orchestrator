@@ -79,7 +79,7 @@ func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer,
 	if e.encryptor == nil || e.store == nil {
 		return BulkRewriteResult{}, ErrEncryptionDisabled
 	}
-	return runBulkRewrite(ctx, e.rewriteEnv(), obs, bulkRewriteOp[*encryptRow]{
+	return bulkRewriteOp[*encryptRow]{
 		opName:      "encrypt-existing",
 		resultLabel: "encrypted",
 		counter:     telemetry.EncryptExistingObjectsTotal,
@@ -116,7 +116,7 @@ func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer,
 				},
 			}, nil
 		},
-	})
+	}.run(ctx, e.rewriteEnv(), obs)
 }
 
 // DecryptExisting reads every encrypted copy, decrypts it, re-uploads the
@@ -130,7 +130,7 @@ func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer,
 	if e.encryptor == nil || e.store == nil {
 		return BulkRewriteResult{}, ErrEncryptionDisabled
 	}
-	return runBulkRewrite(ctx, e.rewriteEnv(), obs, bulkRewriteOp[*decryptRow]{
+	return bulkRewriteOp[*decryptRow]{
 		opName:      "decrypt-existing",
 		resultLabel: "decrypted",
 		counter:     telemetry.DecryptExistingObjectsTotal,
@@ -159,7 +159,7 @@ func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer,
 				},
 			}, nil
 		},
-	})
+	}.run(ctx, e.rewriteEnv(), obs)
 }
 
 // RotateKey re-wraps every DEK sealed with oldKeyID under the current primary

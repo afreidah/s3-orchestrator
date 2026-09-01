@@ -19,20 +19,20 @@ import (
 )
 
 // Get issues an authenticated GET and decodes the response into T.
-func Get[T any](ctx context.Context, c *Client, path string, q url.Values) (*T, error) {
-	return do[T](ctx, c, http.MethodGet, path, q, nil)
+func (c *Client) Get[T any](ctx context.Context, path string, q url.Values) (*T, error) {
+	return c.do[T](ctx, http.MethodGet, path, q, nil)
 }
 
 // Post issues an authenticated POST and decodes the response into T. Most
 // admin actions take their arguments in the query string, so body is usually
 // nil.
-func Post[T any](ctx context.Context, c *Client, path string, q url.Values, body io.Reader) (*T, error) {
-	return do[T](ctx, c, http.MethodPost, path, q, body)
+func (c *Client) Post[T any](ctx context.Context, path string, q url.Values, body io.Reader) (*T, error) {
+	return c.do[T](ctx, http.MethodPost, path, q, body)
 }
 
 // do issues a request and decodes the response into T. A >=400 status becomes
 // an *Error carrying the status and trimmed body.
-func do[T any](ctx context.Context, c *Client, method, path string, q url.Values, body io.Reader) (*T, error) {
+func (c *Client) do[T any](ctx context.Context, method, path string, q url.Values, body io.Reader) (*T, error) {
 	resp, err := c.send(ctx, c.http, method, path, q, body, "")
 	if err != nil {
 		return nil, err

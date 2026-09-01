@@ -263,7 +263,7 @@ func TestCB_NilErrorIsSuccess(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// CBCall / CBCallNoResult helpers
+// Call / CallNoResult helpers
 // -------------------------------------------------------------------------
 
 // TestCBCall_PassesThrough verifies the cbcall passes through contract.
@@ -271,7 +271,7 @@ func TestCB_NilErrorIsSuccess(t *testing.T) {
 func TestCBCall_PassesThrough(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(3, time.Minute)
-	result, err := CBCall(cb, func() (string, error) { return "ok", nil })
+	result, err := cb.Call(func() (string, error) { return "ok", nil })
 	if err != nil || result != "ok" {
 		t.Fatalf("unexpected: result=%q err=%v", result, err)
 	}
@@ -285,7 +285,7 @@ func TestCBCall_CircuitOpen(t *testing.T) {
 	_ = cb.PostCheck(errTest) // trip
 
 	called := false
-	_, err := CBCall(cb, func() (string, error) {
+	_, err := cb.Call(func() (string, error) {
 		called = true
 		return "ok", nil
 	})
@@ -297,25 +297,25 @@ func TestCBCall_CircuitOpen(t *testing.T) {
 	}
 }
 
-// TestCBCallNoResult_PassesThrough verifies the cbcall no result passes through contract.
+// TestCallNoResult_PassesThrough verifies the call no result passes through contract.
 // Asserts that unexpected error:.
 func TestCBCallNoResult_PassesThrough(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(3, time.Minute)
-	err := CBCallNoResult(cb, func() error { return nil })
+	err := cb.CallNoResult(func() error { return nil })
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-// TestCBCallNoResult_CircuitOpen verifies the cbcall no result circuit open contract.
+// TestCallNoResult_CircuitOpen verifies the call no result circuit open contract.
 // Asserts that expected sentinel, got.
 func TestCBCallNoResult_CircuitOpen(t *testing.T) {
 	t.Parallel()
 	cb := newTestBreaker(1, time.Minute)
 	_ = cb.PostCheck(errTest) // trip
 
-	err := CBCallNoResult(cb, func() error { return nil })
+	err := cb.CallNoResult(func() error { return nil })
 	if !errors.Is(err, errSentinel) {
 		t.Fatalf("expected sentinel, got %v", err)
 	}

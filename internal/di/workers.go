@@ -53,9 +53,9 @@ type workerCoreWithCfg struct {
 // missing provider points at the right registration site.
 func workerCoreFrom(r *resolver) workerCore {
 	return workerCore{
-		Runtime: resolveNamed[*infra.BackendRuntime](r, "BackendRuntime"),
-		Coord:   resolveNamed[*writepath.Coordinator](r, "WriteCoordinator"),
-		Stores:  resolveNamed[metadataStore](r, "MetadataStore"),
+		Runtime: r.ResolveNamed[*infra.BackendRuntime]("BackendRuntime"),
+		Coord:   r.ResolveNamed[*writepath.Coordinator]("WriteCoordinator"),
+		Stores:  r.ResolveNamed[metadataStore]("MetadataStore"),
 	}
 }
 
@@ -70,7 +70,7 @@ func resolveWorkerCore(i do.Injector) (workerCore, error) {
 // lets feature-gated providers short-circuit before touching the runtime.
 func resolveWorkerCoreWithCfg(i do.Injector) (workerCoreWithCfg, error) {
 	r := newResolver(i)
-	cfg := resolveNamed[*config.Config](r, "Config")
+	cfg := r.ResolveNamed[*config.Config]("Config")
 	return workerCoreWithCfg{workerCore: workerCoreFrom(r), Cfg: cfg}, r.err
 }
 
@@ -139,10 +139,10 @@ func ProvideOverReplicationCleaner(i do.Injector) (*worker.OverReplicationCleane
 // same pieces without an ordering dependency between the two.
 func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 	r := newResolver(i)
-	cfg := resolveNamed[*config.Config](r, "Config")
-	rt := resolveNamed[*infra.BackendRuntime](r, "BackendRuntime")
-	stores := resolveNamed[metadataStore](r, "MetadataStore")
-	id := resolveNamed[instanceid.ID](r, "InstanceID")
+	cfg := r.ResolveNamed[*config.Config]("Config")
+	rt := r.ResolveNamed[*infra.BackendRuntime]("BackendRuntime")
+	stores := r.ResolveNamed[metadataStore]("MetadataStore")
+	id := r.ResolveNamed[instanceid.ID]("InstanceID")
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -238,11 +238,11 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 // flush.
 func ProvideDrainManager(i do.Injector) (*drain.Manager, error) {
 	r := newResolver(i)
-	rt := resolveNamed[*infra.BackendRuntime](r, "BackendRuntime")
-	coord := resolveNamed[*writepath.Coordinator](r, "WriteCoordinator")
-	stores := resolveNamed[metadataStore](r, "MetadataStore")
-	mp := resolveNamed[*multipart.Manager](r, "MultipartManager")
-	cleanup := resolveNamed[*worker.CleanupWorker](r, "CleanupWorker")
+	rt := r.ResolveNamed[*infra.BackendRuntime]("BackendRuntime")
+	coord := r.ResolveNamed[*writepath.Coordinator]("WriteCoordinator")
+	stores := r.ResolveNamed[metadataStore]("MetadataStore")
+	mp := r.ResolveNamed[*multipart.Manager]("MultipartManager")
+	cleanup := r.ResolveNamed[*worker.CleanupWorker]("CleanupWorker")
 	if r.err != nil {
 		return nil, r.err
 	}

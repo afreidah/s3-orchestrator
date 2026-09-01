@@ -55,20 +55,20 @@ func (c *apiClient) listObjects(ctx context.Context, prefix, delimiter, continua
 	if continuation != "" {
 		q.Set("continuation", continuation)
 	}
-	return adminclient.Get[adminapi.ObjectListResponse](ctx, c.c, objectsPath, q)
+	return c.c.Get[adminapi.ObjectListResponse](ctx, objectsPath, q)
 }
 
 // GetObjectLocations fetches every backend copy of a single object key.
 func (c *apiClient) GetObjectLocations(ctx context.Context, key string) (*adminapi.ObjectLocationsResponse, error) {
 	q := url.Values{}
 	q.Set("key", key)
-	return adminclient.Get[adminapi.ObjectLocationsResponse](ctx, c.c, "/admin/api/object-locations", q)
+	return c.c.Get[adminapi.ObjectLocationsResponse](ctx, "/admin/api/object-locations", q)
 }
 
 // GetObjectTags fetches one object's tag set. The key rides in the path rather
 // than a query parameter, matching the admin route.
 func (c *apiClient) GetObjectTags(ctx context.Context, key string) (*adminapi.ObjectTagsResponse, error) {
-	return adminclient.Get[adminapi.ObjectTagsResponse](ctx, c.c, "/admin/api/objects/tags/"+url.PathEscape(key), nil)
+	return c.c.Get[adminapi.ObjectTagsResponse](ctx, "/admin/api/objects/tags/"+url.PathEscape(key), nil)
 }
 
 // ScrubKey verifies every recorded copy of one key now and reports a verdict
@@ -76,12 +76,12 @@ func (c *apiClient) GetObjectTags(ctx context.Context, key string) (*adminapi.Ob
 func (c *apiClient) ScrubKey(ctx context.Context, key string) (*adminapi.ScrubKeyResponse, error) {
 	q := url.Values{}
 	q.Set("key", key)
-	return adminclient.Post[adminapi.ScrubKeyResponse](ctx, c.c, "/admin/api/object-scrub", q, nil)
+	return c.c.Post[adminapi.ScrubKeyResponse](ctx, "/admin/api/object-scrub", q, nil)
 }
 
 // GetStatus fetches instance and per-backend operational status.
 func (c *apiClient) GetStatus(ctx context.Context) (*adminapi.StatusResponse, error) {
-	return adminclient.Get[adminapi.StatusResponse](ctx, c.c, "/admin/api/status", nil)
+	return c.c.Get[adminapi.StatusResponse](ctx, "/admin/api/status", nil)
 }
 
 // GetLogs fetches recent structured log entries from the in-memory buffer,
@@ -91,39 +91,39 @@ func (c *apiClient) GetLogs(ctx context.Context, level string) (*adminapi.LogsRe
 	if level != "" {
 		q = url.Values{"level": {level}}
 	}
-	return adminclient.Get[adminapi.LogsResponse](ctx, c.c, "/admin/api/logs", q)
+	return c.c.Get[adminapi.LogsResponse](ctx, "/admin/api/logs", q)
 }
 
 // GetReplicationStatus fetches the latest replication snapshot (factor and the
 // current under- and over-replicated object counts) computed by the metrics
 // collector. Returns an error until the first snapshot is available.
 func (c *apiClient) GetReplicationStatus(ctx context.Context) (*adminapi.ReplicationStatusResponse, error) {
-	return adminclient.Get[adminapi.ReplicationStatusResponse](ctx, c.c, "/admin/api/replication", nil)
+	return c.c.Get[adminapi.ReplicationStatusResponse](ctx, "/admin/api/replication", nil)
 }
 
 // GetWorkers fetches every registered background service's last-tick health.
 // Returns an unavailable adminclient.Error on a proxy-only deployment, which registers
 // no worker pool.
 func (c *apiClient) GetWorkers(ctx context.Context) (*adminapi.WorkersResponse, error) {
-	return adminclient.Get[adminapi.WorkersResponse](ctx, c.c, "/admin/api/workers", nil)
+	return c.c.Get[adminapi.WorkersResponse](ctx, "/admin/api/workers", nil)
 }
 
 // GetCleanupQueue fetches the pending-cleanup depth and a page of rows awaiting
 // a successful backend delete.
 func (c *apiClient) GetCleanupQueue(ctx context.Context) (*adminapi.CleanupQueueResponse, error) {
-	return adminclient.Get[adminapi.CleanupQueueResponse](ctx, c.c, "/admin/api/cleanup-queue", nil)
+	return c.c.Get[adminapi.CleanupQueueResponse](ctx, "/admin/api/cleanup-queue", nil)
 }
 
 // GetCleanupDLQ fetches the dead-letter depth and a page of rows that exhausted
 // their retry budget.
 func (c *apiClient) GetCleanupDLQ(ctx context.Context) (*adminapi.CleanupDLQResponse, error) {
-	return adminclient.Get[adminapi.CleanupDLQResponse](ctx, c.c, "/admin/api/cleanup-dlq", nil)
+	return c.c.Get[adminapi.CleanupDLQResponse](ctx, "/admin/api/cleanup-dlq", nil)
 }
 
 // GetCacheStats fetches the object data cache's utilization. Returns an
 // unavailable adminclient.Error when object caching is disabled.
 func (c *apiClient) GetCacheStats(ctx context.Context) (*adminapi.CacheStatsResponse, error) {
-	return adminclient.Get[adminapi.CacheStatsResponse](ctx, c.c, "/admin/api/cache", nil)
+	return c.c.Get[adminapi.CacheStatsResponse](ctx, "/admin/api/cache", nil)
 }
 
 // RequeueCleanupDLQ moves dead-lettered rows back into the cleanup queue,
@@ -133,7 +133,7 @@ func (c *apiClient) RequeueCleanupDLQ(ctx context.Context, backend string) (*adm
 	if backend != "" {
 		q = url.Values{"backend": {backend}}
 	}
-	return adminclient.Post[adminapi.CleanupDLQRequeueResponse](ctx, c.c, "/admin/api/cleanup-dlq/requeue", q, nil)
+	return c.c.Post[adminapi.CleanupDLQRequeueResponse](ctx, "/admin/api/cleanup-dlq/requeue", q, nil)
 }
 
 // ListObjectsFlat fetches one page of every key under prefix, ungrouped.
@@ -211,13 +211,13 @@ func objectPath(key string) string {
 // away from it. Returns as soon as the drain is accepted; progress is polled
 // with DrainProgress.
 func (c *apiClient) StartDrain(ctx context.Context, backend string) (*adminapi.BackendOperationResponse, error) {
-	return adminclient.Post[adminapi.BackendOperationResponse](ctx, c.c, backendDrainPath(backend), nil, nil)
+	return c.c.Post[adminapi.BackendOperationResponse](ctx, backendDrainPath(backend), nil, nil)
 }
 
 // DrainProgress reports how far an in-flight drain has got. Active is false
 // once the migration finished, was cancelled, or never started.
 func (c *apiClient) DrainProgress(ctx context.Context, backend string) (*adminapi.DrainProgressResponse, error) {
-	return adminclient.Get[adminapi.DrainProgressResponse](ctx, c.c, backendDrainPath(backend), nil)
+	return c.c.Get[adminapi.DrainProgressResponse](ctx, backendDrainPath(backend), nil)
 }
 
 // CancelDrain aborts an in-flight drain. Copies already migrated stay migrated.
@@ -241,7 +241,7 @@ func (c *apiClient) CancelDrain(ctx context.Context, backend string) (*adminapi.
 // ReconcileBackend reconciles metadata against one backend's storage rather
 // than the whole fleet.
 func (c *apiClient) ReconcileBackend(ctx context.Context, backend string) (*adminapi.ReconcileResponse, error) {
-	return adminclient.Post[adminapi.ReconcileResponse](ctx, c.c, "/admin/api/reconcile",
+	return c.c.Post[adminapi.ReconcileResponse](ctx, "/admin/api/reconcile",
 		url.Values{"backend": {backend}}, nil)
 }
 

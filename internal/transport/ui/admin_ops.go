@@ -27,7 +27,7 @@ import (
 func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	startAdminAction(h, w, r, h.rebalanceOp())
+	h.startAdminAction(w, r, h.rebalanceOp())
 }
 
 // rebalanceStatus reports a rebalance cycle. The dashboard keys on moved.
@@ -58,7 +58,7 @@ func (h *Handler) rebalanceOp() adminActionOp[rebalanceStatus] {
 
 // handleAPIRebalanceStatus returns the status of a running or completed rebalance.
 func (h *Handler) handleAPIRebalanceStatus(w http.ResponseWriter, _ *http.Request) {
-	writeAdminActionStatus(h, w, h.rebalanceOp())
+	h.writeAdminActionStatus(w, h.rebalanceOp())
 }
 
 // handleAPICleanExcess triggers an on-demand over-replication cleanup in the
@@ -66,7 +66,7 @@ func (h *Handler) handleAPIRebalanceStatus(w http.ResponseWriter, _ *http.Reques
 func (h *Handler) handleAPICleanExcess(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	startAdminAction(h, w, r, h.cleanExcessOp())
+	h.startAdminAction(w, r, h.cleanExcessOp())
 }
 
 // cleanExcessStatus reports an over-replication cleanup. The dashboard keys on
@@ -99,7 +99,7 @@ func (h *Handler) cleanExcessOp() adminActionOp[cleanExcessStatus] {
 
 // handleAPICleanExcessStatus returns the status of a running or completed cleanup.
 func (h *Handler) handleAPICleanExcessStatus(w http.ResponseWriter, _ *http.Request) {
-	writeAdminActionStatus(h, w, h.cleanExcessOp())
+	h.writeAdminActionStatus(w, h.cleanExcessOp())
 }
 
 // handleAPISync triggers a backend sync to import pre-existing objects.

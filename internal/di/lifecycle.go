@@ -48,11 +48,11 @@ type lifecycleWorkerSet struct {
 func resolveLifecycleWorkers(i do.Injector) (lifecycleWorkerSet, error) {
 	r := newResolver(i)
 	ws := lifecycleWorkerSet{
-		cleanup:    resolve[*worker.CleanupWorker](r),
-		rebalancer: resolve[*worker.Rebalancer](r),
-		replicator: resolve[*worker.Replicator](r),
-		overRep:    resolve[*worker.OverReplicationCleaner](r),
-		scrubber:   resolve[*worker.Scrubber](r),
+		cleanup:    r.Resolve[*worker.CleanupWorker](),
+		rebalancer: r.Resolve[*worker.Rebalancer](),
+		replicator: r.Resolve[*worker.Replicator](),
+		overRep:    r.Resolve[*worker.OverReplicationCleaner](),
+		scrubber:   r.Resolve[*worker.Scrubber](),
 	}
 	if r.err != nil {
 		return ws, r.err
@@ -86,12 +86,12 @@ func registerWorkerServices(sm *lifecycle.Manager, mp *multipart.Manager, rt *in
 // ProvideLifecycleManager creates and registers all background services.
 func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	r := newResolver(i)
-	cfg := resolve[*config.Config](r)
-	rt := resolve[*infra.BackendRuntime](r)
-	multipartManager := resolve[*multipart.Manager](r)
-	usageSvc := resolve[*usage.Service](r)
-	registry := resolve[*breaker.Registry](r)
-	locker := resolve[core.AdvisoryLocker](r)
+	cfg := r.Resolve[*config.Config]()
+	rt := r.Resolve[*infra.BackendRuntime]()
+	multipartManager := r.Resolve[*multipart.Manager]()
+	usageSvc := r.Resolve[*usage.Service]()
+	registry := r.Resolve[*breaker.Registry]()
+	locker := r.Resolve[core.AdvisoryLocker]()
 	if r.err != nil {
 		return nil, r.err
 	}

@@ -237,6 +237,12 @@ func serverFieldsChanged(old, new *ServerConfig) []string {
 	if old.MaxConcurrentWrites != new.MaxConcurrentWrites {
 		changed = append(changed, "server.max_concurrent_writes")
 	}
+	if old.MaxHeaderBytes != new.MaxHeaderBytes {
+		changed = append(changed, "server.max_header_bytes")
+	}
+	if old.MaxHeaderValueCount != new.MaxHeaderValueCount {
+		changed = append(changed, "server.max_header_value_count")
+	}
 	if old.LoadShedThreshold != new.LoadShedThreshold {
 		changed = append(changed, "server.load_shed_threshold")
 	}

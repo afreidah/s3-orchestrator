@@ -35,7 +35,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 		return res, nil
 	}
 
-	result, backendName, err := readpath.Read(ctx, o.failover, "HeadObject", key,
+	result, backendName, err := o.failover.Read(ctx, "HeadObject", key,
 		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.HeadObjectResult], error) {
 			var fail readpath.ProbeResult[*s3be.HeadObjectResult]
 			if !o.core.Usage().WithinLimits(beName, 1, 0, 0) {

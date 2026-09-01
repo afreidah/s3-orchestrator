@@ -61,10 +61,10 @@ func ProvideBucketAuth(i do.Injector) (*auth.BucketRegistry, error) {
 // ProvideS3Server creates the S3-compatible HTTP handler.
 func ProvideS3Server(i do.Injector) (*s3api.Server, error) {
 	r := newResolver(i)
-	cfg := resolve[*config.Config](r)
-	objects := resolve[*object.Manager](r)
-	multipartManager := resolve[*multipart.Manager](r)
-	bucketAuth := resolve[*auth.BucketRegistry](r)
+	cfg := r.Resolve[*config.Config]()
+	objects := r.Resolve[*object.Manager]()
+	multipartManager := r.Resolve[*multipart.Manager]()
+	bucketAuth := r.Resolve[*auth.BucketRegistry]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -96,16 +96,16 @@ func ProvideLoginThrottle(_ do.Injector) (*httputil.LoginThrottle, error) {
 // ProvideOps creates the operations layer both transports call.
 func ProvideOps(i do.Injector) (*ops.Services, error) {
 	r := newResolver(i)
-	cfg := resolve[*config.Config](r)
-	rt := resolve[*infra.BackendRuntime](r)
-	objectManager := resolve[*object.Manager](r)
-	integrityCfg := resolve[*syncutil.AtomicConfig[config.IntegrityConfig]](r)
-	stores := resolve[metadataStore](r)
-	encAdmin := resolve[core.EncryptionAdmin](r)
-	replicator := resolve[*worker.Replicator](r)
-	overRep := resolve[*worker.OverReplicationCleaner](r)
-	rebalancer := resolve[*worker.Rebalancer](r)
-	scrubber := resolve[*worker.Scrubber](r)
+	cfg := r.Resolve[*config.Config]()
+	rt := r.Resolve[*infra.BackendRuntime]()
+	objectManager := r.Resolve[*object.Manager]()
+	integrityCfg := r.Resolve[*syncutil.AtomicConfig[config.IntegrityConfig]]()
+	stores := r.Resolve[metadataStore]()
+	encAdmin := r.Resolve[core.EncryptionAdmin]()
+	replicator := r.Resolve[*worker.Replicator]()
+	overRep := r.Resolve[*worker.OverReplicationCleaner]()
+	rebalancer := r.Resolve[*worker.Rebalancer]()
+	scrubber := r.Resolve[*worker.Scrubber]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -143,13 +143,13 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 // ProvideUIHandler creates the web dashboard handler.
 func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 	r := newResolver(i)
-	cfg := resolve[*config.Config](r)
-	cb := resolve[*breaker.CircuitBreaker](r)
-	logBuffer := resolve[*telemetry.LogBuffer](r)
-	loginThrottle := resolve[*httputil.LoginThrottle](r)
-	aggregator := resolve[*dashboard.Aggregator](r)
-	reconciler := resolve[*reconcile.Manager](r)
-	opsSvc := resolve[*ops.Services](r)
+	cfg := r.Resolve[*config.Config]()
+	cb := r.Resolve[*breaker.CircuitBreaker]()
+	logBuffer := r.Resolve[*telemetry.LogBuffer]()
+	loginThrottle := r.Resolve[*httputil.LoginThrottle]()
+	aggregator := r.Resolve[*dashboard.Aggregator]()
+	reconciler := r.Resolve[*reconcile.Manager]()
+	opsSvc := r.Resolve[*ops.Services]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -189,13 +189,13 @@ type adminHandlerRequiredDeps struct {
 func resolveAdminHandlerRequiredDeps(i do.Injector) (adminHandlerRequiredDeps, error) {
 	r := newResolver(i)
 	d := adminHandlerRequiredDeps{
-		cfg:      resolve[*config.Config](r),
-		usageSvc: resolve[*usage.Service](r),
-		cb:       resolve[*breaker.CircuitBreaker](r),
-		logLevel: resolve[*slog.LevelVar](r),
-		stores:   resolve[metadataStore](r),
-		drain:    resolve[*drain.Manager](r),
-		ops:      resolve[*ops.Services](r),
+		cfg:      r.Resolve[*config.Config](),
+		usageSvc: r.Resolve[*usage.Service](),
+		cb:       r.Resolve[*breaker.CircuitBreaker](),
+		logLevel: r.Resolve[*slog.LevelVar](),
+		stores:   r.Resolve[metadataStore](),
+		drain:    r.Resolve[*drain.Manager](),
+		ops:      r.Resolve[*ops.Services](),
 	}
 	if r.err != nil {
 		return d, r.err
@@ -290,8 +290,8 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 // ProvideNotifier creates the webhook notification system.
 func ProvideNotifier(i do.Injector) (*notify.Notifier, error) {
 	r := newResolver(i)
-	cfg := resolve[*config.Config](r)
-	stores := resolve[metadataStore](r)
+	cfg := r.Resolve[*config.Config]()
+	stores := r.Resolve[metadataStore]()
 	if r.err != nil {
 		return nil, r.err
 	}

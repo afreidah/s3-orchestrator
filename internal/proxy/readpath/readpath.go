@@ -161,7 +161,7 @@ type readOp struct {
 	span      trace.Span
 }
 
-func Read[T any](ctx context.Context, f *Failover, operation, key string, probe Probe[T]) (T, string, error) {
+func (f *Failover) Read[T any](ctx context.Context, operation, key string, probe Probe[T]) (T, string, error) {
 	var zero T
 	start := time.Now()
 
@@ -184,13 +184,13 @@ func Read[T any](ctx context.Context, f *Failover, operation, key string, probe 
 				observe.MarkSpanError(span, "degraded reads disabled by operator")
 				return zero, "", core.ErrServiceUnavailable
 			}
-			return broadcastRead(ctx, f.broadcaster, op, probe)
+			return f.broadcaster.broadcastRead(ctx, op, probe)
 		}
 		observe.RecordSpanError(span, err)
 		return zero, "", fmt.Errorf("failed to find object location: %w", err)
 	}
 
-	return tryEachLocation(ctx, f, op, locations, probe)
+	return f.tryEachLocation(ctx, op, locations, probe)
 }
 
 // tryEachLocation walks the resolved location list and runs the probe
@@ -198,7 +198,7 @@ func Read[T any](ctx context.Context, f *Failover, operation, key string, probe 
 // count of usage-limit skips so the failure-path return distinguishes
 // "all backends declined for usage limits" from "all backends genuinely
 // failed."
-func tryEachLocation[T any](ctx context.Context, f *Failover, op readOp, locations []core.ObjectLocation, probe Probe[T]) (T, string, error) {
+func (f *Failover) tryEachLocation[T any](ctx context.Context, op readOp, locations []core.ObjectLocation, probe Probe[T]) (T, string, error) {
 	var zero T
 	var lastErr error
 	var limitSkips int

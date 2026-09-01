@@ -95,7 +95,7 @@ func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observe
 	if c.codec == nil || c.store == nil {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
-	return runBulkRewrite(ctx, c.rewriteEnv(), obs, bulkRewriteOp[*rewriteRow]{
+	return bulkRewriteOp[*rewriteRow]{
 		opName:      "compress-existing",
 		resultLabel: "compressed",
 		counter:     telemetry.CompressExistingObjectsTotal,
@@ -112,7 +112,7 @@ func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observe
 		}),
 		rewrite:     c.compressOne,
 		maxRewrites: maxRewrites,
-	})
+	}.run(ctx, c.rewriteEnv(), obs)
 }
 
 // DecompressExisting decodes every encoded copy and records it as stored
@@ -125,14 +125,14 @@ func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Obser
 	if c.codec == nil || c.store == nil {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
-	return runBulkRewrite(ctx, c.rewriteEnv(), obs, bulkRewriteOp[*rewriteRow]{
+	return bulkRewriteOp[*rewriteRow]{
 		opName:      "decompress-existing",
 		resultLabel: "decompressed",
 		counter:     telemetry.DecompressExistingObjectsTotal,
 		listFn:      rewriteListFn(c.store.ListCompressedLocations),
 		rewrite:     c.decompressOne,
 		maxRewrites: maxRewrites,
-	})
+	}.run(ctx, c.rewriteEnv(), obs)
 }
 
 // compressOne encodes one copy. The encoded bytes are buffered because a PUT

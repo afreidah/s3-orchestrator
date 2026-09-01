@@ -12,6 +12,7 @@ package config
 import (
 	"errors"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,6 +92,12 @@ func TestConfigValidation_FieldRules(t *testing.T) {
 		{"negative max_concurrent_requests", func(c *Config) { c.Server.MaxConcurrentRequests = -1 }, true},
 		{"negative max_concurrent_reads", func(c *Config) { c.Server.MaxConcurrentReads = -1 }, true},
 		{"negative max_concurrent_writes", func(c *Config) { c.Server.MaxConcurrentWrites = -1 }, true},
+		{"negative max_header_bytes", func(c *Config) { c.Server.MaxHeaderBytes = -1 }, true},
+		{"negative max_header_value_count", func(c *Config) { c.Server.MaxHeaderValueCount = -1 }, true},
+		{"explicit header limits", func(c *Config) {
+			c.Server.MaxHeaderBytes = 8192
+			c.Server.MaxHeaderValueCount = 64
+		}, false},
 		{"load_shed_threshold at or above 1.0", func(c *Config) { c.Server.LoadShedThreshold = 1.5 }, true},
 		{"negative load_shed_threshold", func(c *Config) { c.Server.LoadShedThreshold = -0.5 }, true},
 		{"load_shed_threshold in range", func(c *Config) { c.Server.LoadShedThreshold = 0.8 }, false},
@@ -1021,6 +1028,51 @@ func TestNonReloadableFieldsChanged_LoadShedThreshold(t *testing.T) {
 	changed := NonReloadableFieldsChanged(&a, &b)
 	if len(changed) != 1 || changed[0] != "server.load_shed_threshold" {
 		t.Errorf("expected [server.load_shed_threshold], got %v", changed)
+	}
+}
+
+// TestHeaderLimits_DefaultToStdlib pins the unconfigured case: an operator
+// who never sets these gets exactly what net/http would have given them,
+// so adding the knobs did not quietly retune anyone's server.
+func TestHeaderLimits_DefaultToStdlib(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("SetDefaultsAndValidate: %v", err)
+	}
+	if got := cfg.Server.MaxHeaderBytes; got != http.DefaultMaxHeaderBytes {
+		t.Errorf("MaxHeaderBytes = %d, want %d", got, http.DefaultMaxHeaderBytes)
+	}
+	if got := cfg.Server.MaxHeaderValueCount; got != http.DefaultMaxHeaderValueCount {
+		t.Errorf("MaxHeaderValueCount = %d, want %d", got, http.DefaultMaxHeaderValueCount)
+	}
+}
+
+// TestNonReloadableFieldsChanged_HeaderLimits covers both knobs: they land
+// on http.Server at construction, so SIGHUP has to report them as needing
+// a restart rather than silently keeping the old caps.
+func TestNonReloadableFieldsChanged_HeaderLimits(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		field  string
+		mutate func(*Config)
+	}{
+		{"server.max_header_bytes", func(c *Config) { c.Server.MaxHeaderBytes = 8192 }},
+		{"server.max_header_value_count", func(c *Config) { c.Server.MaxHeaderValueCount = 64 }},
+	} {
+		t.Run(tt.field, func(t *testing.T) {
+			t.Parallel()
+			a := validBaseConfig()
+			b := validBaseConfig()
+			_ = a.SetDefaultsAndValidate()
+			tt.mutate(&b)
+			_ = b.SetDefaultsAndValidate()
+
+			changed := NonReloadableFieldsChanged(&a, &b)
+			if len(changed) != 1 || changed[0] != tt.field {
+				t.Errorf("expected [%s], got %v", tt.field, changed)
+			}
+		})
 	}
 }
 
@@ -3581,7 +3633,7 @@ func TestBackendHTTP_ExplicitValuesSurviveDefaulting(t *testing.T) {
 // not, and no transport field accepts it.
 func TestBackendHTTP_RejectsNegativeValues(t *testing.T) {
 	t.Parallel()
-	for name, http := range map[string]BackendHTTPConfig{
+	for name, httpCfg := range map[string]BackendHTTPConfig{
 		"max_idle_conns":          {MaxIdleConns: -1},
 		"max_idle_conns_per_host": {MaxIdleConnsPerHost: -1},
 		"max_conns_per_host":      {MaxConnsPerHost: -1},
@@ -3590,7 +3642,7 @@ func TestBackendHTTP_RejectsNegativeValues(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			cfg := validBaseConfig()
-			cfg.Backends[0].HTTP = http
+			cfg.Backends[0].HTTP = httpCfg
 			if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrNegativeHTTPSetting) {
 				t.Errorf("err = %v, want ErrNegativeHTTPSetting", err)
 			}

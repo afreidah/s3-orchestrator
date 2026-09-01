@@ -169,7 +169,7 @@ func TestGet_DecodesAndTypesErrors(t *testing.T) {
 			Entries int `json:"entries"`
 			Hits    int `json:"hits"`
 		}
-		out, err := Get[stats](t.Context(), New(srv.URL, "tok"), "/admin/api/cache", nil)
+		out, err := New(srv.URL, "tok").Get[stats](t.Context(), "/admin/api/cache", nil)
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
@@ -184,7 +184,7 @@ func TestGet_DecodesAndTypesErrors(t *testing.T) {
 	t.Run("types a non-2xx", func(t *testing.T) {
 		t.Parallel()
 		srv, _ := newCaptureServer(t, http.StatusServiceUnavailable, `{"status":"disabled","reason":"caching is off"}`)
-		_, err := Get[struct{}](t.Context(), New(srv.URL, "tok"), "/admin/api/cache", nil)
+		_, err := New(srv.URL, "tok").Get[struct{}](t.Context(), "/admin/api/cache", nil)
 
 		apiErr, ok := errors.AsType[*Error](err)
 		if !ok {
@@ -201,7 +201,7 @@ func TestGet_DecodesAndTypesErrors(t *testing.T) {
 	t.Run("surfaces a decode failure", func(t *testing.T) {
 		t.Parallel()
 		srv, _ := newCaptureServer(t, http.StatusOK, `{not json`)
-		if _, err := Get[struct{}](t.Context(), New(srv.URL, "tok"), "/admin/api/cache", nil); err == nil {
+		if _, err := New(srv.URL, "tok").Get[struct{}](t.Context(), "/admin/api/cache", nil); err == nil {
 			t.Error("expected a decode error")
 		}
 	})
@@ -216,7 +216,7 @@ func TestPost_UsesPOST(t *testing.T) {
 	type resp struct {
 		Requeued int `json:"requeued"`
 	}
-	out, err := Post[resp](t.Context(), New(srv.URL, "tok"), "/admin/api/cleanup-dlq/requeue",
+	out, err := New(srv.URL, "tok").Post[resp](t.Context(), "/admin/api/cleanup-dlq/requeue",
 		url.Values{"backend": {"b1"}}, nil)
 	if err != nil {
 		t.Fatalf("Post: %v", err)
@@ -348,7 +348,7 @@ func TestSend_RejectsAnUnbuildableRequest(t *testing.T) {
 func TestGet_TransportFailure(t *testing.T) {
 	t.Parallel()
 	// Port 0 is never listening, so the round trip fails outright.
-	_, err := Get[struct{}](t.Context(), New("http://127.0.0.1:0", "tok"), "/x", nil)
+	_, err := New("http://127.0.0.1:0", "tok").Get[struct{}](t.Context(), "/x", nil)
 	if err == nil {
 		t.Fatal("expected a transport error")
 	}
