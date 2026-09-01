@@ -345,7 +345,8 @@ func backendStructuralChanges(old, new []BackendConfig) []string {
 			o.SecretAccessKey != n.SecretAccessKey || o.ForcePathStyle != n.ForcePathStyle ||
 			boolDefault(o.UnsignedPayload, true) != boolDefault(n.UnsignedPayload, true) ||
 			o.DisableChecksum != n.DisableChecksum ||
-			o.StripSDKHeaders != n.StripSDKHeaders {
+			o.StripSDKHeaders != n.StripSDKHeaders ||
+			httpTransportChanged(o.HTTP, n.HTTP) {
 			changed = append(changed, fmt.Sprintf("backends[%d] (%s) structural fields", i, o.Name))
 		}
 	}
@@ -355,6 +356,18 @@ func backendStructuralChanges(old, new []BackendConfig) []string {
 // -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------
+
+// httpTransportChanged reports whether a backend's transport settings differ.
+// The transport is built once when the backend client is constructed, so a
+// changed pool size or HTTP/2 setting needs a restart to take effect - which
+// the reload path reports rather than silently ignoring.
+func httpTransportChanged(o, n BackendHTTPConfig) bool {
+	return o.MaxIdleConns != n.MaxIdleConns ||
+		o.MaxIdleConnsPerHost != n.MaxIdleConnsPerHost ||
+		o.MaxConnsPerHost != n.MaxConnsPerHost ||
+		o.ResponseHeaderTimeout != n.ResponseHeaderTimeout ||
+		o.HTTP2Enabled() != n.HTTP2Enabled()
+}
 
 // boolDefault returns the value of a *bool, or the given default if nil.
 func boolDefault(p *bool, def bool) bool {

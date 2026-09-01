@@ -78,6 +78,7 @@ var (
 	ErrNegativeAPILimit    = errors.New("api_request_limit must not be negative")
 	ErrNegativeEgress      = errors.New("egress_byte_limit must not be negative")
 	ErrNegativeIngress     = errors.New("ingress_byte_limit must not be negative")
+	ErrNegativeHTTPSetting = errors.New("HTTP transport setting must not be negative")
 	// ErrInvalidCredentialSource: unknown credential_source value (allowed: "static", "default_chain").
 	ErrInvalidCredentialSource = errors.New(`credential_source must be "static" or "default_chain"`)
 	// ErrCredentialsWithDefaultChain: static keys present alongside credential_source=default_chain.
