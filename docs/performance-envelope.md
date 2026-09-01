@@ -2,13 +2,17 @@
 title: "Performance envelope"
 ---
 
-This document is a **runbook + results template** for characterising
-the orchestrator's performance envelope (closes #367). The tooling in
-`loadtest/` produces the per-scenario JSON matrices referenced below;
-the results tables are placeholders that operators fill in after
-running the suite on representative hardware. Numbers without a
-hardware fingerprint are meaningless, so each table block carries an
-**"Environment"** line.
+This page is a **runbook and results template** for characterising the
+orchestrator's performance envelope on your own hardware. The tooling in
+`loadtest/` produces the per-scenario JSON matrices referenced below; the
+results tables here are deliberately empty, for you to fill in after running
+the suite.
+
+They are empty because published numbers from someone else's hardware would be
+worse than none: throughput here is bounded by the backends and the database,
+not by the orchestrator, so a figure without the environment that produced it
+cannot be compared against anything. Each table block therefore carries an
+**"Environment"** line, and filling that in matters as much as the numbers.
 
 ## How to run
 

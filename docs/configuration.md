@@ -35,7 +35,7 @@ server:
   listen_addr: "0.0.0.0:9000"    # required
   log_level: "info"               # debug, info, warn, error (default: info, reloadable via SIGHUP)
   max_object_size: 5368709120     # 5 GB default
-  max_concurrent_requests: 0      # max concurrent S3 requests (0 = unlimited, default)
+  max_concurrent_requests: 0      # max concurrent S3 requests (0 with no read/write split = 1000)
   # max_concurrent_reads: 0       # separate limit for GET/HEAD (0 = use global limit)
   # max_concurrent_writes: 0      # separate limit for PUT/POST/DELETE (0 = use global limit)
   # load_shed_threshold: 0        # active shedding threshold (0.0-1.0, 0 = disabled)
@@ -49,8 +49,10 @@ server:
 ```
 
 - `listen_addr` is the only required field.
-- `max_object_size` caps single-PUT uploads. Larger objects should use multipart upload (most clients do this automatically). PutObject buffers the entire body in memory to support write failover across backends, so peak memory from uploads is approximately `max_object_size x max_concurrent_writes`.
-- `max_concurrent_requests` limits the number of S3 requests processed simultaneously. When the limit is reached, new requests are rejected with `503 SlowDown` and `Retry-After: 1`. Set to 2-3x `database.max_conns` for load shedding. `0` disables the limit.
+- `max_object_size` caps single-PUT uploads. Larger objects should use multipart upload (most clients do this automatically). PutObject materializes the body so a write can fail over to another backend, but only bodies up to 32 MiB are held in memory; anything larger spills to a temporary file. Peak memory from uploads is therefore bounded by `32 MiB x max_concurrent_writes` rather than by `max_object_size`, at the cost of disk for the spilled ones.
+- `max_concurrent_requests` limits the number of S3 requests processed simultaneously. When the limit is reached, new requests are rejected with `503 SlowDown` and `Retry-After: 1`. Set to 2-3x `database.max_conns` for load shedding.
+
+  **There is no unlimited mode.** Leaving all three of `max_concurrent_requests`, `max_concurrent_reads` and `max_concurrent_writes` at `0` applies a default of 1000 combined requests rather than disabling admission control. A deployment sized on the assumption that it has no cap is one that will meet `503 SlowDown` without knowing where it came from. Set the value explicitly if 1000 is not what you want.
 - `max_concurrent_reads` and `max_concurrent_writes` provide separate concurrency limits for reads (GET, HEAD) and writes (PUT, POST, DELETE). When both are set, they replace `max_concurrent_requests` with independent pools so write storms cannot starve reads. **Background workers contend with HTTP writes, not reads** — cleanup, replication, rebalance, pending reaper, and over-replication acquire admission slots from the same pool sized to `max_concurrent_writes`. In merged mode (`max_concurrent_requests` only), every HTTP request and every background worker shares the single global pool. Size `max_concurrent_writes` to accommodate both peak HTTP write traffic and the worst-case overlap of background worker activity (typically the replication factor × replicator concurrency for the dominant case). See issue #835 for the design rationale.
 - `load_shed_threshold` enables active load shedding. When in-flight requests exceed this fraction of pool capacity (e.g. `0.8`), new requests are probabilistically rejected before the hard limit, providing smooth degradation instead of a cliff.
 - `admission_wait` adds a brief wait before rejecting when the semaphore is full (e.g. `50ms`). Smooths micro-bursts without adding latency during sustained overload. Default `0` means instant rejection.
@@ -127,7 +129,7 @@ database:
   password: "${DB_PASSWORD}"
   ssl_mode: "require"            # default: require (use "disable" for local dev)
   max_conns: 50                  # default: 50; size to 2-3x max_concurrent_requests
-  min_conns: 10                  # default: 5
+  min_conns: 10                  # default: 10
   max_conn_lifetime: "5m"        # default: 5m
 ```
 
@@ -301,7 +303,7 @@ Per-backend circuit breakers isolate failures at the individual backend level. W
 ```yaml
 backend_circuit_breaker:
   enabled: true
-  failure_threshold: 5             # consecutive failures before opening (default: 10)
+  failure_threshold: 5             # consecutive failures before opening (default: 5)
   open_timeout: "5m"               # delay before probing recovery (default: 5m)
 ```
 
@@ -320,7 +322,7 @@ rebalance:
   interval: "6h"                 # default: 6h
   batch_size: 100                # objects per run (default: 100)
   threshold: 0.1                 # min utilization spread to trigger (default: 0.1)
-  concurrency: 5                 # parallel moves per run (default: 10)
+  concurrency: 5                 # parallel moves per run (default: 5)
 ```
 
 - **pack** — fills backends in config order, consolidating free space onto the last backend. Good for maximizing free-tier allocations.
@@ -337,7 +339,7 @@ replication:
   factor: 2                      # copies per object (default: 1 = no replication)
   worker_interval: "5m"          # replication cycle (default: 5m)
   batch_size: 50                 # objects per cycle (default: 50)
-  concurrency: 5                 # parallel object replications per cycle (default: 10)
+  concurrency: 5                 # parallel object replications per cycle (default: 5)
   unhealthy_threshold: "10m"     # grace period before replacing copies on circuit-broken backends (default: 10m)
 ```
 

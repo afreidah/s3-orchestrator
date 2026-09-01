@@ -137,4 +137,10 @@ Three endpoints reject an input that would otherwise be a plausible convenience:
 
 ## Endpoint reference
 
+On the documentation site the full endpoint reference renders below, generated
+from the server's own route table so it cannot drift from the code. Reading this
+file on GitHub instead, the rendered form is not available: consult
+[`docs/openapi.yaml`](openapi.yaml) directly, or point any OpenAPI viewer at it.
+Every route, parameter, request body and response schema is in that file.
+
 {{< openapi src="repo/openapi.yaml" >}}

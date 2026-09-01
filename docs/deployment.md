@@ -16,6 +16,29 @@ make nomad-demo        # Nomad dev agent with docker-compose backing services
 
 See [`deploy/README.md`](../deploy/README.md) for production deployment instructions, Vault integration, TLS/mTLS configuration, and Ingress setup.
 
+### Kubernetes (Helm)
+
+The chart in `deploy/helm/s3-orchestrator/` deploys the whole stack: Deployment, Service, ConfigMap, Secret, ServiceAccount, NetworkPolicy and an optional Ingress.
+
+```bash
+# Install with defaults
+helm install s3-orchestrator deploy/helm/s3-orchestrator \
+  -n s3-orchestrator --create-namespace
+
+# Install with your own values
+helm install s3-orchestrator deploy/helm/s3-orchestrator \
+  -n s3-orchestrator --create-namespace -f my-values.yaml
+
+# Upgrade after changing values
+helm upgrade s3-orchestrator deploy/helm/s3-orchestrator \
+  -n s3-orchestrator -f my-values.yaml
+
+# Render manifests without Helm, for a kubectl apply workflow
+helm template s3-orchestrator deploy/helm/s3-orchestrator -f my-values.yaml > manifests.yaml
+```
+
+The chart needs a PostgreSQL instance reachable from the cluster; SQLite is single-instance only and will not survive a rescheduled pod. Backends, credentials and the database connection all come from your values file — `deploy/helm/s3-orchestrator/values.yaml` lists every option with its default.
+
 ### Multi-instance deployment
 
 By default, every instance runs both the HTTP API and all background workers (`--mode=all`). For larger deployments, the `--mode` flag separates these roles:
@@ -76,15 +99,14 @@ The `listen_addr` in your config determines which port the process binds to insi
 Build a `.deb` package for bare-metal or VM deployments:
 
 ```bash
-# Build for host architecture
-make deb VERSION=X.Y.Z
-
-# Build for both amd64 and arm64
-make deb-all VERSION=X.Y.Z
+# Build amd64 and arm64 packages into dist/
+make deb
 
 # Build and validate with lintian
-make deb-lint VERSION=X.Y.Z
+make deb-lint
 ```
+
+`make deb` runs GoReleaser in snapshot mode, which builds both architectures in one pass; there is no separate per-architecture target. The version comes from the git tag rather than a variable on the command line.
 
 Install and configure:
 

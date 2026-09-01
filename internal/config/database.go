@@ -35,7 +35,7 @@ type DatabaseConfig struct {
 	Password        string        `yaml:"password"` //nolint:gosec // G117: config struct field, not a hardcoded credential
 	SSLMode         string        `yaml:"ssl_mode"`
 	MaxConns        int32         `yaml:"max_conns"`         // Max pool connections (default: 50; size to 2-3x max concurrent requests)
-	MinConns        int32         `yaml:"min_conns"`         // Min idle connections (default: 5)
+	MinConns        int32         `yaml:"min_conns"`         // Min idle connections (default: 10)
 	MaxConnLifetime time.Duration `yaml:"max_conn_lifetime"` // Max connection age (default: 5m)
 }
 

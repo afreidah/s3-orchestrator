@@ -321,6 +321,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_integrity_errors_total` | Counter | operation | Hash mismatches detected (corrupted copies enqueued for cleanup) |
 | `s3o_integrity_oldest_unverified_seconds` | Gauge | — | How long the most overdue object copy has gone unverified |
 | `s3o_integrity_never_verified_copies` | Gauge | — | Copies with a content hash that have never been verified |
+| `s3o_integrity_usage_declined_total` | Counter | — | Copies the scrubber skipped because the backend holding them was at its usage limit. A sustained rate means coverage is bounded by egress budget, not by scrubber throughput |
 | `s3o_auth_streaming_requests_total` | Counter | variant | Streaming-payload SigV4 PUTs by variant |
 | `s3o_auth_streaming_rejections_total` | Counter | reason | Chunk-validation failures (tampered body, signature mismatch, etc.) |
 | `s3o_notification_queue_depth` | Gauge | — | Pending webhook events queued for delivery |
