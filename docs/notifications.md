@@ -52,9 +52,11 @@ notifications:
 
 | Metric | Meaning |
 |---|---|
-| `s3o_notification_outbox_depth` | Current queued rows |
-| `s3o_notifications_delivered_total` | Successful POSTs by endpoint |
-| `s3o_notifications_failed_total` | POST failures (counted before retry) |
-| `s3o_notifications_dropped_total` | Rows that exceeded `max_retries` and were dropped |
+| `s3o_notification_queue_depth` | Current queued rows |
+| `s3o_notification_sent_total` | Successful POSTs by endpoint and event type |
+| `s3o_notification_failed_total` | POST failures (counted before retry) |
+| `s3o_notification_dropped_total` | Rows that exceeded `max_retries` and were dropped |
+| `s3o_notification_store_errors_total` | Outbox reads or writes that failed, by operation. Non-zero means events are being lost before anyone tries to deliver them |
+| `s3o_notification_duration_seconds` | POST latency by endpoint. A slow endpoint backs the queue up, so watch it alongside the depth gauge |
 
 See [docs/monitoring.md](monitoring.md) for the full metric set.

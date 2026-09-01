@@ -26,8 +26,22 @@ import (
 // -------------------------------------------------------------------------
 
 // Emit is the package-level hook for emitting notification events. Nil when
-// notifications are not configured. Callers must nil-check before calling.
+// notifications are not configured. Use Publish rather than calling it
+// directly, so no emit site has to remember the nil check.
 var Emit func(Event)
+
+// Publish sends one event to the configured notifier, or does nothing when the
+// deployment has none. The envelope fields a CloudEvent needs are filled in by
+// the notifier, so a caller supplies only what is specific to the occurrence.
+//
+// subject is the resource the event is about - a backend name, an object key -
+// and is empty for fleet-wide events that name no single one.
+func Publish(eventType, subject string, data map[string]any) {
+	if Emit == nil {
+		return
+	}
+	Emit(Event{Type: eventType, Subject: subject, Data: data})
+}
 
 // -------------------------------------------------------------------------
 // EVENT TYPE CONSTANTS

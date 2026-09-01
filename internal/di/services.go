@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
@@ -186,6 +187,10 @@ func NewLifecycleService(manager lifecycleOps, locker tickrunner.AdvisoryLocker)
 			if deleted > 0 || failed > 0 {
 				log.InfoContext(ctx, "expiration completed",
 					"deleted", deleted, "failed", failed)
+				event.Publish(event.LifecycleCompleted, "", map[string]any{
+					"deleted": deleted,
+					"failed":  failed,
+				})
 			}
 			if failed > 0 {
 				telemetry.LifecycleRunsTotal.WithLabelValues("partial").Inc()

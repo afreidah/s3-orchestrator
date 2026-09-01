@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
@@ -315,6 +316,13 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 		if target == "" {
 			r.log.WarnContext(ctx, "no target backend with space",
 				"key", key, "needed", remaining)
+			event.Publish(event.ReplicationTargetExhausted, key, map[string]any{
+				"key":               key,
+				"copies_needed":     remaining,
+				"copies_created":    out.Created,
+				"size_bytes":        sizeEstimate,
+				"excluded_backends": exclusion,
+			})
 			out.NoTarget = true
 			break
 		}

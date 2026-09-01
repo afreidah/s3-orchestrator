@@ -232,6 +232,11 @@ type keyMaterial struct {
 // VerifySigV4 checks an AWS Signature Version 4 Authorization header against
 // the provided credentials. The caller is responsible for resolving the correct
 // credentials via BucketRegistry. Returns nil if the signature is valid.
+//
+// The request path reaches the same check through verifySigV4Parsed, which
+// takes the header already split. This form is kept for callers holding only a
+// request - tests, and anything embedding the package - and is deliberately
+// exported rather than left as an accident of refactoring.
 func VerifySigV4(r *http.Request, accessKeyID, secretAccessKey string) error {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
