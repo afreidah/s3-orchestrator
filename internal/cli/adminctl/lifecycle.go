@@ -10,8 +10,10 @@
 
 package adminctl
 
-// cmdLifecycle implements `s3-orchestrator admin lifecycle`. Applies every
-// configured lifecycle rule once and prints what it deleted.
+import "net/http"
+
+// cmdLifecycle implements `s3-orchestrator admin lifecycle`. Streams a line per
+// expired object, then the total.
 func cmdLifecycle(_ []string, c *client) int {
-	return c.post("/admin/api/lifecycle", "", nil)
+	return c.stream(http.MethodPost, "/admin/api/lifecycle", "")
 }

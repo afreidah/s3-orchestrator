@@ -76,6 +76,7 @@ item, and a terminal `result`.
 | `reconcile` | `reconciling` | backend |
 | `replicate` | `replicating` | object key |
 | `over-replication --execute` | `removing` | object key |
+| `lifecycle` | `expiring` | object key |
 | `remove-backend --purge --confirm` | `deleting` | object key |
 
 ```text
@@ -178,8 +179,9 @@ s3-orchestrator admin replicate
 s3-orchestrator admin rebalance
 
 # Run one lifecycle expiration sweep now, instead of waiting for the hourly
-# tick. Reports deleted and failed counts, so a rule that matches nothing is
-# distinguishable from one that ran and found nothing expired.
+# tick. Streams a line per expired object, then the deleted and failed counts,
+# so a rule that matches nothing is distinguishable from one that ran and
+# found nothing expired.
 s3-orchestrator admin lifecycle
 
 # Show count of over-replicated objects

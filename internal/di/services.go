@@ -183,7 +183,8 @@ func NewLifecycleService(manager lifecycleOps, locker tickrunner.AdvisoryLocker)
 			if cfg == nil {
 				return nil
 			}
-			deleted, failed := manager.ProcessRules(ctx, cfg.Rules)
+			// No observer: nothing is watching a scheduled tick.
+			deleted, failed := manager.ProcessRules(ctx, cfg.Rules, nil)
 			if deleted > 0 || failed > 0 {
 				log.InfoContext(ctx, "expiration completed",
 					"deleted", deleted, "failed", failed)

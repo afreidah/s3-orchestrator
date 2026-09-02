@@ -15,6 +15,7 @@ import (
 	"context"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 )
 
 // usageFlushOps is the subset of *usage.Service that usageFlushService needs
@@ -45,5 +46,5 @@ type quotaMetricsRefresher interface {
 // needs to read the lifecycle config and process a tick.
 type lifecycleOps interface {
 	Config() *config.LifecycleConfig
-	ProcessRules(ctx context.Context, rules []config.LifecycleRule) (deleted, failed int)
+	ProcessRules(ctx context.Context, rules []config.LifecycleRule, observer progress.Observer) (deleted, failed int)
 }

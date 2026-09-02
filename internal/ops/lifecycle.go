@@ -18,6 +18,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 )
 
 // LifecycleResult reports one expiration sweep. Failed counts the objects a
@@ -59,7 +60,7 @@ func NewLifecycle(d LifecycleDeps) *Lifecycle {
 // matches every other manual trigger. A manual sweep can therefore overlap a
 // scheduled one; applyRule is idempotent and a doubled delete of the same key
 // is harmless.
-func (l *Lifecycle) Run(ctx context.Context) (LifecycleResult, error) {
+func (l *Lifecycle) Run(ctx context.Context, observer progress.Observer) (LifecycleResult, error) {
 	if l.expiry == nil {
 		return LifecycleResult{}, ErrLifecycleUnavailable
 	}
@@ -68,7 +69,7 @@ func (l *Lifecycle) Run(ctx context.Context) (LifecycleResult, error) {
 		return LifecycleResult{}, Skip("no lifecycle rules are configured")
 	}
 
-	deleted, failed := l.expiry.ProcessRules(ctx, cfg.Rules)
+	deleted, failed := l.expiry.ProcessRules(ctx, cfg.Rules, observer)
 
 	event.Publish(event.LifecycleCompleted, "", map[string]any{
 		"deleted": deleted,

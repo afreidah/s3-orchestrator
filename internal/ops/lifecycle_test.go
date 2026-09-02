@@ -18,23 +18,26 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 )
 
 // lifecycleStub stands in for *expiry.Manager, reporting a fixed outcome and
 // recording the rules it was handed.
 type lifecycleStub struct {
-	cfg      *config.LifecycleConfig
-	deleted  int
-	failed   int
-	gotRules []config.LifecycleRule
-	calls    int
+	cfg         *config.LifecycleConfig
+	deleted     int
+	failed      int
+	gotRules    []config.LifecycleRule
+	gotObserver progress.Observer
+	calls       int
 }
 
 // Config returns the configured rules, or nil for a deployment with none.
 func (s *lifecycleStub) Config() *config.LifecycleConfig { return s.cfg }
 
 // ProcessRules records the call and reports the fixed outcome.
-func (s *lifecycleStub) ProcessRules(_ context.Context, rules []config.LifecycleRule) (int, int) {
+func (s *lifecycleStub) ProcessRules(_ context.Context, rules []config.LifecycleRule, obs progress.Observer) (int, int) {
+	s.gotObserver = obs
 	s.calls++
 	s.gotRules = rules
 	return s.deleted, s.failed
@@ -63,9 +66,14 @@ func TestLifecycleRun_ReportsWhatItDeleted(t *testing.T) {
 	emitted := captureEvents(t)
 	stub := &lifecycleStub{cfg: rules(), deleted: 12, failed: 2}
 
-	res, err := NewLifecycle(LifecycleDeps{Expiry: stub}).Run(context.Background())
+	res, err := NewLifecycle(LifecycleDeps{Expiry: stub}).Run(context.Background(), func(progress.Step) {})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
+	}
+	// The observer is the whole point of a streamed sweep; dropping it here
+	// would leave the caller watching a run that reports nothing.
+	if stub.gotObserver == nil {
+		t.Error("the caller's observer did not reach ProcessRules")
 	}
 	if res.Deleted != 12 || res.Failed != 2 {
 		t.Errorf("res = %+v, want 12 deleted / 2 failed", res)
@@ -91,7 +99,7 @@ func TestLifecycleRun_ReportsWhatItDeleted(t *testing.T) {
 // exists for: a rule that ran and matched nothing completed, and reporting it
 // as skipped would read as "nothing happened" when something did.
 func TestLifecycleRun_MatchedNothingIsNotASkip(t *testing.T) {
-	res, err := NewLifecycle(LifecycleDeps{Expiry: &lifecycleStub{cfg: rules()}}).Run(context.Background())
+	res, err := NewLifecycle(LifecycleDeps{Expiry: &lifecycleStub{cfg: rules()}}).Run(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("a sweep that matched nothing is not a skip, got %v", err)
 	}
@@ -110,7 +118,7 @@ func TestLifecycleRun_NoRulesSkips(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			stub := &lifecycleStub{cfg: cfg}
-			_, err := NewLifecycle(LifecycleDeps{Expiry: stub}).Run(context.Background())
+			_, err := NewLifecycle(LifecycleDeps{Expiry: stub}).Run(context.Background(), nil)
 
 			var skip *SkipError
 			if !errors.As(err, &skip) {
@@ -129,7 +137,7 @@ func TestLifecycleRun_NoRulesSkips(t *testing.T) {
 // TestLifecycleRun_UnwiredManagerSkips covers the deployment where the expiry
 // manager is absent entirely, which must report that rather than panic.
 func TestLifecycleRun_UnwiredManagerSkips(t *testing.T) {
-	_, err := NewLifecycle(LifecycleDeps{}).Run(context.Background())
+	_, err := NewLifecycle(LifecycleDeps{}).Run(context.Background(), nil)
 	if !errors.Is(err, ErrLifecycleUnavailable) {
 		t.Errorf("err = %v, want ErrLifecycleUnavailable", err)
 	}
