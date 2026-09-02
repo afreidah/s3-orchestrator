@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -384,8 +385,8 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 		// Charged at the size the metadata commit settled on, not the size
 		// that crossed the wire. StreamCopy admitted the transfer against
 		// both backends' limits; it does not account for it.
-		r.ops.Acct().Egress(source, recordedSize)
-		r.ops.Acct().Ingress(target, recordedSize)
+		r.ops.Acct().Egress(s3op.GetObject, source, recordedSize)
+		r.ops.Acct().Ingress(s3op.PutObject, target, recordedSize)
 
 		audit.Log(ctx, "replication.copy",
 			slog.String("key", key),

@@ -26,9 +26,20 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
+)
+
+// Single-operation admission sets. Package-level so the read and write paths
+// do not allocate a one-element slice per request just to name the operation
+// they are asking about.
+var (
+	getObjectOp  = []s3op.Operation{s3op.GetObject}
+	headObjectOp = []s3op.Operation{s3op.HeadObject}
+	putObjectOp  = []s3op.Operation{s3op.PutObject}
+	copyObjectOp = []s3op.Operation{s3op.CopyObject}
 )
 
 // managerSpanPrefix is prepended to every OpenTelemetry span name the
@@ -157,7 +168,7 @@ func (o *Manager) LocationCache() *LocationCache {
 // size. Used by the HTTP handler to reject uploads before the request body
 // is transmitted (Expect: 100-Continue support).
 func (o *Manager) CanAcceptWrite(size int64) bool {
-	return len(o.core.EligibleForWrite(1, 0, size)) > 0
+	return len(o.core.EligibleForWrite(putObjectOp, 0, size)) > 0
 }
 
 // BackendCapacityStats returns the current per-backend used/limit byte

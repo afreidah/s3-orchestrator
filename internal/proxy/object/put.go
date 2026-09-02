@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
 
@@ -50,11 +51,11 @@ type PutObjectRequest struct {
 }
 
 func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string, error) {
-	const operation = "PutObject"
+	const operation = s3op.PutObject
 	key, size := req.Key, req.Size
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation.String(),
 		telemetry.AttrObjectKey.String(key),
 		telemetry.AttrObjectSize.Int64(size),
 	)
@@ -68,7 +69,7 @@ func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string,
 	compress := o.compressOnWrite(size)
 	eligible := []string{}
 	if !compress {
-		if eligible = o.core.EligibleForWrite(1, 0, o.physicalSize(size)); len(eligible) == 0 {
+		if eligible = o.core.EligibleForWrite(putObjectOp, 0, o.physicalSize(size)); len(eligible) == 0 {
 			return "", rejectPutForUsage(span, operation)
 		}
 	}
@@ -80,7 +81,7 @@ func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string,
 	defer plan.cleanup()
 
 	if compress {
-		if eligible = o.core.EligibleForWrite(1, 0, o.physicalSize(plan.storedSize)); len(eligible) == 0 {
+		if eligible = o.core.EligibleForWrite(putObjectOp, 0, o.physicalSize(plan.storedSize)); len(eligible) == 0 {
 			return "", rejectPutForUsage(span, operation)
 		}
 	}
@@ -115,8 +116,8 @@ func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string,
 
 // rejectPutForUsage records a write turned away because no backend had room,
 // and returns the error PutObject surfaces for it.
-func rejectPutForUsage(span trace.Span, operation string) error {
-	telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
+func rejectPutForUsage(span trace.Span, operation s3op.Operation) error {
+	telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation.String(), "write").Inc()
 	observe.MarkSpanError(span, "usage limits exceeded on all backends")
 	return core.ErrInsufficientStorage
 }
@@ -279,7 +280,7 @@ func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*m
 // attemptPutOnBackend performs one backend PUT attempt: select a
 // destination, prepare the payload (encrypt/hash), insert a pending
 // intent, upload, then promote the intent on success.
-func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, operation string, req *PutObjectRequest, plan *putPlan, dekState *putEncryptState, eligible []string) putAttemptResult {
+func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, operation s3op.Operation, req *PutObjectRequest, plan *putPlan, dekState *putEncryptState, eligible []string) putAttemptResult {
 	key := req.Key
 	// Placement decides on the bytes that will occupy the backend, which is
 	// neither the size the client announced nor the size the plan holds: a
@@ -287,7 +288,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	// after it.
 	backendName, err := o.coord.SelectBackendForWrite(ctx, o.physicalSize(plan.storedSize), eligible)
 	if err != nil {
-		return putAttemptResult{fatalErr: o.core.ClassifyWriteError(span, operation, err)}
+		return putAttemptResult{fatalErr: o.core.ClassifyWriteError(span, operation.String(), err)}
 	}
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
 
@@ -320,7 +321,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	_, err = be.PutObject(bctx, key, uploadBody, uploadSize, req.ContentType, req.Metadata)
 	bcancel()
 	if err != nil {
-		o.core.Acct().APICall(backendName)
+		o.core.Acct().APICall(s3op.PutObject, backendName)
 		// Leave the pending row for the reaper. A backend PUT error does
 		// not reliably mean the bytes are absent: the response could have
 		// been lost mid-flight, so the reaper HEADs the backend on its

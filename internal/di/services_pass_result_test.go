@@ -110,6 +110,7 @@ func expectCollectorReads(m *storetest.MockMetadataStore) {
 	m.EXPECT().GetUnverifiedObjectCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	m.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	m.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.UsageStat{}, nil).AnyTimes()
+	m.EXPECT().GetPoolUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.PoolUsage{}, nil).AnyTimes()
 	m.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	m.EXPECT().CountOverReplicatedObjects(gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
 	m.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()

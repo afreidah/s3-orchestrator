@@ -261,7 +261,7 @@ func (s *Scrubber) scrub(ctx context.Context, batchSize int, observer progress.O
 // is known. verifyOne re-checks against the real size.
 func (s *Scrubber) affordableBackends() (affordable, declined []string) {
 	order := s.deps.BackendOrder()
-	affordable = s.deps.Usage().BackendsWithinLimits(order, 1, 0, 0)
+	affordable = s.deps.Usage().BackendsWithinLimits(order, getObjectOp, 0, 0)
 
 	if len(affordable) == len(order) {
 		return affordable, nil
@@ -321,7 +321,7 @@ func (s *Scrubber) verifyOne(ctx context.Context, loc *core.ObjectLocation) Item
 	// Declined ahead of the scrub stamp below: a copy that was never read has
 	// not been verified, and recording it as scrubbed would send it to the
 	// back of the queue claiming an integrity check that never happened.
-	if !s.deps.Usage().WithinLimits(loc.BackendName, 1, loc.SizeBytes, 0) {
+	if !s.deps.Usage().WithinLimits(loc.BackendName, getObjectOp, loc.SizeBytes, 0) {
 		telemetry.IntegrityUsageDeclinedTotal.Inc()
 		s.log.WarnContext(ctx, "scrub declined by usage limits",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "size", loc.SizeBytes)

@@ -43,6 +43,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -210,10 +211,10 @@ func (c *BackendRuntime) MaxObjectSize(name string) int64 {
 // circuit-broken, and within usage limits / max-object-size for the
 // given operation. Composed pipeline of registry filters + usage
 // filter so each capability owns its half of the decision.
-func (c *BackendRuntime) EligibleForWrite(apiCalls, egress, ingress int64) []string {
+func (c *BackendRuntime) EligibleForWrite(ops []s3op.Operation, egress, ingress int64) []string {
 	eligible := c.registry.ExcludeDraining(c.registry.Order())
 	eligible = c.registry.ExcludeUnhealthy(eligible)
-	return c.usage.FilterEligible(eligible, apiCalls, egress, ingress)
+	return c.usage.FilterEligible(eligible, ops, egress, ingress)
 }
 
 // -------------------------------------------------------------------------
@@ -277,13 +278,13 @@ func (c *BackendRuntime) StreamCopy(ctx context.Context, src, dst backend.CopyEn
 	// the same structural retry answer they already act on for I/O failures:
 	// another source may have egress left, but a destination that is full
 	// ends the attempt.
-	if !c.Acct().Allow(src.Name, 1, sizeEstimate, 0) {
+	if !c.Acct().Allow(src.Name, []s3op.Operation{s3op.GetObject}, sizeEstimate, 0) {
 		return 0, &backend.CopyError{
 			Phase: backend.CopyPhaseRead,
 			Err:   fmt.Errorf("source %s: %w", src.Name, core.ErrUsageLimitExceeded),
 		}
 	}
-	if !c.Acct().Allow(dst.Name, 1, 0, sizeEstimate) {
+	if !c.Acct().Allow(dst.Name, []s3op.Operation{s3op.PutObject}, 0, sizeEstimate) {
 		return 0, &backend.CopyError{
 			Phase: backend.CopyPhaseWrite,
 			Err:   fmt.Errorf("destination %s: %w", dst.Name, core.ErrUsageLimitExceeded),

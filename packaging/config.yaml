@@ -65,9 +65,17 @@ backends:
     # unsigned_payload: true       # Stream uploads without buffering (auto-enabled for HTTPS, set explicitly for HTTP)
     # quota_bytes: 0               # 0 = unlimited
     # max_object_size: 0           # Per-object size limit in bytes (0 = unlimited)
-    # api_request_limit: 0         # Monthly API request cap (0 = unlimited)
+    # api_request_limit: 0         # Monthly API request cap, all operations (0 = unlimited)
     # egress_byte_limit: 0         # Monthly egress cap (0 = unlimited)
     # ingress_byte_limit: 0        # Monthly ingress cap (0 = unlimited)
+    # unmetered: [DeleteObject]    # Operations the provider does not bill; charged to no budget
+    # request_limits:              # Per-class request budgets; mutually exclusive with api_request_limit
+    #   - name: class_a
+    #     operations: [PutObject, CopyObject, ListObjects, ListObjectsV2]
+    #     limit: 5000
+    #   - name: class_b
+    #     operations: [GetObject, HeadObject, GetParts]
+    #     limit: 50000
     # http:                        # Per-backend transport tuning; 0 means "use the default"
     #   max_idle_conns: 100
     #   max_idle_conns_per_host: 100

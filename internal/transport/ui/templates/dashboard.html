@@ -235,7 +235,7 @@
         <tr>
           <th>Backend</th>
           <th class="num">API Requests</th>
-          <th class="num">API Limit</th>
+          <th>Request Budgets</th>
           <th class="num">Egress</th>
           <th class="num">Egress Limit</th>
           <th class="num">Ingress</th>
@@ -249,9 +249,16 @@
           <tr>
             <td>{{.}}</td>
             <td class="num">{{formatNumber $usage.APIRequests}}</td>
-            <td class="num">
-              {{- if eq $limits.APIRequestLimit 0}}unlimited
-              {{- else}}{{formatNumber $limits.APIRequestLimit}}
+            <td>
+              {{- if not $limits.Pools}}unlimited
+              {{- else}}
+                {{- range $i, $pool := $limits.Pools}}
+                  {{- if $i}}, {{end}}
+                  {{- $pool.Name}}:
+                  {{- if eq $pool.Limit 0}} unlimited
+                  {{- else}} {{formatNumber $pool.Limit}}
+                  {{- end}}
+                {{- end}}
               {{- end -}}
             </td>
             <td class="num">{{formatBytes $usage.EgressBytes}}</td>

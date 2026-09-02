@@ -84,7 +84,7 @@ func logicalSize(loc *core.ObjectLocation) int64 {
 func (o *Manager) compressedGetAttempt(ctx context.Context, key, rangeHeader, beName string, backend s3be.ObjectBackend, loc *core.ObjectLocation) (readpath.ProbeResult[*s3be.GetObjectResult], error) {
 	var fail readpath.ProbeResult[*s3be.GetObjectResult]
 
-	if !o.core.Usage().WithinLimits(beName, 1, 0, 0) {
+	if !o.core.Usage().WithinLimits(beName, getObjectOp, 0, 0) {
 		return fail, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 	}
 	if o.codec == nil {

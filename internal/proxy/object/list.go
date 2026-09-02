@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	pobserve "github.com/afreidah/s3-orchestrator/internal/proxy/observe"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -41,10 +42,10 @@ type ListObjectsV2Result struct {
 // ListObjects returns one page of objects under the given prefix, folding keys
 // into virtual-directory CommonPrefixes when a delimiter is set.
 func (o *Manager) ListObjects(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListObjectsV2Result, error) {
-	const operation = "ListObjects"
+	const operation = s3op.ListObjects
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation.String(),
 		attribute.String("s3o.prefix", prefix),
 		attribute.String("s3o.delimiter", delimiter),
 		attribute.Int("s3o.max_keys", maxKeys),

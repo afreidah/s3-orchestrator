@@ -43,6 +43,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
 	pobserve "github.com/afreidah/s3-orchestrator/internal/proxy/observe"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
@@ -173,11 +174,11 @@ type CreateUploadRequest struct {
 // round-trip (this is the shared-DEK invariant CompleteMultipartUpload
 // also depends on).
 func (mp *Manager) CreateMultipartUpload(ctx context.Context, req *CreateUploadRequest) (string, string, error) {
-	const operation = "CreateMultipartUpload"
+	const operation = s3op.CreateMultipartUpload
 	key := req.Key
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation,
+	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation.String(),
 		telemetry.AttrObjectKey.String(key),
 	)
 	defer span.End()
@@ -236,10 +237,10 @@ func (mp *Manager) CreateMultipartUpload(ctx context.Context, req *CreateUploadR
 // UploadPart uploads a single part to the backend. Parts are stored under a
 // temporary key prefix and reassembled on completion.
 func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, body io.Reader, size int64) (string, error) {
-	const operation = "UploadPart"
+	const operation = s3op.UploadPart
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation,
+	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation.String(),
 		telemetry.AttrUploadID.String(uploadID),
 		telemetry.AttrPartNumber.Int(partNumber),
 	)
@@ -264,7 +265,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 
 	// Checked against what the part will occupy, which for an encrypted upload
 	// is the envelope rather than the bytes the client sent.
-	if !mp.core.Usage().WithinLimits(mu.BackendName, 1, 0, mp.physicalPartSize(mu, size)) {
+	if !mp.core.Usage().WithinLimits(mu.BackendName, []s3op.Operation{s3op.UploadPart}, 0, mp.physicalPartSize(mu, size)) {
 		observe.MarkSpanError(span, "usage limits exceeded")
 		return "", core.ErrInsufficientStorage
 	}
@@ -286,7 +287,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	defer bcancel()
 	storedETag, err := be.PutObject(bctx, partKey, uploadBody, uploadSize, "application/octet-stream", nil)
 	if err != nil {
-		mp.core.Acct().APICall(mu.BackendName) // API call was made even on failure
+		mp.core.Acct().APICall(s3op.UploadPart, mu.BackendName) // API call was made even on failure
 		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to upload part: %w", err)
 	}
@@ -342,8 +343,8 @@ func (mp *Manager) ListMultipartUploads(ctx context.Context, prefix string, maxU
 // validates against, and those two differ as soon as the stored part is an
 // encryption envelope.
 func (mp *Manager) GetParts(ctx context.Context, bucket, key, uploadID string) ([]core.MultipartPart, error) {
-	const operation = "GetParts"
-	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation,
+	const operation = s3op.GetParts
+	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation.String(),
 		telemetry.AttrUploadID.String(uploadID),
 	)
 	defer span.End()
@@ -465,10 +466,10 @@ func multipartPartKey(uploadID string, partNumber int) string {
 // span must be the operation's pre-existing span (created at the entry
 // point). Errors are recorded against it so the operation span shows
 // the failure rather than a detached child span.
-func (mp *Manager) fetchScopedUpload(ctx context.Context, span trace.Span, bucket, key, uploadID, operation string) (*core.MultipartUpload, error) {
+func (mp *Manager) fetchScopedUpload(ctx context.Context, span trace.Span, bucket, key, uploadID string, operation s3op.Operation) (*core.MultipartUpload, error) {
 	mu, err := mp.stores.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
-		return nil, mp.core.ClassifyWriteError(span, operation, err)
+		return nil, mp.core.ClassifyWriteError(span, operation.String(), err)
 	}
 	if err := validateMultipartScope(mu, bucket, key); err != nil {
 		observe.RecordSpanError(span, err)
@@ -548,8 +549,8 @@ func formatPartNumbers(parts []int) string {
 // URL, matching them against the stored ObjectKey via validateMultipartScope
 // so a caller for one bucket cannot abort an upload that belongs to another.
 func (mp *Manager) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
-	const operation = "AbortMultipartUpload"
-	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation,
+	const operation = s3op.AbortMultipartUpload
+	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation.String(),
 		telemetry.AttrUploadID.String(uploadID),
 	)
 	defer span.End()
@@ -569,7 +570,7 @@ func (mp *Manager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUp
 		telemetry.AttrUploadID.String(mu.UploadID),
 	)
 	defer span.End()
-	const operation = "AbortMultipartUpload"
+	const operation = s3op.AbortMultipartUpload
 	start := time.Now()
 	uploadID := mu.UploadID
 
@@ -600,7 +601,7 @@ func (mp *Manager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUp
 	// 1 abort API call. The N part DELETEs go through DeleteOrEnqueue,
 	// which records them itself.
 	mp.core.Acct().Operation(operation, mu.BackendName, start, nil)
-	mp.core.Acct().APICall(mu.BackendName)
+	mp.core.Acct().APICall(operation, mu.BackendName)
 
 	pobserve.MultipartAborted(ctx, span, uploadID, mu.ObjectKey, mu.BackendName, len(parts))
 	return nil
@@ -665,10 +666,10 @@ func (mp *Manager) AbortMultipartUploadsOnBackend(ctx context.Context, backendNa
 // fails fast with a 409 OperationAborted so the client can decide
 // whether to retry or abort.
 func (mp *Manager) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, manifest []core.CompletePart) (string, error) {
-	const operation = "CompleteMultipartUpload"
+	const operation = s3op.CompleteMultipartUpload
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation,
+	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation.String(),
 		telemetry.AttrUploadID.String(uploadID),
 	)
 	defer span.End()
@@ -710,13 +711,14 @@ func (mp *Manager) CompleteMultipartUpload(ctx context.Context, bucket, key, upl
 func (mp *Manager) completeMultipartUploadLocked(
 	ctx context.Context,
 	span trace.Span,
-	operation, uploadID string,
+	operation s3op.Operation,
+	uploadID string,
 	manifest []core.CompletePart,
 	start time.Time,
 ) (string, error) {
 	mu, err := mp.stores.GetMultipartUpload(ctx, uploadID)
 	if err != nil {
-		return "", mp.core.ClassifyWriteError(span, operation, err)
+		return "", mp.core.ClassifyWriteError(span, operation.String(), err)
 	}
 	be, err := mp.core.GetBackend(mu.BackendName)
 	if err != nil {
@@ -858,9 +860,9 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// DeleteOrEnqueue, which records them itself.
 	mp.core.Acct().Operation(operation, mu.BackendName, start, nil)
 	for i := range parts {
-		mp.core.Acct().Egress(mu.BackendName, parts[i].SizeBytes)
+		mp.core.Acct().Egress(s3op.GetObject, mu.BackendName, parts[i].SizeBytes)
 	}
-	mp.core.Acct().Ingress(mu.BackendName, uploadSize)
+	mp.core.Acct().Ingress(s3op.PutObject, mu.BackendName, uploadSize)
 
 	pobserve.MultipartCompleted(ctx, span, mu.ObjectKey, mu.BackendName, uploadID, totalPlaintextSize, len(parts))
 	mp.invalidateCache(mu.ObjectKey)

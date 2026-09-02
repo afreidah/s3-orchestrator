@@ -73,7 +73,7 @@ func newBackendOps(t *testing.T, cfg backendOpsStub) *MockBackendOps {
 func newOpsUsage(t *testing.T) *opstest.MockUsageGate {
 	t.Helper()
 	m := opstest.NewMockUsageGate(gomock.NewController(t))
-	m.EXPECT().Record(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	m.EXPECT().RecordAll(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 	m.EXPECT().WithinLimits(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
 	return m
 }

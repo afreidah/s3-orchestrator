@@ -174,7 +174,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     ULIMIT: {
       title: 'Usage Limit Check (Pre-fetch)',
       badge: 'filter', badgeText: 'quota check',
-      body: '<p><code>usage.WithinLimits(backendName, apiCalls=1, egress=0, ingress=0)</code></p><p>Checks if this backend can accept one more API call without exceeding its monthly limits. This is a <b>pre-fetch</b> check &mdash; egress is checked again after the response size is known.</p><p>Skipping over-limit backends avoids wasting API calls on backends that can\'t serve the egress anyway. If copies remain on other backends, the loop continues. If all copies were on over-limit backends, returns <code>ErrUsageLimitExceeded</code>.</p><p class="ac-metric">Metric: s3o_usage_limit_rejections_total{operation="GetObject", direction="read"}</p>'
+      body: '<p><code>usage.WithinLimits(backendName, []Operation{GetObject}, egress=0, ingress=0)</code></p><p>Checks if this backend can accept one more read without exceeding its monthly limits. The operation is named rather than counted, so only the request pools a <code>GetObject</code> belongs to are consulted &mdash; a backend out of upload budget still serves reads. This is a <b>pre-fetch</b> check &mdash; egress is checked again after the response size is known.</p><p>Skipping over-limit backends avoids wasting API calls on backends that can\'t serve the egress anyway. If copies remain on other backends, the loop continues. If all copies were on over-limit backends, returns <code>ErrUsageLimitExceeded</code>.</p><p class="ac-metric">Metric: s3o_usage_limit_rejections_total{operation="GetObject", direction="read"}</p>'
     },
     RLIMIT: {
       title: '429 Usage Limit Exceeded',
@@ -244,7 +244,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     EGRESSCHK: {
       title: 'Egress Limit Check (Post-fetch)',
       badge: 'filter', badgeText: 'egress check',
-      body: '<p><code>usage.WithinLimits(backendName, 1, response.Size, 0)</code></p><p>Now that the response size is known, checks if downloading this object would exceed the backend\'s monthly egress limit.</p><p>If over limit: closes the response body (releasing the HTTP connection), records the API call against usage, and loops back to try the next copy. If no copies remain within limits, returns <code>ErrUsageLimitExceeded</code>.</p>'
+      body: '<p><code>usage.WithinLimits(backendName, []Operation{GetObject}, response.Size, 0)</code></p><p>Now that the response size is known, checks if downloading this object would exceed the backend\'s monthly egress limit.</p><p>If over limit: closes the response body (releasing the HTTP connection), records the API call against usage, and loops back to try the next copy. If no copies remain within limits, returns <code>ErrUsageLimitExceeded</code>.</p>'
     },
     DECRYPT: {
       title: 'Decrypt Needed?',
@@ -294,7 +294,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     METRICS: {
       title: 'Record Usage & Metrics',
       badge: 'process', badgeText: 'telemetry',
-      body: '<p><code>Record(backendName, apiCalls=1, egress=wireBytes, ingress=0)</code> increments the monthly usage counters in the counter backend.</p><p>The egress charged is what crossed the backend link, which is not the size the client is served. Decryption happens on this side of that link, so an encrypted object is served as a smaller plaintext than the ciphertext fetched, and a ranged read of one crosses whole chunks to serve a slice.</p><p>A compressed read is not charged here at all: it meters itself per frame inside the fetcher, and adding the logical size on top would double-count the larger of the two figures.</p><p>Operation duration is recorded via <code>MetricsCollector</code>. If failover occurred (primary copy failed), the span includes <code>s3o.failover=true</code>.</p><p>Audit event: <code>storage.GetObject</code> with key, backend name, and size.</p>'
+      body: '<p><code>Record(backendName, GetObject, egress=wireBytes, ingress=0)</code> increments the monthly usage counters in the counter backend, charging the backend&#39;s request total and every budget pool containing <code>GetObject</code>.</p><p>The egress charged is what crossed the backend link, which is not the size the client is served. Decryption happens on this side of that link, so an encrypted object is served as a smaller plaintext than the ciphertext fetched, and a ranged read of one crosses whole chunks to serve a slice.</p><p>A compressed read is not charged here at all: it meters itself per frame inside the fetcher, and adding the logical size on top would double-count the larger of the two figures.</p><p>Operation duration is recorded via <code>MetricsCollector</code>. If failover occurred (primary copy failed), the span includes <code>s3o.failover=true</code>.</p><p>Audit event: <code>storage.GetObject</code> with key, backend name, and size.</p>'
     },
     OK: {
       title: 'Return GetObjectResult',

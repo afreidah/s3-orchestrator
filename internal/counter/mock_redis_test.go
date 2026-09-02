@@ -117,6 +117,20 @@ func (mr *MockRedisClientMockRecorder) GetSet(ctx, key, value any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSet", reflect.TypeOf((*MockRedisClient)(nil).GetSet), ctx, key, value)
 }
 
+// HGet mocks base method.
+func (m *MockRedisClient) HGet(ctx context.Context, key, field string) *redis.StringCmd {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HGet", ctx, key, field)
+	ret0, _ := ret[0].(*redis.StringCmd)
+	return ret0
+}
+
+// HGet indicates an expected call of HGet.
+func (mr *MockRedisClientMockRecorder) HGet(ctx, key, field any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HGet", reflect.TypeOf((*MockRedisClient)(nil).HGet), ctx, key, field)
+}
+
 // IncrBy mocks base method.
 func (m *MockRedisClient) IncrBy(ctx context.Context, key string, value int64) *redis.IntCmd {
 	m.ctrl.T.Helper()
@@ -157,4 +171,18 @@ func (m *MockRedisClient) Pipeline() redis.Pipeliner {
 func (mr *MockRedisClientMockRecorder) Pipeline() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Pipeline", reflect.TypeOf((*MockRedisClient)(nil).Pipeline))
+}
+
+// TxPipeline mocks base method.
+func (m *MockRedisClient) TxPipeline() redis.Pipeliner {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TxPipeline")
+	ret0, _ := ret[0].(redis.Pipeliner)
+	return ret0
+}
+
+// TxPipeline indicates an expected call of TxPipeline.
+func (mr *MockRedisClientMockRecorder) TxPipeline() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TxPipeline", reflect.TypeOf((*MockRedisClient)(nil).TxPipeline))
 }

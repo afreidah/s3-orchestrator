@@ -84,7 +84,7 @@ func (r *Replicator) verifyReplica(ctx context.Context, target string, source *c
 	replica := *source
 	replica.BackendName = target
 
-	if !r.ops.Usage().WithinLimits(target, 1, replica.SizeBytes, 0) {
+	if !r.ops.Usage().WithinLimits(target, getObjectOp, replica.SizeBytes, 0) {
 		telemetry.IntegrityUsageDeclinedTotal.Inc()
 		r.log.WarnContext(ctx, "replica verification declined by usage limits",
 			"key", source.ObjectKey, "target", target, "size", replica.SizeBytes)

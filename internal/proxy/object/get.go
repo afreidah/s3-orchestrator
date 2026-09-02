@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	pobserve "github.com/afreidah/s3-orchestrator/internal/proxy/observe"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 )
@@ -71,7 +72,7 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 		return nil, err
 	}
 	if !selfMetered.Load() {
-		o.core.Acct().Egress(backendName, wireBytes.Load())
+		o.core.Acct().Egress(s3op.GetObject, backendName, wireBytes.Load())
 	}
 
 	pobserve.GetCompleted(ctx, key, backendName, result.Size)
@@ -122,7 +123,7 @@ func (o *Manager) tryGetObjectCache(ctx context.Context, key, rangeHeader string
 func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName string, backend s3be.ObjectBackend, loc *core.ObjectLocation) (readpath.ProbeResult[*s3be.GetObjectResult], int64, error) {
 	var fail readpath.ProbeResult[*s3be.GetObjectResult]
 
-	if !o.core.Usage().WithinLimits(beName, 1, 0, 0) {
+	if !o.core.Usage().WithinLimits(beName, getObjectOp, 0, 0) {
 		return fail, 0, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 	}
 	// Encrypted reads need the location row to unwrap the DEK; without it
@@ -157,14 +158,14 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 
 	r, cancel, err := o.core.GetWithTimeout(ctx, backend, key, actualRange)
 	if err != nil {
-		o.core.Acct().APICall(beName)
+		o.core.Acct().APICall(s3op.GetObject, beName)
 		return fail, 0, err
 	}
 	wire := r.Size
-	if !o.core.Usage().WithinLimits(beName, 1, wire, 0) {
+	if !o.core.Usage().WithinLimits(beName, getObjectOp, wire, 0) {
 		_ = r.Body.Close()
 		cancel()
-		o.core.Acct().APICall(beName)
+		o.core.Acct().APICall(s3op.GetObject, beName)
 		return fail, 0, fmt.Errorf("backend %s egress: %w", beName, readpath.ErrUsageLimitSkip)
 	}
 

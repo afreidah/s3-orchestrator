@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
@@ -587,7 +588,7 @@ func (d *Manager) purgeOneObject(ctx context.Context, be backend.ObjectBackend, 
 		d.log.WarnContext(ctx, "failed to delete object from backend during purge",
 			slog.String("backend", name), slog.String("key", key), "error", err)
 	}
-	d.infra.Acct().APICall(name)
+	d.infra.Acct().APICall(s3op.DeleteObject, name)
 
 	if err := d.objects.DeleteObjectLocation(ctx, key, name); err != nil {
 		d.log.WarnContext(ctx, "failed to delete DB record during purge",

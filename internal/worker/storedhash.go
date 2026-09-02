@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -89,13 +90,13 @@ func (h *storedHasher) hashStored(ctx context.Context, loc *core.ObjectLocation)
 
 	result, cancel, err := h.ops.GetWithTimeout(ctx, be, loc.ObjectKey, "")
 	if err != nil {
-		h.ops.Acct().APICall(loc.BackendName)
+		h.ops.Acct().APICall(s3op.GetObject, loc.BackendName)
 		return storedDigests{}, fmt.Errorf("get object: %w", err)
 	}
 	defer cancel()
 	defer result.Body.Close()
 
-	h.ops.Acct().Egress(loc.BackendName, result.Size)
+	h.ops.Acct().Egress(s3op.GetObject, loc.BackendName, result.Size)
 
 	// Check the stored bytes against what the row claims before hashing.
 	// Hashing an envelope as if it were plaintext writes a ciphertext digest

@@ -17,6 +17,7 @@ import (
 	config "github.com/afreidah/s3-orchestrator/internal/config"
 	progress "github.com/afreidah/s3-orchestrator/internal/progress"
 	object "github.com/afreidah/s3-orchestrator/internal/proxy/object"
+	s3op "github.com/afreidah/s3-orchestrator/internal/s3op"
 	core "github.com/afreidah/s3-orchestrator/internal/store/core"
 	worker "github.com/afreidah/s3-orchestrator/internal/worker"
 	gomock "go.uber.org/mock/gomock"
@@ -403,30 +404,30 @@ func (m *MockUsageGate) EXPECT() *MockUsageGateMockRecorder {
 	return m.recorder
 }
 
-// Record mocks base method.
-func (m *MockUsageGate) Record(backendName string, apiCalls, egress, ingress int64) {
+// RecordAll mocks base method.
+func (m *MockUsageGate) RecordAll(backendName string, ops []s3op.Operation, egress, ingress int64) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "Record", backendName, apiCalls, egress, ingress)
+	m.ctrl.Call(m, "RecordAll", backendName, ops, egress, ingress)
 }
 
-// Record indicates an expected call of Record.
-func (mr *MockUsageGateMockRecorder) Record(backendName, apiCalls, egress, ingress any) *gomock.Call {
+// RecordAll indicates an expected call of RecordAll.
+func (mr *MockUsageGateMockRecorder) RecordAll(backendName, ops, egress, ingress any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Record", reflect.TypeOf((*MockUsageGate)(nil).Record), backendName, apiCalls, egress, ingress)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordAll", reflect.TypeOf((*MockUsageGate)(nil).RecordAll), backendName, ops, egress, ingress)
 }
 
 // WithinLimits mocks base method.
-func (m *MockUsageGate) WithinLimits(backendName string, apiCalls, egress, ingress int64) bool {
+func (m *MockUsageGate) WithinLimits(backendName string, ops []s3op.Operation, egress, ingress int64) bool {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "WithinLimits", backendName, apiCalls, egress, ingress)
+	ret := m.ctrl.Call(m, "WithinLimits", backendName, ops, egress, ingress)
 	ret0, _ := ret[0].(bool)
 	return ret0
 }
 
 // WithinLimits indicates an expected call of WithinLimits.
-func (mr *MockUsageGateMockRecorder) WithinLimits(backendName, apiCalls, egress, ingress any) *gomock.Call {
+func (mr *MockUsageGateMockRecorder) WithinLimits(backendName, ops, egress, ingress any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WithinLimits", reflect.TypeOf((*MockUsageGate)(nil).WithinLimits), backendName, apiCalls, egress, ingress)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WithinLimits", reflect.TypeOf((*MockUsageGate)(nil).WithinLimits), backendName, ops, egress, ingress)
 }
 
 // MockIntegrityConfigLoader is a mock of IntegrityConfigLoader interface.

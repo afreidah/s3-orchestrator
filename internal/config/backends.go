@@ -16,6 +16,8 @@ import (
 	"cmp"
 	"fmt"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 )
 
 // CredentialSourceStatic and friends enumerate the supported credential_source values.
@@ -45,6 +47,9 @@ type BackendConfig struct {
 	APIRequestLimit  int64  `yaml:"api_request_limit"`  // Monthly API request limit (0 = unlimited)
 	EgressByteLimit  int64  `yaml:"egress_byte_limit"`  // Monthly egress byte limit (0 = unlimited)
 	IngressByteLimit int64  `yaml:"ingress_byte_limit"` // Monthly ingress byte limit (0 = unlimited)
+
+	RequestLimits []RequestPoolConfig `yaml:"request_limits"` // Per-operation request budgets (see RequestPoolConfig)
+	Unmetered     []string            `yaml:"unmetered"`      // Operations the provider does not bill, charged to no budget
 
 	HTTP BackendHTTPConfig `yaml:"http"` // Per-backend HTTP transport tuning
 }
@@ -162,6 +167,7 @@ func validateBackend(idx int, b *BackendConfig, seenNames map[string]bool) []err
 	errs = append(errs, b.HTTP.validate(prefix)...)
 	b.HTTP.setDefaults()
 	errs = append(errs, nonNegativeBackendFieldErrs(prefix, b)...)
+	errs = append(errs, requestLimitErrs(prefix, b)...)
 	return errs
 }
 
@@ -199,6 +205,82 @@ func credentialSourceErrs(prefix string, b *BackendConfig) []error {
 		}
 	default:
 		errs = append(errs, prefixedDetail(prefix, ErrInvalidCredentialSource, fmt.Sprintf("got %q", b.CredentialSource)))
+	}
+	return errs
+}
+
+// RequestPoolConfig is one monthly request budget shared by a set of
+// operations, which is how providers actually meter: GCS bills uploads and
+// listings from one allowance and reads from a much larger separate one, and
+// B2 splits them differently again. Naming the grouping in config rather than
+// in code keeps the orchestrator out of the business of tracking each
+// provider's price list.
+//
+// Pools are additive. An operation charges every pool that contains it and is
+// admitted only when all of them have headroom, so a per-operation sub-cap can
+// sit inside an aggregate cap. Limit 0 means unlimited: the pool is still
+// counted and reported, it simply never refuses.
+type RequestPoolConfig struct {
+	Name       string   `yaml:"name"`       // Identifier for the counter, metric label and usage report
+	Operations []string `yaml:"operations"` // Operation names, or "*" for every metered operation
+	Limit      int64    `yaml:"limit"`      // Monthly ceiling shared by those operations (0 = unlimited)
+}
+
+// requestLimitErrs validates the per-backend request budgets: pool identity,
+// known operation names, and the two config states that cannot be resolved in
+// any one direction without guessing at intent.
+func requestLimitErrs(prefix string, b *BackendConfig) []error {
+	var errs []error
+	if b.APIRequestLimit > 0 && len(b.RequestLimits) > 0 {
+		errs = append(errs, prefixed(prefix, ErrPoolsWithAPILimit))
+	}
+
+	unmetered := make(map[string]bool, len(b.Unmetered))
+	for _, name := range b.Unmetered {
+		if name == s3op.Wildcard {
+			errs = append(errs, prefixed(prefix, ErrUnmeteredWildcard))
+			continue
+		}
+		if !s3op.Known(name) {
+			errs = append(errs, prefixedDetail(prefix, ErrUnknownOperation, fmt.Sprintf("unmetered: %q", name)))
+			continue
+		}
+		unmetered[name] = true
+	}
+
+	seen := make(map[string]bool, len(b.RequestLimits))
+	for i := range b.RequestLimits {
+		errs = append(errs, poolErrs(fmt.Sprintf("%s.request_limits[%d]", prefix, i), &b.RequestLimits[i], seen, unmetered)...)
+	}
+	return errs
+}
+
+// poolErrs validates one pool entry against the backend's unmetered set and
+// the pool names already seen.
+func poolErrs(prefix string, p *RequestPoolConfig, seen, unmetered map[string]bool) []error {
+	var errs []error
+	switch {
+	case p.Name == "":
+		errs = append(errs, prefixed(prefix, ErrPoolNameRequired))
+	case seen[p.Name]:
+		errs = append(errs, prefixedDetail(prefix, ErrDuplicatePoolName, fmt.Sprintf("%q", p.Name)))
+	default:
+		seen[p.Name] = true
+	}
+	if len(p.Operations) == 0 {
+		errs = append(errs, prefixed(prefix, ErrPoolOperationsReqd))
+	}
+	if p.Limit < 0 {
+		errs = append(errs, prefixed(prefix, ErrNegativePoolLimit))
+	}
+	for _, name := range p.Operations {
+		switch {
+		case name == s3op.Wildcard:
+		case !s3op.Known(name):
+			errs = append(errs, prefixedDetail(prefix, ErrUnknownOperation, fmt.Sprintf("%q", name)))
+		case unmetered[name]:
+			errs = append(errs, prefixedDetail(prefix, ErrPoolChargesUnmetered, fmt.Sprintf("%q", name)))
+		}
 	}
 	return errs
 }

@@ -250,10 +250,10 @@ func TestStoredRangeFetcher_ChargesEveryFetch(t *testing.T) {
 
 	// One more API call than the object could afford proves each fetch was
 	// charged rather than the read as a whole.
-	if s.rt.usage.WithinLimits("be1", 1, 0, 0) != true {
+	if s.rt.usage.WithinLimits("be1", getObjectOp, 0, 0) != true {
 		t.Fatal("unlimited backend reported over its limit")
 	}
-	limited := newFakeRangeRuntime("be1", core.UsageLimits{APIRequestLimit: fetches})
+	limited := newFakeRangeRuntime("be1", requestCapped(t, fetches, 0, 0))
 	s.rt = limited
 	f = s.fetcher()
 	for i := range fetches {

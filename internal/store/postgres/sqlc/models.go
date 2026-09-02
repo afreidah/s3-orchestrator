@@ -16,6 +16,14 @@ type BackendQuota struct {
 	OrphanBytes int64
 }
 
+type BackendRequestUsage struct {
+	BackendName string
+	Period      string
+	Pool        string
+	Requests    int64
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type BackendUsage struct {
 	BackendName  string
 	Period       string

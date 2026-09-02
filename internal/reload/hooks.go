@@ -197,11 +197,11 @@ func (h *usageLimitsHook) Apply(_ context.Context, _, newCfg *config.Config) (Ho
 	limits := make(map[string]core.UsageLimits, len(newCfg.Backends))
 	for i := range newCfg.Backends {
 		bcfg := &newCfg.Backends[i]
-		limits[bcfg.Name] = core.UsageLimits{
-			APIRequestLimit:  bcfg.APIRequestLimit,
-			EgressByteLimit:  bcfg.EgressByteLimit,
-			IngressByteLimit: bcfg.IngressByteLimit,
+		lim, err := di.UsageLimitsFor(bcfg)
+		if err != nil {
+			return HookFailed, fmt.Errorf("backend %s: %w", bcfg.Name, err)
 		}
+		limits[bcfg.Name] = lim
 	}
 	var applier usageLimitsApplier = res.Value.Usage()
 	applier.UpdateLimits(limits)

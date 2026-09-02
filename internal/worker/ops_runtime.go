@@ -21,6 +21,15 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
+)
+
+// Single-operation admission sets shared by the background workers.
+// Package-level so a pass that checks a backend per object does not allocate
+// a one-element slice for every check.
+var (
+	getObjectOp = []s3op.Operation{s3op.GetObject}
+	putObjectOp = []s3op.Operation{s3op.PutObject}
 )
 
 // BackendAccess provides backend fleet discovery and drain-awareness.

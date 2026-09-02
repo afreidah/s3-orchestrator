@@ -40,6 +40,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -61,6 +62,28 @@ type BackendsResult struct {
 	// The watchdog registry consumes this so it never has to rediscover
 	// breakers via type assertion at runtime.
 	Breakers []breaker.StaleProbeResetter
+}
+
+// UsageLimitsFor compiles one backend's configured budgets into the form
+// admission reads. Shared with the reload hook so a limit applied at startup
+// and the same limit applied on reload cannot be built two different ways.
+//
+// api_request_limit is the single-pool spelling of request_limits, so it
+// desugars into one wildcard pool. Config validation rejects setting both,
+// which leaves nothing here to reconcile.
+func UsageLimitsFor(b *config.BackendConfig) (core.UsageLimits, error) {
+	specs := make([]core.PoolSpec, 0, len(b.RequestLimits)+1)
+	for i := range b.RequestLimits {
+		p := &b.RequestLimits[i]
+		specs = append(specs, core.PoolSpec{Name: p.Name, Operations: p.Operations, Limit: p.Limit})
+	}
+	specs = append(specs, core.SingleRequestPool(b.APIRequestLimit)...)
+
+	unmetered := make([]s3op.Operation, 0, len(b.Unmetered))
+	for _, name := range b.Unmetered {
+		unmetered = append(unmetered, s3op.Operation(name))
+	}
+	return core.NewUsageLimits(b.EgressByteLimit, b.IngressByteLimit, specs, unmetered)
 }
 
 // ProvideBackends initializes all configured storage backends, wrapping
@@ -95,11 +118,11 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 		}
 		backends[bcfg.Name] = be
 		order = append(order, bcfg.Name)
-		limits[bcfg.Name] = core.UsageLimits{
-			APIRequestLimit:  bcfg.APIRequestLimit,
-			EgressByteLimit:  bcfg.EgressByteLimit,
-			IngressByteLimit: bcfg.IngressByteLimit,
+		lim, err := UsageLimitsFor(bcfg)
+		if err != nil {
+			return nil, err
 		}
+		limits[bcfg.Name] = lim
 		if bcfg.MaxObjectSize > 0 {
 			maxSizes[bcfg.Name] = bcfg.MaxObjectSize
 		}

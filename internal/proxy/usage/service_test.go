@@ -19,6 +19,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -26,6 +27,7 @@ import (
 // for the reconcile, which is the whole persistence surface the service needs.
 type fakeStores struct {
 	flushed        map[string]int64
+	flushedPools   map[string]int64
 	flushErr       error
 	reconciled     map[string]int64
 	reconcileErr   error
@@ -33,7 +35,7 @@ type fakeStores struct {
 }
 
 func newFakeStores() *fakeStores {
-	return &fakeStores{flushed: make(map[string]int64)}
+	return &fakeStores{flushed: make(map[string]int64), flushedPools: make(map[string]int64)}
 }
 
 func (f *fakeStores) FlushUsageDeltas(_ context.Context, backendName, _ string, apiRequests, _, _ int64) error {
@@ -41,6 +43,18 @@ func (f *fakeStores) FlushUsageDeltas(_ context.Context, backendName, _ string, 
 		return f.flushErr
 	}
 	f.flushed[backendName] += apiRequests
+	return nil
+}
+
+// FlushPoolDeltas accepts the per-pool half of a flush. Recorded separately
+// from the totals because the service restores only the half that failed.
+func (f *fakeStores) FlushPoolDeltas(_ context.Context, backendName, _ string, deltas core.PoolUsage) error {
+	if f.flushErr != nil {
+		return f.flushErr
+	}
+	for pool, n := range deltas {
+		f.flushedPools[backendName+"/"+pool] += n
+	}
 	return nil
 }
 
@@ -73,8 +87,8 @@ func (d fakeDrain) CompletedBackends() map[string]bool { return d.completed }
 func newService(t *testing.T, stores Stores, drain DrainReader) *Service {
 	t.Helper()
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
-	tracker.Record("b1", 1, 0, 0)
-	tracker.Record("b2", 1, 0, 0)
+	tracker.Record("b1", s3op.GetObject, 0, 0)
+	tracker.Record("b2", s3op.GetObject, 0, 0)
 	return New(&Deps{Usage: tracker, Stores: stores, Drain: drain})
 }
 

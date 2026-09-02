@@ -23,6 +23,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
@@ -55,9 +56,14 @@ type BackendResolver interface {
 // provider past its monthly request quota leaves client traffic to be refused
 // on the budget it consumed.
 type UsageRecorder interface {
-	Allow(backendName string, apiCalls, egress, ingress int64) bool
-	APICalls(backendName string, n int64)
+	Allow(backendName string, ops []s3op.Operation, egress, ingress int64) bool
+	APICalls(op s3op.Operation, backendName string, n int64)
 }
+
+// listOp is what a reconcile spends: it walks a bucket one listing page at a
+// time. Package-level so a walk of thousands of pages does not allocate it per
+// page.
+var listOp = []s3op.Operation{s3op.ListObjects}
 
 // errBudgetExhausted stops a listing walk that has spent the backend's API
 // budget. Returned from the page callback, which is the only way to end a walk
@@ -88,8 +94,8 @@ func (b pageBudget) charge() bool {
 	if b.usage == nil {
 		return true
 	}
-	b.usage.APICalls(b.backendName, 1)
-	return b.usage.Allow(b.backendName, 1, 0, 0)
+	b.usage.APICalls(s3op.ListObjects, b.backendName, 1)
+	return b.usage.Allow(b.backendName, listOp, 0, 0)
 }
 
 // reportBudgetStop records a walk that ended at the backend's usage limit. The
@@ -154,7 +160,7 @@ func (m *Manager) SyncBackend(ctx context.Context, backendName, bucket string, k
 	// One page of headroom is the entry price, so a pass does not start against
 	// a backend that is already spent. The per-page charge inside the walk is
 	// what holds it to the limit from there.
-	if !m.usage.Allow(backendName, 1, 0, 0) {
+	if !m.usage.Allow(backendName, listOp, 0, 0) {
 		return 0, 0, fmt.Errorf("backend %s: %w", backendName, core.ErrUsageLimitExceeded)
 	}
 
@@ -274,7 +280,7 @@ func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, know
 
 	// The same entry price SyncBackend pays, which this path did not ask for at
 	// all: a reconcile could start against a backend with nothing left.
-	if !m.usage.Allow(backendName, 1, 0, 0) {
+	if !m.usage.Allow(backendName, listOp, 0, 0) {
 		return nil, fmt.Errorf("backend %s: %w", backendName, core.ErrUsageLimitExceeded)
 	}
 

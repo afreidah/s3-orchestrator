@@ -90,6 +90,27 @@ var (
 		[]string{"backend"},
 	)
 
+	// UsagePoolRequests tracks the current month's request count per backend
+	// request pool. Pools are additive, so these do not sum to
+	// s3o_usage_api_requests.
+	UsagePoolRequests = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "s3o_usage_pool_requests",
+			Help: "Current month request count per backend request pool (from DB)",
+		},
+		[]string{"backend", "pool"},
+	)
+
+	// UsagePoolLimit publishes each pool's configured ceiling, so a dashboard
+	// can show headroom without the limit being hardcoded alongside it.
+	UsagePoolLimit = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "s3o_usage_pool_limit",
+			Help: "Configured monthly request ceiling per backend request pool (0 = unlimited)",
+		},
+		[]string{"backend", "pool"},
+	)
+
 	// UsageEgressBytes tracks the current month's egress bytes per backend.
 	UsageEgressBytes = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{

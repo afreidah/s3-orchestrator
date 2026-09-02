@@ -58,7 +58,22 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.118.x (current)
+### v0.120.x (current)
+
+**Per-operation request budgets ([#235](https://github.com/afreidah/s3-orchestrator/issues/235), v0.120.0)**
+
+`api_request_limit` charged every backend call against one allowance. Providers do not bill that way: GCS meters uploads and listings from a small Class A allowance, reads from a much larger Class B one, and does not bill deletes at all. Collapsing those into one number means either wasting the loose classes or exhausting the strict one and taking the whole backend out of service - reads included, since the read path checks the same counter.
+
+Backends can now declare `request_limits`, a list of named pools each covering a set of operations, plus `unmetered` for the operations the provider gives away. Pools are additive: an operation charges every pool containing it and is admitted only when all of them have headroom. Migration `00024` adds `backend_request_usage(backend_name, period, pool, requests)`; byte counters stay in `backend_usage`.
+
+**Operator action items after upgrade:**
+
+- **No config change required.** `api_request_limit` remains valid and desugars to a single pool named `all` covering every operation, which is exactly what it meant before. Setting both it and `request_limits` on one backend is rejected at startup.
+- **Pool counts start at zero for the month in progress.** The existing `api_requests` total cannot be split by pool retroactively - nothing recorded which calls were uploads and which were reads - so seeding a pool from it would charge reads and free deletes against a write budget. A backend that is currently over its limit will accept work again until the new counts accumulate, once, for the remainder of the current period.
+- **`s3o_usage_api_requests` still counts every call**, including operations no budget charges. Watch `s3o_usage_pool_requests{backend,pool}` against `s3o_usage_pool_limit{backend,pool}` to see which budget is close to refusing work; the bundled Grafana dashboard adds a "Request Pool Usage" panel for this.
+- Operators on GCS, B2 or IBM COS should re-check the provider's current pricing page and split their allowances accordingly. The free-tier guide has a worked GCS example.
+
+### v0.118.x
 
 **Prefix listings are served index-only ([#1341](https://github.com/afreidah/s3-orchestrator/issues/1341), v0.118.0)**
 

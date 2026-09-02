@@ -314,6 +314,66 @@ func TestStoreInt_UsageFlushAndRead(t *testing.T) {
 	}
 }
 
+// TestStoreInt_PoolUsageFlushAndRead exercises the per-pool counters
+// admission is judged against: the insert and additive-upsert paths of
+// FlushPoolDeltas, and the period-scoped read that seeds the baselines.
+func TestStoreInt_PoolUsageFlushAndRead(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	period := "2026-06"
+
+	if err := s.FlushPoolDeltas(ctx, "backend-a", period, core.PoolUsage{"class_a": 10, "class_b": 4}); err != nil {
+		t.Fatalf("FlushPoolDeltas(insert): %v", err)
+	}
+	// Second flush exercises the upsert path, which is what lets several
+	// instances flush the same period without losing each other's deltas.
+	if err := s.FlushPoolDeltas(ctx, "backend-a", period, core.PoolUsage{"class_a": 5}); err != nil {
+		t.Fatalf("FlushPoolDeltas(upsert): %v", err)
+	}
+	// A zero delta writes no row: a pool nothing charged should not report as
+	// active from the first tick of a period.
+	if err := s.FlushPoolDeltas(ctx, "backend-a", period, core.PoolUsage{"class_c": 0}); err != nil {
+		t.Fatalf("FlushPoolDeltas(zero): %v", err)
+	}
+
+	got, err := s.GetPoolUsageForPeriod(ctx, period)
+	if err != nil {
+		t.Fatalf("GetPoolUsageForPeriod: %v", err)
+	}
+	pools, ok := got["backend-a"]
+	if !ok {
+		t.Fatalf("backend-a not in pool usage map: %+v", got)
+	}
+	if pools["class_a"] < 15 {
+		t.Errorf("class_a = %d, want at least 15 after the upsert", pools["class_a"])
+	}
+	if pools["class_b"] < 4 {
+		t.Errorf("class_b = %d, want at least 4", pools["class_b"])
+	}
+	if _, charged := pools["class_c"]; charged {
+		t.Errorf("class_c has a row: %+v; a zero delta must write nothing", pools)
+	}
+}
+
+// TestStoreInt_PoolUsageIsScopedToPeriod pins the monthly rollover: budgets
+// reset because the read is keyed by period, with no reset job to run.
+func TestStoreInt_PoolUsageIsScopedToPeriod(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+
+	if err := s.FlushPoolDeltas(ctx, "backend-a", "2026-07", core.PoolUsage{"class_a": 9}); err != nil {
+		t.Fatalf("FlushPoolDeltas: %v", err)
+	}
+
+	got, err := s.GetPoolUsageForPeriod(ctx, "2026-08")
+	if err != nil {
+		t.Fatalf("GetPoolUsageForPeriod: %v", err)
+	}
+	if pools, ok := got["backend-a"]; ok {
+		t.Errorf("backend-a carried %v into the next period, want none", pools)
+	}
+}
+
 // -------------------------------------------------------------------------
 // MULTIPART
 // -------------------------------------------------------------------------

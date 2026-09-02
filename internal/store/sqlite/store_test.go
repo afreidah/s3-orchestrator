@@ -876,6 +876,106 @@ func TestFlushUsageDeltas_And_GetUsage(t *testing.T) {
 	}
 }
 
+// TestFlushPoolDeltas_And_GetPoolUsage covers the per-pool counters admission
+// is judged against: deltas accumulate additively into the row for their
+// (backend, period, pool), and a read returns every pool keyed by backend.
+func TestFlushPoolDeltas_And_GetPoolUsage(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	period := "2026-03"
+
+	if err := s.FlushPoolDeltas(ctx, "backend-a", period, core.PoolUsage{"class_a": 10, "class_b": 3}); err != nil {
+		t.Fatalf("FlushPoolDeltas: %v", err)
+	}
+	// A second flush of the same period must add to the row, not replace it,
+	// so two instances flushing concurrently converge.
+	if err := s.FlushPoolDeltas(ctx, "backend-a", period, core.PoolUsage{"class_a": 5}); err != nil {
+		t.Fatalf("FlushPoolDeltas second: %v", err)
+	}
+	if err := s.FlushPoolDeltas(ctx, "backend-b", period, core.PoolUsage{"class_a": 1}); err != nil {
+		t.Fatalf("FlushPoolDeltas backend-b: %v", err)
+	}
+
+	usage, err := s.GetPoolUsageForPeriod(ctx, period)
+	if err != nil {
+		t.Fatalf("GetPoolUsageForPeriod: %v", err)
+	}
+	if got := usage["backend-a"]["class_a"]; got != 15 {
+		t.Errorf("backend-a class_a = %d, want 15", got)
+	}
+	if got := usage["backend-a"]["class_b"]; got != 3 {
+		t.Errorf("backend-a class_b = %d, want 3", got)
+	}
+	if got := usage["backend-b"]["class_a"]; got != 1 {
+		t.Errorf("backend-b class_a = %d, want 1", got)
+	}
+}
+
+// TestFlushPoolDeltas_SkipsZeroAndEmpty keeps a flush from writing rows for
+// pools nothing charged, which would otherwise report every configured pool as
+// active from the first tick of a period.
+func TestFlushPoolDeltas_SkipsZeroAndEmpty(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	period := "2026-04"
+
+	if err := s.FlushPoolDeltas(ctx, "backend-a", period, nil); err != nil {
+		t.Fatalf("FlushPoolDeltas(nil): %v", err)
+	}
+	if err := s.FlushPoolDeltas(ctx, "backend-a", period, core.PoolUsage{"class_a": 0}); err != nil {
+		t.Fatalf("FlushPoolDeltas(zero): %v", err)
+	}
+
+	usage, err := s.GetPoolUsageForPeriod(ctx, period)
+	if err != nil {
+		t.Fatalf("GetPoolUsageForPeriod: %v", err)
+	}
+	if len(usage) != 0 {
+		t.Errorf("usage = %v, want no rows written for zero deltas", usage)
+	}
+}
+
+// TestPoolUsageQueries_SurfaceDatabaseErrors keeps a failing database from
+// reading as an unused budget. A silent zero here would seed the admission
+// baseline at nothing and let a spent backend accept work all month.
+func TestPoolUsageQueries_SurfaceDatabaseErrors(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.db.Close(); err != nil {
+		t.Fatalf("closing the test database: %v", err)
+	}
+
+	if err := s.FlushPoolDeltas(ctx, "backend-a", "2026-03", core.PoolUsage{"class_a": 1}); err == nil {
+		t.Error("FlushPoolDeltas should surface a closed database")
+	}
+	if _, err := s.GetPoolUsageForPeriod(ctx, "2026-03"); err == nil {
+		t.Error("GetPoolUsageForPeriod should surface a closed database")
+	}
+}
+
+// TestGetPoolUsageForPeriod_ScopedToPeriod pins the monthly rollover: a new
+// period starts empty rather than inheriting the previous month's counts.
+func TestGetPoolUsageForPeriod_ScopedToPeriod(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.FlushPoolDeltas(ctx, "backend-a", "2026-03", core.PoolUsage{"class_a": 9}); err != nil {
+		t.Fatalf("FlushPoolDeltas: %v", err)
+	}
+
+	usage, err := s.GetPoolUsageForPeriod(ctx, "2026-04")
+	if err != nil {
+		t.Fatalf("GetPoolUsageForPeriod: %v", err)
+	}
+	if len(usage) != 0 {
+		t.Errorf("usage = %v, want the next period to start empty", usage)
+	}
+}
+
 // -------------------------------------------------------------------------
 // MULTIPART UPLOADS
 // -------------------------------------------------------------------------

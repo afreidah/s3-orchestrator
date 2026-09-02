@@ -46,6 +46,9 @@ func (fakeReplicationDeps) GetActiveMultipartCounts(context.Context) (map[string
 func (fakeReplicationDeps) GetUsageForPeriod(context.Context, string) (map[string]core.UsageStat, error) {
 	return nil, nil
 }
+func (fakeReplicationDeps) GetPoolUsageForPeriod(context.Context, string) (map[string]core.PoolUsage, error) {
+	return nil, nil
+}
 func (f fakeReplicationDeps) GetUnderReplicatedObjects(context.Context, int, int) ([]core.ObjectLocation, error) {
 	return f.under, nil
 }

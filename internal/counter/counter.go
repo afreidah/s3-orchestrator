@@ -56,6 +56,19 @@ type Backend interface {
 	// LoadAll reads all three counter fields for the given backend in a
 	// single call. Implementations may pipeline the operations.
 	LoadAll(backend string) LoadAllResult
+
+	// AddPools increments per-pool request counters, keyed by pool name.
+	// Implementations may pipeline the increments.
+	AddPools(backend string, deltas map[string]int64)
+
+	// LoadPool returns the current count for a single pool. Admission
+	// reads one or two of these per request, so it stays a point read
+	// rather than a map allocation.
+	LoadPool(backend, pool string) int64
+
+	// SwapPools atomically reads and resets every pool counter for the
+	// backend, returning the values immediately before the reset.
+	SwapPools(backend string) map[string]int64
 }
 
 // -------------------------------------------------------------------------
@@ -67,4 +80,12 @@ type LoadAllResult struct {
 	APIRequests  int64
 	EgressBytes  int64
 	IngressBytes int64
+}
+
+// Snapshot is one backend's unflushed counters: the three fixed dimensions
+// plus every request pool charged since the last reset. Pools are additive,
+// so their values do not sum to APIRequests.
+type Snapshot struct {
+	LoadAllResult
+	Pools map[string]int64
 }

@@ -389,15 +389,38 @@ func TestCanAcceptWrite_HasCapacity(t *testing.T) {
 	}
 }
 
+// requestCapped builds a backend's limits from a bare monthly request cap plus
+// byte caps, the shape api_request_limit desugars into.
+func requestCapped(t *testing.T, api, egress, ingress int64) core.UsageLimits {
+	t.Helper()
+	lim, err := core.NewUsageLimits(egress, ingress, core.SingleRequestPool(api), nil)
+	if err != nil {
+		t.Fatalf("build limits: %v", err)
+	}
+	return lim
+}
+
+// alreadySpent seeds a period partly consumed. Both halves of the baseline are
+// set: the request total, and the wildcard pool's share of it that admission
+// actually judges against.
+func alreadySpent(mgr *fleet, name string, api, egress, ingress int64) {
+	stat := core.UsageStat{APIRequests: api, EgressBytes: egress, IngressBytes: ingress}
+	var pools core.PoolUsage
+	if api > 0 {
+		pools = core.PoolUsage{core.PoolAll: api}
+	}
+	mgr.Runtime.Usage().SetBaseline(name, stat, pools)
+}
+
 // TestCanAcceptWrite_NoCapacity asserts the over-limit branch.
 func TestCanAcceptWrite_NoCapacity(t *testing.T) {
 	t.Parallel()
 	limits := map[string]core.UsageLimits{
-		"b1": {APIRequestLimit: 1},
+		"b1": requestCapped(t, 1, 0, 0),
 	}
 	mgr := newFleet(t, newPermissiveStore(t), map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{UsageLimits: limits})
 
-	mgr.Runtime.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 1})
+	alreadySpent(mgr, "b1", 1, 0, 0)
 
 	if mgr.CanAcceptWrite(100) {
 		t.Error("CanAcceptWrite should return false when no backend has capacity")
@@ -2146,13 +2169,13 @@ func TestPutObject_UsageLimitOverflow(t *testing.T) {
 	b2 := backendtest.NewInMemory()
 
 	limits := map[string]core.UsageLimits{
-		"b1": {APIRequestLimit: 10},
-		"b2": {APIRequestLimit: 100},
+		"b1": requestCapped(t, 10, 0, 0),
+		"b2": requestCapped(t, 100, 0, 0),
 	}
 	store, _ := putObjectStore(t, "b2")
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{UsageLimits: limits})
 
-	mgr.Runtime.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
+	alreadySpent(mgr, "b1", 10, 0, 0)
 
 	etag, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"})
 	if err != nil {
@@ -2179,8 +2202,8 @@ func TestGetObject_UsageLimitSkipsBackend(t *testing.T) {
 	_, _ = b2.PutObject(context.Background(), "key", bytes.NewReader([]byte("from-b2")), 7, "text/plain", nil)
 
 	limits := map[string]core.UsageLimits{
-		"b1": {APIRequestLimit: 10},
-		"b2": {APIRequestLimit: 100},
+		"b1": requestCapped(t, 10, 0, 0),
+		"b2": requestCapped(t, 100, 0, 0),
 	}
 	store := locationsStore(t, []core.ObjectLocation{
 		{ObjectKey: "key", BackendName: "b1"},
@@ -2188,7 +2211,7 @@ func TestGetObject_UsageLimitSkipsBackend(t *testing.T) {
 	}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{UsageLimits: limits})
 
-	mgr.Runtime.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
+	alreadySpent(mgr, "b1", 10, 0, 0)
 
 	result, err := mgr.GetObject(context.Background(), "key", "")
 	if err != nil {
@@ -2208,14 +2231,14 @@ func TestGetObject_AllCopiesOverLimit(t *testing.T) {
 	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	limits := map[string]core.UsageLimits{
-		"b1": {APIRequestLimit: 10},
+		"b1": requestCapped(t, 10, 0, 0),
 	}
 	store := locationsStore(t, []core.ObjectLocation{
 		{ObjectKey: "key", BackendName: "b1"},
 	}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1}, &fleetOpts{UsageLimits: limits})
 
-	mgr.Runtime.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
+	alreadySpent(mgr, "b1", 10, 0, 0)
 
 	if _, err := mgr.GetObject(context.Background(), "key", ""); !errors.Is(err, core.ErrUsageLimitExceeded) {
 		t.Fatalf("expected st.ErrUsageLimitExceeded, got %v", err)
@@ -2229,12 +2252,12 @@ func TestDeleteObject_AlwaysAllowed(t *testing.T) {
 	_, _ = be.PutObject(context.Background(), "del-key", bytes.NewReader([]byte("rm")), 2, "", nil)
 
 	limits := map[string]core.UsageLimits{
-		"b1": {APIRequestLimit: 1, EgressByteLimit: 1, IngressByteLimit: 1},
+		"b1": requestCapped(t, 1, 1, 1),
 	}
 	store := deleteObjectStore(t, []core.DeletedCopy{{BackendName: "b1", SizeBytes: 2}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, &fleetOpts{UsageLimits: limits})
 
-	mgr.Runtime.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 100, EgressBytes: 100, IngressBytes: 100})
+	alreadySpent(mgr, "b1", 100, 100, 100)
 
 	if err := mgr.DeleteObject(context.Background(), "del-key"); err != nil {
 		t.Fatalf("DeleteObject should always succeed regardless of limits: %v", err)
@@ -2248,12 +2271,12 @@ func TestDeleteObject_AlwaysAllowed(t *testing.T) {
 // writes.
 func TestPutObject_UsageLimitRejectionsMetric(t *testing.T) {
 	limits := map[string]core.UsageLimits{
-		"b1": {APIRequestLimit: 10},
+		"b1": requestCapped(t, 10, 0, 0),
 	}
 	store, _ := putObjectStore(t, "b1")
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{UsageLimits: limits})
 
-	mgr.Runtime.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
+	alreadySpent(mgr, "b1", 10, 0, 0)
 
 	before := testutil.ToFloat64(telemetry.UsageLimitRejectionsTotal.WithLabelValues("PutObject", "write"))
 
@@ -2274,14 +2297,14 @@ func TestGetObject_UsageLimitRejectionsMetric(t *testing.T) {
 	_, _ = b1.PutObject(context.Background(), "key", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	limits := map[string]core.UsageLimits{
-		"b1": {APIRequestLimit: 10},
+		"b1": requestCapped(t, 10, 0, 0),
 	}
 	store := locationsStore(t, []core.ObjectLocation{
 		{ObjectKey: "key", BackendName: "b1"},
 	}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1}, &fleetOpts{UsageLimits: limits})
 
-	mgr.Runtime.Usage().SetBaseline("b1", core.UsageStat{APIRequests: 10})
+	alreadySpent(mgr, "b1", 10, 0, 0)
 
 	before := testutil.ToFloat64(telemetry.UsageLimitRejectionsTotal.WithLabelValues("GetObject", "read"))
 

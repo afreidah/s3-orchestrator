@@ -28,7 +28,16 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+)
+
+// The operations one rewrite performs. Package-level so a pass over the whole
+// fleet does not allocate these per object.
+var (
+	readOp     = []s3op.Operation{s3op.GetObject}
+	writeOp    = []s3op.Operation{s3op.PutObject}
+	rewriteOps = []s3op.Operation{s3op.GetObject, s3op.PutObject}
 )
 
 // bulkRewriteBatchSize is how many locations one listing page of a bulk
@@ -253,7 +262,11 @@ func (op bulkRewriteOp[L]) processLocation(ctx context.Context, env bulkRewriteE
 	// The read is charged at the row's size and the write at the same figure
 	// as an estimate, since the transform's output is not known yet. Both are
 	// re-charged with the real numbers once they are.
-	if !env.usage.WithinLimits(backendName, 2, sizeBytes, sizeBytes) {
+	//
+	// Admitted as the two operations it actually performs rather than as a
+	// count of two: providers meter a read and a write from separate
+	// allowances, so a rewrite can be affordable on one and not the other.
+	if !env.usage.WithinLimits(backendName, rewriteOps, sizeBytes, sizeBytes) {
 		op.counter.WithLabelValues("skipped").Inc()
 		telemetry.BulkRewriteUsageDeclinedTotal.WithLabelValues(op.opName).Inc()
 		env.log.WarnContext(ctx, op.opName+": object declined by usage limits",
@@ -268,10 +281,10 @@ func (op bulkRewriteOp[L]) processLocation(ctx context.Context, env bulkRewriteE
 
 	src, err := be.GetObject(ctx, key, "")
 	if err != nil {
-		env.usage.Record(backendName, 1, 0, 0)
+		env.usage.RecordAll(backendName, readOp, 0, 0)
 		return op.failed(ctx, env, "download failed", key, backendName, err)
 	}
-	env.usage.Record(backendName, 1, src.Size, 0)
+	env.usage.RecordAll(backendName, readOp, src.Size, 0)
 
 	out, err := op.rewrite(ctx, src, loc)
 	if err != nil {
@@ -289,10 +302,10 @@ func (op bulkRewriteOp[L]) processLocation(ctx context.Context, env bulkRewriteE
 	_, err = be.PutObject(ctx, key, out.body, out.size, src.ContentType, src.Metadata)
 	src.Body.Close()
 	if err != nil {
-		env.usage.Record(backendName, 1, 0, 0)
+		env.usage.RecordAll(backendName, writeOp, 0, 0)
 		return op.failed(ctx, env, "re-upload failed", key, backendName, err)
 	}
-	env.usage.Record(backendName, 1, 0, out.size)
+	env.usage.RecordAll(backendName, writeOp, 0, out.size)
 
 	if err := out.commit(); err != nil {
 		return op.failed(ctx, env, "metadata update failed", key, backendName, err)

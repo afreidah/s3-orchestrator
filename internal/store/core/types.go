@@ -206,21 +206,6 @@ type QuotaStat struct {
 	UpdatedAt   time.Time
 }
 
-// UsageLimits holds configurable monthly usage limits for a single backend.
-// Zero in a field means unlimited for that dimension.
-type UsageLimits struct {
-	APIRequestLimit  int64
-	EgressByteLimit  int64
-	IngressByteLimit int64
-}
-
-// UsageStat holds usage statistics for a single backend in a given period.
-type UsageStat struct {
-	APIRequests  int64
-	EgressBytes  int64
-	IngressBytes int64
-}
-
 // -------------------------------------------------------------------------
 // MULTIPART UPLOADS
 // -------------------------------------------------------------------------

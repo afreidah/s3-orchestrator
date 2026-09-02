@@ -18,6 +18,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 )
 
 // pendingProbe is one eligible backend awaiting (or running) its probe.
@@ -34,9 +35,9 @@ type pendingProbe struct {
 // stay with the Broadcaster.
 type ProbeScheduler[T any] struct {
 	pending      []pendingProbe
-	parallelism  int           // 0 means no cap: fan out to every backend at once
-	drainTimeout time.Duration // bound on the post-winner loser-drain
-	operation    string        // label for the drain-timeout metric
+	parallelism  int            // 0 means no cap: fan out to every backend at once
+	drainTimeout time.Duration  // bound on the post-winner loser-drain
+	operation    s3op.Operation // label for the drain-timeout metric
 }
 
 // FirstSuccess launches the rolling window and returns the first successful
@@ -148,7 +149,7 @@ func runBackendProbe[T any](
 // timeout (and the request ctx) so a hung backend that never returns after
 // cancellation cannot strand this goroutine indefinitely; a timeout is counted
 // so the leak is observable rather than silent.
-func drainAndCleanupLosers[T any](ctx context.Context, operation string, ch <-chan broadcastResult[T], remaining int, timeout time.Duration) {
+func drainAndCleanupLosers[T any](ctx context.Context, operation s3op.Operation, ch <-chan broadcastResult[T], remaining int, timeout time.Duration) {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
@@ -161,7 +162,7 @@ func drainAndCleanupLosers[T any](ctx context.Context, operation string, ch <-ch
 		case <-ctx.Done():
 			return
 		case <-timer.C:
-			telemetry.DegradedBroadcastDrainTimeoutTotal.WithLabelValues(operation).Inc()
+			telemetry.DegradedBroadcastDrainTimeoutTotal.WithLabelValues(operation.String()).Inc()
 			return
 		}
 	}
