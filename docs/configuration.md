@@ -197,6 +197,21 @@ backends:
 
 When a backend exceeds a usage limit, writes overflow to the next eligible backend. Limits reset each month automatically.
 
+**Request pools:** providers meter operations in classes with separate allowances and disagree about the grouping, so a single `api_request_limit` either wastes the loose classes or blows the strict one. Name the grouping instead:
+
+```yaml
+    unmetered: [DeleteObject, DeleteObjects, AbortMultipartUpload]
+    request_limits:
+      - name: class_a
+        operations: [PutObject, CopyObject, ListObjects, ListObjectsV2]
+        limit: 5000
+      - name: class_b
+        operations: [GetObject, HeadObject, GetParts]
+        limit: 50000
+```
+
+Pools are additive: an operation charges every pool containing it and needs headroom in all of them. `"*"` matches every operation not listed as `unmetered`, and `limit: 0` counts without refusing. `api_request_limit` still works and desugars to one `all` pool over `"*"`; setting both on a backend is rejected. See [backends.md](backends.md) for the full operation vocabulary.
+
 **HTTP transport:** Each backend gets its own connection pool. The defaults suit a proxy serving concurrent client traffic alongside the rebalancer and replicator, but deployments range from a Raspberry Pi to a high-concurrency gateway, so they can be tuned per backend:
 
 ```yaml

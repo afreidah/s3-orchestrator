@@ -1487,7 +1487,7 @@
    "gridPos": {
     "x": 0,
     "y": 78,
-    "w": 8,
+    "w": 6,
     "h": 6
    },
    "datasource": {
@@ -1569,9 +1569,9 @@
    "id": 34,
    "title": "Monthly Egress",
    "gridPos": {
-    "x": 8,
+    "x": 6,
     "y": 78,
-    "w": 8,
+    "w": 6,
     "h": 6
    },
    "datasource": {
@@ -1653,9 +1653,9 @@
    "id": 35,
    "title": "Monthly Ingress",
    "gridPos": {
-    "x": 16,
+    "x": 12,
     "y": 78,
-    "w": 8,
+    "w": 6,
     "h": 6
    },
    "datasource": {
@@ -1723,6 +1723,103 @@
           {
            "color": "blue",
            "value": null
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "type": "table",
+   "id": 129,
+   "title": "Request Pool Usage (% of limit)",
+   "description": "Per-pool share of the monthly request budget. Providers meter operations in classes with separate allowances, so this is the figure a backend is refused on - Monthly API Requests counts every call, including ones no budget charges. Unlimited pools are omitted.",
+   "gridPos": {
+    "x": 18,
+    "y": 78,
+    "w": 6,
+    "h": 6
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "expr": "100 * (s3o_usage_pool_requests / (s3o_usage_pool_limit > 0))",
+     "format": "table",
+     "instant": true
+    }
+   ],
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "displayName": "Used",
+      "desc": true
+     }
+    ]
+   },
+   "transformations": [
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {
+       "Time": true,
+       "__name__": true
+      },
+      "renameByName": {
+       "Value": "Used"
+      }
+     }
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Used"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "percent"
+       },
+       {
+        "id": "custom.displayMode",
+        "value": "color-text"
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "green",
+           "value": null
+          },
+          {
+           "color": "yellow",
+           "value": 75
+          },
+          {
+           "color": "orange",
+           "value": 90
+          },
+          {
+           "color": "red",
+           "value": 100
           }
          ]
         }

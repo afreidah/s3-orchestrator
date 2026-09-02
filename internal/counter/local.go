@@ -17,10 +17,54 @@ import (
 )
 
 // localCounters holds atomic counters for a single backend's usage deltas.
+//
+// The three fixed dimensions are named fields because every backend has
+// exactly those; request pools are a map because their names come from
+// config and change with it. The map is guarded rather than atomic since it
+// is only written when a pool is charged for the first time in a period.
 type localCounters struct {
 	apiRequests  atomic.Int64
 	egressBytes  atomic.Int64
 	ingressBytes atomic.Int64
+
+	mu    sync.RWMutex
+	pools map[string]*atomic.Int64
+}
+
+// pool returns the counter for one pool, creating it on first charge.
+func (c *localCounters) pool(name string) *atomic.Int64 {
+	c.mu.RLock()
+	p := c.pools[name]
+	c.mu.RUnlock()
+	if p != nil {
+		return p
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if existing := c.pools[name]; existing != nil {
+		return existing
+	}
+	created := &atomic.Int64{}
+	if c.pools == nil {
+		c.pools = make(map[string]*atomic.Int64)
+	}
+	c.pools[name] = created
+	return created
+}
+
+// poolValues reads every pool counter for this backend.
+func (c *localCounters) poolValues() map[string]int64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if len(c.pools) == 0 {
+		return nil
+	}
+	out := make(map[string]int64, len(c.pools))
+	for name, p := range c.pools {
+		out[name] = p.Load()
+	}
+	return out
 }
 
 // LocalCounterBackend stores per-backend usage deltas in local atomic
@@ -153,7 +197,7 @@ func (l *LocalCounterBackend) SwapAll(backend string) LoadAllResult {
 // a single operation by swapping the entire map. Returns the old values keyed
 // by backend name. This avoids the race where per-backend SwapAll calls allow
 // concurrent Add calls to slip between swaps.
-func (l *LocalCounterBackend) SwapAllBackends() map[string]LoadAllResult {
+func (l *LocalCounterBackend) SwapAllBackends() map[string]Snapshot {
 	l.mu.Lock()
 	old := l.counters
 	fresh := make(map[string]*localCounters, len(old))
@@ -163,15 +207,63 @@ func (l *LocalCounterBackend) SwapAllBackends() map[string]LoadAllResult {
 	l.counters = fresh
 	l.mu.Unlock()
 
-	result := make(map[string]LoadAllResult, len(old))
+	result := make(map[string]Snapshot, len(old))
 	for name, c := range old {
-		result[name] = LoadAllResult{
-			APIRequests:  c.apiRequests.Load(),
-			EgressBytes:  c.egressBytes.Load(),
-			IngressBytes: c.ingressBytes.Load(),
+		result[name] = Snapshot{
+			LoadAllResult: LoadAllResult{
+				APIRequests:  c.apiRequests.Load(),
+				EgressBytes:  c.egressBytes.Load(),
+				IngressBytes: c.ingressBytes.Load(),
+			},
+			Pools: c.poolValues(),
 		}
 	}
 	return result
+}
+
+// AddPools increments the named pool counters for a backend.
+func (l *LocalCounterBackend) AddPools(backend string, deltas map[string]int64) {
+	c := l.get(backend)
+	if c == nil {
+		return
+	}
+	for name, delta := range deltas {
+		if delta > 0 {
+			c.pool(name).Add(delta)
+		}
+	}
+}
+
+// LoadPool returns the current count for a single pool.
+func (l *LocalCounterBackend) LoadPool(backend, pool string) int64 {
+	c := l.get(backend)
+	if c == nil {
+		return 0
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if p := c.pools[pool]; p != nil {
+		return p.Load()
+	}
+	return 0
+}
+
+// SwapPools reads and resets every pool counter for a backend.
+func (l *LocalCounterBackend) SwapPools(backend string) map[string]int64 {
+	c := l.get(backend)
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.pools) == 0 {
+		return nil
+	}
+	out := make(map[string]int64, len(c.pools))
+	for name, p := range c.pools {
+		out[name] = p.Swap(0)
+	}
+	return out
 }
 
 // -------------------------------------------------------------------------

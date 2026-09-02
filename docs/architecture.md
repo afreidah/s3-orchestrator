@@ -29,6 +29,7 @@ PostgreSQL (or embedded SQLite) stores:
   `created_at` is the **object's write time, not the copy's**, and every copy of a key carries the same value. A replica inherits it from the source rather than being stamped when it was made, and a discovered object takes whatever modification time the backend reported, falling back to the moment of discovery when the backend reports none. It is what reads return as `Last-Modified`, in preference to whatever the serving backend says, so an unmodified object reports the same time no matter which copy answered - the same reason ETag is stored per object rather than read from the backend. Note that this makes `created_at` unsuitable as a per-copy age: the scrub queue tracks that separately in `last_scrubbed_at`.
 - **`backend_quotas`** — per-backend quota counters + orphan-bytes tracking
 - **`backend_usage`** - per-backend monthly API-call and egress counters
+- **`backend_request_usage`** - per-backend monthly request counts per configured budget pool
 - **`multipart_uploads`** / **`multipart_parts`** — multipart upload state
 - **`cleanup_queue`** - durable retry queue for failed deletions
 - **`cleanup_dlq`** - cleanup rows that exhausted their retries, surfaced for operator action

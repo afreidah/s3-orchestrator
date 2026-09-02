@@ -332,12 +332,29 @@ func TestUsage_MultipartCompleteChargesPartReadEgress(t *testing.T) {
 //
 // The limits and baselines live on the shared manager, so leaving either in
 // place would silently refuse work in whatever test ran next.
+// exhaustedLimits is a backend budgeted so tightly that any further work is
+// refused: one request, one byte each way.
+func exhaustedLimits(t *testing.T) core.UsageLimits {
+	t.Helper()
+	lim, err := core.NewUsageLimits(1, 1, core.SingleRequestPool(1), nil)
+	if err != nil {
+		t.Fatalf("build limits: %v", err)
+	}
+	return lim
+}
+
 func exhaustBackends(t *testing.T, names []string, limits core.UsageLimits, spent core.UsageStat) {
 	t.Helper()
 	byName := make(map[string]core.UsageLimits, len(names))
 	for _, name := range names {
 		byName[name] = limits
-		testStack.Runtime.Usage().SetBaseline(name, spent)
+		// The pool half of the baseline is what admission judges requests on;
+		// the stat is what the usage report shows.
+		var pools core.PoolUsage
+		if spent.APIRequests > 0 {
+			pools = core.PoolUsage{core.PoolAll: spent.APIRequests}
+		}
+		testStack.Runtime.Usage().SetBaseline(name, spent, pools)
 	}
 	testStack.Runtime.Usage().UpdateLimits(byName)
 
@@ -406,7 +423,7 @@ func TestUsage_DeleteAllowedWithEveryBudgetExhausted(t *testing.T) {
 
 	// Exhausted only after the object exists, so the write above is unaffected.
 	exhaustBackends(t, allBackendOrder,
-		core.UsageLimits{APIRequestLimit: 1, EgressByteLimit: 1, IngressByteLimit: 1},
+		exhaustedLimits(t),
 		core.UsageStat{APIRequests: 1000, EgressBytes: 1000, IngressBytes: 1000})
 
 	if _, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{

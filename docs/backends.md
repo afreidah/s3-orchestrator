@@ -51,6 +51,31 @@ backends:
 
 When a backend exceeds a usage limit, writes overflow to the next eligible backend. Limits reset each month automatically.
 
+**Request pools:** `api_request_limit` charges every operation against one allowance, which is not how providers bill. GCS meters uploads and listings from a small Class A allowance, reads from a much larger Class B one, and does not bill deletes at all; B2 splits them differently again. Collapsing that into one number means setting it to the strictest class and wasting the rest, or to the loosest and blowing the strict one.
+
+`request_limits` names the grouping instead, and `unmetered` lists the operations the provider gives away:
+
+```yaml
+    unmetered: [DeleteObject, DeleteObjects, AbortMultipartUpload]
+    request_limits:
+      - name: class_a
+        operations: [PutObject, CopyObject, CreateMultipartUpload, UploadPart, CompleteMultipartUpload, ListObjects, ListObjectsV2]
+        limit: 5000
+      - name: class_b
+        operations: [GetObject, HeadObject, GetParts]
+        limit: 50000
+```
+
+Pools are additive: an operation charges every pool that contains it and is admitted only when all of them have headroom, so a per-operation sub-cap can sit inside an aggregate one. `operations: ["*"]` covers every operation not listed as `unmetered`, and `limit: 0` means the pool is counted but never refuses.
+
+Unmetered operations are still recorded against the backend's request total -- not billing an operation is not a reason to stop reporting it -- they are simply charged to no budget. Deletes are never refused on any budget regardless, since refusing one would leave an operator unable to get back under a limit.
+
+`api_request_limit` remains valid and desugars to a single pool named `all` over `["*"]`, so existing configs are unchanged. Setting both it and `request_limits` on one backend is rejected.
+
+Valid operation names: `PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject`, `ListObjects`, `ListObjectsV2`, `CreateMultipartUpload`, `UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload`, `GetParts`.
+
+Per-pool usage is published as `s3o_usage_pool_requests{backend,pool}` against `s3o_usage_pool_limit{backend,pool}`. Watch those rather than `s3o_usage_api_requests` when a backend stops accepting work: the total counts every call, including ones no budget charges.
+
 **Unsigned payload:** By default, uploads stream directly to backends without buffering the entire body in memory. The AWS SDK normally buffers the request body to compute a SigV4 payload hash (SHA-256), but the orchestrator uses `UNSIGNED-PAYLOAD` to skip this. Without streaming, large uploads (multipart completion, replication) can cause out-of-memory kills.
 
 For HTTPS endpoints, unsigned payload is enabled by default. For plain HTTP endpoints, it is auto-disabled unless explicitly set — AWS S3 rejects unsigned payloads over HTTP, but most S3-compatible backends (MinIO, R2, etc.) accept them. Set `unsigned_payload: true` on HTTP backends to enable streaming:

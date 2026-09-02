@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 )
 
 // OperationRecordFunc is the per-operation metric callback. Wraps the
@@ -59,26 +60,29 @@ func New(usage *counter.UsageTracker, recordOp OperationRecordFunc) *Recorder {
 // separate surfaces, and every path recorded what it spent while only some
 // asked first, so the counters stayed truthful while the budget was spent
 // unchecked. A caller holding a Recorder can now always ask.
-func (r *Recorder) Allow(backend string, apiCalls, egress, ingress int64) bool {
-	return r.usage.WithinLimits(backend, apiCalls, egress, ingress)
+func (r *Recorder) Allow(backend string, ops []s3op.Operation, egress, ingress int64) bool {
+	return r.usage.WithinLimits(backend, ops, egress, ingress)
 }
 
 // -------------------------------------------------------------------------
 // API-CALL CHARGES
 // -------------------------------------------------------------------------
 
-// APICall credits one API call against the backend's usage counter.
+// APICall credits one call of op against the backend's usage counter.
 // Call after every attempt that contacted the backend, regardless of
 // outcome: the HTTP call was made either way.
-func (r *Recorder) APICall(backend string) {
-	r.usage.Record(backend, 1, 0, 0)
+//
+// The operation is required because providers price them differently, so
+// the charge cannot be settled without knowing which one it was.
+func (r *Recorder) APICall(op s3op.Operation, backend string) {
+	r.usage.Record(backend, op, 0, 0)
 }
 
-// APICalls credits n API calls against the backend's usage counter.
-// For paginated lists, multipart completes that touch many part
-// objects, and other multi-call operations.
-func (r *Recorder) APICalls(backend string, n int64) {
-	r.usage.Record(backend, n, 0, 0)
+// APICalls credits n calls of the same operation. For paginated lists,
+// multipart completes that touch many part objects, and other multi-call
+// operations.
+func (r *Recorder) APICalls(op s3op.Operation, backend string, n int64) {
+	r.usage.RecordN(backend, op, n)
 }
 
 // -------------------------------------------------------------------------
@@ -88,15 +92,15 @@ func (r *Recorder) APICalls(backend string, n int64) {
 // Egress credits one API call + sizeBytes of egress on the backend.
 // Use after a successful GET-like operation (the bytes left the
 // backend toward the client).
-func (r *Recorder) Egress(backend string, sizeBytes int64) {
-	r.usage.Record(backend, 1, sizeBytes, 0)
+func (r *Recorder) Egress(op s3op.Operation, backend string, sizeBytes int64) {
+	r.usage.Record(backend, op, sizeBytes, 0)
 }
 
 // Ingress credits one API call + sizeBytes of ingress on the backend.
 // Use after a successful PUT-like operation (the bytes arrived at the
 // backend from the client).
-func (r *Recorder) Ingress(backend string, sizeBytes int64) {
-	r.usage.Record(backend, 1, 0, sizeBytes)
+func (r *Recorder) Ingress(op s3op.Operation, backend string, sizeBytes int64) {
+	r.usage.Record(backend, op, 0, sizeBytes)
 }
 
 // -------------------------------------------------------------------------
@@ -108,8 +112,8 @@ func (r *Recorder) Ingress(backend string, sizeBytes int64) {
 // two surfaces are deliberately separate so callers can record the
 // API-call charge on failure paths without also emitting a fake
 // success observation.
-func (r *Recorder) Operation(operation, backend string, start time.Time, err error) {
-	r.recordOp(operation, backend, start, err)
+func (r *Recorder) Operation(op s3op.Operation, backend string, start time.Time, err error) {
+	r.recordOp(op.String(), backend, start, err)
 }
 
 // -------------------------------------------------------------------------
@@ -118,22 +122,22 @@ func (r *Recorder) Operation(operation, backend string, start time.Time, err err
 
 // PutSuccess is the canonical "PUT succeeded" pair: emit the per-op
 // metric with a nil error and credit one API call + ingress bytes.
-func (r *Recorder) PutSuccess(operation, backend string, sizeBytes int64, start time.Time) {
-	r.recordOp(operation, backend, start, nil)
-	r.usage.Record(backend, 1, 0, sizeBytes)
+func (r *Recorder) PutSuccess(op s3op.Operation, backend string, sizeBytes int64, start time.Time) {
+	r.recordOp(op.String(), backend, start, nil)
+	r.usage.Record(backend, op, 0, sizeBytes)
 }
 
 // GetSuccess is the canonical "GET succeeded" pair: emit the per-op
 // metric with a nil error and credit one API call + egress bytes.
-func (r *Recorder) GetSuccess(operation, backend string, sizeBytes int64, start time.Time) {
-	r.recordOp(operation, backend, start, nil)
-	r.usage.Record(backend, 1, sizeBytes, 0)
+func (r *Recorder) GetSuccess(op s3op.Operation, backend string, sizeBytes int64, start time.Time) {
+	r.recordOp(op.String(), backend, start, nil)
+	r.usage.Record(backend, op, sizeBytes, 0)
 }
 
 // OperationFailed is the canonical "the call reached the backend and
 // failed" pair: emit the per-op metric with the err and credit one API
 // call (no bytes, since nothing transferred).
-func (r *Recorder) OperationFailed(operation, backend string, start time.Time, err error) {
-	r.recordOp(operation, backend, start, err)
-	r.usage.Record(backend, 1, 0, 0)
+func (r *Recorder) OperationFailed(op s3op.Operation, backend string, start time.Time, err error) {
+	r.recordOp(op.String(), backend, start, err)
+	r.usage.Record(backend, op, 0, 0)
 }

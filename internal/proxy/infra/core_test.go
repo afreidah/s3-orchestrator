@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -166,11 +167,11 @@ func TestCore_EligibleForWrite_AppliesAllFilters(t *testing.T) {
 	c.SetDrainChecker(staticDrainChecker{"b1": true})
 
 	// b1 is draining -> excluded. b2 has max 1024; ingress 2048 -> excluded.
-	if got := c.EligibleForWrite(1, 0, 2048); len(got) != 0 {
+	if got := c.EligibleForWrite([]s3op.Operation{s3op.PutObject}, 0, 2048); len(got) != 0 {
 		t.Errorf("EligibleForWrite(2048) = %v, want []", got)
 	}
 	// b1 still draining; b2 within limit (ingress 512 < 1024) -> [b2].
-	if got := c.EligibleForWrite(1, 0, 512); len(got) != 1 || got[0] != "b2" {
+	if got := c.EligibleForWrite([]s3op.Operation{s3op.PutObject}, 0, 512); len(got) != 1 || got[0] != "b2" {
 		t.Errorf("EligibleForWrite(512) = %v, want [b2]", got)
 	}
 }
@@ -368,7 +369,8 @@ func limitedCore(t *testing.T, limits map[string]core.UsageLimits, spent map[str
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
 	tracker.UpdateLimits(limits)
 	for name, stat := range spent {
-		tracker.SetBaseline(name, stat)
+		// Byte budgets only here, so there is no pool baseline to seed.
+		tracker.SetBaseline(name, stat, nil)
 	}
 	return New(&Config{
 		Backends:        map[string]backend.ObjectBackend{"b1": fakeBackend{}, "b2": fakeBackend{}},

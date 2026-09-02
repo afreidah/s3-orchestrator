@@ -670,10 +670,10 @@ func (b *usageBudget) allows(src, dest string, size int64) bool {
 	if b == nil || b.usage == nil {
 		return true
 	}
-	if !b.usage.WithinLimits(src, 1, b.egress[src]+size, 0) {
+	if !b.usage.WithinLimits(src, getObjectOp, b.egress[src]+size, 0) {
 		return false
 	}
-	return b.usage.WithinLimits(dest, 1, 0, b.ingress[dest]+size)
+	return b.usage.WithinLimits(dest, putObjectOp, 0, b.ingress[dest]+size)
 }
 
 // commit records a planned move against both backends' allowances.

@@ -149,7 +149,7 @@ func pagingEnv(t *testing.T) bulkRewriteEnv {
 	runtime.EXPECT().GetBackend(gomock.Any()).Return(&fakeBackend{payload: []byte("payload")}, nil).AnyTimes()
 	usageGate := opstest.NewMockUsageGate(ctrl)
 	usageGate.EXPECT().WithinLimits(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
-	usageGate.EXPECT().Record(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	usageGate.EXPECT().RecordAll(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	return bulkRewriteEnv{
 		log:     slog.New(slog.DiscardHandler),
@@ -312,7 +312,7 @@ func TestRunBulkRewrite_DeclinesObjectsWithoutUsageHeadroom(t *testing.T) {
 	runtime.EXPECT().GetBackend(gomock.Any()).Return(be, nil).AnyTimes()
 	usageGate := opstest.NewMockUsageGate(ctrl)
 	usageGate.EXPECT().WithinLimits(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(false).AnyTimes()
-	usageGate.EXPECT().Record(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	usageGate.EXPECT().RecordAll(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	env := bulkRewriteEnv{
 		log:     slog.New(slog.DiscardHandler),

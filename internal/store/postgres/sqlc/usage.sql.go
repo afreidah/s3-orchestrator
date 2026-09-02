@@ -9,12 +9,49 @@ import (
 	"context"
 )
 
+const deletePoolUsageByBackend = `-- name: DeletePoolUsageByBackend :exec
+DELETE FROM backend_request_usage WHERE backend_name = $1
+`
+
+func (q *Queries) DeletePoolUsageByBackend(ctx context.Context, backendName string) error {
+	_, err := q.db.Exec(ctx, deletePoolUsageByBackend, backendName)
+	return err
+}
+
 const deleteUsageByBackend = `-- name: DeleteUsageByBackend :exec
 DELETE FROM backend_usage WHERE backend_name = $1
 `
 
 func (q *Queries) DeleteUsageByBackend(ctx context.Context, backendName string) error {
 	_, err := q.db.Exec(ctx, deleteUsageByBackend, backendName)
+	return err
+}
+
+const flushPoolDelta = `-- name: FlushPoolDelta :exec
+INSERT INTO backend_request_usage (backend_name, period, pool, requests, updated_at)
+VALUES ($1, $2, $3, $4, NOW())
+ON CONFLICT (backend_name, period, pool) DO UPDATE SET
+    requests   = backend_request_usage.requests + $4,
+    updated_at = NOW()
+`
+
+type FlushPoolDeltaParams struct {
+	BackendName string
+	Period      string
+	Pool        string
+	Requests    int64
+}
+
+// Adds one pool's accumulated delta to its persistent row, creating the row on
+// first charge in the period. Same additive ON CONFLICT as the totals above so
+// concurrent flushers converge.
+func (q *Queries) FlushPoolDelta(ctx context.Context, arg FlushPoolDeltaParams) error {
+	_, err := q.db.Exec(ctx, flushPoolDelta,
+		arg.BackendName,
+		arg.Period,
+		arg.Pool,
+		arg.Requests,
+	)
 	return err
 }
 
@@ -59,6 +96,39 @@ func (q *Queries) FlushUsageDeltas(ctx context.Context, arg FlushUsageDeltasPara
 		arg.IngressBytes,
 	)
 	return err
+}
+
+const getPoolUsageForPeriod = `-- name: GetPoolUsageForPeriod :many
+SELECT backend_name, pool, requests
+FROM backend_request_usage
+WHERE period = $1
+`
+
+type GetPoolUsageForPeriodRow struct {
+	BackendName string
+	Pool        string
+	Requests    int64
+}
+
+// Returns every pool's request count for every backend in the given period.
+func (q *Queries) GetPoolUsageForPeriod(ctx context.Context, period string) ([]GetPoolUsageForPeriodRow, error) {
+	rows, err := q.db.Query(ctx, getPoolUsageForPeriod, period)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetPoolUsageForPeriodRow{}
+	for rows.Next() {
+		var i GetPoolUsageForPeriodRow
+		if err := rows.Scan(&i.BackendName, &i.Pool, &i.Requests); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getUsageForPeriod = `-- name: GetUsageForPeriod :many

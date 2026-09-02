@@ -236,6 +236,59 @@ func (s *Store) FlushUsageDeltas(ctx context.Context, backendName, period string
 	return nil
 }
 
+// FlushPoolDeltas adds one backend's accumulated per-pool request counts to
+// their persistent rows, one statement per pool so a single bad pool name does
+// not fail the whole flush.
+func (s *Store) FlushPoolDeltas(ctx context.Context, backendName, period string, deltas core.PoolUsage) error {
+	now := now()
+	for pool, requests := range deltas {
+		if requests == 0 {
+			continue
+		}
+		_, err := s.db.ExecContext(ctx, `
+			INSERT INTO backend_request_usage (backend_name, period, pool, requests, updated_at)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT (backend_name, period, pool) DO UPDATE SET
+				requests   = backend_request_usage.requests + excluded.requests,
+				updated_at = excluded.updated_at`,
+			backendName, period, pool, requests, now)
+		if err != nil {
+			return fmt.Errorf("failed to flush pool deltas: %w", err)
+		}
+	}
+	return nil
+}
+
+// GetPoolUsageForPeriod returns every backend's per-pool request counts for
+// the given period, keyed by backend name.
+func (s *Store) GetPoolUsageForPeriod(ctx context.Context, period string) (map[string]core.PoolUsage, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT backend_name, pool, requests
+		FROM backend_request_usage
+		WHERE period = ?`, period)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	usage := make(map[string]core.PoolUsage)
+	for rows.Next() {
+		var (
+			name     string
+			pool     string
+			requests int64
+		)
+		if err := rows.Scan(&name, &pool, &requests); err != nil {
+			return nil, fmt.Errorf("failed to scan pool usage: %w", err)
+		}
+		if usage[name] == nil {
+			usage[name] = make(core.PoolUsage)
+		}
+		usage[name][pool] = requests
+	}
+	return usage, rows.Err()
+}
+
 // GetUsageForPeriod returns usage statistics for all backends in the given period.
 func (s *Store) GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error) {
 	rows, err := s.db.QueryContext(ctx, `

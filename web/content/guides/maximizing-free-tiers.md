@@ -113,7 +113,18 @@ backends:
     quota_bytes: 5368709120
     egress_byte_limit: 1073741824
     ingress_byte_limit: 5368709120
-    api_request_limit: 5000
+    # GCS bills uploads and listings from the Class A allowance, reads from a
+    # far larger Class B one, and does not bill deletes at all. A single
+    # api_request_limit charges all three against the smallest of them, which
+    # takes the backend out of service with its read allowance untouched.
+    unmetered: [DeleteObject, DeleteObjects, AbortMultipartUpload]
+    request_limits:
+      - name: class_a
+        operations: [PutObject, CopyObject, CreateMultipartUpload, UploadPart, CompleteMultipartUpload, ListObjects, ListObjectsV2]
+        limit: 5000
+      - name: class_b
+        operations: [GetObject, HeadObject, GetParts]
+        limit: 50000
 
   - name: "g3"
     endpoint: "{{ .Data.data.g3_s3_endpoint }}"
@@ -204,10 +215,12 @@ Check each provider's free-tier limits. Common examples:
 | Backblaze B2 | 10 GB | 75,000/mo | 30 GB/mo |
 | iDrive e2 | 10 GB | Unlimited | 30 GB/mo |
 | IBM Cloud | 5 GB | Unlimited | 5 GB/mo |
-| Google Cloud (GCS) | 5 GB | 5,000/mo | 1 GB/mo |
+| Google Cloud (GCS) | 5 GB | 5,000/mo Class A, 50,000/mo Class B | 1 GB/mo |
 | [g3](https://g3.munchbox.cc) (Gmail + Drive) | 15 GB | 12,000/min (Drive) | Unlimited |
 
 With all seven providers you get 65 GB of combined storage behind a single S3 endpoint.
+
+Read the request column carefully: most providers do not have a single request allowance. GCS bills uploads and listings as Class A and reads as Class B from separate allowances, and does not bill deletes at all; B2 gives uploads and deletes away free and charges downloads and listings from two different classes. Configure those with `request_limits` rather than collapsing them into one `api_request_limit`, or the strictest class takes the whole backend out of service while the others sit unused. See [backends.md](../../docs/backends/) for the syntax.
 
 {{% notice tip %}}
 **[g3](https://github.com/afreidah/g3)** is an S3-compatible gateway that uses Google Drive for object data and Gmail for metadata. Each free Google account provides 15 GB of storage. g3 runs as a service in your infrastructure and presents a standard S3 API that S3 Orchestrator connects to like any other backend. See the [g3 project website](https://g3.munchbox.cc) for setup instructions.
@@ -354,7 +367,18 @@ backends:
     quota_bytes: 5368709120
     egress_byte_limit: 1073741824
     ingress_byte_limit: 5368709120
-    api_request_limit: 5000
+    # GCS bills uploads and listings from the Class A allowance, reads from a
+    # far larger Class B one, and does not bill deletes at all. A single
+    # api_request_limit charges all three against the smallest of them, which
+    # takes the backend out of service with its read allowance untouched.
+    unmetered: [DeleteObject, DeleteObjects, AbortMultipartUpload]
+    request_limits:
+      - name: class_a
+        operations: [PutObject, CopyObject, CreateMultipartUpload, UploadPart, CompleteMultipartUpload, ListObjects, ListObjectsV2]
+        limit: 5000
+      - name: class_b
+        operations: [GetObject, HeadObject, GetParts]
+        limit: 50000
 
   # g3 uses Google Drive + Gmail as storage via an S3-compatible proxy.
   # See https://github.com/afreidah/g3 for setup.

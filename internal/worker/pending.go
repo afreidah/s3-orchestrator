@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
@@ -188,7 +189,7 @@ const (
 // outcome so usage accounting remains accurate during reaper sweeps.
 func (r *PendingReaper) probeBackend(ctx context.Context, be backend.ObjectBackend, p *core.PendingObject) probeOutcome {
 	_, err := r.deps.HeadWithTimeout(ctx, be, p.ObjectKey)
-	r.deps.Acct().APICall(p.BackendName)
+	r.deps.Acct().APICall(s3op.HeadObject, p.BackendName)
 
 	switch {
 	case err == nil:

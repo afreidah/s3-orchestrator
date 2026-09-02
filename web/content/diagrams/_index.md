@@ -65,6 +65,13 @@ weight: 35
       <p>The four ways a tag set is written, validation and the per-key lock, one set per object key, and what clears it.</p>
     </div>
   </a>
+  <a class="landing-card" href="usage-quotas/">
+    <i class="fas fa-gauge-high landing-card-icon" style="color: #c4a35a;"></i>
+    <div>
+      <strong>Usage Quotas</strong>
+      <p>Per-operation request budgets: pooled admission, unmetered operations, ungated deletes, and where the counters live.</p>
+    </div>
+  </a>
   <a class="landing-card" href="background-services/">
     <i class="fas fa-cogs landing-card-icon" style="color: #8b949e;"></i>
     <div>

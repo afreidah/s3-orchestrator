@@ -20,6 +20,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/compression"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -32,7 +33,7 @@ type WriteRuntime interface {
 	GetBackend(name string) (backend.ObjectBackend, error)
 	IsDraining(name string) bool
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
-	EligibleForWrite(apiCalls, egress, ingress int64) []string
+	EligibleForWrite(ops []s3op.Operation, egress, ingress int64) []string
 	ClassifyWriteError(span trace.Span, operation string, err error) error
 	Acct() *accounting.Recorder
 }
@@ -89,7 +90,7 @@ type Runtime interface {
 // Tests that exercise only routing decisions can mock this alone.
 type WriteRouter interface {
 	SelectBackendForWrite(ctx context.Context, size int64, eligible []string) (string, error)
-	SelectWriteTarget(ctx context.Context, span trace.Span, operation string, size int64) (string, error)
+	SelectWriteTarget(ctx context.Context, span trace.Span, operation s3op.Operation, size int64) (string, error)
 }
 
 // PendingWriter is the pending-intent subset of *writepath.Coordinator:

@@ -21,6 +21,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	pobserve "github.com/afreidah/s3-orchestrator/internal/proxy/observe"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -30,11 +31,11 @@ import (
 // finalizePutSuccess emits success metrics, audit log, and an event
 // notification for a successful PutObject. Records failover spans when
 // retries occurred.
-func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, operation, key, backendName string, size int64, start time.Time, failedBackends []string) {
+func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, operation s3op.Operation, key, backendName string, size int64, start time.Time, failedBackends []string) {
 	o.core.Acct().PutSuccess(operation, backendName, size, start)
 	if len(failedBackends) > 0 {
 		for _, fb := range failedBackends {
-			telemetry.WriteFailoverTotal.WithLabelValues(operation, fb, backendName).Inc()
+			telemetry.WriteFailoverTotal.WithLabelValues(operation.String(), fb, backendName).Inc()
 		}
 		span.SetAttributes(telemetry.AttrWriteFailover.Bool(true))
 		span.SetAttributes(telemetry.AttrFailoverAttempts.Int(len(failedBackends)))
@@ -48,7 +49,7 @@ func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, opera
 // the egress/ingress tick because the bytes physically traversed the
 // orchestrator.
 func (o *Manager) finalizeMaterializedCopy(ctx context.Context, req *materializedCopyContext, etag string) (string, error) {
-	const operation = "CopyObject"
+	const operation = s3op.CopyObject
 	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, &core.RecordObjectRequest{
 		Key: req.destKey, Backend: req.destBackendName, Size: req.size, Form: req.srcForm,
 		Identity: req.identity, Tags: req.tags,
@@ -59,8 +60,8 @@ func (o *Manager) finalizeMaterializedCopy(ctx context.Context, req *materialize
 		etag = req.identity.ETag
 	}
 	o.core.Acct().Operation(operation, req.destBackendName, req.start, nil)
-	o.core.Acct().Egress(req.srcBackendName, req.size)
-	o.core.Acct().Ingress(req.destBackendName, req.size)
+	o.core.Acct().Egress(s3op.GetObject, req.srcBackendName, req.size)
+	o.core.Acct().Ingress(s3op.PutObject, req.destBackendName, req.size)
 	pobserve.CopyCompleted(ctx, req.span, req.sourceKey, req.destKey, req.srcBackendName, req.destBackendName, req.size)
 	o.invalidateObjectCaches(req.destKey)
 	return etag, nil
@@ -73,7 +74,7 @@ func (o *Manager) finalizeMaterializedCopy(ctx context.Context, req *materialize
 // (_, true, err) on RecordObjectOrCleanup failure - the bytes are
 // already on the destination so the caller MUST NOT fall back.
 func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyContext, etag string) (string, bool, error) {
-	const operation = "CopyObject"
+	const operation = s3op.CopyObject
 	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, &core.RecordObjectRequest{
 		Key: req.destKey, Backend: req.destBackendName, Size: req.size, Form: req.srcForm,
 		Identity: req.identity, Tags: req.tags,
@@ -96,7 +97,7 @@ func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyContext
 // cache invalidation. Per-backend DELETE API-call accounting is owned
 // by DeleteOrEnqueue so this helper does NOT call APICall.
 func (o *Manager) finalizeDelete(ctx context.Context, span trace.Span, key string, copies []core.DeletedCopy, start time.Time) {
-	const operation = "DeleteObject"
+	const operation = s3op.DeleteObject
 	if len(copies) > 0 {
 		o.core.Acct().Operation(operation, copies[0].BackendName, start, nil)
 	}
@@ -110,7 +111,7 @@ func (o *Manager) finalizeDelete(ctx context.Context, span trace.Span, key strin
 // completion observability. Per-key API-call accounting is owned by
 // DeleteOrEnqueue inside the fanout.
 func (o *Manager) finalizeBatchDelete(ctx context.Context, span trace.Span, batchSize int, results []DeleteObjectResult, start time.Time) {
-	const operation = "DeleteObjects"
+	const operation = s3op.DeleteObjects
 	successCount, errorCount := tallyDeleteResults(results)
 	o.core.Acct().Operation(operation, "", start, nil)
 	span.SetAttributes(

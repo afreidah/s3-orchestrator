@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
@@ -99,16 +100,16 @@ func (w *Coordinator) SelectBackendForWrite(ctx context.Context, size int64, eli
 // eligibility filtering, backend selection, and error classification
 // into a single call. Returns ErrInsufficientStorage when no backend can
 // accept the write, or the classified error from the routing query.
-func (w *Coordinator) SelectWriteTarget(ctx context.Context, span trace.Span, operation string, size int64) (string, error) {
-	eligible := w.core.EligibleForWrite(1, 0, size)
+func (w *Coordinator) SelectWriteTarget(ctx context.Context, span trace.Span, operation s3op.Operation, size int64) (string, error) {
+	eligible := w.core.EligibleForWrite([]s3op.Operation{operation}, 0, size)
 	if len(eligible) == 0 {
-		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "write").Inc()
+		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation.String(), "write").Inc()
 		observe.MarkSpanError(span, "usage limits exceeded on all backends")
 		return "", core.ErrInsufficientStorage
 	}
 	name, err := w.SelectBackendForWrite(ctx, size, eligible)
 	if err != nil {
-		return "", w.core.ClassifyWriteError(span, operation, err)
+		return "", w.core.ClassifyWriteError(span, operation.String(), err)
 	}
 	return name, nil
 }
@@ -145,9 +146,9 @@ func (w *Coordinator) RecordObjectOrCleanup(ctx context.Context, span trace.Span
 // phantom rows for objects already gone. Callers own the failure log
 // message and span status before/after this call.
 func (w *Coordinator) RecoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, backendName, key, cleanupReason string, size int64) {
-	w.core.Acct().APICall(backendName) // PUT that succeeded
+	w.core.Acct().APICall(s3op.PutObject, backendName) // PUT that succeeded
 	delErr := w.core.DeleteWithTimeout(ctx, be, key)
-	w.core.Acct().APICall(backendName) // cleanup DELETE
+	w.core.Acct().APICall(s3op.DeleteObject, backendName) // cleanup DELETE
 	if delErr == nil {
 		return
 	}
@@ -229,7 +230,7 @@ func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span tra
 		// The successful PUT against the backend still consumed an API
 		// call. The success-path usage record runs only when this returns
 		// nil, so account for it here.
-		w.core.Acct().APICall(req.Backend)
+		w.core.Acct().APICall(s3op.PutObject, req.Backend)
 		observe.RecordSpanError(span, err)
 		return fmt.Errorf("failed to record object: %w", err)
 	}
@@ -276,7 +277,7 @@ func (w *Coordinator) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBack
 	// that returns without removing the object is simply wrong. The API call
 	// is still charged below.
 	err := w.core.DeleteWithTimeout(ctx, be, key)
-	w.core.Acct().APICall(backendName)
+	w.core.Acct().APICall(s3op.DeleteObject, backendName)
 	if err == nil {
 		return
 	}
@@ -453,8 +454,8 @@ func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, 
 	// GET, one for the dest PUT); DeleteOrEnqueue includes the source DELETE
 	// tick. No additional Acct().APICall calls.
 	w.DeleteOrEnqueue(ctx, req.SrcBackend, req.SrcName, req.Key, req.Reasons.SourceDelete, movedSize)
-	w.core.Acct().Egress(req.SrcName, movedSize)
-	w.core.Acct().Ingress(req.DestName, movedSize)
+	w.core.Acct().Egress(s3op.GetObject, req.SrcName, movedSize)
+	w.core.Acct().Ingress(s3op.PutObject, req.DestName, movedSize)
 	return movedSize, nil
 }
 
@@ -463,7 +464,7 @@ func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, 
 // hold a copy. Returns "" with no error when nothing is eligible, so the
 // caller can treat "no room right now" as a skip rather than a failure.
 func (w *Coordinator) SelectReplicaTarget(ctx context.Context, size int64, exclusion map[string]bool) (string, error) {
-	eligible := w.core.EligibleForWrite(1, 0, size)
+	eligible := w.core.EligibleForWrite([]s3op.Operation{s3op.PutObject}, 0, size)
 	filtered := slices.DeleteFunc(slices.Clone(eligible), func(name string) bool {
 		return exclusion[name]
 	})
