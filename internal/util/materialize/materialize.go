@@ -22,6 +22,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // MemThreshold is the largest payload size kept entirely in memory before
 // the sink spills to a tempfile. Sized to match the AWS SDK's own internal
 // heuristic for the PUT signing path. Not a config knob because the choice
@@ -71,6 +75,10 @@ type Body struct {
 	size int64
 }
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // New copies src into a memory buffer or a tempfile based on size, tee'ing
 // the bytes into each supplied hasher so every digest the caller needs comes
 // out of the same single pass instead of re-scanning the materialized body.
@@ -117,6 +125,10 @@ func NewEmpty(size int64) (*Body, error) {
 	_ = os.Remove(f.Name()) //nolint:gosec // G703: path comes from os.CreateTemp, not user input
 	return &Body{file: f}, nil
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // Cleanup releases the underlying tempfile when the sink spilled to disk; the
 // in-memory branch has no fd to release and the buffer is reclaimed by the GC

@@ -26,6 +26,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/openapi"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // updateSpec rewrites the committed description instead of asserting against
 // it. Wired to `make openapi`.
 var updateSpec = flag.Bool("update", false, "rewrite docs/openapi.yaml from the route table")
@@ -53,6 +57,10 @@ var specSecurity = openapi.SecurityScheme{
 	HeaderName:  "X-Admin-Token",
 	Description: "Shared admin token, configured as server.admin_token",
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // openAPIRoutes projects the route table onto the generator's descriptors. The
 // projection is intentionally mechanical: everything the description needs is
@@ -90,6 +98,10 @@ func openAPIRoutes(rts []route) []openapi.Route {
 	}
 	return out
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestOpenAPISpec_MatchesRouteTable regenerates the description and compares it
 // to the committed file. A failure means the two have diverged: either

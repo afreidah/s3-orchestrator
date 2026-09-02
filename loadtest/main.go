@@ -152,6 +152,10 @@ func validateRampFlags(rampTo, rate, rampStep int, multiSize bool) error {
 	return nil
 }
 
+// -------------------------------------------------------------------------
+// ENTRY POINT
+// -------------------------------------------------------------------------
+
 // main is the program entry point.
 func main() {
 	var (
@@ -270,6 +274,10 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// -------------------------------------------------------------------------
+// SWEEP ORCHESTRATION
+// -------------------------------------------------------------------------
 
 // enforceErrorBudget reports the first result whose error rate exceeded the
 // budget, so a scenario that ran to completion while failing a large share of
@@ -401,6 +409,10 @@ func parseSizes(csv string, single int) ([]int, error) {
 	return out, nil
 }
 
+// -------------------------------------------------------------------------
+// SCENARIO EXECUTION
+// -------------------------------------------------------------------------
+
 // newHardwareInfo captures the host fingerprint at run start so the
 // results document remains interpretable when read months later.
 func newHardwareInfo() hardwareInfo {
@@ -459,6 +471,10 @@ func runScenario(cfg *scenarioConfig, size int) (runResult, error) {
 
 	return summarise(size, cfg.rate, &metrics), nil
 }
+
+// -------------------------------------------------------------------------
+// REPORTING
+// -------------------------------------------------------------------------
 
 // summarise converts a vegeta.Metrics block into the persisted runResult
 // shape. ms-precision percentiles are easier to skim in Markdown than
@@ -519,6 +535,10 @@ func writeJSON(path string, r *sweepResults) error {
 	}
 	return os.WriteFile(path, data, 0o600)
 }
+
+// -------------------------------------------------------------------------
+// SEEDING AND TARGETING
+// -------------------------------------------------------------------------
 
 // seedObjects uploads n objects and returns the keys that succeeded.
 // Retries on 429 with backoff to avoid overwhelming the rate limiter.

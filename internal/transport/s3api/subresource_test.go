@@ -26,6 +26,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // unimplementedSubresources are the object-level query subresources S3 defines
 // that this server does not serve. Each one shares a method and a path with a
 // data-path operation, which is what made them destructive.
@@ -42,6 +46,10 @@ var unimplementedSubresources = []string{
 	"versions",
 	"policy",
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // statusOf issues one request and returns its status, closing the body. The
 // response never escapes, which keeps the close adjacent to it.
@@ -87,6 +95,10 @@ func assertSubresourceRefused(t *testing.T, sub string) {
 		t.Errorf("object was overwritten by ?%s: %q", sub, string(obj.Data))
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestObjectSubresource_NeverReachesTheDataPath is the regression this guard
 // exists for. A PUT carrying an unimplemented subresource must not store its

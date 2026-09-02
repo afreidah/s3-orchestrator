@@ -6,7 +6,6 @@
 //	mockgen -destination=mock_backend.go -package=backendtest github.com/afreidah/s3-orchestrator/internal/backend ObjectBackend
 //
 
-// Package backendtest is a generated GoMock package.
 package backendtest
 
 import (

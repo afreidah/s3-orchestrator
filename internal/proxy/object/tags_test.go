@@ -28,6 +28,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newTagTestManager builds a Manager over a mocked store, which is all the tag
 // methods touch. The location cache is real because the tag writes invalidate
 // it, and a Manager in production never holds a nil one.
@@ -57,6 +61,10 @@ func newTagCacheTestManager(t *testing.T) (*Manager, *storetest.MockMetadataStor
 	m.objectCache = c
 	return m, store, c
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestGetObjectTags_ReturnsStoredSet verifies the set comes back as the store
 // handed it over, with no reordering or filtering in the manager.

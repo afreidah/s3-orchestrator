@@ -26,6 +26,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // MaxUploadSize caps a single upload accepted from an operator interface.
 // Transports enforce it while reading the request body so an oversized upload
 // is refused before it reaches a backend.
@@ -37,6 +41,10 @@ const deletePrefixPageSize = 1000
 
 // defaultListMaxKeys caps one browse page when the caller asks for no limit.
 const defaultListMaxKeys = 1000
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // DeletePrefixResult reports what a prefix delete removed. Failed is non-zero
 // when some copies could not be removed, which leaves the prefix partially
@@ -75,6 +83,10 @@ func NewObjects(d ObjectsDeps) *Objects {
 		cfg:     d.Config,
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // List returns one page of the namespace under prefix. A delimiter groups the
 // keys below it into common prefixes; an empty delimiter lists every key flat,
@@ -239,6 +251,10 @@ func (o *Objects) DeletePrefix(ctx context.Context, prefix string, observer prog
 	o.log.InfoContext(ctx, "prefix delete completed", "prefix", prefix, "deleted", res.Deleted, "failed", res.Failed)
 	return res, nil
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // deletePage removes one page of keys and folds the per-key outcomes into res,
 // reporting each one through the observer as the batch reports it.

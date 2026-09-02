@@ -30,11 +30,8 @@ import (
 // CONSTANTS
 // -------------------------------------------------------------------------
 
-// TracerName and related constants used by this package.
-const (
-	// TracerName identifies spans created by this service.
-	TracerName = "s3-orchestrator"
-)
+// TracerName identifies spans created by this service.
+const TracerName = "s3-orchestrator"
 
 // Version of the service for trace metadata. Set at build time via
 // -ldflags "-X github.com/afreidah/s3-orchestrator/internal/telemetry.Version=..."

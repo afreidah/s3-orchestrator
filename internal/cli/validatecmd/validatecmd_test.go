@@ -17,6 +17,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 const validConfig = `
 server:
   listen_addr: ":9000"
@@ -38,6 +42,10 @@ backends:
     access_key_id: ak
     secret_access_key: sk
 `
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestValidate_ValidFile asserts a well-formed config validates and the summary
 // reports the parsed backend/bucket/routing values.

@@ -22,6 +22,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // mkPending builds a pending-probe slice from backend names. The backend is
 // left nil because the test probes key off the name and ignore it.
 func mkPending(names ...string) []pendingProbe {
@@ -31,6 +35,10 @@ func mkPending(names ...string) []pendingProbe {
 	}
 	return p
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestProbeScheduler_AllFail verifies that when every probe fails the scheduler
 // reports found=false and returns one error per probe for the caller to

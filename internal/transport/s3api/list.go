@@ -23,6 +23,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // xmlContent represents a single object in an S3 ListBucketResult response.
 // ETag and StorageClass are required by the S3 REST API spec; aws-sdk-go-v2
 // models ETag as *string and dereferences it without nil-checks, so omitting
@@ -76,6 +80,10 @@ type xmlListResultV2 struct {
 	Contents              []xmlContent      `xml:"Contents"`
 	CommonPrefixes        []xmlCommonPrefix `xml:"CommonPrefixes,omitempty"`
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // buildListContents converts storage objects and common prefixes to their XML
 // representations, stripping the internal bucket prefix from each key.

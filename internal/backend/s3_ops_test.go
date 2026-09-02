@@ -22,6 +22,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newTestBackend spins up an httptest server with handler and returns an
 // S3Backend pointed at it (path-style, signed payload). The server is closed
 // via t.Cleanup.
@@ -44,6 +48,10 @@ func newTestBackend(t *testing.T, handler http.HandlerFunc) *S3Backend {
 	}
 	return be
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestGetObject covers the GET path and the attribute unwrapping in
 // mapGetObjectResult / objectAttrsFromSDK.

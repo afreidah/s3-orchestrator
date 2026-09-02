@@ -32,6 +32,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // The operations one rewrite performs. Package-level so a pass over the whole
 // fleet does not allocate these per object.
 var (
@@ -43,6 +47,10 @@ var (
 // bulkRewriteBatchSize is how many locations one listing page of a bulk
 // rewrite pass collects, bounding how long any single transaction runs.
 const bulkRewriteBatchSize = 100
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // BulkRewriteResult reports one bulk rewrite pass. Total counts every copy
 // considered, so Total - Succeeded - Failed - Skipped is zero for a run that
@@ -127,6 +135,10 @@ const (
 	rewriteSkipped
 	rewriteErrored
 )
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // status renders one outcome for a progress step, in the vocabulary the other
 // streaming passes already use.

@@ -30,6 +30,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // Broadcaster fans a degraded-mode read out across every configured backend
 // and returns the first success. It holds no metadata-store dependency -
 // degraded mode exists precisely because the store is unreachable - and
@@ -46,6 +50,10 @@ type Broadcaster struct {
 // configured; it mirrors the config BackendTimeout default and guards
 // zero-value construction (notably in tests).
 const defaultDrainTimeout = 30 * time.Second
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // drainTimeoutOrDefault returns the configured backend timeout, or
 // defaultDrainTimeout when it is unset, so the drain bound is never zero.

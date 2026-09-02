@@ -14,9 +14,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// QuotaBytesUsed and related package-level variables used by this package.
+// Per-backend quota usage metrics.
 var (
-
 	// QuotaBytesUsed tracks current bytes used per backend.
 	QuotaBytesUsed = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{

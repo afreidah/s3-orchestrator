@@ -25,6 +25,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // client carries the shared admin transport, output format, and writers used
 // by every admin subcommand handler.
 type client struct {
@@ -37,6 +41,10 @@ type client struct {
 // renderFunc renders a successful response body in text mode. A nil renderer
 // falls back to the generic key/value renderer.
 type renderFunc func(w io.Writer, body []byte) error
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // get/post/put/delete issue the named verb against path (appended to the
 // resolved base address) and render the response per the client's format.

@@ -21,14 +21,12 @@ import (
 )
 
 // HealthDeps holds the signals the health and readiness handlers read.
+//
+// DBBreaker is a function rather than a reference so the handler reflects
+// breaker state without holding one past shutdown; nil reads as healthy.
 type HealthDeps struct {
-	// Ready reports whether the daemon has finished initialization and is
-	// accepting traffic. Routed to /health/ready.
-	Ready *atomic.Bool
-	// DBBreaker resolves the database circuit breaker lazily so the health
-	// handler reflects breaker state without holding a reference past
-	// shutdown. nil is treated as healthy.
-	DBBreaker func() *breaker.CircuitBreaker
+	Ready     *atomic.Bool                   // initialization finished and accepting traffic; served at /health/ready
+	DBBreaker func() *breaker.CircuitBreaker // resolved lazily
 }
 
 // registerHealthEndpoints mounts /health and /health/ready on mux.

@@ -24,6 +24,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // classifyChunk is small enough that a modest fixture crosses frame boundaries.
 const classifyChunk = compression.MinChunkSize
 
@@ -37,6 +41,10 @@ func newClassifyCodec(t *testing.T) *compression.Codec {
 	t.Cleanup(c.Close)
 	return c
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // compressibleText returns n bytes zstd can shrink.
 func compressibleText(n int) []byte {
@@ -67,6 +75,10 @@ func classifyWithCodec(t *testing.T, be *backendtest.InMemory, codec StoredInspe
 	}
 	return form
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestClassifyImport_RecognisesCompressedObject is the headline: an object this
 // codec wrote, rediscovered with no ledger row, is imported as compressed and

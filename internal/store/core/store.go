@@ -11,10 +11,6 @@
 // TxAdapter seam.
 // -------------------------------------------------------------------------------
 
-// Package core holds the engine-agnostic orchestration that both
-// store engines share: the TxAdapter seam, the Runner abstraction,
-// narrow store role interfaces, and operations that span multiple
-// statements within a single transaction.
 package core
 
 import (
@@ -26,24 +22,14 @@ import (
 // PENDING ORCHESTRATION
 // -------------------------------------------------------------------------
 
-// PromotePending resolves a pending intent transactionally. The pending
-// row is locked first so two reaper instances cannot promote the same
-// intent concurrently. The destination is then inspected:
-//
-//   - If no row for (object_key, backend_name) exists in
-//     object_locations, the pending row is promoted: any displaced
-//     copies on other backends are cleared, the new row is inserted
-//     with the pending's metadata, quotas are adjusted, and the
-//     pending row is deleted in the same tx. The displaced copies are
-//     returned so the caller can enqueue cleanup.
-//
-//   - If any object_locations row for the key was created after this
-//     intent was inserted, the intent is provably stale and the
-//     pending row is dropped (Superseded).
-//
-//   - If the pending row is already gone (another reaper resolved it
-//     between GetStalePending and the lock acquire), the call returns
-//     PendingPromoteAlreadyResolved.
+// PromotePending resolves a pending intent transactionally. The pending row is
+// locked first so two reaper instances cannot promote the same intent
+// concurrently, then the destination decides the outcome: an unoccupied
+// (object_key, backend_name) promotes the intent and returns the displaced
+// copies for the caller to enqueue cleanup on; a location row created after the
+// intent makes it provably stale (Superseded); a pending row that vanished
+// between GetStalePending and the lock means another reaper won
+// (AlreadyResolved).
 func PromotePending(ctx context.Context, runner Runner, p *PendingObject) (PendingPromoteResult, []DeletedCopy, error) {
 	out, err := WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (promoteOutcome, error) {
 		return promotePendingTx(ctx, tx, p)

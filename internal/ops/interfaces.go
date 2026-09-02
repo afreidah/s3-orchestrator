@@ -42,6 +42,10 @@ type ObjectAPI interface {
 	DeleteObjectTags(ctx context.Context, key string) error
 }
 
+// -------------------------------------------------------------------------
+// STORES AND CODECS
+// -------------------------------------------------------------------------
+
 // ObjectStore is the metadata half of the object operations: the namespace
 // listing that answers what exists without reading any bytes.
 type ObjectStore interface {
@@ -98,6 +102,10 @@ type IntegrityConfigLoader interface {
 	Load() *config.IntegrityConfig
 }
 
+// -------------------------------------------------------------------------
+// RUNTIME AND WORKERS
+// -------------------------------------------------------------------------
+
 // RuntimeOps is the backend-runtime surface: backend lookup for the bulk
 // rewrite passes, and the post-mutation quota-metric refresh.
 // *infra.BackendRuntime satisfies it.
@@ -148,6 +156,10 @@ type ScrubberOps interface {
 	ScrubKey(ctx context.Context, key string) ([]worker.CopyVerification, error)
 	Backfill(ctx context.Context, batchSize, offset int, observer progress.Observer) (worker.WorkSummary, int)
 }
+
+// -------------------------------------------------------------------------
+// ASSERTIONS
+// -------------------------------------------------------------------------
 
 // Compile-time assertions.
 var (

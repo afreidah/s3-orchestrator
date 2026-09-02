@@ -30,6 +30,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // ListObjectsV2Result holds the processed result for the S3 ListObjectsV2 response.
 type ListObjectsV2Result struct {
 	Objects               []core.ObjectLocation `json:"objects,omitempty"`
@@ -64,6 +68,10 @@ func (o *Manager) ListObjects(ctx context.Context, prefix, delimiter, startAfter
 	span.SetAttributes(attribute.Int("s3o.key_count", result.KeyCount))
 	return result, nil
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // listPage fetches one page from the store: the delimiter-grouped query when a
 // delimiter is set (CommonPrefixes plus interleaved leaf objects), otherwise the

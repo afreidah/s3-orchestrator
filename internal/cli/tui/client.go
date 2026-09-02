@@ -24,6 +24,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // objectsPath is the object namespace endpoint, named so the listing, the
 // prefix delete, and the per-object paths built from it cannot drift.
 const objectsPath = "/admin/api/objects"
@@ -57,6 +61,10 @@ func (c *apiClient) listObjects(ctx context.Context, prefix, delimiter, continua
 	}
 	return c.c.Get[adminapi.ObjectListResponse](ctx, objectsPath, q)
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // GetObjectLocations fetches every backend copy of a single object key.
 func (c *apiClient) GetObjectLocations(ctx context.Context, key string) (*adminapi.ObjectLocationsResponse, error) {
@@ -182,6 +190,10 @@ func (c *apiClient) DeletePrefix(ctx context.Context, prefix string) (*adminapi.
 	return c.deleteJSON(ctx, objectsPath, url.Values{"prefix": {prefix}})
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // deleteJSON issues a DELETE and decodes the JSON summary, which the shared
 // helpers do not cover since they only wrap GET and POST.
 func (c *apiClient) deleteJSON(ctx context.Context, path string, q url.Values) (*adminapi.ObjectDeleteResponse, error) {
@@ -206,6 +218,10 @@ func (c *apiClient) deleteJSON(ctx context.Context, path string, q url.Values) (
 func objectPath(key string) string {
 	return objectsPath + "/" + key
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // StartDrain begins migrating every copy off one backend and routes new writes
 // away from it. Returns as soon as the drain is accepted; progress is polled

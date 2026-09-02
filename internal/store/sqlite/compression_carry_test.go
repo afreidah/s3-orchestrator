@@ -25,6 +25,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // anyCandidate is the threshold set that excludes nothing, so a listing test
 // sees every verbatim copy regardless of size or any recorded measurement.
 func anyCandidate() core.CompressionThresholds {
@@ -99,6 +103,10 @@ func locationOn(t *testing.T, s *Store, key, backendName string) *core.ObjectLoc
 	t.Fatalf("no copy of %q on %q; have %+v", key, backendName, locs)
 	return nil
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestMoveObjectLocation_CarriesRepresentation covers the rebalance and drain
 // path. The bytes are moved verbatim, so the row that lands on the destination
@@ -208,6 +216,10 @@ func TestRecordReplica_CarriesRepresentation(t *testing.T) {
 	assertCarried(t, locationOn(t, s, "bucket/replicated", "backend-b"), 4096)
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // probeOn reads back the measurement recorded against one copy.
 func probeOn(t *testing.T, s *Store, key, backendName string) (int64, string) {
 	t.Helper()
@@ -239,6 +251,10 @@ func listKeys(t *testing.T, s *Store, thresholds core.CompressionThresholds) []s
 	}
 	return keys
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestMoveObjectLocation_CarriesCompressionProbe covers the rebalance path for
 // the measurement rather than the stored form. The bytes move verbatim, so what

@@ -21,6 +21,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // timeoutPolicy owns the per-backend-operation timeout. A value of 0
 // disables the timeout (callers get the parent context unchanged
 // modulo a wrapping cancel for symmetric defer cleanup).
@@ -33,6 +37,10 @@ type timeoutPolicy struct {
 func newTimeoutPolicy(backendTimeout time.Duration) *timeoutPolicy {
 	return &timeoutPolicy{backendTimeout: backendTimeout}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // WithTimeout returns a context with the configured backend timeout
 // applied. Honours a tighter parent deadline. Returns context.WithCancel

@@ -23,12 +23,15 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
+// The two ends of every copy here, plus the single backend both keys live on,
+// so one fixture drives the native fast path and the materialized fallback.
 const (
-	// copySrcKey and copyDstKey are the two ends of every copy here.
-	copySrcKey = "compressed-src"
-	copyDstKey = "compressed-dst"
-	// copySrcBackend is the single backend both keys live on, so the same
-	// fixture drives the native fast path and the materialized fallback.
+	copySrcKey     = "compressed-src"
+	copyDstKey     = "compressed-dst"
 	copySrcBackend = "b1"
 )
 
@@ -38,6 +41,10 @@ type copyResult struct {
 	be  *backendtest.InMemory
 	rec objRecordCall
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // dest returns the bytes that landed on the destination key.
 func (r *copyResult) dest(t *testing.T) []byte {
@@ -114,6 +121,10 @@ func assertCompressionCarried(t *testing.T, form *core.StoredForm, logicalSize i
 		t.Errorf("LogicalSize = %d, want %d", form.LogicalSize, logicalSize)
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestCopyObject_MaterializedCarriesCompression checks the stream-through path:
 // the destination holds the source's own encoded bytes, the row describes them,

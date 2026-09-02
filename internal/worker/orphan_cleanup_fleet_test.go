@@ -29,6 +29,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // orphanCalls accumulates the per-test interactions a migrated test
 // asserts on. Each field is keyed by the store method that fed it.
 type orphanCalls struct {
@@ -45,6 +49,10 @@ type orphanBytesEntry struct {
 	backendName string
 	sizeBytes   int64
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // stubOrphanEnqueue captures EnqueueCleanup args.
 func stubOrphanEnqueue(c *orphanCalls, err error) func(context.Context, string, string, string, int64) error {
@@ -77,6 +85,10 @@ func stubOrphanDecrement(c *orphanCalls) func(context.Context, string, int64) er
 		return nil
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestCleanupWorker_SuccessfulDelete_DecrementsOrphanBytes asserts the
 // success path calls DecrementOrphanBytes with the row's size.
@@ -390,6 +402,10 @@ func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // cleanupCalls records the calls a test wants to assert against. Each
 // migrated test wires the relevant DoAndReturn closures to populate the
 // slices on this struct, then reads them after exercising the system
@@ -414,6 +430,10 @@ type dlqRecord struct {
 	id        int64
 	lastError string
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestCleanupBackoff verifies the exponential backoff schedule.
 func TestCleanupBackoff(t *testing.T) {
@@ -838,6 +858,10 @@ func TestOrphanBytes_FullLifecycle(t *testing.T) {
 		t.Errorf("step 2: expected 1024 bytes decremented, got %d", c.decrement[0].sizeBytes)
 	}
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // stubCleanupQueue wires the same DoAndReturn closures stubProcessQueue
 // uses, but populates an orphanCalls instead. Lets orphan-bytes tests

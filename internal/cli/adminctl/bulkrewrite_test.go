@@ -23,6 +23,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // bulkRewriteCommands are the four commands sharing the -max flag set.
 var bulkRewriteCommands = []struct {
 	cmd      string
@@ -51,6 +55,10 @@ func runBulkRewriteCmd(t *testing.T, cmd string, args []string) (code int, path,
 	}
 	return code, path, query
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestBulkRewrite_MaxReachesTheServer verifies -max=N is sent as the max query
 // parameter.

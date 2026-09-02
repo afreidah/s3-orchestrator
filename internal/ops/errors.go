@@ -34,6 +34,10 @@ func Skip(reason string) error {
 // Skips for subsystems that are unavailable in the running configuration.
 // Each is a *SkipError, so a transport handles a fixed and a runtime skip
 // through the same errors.As branch.
+//
+// ErrCompressionUnavailable reports no codec, which is a different state from
+// compression being disabled for writes: a codec is built either way so stored
+// objects stay readable, and only its absence stops a rewrite.
 var (
 	ErrIntegrityDisabled     = &SkipError{Reason: "integrity verification is not enabled"}
 	ErrReplicationDisabled   = &SkipError{Reason: "replication not configured or factor <= 1"}
@@ -41,9 +45,6 @@ var (
 	ErrRebalancerUnavailable = &SkipError{Reason: "rebalancer not available"}
 	ErrLifecycleUnavailable  = &SkipError{Reason: "lifecycle manager not available"}
 
-	// ErrCompressionUnavailable reports no codec, which is a different state
-	// from compression being disabled for writes: a codec is built either way
-	// so stored objects stay readable, and only its absence stops a rewrite.
 	ErrCompressionUnavailable = &SkipError{Reason: "compression codec not available"}
 )
 

@@ -40,6 +40,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // compressionEnv is a proxy whose writes are encoded, plus the stack behind
 // it so a test can read the counters the requests moved.
 type compressionEnv struct {
@@ -51,6 +55,10 @@ type compressionEnv struct {
 // codec allows, so a modest fixture still spans several frames and a ranged
 // read has more than one frame to choose between.
 const compTestChunk = compression.MinChunkSize
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // setupCompressionEnv builds a compression-enabled manager over the shared
 // backends and store, fronted by its own proxy server.
@@ -180,6 +188,10 @@ func (e *compressionEnv) putCompressed(t *testing.T, prefix string, body []byte)
 	backendName = queryObjectBackend(t, key)
 	return key, backendName, queryStoredSize(t, key)
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestCompressionUsage_PutChargesStoredSizeNotLogical is the headline. The
 // client wrote the logical size, but only the encoded bytes reached the

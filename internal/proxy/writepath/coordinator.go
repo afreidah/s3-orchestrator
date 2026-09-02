@@ -358,13 +358,11 @@ var ErrMoveStale = errors.New("object already moved or deleted")
 // Callers supply distinct cleanup-queue reason strings per failure
 // mode so a future operator triaging the cleanup_queue can tell which
 // subsystem orphaned each row.
+// SizeBytes is what the caller knew before the move ran, and is used only by
+// the orphan-cleanup paths, where MoveObjectLocation never returned the row's
+// real size. The success path charges the authoritative movedSize instead.
 type MoveRequest struct {
-	// Key is the object key being moved.
-	Key string
-	// SizeBytes is the size as known to the caller before the move
-	// runs. Used for the orphan-cleanup paths where MoveObjectLocation
-	// did not return the row's actual size. The success path uses the
-	// authoritative movedSize from MoveObjectLocation instead.
+	Key       string
 	SizeBytes int64
 
 	SrcBackend  backend.ObjectBackend
@@ -372,24 +370,20 @@ type MoveRequest struct {
 	DestBackend backend.ObjectBackend
 	DestName    string
 
-	// Reasons names the cleanup-queue reason labels for this move's orphan,
-	// stale-orphan, and source-delete paths. Callers pass a named profile
-	// (RebalanceMoveReasons, DrainMoveReasons) rather than three strings.
 	Reasons MoveReasonProfile
 }
 
 // MoveReasonProfile groups the cleanup-queue reason labels a move emits across
 // its three cleanup paths, so callers select a named profile instead of
 // repeating the same strings - and the labels stay consistent and typo-free.
+//
+// Both orphan cases leave bytes on the destination: the first when
+// MoveObjectLocation errors after the PUT landed, the second when it reports a
+// raced row because another process won.
 type MoveReasonProfile struct {
-	// Orphan is used when MoveObjectLocation errors after the destination PUT
-	// has landed, leaving the destination bytes orphaned.
-	Orphan string
-	// StaleOrphan is used when MoveObjectLocation reports a raced row
-	// (movedSize=0): another process won, so the destination bytes are orphaned.
-	StaleOrphan string
-	// SourceDelete is used for the source-side delete after a successful move.
-	SourceDelete string
+	Orphan       string
+	StaleOrphan  string
+	SourceDelete string // the source-side delete after a successful move
 }
 
 // RebalanceMoveReasons and DrainMoveReasons are the cleanup-queue reason
@@ -420,12 +414,9 @@ var (
 // so this method does NOT call Acct().APICall(...) on the destination cleanup
 // or the source delete.
 //
-// Returns:
-//   - (movedSize, nil) on success
-//   - (0, ErrMoveStale) when MoveObjectLocation returned movedSize=0
-//   - (0, err) wrapping the underlying StreamCopy / MoveObjectLocation
-//     failure for every other failure mode, including a transfer either
-//     backend had no usage headroom for
+// Returns the moved size on success, ErrMoveStale when MoveObjectLocation
+// raced, and the wrapped underlying failure otherwise - including a transfer
+// either backend had no usage headroom for.
 func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, error) {
 	src := backend.CopyEndpoint{Name: req.SrcName, Backend: req.SrcBackend}
 	dst := backend.CopyEndpoint{Name: req.DestName, Backend: req.DestBackend}

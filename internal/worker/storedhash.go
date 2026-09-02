@@ -31,11 +31,19 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // errNoCodec reports a compressed copy this orchestrator cannot decode, which
 // is a copy it cannot judge. It surfaces as an unreadable copy rather than a
 // failed one, because treating "cannot read" as "corrupt" deletes objects that
 // were never damaged.
 var errNoCodec = errors.New("object is compressed but no codec is configured")
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // StoredReader is the narrow surface hashing a stored copy needs: find the
 // backend, read the object, and charge the read to that backend's quota.
@@ -70,6 +78,10 @@ type storedDigests struct {
 	SHA256 string
 	MD5    string
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // hashStored reads a copy from its backend and returns the digests of the
 // bytes the client wrote. Records the API call and egress against the

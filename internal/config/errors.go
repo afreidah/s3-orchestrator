@@ -19,6 +19,10 @@ import (
 	"fmt"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // prefixed wraps a sentinel with a positional prefix like "buckets[3]" or
 // "backends[0]" so error chains carry both the sentinel (for errors.Is)
 // and human context (for the Error() string).
@@ -41,6 +45,10 @@ func wrappedPath(sentinel error, path string, cause error) error {
 	return fmt.Errorf("%w %q: %w", sentinel, path, cause)
 }
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // Loader-level wrapping errors (LoadConfig).
 var (
 	ErrReadConfigFile = errors.New("read config file")
@@ -49,6 +57,10 @@ var (
 )
 
 // Bucket validation errors.
+//
+// A duplicate proxy token is refused because the token selects the bucket a
+// request is authorized against: sharing one would resolve to whichever bucket
+// the registry happened to store last.
 var (
 	ErrNoBuckets           = errors.New("at least one bucket is required")
 	ErrBucketNameRequired  = errors.New("bucket name is required")
@@ -57,15 +69,15 @@ var (
 	ErrNoCredential        = errors.New("at least one credential is required")
 	ErrInvalidCredential   = errors.New("must have access_key_id+secret_access_key or token")
 	ErrDuplicateCredential = errors.New("duplicate access_key_id")
-
-	// ErrDuplicateToken means two credentials share one proxy token. The token
-	// selects the bucket a request is authorized against, so a shared token
-	// would resolve to whichever bucket the registry happened to store last.
-	ErrDuplicateToken     = errors.New("duplicate proxy token")
-	ErrNegativeMaxUploads = errors.New("max_multipart_uploads must be >= 0")
+	ErrDuplicateToken      = errors.New("duplicate proxy token")
+	ErrNegativeMaxUploads  = errors.New("max_multipart_uploads must be >= 0")
 )
 
 // Backend validation errors.
+//
+// api_request_limit is the single-pool spelling of request_limits, so setting
+// both is ambiguous rather than additive. credential_source accepts "static"
+// or "default_chain", and the chain form refuses static keys alongside it.
 var (
 	ErrNoBackends           = errors.New("at least one backend is required")
 	ErrDuplicateBackend     = errors.New("duplicate backend name")
@@ -86,11 +98,9 @@ var (
 	ErrUnknownOperation     = errors.New("unknown operation name")
 	ErrUnmeteredWildcard    = errors.New(`unmetered does not accept "*"`)
 	ErrPoolChargesUnmetered = errors.New("request_limits pool charges an operation listed as unmetered")
-	// ErrPoolsWithAPILimit: api_request_limit is the single-pool spelling of request_limits; setting both is ambiguous.
-	ErrPoolsWithAPILimit = errors.New("api_request_limit and request_limits are mutually exclusive")
-	// ErrInvalidCredentialSource: unknown credential_source value (allowed: "static", "default_chain").
-	ErrInvalidCredentialSource = errors.New(`credential_source must be "static" or "default_chain"`)
-	// ErrCredentialsWithDefaultChain: static keys present alongside credential_source=default_chain.
+
+	ErrPoolsWithAPILimit           = errors.New("api_request_limit and request_limits are mutually exclusive")
+	ErrInvalidCredentialSource     = errors.New(`credential_source must be "static" or "default_chain"`)
 	ErrCredentialsWithDefaultChain = errors.New("access_key_id/secret_access_key must be empty when credential_source is default_chain")
 )
 

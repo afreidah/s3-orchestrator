@@ -25,9 +25,17 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // objectKeyPattern is the path suffix carrying an object key. Keys contain
 // slashes, so the wildcard is greedy.
 const objectKeyPattern = "{key...}"
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // handleListObjects returns one page under the given prefix. An omitted
 // delimiter defaults to "/" so browsing is hierarchical; an explicitly empty

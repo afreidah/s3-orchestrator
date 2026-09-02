@@ -24,10 +24,18 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // maxObjectTagsBody caps the tag-set request body. Ten tags at the maximum key
 // and value lengths is a few kilobytes, so this sits far above any legal
 // request while still bounding what an attacker can send.
 const maxObjectTagsBody = 64 << 10
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // handleGetObjectTags returns one object's tag set.
 func (h *Handler) handleGetObjectTags(w http.ResponseWriter, r *http.Request) {

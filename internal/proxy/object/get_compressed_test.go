@@ -32,6 +32,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // seedCreatedAt is the row's creation time. The in-memory backend reports no
 // modification time, which is also true of some real ones, so this is what the
 // response has to fall back to.
@@ -63,6 +67,10 @@ type compressedFixture struct {
 	src   []byte
 	loc   core.ObjectLocation
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // seedCompressed writes src compressed (and optionally encrypted) straight onto
 // a backend, then builds a fleet whose ledger points at it. The write path is
@@ -129,6 +137,10 @@ func (c *compressedFixture) get(t *testing.T, rangeHeader string) *backend.GetOb
 	}
 	return res.GetObjectResult
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestCompressedGet_ServesTheObjectAsWritten is the headline of #1256: whatever
 // the stored form, the client gets back exactly what it sent, at the size it

@@ -1,4 +1,4 @@
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 // Cleanup DLQ Integration Tests
 //
 // Author: Alex Freidah
@@ -6,7 +6,7 @@
 // Exercises ListCleanupDLQ (backend scoping + field mapping) and the
 // writable-CTE RequeueCleanupDLQ against a real Postgres container. The
 // atomic DELETE ... RETURNING -> INSERT move is not covered by unit tests.
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 
 //go:build integration
 
@@ -18,6 +18,10 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // dlqAllPg moves every pending cleanup row into the DLQ, stamping lastError.
 func dlqAllPg(t *testing.T, s *Store, lastError string) {
@@ -73,6 +77,10 @@ func assertBackendADLQRow(t *testing.T, it core.CleanupDLQItem) {
 		t.Errorf("zero timestamps: %+v", it)
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestStoreInt_ListCleanupDLQ_ScopeAndFields asserts the listing filters by
 // backend and maps every column (reason, last_error, and both timestamps)

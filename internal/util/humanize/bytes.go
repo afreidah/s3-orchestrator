@@ -9,7 +9,6 @@
 // layers can use it without taking a dependency on cli/ or ui/.
 // -------------------------------------------------------------------------------
 
-// Package humanize renders machine values in the units an operator reads.
 package humanize
 
 import "fmt"

@@ -51,6 +51,10 @@ type Codec interface {
 	DecompressRanged(ctx context.Context, f compression.RangeFetcher, compressedSize int64) (compression.RangedReader, error)
 }
 
+// -------------------------------------------------------------------------
+// READ PATH
+// -------------------------------------------------------------------------
+
 // RangeFetchRuntime is what a single ranged GET needs: the timed call plus the
 // two meters it is charged against. Split out because a compressed read issues
 // one per frame it touches, and the fetcher doing so needs nothing else.
@@ -84,6 +88,10 @@ type Runtime interface {
 	WriteRuntime
 	ReadRuntime
 }
+
+// -------------------------------------------------------------------------
+// WRITE PATH COLLABORATORS
+// -------------------------------------------------------------------------
 
 // WriteRouter is the routing subset of *writepath.Coordinator: pick a
 // write-target backend given a size and an optional eligibility filter.

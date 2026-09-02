@@ -77,20 +77,19 @@ type RedisClient interface {
 // RedisCounterBackend stores per-backend usage deltas in Redis for
 // cross-instance visibility. Falls back to local counters when Redis is
 // unavailable.
+//
+// Tests construct this type directly and may leave log nil, so every caller
+// routes through logger() rather than reading the field.
 type RedisCounterBackend struct {
 	client   RedisClient
 	prefix   string
 	local    *LocalCounterBackend
 	cb       *breaker.CircuitBreaker
 	backends []string
-	// log is the component-scoped logger; populated by NewRedisCounterBackend.
-	// Tests construct this type directly and may leave log nil, so callers
-	// route through (r *RedisCounterBackend).logger() to get a safe default.
-	log *slog.Logger
+	log      *slog.Logger
 
-	// fallback tracks whether the backend is currently using local counters.
 	fallbackMu sync.RWMutex
-	fallback   bool
+	fallback   bool // currently serving from the local counters
 
 	stopProbe chan struct{}
 	probeDone chan struct{}

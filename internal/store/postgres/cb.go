@@ -1,8 +1,15 @@
+// -------------------------------------------------------------------------------
+// Postgres Circuit Breaker Chokepoint
+//
+// Author: Alex Freidah
+//
 // CB-aware sqlc DBTX wrapper for the postgres driver. Every sqlc query -
-// pool-bound or tx-bound - flows through this single chokepoint, which
-// calls breaker.PreCheck before the SQL and breaker.PostCheck after.
-// Advisory locks bypass the breaker by going through pool.Acquire()
-// directly (see advisory_lock.go).
+// pool-bound or tx-bound - flows through this single chokepoint, which calls
+// breaker.PreCheck before the SQL and breaker.PostCheck after. Advisory locks
+// bypass the breaker by going through pool.Acquire() directly, in
+// advisory_lock.go.
+// -------------------------------------------------------------------------------
+
 package postgres
 
 import (

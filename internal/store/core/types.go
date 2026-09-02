@@ -57,7 +57,9 @@ func (i *ObjectIdentity) Complete() bool {
 // the original. CompressionLevel does not affect decoding and is carried for
 // diagnostics and for rewrite passes.
 //
-// The zero value describes bytes stored verbatim.
+// The zero value describes bytes stored verbatim, which is also why Unmanaged
+// is negated: it is stored as the `managed` column, so a construction site that
+// omits the field cannot accidentally produce a row every worker ignores.
 type StoredForm struct {
 	Encrypted                bool
 	EncryptionKey            []byte
@@ -69,12 +71,7 @@ type StoredForm struct {
 	CompressionFormatVersion int
 	LogicalSize              int64
 
-	// Unmanaged marks an object that exists on the backend but outside every
-	// configured virtual bucket prefix: real bytes the orchestrator did not
-	// write and does not act on. It is stored as the negated `managed` column,
-	// so the zero value means managed and a construction site that omits it
-	// cannot accidentally produce a row the workers ignore.
-	Unmanaged bool
+	Unmanaged bool // on the backend but outside every virtual bucket prefix: real bytes no worker acts on
 }
 
 // ObjectLocation records that a backend currently holds a copy of a key,
@@ -90,6 +87,7 @@ type StoredForm struct {
 // and does not act on. It is stored as the negated `managed` column, so the
 // zero value means managed and a construction site that omits it cannot
 // accidentally produce a row the workers ignore.
+//
 // The compression columns follow StoredForm: an empty algorithm means the
 // bytes are stored verbatim, and they are zero on rows from queries that do
 // not select them.
@@ -121,16 +119,17 @@ type ObjectLocation struct {
 
 // ExistingCopy is the projection of an object_locations row that promotion
 // and overwrite logic needs from a SELECT-for-update read.
+//
+// Encrypted and HasDEK say whether the row claims the bytes are an envelope and
+// whether the key that reads them is still present. They are carried here so a
+// decision about which copy to drop cannot destroy the last row able to decrypt
+// the object.
 type ExistingCopy struct {
 	BackendName string
 	SizeBytes   int64
 	CreatedAt   time.Time
-	// Encrypted and HasDEK describe whether this copy's row claims the bytes
-	// are an encryption envelope and whether the key needed to read them is
-	// still present. Carried here so copy-set decisions (which copy to drop)
-	// can avoid destroying the last row that can decrypt the object.
-	Encrypted bool
-	HasDEK    bool
+	Encrypted   bool
+	HasDEK      bool
 }
 
 // DeletedCopy describes a copy displaced by an overwrite or delete. The
@@ -169,28 +168,16 @@ type PendingObject struct {
 // PendingPromoteResult describes how PromotePending resolved an intent.
 type PendingPromoteResult int
 
-// PendingPromoteCommitted and related constants used by this package.
+// The outcomes of promoting a pending write intent.
+//
+// Ambiguous is reserved and never produced: the timestamp comparison resolves
+// every case it was meant for as Superseded instead. It stays declared so the
+// metric label and the constant keep their values across releases.
 const (
-	// PendingPromoteCommitted means the pending row was promoted into
-	// object_locations and removed in the same transaction.
-	PendingPromoteCommitted PendingPromoteResult = iota
-
-	// PendingPromoteAmbiguous is reserved for pathological cases the
-	// resolver cannot decide between promotion and dropping. The current
-	// resolver does not produce this result; the timestamp comparison
-	// covers every previously-ambiguous case as Superseded instead. Kept
-	// so the metric label and constant stay stable across releases.
-	PendingPromoteAmbiguous
-
-	// PendingPromoteAlreadyResolved means the pending row was gone by
-	// the time the transaction acquired its lock - another reaper
-	// instance already resolved it. Benign no-op.
-	PendingPromoteAlreadyResolved
-
-	// PendingPromoteSuperseded means a successful write for the same
-	// key committed after this intent was inserted. The intent is
-	// provably stale, so the resolver deletes the pending row.
-	PendingPromoteSuperseded
+	PendingPromoteCommitted       PendingPromoteResult = iota // promoted and the intent removed, one transaction
+	PendingPromoteAmbiguous                                   // reserved; see above
+	PendingPromoteAlreadyResolved                             // another reaper got there first, a benign no-op
+	PendingPromoteSuperseded                                  // a later write for the key committed, so the intent is provably stale
 )
 
 // -------------------------------------------------------------------------

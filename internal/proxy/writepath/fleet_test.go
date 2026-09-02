@@ -33,12 +33,9 @@ const fleetTimeout = 30 * time.Second
 // fleetOpts tunes the test fleet beyond the defaults. The zero value gives
 // pack routing, an unlimited local usage counter, and pending writes off.
 type fleetOpts struct {
-	// Order fixes the fleet order. Defaults to the backend map's keys.
-	Order []string
-	// PendingEnabled turns on the pending-write pattern.
-	PendingEnabled bool
-	// UsageLimits applies per-backend API/bandwidth caps.
-	UsageLimits map[string]core.UsageLimits
+	Order          []string                    // fleet order; defaults to the backend map's keys
+	PendingEnabled bool                        // turns on the pending-write pattern
+	UsageLimits    map[string]core.UsageLimits // per-backend API/bandwidth caps
 }
 
 // newFleet builds a Coordinator over the supplied backends, returning it with

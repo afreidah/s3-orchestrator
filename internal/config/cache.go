@@ -17,6 +17,10 @@ import (
 	"time"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // CacheConfig holds settings for the object data cache.
 type CacheConfig struct {
 	Enabled       bool          `yaml:"enabled"`         // Enable the object data cache (default: false)
@@ -24,10 +28,13 @@ type CacheConfig struct {
 	MaxObjectSize string        `yaml:"max_object_size"` // Maximum cacheable object size (e.g., "10MB"); 0 = no limit
 	TTL           time.Duration `yaml:"ttl"`             // Time before a cached entry expires (default: 5m)
 
-	// Parsed values (not from YAML)
-	MaxSizeBytes       int64 `yaml:"-"`
-	MaxObjectSizeBytes int64 `yaml:"-"`
+	MaxSizeBytes       int64 `yaml:"-"` // parsed from MaxSize
+	MaxObjectSizeBytes int64 `yaml:"-"` // parsed from MaxObjectSize
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // setDefaultsAndValidate sets defaults and validate.
 func (cc *CacheConfig) setDefaultsAndValidate() []error {

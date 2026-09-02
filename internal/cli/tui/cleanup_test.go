@@ -22,6 +22,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // cleanupModel builds a sized model on the cleanup section with both listings
 // loaded, so tests exercise the pane in the state a user actually sees.
 func cleanupModel(t *testing.T) *model {
@@ -47,6 +51,10 @@ func cleanupModel(t *testing.T) *model {
 	})
 	return m
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func TestRowsFromCleanupQueue(t *testing.T) {
 	t.Parallel()

@@ -12,10 +12,6 @@
 // to detect absence.
 // -------------------------------------------------------------------------------
 
-// Package di is the single wiring point for the orchestrator. It uses
-// samber/do/v2 to register every store role, backend, worker, and
-// transport handler as a lazy provider; consumers resolve their
-// dependencies through the injector at the moment they need them.
 package di
 
 import (
@@ -29,6 +25,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // InjectorDeps groups the values NewInjector seeds the container with.
 type InjectorDeps struct {
@@ -55,6 +55,10 @@ func NewInjector(deps InjectorDeps) do.Injector {
 
 	return inj
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // registerValues seeds the injector with already-constructed values
 // (config, mode, log level, log buffer) so providers can resolve them

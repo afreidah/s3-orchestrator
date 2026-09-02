@@ -22,6 +22,10 @@ import (
 	"time"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // schemaSet collects the named schemas discovered during reflection, keyed by
 // Go type name as it appears under components/schemas.
 type schemaSet map[string]map[string]any
@@ -29,6 +33,10 @@ type schemaSet map[string]map[string]any
 // timeType is special-cased to a date-time string rather than reflected as the
 // struct it is.
 var timeType = reflect.TypeFor[time.Time]()
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // schemaFor returns the schema for v. Named struct types are registered in set
 // and returned as a reference, so the document describes each type once.

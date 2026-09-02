@@ -25,9 +25,17 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // rotateBatchSize is how many encrypted locations one key-rotation page
 // collects.
 const rotateBatchSize = 500
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // RotateKeyResult reports one key-rotation pass.
 type RotateKeyResult struct {
@@ -67,6 +75,10 @@ func NewEncryption(d EncryptionDeps) *Encryption {
 		usage:     d.Usage,
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // EncryptExisting reads every plaintext copy, encrypts it, re-uploads the
 // ciphertext, and records the new encryption metadata.
@@ -188,6 +200,10 @@ func (e *Encryption) RotateKey(ctx context.Context, oldKeyID string) (RotateKeyR
 	e.log.InfoContext(ctx, "key rotation complete", "rotated", res.Rotated, "failed", res.Failed, "total", res.Total)
 	return res, nil
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // rotateBatch re-wraps one page of locations and folds the outcomes into res.
 func (e *Encryption) rotateBatch(ctx context.Context, locs []core.EncryptedLocation, res *RotateKeyResult) {

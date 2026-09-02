@@ -13,8 +13,6 @@
 // access with per-bucket credential isolation.
 // -------------------------------------------------------------------------------
 
-// Package auth provides S3 SigV4 (header and presigned URL) and token-based
-// request authentication with multi-bucket credential resolution.
 package auth
 
 import (
@@ -41,7 +39,7 @@ const sigV4MaxSkew = 15 * time.Minute
 // matching the AWS S3 limit).
 const presignedMaxExpiry = 7 * 24 * time.Hour
 
-// errAuthFailed and related constants used by this package.
+// The generic rejection message and the SigV4 Authorization scheme prefix.
 const (
 	errAuthFailed = "authentication failed"
 	sigV4Prefix   = "AWS4-HMAC-SHA256 "

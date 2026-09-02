@@ -24,12 +24,20 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newPresignClient creates an AWS SDK v2 presign client pointed at the
 // in-process proxy, using the same credentials as the regular test client.
 func newPresignClient(t *testing.T) *s3.PresignClient {
 	t.Helper()
 	return s3.NewPresignClient(newS3Client(t))
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestE2E_PresignedGetObject uploads an object normally, generates a presigned
 // GET URL via the AWS SDK, fetches it with a plain HTTP client (no SigV4

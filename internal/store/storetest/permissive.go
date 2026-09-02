@@ -1,3 +1,14 @@
+// -------------------------------------------------------------------------------
+// Permissive Store Mock
+//
+// Author: Alex Freidah
+//
+// Stubs every store method a fixture might reach with an empty, successful
+// answer, so a test that exercises one path does not have to state expectations
+// for the twenty it merely passes through. Tests that care about a call
+// override it afterwards.
+// -------------------------------------------------------------------------------
+
 package storetest
 
 import (

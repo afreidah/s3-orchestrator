@@ -1,7 +1,14 @@
-// Database circuit breaker factory plus the error filter used by the
-// driver-level DBTX/DB wrappers. The CB instance is a first-class
-// DI-registered value; consumers that need lifecycle controls
-// (IsHealthy, ResetStaleProbe) invoke *breaker.CircuitBreaker directly.
+// -------------------------------------------------------------------------------
+// Database Circuit Breaker Factory
+//
+// Author: Alex Freidah
+//
+// Builds the database circuit breaker and the error filter the driver-level
+// DBTX/DB wrappers apply. The breaker is a first-class DI-registered value;
+// consumers needing lifecycle controls (IsHealthy, ResetStaleProbe) invoke
+// *breaker.CircuitBreaker directly.
+// -------------------------------------------------------------------------------
+
 package store
 
 import (

@@ -1,5 +1,13 @@
-// Helper tests for the proxytest fixture. The helpers are test-only API but
-// Sonar's "new code coverage" gate counts them, so we drive them once.
+// -------------------------------------------------------------------------------
+// Proxytest Fixture Tests
+//
+// Author: Alex Freidah
+//
+// Helper tests for the proxytest fixture. The helpers are test-only API, but
+// the new-code coverage gate counts them like anything else, so they are
+// driven once here.
+// -------------------------------------------------------------------------------
+
 package proxytest_test
 
 import (
@@ -13,6 +21,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newStack builds a minimal stack fed only by a single MockStore.
 func newStack(t *testing.T, mock *storetest.MockMetadataStore) *proxytest.Stack {
 	t.Helper()
@@ -25,6 +37,10 @@ func newStack(t *testing.T, mock *storetest.MockMetadataStore) *proxytest.Stack 
 		}),
 	})
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestNewStack_WiresEveryCollaborator asserts the fixture hands back a
 // populated stack, since a nil field would surface in a test as a confusing

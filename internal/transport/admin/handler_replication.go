@@ -23,6 +23,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
+// -------------------------------------------------------------------------
+// REPLICATION
+// -------------------------------------------------------------------------
+
 // handleReplicate triggers one replication cycle. Streams per-object NDJSON
 // progress when the client accepts the stream content type; otherwise returns a
 // single JSON result.
@@ -71,6 +75,10 @@ func (h *Handler) streamReplicate(w http.ResponseWriter, r *http.Request) {
 		}, nil
 	})
 }
+
+// -------------------------------------------------------------------------
+// OVER-REPLICATION
+// -------------------------------------------------------------------------
 
 // handleOverReplicationStatus returns the count of over-replicated objects.
 func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +151,10 @@ func (h *Handler) streamOverReplication(w http.ResponseWriter, r *http.Request, 
 		}, nil
 	})
 }
+
+// -------------------------------------------------------------------------
+// CONSUMER INTERFACE
+// -------------------------------------------------------------------------
 
 // replicationSnapshotter is the narrow view of the metrics collector the
 // replication-status endpoint needs; *metrics.Collector satisfies it.

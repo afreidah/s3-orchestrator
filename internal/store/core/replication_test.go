@@ -18,6 +18,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // excessTxStub drives RemoveExcessCopy: it overrides the lock, re-read,
 // and delete methods, and inherits DecrementBackendQuota (with its
 // failOn/failErr hooks) from the embedded quotaTxStub.
@@ -29,6 +33,10 @@ type excessTxStub struct {
 	deleteErr   error
 	deleted     []string
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // AcquireKeyLock returns the seeded lock error (nil = success).
 func (s *excessTxStub) AcquireKeyLock(context.Context, string) error { return s.lockErr }

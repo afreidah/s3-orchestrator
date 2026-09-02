@@ -22,6 +22,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
+
 // HeadObject retrieves object metadata. An object whose row carries its
 // identity is answered from the ledger alone - no backend round trip and no
 // metered API call, which is the whole point of storing it. Everything else
@@ -90,6 +94,10 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 	pobserve.HeadCompleted(ctx, key, backendName, result.Size)
 	return &HeadResult{HeadObjectResult: result, TagCount: o.countObjectTags(ctx, key)}, nil
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // locationsForHead reads the rows a HEAD needs, once: the identity that may
 // answer it outright, and the copies that decide what a backend answer is

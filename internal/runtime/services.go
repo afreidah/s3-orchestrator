@@ -35,6 +35,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // bootstrapped is what the resolve pass hands back: the collaborators the
 // runtime keeps hold of after startup, either to seed with config or to drive
 // in order during shutdown. Everything else the injector owns and disposes of
@@ -46,6 +50,10 @@ type bootstrapped struct {
 	runtime      *infra.BackendRuntime
 	integrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // resolveBootstrapped builds the backend stack and returns the pieces startup
 // and shutdown hold onto. Resolving them here rather than at each use keeps a

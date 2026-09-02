@@ -173,15 +173,13 @@ func (r *PendingReaper) resolveOneIntent(ctx context.Context, p *core.PendingObj
 // from the reaper's point of view.
 type probeOutcome int
 
-// probeFound and related constants used by this package.
+// The HEAD outcomes a probe can report. An error is inconclusive rather than
+// negative: the bytes may well be there, so the intent is left for a later tick
+// instead of being resolved on a guess.
 const (
-	// probeFound means HEAD returned 200; bytes are present on the backend.
-	probeFound probeOutcome = iota
-	// probeNotFound means HEAD returned 404; bytes were never written.
-	probeNotFound
-	// probeError means HEAD returned a non-404 error; the result is
-	// inconclusive and the intent must be left for a later tick.
-	probeError
+	probeFound    probeOutcome = iota // 200: the bytes are on the backend
+	probeNotFound                     // 404: they were never written
+	probeError                        // anything else: inconclusive
 )
 
 // probeBackend HEADs the destination backend and classifies the result.

@@ -23,6 +23,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
 )
 
+// -------------------------------------------------------------------------
+// HASHING
+// -------------------------------------------------------------------------
+
 // sha256Hex returns the SHA-256 accumulated in h as a hex string. Convenience
 // for call sites that materialize a body with a streaming hasher attached.
 func sha256Hex(h hash.Hash) string {
@@ -38,6 +42,10 @@ func sha256Hex(h hash.Hash) string {
 func newSHA256() hash.Hash {
 	return sha256.New()
 }
+
+// -------------------------------------------------------------------------
+// MATERIALIZED SOURCE
+// -------------------------------------------------------------------------
 
 // materializedSource bundles the seekable reader handed to PutObject with the
 // cleanup the caller must invoke once the upload settles. The returned source

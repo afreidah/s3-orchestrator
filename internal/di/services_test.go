@@ -38,6 +38,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // fakeLocker skips advisory locking  -  useful for constructor-only tests
 // where we never want Run to actually fire.
 type fakeLocker struct{}
@@ -79,6 +83,10 @@ type servicesFixture struct {
 	cleanupWorker *worker.CleanupWorker
 	scrubber      *worker.Scrubber
 }
+
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
 
 // newServicesFixture builds the stack and the workers the service
 // constructors need. Mirrors what the per-worker DI providers do at
@@ -129,6 +137,10 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 		scrubber:      sc,
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestCleanupQueueService_ProcessedLogFires pre-populates the mock
 // store with a cleanup item whose backend is not registered with the

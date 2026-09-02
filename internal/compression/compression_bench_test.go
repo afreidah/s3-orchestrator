@@ -18,6 +18,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // benchCodec builds a codec at the production default chunk size.
 func benchCodec(b *testing.B) *Codec {
 	b.Helper()
@@ -28,6 +32,10 @@ func benchCodec(b *testing.B) *Codec {
 	b.Cleanup(c.Close)
 	return c
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // BenchmarkCompress measures one multi-chunk object through the encoder.
 func BenchmarkCompress(b *testing.B) {
@@ -93,6 +101,10 @@ func BenchmarkCompressIncompressible(b *testing.B) {
 func BenchmarkCompressLogLike(b *testing.B) {
 	benchRatio(b, logLike(DefaultChunkSize*4))
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // benchRatio encodes src and reports both throughput and the ratio reached, so
 // a run states what it compressed as well as how fast.

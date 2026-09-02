@@ -1,4 +1,4 @@
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 // MarkObjectEncrypted / MarkObjectDecrypted Quota Integration Tests
 //
 // Author: Alex Freidah
@@ -10,7 +10,7 @@
 // must follow the size delta. Without these adjustments the counter drifts
 // permanently from SUM(object_locations.size_bytes) and write-routing
 // silently overcommits.
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 
 //go:build integration
 
@@ -22,6 +22,10 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // encUpdate describes one copy on backend-a rewritten by the encrypt pass. The
 // envelope itself is not what these tests are about, so every case uses the
@@ -36,6 +40,10 @@ func encUpdate(key string, plaintextSize, ciphertextSize int64) *core.EncryptedU
 		CiphertextSize: ciphertextSize,
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestStoreInt_MarkObjectEncrypted_AdjustsBytesUsed asserts that marking an
 // object encrypted advances backend_quotas.bytes_used by ciphertextSize -
@@ -159,6 +167,10 @@ func TestStoreInt_MarkObjectEncrypted_BatchSumsCorrectly(t *testing.T) {
 		t.Errorf("bytes_used after batch = %d, want %d (before + %d objects * %d delta)", after, want, objects, perObjectDelta)
 	}
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // readBytesUsed returns the current bytes_used value for backendName.
 func readBytesUsed(t *testing.T, s *Store, backendName string) int64 {

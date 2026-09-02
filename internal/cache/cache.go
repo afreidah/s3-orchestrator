@@ -7,9 +7,6 @@
 // API calls and egress. Implementations must be safe for concurrent use.
 // -------------------------------------------------------------------------------
 
-// Package cache provides an object data cache layer that sits between the
-// orchestrator and storage backends, reducing API calls and egress by serving
-// repeated reads from local storage.
 package cache
 
 import "time"
@@ -24,38 +21,22 @@ import "time"
 // The interface separates admission decision from buffering so callers
 // can refuse to read oversized payloads into memory in the first place:
 // check Admit(size), and only buffer + PutBytes when admitted.
+//
+// PutBytes is best-effort. A caller that admitted an entry may still find the
+// cache unable to hold it once larger entries have taken the capacity, and that
+// case is a silent no-op rather than an error, because nothing about the read
+// it came from has gone wrong.
+//
+// An empty prefix passed to InvalidatePrefix matches every entry. Callers that
+// mean to empty the cache should call Clear instead, so the metric records what
+// the operator actually asked for.
 type ObjectCache interface {
-	// Get returns the cached entry for the given key, or false if not cached.
 	Get(key string) (*Entry, bool)
-
-	// Admit reports whether an entry of the given size would be accepted by
-	// the cache (i.e., size <= max_object_size). O(1). Callers consult this
-	// before buffering data; oversized streams stay unread on the wire.
-	Admit(size int64) bool
-
-	// PutBytes stores pre-buffered data for key. Callers must have called
-	// Admit first to confirm size fits. Implementations may evict LRU
-	// entries to make room. Best-effort: if the cache cannot store the
-	// entry (e.g. capacity exhausted by larger entries), the call is a
-	// silent no-op.
+	Admit(size int64) bool // O(1) size check, before any buffering
 	PutBytes(key string, data []byte, meta EntryMeta)
-
-	// Invalidate removes a single key from the cache.
 	Invalidate(key string)
-
-	// InvalidatePrefix removes every entry whose key starts with the given
-	// prefix and returns the count of entries that were dropped. Empty
-	// prefix matches every entry (equivalent to Clear) - callers that
-	// want a clean flush should use Clear directly so the metric counter
-	// reflects the operator's intent.
-	InvalidatePrefix(prefix string) int
-
-	// Clear removes every entry. Returns the number of entries that were
-	// dropped. Used by the admin cache-flush endpoint to support cache-cold
-	// performance characterisation.
-	Clear() int
-
-	// Stats returns current cache utilization statistics.
+	InvalidatePrefix(prefix string) int // returns entries dropped
+	Clear() int                         // returns entries dropped
 	Stats() Stats
 }
 

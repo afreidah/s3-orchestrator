@@ -56,16 +56,14 @@ const (
 // Unreadable is reported separately because it is not a hash result. A pass
 // that could not read a single copy has nothing to say about whether the
 // bytes are intact, and reporting only Checked and Failed makes that pass look
-// like a clean one.
+// like a clean one. Deferred is distinct again: those copies were never
+// attempted, because the backend holding them is over its usage limit.
 type ScrubResponse struct {
 	IntegrityOutcome
 	Checked    int `json:"checked"`
 	Failed     int `json:"failed"`
 	Unreadable int `json:"unreadable"`
-	// Deferred counts copies the cycle never selected because the backend
-	// holding them is over its usage limit. Distinct from Unreadable: those
-	// were reached and failed, these were never attempted.
-	Deferred int `json:"deferred"`
+	Deferred   int `json:"deferred"`
 }
 
 // BackfillChecksumsResponse reports a checksum backfill pass. Done is true

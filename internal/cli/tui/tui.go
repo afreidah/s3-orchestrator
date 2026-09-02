@@ -8,7 +8,6 @@
 // tracking loading and error states through the Model / Update / View loop.
 // -------------------------------------------------------------------------------
 
-// Package tui implements the `s3-orchestrator tui` terminal browser.
 package tui
 
 import (

@@ -25,6 +25,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 )
 
+// -------------------------------------------------------------------------
+// ROW INSPECTION
+// -------------------------------------------------------------------------
+
 // isCompressed reports whether a copy's stored bytes were encoded. An empty
 // algorithm is the store's own way of saying the bytes are verbatim, so this
 // never consults a separate flag that could disagree with it.
@@ -69,6 +73,10 @@ func logicalSize(loc *core.ObjectLocation) int64 {
 	}
 	return loc.SizeBytes
 }
+
+// -------------------------------------------------------------------------
+// COMPRESSED READ
+// -------------------------------------------------------------------------
 
 // compressedGetAttempt is the per-backend GET callback for a compressed copy.
 //

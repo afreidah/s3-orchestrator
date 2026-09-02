@@ -43,12 +43,12 @@ type Entry struct {
 // keySource is a forward, lex-ordered, bounded-memory iterator over keys
 // (with size on the S3 side; DB-only keys do not carry size since the merge
 // only needs it on import).
+//
+// Next reports ok=false at end-of-stream and returns a non-nil error only on
+// transport / DB failure, which callers must abort on. Stop releases any
+// backing goroutine and is safe to call more than once.
 type keySource interface {
-	// next returns the next entry. ok=false signals end-of-stream; err is
-	// non-nil only on transport / DB failure (callers must abort).
 	Next(ctx context.Context) (Entry, bool, error)
-
-	// stop releases any backing goroutine. Safe to call multiple times.
 	Stop()
 }
 

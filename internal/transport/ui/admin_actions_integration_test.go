@@ -39,6 +39,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newOpsForTest builds the operations layer against a mock store and an empty
 // backend set. opts mutates the resulting stack and workers so
 // individual tests can flip the relevant skipped-vs-happy guards.
@@ -115,6 +119,10 @@ func newActionsHandler(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.W
 		compression: svc.Compression,
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestHandleAPIReplicate_HappyPathReturnsCount asserts that when the
 // admin handler is configured to actually run (factor > 1) the wrapper
@@ -290,6 +298,10 @@ func TestHandleAPICleanExcess_ReportsRemovedCount(t *testing.T) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // partialReplication builds a replication service whose cycles both report
 // work left unfinished, which a real fleet only produces against failing
 // backends.
@@ -324,6 +336,10 @@ func partialReplication(t *testing.T, created, removed, failed int) *ops.Replica
 		Config:     ops.NewConfigStore(&config.Config{}),
 	})
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestAdminActions_SurfaceObjectsTheCycleCouldNotFinish asserts the dashboard's
 // status payload carries the objects each cycle left behind alongside the count

@@ -16,11 +16,19 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // trackingCloser counts Close invocations and returns the configured error.
 type trackingCloser struct {
 	closes atomic.Int32
 	err    error
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // Close increments the call counter and returns the configured error.
 func (c *trackingCloser) Close() error {

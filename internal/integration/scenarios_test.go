@@ -29,6 +29,10 @@ import (
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
+
 // TestEmptyObject_RoundTrip covers the 0-byte edge case. PUT an empty body,
 // assert HEAD reports ContentLength 0, and GET returns no content.
 func TestEmptyObject_RoundTrip(t *testing.T) {
@@ -212,6 +216,10 @@ func TestPresignedDELETE(t *testing.T) {
 		t.Errorf("HeadObject after presigned DELETE: expected 404, got %v", err)
 	}
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // runConcurrentPutDelete fires two goroutines  -  one repeatedly PUTting the
 // same key and one repeatedly DELETEing it  -  and returns a closed error

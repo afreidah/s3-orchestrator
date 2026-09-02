@@ -46,6 +46,10 @@ type RequestPool struct {
 	Limit int64
 }
 
+// -------------------------------------------------------------------------
+// CONSTRUCTION
+// -------------------------------------------------------------------------
+
 // SingleRequestPool is the desugaring of a bare monthly request cap: one pool
 // over every metered operation, which is what the single scalar always meant.
 // Returns nil for a non-positive limit, so an unset cap compiles to no pools
@@ -137,6 +141,10 @@ func expand(spec PoolSpec, free map[s3op.Operation]bool) ([]s3op.Operation, erro
 	return out, nil
 }
 
+// -------------------------------------------------------------------------
+// ACCESSORS
+// -------------------------------------------------------------------------
+
 // Pools returns every compiled pool for the backend, in configured order.
 // Used by the flush path and the usage surfaces, which report a pool whether
 // or not any operation charged it this period.
@@ -160,6 +168,10 @@ func (u UsageLimits) Unlimited() bool {
 	}
 	return true
 }
+
+// -------------------------------------------------------------------------
+// USAGE READINGS
+// -------------------------------------------------------------------------
 
 // UsageStat holds usage statistics for a single backend in a given period.
 // APIRequests is the count of backend calls made, including ones no pool

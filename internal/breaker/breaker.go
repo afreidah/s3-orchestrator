@@ -11,11 +11,6 @@
 // States: closed (healthy) -> open (down) -> half-open (probing) -> closed.
 // -------------------------------------------------------------------------------
 
-// Package breaker implements a generic three-state circuit breaker (closed,
-// open, half-open) with pluggable error filters and probe jitter. The
-// breaker emits no metrics or events on its own  -  callers wire those via
-// the optional OnStateChange callback so this package stays free of
-// observability dependencies.
 package breaker
 
 import (
@@ -37,7 +32,7 @@ import (
 // State represents the current circuit breaker state.
 type State int
 
-// StateClosed and related constants used by this package.
+// The three circuit states, in the order the breaker cycles through them.
 const (
 	StateClosed   State = iota // healthy  -  all calls pass through
 	StateOpen                  // down  -  return sentinel error

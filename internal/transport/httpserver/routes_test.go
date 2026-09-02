@@ -23,6 +23,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // errRateLimiterBoom is the sentinel the override constructor returns
 // so the tests can assert the di.Optional Failed branch was reached.
 var errRateLimiterBoom = errors.New("rate limiter boom")
@@ -35,6 +39,10 @@ func overrideFailingRateLimiter(inj do.Injector) {
 		return nil, errRateLimiterBoom
 	})
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestRegisterAdminHandler_RateLimiterFailedFallsBack drives the slog
 // fallback branch where the optional rate limiter fails to resolve but

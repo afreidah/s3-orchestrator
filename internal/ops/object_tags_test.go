@@ -24,6 +24,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newTagObjects builds an Objects over a mocked API with one bucket
 // configured, which is what the key validation checks against.
 func newTagObjects(t *testing.T) (*Objects, *opstest.MockObjectAPI) {
@@ -37,6 +41,10 @@ func newTagObjects(t *testing.T) (*Objects, *opstest.MockObjectAPI) {
 		}),
 	}), api
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestObjectsTags_ReturnsStoredSet covers the read.
 func TestObjectsTags_ReturnsStoredSet(t *testing.T) {

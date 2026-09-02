@@ -14,9 +14,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// RequestsTotal and related package-level variables used by this package.
+// HTTP request count, latency and in-flight metrics.
 var (
-
 	// RequestsTotal counts all HTTP requests by method and status code.
 	RequestsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

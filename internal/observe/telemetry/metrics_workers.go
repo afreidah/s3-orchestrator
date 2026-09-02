@@ -19,12 +19,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+// WorkerTicksTotal counts each completed tick of a locked-ticker service,
+// labelled by service name and outcome: success when the work returned nil,
+// error when it returned one, and skipped when shouldRun gated the tick or the
+// advisory lock was busy.
 var (
-	// WorkerTicksTotal counts each completed tick of a locked-ticker
-	// service, labelled by service name and outcome. Outcomes:
-	//   success  -  work returned nil
-	//   error    -  work returned a non-nil error
-	//   skipped  -  shouldRun gated the tick or the lock was busy
 	WorkerTicksTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "s3o_worker_ticks_total",

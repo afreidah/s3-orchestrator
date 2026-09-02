@@ -27,26 +27,29 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // fleetTimeout bounds a backend call in the test fleet. Long enough that no
 // test trips it incidentally; tests that want a timeout set their own.
 const fleetTimeout = 30 * time.Second
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // fleetOpts tunes the test fleet beyond the defaults. The zero value gives
 // pack routing, an unlimited local usage counter, and no drain.
+// Order defaults to the backend map's keys in unspecified order, which is fine
+// for a test that names one backend.
 type fleetOpts struct {
-	// Order fixes the fleet order. Defaults to the backend map's keys in
-	// unspecified order, which is fine for tests that name one backend.
-	Order []string
-	// Routing overrides the placement strategy. Defaults to pack.
-	Routing config.RoutingStrategy
-	// UsageLimits applies per-backend API/bandwidth caps.
-	UsageLimits map[string]core.UsageLimits
-	// MaxObjectSizes caps per-backend object size, for eligibility tests.
-	MaxObjectSizes map[string]int64
-	// Draining lists backends the runtime should report as draining.
-	Draining []string
-	// PendingEnabled turns on the coordinator's pending-write pattern.
-	PendingEnabled bool
+	Order          []string                    // fixes the fleet order
+	Routing        config.RoutingStrategy      // defaults to pack
+	UsageLimits    map[string]core.UsageLimits // per-backend API and bandwidth caps
+	MaxObjectSizes map[string]int64            // per-backend object size cap, for eligibility tests
+	Draining       []string                    // backends the runtime should report as draining
+	PendingEnabled bool                        // turns on the coordinator's pending-write pattern
 }
 
 // drainingSet reports a fixed set of backends as draining, standing in for
@@ -55,6 +58,10 @@ type drainingSet map[string]bool
 
 // IsDraining implements infra.DrainChecker.
 func (d drainingSet) IsDraining(name string) bool { return d[name] }
+
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
 
 // newFleet builds the runtime and coordinator a worker is constructed from.
 // The store is the wide metadata store; each worker constructor narrows it to

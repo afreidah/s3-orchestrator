@@ -27,6 +27,10 @@ import (
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
+// -------------------------------------------------------------------------
+// CONFIGURATION
+// -------------------------------------------------------------------------
+
 // SyncQuotaLimits ensures the backend_quotas table has entries for all configured
 // backends with their quota limits. Creates new entries or updates existing limits.
 // All updates happen in a single transaction for atomicity.
@@ -44,6 +48,10 @@ func (s *Store) SyncQuotaLimits(ctx context.Context, backends []config.BackendCo
 		return nil
 	})
 }
+
+// -------------------------------------------------------------------------
+// ROUTING
+// -------------------------------------------------------------------------
 
 // GetBackendWithSpace finds a backend with enough quota for the given size.
 // Returns the backend name or ErrNoSpaceAvailable if none have enough space.
@@ -80,6 +88,10 @@ func (s *Store) GetLeastUtilizedBackend(ctx context.Context, size int64, eligibl
 	}
 	return row.BackendName, nil
 }
+
+// -------------------------------------------------------------------------
+// STATISTICS
+// -------------------------------------------------------------------------
 
 // GetQuotaStats returns quota statistics for all backends.
 func (s *Store) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error) {

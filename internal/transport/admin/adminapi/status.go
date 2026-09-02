@@ -34,6 +34,10 @@ type IntegrityStatus struct {
 
 // BackendStatus is the configured-and-live state of one backend: its quota and
 // usage counters plus circuit-breaker health and drain state.
+//
+// CompressionSavedBytes is what the compressed objects on this backend are,
+// less what they occupy. It is zero when nothing there is stored encoded,
+// which is also what an operator sees before compression is turned on.
 type BackendStatus struct {
 	Name         string `json:"name"`
 	Healthy      bool   `json:"healthy"`
@@ -45,9 +49,6 @@ type BackendStatus struct {
 	EgressBytes  int64  `json:"egress_bytes"`
 	IngressBytes int64  `json:"ingress_bytes"`
 
-	// CompressionSavedBytes is what the compressed objects on this backend are,
-	// less what they occupy. Zero when nothing there is stored encoded, which is
-	// also what an operator sees before compression is turned on.
 	CompressionSavedBytes int64 `json:"compression_saved_bytes"`
 }
 
@@ -94,11 +95,12 @@ type LogLevelResponse struct {
 // is absent in that state; afterwards it carries the coordinator's outcome for
 // the pass. Converted at the wiring layer so no internal reload type reaches
 // the wire.
+//
+// Generation is a pointer so a genuine generation-0 result still reports the
+// field, while the not-yet placeholder omits it; a plain int64 with omitempty
+// would silently drop the zero.
 type ReloadStatusResponse struct {
-	Status string `json:"status"`
-	// Generation is a pointer so a genuine generation-0 result still reports
-	// the field, while the not-yet placeholder omits it. A plain int64 with
-	// omitempty would silently drop the zero.
+	Status          string              `json:"status"`
 	Generation      *int64              `json:"generation,omitempty"`
 	Outcomes        []ReloadHookOutcome `json:"outcomes,omitempty"`
 	RequiresRestart []string            `json:"requires_restart,omitempty"`

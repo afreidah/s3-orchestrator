@@ -24,6 +24,10 @@ import (
 	"time"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // writeTestConfig writes YAML content to a temp file and returns the path.
 func writeTestConfig(t *testing.T, content string) string {
 	t.Helper()
@@ -69,6 +73,10 @@ backends:
     secret_access_key: sk
 `, port)
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestRun_InvalidConfigPath verifies that Run returns an error for a
 // nonexistent config file.

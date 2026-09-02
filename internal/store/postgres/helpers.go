@@ -18,6 +18,10 @@ import (
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
+// -------------------------------------------------------------------------
+// NULLABLE CONVERSIONS
+// -------------------------------------------------------------------------
+
 // strPtr returns a pointer to s when non-empty, nil otherwise.
 func strPtr(s string) *string {
 	if s == "" {
@@ -64,6 +68,10 @@ func derefInt64(p *int64) int64 { return derefOr(p, 0) }
 // derefInt16 safely dereferences a nullable int16 pointer.
 func derefInt16(p *int16) int16 { return derefOr(p, 0) }
 
+// -------------------------------------------------------------------------
+// ROW MAPPING
+// -------------------------------------------------------------------------
+
 // mapSlice applies fn to every element of in and returns the resulting
 // slice. fn receives a pointer to each element so large sqlc row structs
 // are not copied per call. The output slice is always pre-sized to
@@ -95,6 +103,10 @@ func existingCopyFromRow(r *db.GetExistingCopiesForUpdateRow) core.ExistingCopy 
 		HasDEK:      r.HasDek != nil && *r.HasDek,
 	}
 }
+
+// -------------------------------------------------------------------------
+// INSERT PARAMETERS
+// -------------------------------------------------------------------------
 
 // objectInsertParams maps a core.ObjectLocation onto the sqlc insert
 // struct, attaching the representation metadata that is present.

@@ -30,12 +30,20 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // md5ETag renders the quoted MD5 of body, which is what S3 reports for a
 // single-part upload of those bytes.
 func md5ETag(body string) string {
 	sum := md5.Sum([]byte(body)) //nolint:gosec // G401: see above
 	return `"` + hex.EncodeToString(sum[:]) + `"`
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestPutObject_ReturnsMD5OfClientBytes pins the write half of the contract:
 // the ETag a client is handed is the digest of what it sent, not whatever the

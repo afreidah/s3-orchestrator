@@ -23,6 +23,10 @@ import (
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
+// -------------------------------------------------------------------------
+// LISTINGS
+// -------------------------------------------------------------------------
+
 // ListUncompressedLocations returns a page of copies whose bytes carry no
 // encoding and that the supplied thresholds do not already exclude.
 func (s *Store) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor, t core.CompressionThresholds) ([]core.RewritableLocation, error) {
@@ -61,6 +65,10 @@ func (s *Store) ListCompressedLocations(ctx context.Context, limit int, after co
 	return out, nil
 }
 
+// -------------------------------------------------------------------------
+// STATISTICS AND WRITES
+// -------------------------------------------------------------------------
+
 // CompressionStats reports per-backend compression totals for the dashboard.
 // Backends holding no encoded copies are absent rather than present as zeroes,
 // so a caller can tell "nothing compressed here" from "compressed to nothing".
@@ -98,6 +106,10 @@ func (s *Store) RecordCompressionProbe(ctx context.Context, probe *core.Compress
 // rewritableRow is the shape both listings return. The two generated row types
 // are structurally identical, so one conversion serves both.
 type rewritableRow = db.ListUncompressedLocationsRow
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // rewritableFromRow converts one generated row to the canonical type.
 func rewritableFromRow(r *rewritableRow) core.RewritableLocation {

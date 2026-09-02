@@ -10,10 +10,6 @@
 // and Shutdown for the runtime to call.
 // -------------------------------------------------------------------------------
 
-// Package httpserver constructs the HTTP listener the daemon serves S3,
-// admin, UI, health, and metrics traffic on. It owns route registration,
-// middleware composition, TLS config (including the cert reloader for
-// SIGHUP rotation), and the optional separate metrics listener.
 package httpserver
 
 import (
@@ -36,6 +32,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // Deps holds the dependencies New requires.
 type Deps struct {
 	Cfg       *config.Config
@@ -50,23 +50,26 @@ type Deps struct {
 // closes them in the right order. The cert reloader is exposed so the
 // reload coordinator can refresh certificates without reaching into the
 // listener internals.
+//
+// The bound sockets are held between Listen and Run. Binding separately from
+// serving is what makes an address conflict a startup failure rather than a
+// goroutine that logs and exits after the process has already reported itself
+// ready.
 type Server struct {
 	main         *http.Server
 	metrics      *http.Server
 	certReloader *httputil.CertReloader
 	log          *slog.Logger
 
-	// requireMetrics aborts startup when the metrics listener cannot bind,
-	// rather than serving S3 traffic with no metrics.
-	requireMetrics bool
+	requireMetrics bool // abort startup rather than serve S3 traffic with no metrics
 
-	// Bound sockets, held between Listen and Run. Listening separately from
-	// serving is what makes an address conflict a startup failure instead of a
-	// goroutine that logs and exits after the process has already reported
-	// itself ready.
 	mainLn    net.Listener
 	metricsLn net.Listener
 }
+
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
 
 // New constructs the HTTP server with all routes mounted and TLS
 // configured. It does not start any listener; call Run to do that.
@@ -124,6 +127,10 @@ func New(deps Deps) (*Server, error) {
 		log:            slog.Default().With(logfmt.Component("httpserver")),
 	}, nil
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // CertReloader returns the TLS cert reloader, or nil when TLS is not
 // configured. The reload coordinator calls Reload on this to refresh

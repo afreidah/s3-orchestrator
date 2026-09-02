@@ -21,21 +21,20 @@ import (
 )
 
 // -------------------------------------------------------------------------
-// CONSTANTS
+// VARIANTS AND THRESHOLDS
 // -------------------------------------------------------------------------
 
 // Variant names a recognised flavour of aws-chunked framing.
 type Variant string
 
+// VariantNone and the two framings a body can announce. Signed covers both
+// STREAMING-AWS4-HMAC-SHA256-PAYLOAD and its TRAILER-suffixed sibling, which
+// share a leading line; UnsignedTrailer is the bare-hex framing that
+// STREAMING-UNSIGNED-PAYLOAD-TRAILER emits.
 const (
-	// VariantNone indicates the head bytes do not look like chunked framing.
-	VariantNone Variant = ""
-	// VariantSigned matches the leading line of STREAMING-AWS4-HMAC-SHA256-
-	// PAYLOAD or its TRAILER-suffixed sibling.
-	VariantSigned Variant = "signed"
-	// VariantUnsignedTrailer matches the bare-hex chunk framing emitted by
-	// STREAMING-UNSIGNED-PAYLOAD-TRAILER.
-	VariantUnsignedTrailer Variant = "unsigned_trailer"
+	VariantNone            Variant = ""                 // the head bytes do not look like chunked framing
+	VariantSigned          Variant = "signed"           // per-chunk signature lines
+	VariantUnsignedTrailer Variant = "unsigned_trailer" // bare-hex chunk sizes
 )
 
 // MaxChunkSizeBytes caps a single declared chunk during validation. AWS

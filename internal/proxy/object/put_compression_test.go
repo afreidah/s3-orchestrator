@@ -29,6 +29,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // putCompressChunk is the codec chunk size these tests write at, small enough
 // that a modest fixture still crosses frame boundaries.
 const putCompressChunk = compression.MinChunkSize
@@ -43,6 +47,10 @@ func newPutCodec(t *testing.T) *compression.Codec {
 	t.Cleanup(c.Close)
 	return c
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // compressibleBody returns n bytes zstd can shrink, so a test asserting the
 // stored size dropped is not fighting incompressible input.
@@ -118,6 +126,10 @@ func putThroughFleet(t *testing.T, opts *fleetOpts, key string, body []byte) put
 	rec := calls.recordObject[0]
 	return putResult{be: be, stored: be.Objects[key].Data, size: rec.Size, form: rec.Form}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestPut_CompressesAndRecordsRepresentation checks the whole write-side
 // contract at once: fewer bytes land than the client sent, the row says how

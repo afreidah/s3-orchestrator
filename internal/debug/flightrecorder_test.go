@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Flight Recorder Tests
+//
+// Author: Alex Freidah
+//
+// Covers the recorder's lifecycle and its nil-safety. A nil recorder is the
+// normal state for a deployment that never enabled it, so every method has to
+// tolerate one rather than the caller guarding each call.
+// -------------------------------------------------------------------------------
+
 package debug
 
 import (

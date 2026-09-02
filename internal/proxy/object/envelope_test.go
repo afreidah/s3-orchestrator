@@ -21,10 +21,18 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // envelopeResult builds a GetObjectResult whose body carries the given bytes.
 func envelopeResult(body string) *s3be.GetObjectResult {
 	return &s3be.GetObjectResult{Body: io.NopCloser(strings.NewReader(body)), Size: int64(len(body))}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestVerifyStoredEnvelope_Agreement verifies a copy whose bytes match its row
 // passes and still streams its full body afterwards.

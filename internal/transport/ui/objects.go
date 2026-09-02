@@ -28,6 +28,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 )
 
+// -------------------------------------------------------------------------
+// BROWSING
+// -------------------------------------------------------------------------
+
 // handleTreeAPI returns children of a directory prefix as JSON for the
 // lazy-loaded file browser.
 func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +59,10 @@ func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 
 	httputil.WriteJSON(w, http.StatusOK, result)
 }
+
+// -------------------------------------------------------------------------
+// DELETION
+// -------------------------------------------------------------------------
 
 // handleAPIDelete deletes a single object by key.
 func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +128,10 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 
 	httputil.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": res.Deleted})
 }
+
+// -------------------------------------------------------------------------
+// TRANSFER
+// -------------------------------------------------------------------------
 
 // handleAPIUpload uploads a file via multipart form data.
 func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {

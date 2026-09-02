@@ -20,6 +20,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // ndjsonServer returns a server that writes the given raw NDJSON lines and
 // records the Accept header it received.
 func ndjsonServer(t *testing.T, lines string) (*httptest.Server, *string) {
@@ -33,6 +37,10 @@ func ndjsonServer(t *testing.T, lines string) (*httptest.Server, *string) {
 	t.Cleanup(srv.Close)
 	return srv, &accept
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func TestStream_TextRendersStepsAndResult(t *testing.T) {
 	t.Parallel()

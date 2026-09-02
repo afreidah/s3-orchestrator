@@ -14,9 +14,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// RebalanceObjectsMoved and related package-level variables used by this package.
+// Rebalancer progress metrics.
 var (
-
 	// RebalanceObjectsMoved counts objects moved by the rebalancer.
 	RebalanceObjectsMoved = promauto.NewCounterVec(
 		prometheus.CounterOpts{

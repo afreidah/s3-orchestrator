@@ -9,8 +9,6 @@
 // and hot-reload change detection.
 // -------------------------------------------------------------------------------
 
-// Package config provides YAML configuration loading with environment variable
-// expansion, validation, and hot-reload support via SIGHUP.
 package config
 
 import (
@@ -34,13 +32,10 @@ import (
 // RoutingStrategy determines how write operations select a target backend.
 type RoutingStrategy string
 
-// RoutingPack and related constants used by this package.
+// RoutingPack and RoutingSpread are the supported routing strategies.
 const (
-	// RoutingPack fills backends in order, returning the first with space.
-	RoutingPack RoutingStrategy = "pack"
-
-	// RoutingSpread distributes writes across backends by utilization ratio.
-	RoutingSpread RoutingStrategy = "spread"
+	RoutingPack   RoutingStrategy = "pack"   // fills backends in order, first with space wins
+	RoutingSpread RoutingStrategy = "spread" // distributes writes by utilization ratio
 )
 
 // -------------------------------------------------------------------------

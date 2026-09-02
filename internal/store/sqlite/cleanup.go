@@ -20,6 +20,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// QUEUE
+// -------------------------------------------------------------------------
+
 // EnqueueCleanup adds a failed cleanup operation to the retry queue.
 func (s *Store) EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) error {
 	now := now()
@@ -143,6 +147,10 @@ func stampClaims(ctx context.Context, tx *sql.Tx, items []core.CleanupItem, inst
 	return nil
 }
 
+// -------------------------------------------------------------------------
+// COMPLETION AND RETRY
+// -------------------------------------------------------------------------
+
 // CompleteCleanupItem atomically deletes a successfully-processed row and
 // decrements the backing backend's orphan_bytes by the row's size. The two
 // statements run inside a single transaction so a worker crash between them
@@ -211,6 +219,10 @@ func parseNullableTime(s sql.NullString) *time.Time {
 	}
 	return &t
 }
+
+// -------------------------------------------------------------------------
+// DEPTHS AND DLQ
+// -------------------------------------------------------------------------
 
 // CleanupQueueDepth returns the number of items still pending in the queue
 // (fewer than 10 attempts).
