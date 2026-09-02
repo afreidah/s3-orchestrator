@@ -65,7 +65,7 @@ func sweep(t *testing.T, s *Store, rules []config.LifecycleRule) []string {
 	deleter := &recordingDeleter{}
 	m := expiry.New(s, deleter, nil)
 	m.SetConfig(&config.LifecycleConfig{BatchSize: 100})
-	m.ProcessRules(context.Background(), rules)
+	m.ProcessRules(context.Background(), rules, nil)
 	return deleter.deleted()
 }
 

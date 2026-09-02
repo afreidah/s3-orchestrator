@@ -22,7 +22,7 @@ Requests without a valid token get `401` with a JSON body. Request bodies are ca
 
 ## Streaming progress
 
-Nine endpoints run long enough that a single response is unhelpful: `rebalance`, `replicate`, `over-replication`, `scrub`, `backfill-checksums`, `reconcile`, `compress-existing`, `decompress-existing`, and a backend purge. They return their JSON result by default, but stream newline-delimited progress when the caller asks for it:
+Twelve endpoints run long enough that a single response is unhelpful: `rebalance`, `replicate`, `over-replication`, `scrub`, `backfill-checksums`, `reconcile`, `lifecycle`, `compress-existing`, `decompress-existing`, `encrypt-existing`, `decrypt-existing`, and a backend purge. They return their JSON result by default, but stream newline-delimited progress when the caller asks for it:
 
 ```bash
 curl -H "X-Admin-Token: $TOKEN" \

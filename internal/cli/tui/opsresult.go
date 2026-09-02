@@ -14,7 +14,6 @@
 package tui
 
 import (
-	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -219,29 +218,4 @@ func signedSize(delta int64) string {
 		return humanize.Bytes(delta) // the formatter carries the minus sign
 	}
 	return "+" + humanize.Bytes(delta)
-}
-
-// lifecycleResult reports one expiration sweep. Deleted and failed are shown
-// separately because a sweep that removed nothing since every delete failed is
-// a different answer from one that found nothing to expire.
-type lifecycleResult struct {
-	adminapi.LifecycleResponse
-}
-
-// skipReason surfaces the server's own explanation rather than the bare status,
-// since "no lifecycle rules are configured" is the answer an operator checking
-// a rule they just wrote actually needs.
-func (r lifecycleResult) skipReason() string {
-	if r.Status != statusSkipped {
-		return ""
-	}
-	return cmp.Or(r.Reason, statusSkipped)
-}
-
-func (r lifecycleResult) describe() string {
-	expired := countOf(r.Deleted, "object", "objects") + " expired"
-	if r.Failed > 0 {
-		return expired + ", " + countOf(r.Failed, "failure", "failures")
-	}
-	return expired
 }

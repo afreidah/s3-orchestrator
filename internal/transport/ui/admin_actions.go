@@ -429,7 +429,7 @@ func (h *Handler) lifecycleOp() adminActionOp[lifecycleStatus] {
 	return adminActionOp[lifecycleStatus]{
 		name: opLifecycle,
 		run: func(ctx context.Context) (adminActionCounts, string, error) {
-			res, err := h.expiry.Run(ctx)
+			res, err := h.expiry.Run(ctx, nil)
 			if reason, skipped := skipReason(err); skipped {
 				return adminActionCounts{}, reason, nil
 			}

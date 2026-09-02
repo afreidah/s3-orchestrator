@@ -128,7 +128,7 @@ type RebalancerOps interface {
 // once and reports what it deleted against what it could not.
 type LifecycleOps interface {
 	Config() *config.LifecycleConfig
-	ProcessRules(ctx context.Context, rules []config.LifecycleRule) (deleted, failed int)
+	ProcessRules(ctx context.Context, rules []config.LifecycleRule, observer progress.Observer) (deleted, failed int)
 }
 
 // OverReplicationOps is the slice of *worker.OverReplicationCleaner the

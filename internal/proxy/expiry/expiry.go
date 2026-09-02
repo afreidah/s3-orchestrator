@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
@@ -73,7 +74,11 @@ func (m *Manager) logger() *slog.Logger {
 
 // ProcessRules evaluates every rule and deletes the objects each one expires,
 // returning the total deleted and failed counts across all rules.
-func (m *Manager) ProcessRules(ctx context.Context, rules []config.LifecycleRule) (deleted, failed int) {
+//
+// obs receives one bracketed step per object, which is what lets the admin API
+// stream a sweep instead of answering with a single count after it finishes. It
+// is nil on the scheduled tick, where nothing is watching.
+func (m *Manager) ProcessRules(ctx context.Context, rules []config.LifecycleRule, obs progress.Observer) (deleted, failed int) {
 	batchSize := batchSizeFor(m.Config())
 
 	// Left hand-written: Run and its variants carry one result, and folding two
@@ -84,7 +89,7 @@ func (m *Manager) ProcessRules(ctx context.Context, rules []config.LifecycleRule
 	defer span.End()
 
 	for _, rule := range rules {
-		d, f := m.applyRule(ctx, rule, batchSize)
+		d, f := m.applyRule(ctx, rule, batchSize, obs)
 		deleted += d
 		failed += f
 	}
@@ -104,7 +109,7 @@ func batchSizeFor(cfg *config.LifecycleConfig) int {
 // objects, or a full batch produces zero successful deletions. That second
 // condition is the infinite-loop guard: without it, a backend outage means
 // every batch fails and the same rows are re-listed forever.
-func (m *Manager) applyRule(ctx context.Context, rule config.LifecycleRule, batchSize int) (deleted, failed int) {
+func (m *Manager) applyRule(ctx context.Context, rule config.LifecycleRule, batchSize int, obs progress.Observer) (deleted, failed int) {
 	cutoff := time.Now().Add(-time.Duration(rule.ExpirationDays) * 24 * time.Hour)
 	for {
 		objects, err := m.store.ListExpiredObjects(ctx, core.ExpiredObjectsQuery{
@@ -123,7 +128,7 @@ func (m *Manager) applyRule(ctx context.Context, rule config.LifecycleRule, batc
 			return deleted, failed
 		}
 
-		batchDeleted, batchFailed := m.deleteBatch(ctx, rule, objects)
+		batchDeleted, batchFailed := m.deleteBatch(ctx, rule, objects, obs)
 		deleted += batchDeleted
 		failed += batchFailed
 
@@ -139,31 +144,43 @@ func (m *Manager) applyRule(ctx context.Context, rule config.LifecycleRule, batc
 }
 
 // deleteBatch deletes one batch of expired objects, emitting an audit event
-// and a metric per outcome.
-func (m *Manager) deleteBatch(ctx context.Context, rule config.LifecycleRule, objects []core.ObjectLocation) (deleted, failed int) {
+// and a metric per outcome, and bracketing each object for the observer.
+func (m *Manager) deleteBatch(ctx context.Context, rule config.LifecycleRule, objects []core.ObjectLocation, obs progress.Observer) (deleted, failed int) {
 	for i := range objects {
 		key := objects[i].ObjectKey
-		if err := m.objects.DeleteObject(ctx, key); err != nil {
-			m.logger().WarnContext(ctx, "failed to delete expired object",
-				slog.String("key", key), "error", err)
-			telemetry.LifecycleFailedTotal.Inc()
-			failed++
-			continue
-		}
-		audit.Log(ctx, "lifecycle.delete",
-			slog.String("key", key),
-			slog.String("prefix", rule.Prefix),
-			slog.Int("expiration_days", rule.ExpirationDays),
-		)
-		bucket, userKey := internalkey.Split(key)
-		event.Publish(event.LifecycleDelete, userKey, map[string]any{
-			"bucket":          bucket,
-			"key":             userKey,
-			"prefix":          rule.Prefix,
-			"expiration_days": rule.ExpirationDays,
+		progress.Track(obs, key, func() string {
+			if err := m.deleteExpired(ctx, rule, key); err != nil {
+				failed++
+				return progress.StatusFailed
+			}
+			deleted++
+			return progress.StatusOK
 		})
-		telemetry.LifecycleDeletedTotal.Inc()
-		deleted++
 	}
 	return deleted, failed
+}
+
+// deleteExpired removes one expired object and records the outcome, so the
+// bracketing in deleteBatch reports a status rather than carrying the work.
+func (m *Manager) deleteExpired(ctx context.Context, rule config.LifecycleRule, key string) error {
+	if err := m.objects.DeleteObject(ctx, key); err != nil {
+		m.logger().WarnContext(ctx, "failed to delete expired object",
+			slog.String("key", key), "error", err)
+		telemetry.LifecycleFailedTotal.Inc()
+		return err
+	}
+	audit.Log(ctx, "lifecycle.delete",
+		slog.String("key", key),
+		slog.String("prefix", rule.Prefix),
+		slog.Int("expiration_days", rule.ExpirationDays),
+	)
+	bucket, userKey := internalkey.Split(key)
+	event.Publish(event.LifecycleDelete, userKey, map[string]any{
+		"bucket":          bucket,
+		"key":             userKey,
+		"prefix":          rule.Prefix,
+		"expiration_days": rule.ExpirationDays,
+	})
+	telemetry.LifecycleDeletedTotal.Inc()
+	return nil
 }

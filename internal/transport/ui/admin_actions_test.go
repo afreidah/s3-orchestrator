@@ -26,6 +26,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
 )
 
@@ -405,7 +406,7 @@ type uiExpiryStub struct {
 func (s *uiExpiryStub) Config() *config.LifecycleConfig { return s.cfg }
 
 // ProcessRules reports the fixed outcome.
-func (s *uiExpiryStub) ProcessRules(context.Context, []config.LifecycleRule) (int, int) {
+func (s *uiExpiryStub) ProcessRules(context.Context, []config.LifecycleRule, progress.Observer) (int, int) {
 	return s.deleted, s.failed
 }
 

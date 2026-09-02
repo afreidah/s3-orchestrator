@@ -48,7 +48,7 @@ func TestProvideOps_LifecycleExpirerIsWired(t *testing.T) {
 
 	// The rule matches nothing in an empty ledger, so a wired manager sweeps
 	// and reports zero. Only an unwired one refuses to sweep at all.
-	if _, err := svc.Lifecycle.Run(context.Background()); errors.Is(err, ops.ErrLifecycleUnavailable) {
+	if _, err := svc.Lifecycle.Run(context.Background(), nil); errors.Is(err, ops.ErrLifecycleUnavailable) {
 		t.Fatal("ops.Lifecycle has no expiry manager; ProvideOps must pass one into ops.Deps")
 	} else if err != nil {
 		t.Fatalf("Lifecycle.Run: %v", err)
