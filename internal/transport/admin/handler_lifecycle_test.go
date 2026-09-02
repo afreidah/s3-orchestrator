@@ -13,13 +13,17 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
+	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
 // expiryStub stands in for *expiry.Manager, reporting a fixed outcome for
@@ -34,9 +38,16 @@ type expiryStub struct {
 // Config returns the configured rules, or nil for a deployment with none.
 func (s *expiryStub) Config() *config.LifecycleConfig { return s.cfg }
 
-// ProcessRules records that the sweep ran and reports the fixed outcome.
-func (s *expiryStub) ProcessRules(context.Context, []config.LifecycleRule) (int, int) {
+// ProcessRules records that the sweep ran, brackets one step per object it
+// claims to have handled, and reports the fixed outcome.
+func (s *expiryStub) ProcessRules(_ context.Context, _ []config.LifecycleRule, obs progress.Observer) (int, int) {
 	s.called = true
+	for i := range s.deleted {
+		progress.Track(obs, fmt.Sprintf("gone-%d", i), func() string { return progress.StatusOK })
+	}
+	for i := range s.failed {
+		progress.Track(obs, fmt.Sprintf("stuck-%d", i), func() string { return progress.StatusFailed })
+	}
 	return s.deleted, s.failed
 }
 
@@ -129,6 +140,55 @@ func TestHandleLifecycle_NoRulesSkips(t *testing.T) {
 				t.Error("no rules configured; the sweep should not have run")
 			}
 		})
+	}
+}
+
+// TestHandleLifecycle_StreamsProgressAndResult is the point of streaming the
+// sweep: a large backlog reports what it is expiring as it goes instead of
+// holding the operator on one line until the whole thing finishes.
+func TestHandleLifecycle_StreamsProgressAndResult(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	lifecycleWith(t, h, &expiryStub{cfg: oneRule(), deleted: 2, failed: 1})
+
+	w := httptest.NewRecorder()
+	h.handleLifecycle(w, streamReq("/admin/api/lifecycle"))
+
+	events := decodeEvents(t, w.Body.Bytes())
+	if events[0].Kind != adminstream.KindStart || events[0].Op != "lifecycle" {
+		t.Errorf("first event = %+v, want start/lifecycle", events[0])
+	}
+	if !strings.Contains(events[1].Message, "expiring gone-0") {
+		t.Errorf("step line = %q, want the object being expired", events[1].Message)
+	}
+	// Objects are deleted one at a time, so each is a start/end pair.
+	stepStarts, steps := countStepEvents(events)
+	if stepStarts != 3 || steps != 3 {
+		t.Errorf("step events = %d step_start / %d step_end, want 3 / 3", stepStarts, steps)
+	}
+	last := events[len(events)-1]
+	if last.Kind != adminstream.KindResult || last.Outcome != adminstream.OutcomeOK || last.Processed != 2 {
+		t.Errorf("last event = %+v, want result/ok with 2 processed", last)
+	}
+	if last.Fields["failed"] != float64(1) {
+		t.Errorf("result fields = %v, want the failure count carried through", last.Fields)
+	}
+}
+
+// TestHandleLifecycle_StreamsSkip asserts the streaming path keeps the
+// distinction the endpoint exists for: no rules configured ends the stream with
+// the server's reason, not a completed sweep of zero.
+func TestHandleLifecycle_StreamsSkip(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	lifecycleWith(t, h, &expiryStub{})
+
+	w := httptest.NewRecorder()
+	h.handleLifecycle(w, streamReq("/admin/api/lifecycle"))
+
+	last := decodeEvents(t, w.Body.Bytes())[1]
+	if last.Outcome != adminstream.OutcomeSkipped || last.Message == "" {
+		t.Errorf("last event = %+v, want a skip naming its reason", last)
 	}
 }
 

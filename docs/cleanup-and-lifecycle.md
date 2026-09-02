@@ -150,6 +150,8 @@ POST /admin/api/lifecycle
 {"status":"ok","deleted":12,"failed":0}
 ```
 
+A sweep over a large expired backlog runs for minutes, so the endpoint streams a line per object when the caller sends `Accept: application/x-ndjson`; `s3-orchestrator admin lifecycle` and the TUI both do.
+
 `deleted` and `failed` are separate because a sweep that removed nothing since every delete failed is a different answer from one that found nothing to expire. A deployment with no rules configured reports `{"status":"skipped","reason":"no lifecycle rules are configured"}` rather than a sweep of zero — that distinguishes a rule that does not match from config that never reached the process.
 
 The manual sweep does not take the advisory lock the scheduled one holds, matching every other manual trigger, so it can overlap a scheduled tick. Rule application is idempotent and a repeated delete of the same key is a no-op, so the overlap costs duplicated work rather than correctness.
