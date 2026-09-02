@@ -22,6 +22,7 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -43,7 +44,7 @@ func (o *Manager) headSourceForCopy(
 	locations []core.ObjectLocation,
 ) (int64, string, map[string]string, *core.StoredForm, bool) {
 	for i := range locations {
-		if !o.core.Usage().WithinLimits(locations[i].BackendName, 1, 0, 0) {
+		if !o.core.Usage().WithinLimits(locations[i].BackendName, copyObjectOp, 0, 0) {
 			continue
 		}
 		be, ok := o.core.Backends()[locations[i].BackendName]
@@ -70,11 +71,11 @@ func (o *Manager) headSourceForCopy(
 // (notably OCI) then reject the upload with HTTP 411. Supports
 // cross-backend copies and read failover from replicas.
 func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (string, error) {
-	const operation = "CopyObject"
+	const operation = s3op.CopyObject
 	sourceKey, destKey := req.SourceKey, req.DestKey
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation.String(),
 		attribute.String("s3o.source_key", sourceKey),
 		attribute.String("s3o.dest_key", destKey),
 	)
@@ -91,7 +92,7 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 			observe.MarkSpanError(span, "source object not found")
 			return "", err
 		}
-		return "", o.core.ClassifyWriteError(span, operation, err)
+		return "", o.core.ClassifyWriteError(span, operation.String(), err)
 	}
 
 	size, contentType, metadata, srcForm, ok := o.headSourceForCopy(ctx, sourceKey, locations)

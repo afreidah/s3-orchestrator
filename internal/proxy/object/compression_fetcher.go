@@ -21,6 +21,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -75,23 +76,23 @@ func (f *storedRangeFetcher) FetchRange(ctx context.Context, start, end int64) (
 	if err != nil {
 		return nil, err
 	}
-	if !f.rt.Usage().WithinLimits(f.beName, 1, 0, 0) {
+	if !f.rt.Usage().WithinLimits(f.beName, getObjectOp, 0, 0) {
 		return nil, fmt.Errorf("backend %s: %w", f.beName, readpath.ErrUsageLimitSkip)
 	}
 
 	r, cancel, err := f.rt.GetWithTimeout(ctx, f.be, f.key, header)
 	if err != nil {
-		f.rt.Acct().APICall(f.beName)
+		f.rt.Acct().APICall(s3op.GetObject, f.beName)
 		return nil, fmt.Errorf("backend %s: fetch %s: %w", f.beName, header, err)
 	}
 	defer cancel()
 	defer func() { _ = r.Body.Close() }()
 
-	if !f.rt.Usage().WithinLimits(f.beName, 1, r.Size, 0) {
-		f.rt.Acct().APICall(f.beName)
+	if !f.rt.Usage().WithinLimits(f.beName, getObjectOp, r.Size, 0) {
+		f.rt.Acct().APICall(s3op.GetObject, f.beName)
 		return nil, fmt.Errorf("backend %s egress: %w", f.beName, readpath.ErrUsageLimitSkip)
 	}
-	f.rt.Acct().Egress(f.beName, r.Size)
+	f.rt.Acct().Egress(s3op.GetObject, f.beName, r.Size)
 	// Counted here rather than per client request: a compressed read makes one
 	// fetch per frame it touches, and read amplification is exactly the sum of
 	// those against what the client was served.

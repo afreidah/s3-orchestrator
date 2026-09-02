@@ -29,3 +29,22 @@ WHERE period = @period;
 
 -- name: DeleteUsageByBackend :exec
 DELETE FROM backend_usage WHERE backend_name = $1;
+
+-- name: FlushPoolDelta :exec
+-- Adds one pool's accumulated delta to its persistent row, creating the row on
+-- first charge in the period. Same additive ON CONFLICT as the totals above so
+-- concurrent flushers converge.
+INSERT INTO backend_request_usage (backend_name, period, pool, requests, updated_at)
+VALUES (@backend_name, @period, @pool, @requests, NOW())
+ON CONFLICT (backend_name, period, pool) DO UPDATE SET
+    requests   = backend_request_usage.requests + @requests,
+    updated_at = NOW();
+
+-- name: GetPoolUsageForPeriod :many
+-- Returns every pool's request count for every backend in the given period.
+SELECT backend_name, pool, requests
+FROM backend_request_usage
+WHERE period = @period;
+
+-- name: DeletePoolUsageByBackend :exec
+DELETE FROM backend_request_usage WHERE backend_name = $1;

@@ -36,6 +36,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -664,7 +665,7 @@ func limitedUsage(t *testing.T) *counter.UsageTracker {
 	tracker := counter.NewUsageTracker(cb, map[string]core.UsageLimits{
 		"b2": {EgressByteLimit: 1},
 	})
-	tracker.Record("b2", 0, 1000, 0)
+	tracker.Record("b2", s3op.GetObject, 1000, 0)
 	return tracker
 }
 
@@ -944,7 +945,7 @@ func TestScrub_DeclinesCopyWithoutEgressHeadroom(t *testing.T) {
 
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1"}), nil)
 	tracker.UpdateLimits(map[string]core.UsageLimits{"b1": {EgressByteLimit: 100}})
-	tracker.SetBaseline("b1", core.UsageStat{EgressBytes: 99})
+	tracker.SetBaseline("b1", core.UsageStat{EgressBytes: 99}, nil)
 	ops.EXPECT().Usage().Return(tracker).AnyTimes()
 	ops.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()

@@ -41,6 +41,7 @@ type Deps interface {
 	GetObjectCounts(ctx context.Context) (map[string]int64, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
 	GetUsageForPeriod(ctx context.Context, period string) (map[string]core.UsageStat, error)
+	GetPoolUsageForPeriod(ctx context.Context, period string) (map[string]core.PoolUsage, error)
 	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error)
 	CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error)
 	CountUnencryptedLocations(ctx context.Context) (int64, error)
@@ -218,9 +219,18 @@ func (mc *Collector) updateMultipartCountGauges(ctx context.Context, stats map[s
 // updateUsageGauges refreshes the monthly usage gauges and seeds the
 // usage tracker baselines used by the in-process limit checks.
 func (mc *Collector) updateUsageGauges(ctx context.Context, stats map[string]core.QuotaStat) {
-	usage, err := mc.store.GetUsageForPeriod(ctx, counter.CurrentPeriod())
+	period := counter.CurrentPeriod()
+	usage, err := mc.store.GetUsageForPeriod(ctx, period)
 	if err != nil {
 		mc.log.ErrorContext(ctx, "failed to get usage stats", "error", err)
+		return
+	}
+	// Fetched alongside the totals rather than on its own tick: the two
+	// baselines are compared against the same counters, and seeding one
+	// without the other admits work against a budget it has already spent.
+	pools, err := mc.store.GetPoolUsageForPeriod(ctx, period)
+	if err != nil {
+		mc.log.ErrorContext(ctx, "failed to get request pool usage", "error", err)
 		return
 	}
 	for name := range stats {
@@ -237,7 +247,21 @@ func (mc *Collector) updateUsageGauges(ctx context.Context, stats map[string]cor
 	// rows) zeroes out before the new period's values get cached.
 	mc.usage.ResetBaselines(mc.backendNames)
 	for name, u := range usage {
-		mc.usage.SetBaseline(name, u)
+		mc.usage.SetBaseline(name, u, pools[name])
+	}
+	mc.updatePoolGauges(pools)
+}
+
+// updatePoolGauges publishes the per-pool request counts and the ceilings they
+// are judged against, so an operator can see which budget is close to
+// refusing work rather than only that the backend stopped accepting it.
+func (mc *Collector) updatePoolGauges(pools map[string]core.PoolUsage) {
+	limits := mc.usage.GetLimits()
+	for name, lim := range limits {
+		for _, pool := range lim.Pools() {
+			telemetry.UsagePoolRequests.WithLabelValues(name, pool.Name).Set(float64(pools[name][pool.Name]))
+			telemetry.UsagePoolLimit.WithLabelValues(name, pool.Name).Set(float64(pool.Limit))
+		}
 	}
 }
 

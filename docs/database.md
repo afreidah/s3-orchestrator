@@ -67,7 +67,8 @@ The schema currently provisions:
 | `object_tags` | One row per [tag](tagging.md) on an object, keyed `(object_key, tag_key)`. Keyed by object key alone, not by backend, because a tag set describes the object and per-replica rows would let copies of one key disagree. `idx_object_tags_lookup` on `(tag_key, tag_value)` serves the reverse lookup: which objects carry a given tag |
 | `multipart_uploads` | In-progress multipart upload metadata, including the `tagging` column holding a query-string-encoded tag set from `CreateMultipartUpload` until the upload completes |
 | `multipart_parts` | Individual parts for active multipart uploads |
-| `backend_usage` | Monthly per-backend API request and data transfer counters |
+| `backend_usage` | Monthly per-backend API request and data transfer counters. `api_requests` counts every call made, including operations no budget charges, so it stays an honest record of request volume |
+| `backend_request_usage` | Monthly per-backend request counts keyed by the pool names config declares, which is what admission judges a request against. Pools are additive - an operation charges every pool containing it - so these do not sum to `backend_usage.api_requests` and are not a decomposition of it |
 | `cleanup_queue` | Retry queue for failed backend object deletions |
 | `cleanup_dlq` | Dead-letter for `cleanup_queue` rows that exhausted retries; surfaces unrecoverable orphans for operator action |
 | `pending_objects` | In-flight PUT intents recorded before the backend write so a DB outage can't silently destroy the prior copy. Carries the same stored-form columns as `object_locations`, so an intent the reaper promotes describes bytes that can actually be read |

@@ -87,6 +87,8 @@ func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataSt
 	mockStore.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{"b1": 0}, nil).AnyTimes()
 	mockStore.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).
 		Return(map[string]core.UsageStat{"b1": {APIRequests: 100}}, nil).AnyTimes()
+	mockStore.EXPECT().GetPoolUsageForPeriod(gomock.Any(), gomock.Any()).
+		Return(map[string]core.PoolUsage{"b1": {core.PoolAll: 100}}, nil).AnyTimes()
 	mockStore.EXPECT().ListDirectoryChildren(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&core.DirectoryListResult{
 			Entries: []core.DirEntry{

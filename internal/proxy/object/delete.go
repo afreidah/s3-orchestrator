@@ -19,6 +19,7 @@ import (
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 
@@ -28,10 +29,10 @@ import (
 
 // DeleteObject removes an object from the backend where it's stored.
 func (o *Manager) DeleteObject(ctx context.Context, key string) error {
-	const operation = "DeleteObject"
+	const operation = s3op.DeleteObject
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation.String(),
 		telemetry.AttrObjectKey.String(key),
 	)
 	defer span.End()
@@ -43,7 +44,7 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 			span.SetStatus(codes.Ok, "object not found - treating as success")
 			return nil
 		}
-		return o.core.ClassifyWriteError(span, operation, err)
+		return o.core.ClassifyWriteError(span, operation.String(), err)
 	}
 
 	span.SetAttributes(attribute.Int("copies.deleted", len(copies)))
@@ -95,10 +96,10 @@ type batchDeleteItem struct {
 // S3 deletes run concurrently with bounded parallelism to avoid
 // overwhelming backends.
 func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObjectResult {
-	const operation = "DeleteObjects"
+	const operation = s3op.DeleteObjects
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation,
+	ctx, span := telemetry.StartSpan(ctx, managerSpanPrefix+operation.String(),
 		attribute.Int("s3o.batch_size", len(keys)),
 	)
 	defer span.End()
@@ -112,7 +113,7 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 	if err != nil {
 		// Whole-tx failure: every key surfaces the error. The cache and
 		// backend cleanup paths are skipped; nothing was changed.
-		classified := o.core.ClassifyWriteError(span, operation, err)
+		classified := o.core.ClassifyWriteError(span, operation.String(), err)
 		for i := range results {
 			results[i].Err = classified
 		}

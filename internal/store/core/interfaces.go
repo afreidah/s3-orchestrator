@@ -239,9 +239,10 @@ type BackendLifecycleStore interface {
 	DeleteBackendData(ctx context.Context, backendName string) error
 }
 
-// UsageFlusher defines the store method used by UsageTracker.FlushUsage.
+// UsageFlusher defines the store methods used by UsageTracker.FlushUsage.
 type UsageFlusher interface {
 	FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error
+	FlushPoolDeltas(ctx context.Context, backendName, period string, deltas PoolUsage) error
 }
 
 // AdvisoryLocker defines the leader-election helper used by background
@@ -260,6 +261,7 @@ type DashboardStore interface {
 	GetUnverifiedObjectCounts(ctx context.Context) (map[string]int64, error)
 	GetActiveMultipartCounts(ctx context.Context) (map[string]int64, error)
 	GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error)
+	GetPoolUsageForPeriod(ctx context.Context, period string) (map[string]PoolUsage, error)
 	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error)
 	OldestUnverifiedAge(ctx context.Context) (age time.Duration, neverVerified int64, err error)
 	CountUnencryptedLocations(ctx context.Context) (int64, error)

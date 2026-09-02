@@ -63,6 +63,18 @@ func (mr *MockBackendMockRecorder) AddAll(backend, apiReqs, egress, ingress any)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddAll", reflect.TypeOf((*MockBackend)(nil).AddAll), backend, apiReqs, egress, ingress)
 }
 
+// AddPools mocks base method.
+func (m *MockBackend) AddPools(backend string, deltas map[string]int64) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "AddPools", backend, deltas)
+}
+
+// AddPools indicates an expected call of AddPools.
+func (mr *MockBackendMockRecorder) AddPools(backend, deltas any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddPools", reflect.TypeOf((*MockBackend)(nil).AddPools), backend, deltas)
+}
+
 // Backends mocks base method.
 func (m *MockBackend) Backends() []string {
 	m.ctrl.T.Helper()
@@ -105,6 +117,20 @@ func (mr *MockBackendMockRecorder) LoadAll(backend any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadAll", reflect.TypeOf((*MockBackend)(nil).LoadAll), backend)
 }
 
+// LoadPool mocks base method.
+func (m *MockBackend) LoadPool(backend, pool string) int64 {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LoadPool", backend, pool)
+	ret0, _ := ret[0].(int64)
+	return ret0
+}
+
+// LoadPool indicates an expected call of LoadPool.
+func (mr *MockBackendMockRecorder) LoadPool(backend, pool any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadPool", reflect.TypeOf((*MockBackend)(nil).LoadPool), backend, pool)
+}
+
 // Swap mocks base method.
 func (m *MockBackend) Swap(backend, field string) int64 {
 	m.ctrl.T.Helper()
@@ -117,4 +143,18 @@ func (m *MockBackend) Swap(backend, field string) int64 {
 func (mr *MockBackendMockRecorder) Swap(backend, field any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Swap", reflect.TypeOf((*MockBackend)(nil).Swap), backend, field)
+}
+
+// SwapPools mocks base method.
+func (m *MockBackend) SwapPools(backend string) map[string]int64 {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SwapPools", backend)
+	ret0, _ := ret[0].(map[string]int64)
+	return ret0
+}
+
+// SwapPools indicates an expected call of SwapPools.
+func (mr *MockBackendMockRecorder) SwapPools(backend any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SwapPools", reflect.TypeOf((*MockBackend)(nil).SwapPools), backend)
 }

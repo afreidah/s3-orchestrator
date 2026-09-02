@@ -127,6 +127,79 @@ func TestLocalCounterBackend_UnknownBackend_NoOp(t *testing.T) {
 	}
 }
 
+// TestLocalCounterBackend_Pools covers the per-pool counters: they are created
+// on first charge, accumulate, and are read and reset independently of the
+// fixed dimensions.
+func TestLocalCounterBackend_Pools(t *testing.T) {
+	t.Parallel()
+	cb := NewLocalCounterBackend([]string{"b1"})
+
+	cb.AddPools("b1", map[string]int64{"class_a": 2, "class_b": 5})
+	cb.AddPools("b1", map[string]int64{"class_a": 3})
+	// A zero delta must not create a counter: a pool nothing charged should
+	// not appear in the flush at all.
+	cb.AddPools("b1", map[string]int64{"class_c": 0})
+
+	if got := cb.LoadPool("b1", "class_a"); got != 5 {
+		t.Errorf("class_a = %d, want 5", got)
+	}
+	if got := cb.LoadPool("b1", "class_b"); got != 5 {
+		t.Errorf("class_b = %d, want 5", got)
+	}
+	if got := cb.LoadPool("b1", "never-charged"); got != 0 {
+		t.Errorf("uncharged pool = %d, want 0", got)
+	}
+
+	swapped := cb.SwapPools("b1")
+	if swapped["class_a"] != 5 || swapped["class_b"] != 5 {
+		t.Errorf("SwapPools = %v, want class_a and class_b at 5", swapped)
+	}
+	if _, ok := swapped["class_c"]; ok {
+		t.Errorf("SwapPools = %v, want no counter for a zero delta", swapped)
+	}
+	if got := cb.LoadPool("b1", "class_a"); got != 0 {
+		t.Errorf("class_a after swap = %d, want 0", got)
+	}
+}
+
+// TestLocalCounterBackend_Pools_UnknownBackend pins the nil-safe paths. A
+// backend can be charged after a drain removed it, and a panic there would
+// take down the request rather than dropping a counter.
+func TestLocalCounterBackend_Pools_UnknownBackend(t *testing.T) {
+	t.Parallel()
+	cb := NewLocalCounterBackend([]string{"b1"})
+
+	cb.AddPools("unknown", map[string]int64{"class_a": 1})
+
+	if got := cb.LoadPool("unknown", "class_a"); got != 0 {
+		t.Errorf("LoadPool on unknown = %d, want 0", got)
+	}
+	if got := cb.SwapPools("unknown"); got != nil {
+		t.Errorf("SwapPools on unknown = %v, want nil", got)
+	}
+	if got := cb.SwapPools("b1"); got != nil {
+		t.Errorf("SwapPools on an uncharged backend = %v, want nil", got)
+	}
+}
+
+// TestLocalCounterBackend_SwapAllBackends_CarriesPools is the Redis recovery
+// contract: the whole-map swap has to carry pool deltas too, or a budget spent
+// during an outage is replayed as bytes and requests with no pool behind them.
+func TestLocalCounterBackend_SwapAllBackends_CarriesPools(t *testing.T) {
+	t.Parallel()
+	cb := NewLocalCounterBackend([]string{"b1"})
+	cb.AddAll("b1", 3, 100, 200)
+	cb.AddPools("b1", map[string]int64{"class_a": 3})
+
+	got := cb.SwapAllBackends()["b1"]
+	if got.APIRequests != 3 || got.Pools["class_a"] != 3 {
+		t.Errorf("snapshot = %+v, want 3 requests and 3 against class_a", got)
+	}
+	if left := cb.LoadPool("b1", "class_a"); left != 0 {
+		t.Errorf("pool counter after swap = %d, want 0", left)
+	}
+}
+
 // TestLocalCounterBackend_UnknownField verifies the local counter backend unknown field contract.
 // Asserts that Load on bogus field = , want 0.
 func TestLocalCounterBackend_UnknownField(t *testing.T) {

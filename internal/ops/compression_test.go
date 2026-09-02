@@ -196,7 +196,7 @@ func newCompression(t *testing.T, store CompressionStore, cfg config.Compression
 	runtime.EXPECT().GetBackend(gomock.Any()).Return(be, nil).AnyTimes()
 	usageGate := opstest.NewMockUsageGate(ctrl)
 	usageGate.EXPECT().WithinLimits(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
-	usageGate.EXPECT().Record(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	usageGate.EXPECT().RecordAll(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	return NewCompression(&CompressionDeps{
 		Codec:   testCodec(t),
@@ -616,7 +616,7 @@ func TestCompressExisting_EncryptedObject(t *testing.T) {
 	runtime.EXPECT().GetBackend(gomock.Any()).Return(be, nil).AnyTimes()
 	usageGate := opstest.NewMockUsageGate(ctrl)
 	usageGate.EXPECT().WithinLimits(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
-	usageGate.EXPECT().Record(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	usageGate.EXPECT().RecordAll(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 	codec := testCodec(t)
 
 	svc := NewCompression(&CompressionDeps{
@@ -793,7 +793,7 @@ func TestCompressExisting_EncodeFailureCountsAgainstObject(t *testing.T) {
 	runtime.EXPECT().GetBackend(gomock.Any()).Return(be, nil).AnyTimes()
 	usageGate := opstest.NewMockUsageGate(ctrl)
 	usageGate.EXPECT().WithinLimits(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
-	usageGate.EXPECT().Record(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	usageGate.EXPECT().RecordAll(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
 	svc := NewCompression(&CompressionDeps{
 		Codec:   failingCodec{err: errors.New("encoder exploded")},

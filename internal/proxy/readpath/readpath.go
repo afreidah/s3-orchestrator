@@ -37,6 +37,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
@@ -155,17 +156,17 @@ func New(deps *FailoverDeps) *Failover {
 // helper: the operation label, key, start time, and span. Grouping them keeps
 // the helper signatures small and the call sites readable.
 type readOp struct {
-	operation string
+	operation s3op.Operation
 	key       string
 	start     time.Time
 	span      trace.Span
 }
 
-func (f *Failover) Read[T any](ctx context.Context, operation, key string, probe Probe[T]) (T, string, error) {
+func (f *Failover) Read[T any](ctx context.Context, operation s3op.Operation, key string, probe Probe[T]) (T, string, error) {
 	var zero T
 	start := time.Now()
 
-	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation,
+	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation.String(),
 		telemetry.AttrObjectKey.String(key),
 	)
 	defer span.End()
@@ -179,7 +180,7 @@ func (f *Failover) Read[T any](ctx context.Context, operation, key string, probe
 		}
 		if errors.Is(err, core.ErrDBUnavailable) {
 			span.SetAttributes(telemetry.AttrDegradedMode.Bool(true))
-			telemetry.DegradedReadsTotal.WithLabelValues(operation).Inc()
+			telemetry.DegradedReadsTotal.WithLabelValues(operation.String()).Inc()
 			if !f.degradedReadsEnabled {
 				observe.MarkSpanError(span, "degraded reads disabled by operator")
 				return zero, "", core.ErrServiceUnavailable
@@ -219,7 +220,7 @@ func (f *Failover) tryEachLocation[T any](ctx context.Context, op readOp, locati
 				limitSkips++
 			}
 			if i < len(locations)-1 {
-				f.log.WarnContext(ctx, op.operation+": copy failed, trying next",
+				f.log.WarnContext(ctx, op.operation.String()+": copy failed, trying next",
 					"key", op.key, "failed_backend", name, "error", err)
 			}
 			continue
@@ -242,9 +243,9 @@ func (f *Failover) tryEachLocation[T any](ctx context.Context, op readOp, locati
 // failoverFailureResult finalises the span and chooses between the
 // usage-limit-exceeded sentinel and the underlying lastErr based on
 // whether every location declined for over-limit reasons.
-func failoverFailureResult(span trace.Span, operation string, locations []core.ObjectLocation, lastErr error, limitSkips int) error {
+func failoverFailureResult(span trace.Span, operation s3op.Operation, locations []core.ObjectLocation, lastErr error, limitSkips int) error {
 	if limitSkips > 0 && limitSkips == len(locations) {
-		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation, "read").Inc()
+		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation.String(), "read").Inc()
 		observe.MarkSpanError(span, "all copies over usage limit")
 		return core.ErrUsageLimitExceeded
 	}

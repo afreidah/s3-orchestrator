@@ -711,6 +711,21 @@ func (mr *MockDashboardStoreMockRecorder) GetObjectCounts(ctx any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObjectCounts", reflect.TypeOf((*MockDashboardStore)(nil).GetObjectCounts), ctx)
 }
 
+// GetPoolUsageForPeriod mocks base method.
+func (m *MockDashboardStore) GetPoolUsageForPeriod(ctx context.Context, period string) (map[string]core.PoolUsage, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetPoolUsageForPeriod", ctx, period)
+	ret0, _ := ret[0].(map[string]core.PoolUsage)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetPoolUsageForPeriod indicates an expected call of GetPoolUsageForPeriod.
+func (mr *MockDashboardStoreMockRecorder) GetPoolUsageForPeriod(ctx, period any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPoolUsageForPeriod", reflect.TypeOf((*MockDashboardStore)(nil).GetPoolUsageForPeriod), ctx, period)
+}
+
 // GetQuotaStats mocks base method.
 func (m *MockDashboardStore) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error) {
 	m.ctrl.T.Helper()

@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
@@ -85,8 +86,8 @@ type CompressionCodec interface {
 // The byte parameters are ordered egress then ingress, matching the tracker
 // they reach.
 type UsageGate interface {
-	WithinLimits(backendName string, apiCalls, egress, ingress int64) bool
-	Record(backendName string, apiCalls, egress, ingress int64)
+	WithinLimits(backendName string, ops []s3op.Operation, egress, ingress int64) bool
+	RecordAll(backendName string, ops []s3op.Operation, egress, ingress int64)
 }
 
 // IntegrityConfigLoader reads the hot-reloadable integrity settings that gate

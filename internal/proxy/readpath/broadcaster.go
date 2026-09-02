@@ -26,6 +26,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -62,7 +63,7 @@ func (b *Broadcaster) broadcastRead[T any](ctx context.Context, op readOp, probe
 	bcStart := time.Now()
 	cacheHit := false
 	defer func() {
-		telemetry.DegradedBroadcastDuration.WithLabelValues(op.operation, broadcastOutcome(cacheHit, retErr)).
+		telemetry.DegradedBroadcastDuration.WithLabelValues(op.operation.String(), broadcastOutcome(cacheHit, retErr)).
 			Observe(time.Since(bcStart).Seconds())
 	}()
 
@@ -162,9 +163,9 @@ func (t *broadcastErrTally) add(err error) {
 	}
 }
 
-func (t *broadcastErrTally) recordMixedOutcomes(operation string) {
+func (t *broadcastErrTally) recordMixedOutcomes(operation s3op.Operation) {
 	if t.notFound > 0 && t.other > 0 {
-		telemetry.DegradedBroadcastMixedOutcomesTotal.WithLabelValues(operation).Inc()
+		telemetry.DegradedBroadcastMixedOutcomesTotal.WithLabelValues(operation.String()).Inc()
 	}
 }
 

@@ -135,6 +135,21 @@ CREATE TABLE IF NOT EXISTS backend_usage (
     PRIMARY KEY (backend_name, period)
 );
 
+-- Per-pool request counts, keyed by the pool names config declares. Additive
+-- with each other rather than a decomposition of backend_usage.api_requests:
+-- an operation charges every pool that contains it.
+CREATE TABLE IF NOT EXISTS backend_request_usage (
+    backend_name TEXT NOT NULL REFERENCES backend_quotas(backend_name),
+    period       TEXT NOT NULL,
+    pool         TEXT NOT NULL,
+    requests     INTEGER NOT NULL DEFAULT 0,
+    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (backend_name, period, pool)
+);
+
+CREATE INDEX IF NOT EXISTS idx_backend_request_usage_period
+    ON backend_request_usage(period);
+
 -- Queue for retrying failed backend object deletions (orphan cleanup).
 CREATE TABLE IF NOT EXISTS cleanup_queue (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,

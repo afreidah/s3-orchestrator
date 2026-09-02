@@ -17,6 +17,7 @@ import (
 	"slices"
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 )
 
 // usagePolicy owns the runtime usage tracker and the static per-backend
@@ -51,8 +52,8 @@ func (p *usagePolicy) MaxObjectSize(name string) int64 {
 // WithinLimits combines the live quota check and the static max-object-
 // size check into one decision. Used by FilterEligible so the per-name
 // filter loop does not have to repeat both checks at every call site.
-func (p *usagePolicy) WithinLimits(name string, apiCalls, egress, ingress int64) bool {
-	if !p.usage.WithinLimits(name, apiCalls, egress, ingress) {
+func (p *usagePolicy) WithinLimits(name string, ops []s3op.Operation, egress, ingress int64) bool {
+	if !p.usage.WithinLimits(name, ops, egress, ingress) {
 		return false
 	}
 	if max := p.maxObjectSizes[name]; max > 0 && ingress > max {
@@ -64,8 +65,8 @@ func (p *usagePolicy) WithinLimits(name string, apiCalls, egress, ingress int64)
 // FilterEligible returns the subset of names that pass WithinLimits
 // for the proposed operation dimensions. Order is preserved so the
 // caller's routing-strategy iteration order is respected.
-func (p *usagePolicy) FilterEligible(names []string, apiCalls, egress, ingress int64) []string {
+func (p *usagePolicy) FilterEligible(names []string, ops []s3op.Operation, egress, ingress int64) []string {
 	return slices.DeleteFunc(slices.Clone(names), func(name string) bool {
-		return !p.WithinLimits(name, apiCalls, egress, ingress)
+		return !p.WithinLimits(name, ops, egress, ingress)
 	})
 }

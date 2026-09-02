@@ -110,6 +110,62 @@ func TestConfigValidation_FieldRules(t *testing.T) {
 			c.Backends[0].EgressByteLimit = 0
 			c.Backends[0].IngressByteLimit = 0
 		}, false},
+		{"request pools with a bare api_request_limit", func(c *Config) {
+			c.Backends[0].APIRequestLimit = 5000
+			c.Backends[0].RequestLimits = []RequestPoolConfig{
+				{Name: "class_a", Operations: []string{"PutObject"}, Limit: 5000},
+			}
+		}, true},
+		{"request pool without a name", func(c *Config) {
+			c.Backends[0].RequestLimits = []RequestPoolConfig{
+				{Operations: []string{"PutObject"}, Limit: 1},
+			}
+		}, true},
+		{"duplicate request pool names", func(c *Config) {
+			c.Backends[0].RequestLimits = []RequestPoolConfig{
+				{Name: "class_a", Operations: []string{"PutObject"}, Limit: 1},
+				{Name: "class_a", Operations: []string{"GetObject"}, Limit: 1},
+			}
+		}, true},
+		{"request pool with no operations", func(c *Config) {
+			c.Backends[0].RequestLimits = []RequestPoolConfig{{Name: "class_a", Limit: 1}}
+		}, true},
+		{"negative request pool limit", func(c *Config) {
+			c.Backends[0].RequestLimits = []RequestPoolConfig{
+				{Name: "class_a", Operations: []string{"PutObject"}, Limit: -1},
+			}
+		}, true},
+		{"request pool naming an unknown operation", func(c *Config) {
+			c.Backends[0].RequestLimits = []RequestPoolConfig{
+				{Name: "class_a", Operations: []string{"PutObjectTagging"}, Limit: 1},
+			}
+		}, true},
+		{"unmetered naming an unknown operation", func(c *Config) {
+			c.Backends[0].Unmetered = []string{"PutObjectTagging"}
+		}, true},
+		{"unmetered wildcard", func(c *Config) {
+			c.Backends[0].Unmetered = []string{"*"}
+		}, true},
+		{"pool charging an operation listed as unmetered", func(c *Config) {
+			c.Backends[0].Unmetered = []string{"DeleteObject"}
+			c.Backends[0].RequestLimits = []RequestPoolConfig{
+				{Name: "class_a", Operations: []string{"DeleteObject"}, Limit: 1},
+			}
+		}, true},
+		{"a provider's classes, spelled out", func(c *Config) {
+			c.Backends[0].APIRequestLimit = 0
+			c.Backends[0].Unmetered = []string{"DeleteObject", "DeleteObjects", "AbortMultipartUpload"}
+			c.Backends[0].RequestLimits = []RequestPoolConfig{
+				{Name: "class_a", Operations: []string{"PutObject", "CopyObject", "ListObjects"}, Limit: 5000},
+				{Name: "class_b", Operations: []string{"GetObject", "HeadObject", "GetParts"}, Limit: 50000},
+			}
+		}, false},
+		{"wildcard pool with an unlimited ceiling", func(c *Config) {
+			c.Backends[0].APIRequestLimit = 0
+			c.Backends[0].RequestLimits = []RequestPoolConfig{
+				{Name: "all", Operations: []string{"*"}, Limit: 0},
+			}
+		}, false},
 	}
 
 	for _, tt := range tests {

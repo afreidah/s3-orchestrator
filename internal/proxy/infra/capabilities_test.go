@@ -24,6 +24,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -92,10 +93,11 @@ func TestUsagePolicy_WithinLimits_MaxObjectSizeEnforced(t *testing.T) {
 	// the only thing that can reject ingress here.
 	p := newUsagePolicy(tracker, map[string]int64{"b1": 1024})
 
-	if !p.WithinLimits("b1", 1, 0, 512) {
+	writes := []s3op.Operation{s3op.PutObject}
+	if !p.WithinLimits("b1", writes, 0, 512) {
 		t.Error("WithinLimits = false for 512 < 1024 max; want true")
 	}
-	if p.WithinLimits("b1", 1, 0, 2048) {
+	if p.WithinLimits("b1", writes, 0, 2048) {
 		t.Error("WithinLimits = true for 2048 > 1024 max; want false")
 	}
 }
@@ -105,7 +107,7 @@ func TestUsagePolicy_FilterEligible_PreservesInputOrder(t *testing.T) {
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2", "b3"}), nil)
 	p := newUsagePolicy(tracker, map[string]int64{"b2": 100})
 
-	got := p.FilterEligible([]string{"b1", "b2", "b3"}, 1, 0, 500)
+	got := p.FilterEligible([]string{"b1", "b2", "b3"}, []s3op.Operation{s3op.PutObject}, 0, 500)
 	// b2 is dropped (500 > 100 max); b1, b3 stay in original order.
 	if len(got) != 2 || got[0] != "b1" || got[1] != "b3" {
 		t.Errorf("FilterEligible = %v, want [b1 b3]", got)

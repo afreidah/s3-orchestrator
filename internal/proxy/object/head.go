@@ -18,6 +18,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	pobserve "github.com/afreidah/s3-orchestrator/internal/proxy/observe"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -38,7 +39,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 	result, backendName, err := o.failover.Read(ctx, "HeadObject", key,
 		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.HeadObjectResult], error) {
 			var fail readpath.ProbeResult[*s3be.HeadObjectResult]
-			if !o.core.Usage().WithinLimits(beName, 1, 0, 0) {
+			if !o.core.Usage().WithinLimits(beName, headObjectOp, 0, 0) {
 				return fail, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 			}
 			// HEAD has no body to inspect, so a contradictory row is the only
@@ -52,7 +53,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 
 			r, err := o.core.HeadWithTimeout(ctx, backend, key)
 			if err != nil {
-				o.core.Acct().APICall(beName) // API call was made even on failure
+				o.core.Acct().APICall(s3op.HeadObject, beName) // API call was made even on failure
 				return fail, err
 			}
 
@@ -77,7 +78,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 	if err != nil {
 		return nil, err
 	}
-	o.core.Acct().APICall(backendName)
+	o.core.Acct().APICall(s3op.HeadObject, backendName)
 
 	// What the backend just reported is what the next HEAD would spend another
 	// call to learn, so it is recorded on every copy of the key. The ETag is

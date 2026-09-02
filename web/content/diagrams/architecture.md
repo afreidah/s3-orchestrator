@@ -234,7 +234,7 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     PG: {
       title: 'PostgreSQL',
       badge: 'data', badgeText: 'metadata store',
-      body: '<p>Stores all object metadata, locations, multipart state, quotas, usage counters, cleanup queue, and replication state.</p><p>Tables: <code>object_locations</code>, <code>object_tags</code>, <code>multipart_uploads</code>, <code>multipart_parts</code>, <code>backend_quotas</code>, <code>backend_usage</code>, <code>cleanup_queue</code>, <code>cleanup_dlq</code>, <code>pending_objects</code>, <code>notification_outbox</code>.</p><p>Uses advisory locks for distributed worker coordination. Connection pool: pgx with configurable <code>max_conns</code>, <code>min_conns</code>, <code>max_conn_lifetime</code>. Migrations applied automatically on startup.</p>'
+      body: '<p>Stores all object metadata, locations, multipart state, quotas, usage counters, cleanup queue, and replication state.</p><p>Tables: <code>object_locations</code>, <code>object_tags</code>, <code>multipart_uploads</code>, <code>multipart_parts</code>, <code>backend_quotas</code>, <code>backend_usage</code>, <code>backend_request_usage</code>, <code>cleanup_queue</code>, <code>cleanup_dlq</code>, <code>pending_objects</code>, <code>notification_outbox</code>.</p><p>Uses advisory locks for distributed worker coordination. Connection pool: pgx with configurable <code>max_conns</code>, <code>min_conns</code>, <code>max_conn_lifetime</code>. Migrations applied automatically on startup.</p>'
     },
     BROADCAST: {
       title: 'Broadcast Reads',
@@ -244,7 +244,7 @@ High-level architecture of the S3 Orchestrator showing the request path, storage
     USAGE: {
       title: 'Usage Tracker & Quota Enforcement',
       badge: 'background', badgeText: 'quota',
-      body: '<p>Tracks per-backend monthly counters: API requests, egress bytes, ingress bytes. Effective usage = DB baseline + unflushed in-memory deltas.</p><p><code>BackendsWithinLimits()</code> filters backends exceeding their configured limits before every write. Flushes deltas to DB every 30s (adaptive: 10s when near limit).</p><p>With Redis: shared counters across instances, advisory lock prevents destructive concurrent flushes.</p>'
+      body: '<p>Tracks per-backend monthly counters: API requests, egress bytes, ingress bytes, and one count per configured request pool. Effective usage = DB baseline + unflushed in-memory deltas.</p><p>Requests are budgeted per pool because providers meter operation classes separately: an upload and a read draw on different allowances, and some operations are not billed at all. Every call is still counted against the request total, whether or not a budget charges it.</p><p><code>BackendsWithinLimits()</code> filters backends exceeding their configured limits before every write. Flushes deltas to DB every 30s (adaptive: 10s when near limit).</p><p>With Redis: shared counters across instances, advisory lock prevents destructive concurrent flushes.</p>'
     },
     COUNTER: {
       title: 'Counter Backend',

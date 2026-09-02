@@ -93,7 +93,7 @@ func (o *Manager) tryMaterializeFromLocation(
 	size int64,
 	backendName string,
 ) (*materializedSource, error) {
-	if !o.core.Usage().WithinLimits(backendName, 1, size, 0) {
+	if !o.core.Usage().WithinLimits(backendName, getObjectOp, size, 0) {
 		return nil, nil
 	}
 	be, ok := o.core.Backends()[backendName]

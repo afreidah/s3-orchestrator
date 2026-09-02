@@ -19,6 +19,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
@@ -142,7 +143,7 @@ func (w *CleanupWorker) processCleanupItem(ctx context.Context, item *core.Clean
 	}
 
 	delErr := w.deps.DeleteWithTimeout(ctx, be, item.ObjectKey)
-	w.deps.Acct().APICall(item.BackendName)
+	w.deps.Acct().APICall(s3op.DeleteObject, item.BackendName)
 
 	if delErr == nil {
 		w.completeCleanupSuccess(ctx, item)
