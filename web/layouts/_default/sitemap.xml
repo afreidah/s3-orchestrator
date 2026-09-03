@@ -1,0 +1,33 @@
+{{- /*
+  Sitemap, overriding the theme's copy for two reasons.
+
+  Locations come from the permalink rather than the rendered file path. The
+  theme addresses pages as ".../backends/index.html" so a site still works when
+  opened from disk; served over HTTP that spelling disagrees with the canonical
+  tag every page carries, which leaves each URL indexed as an alternate of
+  itself.
+
+  The generated Go API reference and the empty taxonomy pages are dropped. They
+  outnumber the documentation two to one, and none of them is a page a search
+  result should land on.
+*/ -}}
+{{- $skip := slice "/godoc/" "/categories/" "/tags/" }}
+{{- printf "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\" ?>" | safeHTML }}
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+{{- range where .Pages "Sitemap.Disable" "ne" true }}
+  {{- $page := . }}
+  {{- $excluded := false }}
+  {{- range $skip }}
+    {{- if hasPrefix $page.RelPermalink . }}{{ $excluded = true }}{{ end }}
+  {{- end }}
+  {{- if or $excluded (partial "_relearn/pageIsSpecial.gotmpl" .) }}
+  {{- else if and .Title .RelPermalink (or (ne site.Params.disableSeoHiddenPages true) (not (partialCached "_relearn/pageIsHiddenSelfOrAncestor.gotmpl" (dict "page" . "to" site.Home) .Path site.Home.Path) ) ) }}
+  <url>
+    <loc>{{ .Permalink }}</loc>{{ if not .Lastmod.IsZero }}
+    <lastmod>{{ safeHTML ( .Lastmod.Format "2006-01-02T15:04:05-07:00" ) }}</lastmod>{{ end }}{{ with .Sitemap.ChangeFreq }}
+    <changefreq>{{ . }}</changefreq>{{ end }}{{ if ge .Sitemap.Priority 0.0 }}
+    <priority>{{ .Sitemap.Priority }}</priority>{{ end }}
+  </url>
+  {{- end -}}
+{{- end }}
+</urlset>

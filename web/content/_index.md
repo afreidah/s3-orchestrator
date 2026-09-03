@@ -333,7 +333,13 @@ A built-in web dashboard provides real-time storage summaries, per-backend quota
 
 s3-orchestrator ships with a pre-built Grafana dashboard and Prometheus metrics out of the box. Track request rates, latency percentiles, backend health, quota usage, replication progress, and background task performance - all without writing a single query.
 
-![Grafana Dashboard](images/grafana.png)
+<p style="text-align: center;">
+  <a href="/images/grafana-full.png">
+    <img src="/images/grafana.png" alt="The first rows of the bundled Grafana dashboard: build info, request rate, quota usage per backend, request latency percentiles, and backend operation rates" width="1920" height="2170" loading="lazy" class="nolightbox" style="max-width: 100%; height: auto;">
+  </a>
+  <br>
+  <a href="/images/grafana-full.png">View the whole dashboard</a>
+</p>
 
 <hr style="margin-top: 3rem;">
 
