@@ -50,6 +50,14 @@ const headerContentType = "Content-Type"
 // TagCount.
 const headerTaggingCount = "x-amz-tagging-count"
 
+// headerCopySource names the source object of a CopyObject or UploadPartCopy.
+// Its presence is what distinguishes both from the PUT they share a route with.
+const headerCopySource = "X-Amz-Copy-Source"
+
+// headerCopySourceRange is the byte range of the source an UploadPartCopy
+// takes as the part. Absent, the part is the whole source object.
+const headerCopySourceRange = "x-amz-copy-source-range"
+
 // -------------------------------------------------------------------------
 // REQUEST GUARDS
 // -------------------------------------------------------------------------
@@ -236,16 +244,48 @@ var supportedObjectQueryKeys = map[string]bool{
 // most presigned download links.
 var supportedObjectQueryPrefixes = []string{"X-Amz-", "response-"}
 
-// unsupportedObjectQuery returns the first query key naming an operation this
-// server does not implement, so the caller can refuse before dispatch rather
-// than fall through to PutObject or DeleteObject. Returns ok=false when every
-// key is recognised.
-func unsupportedObjectQuery(query url.Values) (string, bool) {
+// Query keys a bucket request may carry: the four subresources this server
+// serves, the parameters its two listings and its upload listing read, and
+// x-id. Allow-listed for the same reason the object set is - a bucket
+// subresource absent from here would otherwise be answered by ListObjects,
+// so a client asking for versions or a lifecycle configuration would parse a
+// ListBucketResult as an empty answer instead of learning the operation is
+// unavailable.
+var supportedBucketQueryKeys = map[string]bool{
+	"delete":             true, // DeleteObjects
+	"location":           true, // GetBucketLocation
+	"uploads":            true, // ListMultipartUploads
+	"versioning":         true, // GetBucketVersioning
+	"list-type":          true, // selects ListObjectsV2 over V1
+	"prefix":             true,
+	"delimiter":          true,
+	"marker":             true,
+	"max-keys":           true,
+	"encoding-type":      true,
+	"continuation-token": true,
+	"start-after":        true,
+	"fetch-owner":        true,
+	"key-marker":         true, // ListMultipartUploads paging
+	"upload-id-marker":   true,
+	"max-uploads":        true,
+	"x-id":               true, // SDK-supplied operation name, meaningless here
+}
+
+// Query key prefixes a bucket request may carry. A presigned listing puts its
+// credentials in the query string, so refusing the X-Amz- family would break
+// every presigned ListObjects. The response- overrides are object-only.
+var supportedBucketQueryPrefixes = []string{"X-Amz-"}
+
+// unsupportedQuery returns the first query key outside allowed, so a router can
+// refuse before dispatch rather than fall through to the data path. prefixes
+// are matched as prefixes, which is what lets a whole parameter family pass
+// without naming each member. Returns ok=false when every key is recognised.
+func unsupportedQuery(query url.Values, allowed map[string]bool, prefixes []string) (string, bool) {
 	for key := range query {
-		if supportedObjectQueryKeys[key] {
+		if allowed[key] {
 			continue
 		}
-		if slices.ContainsFunc(supportedObjectQueryPrefixes, func(p string) bool {
+		if slices.ContainsFunc(prefixes, func(p string) bool {
 			return strings.HasPrefix(key, p)
 		}) {
 			continue
