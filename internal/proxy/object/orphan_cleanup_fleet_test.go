@@ -26,6 +26,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // orphanCalls accumulates the per-test interactions a migrated test
 // asserts on. Each field is keyed by the store method that fed it.
 type orphanCalls struct {
@@ -40,6 +44,10 @@ type orphanBytesEntry struct {
 	backendName string
 	sizeBytes   int64
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // stubOrphanEnqueue captures EnqueueCleanup args.
 func stubOrphanEnqueue(c *orphanCalls, err error) func(context.Context, string, string, string, int64) error {
@@ -62,6 +70,10 @@ func stubOrphanIncrement(c *orphanCalls, err error) func(context.Context, string
 		return err
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestPutObject_Overwrite_EnqueuesDisplacedCopiesWithSize pins the
 // overwrite path: displaced copies on other backends enqueue cleanup

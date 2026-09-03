@@ -22,6 +22,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // dlqErrStore is a core.CleanupStore whose DLQ methods return seeded errors so
 // the handler's 500 branches can be exercised without a database. Only the
 // methods the DLQ handlers call are overridden; the embedded nil satisfies the
@@ -30,6 +34,10 @@ type dlqErrStore struct {
 	core.CleanupStore
 	depthErr, listErr, requeueErr error
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func (s dlqErrStore) CleanupDLQDepth(context.Context) (int64, error) { return 0, s.depthErr }
 func (s dlqErrStore) ListCleanupDLQ(context.Context, string, int) ([]core.CleanupDLQItem, error) {

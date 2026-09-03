@@ -25,6 +25,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // fullyPopulatedForm is a StoredForm with every representation field set to a
 // distinguishable value, so a column dropped on the way in or out shows up as
 // a zero rather than blending into a neighbour.
@@ -88,6 +92,10 @@ func readBackOne(t *testing.T, s *Store, key string) *core.ObjectLocation {
 	}
 	return &locs[0]
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestInsertPaths_PreserveRepresentation drives every write path that creates
 // an object_locations row and asserts the representation survives.

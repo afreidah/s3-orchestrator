@@ -19,6 +19,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // noopWork is the cheapest possible fn so the bench measures dispatch
 // overhead rather than the work itself.
 func noopWork(_ context.Context, _ int) {}
@@ -33,6 +37,10 @@ func cpuWork(_ context.Context, _ int) {
 	}
 	runtime.KeepAlive(x)
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // BenchmarkRun_Dispatch sweeps batch size with a no-op fn. Numbers
 // reflect goroutine creation + channel handoff overhead, isolated from

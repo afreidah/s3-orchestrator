@@ -24,6 +24,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // benchSignedRequest constructs a valid SigV4-signed request for benchmarking.
 func benchSignedRequest(accessKey, secret string) *http.Request {
 	amzDate := time.Now().UTC().Format("20060102T150405Z")
@@ -48,6 +52,10 @@ func benchSignedRequest(accessKey, secret string) *http.Request {
 
 	return r
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // BenchmarkVerifySigV4 measures the verify sig v4 behaviour described by the test name.
 func BenchmarkVerifySigV4(b *testing.B) {
@@ -167,6 +175,10 @@ func BenchmarkBuildCanonicalRequest(b *testing.B) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // benchPresignedRequest constructs a valid presigned URL request for benchmarking.
 func benchPresignedRequest(accessKey, secret string) *http.Request {
 	amzDate := time.Now().UTC().Format("20060102T150405Z")
@@ -194,6 +206,10 @@ func benchPresignedRequest(accessKey, secret string) *http.Request {
 
 	return r
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // BenchmarkVerifyPresignedSigV4 measures the verify presigned sig v4 path by exercising br.AuthenticateAndResolveBucket.
 func BenchmarkVerifyPresignedSigV4(b *testing.B) {

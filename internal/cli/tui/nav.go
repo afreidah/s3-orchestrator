@@ -18,6 +18,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // sidebarWidth is the fixed content width of the left nav (excluding its border).
 // It must fit the widest row: a two-column marker plus the longest label
 // ("Replication"), else lipgloss soft-wraps the row and mangles the layout.
@@ -75,6 +79,10 @@ func (m *model) contentWidth() int {
 // (one column on each side); the rendered table is this much wider per column
 // than the sum of the declared column widths.
 const tableCellPad = 2
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // fitFirstColumn sizes a table's leading name column to fill whatever the fixed
 // columns and per-cell padding leave, capped so short names don't sprawl across

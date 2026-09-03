@@ -37,9 +37,17 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // compChunk is the chunk size these tests encode at, small enough that a modest
 // fixture still crosses frame boundaries.
 const compChunk = compression.MinChunkSize
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // testCodec builds a codec and closes it with the test.
 func testCodec(t *testing.T) *compression.Codec {
@@ -84,6 +92,10 @@ type oneRowStore struct {
 	probes   []core.CompressionProbe
 	probeErr error
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // ListUncompressedLocations serves the row once, then reports the end of the
 // listing so the pass terminates.

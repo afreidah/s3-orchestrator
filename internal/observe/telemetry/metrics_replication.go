@@ -14,9 +14,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// ReplicationPending and related package-level variables used by this package.
+// Replication backlog and copy-creation metrics.
 var (
-
 	// ReplicationPending tracks objects currently below the target replication factor.
 	ReplicationPending = promauto.NewGauge(
 		prometheus.GaugeOpts{

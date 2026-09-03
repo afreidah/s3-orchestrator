@@ -35,7 +35,7 @@ import (
 // SHARED CONTAINER FIXTURE
 // -------------------------------------------------------------------------
 
-// pgFixtureOnce and related package-level variables used by this package.
+// The lazily started Postgres testcontainer shared by the whole suite.
 var (
 	pgFixtureOnce sync.Once
 	pgFixture     *Store

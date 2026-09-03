@@ -1,3 +1,14 @@
+// -------------------------------------------------------------------------------
+// Flight Recorder Wiring Tests
+//
+// Author: Alex Freidah
+//
+// Covers the provider that registers the flight recorder as a lifecycle
+// service: an unconfigured recorder resolves to no service rather than to a
+// nil one, which is what keeps the supervisor from starting a worker that
+// records nothing.
+// -------------------------------------------------------------------------------
+
 package di
 
 import (

@@ -22,6 +22,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // fakeReplicationDeps is a metrics.Deps returning canned replication data; the
 // non-replication methods are unused by updateReplicationPending.
 type fakeReplicationDeps struct {
@@ -30,6 +34,10 @@ type fakeReplicationDeps struct {
 	plaintext int64
 	countErr  error
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func (fakeReplicationDeps) GetQuotaStats(context.Context) (map[string]core.QuotaStat, error) {
 	return nil, nil

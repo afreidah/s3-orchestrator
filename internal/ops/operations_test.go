@@ -38,6 +38,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // testBucket is the virtual bucket every key in these tests lives under.
 const testBucket = "bucket"
 
@@ -48,10 +52,12 @@ type fakeBackend struct {
 	payload []byte
 	puts    atomic.Int64
 	gets    atomic.Int64
-	// lastPut is what the most recent upload carried, so a test can assert on
-	// the bytes a rewrite produced rather than only on the call count.
-	lastPut []byte
+	lastPut []byte // bytes the most recent upload carried
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // GetObject returns the fixed payload.
 func (f *fakeBackend) GetObject(_ context.Context, _, _ string) (*s3be.GetObjectResult, error) {
@@ -145,6 +151,10 @@ func (r *rowEncAdmin) MarkObjectEncrypted(_ context.Context, _ *core.EncryptedUp
 	r.marked.Store(true)
 	return nil
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // testServices builds the operations layer over a real manager and workers
 // backed by the union store mock, with replication at factor 1, integrity off
@@ -241,6 +251,10 @@ func testEncryptor(t *testing.T) *encryption.Encryptor {
 	}
 	return enc
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestReplicate_SkippedAtFactorOne asserts a replication cycle declines when
 // the running factor leaves nothing to copy.

@@ -8,8 +8,6 @@
 // trace-snapshot endpoint streams the last MinAge of trace bytes on demand.
 // -------------------------------------------------------------------------------
 
-// Package debug houses opt-in diagnostic services wired by DI when the
-// matching config block is enabled.
 package debug
 
 import (

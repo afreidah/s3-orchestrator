@@ -29,6 +29,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // headSourceForCopy walks the source's known locations until one HEAD
 // succeeds (skipping over-limit and unknown backends), and returns its
 // metadata plus the stored form of its bytes. ok=false signals that no
@@ -60,6 +64,10 @@ func (o *Manager) headSourceForCopy(
 	}
 	return 0, "", nil, nil, false
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // CopyObject copies an object from sourceKey to destKey. Materializes
 // the source body into a seekable buffer  -  in-memory for small
@@ -181,6 +189,10 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 	}, etag)
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // copyIdentity gives the destination the source's identity when the source has
 // one. The content type and metadata are the ones the copy is written with, so
 // they hold whether or not the source row carried an ETag; without that ETag
@@ -247,6 +259,10 @@ func (o *Manager) resolveCopyTags(ctx context.Context, req *CopyObjectRequest) (
 	return tags, nil
 }
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // materializedCopyContext is what the stream-through copy's finalizer needs.
 // Bundled for the same reason as nativeCopyContext: the positional form had
 // reached eleven arguments with four adjacent strings among them.
@@ -279,32 +295,23 @@ type nativeCopyContext struct {
 	start           time.Time
 }
 
-// tryNativeCopy attempts a server-side CopyObject on req.destBackend
-// and, on success, records the destination location, updates
-// accounting, and emits the completion observability. Returns:
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
+// tryNativeCopy attempts a server-side CopyObject on req.destBackend and, on
+// success, records the destination location, updates accounting and emits the
+// completion observability. The second return value is whether the bytes
+// reached the destination, so a caller that sees true must not fall back - that
+// would copy them a second time.
 //
-//   - (etag, true, nil):  native copy + record both succeeded (the
-//     success may have been confirmed via the
-//     HEAD-probe recovery path; either way the
-//     caller treats this as a successful copy)
-//   - (_, true, err):     native copy succeeded but a post-step failed;
-//     bytes are already on the destination, so the
-//     caller MUST NOT fall back (that would copy
-//     the bytes a second time)
-//   - (_, false, nil):    backend does not support native copy, or the
-//     native call failed AND a HEAD probe confirmed
-//     the destination is not in the expected state;
-//     caller falls back to the materialized copy path
+// A non-capability error HEAD-probes the destination before deciding between
+// surfacing the error and falling back, because a backend can complete the copy
+// server-side and still lose the response to a timeout or dropped connection.
 //
-// Native copy accounting differs from the materialized path: one API
-// call against the destination backend with no egress and no ingress,
-// because the bytes never traverse the orchestrator's network.
-//
-// On a non-capability native-copy error, the destination is HEAD-probed
-// before the function decides whether to surface the error or fall back.
-// This guards against the ambiguous case where the backend completed the
-// copy server-side but the response was lost (timeout, dropped connection)
-// - falling back blindly would duplicate the work.
+// Accounting differs from the materialized path: one API call against the
+// destination with no egress and no ingress, since the bytes never traverse the
+// orchestrator's network.
 func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyContext) (string, bool, error) {
 	copier, ok := req.destBackend.(s3be.Copier)
 	if !ok {

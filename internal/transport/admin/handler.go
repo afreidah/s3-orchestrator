@@ -13,7 +13,6 @@
 // integrity scrub/backfill/reconcile in handler_integrity.go.
 // -------------------------------------------------------------------------------
 
-// Package admin provides the admin API handler for operational control endpoints.
 package admin
 
 import (
@@ -33,7 +32,15 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // Handler serves the admin API endpoints.
+//
+// reloadStatus is a function set after construction rather than a dependency,
+// so this package does not import internal/reload - which would cycle back
+// here through the UI.
 type Handler struct {
 	log          *slog.Logger
 	backendOps   BackendOps
@@ -57,12 +64,7 @@ type Handler struct {
 	flightRec    io.WriterTo // nil when debug.flight_recorder.enabled is false
 	token        string
 	logLevel     *slog.LevelVar
-	// reloadStatus is the per-process snapshot of the last reload
-	// result, already converted to the wire type. Set post-construction
-	// by the runtime so the admin handler does not import the reload
-	// package (which would cycle via UI). Returns nil before any reload
-	// has happened.
-	reloadStatus func() *adminapi.ReloadStatusResponse
+	reloadStatus func() *adminapi.ReloadStatusResponse // nil before the first reload
 }
 
 // Deps groups the narrow role interfaces and infrastructure the admin
@@ -92,6 +94,10 @@ type Deps struct {
 	Token        string
 	LogLevel     *slog.LevelVar
 }
+
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
 
 // New creates a new admin API handler from its narrow dependency bag.
 func New(d *Deps) *Handler {
@@ -149,6 +155,10 @@ const (
 	statusSkipped  = "skipped"
 	statusComplete = "complete"
 )
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // skipReason reports the reason an operation declined to run, and whether it
 // declined at all. An operation that skips is answering the caller, not

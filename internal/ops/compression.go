@@ -35,6 +35,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // CompressionDeps holds the collaborators Compression requires.
 type CompressionDeps struct {
 	Codec     CompressionCodec
@@ -80,6 +84,10 @@ func NewCompression(d *CompressionDeps) *Compression {
 func (c *Compression) rewriteEnv() bulkRewriteEnv {
 	return bulkRewriteEnv{log: c.log, runtime: c.runtime, usage: c.usage}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // CompressExisting encodes every copy stored verbatim and records the new
 // stored form. Objects the encoder cannot shrink past the configured ratio are
@@ -134,6 +142,10 @@ func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Obser
 		maxRewrites: maxRewrites,
 	}.run(ctx, c.rewriteEnv(), obs)
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // compressOne encodes one copy. The encoded bytes are buffered because a PUT
 // declares its size up front and an encoder only knows that size at the end,

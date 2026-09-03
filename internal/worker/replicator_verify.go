@@ -23,6 +23,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // integrityOpReplicate labels this worker's checks in the integrity metrics,
 // alongside the read path's "read" and the scrubber's "scrub".
 const integrityOpReplicate = "replicate"
@@ -39,6 +43,10 @@ const (
 	replicaUnverified
 	replicaMismatch
 )
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // admitVerifiedReplica applies the verify-on-replicate verdict to a copy that
 // has just landed, tallying it on out. Returns false when the copy was rejected

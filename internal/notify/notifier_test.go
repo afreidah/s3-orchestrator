@@ -30,6 +30,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
+
 // TestDampening_SuppressesRepeatedCapacityWarning verifies that the TTL-based
 // dampener suppresses duplicate threshold events within the dampening window
 // and allows them after the TTL expires.
@@ -382,6 +386,10 @@ func (m *mockOutboxStore) WithAdvisoryLock(_ context.Context, _ int64, fn func(c
 	return true, fn(context.Background())
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // inserts returns the current insert count under the lock. Tests use
 // this instead of reading m.insertCount directly so a notifier
 // delivery goroutine's concurrent InsertNotification cannot race with
@@ -413,6 +421,10 @@ func (m *mockOutboxStore) retried() []int64 {
 	defer m.mu.Unlock()
 	return append([]int64(nil), m.retriedIDs...)
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestEmit_PrefixFiltering verifies the emit prefix filtering contract.
 // Asserts that expected 1 insert for matching prefix, got.

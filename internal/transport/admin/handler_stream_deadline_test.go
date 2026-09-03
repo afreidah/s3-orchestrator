@@ -23,10 +23,18 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // streamWriteTimeout is the server-side write deadline these tests run under.
 // Short enough to keep the suite fast, and every pass below deliberately
 // outlives it.
 const streamWriteTimeout = 150 * time.Millisecond
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // serveWithWriteTimeout starts a live server running h with the write deadline
 // a long pass would otherwise trip. httptest.NewServer is used rather than a
@@ -60,6 +68,10 @@ func get(t *testing.T, srv *httptest.Server) []byte {
 	}
 	return body
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestStreamSteps_OutlivesTheServerWriteTimeout is the regression test for the
 // TUI reporting INTERNAL_ERROR on a long scrub. The pass here runs to twice the

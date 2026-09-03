@@ -25,6 +25,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // dirTestPrefix builds a per-test directory prefix free of LIKE special
 // characters (% _ \) so these replication-semantics tests stay focused on
 // roll-up behaviour; the LIKE-escaping path has its own coverage in
@@ -34,6 +38,10 @@ func dirTestPrefix(t *testing.T, label string) string {
 	clean := strings.ReplaceAll(t.Name(), "_", "-")
 	return label + "-" + clean + "/"
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestPgListDirectoryChildren_FileRowReplicated asserts that on PostgreSQL
 // a replicated file's row exposes every backend it lives on as a sorted

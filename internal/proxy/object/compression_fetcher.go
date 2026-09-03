@@ -25,6 +25,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // storedRangeFetcher fetches ranges of the compressed stream backing one copy
 // of one object on one backend.
 //
@@ -65,6 +69,10 @@ func (f *storedRangeFetcher) compressedSize() int64 {
 	}
 	return f.loc.SizeBytes
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // FetchRange implements compression.RangeFetcher.
 //
@@ -109,6 +117,10 @@ func (f *storedRangeFetcher) FetchRange(ctx context.Context, start, end int64) (
 	}
 	return buf, nil
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // recordAttrs keeps the object metadata off the first response that carries it.
 // Every fetch returns the same values, so the first one wins and the rest are

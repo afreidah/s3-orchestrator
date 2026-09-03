@@ -10,10 +10,6 @@
 // Range requests.
 // -------------------------------------------------------------------------------
 
-// Package encryption provides envelope encryption for object payloads.
-// It frames plaintext into chunked AES-GCM segments addressable by byte
-// range and supports pluggable key providers (config-embedded, file,
-// and Vault transit).
 package encryption
 
 import (
@@ -47,26 +43,17 @@ type Encryptor struct {
 
 // EncryptResult holds the output of an encryption operation, including the
 // ciphertext stream and metadata to store in the database.
+// BaseNonce is carried out of the header so a later range read can decrypt
+// without fetching the header from the backend first. rawDEK is unexported and
+// reachable only through the RawDEK accessor, so it cannot surface in struct
+// printers, marshalers, or a log line that walks exported fields.
 type EncryptResult struct {
-	// Body is the ciphertext stream (header + encrypted chunks).
-	Body io.Reader
-
-	// CiphertextSize is the total size of the ciphertext output.
+	Body           io.Reader // ciphertext stream: header plus encrypted chunks
 	CiphertextSize int64
+	WrappedDEK     []byte // the encrypted DEK to store on the row
+	KeyID          string // which master key wrapped it
+	BaseNonce      []byte // the 12-byte nonce embedded in the header
 
-	// WrappedDEK is the encrypted DEK to store in the database.
-	WrappedDEK []byte
-
-	// KeyID identifies which master key wrapped the DEK.
-	KeyID string
-
-	// BaseNonce is the 12-byte nonce embedded in the header, needed for
-	// range-based decryption without fetching the header from the backend.
-	BaseNonce []byte
-
-	// rawDEK is the plaintext DEK used for encryption. Reachable only via
-	// the RawDEK accessor so it does not surface in struct printers,
-	// marshalers, or log lines that walk exported fields.
 	rawDEK []byte
 }
 

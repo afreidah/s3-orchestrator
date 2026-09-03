@@ -98,11 +98,10 @@ type FailoverStores interface {
 // Failover orchestrates per-key read failover across backends.
 // One instance per object.Manager; safe for concurrent reads.
 type Failover struct {
-	core        ReadRuntime
-	stores      FailoverStores
-	broadcaster *Broadcaster // degraded-mode fan-out; used only on DB outage
-	// degradedReadsEnabled false makes degraded reads fail fast instead of broadcasting.
-	degradedReadsEnabled bool
+	core                 ReadRuntime
+	stores               FailoverStores
+	broadcaster          *Broadcaster // degraded-mode fan-out; used only on DB outage
+	degradedReadsEnabled bool         // false fails a degraded read fast instead of broadcasting
 	log                  *slog.Logger
 }
 
@@ -115,10 +114,7 @@ type FailoverDeps struct {
 	ParallelBroadcast            bool
 	DegradedBroadcastParallelism int
 	DegradedReadsEnabled         bool
-	// BackendTimeout bounds the loser-drain goroutine after a winner is
-	// declared so a hung backend can't strand it. Zero falls back to a
-	// safe default.
-	BackendTimeout time.Duration
+	BackendTimeout               time.Duration // bounds the loser-drain goroutine; zero takes a safe default
 }
 
 // New constructs a Failover. When DegradedReadsEnabled is false, a DB

@@ -28,6 +28,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // recordReplicaRecord tracks one RecordReplica invocation.
 type recordReplicaRecord struct {
 	key, targetBackend, sourceBackend string
@@ -71,6 +75,10 @@ func stubReplicatorEnqueue(et *replicatorEnqueueTracker) func(context.Context, s
 		return nil
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestGroupByKey_Groups verifies the group-by-key contract.
 func TestGroupByKey_Groups(t *testing.T) {

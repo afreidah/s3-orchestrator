@@ -24,6 +24,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // Stores is the persistence surface the two passes need: the flush writes the
 // deltas, the reconcile recomputes the total they accumulate into.
 type Stores interface {
@@ -65,6 +69,10 @@ func New(d *Deps) *Service {
 	must.NotNil("d.Stores", d.Stores)
 	return &Service{usage: d.Usage, stores: d.Stores, drain: d.Drain}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // FlushUsage writes the accumulated in-memory counters to the store. Backends
 // that have finished draining are skipped: their rows, backend_usage included,

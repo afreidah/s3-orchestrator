@@ -28,17 +28,25 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // The two status values a worker reports when the pass did not run.
 const (
 	statusSkipped  = "skipped"
 	statusDisabled = "disabled"
 )
 
-// opsResult is a decoded one-shot response that can account for itself.
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
+// opsResult is a decoded one-shot response that can account for itself:
+// skipReason is why the pass did not run, or "" when it did, and describe
+// states what it changed.
 type opsResult interface {
-	// skipReason is why the pass did not run, or "" when it did.
 	skipReason() string
-	// describe states what the pass changed.
 	describe() string
 }
 
@@ -72,6 +80,10 @@ func decodeOneShot[T opsResult](r io.Reader) (adminstream.Event, error) {
 type usageReconcileResult struct {
 	adminapi.UsageReconcileResponse
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 func (r usageReconcileResult) skipReason() string { return skippedBecause(r.Status) }
 

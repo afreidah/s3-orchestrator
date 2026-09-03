@@ -19,6 +19,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // moveTxStub serves one locked source row and records what the move writes.
 type moveTxStub struct {
 	*quotaTxStub
@@ -35,6 +39,10 @@ type moveTxStub struct {
 func newMoveStub(src *ObjectLocation) *moveTxStub {
 	return &moveTxStub{quotaTxStub: &quotaTxStub{}, src: src}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // CheckObjectExistsOnBackend reports whether the destination already holds a copy.
 func (s *moveTxStub) CheckObjectExistsOnBackend(context.Context, string, string) (bool, error) {
@@ -67,6 +75,10 @@ func (s *moveTxStub) RecordCompressionProbe(_ context.Context, probe *Compressio
 	return nil
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // probedSource is a copy carrying a recorded measurement, which is what every
 // object a compression pass declined on ratio looks like.
 func probedSource() *ObjectLocation {
@@ -83,6 +95,10 @@ func probedSource() *ObjectLocation {
 func runMove(stub *moveTxStub) (int64, error) {
 	return MoveObjectLocation(context.Background(), &stubRunner{tx: stub}, "k", "b1", "b2")
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestMoveObjectLocation_CarriesTheProbe verifies the source's measurement is
 // written against the destination row. The move is verbatim, so what the

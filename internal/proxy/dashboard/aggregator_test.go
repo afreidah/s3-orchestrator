@@ -24,6 +24,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
+
 // TestAggregator_Success verifies the aggregator success contract.
 // Asserts that BytesUsed = , want 100.
 func TestAggregator_Success(t *testing.T) {
@@ -69,6 +73,10 @@ type dashboardRead struct {
 	ok   func(*storetest.MockDashboardStore)
 	fail func(*storetest.MockDashboardStore, error)
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // dashboardReads lists every read GetData issues, in the order it issues them.
 func dashboardReads() []dashboardRead {
@@ -139,6 +147,10 @@ func dashboardReads() []dashboardRead {
 			}},
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestAggregator_ReadErrorsFailGetData asserts every store read is
 // load-bearing: whichever one fails, GetData fails rather than returning a

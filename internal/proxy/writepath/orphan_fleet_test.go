@@ -31,6 +31,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // orphanCalls accumulates the store interactions these tests assert on: the
 // cleanup rows the coordinator enqueued and the orphan-byte adjustments it
 // charged alongside them.
@@ -46,6 +50,10 @@ type orphanBytesEntry struct {
 	backendName string
 	sizeBytes   int64
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // stubOrphanEnqueue captures EnqueueCleanup args.
 func stubOrphanEnqueue(c *orphanCalls, err error) func(context.Context, string, string, string, int64) error {
@@ -68,6 +76,10 @@ func stubOrphanIncrement(c *orphanCalls, err error) func(context.Context, string
 		return err
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestEnqueueCleanup_IncrementsOrphanBytes asserts a non-zero enqueue
 // drives one IncrementOrphanBytes call.

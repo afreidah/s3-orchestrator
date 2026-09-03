@@ -20,9 +20,17 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // nonSeekableReader wraps a reader so it cannot be type-asserted to
 // io.ReadSeeker, forcing PutObject's signed-payload materialization path.
 type nonSeekableReader struct{ r io.Reader }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func (n nonSeekableReader) Read(p []byte) (int, error) { return n.r.Read(p) }
 

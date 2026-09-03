@@ -10,10 +10,6 @@
 // emulation, and automatic schema migration on first start.
 // -------------------------------------------------------------------------------
 
-// Package sqlite implements every core store role plus the admin
-// roles using an embedded SQLite database via modernc.org/sqlite. WAL
-// mode handles concurrent reads, a process-local mutex emulates
-// advisory locks, and the schema migrates on first start.
 package sqlite
 
 import (
@@ -47,6 +43,10 @@ type Store struct {
 	cb    *breaker.CircuitBreaker
 	mu    sync.Mutex // advisory lock emulation for single-instance
 }
+
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
 
 // NewStore opens a SQLite database at the configured path, applies pragmas
 // for WAL mode and foreign key enforcement, and runs migrations. When cb
@@ -89,6 +89,10 @@ func NewStore(ctx context.Context, dbCfg *config.DatabaseConfig, cb *breaker.Cir
 
 	return s, nil
 }
+
+// -------------------------------------------------------------------------
+// LIFECYCLE
+// -------------------------------------------------------------------------
 
 // Close closes the underlying database connection.
 func (s *Store) Close() {

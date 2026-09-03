@@ -19,23 +19,18 @@ import (
 // ImportDecision is what ClassifyImport concluded about discovered bytes.
 type ImportDecision int
 
+// ImportPlaintext and the other classifications of discovered bytes.
+//
+// AdoptKey means the envelope came from the same encryption run as an existing
+// row for the key, so that row's key reads it. Unreadable means no known key
+// opens it: the object is still recorded, because the space it occupies is real
+// whether or not anything can serve it. Compressed is recognised by the seek
+// table, which a plain zstd encoder never writes.
 const (
-	// ImportPlaintext means the bytes carry no envelope and are the object.
-	ImportPlaintext ImportDecision = iota
-
-	// ImportAdoptKey means the bytes are an envelope produced by the same
-	// encryption run as an existing row for this key, so that row's key
-	// reads them.
-	ImportAdoptKey
-
-	// ImportUnreadable means the bytes are an envelope no known key opens.
-	// The object is recorded so its space is accounted for, but nothing can
-	// serve it.
-	ImportUnreadable
-
-	// ImportCompressed means the bytes are an encoding this orchestrator can
-	// decode, recognised by the seek table a plain zstd encoder never writes.
-	ImportCompressed
+	ImportPlaintext  ImportDecision = iota // no envelope; the bytes are the object
+	ImportAdoptKey                         // envelope an existing row's key opens
+	ImportUnreadable                       // envelope no known key opens
+	ImportCompressed                       // an encoding this orchestrator can decode
 )
 
 // String renders the decision for logs and audit lines.
@@ -54,6 +49,10 @@ func (d ImportDecision) String() string {
 	}
 }
 
+// -------------------------------------------------------------------------
+// DISCOVERED BYTES
+// -------------------------------------------------------------------------
+
 // DiscoveredBytes is everything the reconciler could learn about a rediscovered
 // object without decoding it: the head, where an encryption envelope announces
 // itself, and what the codec made of the stored form.
@@ -67,6 +66,10 @@ type DiscoveredBytes struct {
 	Compressed  bool
 	LogicalSize int64
 }
+
+// -------------------------------------------------------------------------
+// CLASSIFICATION
+// -------------------------------------------------------------------------
 
 // ClassifyImport decides how to record bytes discovered on a backend, given
 // what could be learned from the bytes and the rows the ledger already holds

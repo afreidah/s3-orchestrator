@@ -1,6 +1,13 @@
-// Package storetest hosts the mockgen-generated MockMetadataStore used
-// across the test suite as the single wide store mock, plus the per-role
-// mocks a test that exercises one capability stubs instead.
+// -------------------------------------------------------------------------------
+// Store Test Doubles - Mock Generation Surface
+//
+// Author: Alex Freidah
+//
+// Declares the wide MetadataStore union the generated mocks are built from.
+// The union exists for test doubles only: production consumers depend on the
+// narrow core roles instead, which is why no such interface lives in core.
+// -------------------------------------------------------------------------------
+
 package storetest
 
 import "github.com/afreidah/s3-orchestrator/internal/store/core"

@@ -18,6 +18,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // defaultedHTTPConfig returns a config block as the config layer hands it over:
 // validated, with every unset field already filled in.
 func defaultedHTTPConfig(t *testing.T, cfg config.BackendHTTPConfig) config.BackendHTTPConfig {
@@ -34,6 +38,10 @@ func defaultedHTTPConfig(t *testing.T, cfg config.BackendHTTPConfig) config.Back
 	}
 	return full.Backends[0].HTTP
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestNewBackendTransport_UsesConfiguredPoolSizes asserts the block reaches the
 // transport. One fixed setting either over-allocates file descriptors on a

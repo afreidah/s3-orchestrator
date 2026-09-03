@@ -36,6 +36,12 @@ import (
 // -------------------------------------------------------------------------
 
 // ObjectStore defines object location CRUD and listing operations.
+//
+// RecordObjectIdentity fills in the identity columns a read had to ask a
+// backend for, on every copy of the key so the answer stops depending on which
+// one replies. Columns already set are left alone: what a write computed over
+// the client's own bytes outranks what a backend reports about the bytes as
+// stored.
 type ObjectStore interface {
 	GetAllObjectLocations(ctx context.Context, key string) ([]ObjectLocation, error)
 	GetObjectBackendsForKeys(ctx context.Context, keys []string) (map[string][]string, error)
@@ -49,12 +55,6 @@ type ObjectStore interface {
 	MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error)
 	ImportObject(ctx context.Context, req *ImportObjectRequest) (ImportOutcome, error)
 	DeleteObjectLocation(ctx context.Context, key, backendName string) error
-
-	// RecordObjectIdentity fills in the identity columns a read had to ask a
-	// backend for, on every copy of the key so the answer stops depending on
-	// which one replies. Columns already set are left alone: what a write
-	// computed over the client's own bytes outranks what a backend reports
-	// about the bytes as stored.
 	RecordObjectIdentity(ctx context.Context, key string, id *ObjectIdentity) error
 }
 
@@ -75,15 +75,15 @@ type TagStore interface {
 }
 
 // QuotaStore defines quota routing queries.
+//
+// ReconcileUsage recomputes bytes_used from SUM(object_locations.size_bytes)
+// per backend, correcting drift in the incrementally maintained counter. It
+// returns the delta applied per backend (truth - previous), so backends already
+// in agreement are absent rather than reported as corrected by zero.
 type QuotaStore interface {
 	GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error)
 	GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error)
 	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
-
-	// ReconcileUsage recomputes bytes_used from SUM(object_locations.size_bytes)
-	// per backend, correcting drift in the incrementally maintained counter.
-	// Returns the per-backend delta applied (truth - previous); only drifted
-	// backends are present.
 	ReconcileUsage(ctx context.Context) (map[string]int64, error)
 }
 
@@ -125,62 +125,42 @@ type ReplicationStore interface {
 }
 
 // CleanupStore defines cleanup queue and orphan byte tracking operations.
+//
+// Claiming and reading are separate on purpose. GetPendingCleanups is a
+// read-only snapshot for admin and dashboard display; the worker takes rows
+// with ClaimPendingCleanups, which reserves a batch for one instance. Postgres
+// claims with FOR UPDATE SKIP LOCKED so concurrent instances get disjoint sets,
+// SQLite serializes writers intrinsically, and a row is eligible when its claim
+// is absent or older than graceCutoff - the claim a worker left behind when it
+// died mid-process. Rows reclaimed that way come back with Reclaimed set.
+//
+// Completion and retry both settle the claim. CompleteCleanupItem deletes the
+// row and decrements orphan_bytes together, and is idempotent against a
+// re-claim: a row a previous worker already deleted does not decrement twice.
+// RetryCleanupItem advances next_retry, records the error and clears the claim,
+// so the row is immediately eligible again.
+//
+// The DLQ is where a cleanup goes after exhausting its attempts.
+// MoveCleanupToDLQ leaves orphan_bytes alone, because the object is still on
+// the backend and the operator has not decided what to do about it yet; it
+// reports false when no row existed, a benign race with a concurrent finaliser.
+// RequeueCleanupDLQ sends rows back to the queue with fresh attempts once the
+// backend recovers, and orphan_bytes then drains naturally as those retries
+// complete. Both DLQ listings take an empty backend to mean every backend.
 type CleanupStore interface {
 	EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) error
-
-	// GetPendingCleanups returns a read-only snapshot of pending rows for
-	// admin / dashboard display. It does not stamp claim columns; the
-	// cleanup worker uses ClaimPendingCleanups instead.
 	GetPendingCleanups(ctx context.Context, limit int) ([]CleanupItem, error)
-
-	// ClaimPendingCleanups atomically reserves a batch of cleanup rows
-	// for the calling instance. Postgres uses FOR UPDATE SKIP LOCKED so
-	// concurrent claim transactions across instances return disjoint row
-	// sets; SQLite serialises writes intrinsically. A row is eligible
-	// when claimed_at IS NULL or older than graceCutoff (a stale claim
-	// from a worker that died mid-process). Returned rows have Reclaimed
-	// set true when their previous claim was reclaimed by this call.
 	ClaimPendingCleanups(ctx context.Context, limit int, instanceID string, graceCutoff time.Time) ([]CleanupItem, error)
-
-	// CompleteCleanupItem atomically deletes a successfully-processed row
-	// and decrements the backing backend's orphan_bytes by the row's
-	// size_bytes. Idempotent against re-claim retries: if the row was
-	// already deleted by a previous worker, orphan_bytes is not
-	// double-decremented.
 	CompleteCleanupItem(ctx context.Context, id int64) error
-
-	// RetryCleanupItem advances next_retry, records the error, and
-	// clears the claim so the row is immediately re-eligible for the
-	// next worker tick.
 	RetryCleanupItem(ctx context.Context, id int64, backoff time.Duration, lastError string) error
 	CleanupQueueDepth(ctx context.Context) (int64, error)
 	IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
 	DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
 	SweepStaleCleanupQueueRows(ctx context.Context, key, backend string) (int64, error)
 
-	// MoveCleanupToDLQ atomically graduates an exhausted cleanup_queue
-	// row to cleanup_dlq. orphan_bytes is intentionally left untouched
-	// because the underlying backend object is still on disk; the DLQ
-	// entry exists so an operator can investigate, retry, or write off
-	// each unrecoverable orphan deliberately. Returns true if a row was
-	// moved, false if no row existed (benign concurrent-finaliser race).
 	MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error)
-
-	// CleanupDLQDepth returns the number of rows currently in
-	// cleanup_dlq. Updates the cleanup_dlq_depth gauge so dashboards can
-	// surface the count of unrecoverable orphans needing attention.
-	CleanupDLQDepth(ctx context.Context) (int64, error)
-
-	// ListCleanupDLQ returns dead-lettered cleanup rows for operator
-	// inspection, newest graduation first. An empty backend lists every
-	// backend; a non-empty one scopes the listing. limit bounds the page.
-	ListCleanupDLQ(ctx context.Context, backend string, limit int) ([]CleanupDLQItem, error)
-
-	// RequeueCleanupDLQ atomically moves dead-lettered rows back into
-	// cleanup_queue (fresh attempts) so the cleanup worker retries them
-	// against a recovered backend; orphan_bytes then decrements naturally
-	// as those retries complete. An empty backend requeues every backend.
-	// Returns the number of rows requeued.
+	CleanupDLQDepth(ctx context.Context) (int64, error)                                      // also refreshes the cleanup_dlq_depth gauge
+	ListCleanupDLQ(ctx context.Context, backend string, limit int) ([]CleanupDLQItem, error) // newest graduation first
 	RequeueCleanupDLQ(ctx context.Context, backend string) (int64, error)
 }
 
@@ -199,12 +179,12 @@ type PendingStore interface {
 }
 
 // IntegrityStore defines content hash verification operations.
+//
+// The scrub listing filters by backend in the query rather than in the caller.
+// A copy the scrubber cannot afford to read must never occupy a batch slot, or
+// it is either stamped as examined without being read or left at the head of
+// the queue forever.
 type IntegrityStore interface {
-	// GetLeastRecentlyScrubbedObjects returns the copies most overdue for
-	// verification on the named backends. The backend filter belongs in the
-	// query rather than in the caller: a copy the scrubber cannot afford to
-	// read must never occupy a batch slot, or it is either stamped as examined
-	// without being read or left at the head of the queue forever.
 	GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string) ([]ObjectLocation, error)
 	CountScrubCandidatesOnBackends(ctx context.Context, backends []string) (int64, error)
 	GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]ObjectLocation, error)

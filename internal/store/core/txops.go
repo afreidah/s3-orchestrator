@@ -25,6 +25,10 @@ type TxOps struct {
 // NewTxOps binds the shared methods to the store that will embed them.
 func NewTxOps(r Runner) TxOps { return TxOps{runner: r} }
 
+// -------------------------------------------------------------------------
+// SHARED TRANSACTIONAL OPERATIONS
+// -------------------------------------------------------------------------
+
 // RecordObject records an object's location, its tag set and the backend
 // quota in one transaction, removing and returning any copies the write
 // displaces. A non-empty IntentID also clears the matching pending intent.

@@ -9,6 +9,4 @@
 // All metrics are prefixed with "s3o_" and registered via promauto on init.
 // -------------------------------------------------------------------------------
 
-// Package telemetry provides Prometheus metrics registration and OpenTelemetry
-// tracing initialization for the S3 orchestrator.
 package telemetry

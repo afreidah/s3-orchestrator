@@ -30,9 +30,8 @@ import (
 type viewMode int
 
 const (
-	// modeBrowse shows the prefix listing; modeInspect shows one object's copies.
-	modeBrowse viewMode = iota
-	modeInspect
+	modeBrowse  viewMode = iota // the prefix listing
+	modeInspect                 // one object's copies
 )
 
 // inspector holds the state of the object-detail pane.
@@ -226,8 +225,7 @@ func scrubSummary(copies []adminapi.CopyScrubResult) (bool, string) {
 // clips whatever the body renders past its height.
 func (m *model) resizeInspector() {
 	const (
-		// size + logical + comp + created + enc + key id + hash + verified
-		fixed   = 12 + 12 + 6 + 14 + 5 + 12 + 18 + 10
+		fixed   = 12 + 12 + 6 + 14 + 5 + 12 + 18 + 10 // size, logical, comp, created, enc, key id, hash, verified
 		cols    = 9
 		nameCap = 24
 		chrome  = 3

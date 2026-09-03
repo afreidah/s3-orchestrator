@@ -17,6 +17,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // envelopeHeader builds a valid 32-byte envelope header carrying baseNonce.
 func envelopeHeader(baseNonce []byte) []byte {
 	hdr := make([]byte, encryption.HeaderSize)
@@ -41,6 +45,10 @@ func encryptedSibling(backendName string, baseNonce []byte) ObjectLocation {
 		ContentHash:   "abc123",
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestClassifyImport_Plaintext verifies bytes with no envelope are imported
 // with no encryption metadata, whatever the ledger holds for the key.

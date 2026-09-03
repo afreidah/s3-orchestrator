@@ -25,6 +25,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
+// -------------------------------------------------------------------------
+// EMBEDDED SCHEMA
+// -------------------------------------------------------------------------
+
 //go:embed schema.sql
 var schemaSQL string
 
@@ -45,6 +49,10 @@ type migration struct {
 
 // migrationDir is the directory the migrations are embedded under.
 const migrationDir = "migrations"
+
+// -------------------------------------------------------------------------
+// MIGRATION LOADING
+// -------------------------------------------------------------------------
 
 // loadMigrations reads the embedded migrations in ascending version order.
 func loadMigrations() ([]migration, error) {
@@ -91,6 +99,10 @@ func loadMigrationsFrom(fsys fs.FS) ([]migration, error) {
 	slices.SortFunc(out, func(a, b migration) int { return cmp.Compare(a.version, b.version) })
 	return out, nil
 }
+
+// -------------------------------------------------------------------------
+// APPLYING
+// -------------------------------------------------------------------------
 
 // RunMigrations brings the database up to expectedSchemaVersion.
 //
@@ -189,6 +201,10 @@ func (s *Store) applyMigration(ctx context.Context, m migration) error {
 		return nil
 	})
 }
+
+// -------------------------------------------------------------------------
+// VERIFICATION
+// -------------------------------------------------------------------------
 
 // VerifySchemaVersion checks that the database schema version matches what
 // this binary expects. Returns an error if schema_version is missing or if

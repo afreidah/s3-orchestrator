@@ -22,14 +22,14 @@ import (
 
 // Slow delays the operations selected by its Delay* fields. Construct with
 // NewSlow; the embedded backend serves every operation not delayed.
+//
+// Puts are delayed by default because that is the common case; the read side
+// stays fast unless a test asks otherwise.
 type Slow struct {
 	backend.ObjectBackend
 
 	delay time.Duration
 
-	// DelayPuts, DelayGets, and DelayHeads select which operations wait.
-	// Puts are delayed by default because that is the common case; the
-	// read side stays fast unless a test asks otherwise.
 	DelayPuts  bool
 	DelayGets  bool
 	DelayHeads bool

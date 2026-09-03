@@ -32,9 +32,17 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // notFoundStatus is the HTTP status an absent key reports, so callers reaching
 // for backend.IsNotFound classify it the way they would a real S3 404.
 const notFoundStatus = 404
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // Object is one stored object: the payload plus the metadata a caller can read
 // back through Get or Head.
@@ -48,16 +56,21 @@ type Object struct {
 
 // InMemory is an in-memory backend.ObjectBackend. The zero value is not
 // usable; construct with NewInMemory. Safe for concurrent use.
+//
+// The fields fall into four groups: the backing store, the failures a test can
+// inject, the observations recorded on the way through, and native-copy
+// support. Objects is guarded by the same mutex as the rest, so a test whose
+// subject is still running should read it through Has or Snapshot rather than
+// directly.
+//
+// CopyObject always exists, so InMemory satisfies backend.Copier, but it
+// reports ErrCopyNotSupported until a test sets CopyEnabled - which leaves
+// callers on the materialized-copy path by default.
 type InMemory struct {
 	mu sync.Mutex
 
-	// Objects is the backing store. Held under the same mutex as everything
-	// else, so read it through Has/Snapshot rather than directly when the
-	// system under test may still be running.
 	Objects map[string]Object
 
-	// Injected failures. Each is checked by the matching method and returned
-	// in place of its normal result.
 	PutErr      error
 	GetErr      error
 	HeadErr     error
@@ -66,15 +79,10 @@ type InMemory struct {
 	GetPanic    bool  // GetObject panics instead of returning
 	DeleteDelay time.Duration
 
-	// Observations recorded on the way through, for tests asserting on how
-	// the caller invoked the backend rather than on what it stored.
 	LastPutBodySeekable   bool
 	LastDeleteHadDeadline bool
 	LastDeleteDeadline    time.Time
 
-	// Native-copy support. CopyObject always exists so InMemory satisfies
-	// backend.Copier, but it reports ErrCopyNotSupported until a test
-	// sets CopyEnabled, leaving callers on the materialized-copy path.
 	CopyEnabled bool
 	CopyCalls   int
 	CopyErr     error
@@ -90,6 +98,10 @@ var _ backend.ObjectBackend = (*InMemory)(nil)
 // notFoundError is a status-code-bearing error, so backend.IsNotFound
 // classifies an absent key the same way it classifies a real 404.
 type notFoundError struct{ key string }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // Error implements error.
 func (e *notFoundError) Error() string { return fmt.Sprintf("object %q not found", e.key) }
@@ -133,6 +145,10 @@ func (m *InMemory) PutObject(
 	return etag, nil
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // parseByteRange resolves an RFC 9110 single byte-range against an object of
 // size total, returning the inclusive offsets. ok is false when the header is
 // absent or not a form this fake supports, in which case the caller serves the
@@ -173,6 +189,10 @@ func parseByteRange(header string, total int64) (start, end int64, ok bool) {
 	}
 	return start, min(end, total-1), true
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // GetObject returns the stored object, honouring a single byte-range when one
 // is supplied. The body is a copy, so the caller can read it after the lock is

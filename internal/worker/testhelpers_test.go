@@ -22,6 +22,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newTestReplicator builds a Replicator with no stored-form decoders and no
 // integrity config, which is the shape most replication tests want: copies move
 // verbatim and nothing is hash-checked. Tests that exercise verify_on_replicate
@@ -30,10 +34,18 @@ func newTestReplicator(ops Ops, pl Placement, store ReplicatorStore) *Replicator
 	return NewReplicator(ReplicatorDeps{Ops: ops, Placement: pl, Store: store})
 }
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // mockMetadataStore is a minimal stub for worker tests. It embeds every
 // narrow store role as a nil interface so any worker signature accepts it;
 // tests override only the methods they exercise, and any unstubbed call
 // panics, which surfaces test-fixture gaps loudly.
+//
+// The fields are grouped by the worker that reads them: the scrub cycle's
+// backend filtering, the rebalancer planner's batch-query fixtures, and the
+// pending reaper's intents.
 type mockMetadataStore struct {
 	core.ObjectStore
 	core.QuotaStore
@@ -63,8 +75,6 @@ type mockMetadataStore struct {
 	allLocationsErr     error
 	scrubbed            []string
 
-	// Scrub backend filtering: what the cycle asked for, what it declined,
-	// and how many copies the declined backends hold.
 	scrubSelectedBackends []string
 	scrubDeclinedBackends []string
 	deferredCandidates    int64
@@ -96,13 +106,9 @@ type mockMetadataStore struct {
 	moveSize            int64
 	staleDeleted        int
 
-	// Rebalancer planner fixtures: counts batch invocations and lets
-	// tests override the (key -> backends) map returned by the new
-	// batch query.
 	getBackendsForKeysCalls int
 	getBackendsForKeysResp  map[string][]string
 
-	// Pending reaper fixtures
 	stalePending      []core.PendingObject
 	deletedPendingIDs []string
 	promotedPending   []core.PendingObject
@@ -112,6 +118,10 @@ type mockMetadataStore struct {
 	pendingDepthVal   int64
 	pendingDepthErr   error
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // GetPendingCleanups is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
@@ -231,6 +241,10 @@ func (m *mockMetadataStore) RecordObjectIdentity(_ context.Context, _ string, id
 	return nil
 }
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newTestUsageTracker creates a UsageTracker with no limits for testing.
 func newTestUsageTracker() *counter.UsageTracker {
 	return counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
@@ -242,6 +256,10 @@ func newTestUsageTracker() *counter.UsageTracker {
 func newTestRecorder() *accounting.Recorder {
 	return accounting.New(newTestUsageTracker(), func(string, string, time.Time, error) {})
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // GetUnderReplicatedObjects is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.

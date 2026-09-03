@@ -28,6 +28,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newStubStore returns a DashboardStore mock whose every read succeeds with
 // an empty result, so each test states only the calls it cares about.
 func newStubStore(ctrl *gomock.Controller) *storetest.MockDashboardStore {
@@ -45,6 +49,10 @@ func newStubStore(ctrl *gomock.Controller) *storetest.MockDashboardStore {
 		Return(&core.DirectoryListResult{}, nil).AnyTimes()
 	return store
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // stubUsage returns a UsageReader mock with no configured limits, which is
 // what every test here wants: the limits themselves are the store's business.
@@ -69,6 +77,10 @@ func trippedBackend(t *testing.T, ctrl *gomock.Controller) backend.ObjectBackend
 	}
 	return cb
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestDecorateLiveState_MarksUnhealthyBackends asserts a backend whose breaker
 // is open is reported unhealthy.

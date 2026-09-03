@@ -16,6 +16,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // Deps holds every collaborator the operations layer needs. Encryptor and
 // EncStore are nil when the orchestrator runs without encryption, Codec and
 // CompStore when it runs without a compression codec, and Rebalancer when the
@@ -51,6 +55,10 @@ type Services struct {
 	Encryption  *Encryption
 	Compression *Compression
 }
+
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
 
 // New builds every operation service from one dependency bag.
 func New(d *Deps) *Services {

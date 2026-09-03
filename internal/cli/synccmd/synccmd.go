@@ -8,9 +8,6 @@
 // are skipped. Useful when bringing an existing bucket under proxy management.
 // -------------------------------------------------------------------------------
 
-// Package synccmd implements the `s3-orchestrator sync` subcommand,
-// which imports objects already present on a backend bucket into the
-// metadata store so the proxy can serve them.
 package synccmd
 
 import (
@@ -32,6 +29,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 )
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // synccmdLogger returns the scoped logger for the synccmd CLI; built
 // lazily so init-time slog state is captured rather than a stale
@@ -158,6 +159,10 @@ func loadConfig(path, backendName string) (*config.Config, *config.BackendConfig
 	return nil, nil, 1
 }
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // importer is the slice of the metadata store the sync command writes
 // to: a single ImportObject per backend row. Declared locally so the
 // command owns its own dependency contract.
@@ -174,6 +179,10 @@ type adminStore interface {
 	SyncQuotaLimits(ctx context.Context, backends []config.BackendConfig) error
 	Close()
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // initStore opens the metadata store, applies migrations, and syncs quota
 // limits. Returns non-zero exit on any failure.

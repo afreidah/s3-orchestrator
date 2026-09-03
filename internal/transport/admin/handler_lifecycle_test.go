@@ -26,6 +26,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // expiryStub stands in for *expiry.Manager, reporting a fixed outcome for
 // whatever rules it is handed.
 type expiryStub struct {
@@ -34,6 +38,10 @@ type expiryStub struct {
 	failed  int
 	called  bool
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // Config returns the configured rules, or nil for a deployment with none.
 func (s *expiryStub) Config() *config.LifecycleConfig { return s.cfg }
@@ -50,6 +58,10 @@ func (s *expiryStub) ProcessRules(_ context.Context, _ []config.LifecycleRule, o
 	}
 	return s.deleted, s.failed
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // lifecycleWith installs a lifecycle service over the stub. A nil stub stands
 // for a deployment whose expiry manager was never wired.
@@ -79,6 +91,10 @@ func postLifecycle(t *testing.T, h *Handler) (*httptest.ResponseRecorder, admina
 func oneRule() *config.LifecycleConfig {
 	return &config.LifecycleConfig{Rules: []config.LifecycleRule{{Prefix: "tmp/", ExpirationDays: 7}}}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestHandleLifecycle_ReportsWhatItDeleted covers the answer an operator is
 // after: the rule matched, and this is how much it removed.

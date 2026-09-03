@@ -14,9 +14,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// EncryptionOpsTotal and related package-level variables used by this package.
+// Encryption operation and error metrics.
 var (
-
 	// EncryptionOpsTotal counts encryption operations by type.
 	EncryptionOpsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

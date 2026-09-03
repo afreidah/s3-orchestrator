@@ -30,11 +30,19 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // quotedMD5 is the ETag S3 reports for a part carrying these bytes.
 func quotedMD5(b []byte) string {
 	sum := md5.Sum(b) //nolint:gosec // G401: see above
 	return `"` + hex.EncodeToString(sum[:]) + `"`
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestUploadPart_ReturnsClientMD5 pins the value the client is handed: the
 // digest of what it sent, not what the backend replied for the stored part.

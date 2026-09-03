@@ -24,8 +24,14 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // fakePipeliner collects pipeline commands without executing them against
-// a real Redis. Exec returns a configurable error.
+// a real Redis. Exec returns a configurable error. Pool counters live in a
+// hash per backend and period, so the pool paths record HIncrBy and HGetAll
+// rather than the string commands.
 type fakePipeliner struct {
 	redis.Pipeliner
 	incrByKeys []string
@@ -33,14 +39,16 @@ type fakePipeliner struct {
 	expireKeys []string
 	execErr    error
 
-	// Pool counters live in a hash per backend and period, so the pool paths
-	// exercise HIncrBy and HGetAll rather than the string commands above.
 	hIncrByKeys   []string
 	hIncrByFields []string
 	hIncrByVals   []int64
 	delKeys       []string
 	hgetAll       map[string]string
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // HIncrBy records a pool counter increment.
 func (f *fakePipeliner) HIncrBy(_ context.Context, key, field string, val int64) *redis.IntCmd {

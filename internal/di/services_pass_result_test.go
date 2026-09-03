@@ -34,6 +34,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // passResultManager builds the smallest BackendRuntime that
 // UpdateQuotaMetrics will accept. The mock store is permissive so the
 // success path can call UpdateQuotaMetrics without erroring.
@@ -50,6 +54,10 @@ func passResultManager(t *testing.T) *infra.BackendRuntime {
 		Metrics:         mock,
 	})
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestHandlePassResult_NilErrZeroCount covers the dominant "nothing
 // happened this tick" case: no error, no work, no log line, no

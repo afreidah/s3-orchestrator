@@ -19,6 +19,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 //go:embed templates/*.html static/*
 var embeddedFS embed.FS
 
@@ -28,6 +32,10 @@ var embeddedFS embed.FS
 // directive above, so a runtime failure here would indicate a build
 // problem the binary cannot recover from.
 var staticFS, _ = fs.Sub(embeddedFS, "static")
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // loadTemplates parses every dashboard HTML template into a single
 // template tree with the funcMap registered (formatBytes, pct, etc).

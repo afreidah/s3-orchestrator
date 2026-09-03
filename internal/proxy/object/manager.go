@@ -78,29 +78,27 @@ type Manager struct {
 // under the parameter-count ceiling. Core and Coord are
 // consumer-declared interfaces; the concrete *infra.BackendRuntime and
 // *writepath.Coordinator that DI builds satisfy them implicitly.
+//
+// A nil Codec disables compression in both directions. It is supplied even
+// when compression is off for new writes, because objects already stored
+// encoded still have to be decoded on read.
 type Deps struct {
 	Core          Runtime
 	BroadcastCore readpath.ReadRuntime // narrow consumer interface for the failover broadcaster; satisfied by the same *infra.BackendRuntime that backs Core
 	Coord         Coordinator
 	Stores        Stores
 	Encryptor     *encryption.Encryptor
-	// Codec encodes new objects when Compression.Enabled and decodes stored
-	// ones on read. It is supplied whether or not compression is enabled for
-	// writes, because objects already written compressed still have to be read
-	// back. Nil disables both.
-	Codec             Codec
+
+	Codec             Codec // supplied even when compression is off for writes: already-encoded objects still have to be read
 	Compression       config.CompressionConfig
 	LocationCache     *LocationCache
 	ObjectCache       objcache.ObjectCache
 	ParallelBroadcast bool
-	// DegradedBroadcastParallelism caps concurrent probes during
-	// parallel degraded-mode broadcasts. 0 = uncapped.
-	DegradedBroadcastParallelism int
-	// DisableDegradedReads makes the degraded path fail fast instead of broadcasting.
-	DisableDegradedReads bool
-	IntegrityCfg         *syncutil.AtomicConfig[config.IntegrityConfig]
-	// BackendTimeout bounds the degraded-mode loser-drain goroutine.
-	BackendTimeout time.Duration
+
+	DegradedBroadcastParallelism int  // caps concurrent probes; 0 is uncapped
+	DisableDegradedReads         bool // fail fast instead of broadcasting
+	IntegrityCfg                 *syncutil.AtomicConfig[config.IntegrityConfig]
+	BackendTimeout               time.Duration // bounds the degraded-mode loser-drain goroutine
 }
 
 // New creates a Manager sharing the given core infrastructure and

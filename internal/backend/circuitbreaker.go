@@ -21,6 +21,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // CircuitBreakerBackend wraps an ObjectBackend with circuit breaker protection.
 // All S3 operations are guarded: when the circuit is open, calls immediately
 // return ErrBackendUnavailable without touching the real backend.
@@ -80,6 +84,10 @@ func isBackendError(err error) bool {
 	}
 	return !IsNotFound(err)
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // PutObject uploads an object to the backend with circuit breaker protection.
 func (cb *CircuitBreakerBackend) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {

@@ -21,6 +21,10 @@ import (
 	"time"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newTestCache constructs a new test cache.
 func newTestCache(t *testing.T, maxSize, maxObjSize int64, ttl time.Duration) *MemoryCache {
 	t.Helper()
@@ -45,6 +49,10 @@ func admitAndPut(t *testing.T, c *MemoryCache, key string, data []byte, meta Ent
 	}
 	c.PutBytes(key, data, meta)
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestMemoryCache_PutGet verifies the memory cache put get contract.
 func TestMemoryCache_PutGet(t *testing.T) {

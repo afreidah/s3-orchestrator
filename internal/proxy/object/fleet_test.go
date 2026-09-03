@@ -35,53 +35,49 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
+// fleetTimeout and fleetCacheTTL are the defaults every fleet test runs under.
+// Both are long enough that no test trips them incidentally - a timeout test
+// sets its own - and the TTL is still short enough not to mask an invalidation
+// bug behind a window that never closes.
 const (
-	// fleetTimeout bounds a backend call in the test fleet. Long enough that
-	// no test trips it incidentally; timeout tests set their own.
-	fleetTimeout = 30 * time.Second
-	// fleetCacheTTL is the location-cache window. Long enough that a test
-	// sees its own writes, short enough not to mask an invalidation bug.
+	fleetTimeout  = 30 * time.Second
 	fleetCacheTTL = 5 * time.Second
 )
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // fleetOpts tunes the test fleet beyond the defaults. The zero value gives
 // pack routing, pending writes on, an unlimited local usage counter, and no
 // encryption.
+//
+// Order defaults to the backend map's keys, in unspecified order. Compression
+// is applied only when both Codec and Compression are set, mirroring the
+// production wiring. Pending writes are on by default because that is what the
+// write path ships with, so a test turns them off rather than on.
 type fleetOpts struct {
-	// Order fixes the fleet order, which decides placement under pack
-	// routing. Defaults to the backend map's keys, in unspecified order.
-	Order []string
-	// Routing overrides the placement strategy. Defaults to pack.
-	Routing config.RoutingStrategy
-	// UsageLimits applies per-backend API/bandwidth caps.
-	UsageLimits map[string]core.UsageLimits
-	// MaxObjectSizes caps per-backend object size, for eligibility tests.
-	MaxObjectSizes map[string]int64
-	// BackendTimeout overrides the per-call bound.
-	BackendTimeout time.Duration
-	// AdmissionSem bounds concurrent backend writes.
-	AdmissionSem chan struct{}
-	// Encryptor turns on at-rest encryption.
-	Encryptor *encryption.Encryptor
-	// Codec and Compression turn on at-rest compression. Compression is
-	// applied only when both are set, mirroring production wiring.
-	Codec       Codec
-	Compression config.CompressionConfig
-	// ObjectCache attaches a cache so read-through and invalidation run.
-	ObjectCache objcache.ObjectCache
-	// ParallelBroadcast fans degraded-mode reads out concurrently.
-	ParallelBroadcast bool
-	// DegradedBroadcastParallelism caps those concurrent probes. 0 = uncapped.
-	DegradedBroadcastParallelism int
-	// DisableDegradedReads makes the degraded path fail fast instead.
-	DisableDegradedReads bool
-	// PendingDisabled turns the coordinator's pending-write pattern off; it
-	// is on by default because that is what the write path ships with.
-	PendingDisabled bool
-	// Draining lists backends the runtime should report as draining.
-	Draining []string
-	// CacheTTL overrides the location-cache window, for the expiry tests.
-	CacheTTL time.Duration
+	Order          []string                    // fixes fleet order, which decides placement under pack routing
+	Routing        config.RoutingStrategy      // defaults to pack
+	UsageLimits    map[string]core.UsageLimits // per-backend API and bandwidth caps
+	MaxObjectSizes map[string]int64            // per-backend object size cap, for eligibility tests
+	BackendTimeout time.Duration               // overrides the per-call bound
+	AdmissionSem   chan struct{}               // bounds concurrent backend writes
+	Encryptor      *encryption.Encryptor       // turns on at-rest encryption
+	Codec          Codec                       // with Compression below, turns on at-rest compression
+	Compression    config.CompressionConfig
+	ObjectCache    objcache.ObjectCache // attaches a cache so read-through and invalidation run
+	CacheTTL       time.Duration        // overrides the location-cache window, for the expiry tests
+	Draining       []string             // backends the runtime should report as draining
+
+	ParallelBroadcast            bool // fans degraded-mode reads out concurrently
+	DegradedBroadcastParallelism int  // caps those concurrent probes; 0 is uncapped
+	DisableDegradedReads         bool // makes the degraded path fail fast instead
+	PendingDisabled              bool
 }
 
 // drainingSet reports a fixed set of backends as draining, standing in for
@@ -103,6 +99,10 @@ type fleet struct {
 
 // SetIntegrityConfig swaps the integrity settings the manager reads on write.
 func (f *fleet) SetIntegrityConfig(cfg *config.IntegrityConfig) { f.Integrity.Store(cfg) }
+
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
 
 // newFleet builds an object Manager over the supplied backends. store is the
 // wide metadata store; New narrows it to Stores.

@@ -25,6 +25,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newListTestManager wires a Manager with only what ListObjects touches: the
 // store and a no-op accounting recorder.
 func newListTestManager(store Stores) *Manager {
@@ -39,6 +43,10 @@ type listTestRuntime struct {
 
 	acct *accounting.Recorder
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func (r listTestRuntime) Acct() *accounting.Recorder { return r.acct }
 

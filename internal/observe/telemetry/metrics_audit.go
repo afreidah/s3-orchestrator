@@ -14,9 +14,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// AuditEventsTotal and related package-level variables used by this package.
+// Audit log emission metrics.
 var (
-
 	// AuditEventsTotal counts audit log entries by event type.
 	AuditEventsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

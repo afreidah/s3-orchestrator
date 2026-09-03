@@ -29,6 +29,10 @@ import (
 	sqlitestore "github.com/afreidah/s3-orchestrator/internal/store/sqlite"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // metadataStore is the union of every store role, and exists only so the
 // composition root can carry one opened engine from openStore to the
 // do.MustAs role aliases in injector.go.
@@ -62,6 +66,10 @@ type metadataStore interface {
 	core.NotificationOutbox
 	core.TagStore
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // provideMetadataStore opens the configured driver, runs migrations, syncs
 // quota limits, and returns the opened engine for the role aliases to split.

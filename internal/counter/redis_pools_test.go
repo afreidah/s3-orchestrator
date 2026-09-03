@@ -21,6 +21,10 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newPoolBackend builds a Redis counter backend over the mock client, wired
 // the way the pool paths need: a local fallback and a closed breaker.
 func newPoolBackend(t *testing.T, mock *MockRedisClient) *RedisCounterBackend {
@@ -36,6 +40,10 @@ func newPoolBackend(t *testing.T, mock *MockRedisClient) *RedisCounterBackend {
 		probeDone: make(chan struct{}),
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestAddPools_PipelinesOneHashPerBackend pins the key layout: every pool for
 // a backend is a field in one hash, so a flush can read them all at once.

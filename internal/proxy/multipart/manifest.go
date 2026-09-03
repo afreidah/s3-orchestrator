@@ -25,23 +25,26 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
+// MinPartNumber and the other manifest bounds, all of them S3's rather than
+// this implementation's. A manifest outside them is rejected here rather than
+// passed to a backend, so a client that splits too finely fails on the same
+// rule every other S3 implementation would have applied. MaxPartCount equals
+// MaxPartNumber because part numbers are unique and in range.
 const (
-	// MinPartNumber and MaxPartNumber bound a part number. S3 allows
-	// 1..10000; a manifest outside that range is rejected rather than
-	// passed to the backend.
 	MinPartNumber = 1
 	MaxPartNumber = 10000
+	MaxPartCount  = MaxPartNumber
 
-	// MaxPartCount is the most parts one completion may assemble. Equal to
-	// MaxPartNumber because part numbers are unique and in range.
-	MaxPartCount = MaxPartNumber
-
-	// MinPartSizeBytes is the smallest a non-final part may be. S3 requires
-	// 5 MiB for every part except the last, so a client that splits too
-	// finely fails here rather than producing an object other S3
-	// implementations would have rejected.
-	MinPartSizeBytes = 5 * 1024 * 1024
+	MinPartSizeBytes = 5 * 1024 * 1024 // every part except the last
 )
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // normalizeETag strips surrounding quotes and the weak-comparison prefix so a
 // client that quotes its ETags matches a stored value that does not (or the

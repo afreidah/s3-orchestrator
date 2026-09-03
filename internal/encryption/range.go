@@ -33,20 +33,10 @@ func ciphertextSizeExact(plaintextSize int64, chunkSize int) int64 {
 // RangeResult holds the translated ciphertext range and the slice offsets
 // needed to extract the requested plaintext bytes after decryption.
 type RangeResult struct {
-	// BackendRange is the HTTP Range header value for the backend request
-	// (e.g., "bytes=32-65595"). Empty string means fetch the entire object.
-	BackendRange string
-
-	// StartChunk is the zero-based index of the first chunk to decrypt.
-	StartChunk uint64
-
-	// SliceStart is the byte offset within the first decrypted chunk where
-	// the requested plaintext range begins.
-	SliceStart int64
-
-	// SliceLen is the number of plaintext bytes to return from the
-	// decrypted output.
-	SliceLen int64
+	BackendRange string // the Range header to send, e.g. "bytes=32-65595"; empty fetches the whole object
+	StartChunk   uint64 // zero-based index of the first chunk to decrypt
+	SliceStart   int64  // offset within that first decrypted chunk where the plaintext range begins
+	SliceLen     int64  // plaintext bytes to return from the decrypted output
 }
 
 // CiphertextRange translates a plaintext byte range into the corresponding

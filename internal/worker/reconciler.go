@@ -25,6 +25,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // ReconcileResult holds the outcome of a reconciliation pass for one backend.
 type ReconcileResult struct {
 	Imported                 int `json:"imported"`
@@ -99,6 +103,10 @@ func (r *Reconciler) Run(ctx context.Context) {
 	})
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // run is the body of Run after the span is open.
 func (r *Reconciler) run(ctx context.Context) {
 	start := time.Now()
@@ -162,6 +170,10 @@ func (r *Reconciler) reconcileUsage(ctx context.Context) {
 		"backends_corrected", len(adjustments))
 	audit.Log(ctx, "usage.reconcile", slog.Int("backends_corrected", len(adjustments)))
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // Reconcile performs a full reconciliation for the given backend (or all
 // backends if backendName is empty). Lists objects on each backend, diffs

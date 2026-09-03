@@ -1,3 +1,13 @@
+// -------------------------------------------------------------------------------
+// Flight Recorder Config Tests
+//
+// Author: Alex Freidah
+//
+// Covers the validation and defaulting of the flight recorder block. A
+// disabled recorder is not validated at all, and an enabled one gets a
+// min_age default rather than a zero that would trip on every trace.
+// -------------------------------------------------------------------------------
+
 package config
 
 import (

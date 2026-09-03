@@ -12,10 +12,6 @@
 // exposed via LastResult() for admin status surfaces.
 // -------------------------------------------------------------------------------
 
-// Package reload owns SIGHUP-driven configuration reload. The
-// coordinator runs a two-phase Check / Apply pass over a sequence of
-// hooks, swaps the atomic config on success, and reports full /
-// partial / validation / load outcomes via Result.
 package reload
 
 import (
@@ -37,29 +33,30 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // applyTimeout caps the Apply phase so a hook that hangs on an outbound
 // call (quota sync, quota metrics refresh) cannot stall the SIGHUP
 // goroutine. The Check phase is in-memory and not timeboxed.
 const applyTimeout = 10 * time.Second
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // Deps groups everything the coordinator mutates or reads on reload.
+// CfgPtr is the atomic config the rest of the process reads; the coordinator
+// swaps the new one in after a successful Apply pass. Hooks is nil in
+// production, where the default set is used, and set by tests injecting fakes.
 type Deps struct {
-	// ConfigPath is the on-disk YAML the SIGHUP handler reloads.
-	ConfigPath string
-	// Injector is consulted by hooks for optional subsystems (rate
-	// limiter, UI handler) that may not be registered in every mode.
-	Injector do.Injector
-	// CfgPtr is the atomic config the rest of the process reads. The
-	// coordinator swaps in the new config after a successful Apply pass.
-	CfgPtr *syncutil.AtomicConfig[config.Config]
-	// LogLevel is updated by the log_level hook when Server.LogLevel
-	// changes.
-	LogLevel *slog.LevelVar
-	// CertReloader rotates the TLS certificate; nil when TLS is off.
-	CertReloader *httputil.CertReloader
-	// Hooks overrides the default hook set. Production callers leave
-	// it nil; tests use this to inject fakes.
-	Hooks []Hook
+	ConfigPath   string      // the on-disk YAML SIGHUP reloads
+	Injector     do.Injector // consulted by hooks for optional subsystems
+	CfgPtr       *syncutil.AtomicConfig[config.Config]
+	LogLevel     *slog.LevelVar         // updated by the log_level hook
+	CertReloader *httputil.CertReloader // rotates the TLS certificate; nil when TLS is off
+	Hooks        []Hook
 }
 
 // Coordinator owns the SIGHUP goroutine, the hook sequence, and the
@@ -96,6 +93,10 @@ func New(deps *Deps) *Coordinator {
 		log:   slog.Default().With(logfmt.Component("reload")),
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // Watch installs a SIGHUP handler and spawns the reload goroutine. The
 // goroutine runs until Shutdown is called.
@@ -216,6 +217,10 @@ func (c *Coordinator) Reload() *Result {
 	}
 	return c.finalize(ctx, result)
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // finalize stamps EndedAt, logs the outcome at the appropriate level,
 // stores the result, and returns it.

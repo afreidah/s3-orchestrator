@@ -19,6 +19,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // teeErrReader returns err on the first Read call after returning the seed
 // bytes. Used to simulate mid-stream backend failures.
 type teeErrReader struct {
@@ -26,6 +30,10 @@ type teeErrReader struct {
 	pos  int
 	err  error
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func (r *teeErrReader) Read(p []byte) (int, error) {
 	if r.pos >= len(r.body) {

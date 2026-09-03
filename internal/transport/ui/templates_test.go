@@ -15,6 +15,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newTestCounterVec returns a fresh CounterVec backed by an isolated
 // registry so the counterVecTotal test does not interact with the
 // global telemetry counters. The vec is unregistered - the helper only
@@ -25,6 +29,10 @@ func newTestCounterVec() *prometheus.CounterVec {
 		Help: "isolated counter for counterVecTotal tests",
 	}, []string{"operation"})
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestCounterVecTotal exercises the snapshot helper that surfaces
 // integrity check / error totals on the dashboard. Uses an isolated

@@ -21,6 +21,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // pendingProbe is one eligible backend awaiting (or running) its probe.
 // Held in a flat slice so the rolling-window launcher can pick the next
 // pending entry deterministically as slots free up.
@@ -39,6 +43,10 @@ type ProbeScheduler[T any] struct {
 	drainTimeout time.Duration  // bound on the post-winner loser-drain
 	operation    s3op.Operation // label for the drain-timeout metric
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // FirstSuccess launches the rolling window and returns the first successful
 // probe. found is false when every probe failed; errs holds each failure in
@@ -102,6 +110,10 @@ func (s *ProbeScheduler[T]) FirstSuccess(ctx context.Context, probe Probe[T]) (r
 	}
 	return broadcastResult[T]{}, errs, false
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // broadcastSlotCount returns the initial in-flight slot count for the rolling
 // window: the configured cap clamped to the eligible-backend count, with

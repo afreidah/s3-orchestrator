@@ -19,6 +19,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // s3CodeOf extracts the S3 error code, failing the test when err is not a
 // typed S3 error. Every rejection here must carry a code the transport can
 // map, not a bare error.
@@ -33,6 +37,10 @@ func s3CodeOf(t *testing.T, err error) string {
 	}
 	return s3err.Code
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestValidateManifestShape covers every rejection that needs no store read,
 // plus the ascending manifest that must pass.

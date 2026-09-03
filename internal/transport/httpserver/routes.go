@@ -96,23 +96,14 @@ func registerUIHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 //
 // Admission model (see internal/di/backend.go admissionSemFor):
 //
-//   - Split mode (both MaxConcurrentReads and MaxConcurrentWrites set):
-//     a fresh read semaphore is created here sized to MaxConcurrentReads;
-//     it is local to the HTTP read path and never touched by background
-//     workers. The write half reuses the runtime's AdmissionSem() which the
-//     DI layer already sized to MaxConcurrentWrites - that channel is
-//     also the budget every background worker (cleanup, replication,
-//     rebalance, pending reaper, over-replication) acquires from via
-//     WithAdmission. So in split mode HTTP reads have their own ceiling
-//     while HTTP writes share their ceiling with worker activity.
-//   - Merged mode (only MaxConcurrentRequests set): the runtime's AdmissionSem()
-//     is the single global pool sized to MaxConcurrentRequests; HTTP
-//     reads, HTTP writes, and workers all contend for the same slots.
-//   - Neither set: no admission middleware is installed (AdmissionSem()
-//     returns nil and the switch falls through).
-//
-// Operators sizing MaxConcurrentWrites in split mode should plan for
-// background worker activity to consume from the same budget.
+//   - Split mode (MaxConcurrentReads and MaxConcurrentWrites): reads get a
+//     fresh semaphore created here, local to the HTTP read path. Writes reuse
+//     the runtime's AdmissionSem(), which is also the budget every background
+//     worker acquires from, so HTTP writes share their ceiling with worker
+//     activity and operators should size it for both.
+//   - Merged mode (MaxConcurrentRequests): AdmissionSem() is one global pool
+//     that HTTP reads, HTTP writes and workers all contend for.
+//   - Neither set: no admission middleware is installed.
 //
 // Either form respects LoadShedThreshold and AdmissionWait when set.
 func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) error {

@@ -20,17 +20,14 @@ import (
 	"strings"
 )
 
+// The Err values are the user-facing messages, written when DecodeJSONBody
+// cannot parse a request body and when RequireMethod rejects a method.
 const (
 	contentTypeJSON   = "application/json"
 	headerContentType = "Content-Type"
 
-	// ErrInvalidRequestBody is the user-facing message written when
-	// DecodeJSONBody fails to parse the request body.
 	ErrInvalidRequestBody = "invalid request body"
-
-	// ErrMethodNotAllowed is the user-facing message written when
-	// RequireMethod rejects the request method.
-	ErrMethodNotAllowed = "method not allowed"
+	ErrMethodNotAllowed   = "method not allowed"
 )
 
 // WriteJSON serialises body as JSON, sets the JSON content-type header,

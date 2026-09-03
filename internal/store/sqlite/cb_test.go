@@ -1,6 +1,13 @@
-// Tests for the CB-aware *sql.DB wrapper. The breaker state machine
-// itself is covered in internal/breaker; these tests prove the wrapper
-// feeds PreCheck/PostCheck correctly and that wrapDB no-ops on a nil cb.
+// -------------------------------------------------------------------------------
+// SQLite Circuit Breaker Wrapper Tests
+//
+// Author: Alex Freidah
+//
+// Tests for the CB-aware *sql.DB wrapper. The breaker state machine itself is
+// covered in internal/breaker; these tests prove the wrapper feeds
+// PreCheck/PostCheck correctly and that wrapDB no-ops on a nil cb.
+// -------------------------------------------------------------------------------
+
 package sqlite
 
 import (
@@ -16,11 +23,19 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newCB builds a database breaker with a tight failure threshold so a
 // single error trips it.
 func newCB(threshold int) *breaker.CircuitBreaker {
 	return breaker.NewCircuitBreaker(breaker.Config{Name: "test", Threshold: threshold, Timeout: time.Minute, IsError: isDBErrorForTest, Sentinel: core.ErrDBUnavailable})
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // isDBErrorForTest treats any non-sentinel error as a DB error.
 func isDBErrorForTest(err error) bool {
@@ -41,6 +56,10 @@ func openMemDB(t *testing.T) *sql.DB {
 	t.Cleanup(func() { d.Close() })
 	return d
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func TestWrapDB_NilCBReturnsInner(t *testing.T) {
 	t.Parallel()

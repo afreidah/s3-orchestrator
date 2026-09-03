@@ -22,6 +22,10 @@ import (
 	"time"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // DatabaseConfig holds metadata store connection settings. The Driver field
 // selects between "sqlite" (embedded, zero-dependency default) and "postgres"
 // (required for multi-instance deployments).
@@ -51,6 +55,10 @@ func (c *DatabaseConfig) ConnectionString() string {
 	}
 	return u.String()
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // setDefaultsAndValidate sets defaults and validate.
 func (d *DatabaseConfig) setDefaultsAndValidate() []error {

@@ -27,9 +27,17 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // reloadNotYetStatus is the reload-status placeholder reported before the
 // first SIGHUP of the process.
 const reloadNotYetStatus = "no_reload_yet"
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // handleReloadStatus returns the most recent reload result captured by
 // the reload coordinator. Returns a "no_reload_yet" placeholder when

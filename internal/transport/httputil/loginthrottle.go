@@ -16,6 +16,10 @@ import (
 	"time"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // LoginThrottle tracks failed login attempts per IP and enforces lockout.
 type LoginThrottle struct {
 	mu              sync.Mutex
@@ -60,6 +64,10 @@ func NewLoginThrottle(maxFailures int, lockoutDuration time.Duration) *LoginThro
 
 	return lt
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // Close stops the background cleanup goroutine. Safe to call multiple times.
 func (lt *LoginThrottle) Close() {

@@ -22,6 +22,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
+
 // TestStoreInt_ListObjectsDelimited_GroupsAndLeaves verifies keys fold into
 // CommonPrefixes at the first delimiter after the prefix while leaf objects pass
 // through with their location columns.
@@ -81,6 +85,10 @@ func TestStoreInt_ListObjectsDelimited_PaginationNoDuplicate(t *testing.T) {
 		t.Errorf("distinct prefixes = %d, want 4: %v", len(seen), seen)
 	}
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // seedPGDelimiterGroups records groups x perGroup keys as
 // "<prefix>g<G>/k<K>.txt" and registers per-key cleanup that runs at test end.

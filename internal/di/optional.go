@@ -24,16 +24,17 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // Resolution classifies the outcome of an optional dependency lookup.
 type Resolution string
 
 const (
-	// ResolutionDisabled means no provider was registered for T.
-	ResolutionDisabled Resolution = "disabled"
-	// ResolutionApplied means the provider resolved cleanly.
-	ResolutionApplied Resolution = "applied"
-	// ResolutionFailed means the provider was registered but construction failed.
-	ResolutionFailed Resolution = "failed"
+	ResolutionDisabled Resolution = "disabled" // no provider registered for T
+	ResolutionApplied  Resolution = "applied"  // the provider resolved cleanly
+	ResolutionFailed   Resolution = "failed"   // registered, but construction failed
 )
 
 // OptionalResult carries the outcome of an Optional[T] lookup. Callers
@@ -45,6 +46,10 @@ type OptionalResult[T any] struct {
 	Resolution Resolution
 	Err        error
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // Failed reports whether the provider was registered but failed to
 // construct (or one of its transitive dependencies failed).
@@ -84,6 +89,10 @@ func IsRegistered[T any](inj do.Injector) bool {
 	}
 	return false
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // resolveOptionalCounterBackend returns the configured Redis counter
 // backend, or nil when Redis is disabled / not registered. The runtime

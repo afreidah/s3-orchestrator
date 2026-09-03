@@ -43,7 +43,7 @@ import (
 	// newTestHandler builds a Handler wired to mock data for testing.
 )
 
-// testAdminKey and related constants used by this package.
+// The credentials every handler test signs and logs in with.
 const (
 	testAdminKey      = "test-admin"
 	testAdminSecret   = "test-secret-key"

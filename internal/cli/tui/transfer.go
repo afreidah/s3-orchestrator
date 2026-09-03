@@ -27,6 +27,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/humanize"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // transferPollInterval is how often the pane re-reads a running transfer's
 // byte counter. Fast enough to look live, slow enough not to redraw on every
 // buffer.
@@ -41,6 +45,10 @@ const (
 	transferDownload transferKind = iota
 	transferUpload
 )
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // verb words the transfer for a progress or completion line.
 func (k transferKind) verb() string {
@@ -57,6 +65,10 @@ func (k transferKind) past() string {
 	}
 	return "downloaded"
 }
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // transfer is one in-flight object transfer. done and moved are read by the
 // main loop while the transfer goroutine writes them, so both are atomic.
@@ -82,6 +94,10 @@ type transferDoneMsg struct {
 
 // transferTickMsg schedules the next progress poll.
 type transferTickMsg struct{}
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // transferTick schedules the next poll of the running transfer.
 func transferTick() tea.Cmd {

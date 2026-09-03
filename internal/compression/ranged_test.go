@@ -22,6 +22,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // countingFetcher serves ranges out of an in-memory object and tallies what was
 // asked of it, which is the unit the proportionality assertions are stated in.
 // short, long and err perturb the answer, standing in for a backend that
@@ -61,6 +65,10 @@ func (f *countingFetcher) FetchRange(_ context.Context, start, end int64) ([]byt
 	}
 	return out, nil
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // stats returns the tally without racing the reader.
 func (f *countingFetcher) stats() (calls int, fetched int64) {
@@ -102,6 +110,10 @@ func openRanged(t *testing.T, c *Codec, f *countingFetcher) RangedReader {
 	t.Cleanup(func() { _ = r.Close() })
 	return r
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestDecompressRanged_RoundTrip verifies that a whole-object read through the
 // ranged path returns the same bytes the ReadSeeker path does.

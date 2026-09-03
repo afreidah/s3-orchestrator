@@ -57,7 +57,7 @@ import (
 // the surrounding lifecycle the helpers participate in.
 const virtualBucket = "test-bucket"
 
-// proxyAddr and related package-level variables used by this package.
+// The shared suite fixture, set up once by TestMain and read by every test.
 //
 // testDBConfig and minioEndpoints describe the containers rather than the
 // shared fixture built on them, so a harness can provision its own database and

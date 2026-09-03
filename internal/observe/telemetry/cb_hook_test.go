@@ -21,6 +21,10 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // gaugeValue reads the current scalar value of a Prometheus Gauge.
 func gaugeValue(t *testing.T) float64 {
 	t.Helper()
@@ -30,6 +34,10 @@ func gaugeValue(t *testing.T) float64 {
 	}
 	return m.GetGauge().GetValue()
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestNewCircuitBreakerHook_EmitsOpenEvent confirms the closed->open
 // transition emits a BackendCircuitOpened event with failure context.

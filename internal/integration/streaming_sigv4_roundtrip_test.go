@@ -29,6 +29,10 @@ import (
 	"time"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // emptyStringSHA256 is hex(SHA256("")), used in the per-chunk
 // string-to-sign as the hash of the empty fixed field.
 const emptyStringSHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -39,6 +43,10 @@ type signedStreamingRequest struct {
 	req  *http.Request
 	body []byte
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // buildSignedStreamingPUT crafts a PUT request whose seed signature
 // verifies and whose body is a valid chained-chunk-signed payload of
@@ -135,6 +143,10 @@ func computeChunkSignatureForTest(key []byte, amzDate, scope, prevSig string, ch
 	}, "\n")
 	return hex.EncodeToString(hmacSHA256Bytes(key, []byte(stringToSign)))
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestStreamingSigV4_SignedRoundTrip drives a properly signed streaming
 // PUT through the orchestrator and asserts the GET returns the

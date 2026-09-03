@@ -32,6 +32,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // queryPendingCount returns the number of pending intents for a key.
 func queryPendingCount(t *testing.T, key string) int {
 	t.Helper()
@@ -65,6 +69,10 @@ func runReaperTick(t *testing.T) (resolved, failed int) {
 	sum := testWorkers.PendingReaper.ProcessPendingQueue(context.Background())
 	return sum.Succeeded, sum.Failed
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestPending_HappyPath verifies that a successful PUT clears the pending
 // intent in the same transaction that records the object location.

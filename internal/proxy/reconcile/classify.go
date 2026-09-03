@@ -26,6 +26,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // SiblingLocator reads the rows the ledger already holds for a key, which is
 // where the encryption key for a rediscovered object has to come from.
 type SiblingLocator interface {
@@ -55,6 +59,10 @@ type backendRange struct {
 	be  backend.ObjectBackend
 	key string
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // FetchRange implements compression.RangeFetcher.
 func (b backendRange) FetchRange(ctx context.Context, start, end int64) ([]byte, error) {
@@ -102,6 +110,10 @@ func ClassifyImport(ctx context.Context, deps ClassifyDeps, backendName, key str
 	deps.record(ctx, decision, backendName, key)
 	return form, nil
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // inspectStored asks the codec whether these bytes are one of its own. A failure
 // to read the tail is not an error: it means the object is not recognised, and

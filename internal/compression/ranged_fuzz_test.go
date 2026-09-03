@@ -23,6 +23,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // fuzzMaxSource bounds the fixture a target builds per iteration. Fuzzing spends
 // its budget on the decode paths, not on compressing large inputs.
 const fuzzMaxSource = 1 << 16
@@ -36,6 +40,10 @@ type misbehavingFetcher struct {
 	at   int
 	n    int
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // FetchRange implements RangeFetcher.
 func (m *misbehavingFetcher) FetchRange(_ context.Context, start, end int64) ([]byte, error) {
@@ -67,6 +75,10 @@ func (m *misbehavingFetcher) FetchRange(_ context.Context, start, end int64) ([]
 	return out, nil
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // fuzzStore compresses src and returns the stored bytes.
 func fuzzStore(t *testing.T, c *Codec, src []byte) []byte {
 	t.Helper()
@@ -86,6 +98,10 @@ func wellClassified(err error) bool {
 		errors.Is(err, ErrFetchFailed) ||
 		errors.Is(err, ErrRangeBounds)
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // FuzzDecompressRanged feeds arbitrary bytes to the ranged decode entry point as
 // though they were a stored object, which is what a corrupted backend copy looks
@@ -189,6 +205,10 @@ func FuzzRangedSeekRead(f *testing.F) {
 	})
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // assertSeekReadMatchesSource seeks r and checks that whatever comes back is the
 // source at that position, and that a position past the end yields nothing.
 func assertSeekReadMatchesSource(t *testing.T, r RangedReader, src []byte, offset int64, whence, readLen int) {
@@ -216,6 +236,10 @@ func assertSeekReadMatchesSource(t *testing.T, r RangedReader, src []byte, offse
 		t.Errorf("read %d bytes at offset %d that do not match the source", n, pos)
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // FuzzRangedFetcherMisbehaves corrupts one fetch of an otherwise valid object.
 // A read may fail, but it may not succeed with bytes that are not the source's:

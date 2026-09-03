@@ -30,6 +30,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // recordingDeleter stands in for the object manager, capturing which keys a
 // sweep decided to delete without removing anything. What is under test is the
 // selection, and a real delete would take the rows out from under the
@@ -45,6 +49,10 @@ func (d *recordingDeleter) DeleteObject(_ context.Context, key string) error {
 	d.keys = append(d.keys, key)
 	return nil
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // deleted returns the captured keys, sorted.
 func (d *recordingDeleter) deleted() []string {
@@ -80,6 +88,10 @@ func seedTagged(t *testing.T, s *Store, objects map[string][]core.Tag) {
 		}
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestLifecycleInt_TagFilterEndToEnd proves a tagged rule expires only the
 // objects carrying its tags, and leaves everything else alone.

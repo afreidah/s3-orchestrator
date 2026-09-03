@@ -1,4 +1,4 @@
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 // Cleanup Queue Claim Pattern Integration Tests
 //
 // Author: Alex Freidah
@@ -7,7 +7,7 @@
 // rule, and the atomic CompleteCleanupItem CTE against a real Postgres
 // container. These behaviours are the load-bearing pieces of the cleanup
 // race fix and are not adequately covered by unit tests with mocks.
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 
 //go:build integration
 
@@ -21,6 +21,10 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestStoreInt_ClaimPendingCleanups_ConcurrentDisjoint asserts that two
 // concurrent ClaimPendingCleanups transactions return disjoint row sets.
@@ -41,6 +45,10 @@ type claimResult struct {
 	ids []int64
 	err error
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // enqueueN inserts n cleanup_queue rows with the given uniqueKey suffix.
 func enqueueN(t *testing.T, s *Store, n int, suffix string) {
@@ -101,6 +109,10 @@ func assertDisjointAndCleanup(t *testing.T, s *Store, results []claimResult) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
+
 // TestStoreInt_ClaimPendingCleanups_ReclaimAfterGrace asserts that a row
 // whose claim is older than the grace cutoff is reclaimable, and that the
 // returned item carries Reclaimed=true so the caller can drive the
@@ -137,6 +149,10 @@ func TestStoreInt_ClaimPendingCleanups_ReclaimAfterGrace(t *testing.T) {
 		t.Errorf("row reclaimed under a 15m grace despite 10m-old claim")
 	}
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // mustClaim wraps ClaimPendingCleanups + t.Fatal on error so callers stay focused on assertions.
 func mustClaim(t *testing.T, s *Store, instanceID string, graceCutoff time.Time) []core.CleanupItem {
@@ -180,6 +196,10 @@ func backdateClaim(t *testing.T, s *Store, id int64, interval string) {
 		t.Fatalf("backdate claim: %v", err)
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestStoreInt_CompleteCleanupItem_AtomicDecrement asserts CompleteCleanupItem
 // deletes the row AND decrements orphan_bytes for the backing backend in a

@@ -27,11 +27,19 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // expectedETag renders the value S3 reports for a single-part upload of body.
 func expectedETag(body []byte) string {
 	sum := md5.Sum(body) //nolint:gosec // G401: see above
 	return `"` + hex.EncodeToString(sum[:]) + `"`
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestETag_IsMD5OfClientBytes pins the contract a client checks its own upload
 // against: PUT and HEAD both report the digest of what it sent.

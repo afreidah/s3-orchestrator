@@ -29,6 +29,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // queryMatcher matches an ExpiredObjectsQuery on the one field a test cares
 // about. Matching the whole struct is not an option: the cutoff is derived
 // from the clock at call time.
@@ -37,12 +41,20 @@ type queryMatcher struct {
 	match func(core.ExpiredObjectsQuery) bool
 }
 
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
+
 func (m queryMatcher) Matches(x any) bool {
 	q, ok := x.(core.ExpiredObjectsQuery)
 	return ok && m.match(q)
 }
 
 func (m queryMatcher) String() string { return m.name }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // queryPrefix matches a query by the prefix its rule carried.
 func queryPrefix(p string) queryMatcher {
@@ -94,6 +106,10 @@ func newManager(t *testing.T, ctrl *gomock.Controller) (*Manager, *storetest.Moc
 	deleter := NewMockObjectDeleter(ctrl)
 	return New(lister, deleter, nil), lister, deleter
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestProcessRules_DeletesExpiredObjects drives the happy path.
 func TestProcessRules_DeletesExpiredObjects(t *testing.T) {

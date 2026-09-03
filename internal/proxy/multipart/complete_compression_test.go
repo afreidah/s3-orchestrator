@@ -28,11 +28,14 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
+// mpChunk is small enough that a modest fixture still crosses frame
+// boundaries; mpUploadID and mpObjectKey name the upload every test assembles.
 const (
-	// mpChunk is the codec chunk size these tests encode at, small enough that
-	// a modest fixture still crosses frame boundaries.
-	mpChunk = compression.MinChunkSize
-	// mpUploadID and mpObjectKey name the upload every test here assembles.
+	mpChunk     = compression.MinChunkSize
 	mpUploadID  = "upload-z"
 	mpObjectKey = "multi/zipped"
 )
@@ -47,6 +50,10 @@ func newMPCodec(t *testing.T) *compression.Codec {
 	t.Cleanup(c.Close)
 	return c
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // mpCompressionOn returns a config with compression enabled. MinRatio is set
 // explicitly because the fleet builds this struct directly and config
@@ -126,6 +133,10 @@ func completeWithParts(t *testing.T, opts *fleetOpts, bodies [][]byte) assembled
 	}
 	return assembled{stored: obj.Data, rec: calls.recordObject[0]}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestComplete_CompressesAssembledObject is the headline: parts sized by the
 // client assemble into one encoded object, the row describes the encoding and

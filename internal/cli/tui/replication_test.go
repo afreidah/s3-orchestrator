@@ -21,8 +21,16 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // errNope is a canned failure for the error transitions.
 var errNope = errors.New("nope")
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestLoadReplication covers both delivery paths of the fetch command.
 func TestLoadReplication(t *testing.T) {

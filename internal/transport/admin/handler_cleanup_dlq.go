@@ -23,6 +23,10 @@ import (
 	"log/slog"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // defaultCleanupDLQLimit bounds a cleanup-dlq listing when the caller does not
 // supply an explicit limit; maxCleanupDLQLimit caps it so a single request
 // cannot pull an unbounded page.
@@ -30,6 +34,10 @@ const (
 	defaultCleanupDLQLimit = 50
 	maxCleanupDLQLimit     = 500
 )
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // handleCleanupDLQ lists dead-lettered cleanups plus the total DLQ depth,
 // optionally scoped to one backend via ?backend=NAME.

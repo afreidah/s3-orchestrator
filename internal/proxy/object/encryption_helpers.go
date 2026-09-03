@@ -24,6 +24,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // streamMetricReader counts non-EOF errors surfaced by the wrapped
 // reader's Read method. Used to surface mid-stream encryption /
 // decryption failures (e.g. backend network reset during a copy)
@@ -58,6 +62,10 @@ type putEncryptState struct {
 	dek, wrappedDEK []byte
 	keyID           string
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // encryptForPut prepares an upload body for PutObject. The first call wraps
 // a fresh DEK via the KeyProvider and stores it in state; subsequent calls

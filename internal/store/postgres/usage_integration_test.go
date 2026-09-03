@@ -1,4 +1,4 @@
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 // ReconcileUsage Quota Integration Test
 //
 // Author: Alex Freidah
@@ -7,7 +7,7 @@
 // SUM(object_locations.size_bytes) per backend. The counter is otherwise
 // incrementally maintained and drifts permanently if any mutation path misses
 // an adjustment; this is the operator-facing repair for that drift.
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 
 //go:build integration
 

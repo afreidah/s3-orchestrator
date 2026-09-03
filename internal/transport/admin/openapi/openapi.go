@@ -71,21 +71,17 @@ type Param struct {
 // do not use them; ResponseType is set only when the route answers with
 // something other than JSON.
 type Route struct {
-	Method       string
-	Path         string
-	Summary      string
-	Params       []Param
-	Request      any
-	Response     any
-	Stream       any
-	Alt          any
-	ResponseType string
-	// RequestType is the media type of a non-JSON request body, such as the
-	// raw object bytes an upload carries. Takes precedence over Request.
-	RequestType string
-	// StreamMediaType is the media type of the streamed variant. Required
-	// when Stream is set.
-	StreamMediaType string
+	Method          string
+	Path            string
+	Summary         string
+	Params          []Param
+	Request         any
+	Response        any
+	Stream          any
+	Alt             any
+	ResponseType    string
+	RequestType     string // media type of a non-JSON body; takes precedence over Request
+	StreamMediaType string // required when Stream is set
 }
 
 // SecurityScheme describes how callers authenticate.

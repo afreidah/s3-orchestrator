@@ -42,10 +42,7 @@ type UsageTracker struct {
 	baseline     atomic.Pointer[map[string]core.UsageStat]
 	poolBaseline atomic.Pointer[map[string]core.PoolUsage]
 
-	// writeMu serializes the copy-on-write swaps for limits and baseline
-	// so two concurrent writers cannot lose each other's update. The hot
-	// read path never touches this mutex.
-	writeMu sync.Mutex
+	writeMu sync.Mutex // serializes the copy-on-write swaps; the read path never takes it
 }
 
 // NewUsageTracker creates a usage tracker with the given counter backend

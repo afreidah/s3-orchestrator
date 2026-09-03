@@ -13,9 +13,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// CleanupQueueEnqueuedTotal and related package-level variables used by this package.
+// Cleanup retry queue metrics.
 var (
-
 	// CleanupQueueEnqueuedTotal counts items added to the cleanup retry queue.
 	CleanupQueueEnqueuedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

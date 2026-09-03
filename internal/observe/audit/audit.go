@@ -9,8 +9,6 @@
 // with an "audit" marker for log pipeline filtering.
 // -------------------------------------------------------------------------------
 
-// Package audit provides request ID propagation and structured audit logging
-// for security-relevant operations.
 package audit
 
 import (
@@ -46,10 +44,8 @@ func SetOnEvent(fn func(event string)) {
 // guarantees no other package can collide with these keys.
 type contextKey int
 
-// requestIDKey and related constants used by this package.
-const (
-	requestIDKey contextKey = iota
-)
+// requestIDKey is the context key the correlation ID is stored under.
+const requestIDKey contextKey = iota
 
 // -------------------------------------------------------------------------
 // REQUEST ID

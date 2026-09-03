@@ -25,6 +25,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // stubMetricsStore returns a Deps mock. Most tests in this file exercise the
 // collector's own code path rather than specific store calls, so each states
 // only the reads it depends on.
@@ -34,6 +38,10 @@ func stubMetricsStore(t *testing.T) *MockDeps {
 	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	return store
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestRecordOperation_Success exercises the success label path.
 func TestRecordOperation_Success(t *testing.T) {

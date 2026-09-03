@@ -26,6 +26,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // capture records what the server saw, so header and path assertions read as
 // one struct rather than a fistful of closures.
 type capture struct {
@@ -60,6 +64,10 @@ func newCaptureServer(t *testing.T, status int, body string) (*httptest.Server, 
 	t.Cleanup(srv.Close)
 	return srv, got
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestNew_TrimsTrailingSlash asserts an operator-supplied address with a
 // trailing slash does not produce a double slash in the request path.

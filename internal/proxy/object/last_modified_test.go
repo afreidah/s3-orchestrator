@@ -30,6 +30,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newLMObjectCache builds a small object cache for the cache-hit tests.
 func newLMObjectCache(t *testing.T) objcache.ObjectCache {
 	t.Helper()
@@ -44,12 +48,20 @@ func newLMObjectCache(t *testing.T) objcache.ObjectCache {
 	return c
 }
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // lmCreatedAt is the location row's creation time, used as the fallback.
 var lmCreatedAt = time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
 
 // lmBackendTime is a backend-reported modification time, distinct from the
 // fallback so a test can tell which one the read path kept.
 var lmBackendTime = time.Date(2026, 8, 1, 9, 30, 0, 0, time.UTC)
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestHeadObject_ZeroLastModified_FallsBackToCreatedAt asserts a HEAD whose
 // backend reports no modification time reports the location's CreatedAt.

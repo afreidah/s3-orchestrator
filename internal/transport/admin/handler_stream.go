@@ -22,6 +22,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // acceptsStream reports whether the client opted into NDJSON streaming via the
 // Accept header.
 func acceptsStream(r *http.Request) bool {
@@ -82,6 +86,10 @@ func (h *Handler) streamSteps(w http.ResponseWriter, op, verb string, sequential
 		})
 	}
 }
+
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
 
 // newEventStream sets the stream content type on w and returns an emit function
 // that encodes one Event per line and flushes after each so progress reaches

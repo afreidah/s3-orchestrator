@@ -14,9 +14,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// CacheHitsTotal and related package-level variables used by this package.
+// Object data cache hit and miss metrics.
 var (
-
 	// CacheHitsTotal counts object data cache hits.
 	CacheHitsTotal = promauto.NewCounter(
 		prometheus.CounterOpts{

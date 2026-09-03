@@ -21,8 +21,6 @@
 //   - templates.go      template loading + embedded static FS
 // -------------------------------------------------------------------------------
 
-// Package ui provides the built-in web dashboard for operational visibility,
-// serving HTML pages, JSON API endpoints, and static assets.
 package ui
 
 import (
@@ -47,7 +45,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
-// sessionCookieName and related constants used by this package.
+// Session and CSRF cookie names, plus the header, path and message literals
+// the handlers share.
 const (
 	sessionCookieName = "s3orch_session"
 	csrfCookieName    = "s3orch_csrf"
@@ -64,6 +63,10 @@ const (
 	opRebalance          = "rebalance"
 	opLifecycle          = "lifecycle"
 )
+
+// -------------------------------------------------------------------------
+// INTERFACES
+// -------------------------------------------------------------------------
 
 // BackendSyncer is the backend-sync surface the UI's admin actions pane
 // invokes. *reconcile.Manager satisfies it.
@@ -122,6 +125,10 @@ type Handler struct {
 	asyncOps       asyncOpTracker
 }
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // New is the explicit-deps constructor. The DI layer constructs Deps and
 // passes it here; tests build Deps directly. Each field is the smallest
 // contract the handler uses, so wiring stays visible at the call site.
@@ -174,6 +181,10 @@ func deriveSessionKey(ui *config.UIConfig) []byte {
 func (h *Handler) UpdateConfig(cfg *config.Config) {
 	h.cfg.Store(cfg)
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // clientIP extracts the real client IP from the request, respecting
 // X-Forwarded-For when the peer is a trusted proxy.

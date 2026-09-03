@@ -39,6 +39,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newTestHandlerWithManager returns a Handler backed by a real proxy stack
 // wrapping the generated union store mock. Suitable for exercising handlers that reach
 // into stack or cb-store methods. Encryptor, rawStore, and reconciler are
@@ -86,6 +90,10 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 	}
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // objectsOver builds an object operations service over one store mock, for the
 // handlers that only read object metadata and never move bytes.
 func objectsOver(t *testing.T, store ops.ObjectStore) *ops.Objects {
@@ -122,6 +130,10 @@ func doAuth(method, path string, body string) *http.Request {
 	req.Header.Set("X-Admin-Token", "test-token")
 	return req
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestHandleStatus_EmptyBackends covers the status path with a well-formed
 // manager and no backends configured. Should return 200 with empty arrays

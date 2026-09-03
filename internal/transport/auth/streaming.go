@@ -77,20 +77,15 @@ const trailerSignatureHeader = "x-amz-trailer-signature"
 // declares via X-Amz-Content-Sha256.
 type StreamingVariant int
 
+// StreamingNone and the three streaming modes, named for the
+// X-Amz-Content-Sha256 value that declares them. What varies is where the
+// authentication lives: per-chunk signatures chained from the seed signature,
+// a signed trailer block after the zero-size chunk, or both.
 const (
-	// StreamingNone indicates the request body is not a streaming
-	// payload; the regular SigV4 payload-hash applies.
-	StreamingNone StreamingVariant = iota
-	// StreamingSigned: STREAMING-AWS4-HMAC-SHA256-PAYLOAD. Chunks carry
-	// per-chunk signatures chained from the seed signature; no trailer.
-	StreamingSigned
-	// StreamingSignedTrailer: STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER.
-	// Chunks carry per-chunk signatures and a signed trailer block
-	// follows the zero-size chunk.
-	StreamingSignedTrailer
-	// StreamingUnsignedTrailer: STREAMING-UNSIGNED-PAYLOAD-TRAILER.
-	// Chunks are not authenticated; only the trailer block is signed.
-	StreamingUnsignedTrailer
+	StreamingNone            StreamingVariant = iota // not streaming; the regular payload hash applies
+	StreamingSigned                                  // STREAMING-AWS4-HMAC-SHA256-PAYLOAD, no trailer
+	StreamingSignedTrailer                           // ...-PAYLOAD-TRAILER, signed chunks and a signed trailer
+	StreamingUnsignedTrailer                         // STREAMING-UNSIGNED-PAYLOAD-TRAILER, only the trailer is signed
 )
 
 // StreamingMaterial is the data the chunk reader needs to verify the

@@ -50,6 +50,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
+
 // ProvideBucketAuth creates the credential-to-bucket registry.
 func ProvideBucketAuth(i do.Injector) (*auth.BucketRegistry, error) {
 	cfg, err := do.Invoke[*config.Config](i)
@@ -187,6 +191,10 @@ type adminHandlerRequiredDeps struct {
 	ops      *ops.Services
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // resolveAdminHandlerRequiredDeps invokes every required dependency the
 // admin handler needs and bails on the first error.
 func resolveAdminHandlerRequiredDeps(i do.Injector) (adminHandlerRequiredDeps, error) {
@@ -224,6 +232,10 @@ func toAdminWorkerHealth(snaps []lifecycle.WorkerHealth) []adminapi.WorkerHealth
 	}
 	return out
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // ProvideAdminHandler creates the admin API handler.
 func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {

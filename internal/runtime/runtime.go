@@ -9,10 +9,6 @@
 // The CLI Run is a thin wrapper that constructs a Runtime and calls Run.
 // -------------------------------------------------------------------------------
 
-// Package runtime is the daemon composition root. It assembles every
-// long-lived subsystem - observability, DI, the HTTP listener, background
-// workers, the reload coordinator - and owns the shutdown order so the
-// CLI entry point does not.
 package runtime
 
 import (
@@ -47,6 +43,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // Options carries the inputs the CLI Run passes through to runtime.
 type Options struct {
 	ConfigPath string
@@ -76,6 +76,10 @@ type Runtime struct {
 
 	ready atomic.Bool
 }
+
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
 
 // New assembles the runtime. Order matters: config -> observability ->
 // DI -> required services -> HTTP -> reload coordinator -> lifecycle
@@ -150,6 +154,10 @@ func New(opts Options, cfg *config.Config) (*Runtime, error) {
 	return r, nil
 }
 
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
+
 // Run starts background services, the SIGHUP watcher, and the HTTP
 // listener; blocks until ctx is cancelled or the HTTP listener errors;
 // then performs ordered shutdown. The returned error is the listener's
@@ -207,6 +215,10 @@ func (r *Runtime) Run(ctx context.Context) error {
 	r.log.InfoContext(ctx, "server stopped")
 	return nil
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // dbBreaker resolves the database circuit breaker from the injector for
 // the /health handler. Returns nil when the breaker has not been

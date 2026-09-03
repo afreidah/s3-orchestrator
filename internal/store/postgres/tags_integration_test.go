@@ -1,4 +1,4 @@
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 // Object Tag Integration Tests
 //
 // Author: Alex Freidah
@@ -11,7 +11,7 @@
 // The cases that matter are the conditional ones: removing one replica of a
 // multi-copy object has to leave its tags alone, while removing the last copy
 // or overwriting the object has to take them.
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 
 //go:build integration
 
@@ -23,6 +23,10 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // tagNames flattens a tag set to its keys in the order the store returned
 // them, so ordering assertions read as a list rather than a loop.
@@ -59,6 +63,10 @@ func assertNoTags(t *testing.T, s *Store, key, msg string) {
 		t.Errorf("%s: %v", msg, tagNames(got))
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestStoreInt_CountObjectTags_MatchesTheSetSize verifies the count the read
 // path serves agrees with the set the tagging endpoint returns, and that it

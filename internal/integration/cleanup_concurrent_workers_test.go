@@ -26,12 +26,20 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newAuxCleanupWorker builds an additional CleanupWorker instance that
 // shares testManager and testStore but carries a distinct instanceID.
 // Lets a test spin up N workers all racing on the same queue.
 func newAuxCleanupWorker(instanceID string) *worker.CleanupWorker {
 	return worker.NewCleanupWorker(worker.CleanupWorkerDeps{Ops: testStack.Runtime, Store: testStore, Concurrency: 10, InstanceID: instanceID, ClaimGracePeriod: 5 * time.Minute})
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestInt_CleanupQueue_ConcurrentWorkersProcessExactlyOnce enqueues N
 // items, spawns K worker instances with distinct instanceIDs, and

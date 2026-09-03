@@ -19,6 +19,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // poolNames lists the pools an operation charges, for comparison in the
 // membership assertions below.
 func poolNames(lim UsageLimits, op s3op.Operation) []string {
@@ -29,6 +33,10 @@ func poolNames(lim UsageLimits, op s3op.Operation) []string {
 	}
 	return names
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestNewUsageLimits_WildcardCoversEveryMeteredOperation pins the desugaring a
 // bare api_request_limit relies on: one pool that charges everything.

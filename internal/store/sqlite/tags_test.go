@@ -21,6 +21,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // tagNames flattens a tag set to its keys, in the order the store returned
 // them, so ordering assertions read as a list rather than a loop.
 func tagNames(tags []core.Tag) []string {
@@ -39,6 +43,10 @@ func seedObject(t *testing.T, s *Store, key, backend string) {
 		t.Fatalf("RecordObject(%s, %s): %v", key, backend, err)
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestObjectTags_ReplaceAndRead covers the round trip and the ordering the
 // Tagging XML response depends on: the query sorts by key, so a set written in

@@ -18,6 +18,10 @@ import (
 	"strings"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // CredentialConfig holds a single set of client credentials for accessing a
 // virtual bucket. Supports SigV4 (access_key_id + secret_access_key) or legacy
 // token auth.
@@ -74,6 +78,10 @@ func newSeenCredentials() *seenCredentials {
 		tokens:     make(map[string]bool),
 	}
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // validateBucket checks a single bucket entry. seen is shared across the full
 // list so duplicates are detected across bucket boundaries.

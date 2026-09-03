@@ -18,6 +18,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // usageTxStub drives ReconcileUsage with seeded current/truth maps and records
 // the SetBackendBytesUsed writes it receives.
 type usageTxStub struct {
@@ -29,6 +33,10 @@ type usageTxStub struct {
 	setErr     error
 	sets       map[string]int64
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func (s *usageTxStub) AllBackendBytesUsed(context.Context) (map[string]int64, error) {
 	return s.current, s.currentErr

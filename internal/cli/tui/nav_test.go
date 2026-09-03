@@ -19,7 +19,15 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 func key(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func TestContentWidth_FloorAndSubtraction(t *testing.T) {
 	t.Parallel()

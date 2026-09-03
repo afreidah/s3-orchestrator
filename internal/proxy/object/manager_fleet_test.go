@@ -37,6 +37,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // objectsCalls holds the per-test capture state for assertions.
 type objectsCalls struct {
 	mu                       sync.Mutex
@@ -53,6 +57,10 @@ type objRecordCall struct {
 	Form         *core.StoredForm
 	Tags         []core.Tag // the set the write carried, replacing whatever the key held
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 func stubObjGetBackend(c *objectsCalls, resp string, err error) func(context.Context, int64, []string) (string, error) {
 	return func(_ context.Context, _ int64, _ []string) (string, error) {
@@ -250,6 +258,10 @@ type flippingDrainChecker struct {
 	calls   int
 }
 
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
+
 func (f *flippingDrainChecker) IsDraining(name string) bool {
 	if name != f.backend {
 		return false
@@ -389,6 +401,10 @@ func TestCanAcceptWrite_HasCapacity(t *testing.T) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // requestCapped builds a backend's limits from a bare monthly request cap plus
 // byte caps, the shape api_request_limit desugars into.
 func requestCapped(t *testing.T, api, egress, ingress int64) core.UsageLimits {
@@ -411,6 +427,10 @@ func alreadySpent(mgr *fleet, name string, api, egress, ingress int64) {
 	}
 	mgr.Runtime.Usage().SetBaseline(name, stat, pools)
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestCanAcceptWrite_NoCapacity asserts the over-limit branch.
 func TestCanAcceptWrite_NoCapacity(t *testing.T) {
@@ -2491,12 +2511,12 @@ func TestGetObject_SequentialBroadcast_WhenDisabled(t *testing.T) {
 // watermark of concurrent GetObject calls so a test can assert that the
 // degraded broadcast respects its parallelism cap. Used by
 // TestGetObject_DegradedBroadcastCap_RespectsLimit.
+// The counters are shared across every wrapper backed by the same tracker, so
+// the watermark reflects total cross-backend concurrency rather than
+// per-backend reentrancy.
 type concurrencyTrackingBackend struct {
 	*backendtest.InMemory
-	delay time.Duration
-	// inFlight + maxInFlight are shared across every wrapper backed by
-	// the same tracker so the watermark reflects total cross-backend
-	// concurrency rather than per-backend reentrancy.
+	delay       time.Duration
 	inFlight    *atomic.Int32
 	maxInFlight *atomic.Int32
 }
@@ -2959,6 +2979,10 @@ func TestGetObject_EmptyEncryptedObject(t *testing.T) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // encryptedObjectFleet builds a fleet holding one encrypted object with the
 // given plaintext, returning the manager and the recorded location row.
 func encryptedObjectFleet(t *testing.T, key, plaintext string) *fleet {
@@ -2994,6 +3018,10 @@ func encryptedObjectFleet(t *testing.T, key, plaintext string) *fleet {
 	return newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1},
 		&fleetOpts{Order: []string{"b1"}, BackendTimeout: 30 * time.Second, Encryptor: enc, PendingDisabled: true})
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestGetObject_SuffixRangeOnEmptyEncryptedObject verifies an unsatisfiable
 // range surfaces as InvalidRange instead of being silently swapped for an

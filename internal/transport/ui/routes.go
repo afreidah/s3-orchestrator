@@ -16,20 +16,21 @@ import (
 	"net/http"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // quotaTracking categorises a UI route's relationship to backend quota
 // accounting. Tests in this package read the table to ensure every newly
 // registered API route has been classified.
 type quotaTracking int
 
-// quotaTrackingNone and related constants used by this package.
+// quotaTrackingNone and quotaTrackingTracked classify what a route costs. A
+// tracked route's backend operation flows through the same usage.Record,
+// IncrementQuota and DecrementQuota calls the S3-protocol handlers use, and the
+// audit note on its table entry cites the exact recording site.
 const (
-	// quotaTrackingNone is for routes that never reach a real backend
-	// (HTML pages, JSON read-throughs, status pollers, log streamers).
-	quotaTrackingNone quotaTracking = iota
-	// quotaTrackingTracked is for routes whose backend op flows through
-	// the same usage.Record / IncrementQuota / DecrementQuota calls used
-	// by the S3-protocol handlers. The audit notes (uiAPIRoutes) cite
-	// the exact recording site for each entry.
+	quotaTrackingNone quotaTracking = iota // never reaches a backend: pages, read-throughs, pollers
 	quotaTrackingTracked
 )
 
@@ -40,10 +41,12 @@ type uiAPIRoute struct {
 	suffix   string
 	handler  func(*Handler) http.HandlerFunc
 	tracking quotaTracking
-	// audit explains how the route's backend op (if any) reaches usage
-	// tracking. Empty for quotaTrackingNone routes.
-	audit string
+	audit    string // how the backend op reaches usage tracking; empty for untracked routes
 }
+
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
 
 // uiAPIRoutes is the full set of UI routes, with audit notes for any
 // endpoint that may touch a real backend. Adding a new route to Register

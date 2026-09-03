@@ -28,6 +28,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// -------------------------------------------------------------------------
+// PUT
+// -------------------------------------------------------------------------
+
 // finalizePutSuccess emits success metrics, audit log, and an event
 // notification for a successful PutObject. Records failover spans when
 // retries occurred.
@@ -43,6 +47,10 @@ func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, opera
 	pobserve.PutCompleted(ctx, span, key, backendName, size)
 	o.invalidateObjectCaches(key)
 }
+
+// -------------------------------------------------------------------------
+// COPY
+// -------------------------------------------------------------------------
 
 // finalizeMaterializedCopy runs the post-PUT-success steps for the
 // stream-through copy path. Differs from finalizeNativeCopy by adding
@@ -90,6 +98,10 @@ func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyContext
 	o.invalidateObjectCaches(req.destKey)
 	return etag, true, nil
 }
+
+// -------------------------------------------------------------------------
+// DELETE
+// -------------------------------------------------------------------------
 
 // finalizeDelete runs the post-fanout success steps for single-key
 // DeleteObject: operation-completion accounting (pinned to the first

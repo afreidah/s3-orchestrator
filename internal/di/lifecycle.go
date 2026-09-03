@@ -27,6 +27,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // lifecycleWorkerSet bundles the workers ProvideLifecycleManager registers
 // services for. Resolved via resolveLifecycleWorkers so the provider body
 // stays a flat sequence of registrations rather than a chain of error
@@ -39,6 +43,10 @@ type lifecycleWorkerSet struct {
 	scrubber      *worker.Scrubber
 	pendingReaper *worker.PendingReaper // nil when the pending pattern is off
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // resolveLifecycleWorkers invokes every worker the lifecycle manager
 // registers a service for. drain.Manager is not among them: di.WireManager
@@ -82,6 +90,10 @@ func registerWorkerServices(sm *lifecycle.Manager, mp *multipart.Manager, rt *in
 	sm.Register("lifecycle", NewLifecycleService(expirer, locker))
 	sm.Register("scrubber", worker.NewScrubberService(ws.scrubber, locker))
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // ProvideLifecycleManager creates and registers all background services.
 func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {

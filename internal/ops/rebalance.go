@@ -24,6 +24,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // Defaults applied to a manual rebalance cycle for any setting the worker
 // config and the running config both leave unset.
 const (
@@ -32,6 +36,10 @@ const (
 	defaultRebalanceThreshold   = 0.1
 	defaultRebalanceConcurrency = 5
 )
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // RebalanceResult reports one rebalance cycle.
 type RebalanceResult struct {

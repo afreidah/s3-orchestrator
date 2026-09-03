@@ -33,6 +33,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // workerCore bundles the dependencies every background worker needs.
 type workerCore struct {
 	Runtime *infra.BackendRuntime
@@ -46,6 +50,10 @@ type workerCoreWithCfg struct {
 	workerCore
 	Cfg *config.Config
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // workerCoreFrom pulls the runtime, coordinator and store through an
 // in-flight resolver, so a caller that needs more than the core resolves
@@ -73,6 +81,10 @@ func resolveWorkerCoreWithCfg(i do.Injector) (workerCoreWithCfg, error) {
 	cfg := r.ResolveNamed[*config.Config]("Config")
 	return workerCoreWithCfg{workerCore: workerCoreFrom(r), Cfg: cfg}, r.err
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // ProvideRebalancer constructs the rebalancer worker.
 func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {

@@ -6,7 +6,6 @@
 //	mockgen -destination=role_mocks.go -package=storetest github.com/afreidah/s3-orchestrator/internal/store/core ObjectStore,QuotaStore,CleanupStore,ExpiredObjectsLister,BackendLifecycleStore,DashboardStore,LifecycleAdmin
 //
 
-// Package storetest is a generated GoMock package.
 package storetest
 
 import (

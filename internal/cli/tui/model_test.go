@@ -26,8 +26,16 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // errLister always fails, for the load error paths.
 type errLister struct{}
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func (errLister) ListObjects(_ context.Context, _, _ string) (*adminapi.ObjectListResponse, error) {
 	return nil, errors.New("nope")

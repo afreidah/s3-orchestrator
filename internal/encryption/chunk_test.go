@@ -19,6 +19,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // testDEK returns a fixed 256-bit key for deterministic tests.
 func testDEK() []byte {
 	dek := make([]byte, 32)
@@ -27,6 +31,10 @@ func testDEK() []byte {
 	}
 	return dek
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestDeriveNonce_UniquePerIndex asserts each chunk index yields a distinct
 // nonce. Reusing a nonce under one DEK is a confidentiality break, so this is
@@ -127,6 +135,10 @@ func TestRoundTrip_MultipleFullChunks(t *testing.T) {
 	testRoundTrip(t, 256, 256*5)
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // testRoundTrip is the shared body of the encrypt/decrypt round-trip
 // table tests. Encrypts the plaintext, decrypts the ciphertext, and
 // asserts byte-for-byte equality plus the size invariants.
@@ -174,6 +186,10 @@ func testRoundTrip(t *testing.T, chunkSize, inputSize int) {
 		t.Errorf("decrypted len = %d, want %d", len(got), len(plaintext))
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestChunkParseHeader_InvalidMagic verifies the chunk parse header invalid magic path by exercising bytes.NewReader.
 func TestChunkParseHeader_InvalidMagic(t *testing.T) {
@@ -398,6 +414,10 @@ func TestEncryptDecryptReaders_ZeroAllocsOnChunkHotPath(t *testing.T) {
 	assertAllocsBelow(t, "decrypt", decOpen, scratch, allocsUpperBound)
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // encryptAllForBench encrypts plaintext once with the given DEK/chunk
 // size and returns the chunk body (after stripping the header) plus
 // the parsed header fields. Helper extracted to keep
@@ -450,6 +470,10 @@ func drainReader(t *testing.T, r io.Reader, scratch []byte) {
 		}
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestEncryptReader_ReleaseFiresExactlyOnce verifies the pool-return
 // contract for the encrypt reader: the release closure must fire on

@@ -23,16 +23,12 @@ type DebugConfig struct {
 // ring buffer that backs the admin trace-snapshot endpoint. Disabled by
 // default — the recorder is cheap but does carry continuous overhead, so
 // only flip it on where operators actually want the safety net.
+// MinAge maps directly to runtime/trace.FlightRecorderConfig.MinAge and
+// defaults to 30s, long enough to cover a typical incident window without
+// holding excessive memory.
 type FlightRecorderConfig struct {
-	// Enabled starts the FlightRecorder at boot. When false the admin
-	// snapshot endpoint returns 503.
-	Enabled bool `yaml:"enabled"`
-
-	// MinAge is the soft lower bound on the trace window age, mapped
-	// directly to runtime/trace.FlightRecorderConfig.MinAge. Defaults to
-	// 30s — long enough to cover a typical incident window without
-	// excessive memory.
-	MinAge time.Duration `yaml:"min_age"`
+	Enabled bool          `yaml:"enabled"` // when false, the admin snapshot endpoint returns 503
+	MinAge  time.Duration `yaml:"min_age"` // soft lower bound on the trace window age
 }
 
 // setDefaultsAndValidate populates defaults and returns any validation

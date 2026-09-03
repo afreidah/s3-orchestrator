@@ -23,6 +23,10 @@ import (
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
+// -------------------------------------------------------------------------
+// COPY LOOKUP
+// -------------------------------------------------------------------------
+
 // GetAllObjectLocations returns all copies of an object, ordered by created_at
 // ascending (oldest/primary first). Used for read failover.
 func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error) {
@@ -58,6 +62,10 @@ func (s *Store) GetObjectBackendsForKeys(ctx context.Context, keys []string) (ma
 	return out, nil
 }
 
+// -------------------------------------------------------------------------
+// UNDER-REPLICATION
+// -------------------------------------------------------------------------
+
 // GetUnderReplicatedObjects finds objects with fewer copies than the target
 // replication factor. Returns all rows for those objects so callers know which
 // backends already have copies.
@@ -88,6 +96,10 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 
 	return toFatObjectLocations(rows), nil
 }
+
+// -------------------------------------------------------------------------
+// OVER-REPLICATION
+// -------------------------------------------------------------------------
 
 // GetOverReplicatedObjects finds objects with more copies than the target
 // replication factor. Returns all rows for those objects so callers can

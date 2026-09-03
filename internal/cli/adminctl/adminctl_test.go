@@ -22,6 +22,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
 )
 
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
+
 // TestMain clears the S3O_ADMIN_* environment variables before the suite runs.
 // A developer's exported admin addr/token would otherwise leak into the tests
 // that exercise config-file loading, which Run skips whenever those env vars
@@ -371,6 +375,10 @@ type wrapperCase struct {
 	wantQueryIn string // substring match (some commands optionally append ?...)
 }
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // simpleWrapperCases enumerates the flag-shape variants for every plain
 // HTTP wrapper. Keeping the cmd directly on each row removes the
 // case-name -> cmd-name switch that pushed the test over the cognitive
@@ -403,6 +411,10 @@ var simpleWrapperCases = []wrapperCase{
 	{"object-tags-clear", "object-tags", []string{"-key", "bucket/k", "-clear"}, http.MethodDelete, "/admin/api/objects/tags/bucket/k", ""},
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // runWrapperCase exercises a single wrapper assertion. Pulling the body out
 // of the loop keeps TestCommand_SimpleGetAndPostWrappers below the
 // cognitive-complexity threshold (Sonar S3776).
@@ -430,6 +442,10 @@ func runWrapperCase(t *testing.T, tc *wrapperCase) {
 		t.Errorf("query = %q, want to contain %q", gotQuery, tc.wantQueryIn)
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestCommand_SimpleGetAndPostWrappers walks every handler that is a
 // one-line wrapper around doGet/doPost so the matrix is covered without

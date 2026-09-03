@@ -22,6 +22,10 @@ import (
 	"time"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // addrFor returns an address that was bindable a moment ago. With hold set the
 // listener stays open, so the caller can create a bind conflict.
 func addrFor(t *testing.T, hold bool) (addr string, occupied net.Listener) {
@@ -56,6 +60,10 @@ func serverOn(t *testing.T, mainAddr, metricsAddr string, requireMetrics bool) *
 	}
 	return s
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestListen_MetricsConflictFailsStartup is the defect: a bind conflict on the
 // metrics port used to leave the S3 service running and healthy while

@@ -35,6 +35,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 )
 
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
+
 // GetObject retrieves an object from the backend where it's stored. Tries
 // the primary copy first, then falls back to replicas if the primary
 // fails. When the object is encrypted, the response body is transparently
@@ -85,6 +89,10 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 	}
 	return &GetResult{GetObjectResult: result, TagCount: tagCount}, nil
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // tryGetObjectCache returns a synthesized GetObjectResult when the object
 // data cache holds a non-range hit for this key. ok=false signals that the
@@ -197,15 +205,13 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 
 // backendRange is a client Range header translated into what the backend
 // should actually be asked for.
+// For an encrypted object the header is in ciphertext coordinates, and rng
+// carries the chunk math needed to slice the plaintext back out; both are the
+// zero value when no translation happened.
 type backendRange struct {
-	// header is the Range header to send the backend, empty for a whole-object
-	// read. For an encrypted object this is in ciphertext coordinates.
-	header string
-	// rng carries the chunk math needed to slice the plaintext back out. Nil
-	// when no translation happened.
-	rng *encryption.RangeResult
-	// ptStart and ptEnd are the plaintext bounds the client asked for.
-	ptStart, ptEnd int64
+	header         string // empty for a whole-object read
+	rng            *encryption.RangeResult
+	ptStart, ptEnd int64 // the plaintext bounds the client asked for
 }
 
 // resolveBackendRange translates a plaintext Range header into the ciphertext
@@ -311,23 +317,6 @@ func (o *Manager) dropCorruptedLocation(ctx context.Context, key, beName string)
 	o.cache.Delete(key)
 }
 
-// populateObjectCache wraps result.Body in a tee that copies bytes into
-// a pre-sized buffer as the response streams to the client. On clean
-// read completion (EOF at exactly result.Size bytes) the buffer is
-// handed to the cache. The cache is left untouched on early disconnect,
-// mid-stream errors, or any short-/over-read versus the announced size.
-//
-// Skipped (no buffering, body unchanged) when:
-//   - the cache is disabled
-//   - the request carries a Range header (partial responses are not
-//     stored as full-object cache entries)
-//   - the backend did not return a positive Content-Length (size <= 0)
-//   - the announced size exceeds the cache's per-entry admission limit
-//
-// In every skip case the backend body streams straight through to the
-// client with zero proxy-side buffering, so a 5 GB GET with a 100 MB
-// max_object_size never allocates more than the read buffer worth of
-// heap.
 // applyStoredIdentity replaces the serving copy's answer with the object's
 // own, which is the point of storing it: the backend reports a digest of the
 // bytes it holds, so an unranged GET that failed over to a replica would
@@ -344,6 +333,14 @@ func applyStoredIdentity(res *s3be.GetObjectResult, loc *core.ObjectLocation) {
 	}
 }
 
+// populateObjectCache tees the response body into a pre-sized buffer as it
+// streams to the client, handing the buffer to the cache only on a clean read
+// of exactly result.Size bytes. An early disconnect, a mid-stream error or a
+// short read leaves the cache untouched.
+//
+// A disabled cache, a ranged request, a non-positive Content-Length or a size
+// over the per-entry admission limit all skip the tee entirely, so the body
+// streams through with no proxy-side buffering.
 func (o *Manager) populateObjectCache(key, rangeHeader string, result *s3be.GetObjectResult, tagCount int) error {
 	if o.objectCache == nil || rangeHeader != "" || result.Size <= 0 {
 		return nil

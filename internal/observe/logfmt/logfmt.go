@@ -15,8 +15,6 @@
 // without text-matching message strings.
 // -------------------------------------------------------------------------------
 
-// Package logfmt provides typed slog.Attr constructors for the project's
-// logging conventions.
 package logfmt
 
 import (
@@ -26,15 +24,10 @@ import (
 // Outcome values for the canonical "outcome" attribute. Use these constants
 // rather than ad-hoc strings so dashboards can rely on a closed value set.
 const (
-	// OutcomeOK marks a successful terminal log line.
-	OutcomeOK = "ok"
-	// OutcomeError marks a terminal failure.
-	OutcomeError = "error"
-	// OutcomeSkipped marks a no-op (precondition false, already done, etc).
-	OutcomeSkipped = "skipped"
-	// OutcomeTimeout marks a deadline-exceeded failure.
-	OutcomeTimeout = "timeout"
-	// OutcomeNotFound marks a 404-equivalent failure.
+	OutcomeOK       = "ok"
+	OutcomeError    = "error"
+	OutcomeSkipped  = "skipped" // a no-op: precondition false, already done
+	OutcomeTimeout  = "timeout" // deadline exceeded
 	OutcomeNotFound = "not_found"
 )
 

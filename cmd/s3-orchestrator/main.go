@@ -8,9 +8,6 @@
 // signal handling and flag parsing.
 // -------------------------------------------------------------------------------
 
-// Package main is the s3-orchestrator binary entry point. It dispatches
-// to subcommands implemented under internal/cli and wraps process exit
-// so library code never calls os.Exit directly.
 package main
 
 import (
@@ -60,6 +57,10 @@ func main() { // codecov:ignore -- thin wrapper, logic tested via subcommands
 	}
 	runServe()
 }
+
+// -------------------------------------------------------------------------
+// USAGE AND SUBCOMMANDS
+// -------------------------------------------------------------------------
 
 // printUsage writes the top-level command summary to stderr. Called when
 // the binary is invoked with help, --help, -h, or no arguments.

@@ -20,6 +20,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // adminAction is a write operation the user can invoke. An empty confirm runs
 // immediately; otherwise confirm is shown as a y/N prompt before run fires.
 // before, when set, updates the pane the moment the action is accepted, so the
@@ -54,6 +58,10 @@ type inputPrompt struct {
 	input textinput.Model
 	build func(value string) adminAction
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // askFor arms an input prompt whose field starts empty, with placeholder shown
 // as a hint. The action is not built until a value is submitted, so the

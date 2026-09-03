@@ -23,6 +23,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// PROJECTION AND PREDICATES
+// -------------------------------------------------------------------------
+
 // rewritableColumns is the projection both compression listings read.
 const rewritableColumns = `object_key, backend_name, size_bytes, encrypted, encryption_key,
 	key_id, plaintext_size, compression_algorithm, compression_level,
@@ -58,6 +62,10 @@ const uncompressedPredicate = `compression_algorithm IS NULL
 // no equivalent of the probe filter: every copy this pass succeeds on leaves the
 // predicate, and there is no decision it can decline on.
 const compressedPredicate = `compression_algorithm IS NOT NULL`
+
+// -------------------------------------------------------------------------
+// LISTINGS
+// -------------------------------------------------------------------------
 
 // ListUncompressedLocations returns a page of copies whose bytes carry no
 // encoding, which is what compress-existing rewrites.
@@ -122,6 +130,10 @@ func scanRewritable(rows *sql.Rows) (core.RewritableLocation, error) {
 	loc.LogicalSize = logicalSize.Int64
 	return loc, nil
 }
+
+// -------------------------------------------------------------------------
+// STATISTICS AND WRITES
+// -------------------------------------------------------------------------
 
 // CompressionStats reports per-backend compression totals for the dashboard.
 // Backends holding no encoded copies are absent rather than present as zeroes,

@@ -19,14 +19,17 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // sortField selects how the listing is ordered. Directories are always grouped
 // ahead of objects; the field orders rows within each group.
 type sortField int
 
 const (
-	// sortName orders by name ascending; sortSize orders objects largest-first.
-	sortName sortField = iota
-	sortSize
+	sortName sortField = iota // by name ascending
+	sortSize                  // objects largest-first
 )
 
 // String renders the sort field for the status line.
@@ -36,6 +39,10 @@ func (s sortField) String() string {
 	}
 	return "name"
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // refreshVisible rebuilds visible from entries under the active filter and sort,
 // then syncs the table rows. Call it whenever entries, the filter, or the sort

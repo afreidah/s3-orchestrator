@@ -1,8 +1,15 @@
-// CB-aware *sql.DB wrapper for the sqlite driver. Every statement the
-// store fires - direct or transaction-bound - flows through this single
-// chokepoint, which calls breaker.PreCheck before the call and
-// breaker.PostCheck after. Advisory locks emulate a process-local mutex
-// and never touch *sql.DB, so they bypass the breaker.
+// -------------------------------------------------------------------------------
+// SQLite Circuit Breaker Chokepoint
+//
+// Author: Alex Freidah
+//
+// CB-aware *sql.DB wrapper for the sqlite driver. Every statement the store
+// fires - direct or transaction-bound - flows through this single chokepoint,
+// which calls breaker.PreCheck before the call and breaker.PostCheck after.
+// Advisory locks emulate a process-local mutex and never touch *sql.DB, so they
+// bypass the breaker.
+// -------------------------------------------------------------------------------
+
 package sqlite
 
 import (
@@ -11,6 +18,10 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 )
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // dbAPI is the slice of *sql.DB the sqlite store actually uses for
 // non-transactional statements. Defined as an interface so the
@@ -34,6 +45,10 @@ type cbDB struct {
 	cb    *breaker.CircuitBreaker
 }
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // wrapDB returns inner unchanged when cb is nil so test fixtures and
 // migration runners don't pay for the wrapping.
 func wrapDB(inner *sql.DB, cb *breaker.CircuitBreaker) dbAPI {
@@ -42,6 +57,10 @@ func wrapDB(inner *sql.DB, cb *breaker.CircuitBreaker) dbAPI {
 	}
 	return &cbDB{inner: inner, cb: cb}
 }
+
+// -------------------------------------------------------------------------
+// GUARDED STATEMENTS
+// -------------------------------------------------------------------------
 
 // ExecContext runs the statement under the breaker.
 func (c *cbDB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
@@ -82,6 +101,10 @@ func (c *cbDB) QueryContext(ctx context.Context, query string, args ...any) (*sq
 func (c *cbDB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
 	return c.inner.QueryRowContext(ctx, query, args...)
 }
+
+// -------------------------------------------------------------------------
+// TRANSACTIONS AND LIFECYCLE
+// -------------------------------------------------------------------------
 
 // cbWithTx opens a transaction under the breaker, runs fn against it,
 // commits on a nil return, and rolls back otherwise. Owning the tx

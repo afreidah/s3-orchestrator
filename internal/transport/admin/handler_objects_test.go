@@ -37,6 +37,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newObjectsHandler builds a Handler whose object operations read the given
 // mock store.
 func newObjectsHandler(t *testing.T, mock core.ObjectStore) *Handler {
@@ -51,6 +55,10 @@ func newObjectsHandler(t *testing.T, mock core.ObjectStore) *Handler {
 		logLevel:  &lv,
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestHandleListObjects_Happy maps a delimiter-grouped store page into the DTO.
 func TestHandleListObjects_Happy(t *testing.T) {

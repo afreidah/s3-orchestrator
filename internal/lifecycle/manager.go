@@ -8,8 +8,6 @@
 // method); optional Stopper interface adds explicit cleanup on shutdown.
 // -------------------------------------------------------------------------------
 
-// Package lifecycle provides a service manager for registering and running
-// background goroutines with coordinated graceful shutdown.
 package lifecycle
 
 import (

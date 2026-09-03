@@ -18,11 +18,19 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // md5Hex is the digest a client would compute over its own bytes.
 func md5Hex(s string) string {
 	sum := md5.Sum([]byte(s)) //nolint:gosec // G401: see above
 	return hex.EncodeToString(sum[:])
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestSingle_MatchesS3sWholeObjectForm pins the single-part shape: the hex
 // digest, quoted.

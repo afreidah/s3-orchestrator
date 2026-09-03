@@ -16,6 +16,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // cfgLoader returns a loader that yields a Config with the given address and
 // admin credentials, used to exercise Resolve's config-fallback path.
 func cfgLoader(addr, adminToken, adminKey string) func() (*config.Config, error) {
@@ -37,6 +41,10 @@ func mustNotLoad(t *testing.T) func() (*config.Config, error) {
 		return nil, nil
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestResolve_FlagsBeatEnvAndConfig verifies flags win over both the
 // environment and the config file (which is not even loaded).

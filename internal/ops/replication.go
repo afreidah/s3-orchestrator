@@ -23,6 +23,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // Defaults applied to a manual replication cycle for any setting the worker
 // config and the running config both leave unset.
 const (
@@ -33,6 +37,10 @@ const (
 // maxCleanBatchSize caps a caller-supplied surplus-cleanup batch so one
 // request cannot schedule an unbounded pass.
 const maxCleanBatchSize = 10000
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // ReplicateResult reports one replication cycle. Failed counts the objects the
 // cycle could not bring up to factor, so a pass that created nothing because
@@ -88,6 +96,10 @@ func NewReplication(d ReplicationDeps) *Replication {
 		cfg:        d.Config,
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // Replicate runs one replication cycle and returns the copies it created.
 // observer, when non-nil, receives a start and end step per object replicated.

@@ -23,6 +23,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // Paths served by more than one entry, named so the table cannot drift
 // between the methods that share a route.
 const (
@@ -75,35 +79,31 @@ const mediaOctetStream = "application/octet-stream"
 
 // route is one admin endpoint. Request, Stream, Alt and ResponseType are zero
 // for the routes that do not need them, which is most of them.
+//
+// Method and Pattern stay apart rather than joined into the mux pattern so the
+// table remains greppable by path. Stream is the event emitted per line when a
+// caller sends Accept: application/x-ndjson. Alt is a second success shape
+// under the same status code, which only two-phase backend removal needs: the
+// confirmation preview and the executed acknowledgement share one route. The
+// two media-type overrides are empty for JSON, and set where a route carries
+// raw bytes instead - an object upload in, a trace snapshot out.
 type route struct {
-	// Method and Pattern combine into the net/http mux pattern, kept apart
-	// so the table stays greppable by path.
-	Method  string
-	Pattern string
-	Handler http.HandlerFunc
-	// Summary is the one-line description of the endpoint.
-	Summary string
-	// Request is the decoded request body; nil when the route takes none.
-	Request any
-	// Response is the success body. Nil only when ResponseType says the
-	// route does not answer in JSON.
-	Response any
-	// Stream is the event emitted per line when the caller sends
-	// Accept: application/x-ndjson. Nil for routes that only answer in JSON.
-	Stream any
-	// Alt is a second success shape the same route can return under the same
-	// status code. Only two-phase backend removal needs one: the
-	// confirmation preview and the executed acknowledgement share a route.
-	Alt any
-	// Params are the query and path parameters the handler reads.
-	Params []param
-	// ResponseType overrides the success media type. Empty means JSON; the
-	// trace snapshot serves a binary trace file and has no Response schema.
+	Method       string
+	Pattern      string
+	Handler      http.HandlerFunc
+	Summary      string
+	Request      any
+	Response     any
+	Stream       any
+	Alt          any
+	Params       []param
 	ResponseType string
-	// RequestType overrides the request media type. Empty means JSON; an
-	// object upload carries raw bytes rather than a decodable document.
-	RequestType string
+	RequestType  string
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // routes describes every admin endpoint. Adding an entry here is what mounts
 // it -- there is no other registration path.
