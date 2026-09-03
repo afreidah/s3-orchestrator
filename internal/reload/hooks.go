@@ -4,11 +4,12 @@
 // Author: Alex Freidah
 //
 // One Hook implementation per reloadable subsystem: TLS cert rotator,
-// S3 bucket auth registry, rate limiter, quota sync, per-backend usage
-// limits, slog level, worker configs, manager config sections, and the
-// UI handler. Each hook resolves its dependencies through the injector
-// (or a coordinator-owned handle for the cert reloader) so the coordinator
-// stays a plain orchestrator that does not import any individual subsystem.
+// S3 bucket auth registry, browser CORS rules, rate limiter, quota sync,
+// per-backend usage limits, slog level, worker configs, manager config
+// sections, and the UI handler. Each hook resolves its dependencies through
+// the injector (or a coordinator-owned handle for the cert reloader) so the
+// coordinator stays a plain orchestrator that does not import any individual
+// subsystem.
 // -------------------------------------------------------------------------------
 
 package reload
@@ -28,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
+	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
@@ -50,6 +52,7 @@ func defaultHooks(inj do.Injector, certReloader *httputil.CertReloader, logLevel
 	return []Hook{
 		&tlsCertHook{reloader: certReloader},
 		&bucketAuthHook{inj: inj},
+		&corsHook{inj: inj},
 		&rateLimitHook{inj: inj},
 		&quotaSyncHook{inj: inj},
 		&usageLimitsHook{inj: inj},
@@ -118,6 +121,44 @@ func (h *bucketAuthHook) Apply(_ context.Context, _, newCfg *config.Config) (Hoo
 		return HookFailed, err
 	}
 	res.Value.SetBucketAuth(registry)
+	return HookApplied, nil
+}
+
+// -------------------------------------------------------------------------
+// BUCKET CORS
+// -------------------------------------------------------------------------
+
+// corsHook swaps the compiled browser CORS rule set.
+type corsHook struct {
+	inj do.Injector
+}
+
+func (*corsHook) Name() string { return "bucket_cors" }
+
+// Check compiles the replacement rule set and discards it, so a rule the
+// matcher cannot read aborts the reload before any hook has applied
+// anything and the running server keeps the rules it already had.
+func (*corsHook) Check(_, newCfg *config.Config) error {
+	if newCfg == nil {
+		return nil
+	}
+	_, err := cors.NewRegistry(newCfg.Buckets)
+	return err
+}
+
+func (h *corsHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
+	res := di.Optional[*cors.Policy](h.inj)
+	if res.Failed() {
+		return HookFailed, resolutionError("CORS policy", res.Err)
+	}
+	if res.Value == nil {
+		return HookSkipped, nil
+	}
+	rules, err := cors.NewRegistry(newCfg.Buckets)
+	if err != nil {
+		return HookFailed, err
+	}
+	res.Value.SetRules(rules)
 	return HookApplied, nil
 }
 

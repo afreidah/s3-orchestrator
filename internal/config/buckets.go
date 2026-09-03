@@ -4,11 +4,11 @@
 // Author: Alex Freidah
 //
 // Defines virtual-bucket configuration: the public bucket name clients see,
-// the credential bundles that authorize access, and the bucket-prefix
-// convention used to namespace objects in the underlying physical
-// backends. Validators enforce that every bucket has at least one
-// credential and that access keys are unique across buckets so SigV4
-// resolution is unambiguous.
+// the credential bundles that authorize access, the browser origins allowed
+// to reach the bucket cross-origin, and the bucket-prefix convention used to
+// namespace objects in the underlying physical backends. Validators enforce
+// that every bucket has at least one credential and that access keys are
+// unique across buckets so SigV4 resolution is unambiguous.
 // -------------------------------------------------------------------------------
 
 package config
@@ -17,6 +17,21 @@ import (
 	"fmt"
 	"strings"
 )
+
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
+// corsMethods is the set an allowed_methods entry may name: the methods the
+// S3 transport implements. A rule naming anything else is refused at load
+// rather than silently never matching a request.
+var corsMethods = map[string]bool{
+	"GET":    true,
+	"HEAD":   true,
+	"PUT":    true,
+	"POST":   true,
+	"DELETE": true,
+}
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -31,12 +46,32 @@ type CredentialConfig struct {
 	Token           string `yaml:"token"`
 }
 
+// CORSRule declares which browser origins may reach a bucket cross-origin,
+// mirroring the S3 CORSRule shape so an operator can transcribe a rule set
+// they already run on S3.
+//
+// MaxAge is the seconds a browser may cache a preflight result. Zero leaves
+// the header off, so the browser preflights every request. ExposeHeaders
+// names the response headers a script may read: without ETag in that list, a
+// browser upload cannot see the identifier of the object it just wrote.
+type CORSRule struct {
+	AllowedOrigins []string `yaml:"allowed_origins"`
+	AllowedMethods []string `yaml:"allowed_methods"`
+	AllowedHeaders []string `yaml:"allowed_headers"`
+	ExposeHeaders  []string `yaml:"expose_headers"`
+	MaxAge         int      `yaml:"max_age"`
+}
+
 // BucketConfig defines a virtual bucket with one or more credential sets.
 // Multiple services can share a bucket by each having their own credentials.
+//
+// CORS is empty by default, which refuses every cross-origin preflight. A
+// bucket only reachable from server-side clients never needs it.
 type BucketConfig struct {
 	Name                string             `yaml:"name"`
 	Credentials         []CredentialConfig `yaml:"credentials"`
 	MaxMultipartUploads int                `yaml:"max_multipart_uploads"` // Max active multipart uploads per bucket (0 = unlimited)
+	CORS                []CORSRule         `yaml:"cors"`
 }
 
 // validateBuckets enforces that at least one virtual bucket is
@@ -109,6 +144,46 @@ func validateBucket(idx int, bkt *BucketConfig, seen *seenCredentials) []error {
 
 	for j := range bkt.Credentials {
 		errs = append(errs, validateCredential(prefix, j, &bkt.Credentials[j], seen)...)
+	}
+	for j := range bkt.CORS {
+		errs = append(errs, validateCORSRule(prefix, j, &bkt.CORS[j])...)
+	}
+	return errs
+}
+
+// validateCORSRule checks a single CORS rule within a bucket. A rule that
+// cannot match anything is an error rather than a warning: it reads as
+// granting access the operator never gets, and the browser failure it causes
+// is reported client-side as an opaque CORS error with nothing in the server
+// log to connect it to.
+func validateCORSRule(bucketPrefix string, idx int, rule *CORSRule) []error {
+	prefix := fmt.Sprintf("%s.cors[%d]", bucketPrefix, idx)
+	var errs []error
+
+	if len(rule.AllowedOrigins) == 0 {
+		errs = append(errs, prefixed(prefix, ErrCORSNoOrigins))
+	}
+	for _, origin := range rule.AllowedOrigins {
+		if origin == "" {
+			errs = append(errs, prefixed(prefix, ErrCORSEmptyOrigin))
+			continue
+		}
+		if strings.Count(origin, "*") > 1 {
+			errs = append(errs, prefixedDetail(prefix, ErrCORSOriginWildcard, fmt.Sprintf("%q", origin)))
+		}
+	}
+
+	if len(rule.AllowedMethods) == 0 {
+		errs = append(errs, prefixed(prefix, ErrCORSNoMethods))
+	}
+	for _, method := range rule.AllowedMethods {
+		if !corsMethods[strings.ToUpper(method)] {
+			errs = append(errs, prefixedDetail(prefix, ErrCORSBadMethod, fmt.Sprintf("%q", method)))
+		}
+	}
+
+	if rule.MaxAge < 0 {
+		errs = append(errs, prefixed(prefix, ErrCORSNegativeMaxAge))
 	}
 	return errs
 }

@@ -30,6 +30,14 @@ buckets:
     credentials:
       - access_key_id: "docskey"
         secret_access_key: "docssecret"
+    # Browser origins allowed to reach this bucket cross-origin. Without a
+    # cors block a browser cannot use a presigned URL: its preflight fails.
+    # cors:
+    #   - allowed_origins: ["https://app.example.com"]
+    #     allowed_methods: ["GET", "PUT"]
+    #     allowed_headers: ["content-type", "x-amz-*"]
+    #     expose_headers: ["ETag"]
+    #     max_age: 3600
 
   - name: "backups"
     credentials:

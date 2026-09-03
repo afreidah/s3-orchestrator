@@ -196,6 +196,7 @@ Key metrics to alert on:
 | `s3o_degraded_write_rejections_total` | Writes being rejected due to degraded mode |
 | `s3o_usage_limit_rejections_total` | Operations rejected by usage limits |
 | `s3o_rate_limit_rejections_total` | Requests rejected by per-IP rate limiting |
+| `s3o_cors_preflight_total{result="rejected"}` | Browser preflights refused. Climbing with no matching `result="allowed"` means the bucket's CORS rules do not cover the origin the application is served from, and every browser upload from it is failing |
 | `s3o_admission_rejections_total` | Requests rejected at the hard admission limit |
 | `s3o_load_shed_total` | Requests probabilistically shed before the hard admission limit |
 | `s3o_early_rejections_total` | Uploads rejected before body transmission (no backend capacity) |
@@ -293,6 +294,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_pending_intents_resolved_total` | Counter | status | Pending PUT intents resolved by status (committed, promoted, dropped, ambiguous, already_resolved) |
 | `s3o_pending_intents_depth` | Gauge | — | Current number of unresolved pending PUT intents |
 | `s3o_rate_limit_rejections_total` | Counter | — | Requests rejected by per-IP rate limiting |
+| `s3o_cors_preflight_total` | Counter | result | Browser CORS preflights by outcome (allowed, rejected). A preflight is answered before the S3 handler, so it appears in no other request metric |
 | `s3o_admission_rejections_total` | Counter | — | Requests rejected by server-level admission control |
 | `s3o_admission_client_canceled_total` | Counter | — | Admission waits abandoned because the client cancelled first |
 | `s3o_worker_admission_rejections_total` | Counter | worker | Background worker tasks skipped because admission control was saturated |

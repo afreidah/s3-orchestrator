@@ -286,6 +286,8 @@ fuzz: ## Run fuzz tests (override: FUZZ_TIME=5m make fuzz)
 	go test -fuzz=FuzzExtractClientIP -fuzztime=$(FUZZ_TIME) ./internal/transport/s3api/
 	go test -fuzz=FuzzValidMetadataToken -fuzztime=$(FUZZ_TIME) ./internal/transport/s3api/
 	go test -fuzz=FuzzLoginThrottle_RemoteAddr -fuzztime=$(FUZZ_TIME) ./internal/transport/httputil/
+	go test -fuzz=FuzzPatternMatches -fuzztime=$(FUZZ_TIME) ./internal/transport/cors/
+	go test -fuzz=FuzzParseHeaderList -fuzztime=$(FUZZ_TIME) ./internal/transport/cors/
 	go test -fuzz=FuzzParsePlaintextRange -fuzztime=$(FUZZ_TIME) ./internal/proxy/object/
 	go test -fuzz=FuzzParseQueryInt -fuzztime=$(FUZZ_TIME) ./internal/transport/s3api/
 	go test -fuzz=FuzzParseHeader -fuzztime=$(FUZZ_TIME) ./internal/encryption/

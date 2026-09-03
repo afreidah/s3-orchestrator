@@ -153,7 +153,7 @@ Object tagging is handled the same way, in the metadata layer rather than pushed
       <strong>Virtual Buckets</strong>
       <p>Isolated namespaces and independent credentials per application.</p>
     </div>
-    <div class="feature-detail">Each bucket has its own SigV4 access key and secret key, with support for presigned URLs (up to 7-day expiry) for direct browser uploads and downloads. Objects are stored with an internal key prefix, so bucket isolation requires zero changes to the storage layer or database schema.</div>
+    <div class="feature-detail">Each bucket has its own SigV4 access key and secret key, with support for presigned URLs (up to 7-day expiry) and per-bucket CORS rules for direct browser uploads and downloads. Objects are stored with an internal key prefix, so bucket isolation requires zero changes to the storage layer or database schema.</div>
   </div>
 </div>
 
