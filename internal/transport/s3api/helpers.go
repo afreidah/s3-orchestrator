@@ -160,6 +160,20 @@ func formatCapacityHint(stats map[string]core.QuotaStat) string {
 // PATH AND QUERY PARSING
 // -------------------------------------------------------------------------
 
+// BucketFromPath reports the virtual bucket a request path addresses,
+// discarding the key.
+//
+// Exported for the middleware that runs ahead of authentication and so cannot
+// resolve the bucket from the credential the way a routed request does.
+// Keeping it a wrapper over parsePath means the path convention has one
+// definition: a second copy would be free to drift into disagreeing about
+// which bucket a request names, and the two would then authorize and
+// preflight different buckets for the same URL.
+func BucketFromPath(path string) (string, bool) {
+	bucket, _, ok := parsePath(path)
+	return bucket, ok
+}
+
 // parsePath extracts bucket and key from the URL path.
 // Expected format: /{bucket} or /{bucket}/{key...}
 // When no key is present, key is empty (used for bucket-level operations like

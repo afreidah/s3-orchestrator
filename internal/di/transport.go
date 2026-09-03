@@ -43,6 +43,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
+	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
@@ -76,6 +77,26 @@ func ProvideS3Server(i do.Injector) (*s3api.Server, error) {
 	srv := s3api.NewServer(objects, multipartManager, cfg.Server.MaxObjectSize)
 	srv.SetBucketAuth(bucketAuth)
 	return srv, nil
+}
+
+// ProvideCORS creates the browser CORS policy with the rules the config
+// declares, already compiled.
+//
+// Registered whether or not any bucket carries rules: the middleware is a
+// pass-through for an empty rule set, and installing it unconditionally is
+// what lets a reload add the first rule without a restart.
+func ProvideCORS(i do.Injector) (*cors.Policy, error) {
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	rules, err := cors.NewRegistry(cfg.Buckets)
+	if err != nil {
+		return nil, err
+	}
+	policy := cors.New(s3api.BucketFromPath, s3api.WriteS3Error)
+	policy.SetRules(rules)
+	return policy, nil
 }
 
 // ProvideRateLimiter creates the per-IP rate limiter.

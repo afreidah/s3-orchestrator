@@ -520,6 +520,12 @@ curl -o myfile.txt "THE_PRESIGNED_URL"
 - Presigned URLs work for GET, PUT, DELETE, and HEAD operations.
 - For security recommendations (TLS, expiry values), see the [Security Hardening](security-hardening.md#presigned-url-security) guide.
 
+### From a browser
+
+A presigned URL used from a browser needs a CORS rule on the bucket. Browsers send an unsigned `OPTIONS` preflight before any cross-origin `PUT`, and a bucket with no rules refuses it, so the upload fails before the presigned request is ever sent. The failure surfaces in the browser console as a CORS error rather than as anything from the orchestrator.
+
+Add the origin your application is served from to the bucket's `cors` block (see [Configuration](configuration.md#browser-access-cors)), including `ETag` in `expose_headers` if the upload needs to read back the object's identifier. Server-side clients need none of this — a request without an `Origin` header is not cross-origin and is unaffected.
+
 ## Request Tracing
 
 Every response from the orchestrator includes an `X-Amz-Request-Id` header with a unique ID for that request. When reporting issues to your admin, include this ID so they can look up the full request trace in the audit logs.
@@ -543,6 +549,7 @@ The orchestrator implements a practical subset of the S3 API. A few things to be
 - **Same-bucket copies only** — `CopyObject` requires source and destination to be in the same bucket.
 - **No bucket creation or deletion** — Buckets are configured server-side, so `CreateBucket` and `DeleteBucket` are not supported. `ListBuckets` is: it returns the one bucket the presented credential is authorized for, which is what lets a client that lists before it works pick the right target. `HeadBucket`, `GetBucketLocation` and `GetBucketVersioning` answer as well; versioning always reports disabled.
 - **No ACLs or policies** — Access control is handled entirely through the credential-to-bucket mapping in the server config.
+- **CORS is configured server-side** — `PutBucketCors` and `GetBucketCors` are not supported. Browser origins are declared in the bucket's `cors` block and reloaded with the rest of the config.
 - **No object versioning** — Each key holds exactly one object. Uploading to an existing key overwrites it. Concurrent PUTs to the same key are last-writer-wins, matching native S3 semantics. The orchestrator's per-key advisory lock keeps location metadata consistent across replicas, and bytes from the losing writer are enqueued for backend cleanup. Clients that need conflict detection should send `If-None-Match: *` (see [Conditional Writes](#conditional-writes)).
 - **Max object size** — Configurable server-side (default: 5 GB). For larger objects, use multipart upload (most clients do this automatically).
 - **Multipart upload timeout** — Incomplete multipart uploads are automatically cleaned up after 24 hours.
