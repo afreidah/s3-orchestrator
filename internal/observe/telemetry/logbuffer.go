@@ -10,8 +10,6 @@
 // and component.
 // -------------------------------------------------------------------------------
 
-// Package telemetry provides Prometheus metrics registration and OpenTelemetry
-// tracing initialization for the S3 orchestrator.
 package telemetry
 
 import (

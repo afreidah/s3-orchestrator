@@ -26,6 +26,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // decodeEvents parses an NDJSON response body into a slice of events.
 func decodeEvents(t *testing.T, body []byte) []adminstream.Event {
 	t.Helper()
@@ -49,6 +53,10 @@ func streamReq(target string) *http.Request {
 	req.Header.Set("Accept", adminstream.ContentType)
 	return req
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func TestHandleBackfillChecksums_StreamsProgressAndResult(t *testing.T) {
 	t.Parallel()
@@ -93,6 +101,10 @@ func TestHandleBackfillChecksums_StreamsProgressAndResult(t *testing.T) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // countStepEvents tallies the step_start and step_end events in a stream.
 func countStepEvents(events []adminstream.Event) (starts, ends int) {
 	for _, e := range events {
@@ -115,6 +127,10 @@ func allStepStartsLabeled(events []adminstream.Event) bool {
 	}
 	return true
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func TestHandleBackfillChecksums_StreamsSkippedWhenDisabled(t *testing.T) {
 	t.Parallel()

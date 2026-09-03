@@ -20,10 +20,18 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // cacheDisabledReason is the body reason emitted when an admin cache
 // endpoint is called against an orchestrator started without the
 // object data cache configured.
 const cacheDisabledReason = "object data cache is not enabled"
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // writeCacheDisabled emits the standard 503 response used by every
 // /admin/api/cache/* handler when h.objectCache is nil. Centralised so

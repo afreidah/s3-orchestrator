@@ -21,11 +21,19 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // canned returns a bufio.Scanner reading from the given lines, joined with
 // newlines. Used to drive the prompt helpers without a real TTY.
 func canned(lines ...string) *bufio.Scanner {
 	return bufio.NewScanner(strings.NewReader(strings.Join(lines, "\n") + "\n"))
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestScanDefault_ReturnsDefaultWhenEmpty covers both the empty-string and
 // trimmed-whitespace cases of scanDefault.

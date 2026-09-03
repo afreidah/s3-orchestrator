@@ -131,9 +131,8 @@ type Deps struct {
 	ObjectCache  objcache.ObjectCache // nil when object caching is disabled
 	DEKCacheTTL  time.Duration
 	IntegrityCfg *syncutil.AtomicConfig[config.IntegrityConfig]
-	// EnforceMinPartSize requires every non-final part to meet the S3 5 MiB
-	// floor at completion. Off in tests that upload small parts on purpose.
-	EnforceMinPartSize bool
+
+	EnforceMinPartSize bool // every non-final part must meet the S3 5 MiB floor
 }
 
 // Close stops the per-upload DEK cache eviction loop.

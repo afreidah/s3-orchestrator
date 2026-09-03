@@ -22,9 +22,17 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // defaultBackfillBatchSize is how many objects one backfill pass hashes when
 // the caller asks for no size.
 const defaultBackfillBatchSize = 100
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // ScrubResult reports one verification pass. Checked counts the copies read;
 // the remaining counts partition the ones that did not verify.
@@ -67,6 +75,10 @@ func NewIntegrity(d IntegrityDeps) *Integrity {
 		integrityCfg: d.IntegrityCfg,
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // Scrub runs one verification pass and returns the per-pass counts. batchSize
 // <= 0 uses the configured ScrubberBatchSize. observer, when non-nil, receives
@@ -132,6 +144,10 @@ func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects
 	done := i.drainBackfill(ctx, batchSize, maxObjects, pause, backfillCounter(observer, &total), &total)
 	return BackfillResult{Processed: total, Done: done}, nil
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // drainBackfill runs backfill passes until the backlog drains, the max-objects
 // cap is hit, or the context is cancelled. Returns true only when the backlog

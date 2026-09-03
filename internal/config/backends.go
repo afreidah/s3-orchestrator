@@ -20,24 +20,25 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // CredentialSourceStatic and friends enumerate the supported credential_source values.
 const (
-	// CredentialSourceStatic uses access_key_id / secret_access_key from the config (current default behaviour).
-	CredentialSourceStatic = "static"
-	// CredentialSourceDefaultChain resolves credentials via the AWS SDK default chain (env, IMDS, SSO, ~/.aws, STS).
-	CredentialSourceDefaultChain = "default_chain"
+	CredentialSourceStatic       = "static"        // access_key_id / secret_access_key from the config
+	CredentialSourceDefaultChain = "default_chain" // AWS SDK default chain: env, IMDS, SSO, ~/.aws, STS
 )
 
 // BackendConfig holds configuration for an S3-compatible storage backend.
 type BackendConfig struct {
-	Name            string `yaml:"name"`              // Identifier for metrics/tracing
-	Endpoint        string `yaml:"endpoint"`          // S3-compatible endpoint URL
-	Region          string `yaml:"region"`            // AWS region or equivalent
-	Bucket          string `yaml:"bucket"`            // Target bucket name
-	AccessKeyID     string `yaml:"access_key_id"`     // AWS access key ID (required when credential_source is "static")
-	SecretAccessKey string `yaml:"secret_access_key"` // AWS secret access key (required when credential_source is "static")
-	// CredentialSource selects how credentials are resolved: "static" (default, uses keys above) or "default_chain" (AWS SDK chain: env, IMDS, SSO, STS).
-	CredentialSource string `yaml:"credential_source"`
+	Name             string `yaml:"name"`               // Identifier for metrics/tracing
+	Endpoint         string `yaml:"endpoint"`           // S3-compatible endpoint URL
+	Region           string `yaml:"region"`             // AWS region or equivalent
+	Bucket           string `yaml:"bucket"`             // Target bucket name
+	AccessKeyID      string `yaml:"access_key_id"`      // AWS access key ID (required when credential_source is "static")
+	SecretAccessKey  string `yaml:"secret_access_key"`  // AWS secret access key (required when credential_source is "static")
+	CredentialSource string `yaml:"credential_source"`  // "static" (default) or "default_chain": env, IMDS, SSO, STS
 	ForcePathStyle   bool   `yaml:"force_path_style"`   // Use path-style URLs
 	UnsignedPayload  *bool  `yaml:"unsigned_payload"`   // Skip SigV4 payload hash to stream uploads without buffering (default: true)
 	DisableChecksum  bool   `yaml:"disable_checksum"`   // Disable SDK default checksums for GCS and other providers that reject them (default: false)
@@ -91,6 +92,10 @@ type BackendHTTPConfig struct {
 func (h BackendHTTPConfig) HTTP2Enabled() bool {
 	return h.ForceHTTP2 == nil || *h.ForceHTTP2
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // setDefaults fills each unset field with its default. Zero means unset
 // rather than "no limit": Go's transport reads zero as unlimited for some of

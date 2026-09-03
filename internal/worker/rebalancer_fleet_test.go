@@ -32,11 +32,19 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // rebalEnqueue captures EnqueueCleanup calls for rebalancer tests.
 type rebalEnqueue struct {
 	mu    sync.Mutex
 	calls []core.CleanupItem
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // stubRebalEnqueue returns a DoAndReturn that captures into re.
 func stubRebalEnqueue(re *rebalEnqueue) func(context.Context, string, string, string, int64) error {
@@ -102,6 +110,10 @@ func (m *delayedGetBackend) GetObject(ctx context.Context, key, rangeHeader stri
 func (m *delayedGetBackend) seedObject(key string, data []byte) {
 	m.Put(key, &backendtest.Object{Data: data, ContentType: "application/octet-stream"})
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestExecuteMoves_Concurrent pins parallel execution.
 func TestExecuteMoves_Concurrent(t *testing.T) {

@@ -1,4 +1,4 @@
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 // Instance Identity
 //
 // Author: Alex Freidah
@@ -15,11 +15,8 @@
 // The identifier is computed once at construction (DI singleton) so every
 // claim within a process carries the same value; future-instance comparisons
 // across pods stay meaningful.
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 
-// Package instanceid produces a stable per-process identifier that the
-// cleanup worker writes into cleanup_queue.claimed_by for operator
-// visibility into which orchestrator process is currently holding a row.
 package instanceid
 
 import (

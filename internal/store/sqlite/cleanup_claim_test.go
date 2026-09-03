@@ -1,4 +1,4 @@
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 // SQLite Cleanup Queue Claim Pattern Tests
 //
 // Author: Alex Freidah
@@ -9,7 +9,7 @@
 // of the contract  -  reclaim after grace, atomic complete with orphan_bytes
 // decrement and idempotent re-complete, retry clears claim  -  applies
 // identically and is exercised here.
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 
 package sqlite
 

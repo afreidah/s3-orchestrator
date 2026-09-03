@@ -10,10 +10,6 @@
 // when wired through CircuitBreakerStore.
 // -------------------------------------------------------------------------------
 
-// Package dashboard owns the read-only stats aggregation that the web UI
-// renders. The proxy package wraps Aggregator results with cluster-state
-// enrichment (drain progress, breaker health) before returning them to
-// HTTP handlers.
 package dashboard
 
 import (
@@ -26,9 +22,17 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // maxDirectoryChildren bounds one page of the lazy-loaded file browser, both
 // for the top-level listing and for a caller-supplied page size.
 const maxDirectoryChildren = 200
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // Data holds a snapshot of all operational data for the dashboard.
 //
@@ -101,6 +105,10 @@ func New(store core.DashboardStore, usage UsageReader, order []string, fleet Fle
 	}
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // decorateLiveState fills in the fields that come from the running fleet
 // rather than the store: which backends are draining and how far along, and
 // which are failing their circuit breaker. Both are best-effort - a backend
@@ -130,6 +138,10 @@ func (da *Aggregator) decorateLiveState(ctx context.Context, data *Data) {
 		}
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // GetData fetches all stats needed for the web UI in one call.
 func (da *Aggregator) GetData(ctx context.Context) (*Data, error) {

@@ -1,6 +1,13 @@
-// Tests for the CB-aware DBTX wrapper. The breaker state machine itself
-// is covered in internal/breaker; these tests prove the wrapper feeds
+// -------------------------------------------------------------------------------
+// Postgres Circuit Breaker Wrapper Tests
+//
+// Author: Alex Freidah
+//
+// Tests for the CB-aware DBTX wrapper. The breaker state machine itself is
+// covered in internal/breaker; these tests prove the wrapper feeds
 // PreCheck/PostCheck correctly and that wrapDBTX no-ops on a nil cb.
+// -------------------------------------------------------------------------------
+
 package postgres
 
 import (
@@ -17,6 +24,10 @@ import (
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // stubDBTX is a minimal db.DBTX whose three methods record their last
 // call and return canned responses. Lets cb_test.go exercise the
 // wrapper without standing up a real postgres connection.
@@ -26,6 +37,10 @@ type stubDBTX struct {
 	queryRowErr error
 	calls       int
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func (s *stubDBTX) Exec(_ context.Context, _ string, _ ...any) (pgconn.CommandTag, error) {
 	s.calls++

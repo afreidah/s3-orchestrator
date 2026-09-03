@@ -11,11 +11,6 @@
 // its batch the same way (and feeds the same outcome label to metrics).
 // -------------------------------------------------------------------------------
 
-// Package worker holds the background passes that run on a tick rather than on
-// a request: replication, rebalance, cleanup and its dead-letter queue, the
-// pending-intent reaper, integrity scrub and backfill, and reconcile. Each owns
-// one unit of work, reports it as a WorkSummary, and takes only the narrow store
-// roles it calls.
 package worker
 
 import (
@@ -28,18 +23,20 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/workerpool"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // ItemOutcome classifies how a single work item finished, for the batch tally.
 type ItemOutcome int
 
+// ItemSkipped and the other per-item outcomes. Skipped is the zero value, so an
+// item whose per-item function never ran - admission blocked it, say - counts
+// as declined rather than as a success nobody performed.
 const (
-	// ItemSkipped marks an item the worker declined before doing any work. It
-	// is the zero value, so an item whose per-item function never ran (e.g.
-	// admission blocked it) counts as skipped rather than succeeded.
-	ItemSkipped ItemOutcome = iota
-	// ItemSucceeded marks an item the worker processed successfully.
-	ItemSucceeded
-	// ItemFailed marks an item the worker attempted but could not complete.
-	ItemFailed
+	ItemSkipped   ItemOutcome = iota // declined before any work
+	ItemSucceeded                    // processed successfully
+	ItemFailed                       // attempted but not completed
 )
 
 // ItemResult is what a per-item function returns: the outcome for the tally and
@@ -53,18 +50,19 @@ type ItemResult struct {
 // WorkSummary is the uniform result of one worker cycle. It replaces the ad-hoc
 // count tuples (checked/failed, processed/failed, moved) each worker used to
 // return, so partial-failure reporting and metric labels are consistent.
+//
+// Deferred is not an item outcome. It counts work the cycle never selected,
+// because the backend holding it is over its usage limit, and those items were
+// never in the batch at all. Reporting it alongside the per-item counts is what
+// stops a budget-limited cycle reading as a complete one.
 type WorkSummary struct {
-	Planned   int // items the cycle set out to process
-	Attempted int // items the per-item function ran (succeeded + failed)
-	Succeeded int // items that completed successfully
-	Failed    int // items attempted but not completed
-	Skipped   int // items declined before any work
-	// Deferred counts work this cycle never selected, because the backend
-	// holding it is over its usage limit. It is not an item outcome: these
-	// items were never in the batch, so reporting it alongside the per-item
-	// counts is what stops a budget-limited cycle reading as a complete one.
-	Deferred int
-	Duration time.Duration // wall-clock time for the cycle
+	Planned   int           // items the cycle set out to process
+	Attempted int           // items the per-item function ran (succeeded + failed)
+	Succeeded int           // items that completed successfully
+	Failed    int           // items attempted but not completed
+	Skipped   int           // items declined before any work
+	Deferred  int           // work never selected, the backend being over budget
+	Duration  time.Duration // wall-clock time for the cycle
 }
 
 // The outcome label every worker reports its cycle under. Outcome() picks one
@@ -107,6 +105,10 @@ type BatchRunner[T any] struct {
 	Observer    progress.Observer
 	Key         func(T) string
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // Run processes items through fn with the configured concurrency, brackets each
 // in a progress step, and returns the tallied WorkSummary. Items not reached

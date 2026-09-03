@@ -27,6 +27,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newBenchS3Client constructs a new bench s3 client.
 func newBenchS3Client() *s3.Client {
 	return s3.New(s3.Options{
@@ -36,6 +40,10 @@ func newBenchS3Client() *s3.Client {
 		UsePathStyle: true,
 	})
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // BenchmarkPutObject measures the put object path by exercising context.Background, bytes.Repeat, fmt.Sprintf.
 func BenchmarkPutObject(b *testing.B) {

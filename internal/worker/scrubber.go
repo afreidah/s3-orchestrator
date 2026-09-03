@@ -41,14 +41,14 @@ import (
 // integrity row reads/writes, removal of a location whose bytes failed
 // verification, and the copies of one key for an on-demand verification.
 // Declared locally so the worker does not pull in the full MetadataStore.
+//
+// The pass records an ETag computed from the plaintext for an object that has
+// none, which is the only source for a copy whose stored bytes are compressed
+// or encrypted.
 type ScrubberStore interface {
 	core.IntegrityStore
 	DeleteObjectLocation(ctx context.Context, key, backendName string) error
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
-
-	// RecordObjectIdentity gives an object with no recorded ETag the one this
-	// pass computes from the plaintext, which is the only source for a copy
-	// whose stored bytes are compressed or encrypted.
 	RecordObjectIdentity(ctx context.Context, key string, id *core.ObjectIdentity) error
 }
 

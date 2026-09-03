@@ -31,6 +31,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // PutObject uploads an object to the first backend with available quota.
 // If the upload fails, it retries on remaining eligible backends before
 // returning an error to the caller (write failover).
@@ -49,6 +53,10 @@ type PutObjectRequest struct {
 	Metadata    map[string]string
 	Tags        []core.Tag
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string, error) {
 	const operation = s3op.PutObject
@@ -138,6 +146,10 @@ type putPlan struct {
 	compressed  bool
 	cleanup     func()
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // compressOnWrite reports whether a PUT of this size should be encoded. Objects
 // under the configured minimum are stored verbatim: a seek table and frame

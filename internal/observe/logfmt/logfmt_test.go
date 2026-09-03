@@ -23,11 +23,19 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // errOpaque is the kind of error that pre-logfmt code path serialised as
 // {} via the JSON handler. The struct has no exported fields and no
 // MarshalJSON so encoding/json produces an empty object  -  exactly the
 // downstream "[object Object]" footgun that motivated the helper.
 type errOpaque struct{ inner string }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // Error returns the wrapped message.
 func (e *errOpaque) Error() string { return e.inner }

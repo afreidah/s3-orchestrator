@@ -23,6 +23,10 @@ import (
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
 
+// -------------------------------------------------------------------------
+// SCRUB QUEUE
+// -------------------------------------------------------------------------
+
 // GetLeastRecentlyScrubbedObjects returns the copies most overdue for
 // verification, never-checked ones first, restricted to backends. Ordering
 // rather than sampling is what bounds how long any one copy can go unverified.
@@ -69,6 +73,10 @@ func (s *Store) MarkObjectScrubbed(ctx context.Context, key, backendName string)
 	}
 	return nil
 }
+
+// -------------------------------------------------------------------------
+// REPORTING
+// -------------------------------------------------------------------------
 
 // OldestUnverifiedAge reports how long the copy at the head of the scrub queue
 // has gone unverified, and how many copies have never been verified at all.

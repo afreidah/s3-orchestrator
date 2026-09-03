@@ -33,6 +33,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // drainCalls captures store interactions a drain test wants to assert.
 type drainCalls struct {
 	mu              sync.Mutex
@@ -44,6 +48,10 @@ type drainCalls struct {
 type deleteLocationRecord struct {
 	key, backend string
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // pagedLister returns a DoAndReturn that hands out paginated
 // ListObjectsByBackend results.
@@ -100,6 +108,10 @@ func stubCompleteCleanup(c *drainCalls) func(context.Context, int64) error {
 		return nil
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestPurgeBackendObjects_DeletesDBRecords pins the purge contract:
 // every listed row is deleted from S3 and the DB.

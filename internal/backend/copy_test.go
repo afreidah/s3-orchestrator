@@ -19,6 +19,10 @@ import (
 	"time"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // copyingMockBackend embeds *mockBackend and adds a CopyObject method so
 // it satisfies Copier. Counts calls and exposes an injectable
 // error so tests can drive success and failure paths without spinning
@@ -32,6 +36,10 @@ type copyingMockBackend struct {
 func newCopyingMockBackend() *copyingMockBackend {
 	return &copyingMockBackend{mockBackend: newMockBackend()}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // CopyObject records the call and either returns the injected error or
 // copies the source object's bytes in-memory so existence checks pass.

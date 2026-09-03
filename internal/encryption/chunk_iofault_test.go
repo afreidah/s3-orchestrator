@@ -20,6 +20,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // errFaultyRead is the synthetic error returned by faultyReader. The
 // concrete type is irrelevant; the test only requires that the error is
 // not io.EOF.
@@ -30,6 +34,10 @@ var errFaultyRead = errors.New("synthetic transport failure")
 type faultyReader struct {
 	called bool
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // Read implements io.Reader.
 func (f *faultyReader) Read(_ []byte) (int, error) {

@@ -26,9 +26,9 @@ import (
 //
 // Only objects actually stored encoded are counted. Folding in the ones that
 // were skipped would report a ratio no encoder produced.
+// CompressionLogicalBytesTotal counts the bytes clients wrote for objects that
+// were then stored encoded; the stored counter beside it is what they occupy.
 var (
-	// CompressionLogicalBytesTotal counts the bytes clients wrote for objects
-	// that were then stored encoded.
 	CompressionLogicalBytesTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "s3o_compression_logical_bytes_total",
@@ -63,8 +63,6 @@ var (
 // regression to whole-object decode shows here and nowhere else except the
 // backend bill.
 var (
-	// CompressionFetchedBytesTotal counts stored bytes pulled off backends to
-	// serve compressed reads.
 	CompressionFetchedBytesTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "s3o_compression_fetched_bytes_total",
@@ -131,7 +129,6 @@ const (
 // an object alone - too small, or too incompressible to be worth encoding - and
 // an operator reading a run wants that separate from work that was done.
 var (
-	// CompressExistingObjectsTotal counts objects processed during compress-existing.
 	CompressExistingObjectsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "s3o_compress_existing_objects_total",

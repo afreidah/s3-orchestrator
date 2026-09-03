@@ -30,18 +30,13 @@ import (
 	"io"
 )
 
-// HeaderSize and related constants used by this package.
+// HeaderSize and the AES-GCM sizes the envelope format is built from. Every
+// chunk carries its own nonce and tag, so ChunkOverhead is what a chunk costs
+// on top of its plaintext.
 const (
-	// HeaderSize is the fixed size of the encryption header.
-	HeaderSize = 32
-
-	// NonceSize is the AES-GCM nonce length.
-	NonceSize = 12
-
-	// TagSize is the AES-GCM authentication tag length.
-	TagSize = 16
-
-	// ChunkOverhead is the per-chunk overhead: nonce + tag.
+	HeaderSize    = 32
+	NonceSize     = 12
+	TagSize       = 16
 	ChunkOverhead = NonceSize + TagSize
 )
 
@@ -349,25 +344,15 @@ func (r *decryptReader) Read(p []byte) (int, error) {
 // NONCE DERIVATION
 // -------------------------------------------------------------------------
 //
-// SAFETY INVARIANT: AES-GCM requires that the same (key, nonce) pair is
-// never used twice. This derivation is safe because:
+// SAFETY INVARIANT: AES-GCM requires that a (key, nonce) pair is never used
+// twice. This derivation is safe because Encryptor.Encrypt generates a fresh
+// 32-byte DEK per object, newEncryptReader generates a fresh random base nonce
+// per call, and chunk indices are sequential within one object, so the XOR
+// produces a unique nonce per chunk. A re-uploaded plaintext gets a different
+// DEK and base nonce, and PutObject re-encrypts with a fresh DEK on every retry.
 //
-//  1. Each object gets a fresh random DEK (Encryptor.Encrypt generates a
-//     new 32-byte key per call  -  see encryption.go:93).
-//  2. Each encrypt call generates a fresh random base nonce (see
-//     newEncryptReader  -  chunk.go:77-78).
-//  3. Within a single object, chunk indices are sequential (0, 1, 2, ...),
-//     so XOR with the index produces unique nonces per chunk.
-//
-// Even if the same plaintext is uploaded twice, it gets a different DEK
-// and different base nonce. Nonce reuse can only occur if a future code
-// change reuses a DEK across objects or re-encrypts with the same DEK
-// after a partial failure. The current code never does this  -  PutObject
-// re-encrypts with a fresh DEK on each retry attempt.
-//
-// If the DEK-per-object invariant is ever relaxed (e.g., for performance),
-// this derivation must be replaced with random per-chunk nonces or a
-// NIST-compliant counter mode (AES-ECB of the chunk index).
+// Relaxing the DEK-per-object invariant would require replacing this with
+// random per-chunk nonces or a NIST-compliant counter mode.
 
 // deriveNonce writes a per-chunk nonce into dst by copying the base nonce
 // and XORing the chunk index into the last 8 bytes. dst must be at least

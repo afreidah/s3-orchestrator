@@ -13,7 +13,6 @@
 // hook writes here directly.
 // -------------------------------------------------------------------------------
 
-// Package expiry applies lifecycle expiration rules to stored objects.
 package expiry
 
 import (
@@ -33,8 +32,16 @@ import (
 
 //go:generate mockgen -destination=mock_test.go -package=expiry github.com/afreidah/s3-orchestrator/internal/proxy/expiry ObjectDeleter
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // defaultBatchSize bounds one store query when the operator configured none.
 const defaultBatchSize = 100
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // ObjectDeleter removes one object through the full delete path.
 // *object.Manager satisfies it.
@@ -56,6 +63,10 @@ type Manager struct {
 func New(store core.ExpiredObjectsLister, objects ObjectDeleter, log *slog.Logger) *Manager {
 	return &Manager{store: store, objects: objects, log: log}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // SetConfig atomically replaces the lifecycle configuration.
 func (m *Manager) SetConfig(cfg *config.LifecycleConfig) { m.cfg.Store(cfg) }
@@ -95,6 +106,10 @@ func (m *Manager) ProcessRules(ctx context.Context, rules []config.LifecycleRule
 	}
 	return deleted, failed
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // batchSizeFor returns the per-tick batch size, falling back to the default
 // when the operator configured none.

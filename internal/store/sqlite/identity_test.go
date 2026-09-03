@@ -19,6 +19,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // identityOf reads back the identity recorded for one copy.
 func identityOf(t *testing.T, s *Store, key, backendName string) *core.ObjectIdentity {
 	t.Helper()
@@ -34,6 +38,10 @@ func identityOf(t *testing.T, s *Store, key, backendName string) *core.ObjectIde
 	t.Fatalf("no copy of %s on %s", key, backendName)
 	return nil
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestRecordObject_RoundTripsIdentity covers the write path: what PutObject
 // computed is what a read gets back.

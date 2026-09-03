@@ -25,6 +25,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newAdmissionFor builds a controller over a semaphore the test owns. Production
 // wires the semaphore externally (di.admissionSemFor) so background workers share
 // one budget with HTTP requests; these helpers keep that shape without each test
@@ -45,6 +49,10 @@ func newSplitAdmissionFor(maxReads, maxWrites int) *AdmissionController {
 	return NewSplitAdmissionControllerFromSem(
 		make(chan struct{}, maxReads), make(chan struct{}, maxWrites), AdmissionLimits{})
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestAdmissionController_AllowsWithinLimit verifies the admission controller allows within limit contract.
 // Asserts that request : got , want 200.

@@ -28,9 +28,17 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // emptyCompressionStore serves no rows, so a pass completes having considered
 // nothing.
 type emptyCompressionStore struct{}
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // ListUncompressedLocations returns no rows.
 func (emptyCompressionStore) ListUncompressedLocations(context.Context, int, core.Cursor, core.CompressionThresholds) ([]core.RewritableLocation, error) {

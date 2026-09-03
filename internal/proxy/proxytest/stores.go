@@ -1,14 +1,13 @@
-// Package proxytest provides cross-package test helpers for the proxy
-// subpackages. Importing it from production code is not supported.
+// -------------------------------------------------------------------------------
+// Proxytest - Fixture Builders
 //
-// The builders here mirror what internal/di assembles, one collaborator at a
-// time, so a test constructs only the pieces it exercises. Stack composes them
-// for a test that needs the whole read/write path, and exists because three of
-// the wiring rules between them are invariants rather than choices: the object
-// and multipart managers share one integrity-config pointer, every collaborator
-// shares one write coordinator, and the runtime has to be told about the drain
-// manager. A test that re-derives those by hand gets no error when it gets them
-// wrong - it gets a fixture that silently disagrees with production.
+// Author: Alex Freidah
+//
+// Builders that mirror what internal/di assembles, one collaborator at a time,
+// so a test constructs only the pieces it exercises. Stack composes them for a
+// test that needs the whole read/write path.
+// -------------------------------------------------------------------------------
+
 package proxytest
 
 import (
@@ -61,10 +60,9 @@ type RuntimeOptions struct {
 	MaxObjectSizes  map[string]int64
 	AdmissionSem    chan struct{}
 	Backend         counter.Backend
-	// Metrics, when set, installs a collector. ReplicationFactor feeds the
-	// under-replication gauge and is only read when Metrics is set.
-	Metrics           metrics.Deps
-	ReplicationFactor func() int
+
+	Metrics           metrics.Deps // when set, installs a collector
+	ReplicationFactor func() int   // under-replication gauge; read only when Metrics is set
 }
 
 // StackOptions carries what the collaborators need beyond the runtime: the
@@ -76,8 +74,9 @@ type StackOptions struct {
 	Compression config.CompressionConfig
 	ObjectCache objcache.ObjectCache
 	CacheTTL    time.Duration
-	// PendingEnabled selects the PUT-before-COMMIT write path.
-	PendingEnabled               bool
+
+	PendingEnabled bool // selects the PUT-before-COMMIT write path
+
 	ParallelBroadcast            bool
 	DegradedBroadcastParallelism int
 	DisableDegradedReads         bool

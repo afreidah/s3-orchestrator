@@ -7,10 +7,6 @@
 // trusted proxy validation. Shared by the rate limiter and UI login throttle.
 // -------------------------------------------------------------------------------
 
-// Package httputil houses cross-cutting HTTP helpers that several
-// transport sub-packages share: trusted-proxy-aware client IP
-// extraction, login-attempt throttling, and TLS certificate
-// hot-reloading.
 package httputil
 
 import (
@@ -19,6 +15,10 @@ import (
 	"slices"
 	"strings"
 )
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // IsTLSRequest reports whether the original client connection was over TLS.
 // True when r.TLS is set (TLS terminated at this server) or when the direct
@@ -65,6 +65,10 @@ func ParseTrustedProxies(cidrs []string) []*net.IPNet {
 	}
 	return nets
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // stripPort removes the port suffix from an address string.
 func stripPort(addr string) string {

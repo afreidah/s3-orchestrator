@@ -27,6 +27,10 @@ import (
 	"go.opentelemetry.io/otel/codes"
 )
 
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
+
 // DeleteObject removes an object from the backend where it's stored.
 func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 	const operation = s3op.DeleteObject
@@ -76,6 +80,10 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 // connection pool or burning API quota in a burst.
 const defaultBatchDeleteConcurrency = 10
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // DeleteObjectResult holds the outcome of a single key within a batch delete.
 type DeleteObjectResult struct {
 	Key string `json:"key,omitempty"`
@@ -90,6 +98,10 @@ type batchDeleteItem struct {
 	beName    string
 	sizeBytes int64
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // DeleteObjects deletes multiple objects in a single request. Metadata
 // removal happens in a single transaction via DeleteObjectsBatch; backend
@@ -134,6 +146,10 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 	o.finalizeBatchDelete(ctx, span, len(keys), results, start)
 	return results
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // flattenBatchDeletes produces the worker-pool input slice from the
 // DeleteObjectsBatch result. Skips copies whose backend is unknown

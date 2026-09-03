@@ -26,6 +26,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // removeExcessRecord captures one RemoveExcessCopy call.
 type removeExcessRecord struct {
 	key, backend string
@@ -58,6 +62,10 @@ func stubRemoveExcessCopy(rt *removeExcessTracker) func(context.Context, string,
 		return true, nil
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestScoreCopy_CircuitBrokenBackend pins the score for a tripped breaker.
 func TestScoreCopy_CircuitBrokenBackend(t *testing.T) {

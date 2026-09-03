@@ -20,6 +20,10 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newPassThroughBackend builds a MockObjectBackend with EXPECT calls configured
 // to pass through successfully (returning empty but valid results) so tests
 // can assert failure injection against a healthy inner backend.
@@ -37,6 +41,10 @@ func newPassThroughBackend(t *testing.T) *MockObjectBackend {
 		Return(nil).AnyTimes()
 	return m
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestFailableBackend_PassthroughWhenHealthy verifies that methods delegate
 // to the inner backend unchanged when no failure is configured.

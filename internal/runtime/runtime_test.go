@@ -32,6 +32,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/reload"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 const validTestConfigYAML = `
 server:
   listen_addr: ":0"
@@ -51,6 +55,10 @@ backends:
     access_key_id: ak
     secret_access_key: sk
 `
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 func writeYAML(t *testing.T, content string) string {
 	t.Helper()
@@ -104,6 +112,10 @@ func loadCfg(t *testing.T, yaml string) *config.Config {
 	}
 	return cfg
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestStartObservability sets the default logger and returns a usable
 // shutdownTracer + LogBuffer.

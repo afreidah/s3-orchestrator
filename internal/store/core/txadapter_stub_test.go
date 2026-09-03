@@ -14,12 +14,20 @@ package core
 
 import "context"
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // noopTxAdapter satisfies TxAdapter with zero values throughout. Embed it,
 // then override the methods a test actually exercises.
 type noopTxAdapter struct{}
 
 // Compile-time check that embedding this is enough to be a TxAdapter.
 var _ TxAdapter = (*noopTxAdapter)(nil)
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func (*noopTxAdapter) AcquireKeyLock(context.Context, string) error { return nil }
 

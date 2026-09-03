@@ -35,38 +35,37 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
+// fleetTimeout bounds a backend call in the test fleet, long enough that no
+// test trips it incidentally, and fleetDEKTTL keeps per-upload data keys alive
+// for a whole test.
 const (
-	// fleetTimeout bounds a backend call in the test fleet. Long enough that
-	// no test trips it incidentally.
 	fleetTimeout = 30 * time.Second
-	// fleetDEKTTL keeps per-upload data keys alive for a whole test.
-	fleetDEKTTL = time.Hour
+	fleetDEKTTL  = time.Hour
 )
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // fleetOpts tunes the test fleet beyond the defaults. The zero value gives
 // pack routing, an unlimited local usage counter, and no encryption.
+// The assembled object is encoded only when both Codec and Compression are
+// set, mirroring the production wiring. The 5 MiB non-final part floor is off
+// by default because most fixtures here upload 3-byte parts.
 type fleetOpts struct {
-	// Order fixes the fleet order. Defaults to the backend map's keys.
-	Order []string
-	// Encryptor turns on at-rest encryption for the upload.
-	Encryptor *encryption.Encryptor
-	// Codec and Compression turn on at-rest compression of the assembled
-	// object. It is encoded only when both are set, mirroring production
-	// wiring.
-	Codec       Codec
-	Compression config.CompressionConfig
-	// ObjectCache attaches a cache so completion-time invalidation runs.
-	ObjectCache objcache.ObjectCache
-	// PendingEnabled turns on the coordinator's pending-write pattern.
-	PendingEnabled bool
-	// AdmissionSem bounds concurrent backend writes, for admission tests.
-	AdmissionSem chan struct{}
-	// BackendTimeout overrides the per-call bound. Defaults to fleetTimeout,
-	// which no test trips by accident; timeout tests set their own.
-	BackendTimeout time.Duration
-	// EnforceMinPartSize turns on the S3 5 MiB non-final part floor. Off by
-	// default because most fixtures here upload 3-byte parts.
-	EnforceMinPartSize bool
+	Order              []string                 // defaults to the backend map's keys
+	Encryptor          *encryption.Encryptor    // turns on at-rest encryption for the upload
+	Codec              Codec                    // with Compression below, encodes the assembled object
+	Compression        config.CompressionConfig //
+	ObjectCache        objcache.ObjectCache     // attaches a cache so completion-time invalidation runs
+	PendingEnabled     bool                     // turns on the coordinator's pending-write pattern
+	AdmissionSem       chan struct{}            // bounds concurrent backend writes, for admission tests
+	BackendTimeout     time.Duration            // overrides the per-call bound; defaults to fleetTimeout
+	EnforceMinPartSize bool                     // turns on the S3 5 MiB non-final part floor
 }
 
 // fleet is a multipart Manager plus the collaborators a test asserts against:
@@ -81,6 +80,10 @@ type fleet struct {
 // SetIntegrityConfig swaps the integrity settings the manager reads when it
 // completes an upload.
 func (f *fleet) SetIntegrityConfig(cfg *config.IntegrityConfig) { f.Integrity.Store(cfg) }
+
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
 
 // newFleet builds a multipart Manager over the supplied backends. store is the
 // wide metadata store; New narrows it to Stores.

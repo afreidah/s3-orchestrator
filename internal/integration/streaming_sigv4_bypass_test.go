@@ -34,9 +34,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // streamingPayloadSentinel is the AWS SigV4 marker for chunk-signed
 // payloads.
 const streamingPayloadSentinel = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestStreamingSigV4_BypassRejected asserts the orchestrator now
 // rejects a request whose seed signature verifies but whose per-chunk
@@ -113,6 +121,10 @@ func TestStreamingSigV4_BypassRejected(t *testing.T) {
 		t.Error("object should not exist; bypass write must have been rejected before any storage write")
 	}
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // chunkedBody wraps payload in a single aws-chunked frame plus the
 // terminating zero-size chunk. Chunk-signature values are zero because the

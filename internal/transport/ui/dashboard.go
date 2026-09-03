@@ -28,6 +28,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // dashboardPage holds all data passed to the dashboard template.
 type dashboardPage struct {
 	Version          string
@@ -85,6 +89,10 @@ type integrityStats struct {
 	ChecksTotal float64
 	ErrorsTotal float64
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // handleDashboard renders the HTML dashboard page.
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {

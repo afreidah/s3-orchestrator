@@ -27,6 +27,11 @@ type ObjectLocationsResponse struct {
 // zero-valued, because "never checked" and "checked at the epoch" are different
 // answers to the question this field exists for. Having a ContentHash only says
 // a hash was recorded; this says whether the bytes were ever compared to it.
+//
+// An empty CompressionAlgorithm means the copy is stored verbatim, which is
+// what tells the two size fields apart: LogicalSize is only meaningful next to
+// an algorithm, since SizeBytes is the object's own size when nothing was
+// encoded.
 type ObjectLocation struct {
 	Backend        string     `json:"backend"`
 	SizeBytes      int64      `json:"size_bytes"`
@@ -37,9 +42,6 @@ type ObjectLocation struct {
 	ContentHash    string     `json:"content_hash,omitempty"`
 	LastScrubbedAt *time.Time `json:"last_scrubbed_at,omitempty"`
 
-	// CompressionAlgorithm is empty when the copy is stored verbatim, which is
-	// what tells the two cases apart: LogicalSize is only meaningful next to it,
-	// since SizeBytes is the object's own size when nothing was encoded.
 	CompressionAlgorithm string `json:"compression_algorithm,omitempty"`
 	LogicalSize          int64  `json:"logical_size,omitempty"`
 }

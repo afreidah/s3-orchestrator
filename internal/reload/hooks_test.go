@@ -50,6 +50,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // errResolve is the sentinel every "provider registered but errors"
 // case threads through so tests can assert the wrapped error survives.
 var errResolve = errors.New("dependency unavailable")
@@ -62,6 +66,10 @@ func failingProvider[T any](inj do.Injector) {
 		return zero, errResolve
 	})
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestResolutionError_WrapsCause confirms the helper's rendered form
 // includes the subsystem label and unwraps to the original error so
@@ -91,6 +99,10 @@ func TestTlsCertHook_NilReloaderSkipped(t *testing.T) {
 		t.Errorf("Name = %q", h.Name())
 	}
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // writeSelfSignedCert generates a self-signed ECDSA cert/key pair at
 // the given paths so the tlsCertHook tests can drive a real
@@ -125,6 +137,10 @@ func writeSelfSignedCert(t *testing.T, certPath, keyPath string) {
 		t.Fatalf("write key: %v", err)
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestTlsCertHook_AppliedOnSuccessfulReload wires a real CertReloader
 // over a valid cert pair, then rewrites the cert files with a fresh
@@ -554,6 +570,10 @@ func TestHookNamesStable(t *testing.T) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newUIDepsForReloadTest wires the minimum real deps the ui handler
 // constructor requires. The reload-hook test only exercises UpdateConfig,
 // but the constructor still panics via must.NotNil on missing deps.
@@ -600,6 +620,10 @@ func duplicateTokenConfig() *config.Config {
 		{Name: "traces", Credentials: []config.CredentialConfig{{Token: "SAME"}}},
 	}}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestBucketAuthHook_CheckRejectsAmbiguousCredential proves an ambiguous
 // credential is caught in the Check pass. That is what matters for safety:

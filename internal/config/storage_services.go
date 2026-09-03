@@ -78,11 +78,11 @@ type WritePathConfig struct {
 // completion. Part-number range, ordering, duplicate and ETag checks are
 // always enforced; only the minimum non-final part size is optional, because a
 // deployment whose writers split more finely than S3 allows needs it off.
+//
+// EnforceMinPartSize is a pointer so the loader can tell "absent" (default
+// true) from an explicit false.
 type MultipartConfig struct {
-	// EnforceMinPartSize requires every part but the last to be at least
-	// 5 MiB, matching S3. Default: true. Set to false for a deployment with
-	// existing writers that split more finely than S3 allows.
-	EnforceMinPartSize *bool `yaml:"enforce_min_part_size"`
+	EnforceMinPartSize *bool `yaml:"enforce_min_part_size"` // every part but the last must be >= 5 MiB
 }
 
 // IsMinPartSizeEnforced returns true unless the operator has explicitly

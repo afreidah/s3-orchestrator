@@ -11,10 +11,6 @@
 // default and as raw JSON when --json is passed.
 // -------------------------------------------------------------------------------
 
-// Package adminctl implements the `s3-orchestrator admin ...` family of
-// subcommands. Each command is a thin HTTP client over the admin API
-// exposed by the running server. Responses render as human-readable text by
-// default; the global --json flag switches to raw JSON.
 package adminctl
 
 import (
@@ -30,7 +26,8 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
-// adminBackendsPath and related constants used by this package.
+// The admin API route and header, plus the flag names, query formats and
+// message literals the subcommands share.
 const (
 	adminBackendsPath = "/admin/api/backends/"
 	adminTokenHeader  = "X-Admin-Token"

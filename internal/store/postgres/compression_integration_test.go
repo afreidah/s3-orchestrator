@@ -1,4 +1,4 @@
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 // Compression Admin Integration Tests
 //
 // Author: Alex Freidah
@@ -9,7 +9,7 @@
 // backend_quotas.bytes_used with the size it writes, and has to rewrite the
 // envelope columns: re-encrypting a copy mints a new base nonce and wrapped
 // key, so a row left holding the old ones describes bytes nothing can decrypt.
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 
 //go:build integration
 
@@ -22,6 +22,10 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // encodedForm describes a copy stored both compressed and encrypted, which is
 // the case that exercises every column at once.
@@ -76,6 +80,10 @@ func assertEnvelopeCarried(t *testing.T, got core.RewritableLocation) {
 	}
 }
 
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
+
 // TestStoreInt_CompressionListings_AreComplements asserts a copy appears in
 // exactly one of the two listings, so a compress pass never re-encodes what it
 // wrote and a decompress pass never decodes what was never encoded.
@@ -124,6 +132,10 @@ func TestStoreInt_CompressionListings_PageByCursor(t *testing.T) {
 	seen := walkCompressedByCursor(t, s, ctx, want, total)
 	assertWalkedEachOnce(t, seen, total)
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // seedEncodedCopies records total encoded copies under this test's key prefix
 // and reports the keys it wrote.
@@ -185,6 +197,10 @@ func assertWalkedEachOnce(t *testing.T, seen map[string]int, total int) {
 		}
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestStoreInt_MarkObjectCompressed_MovesQuotaAndEnvelope asserts the update
 // writes every column a rewritten copy needs and moves bytes_used by the

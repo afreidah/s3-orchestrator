@@ -31,6 +31,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // Chunk size bounds and the default. The default comes from measuring the ratio
 // cost of splitting an object into independently decodable frames: at 1 MiB it
 // is 2.5% on Go source and negative on JSON logs, with throughput unchanged,
@@ -81,18 +85,22 @@ var ErrCorruptObject = errors.New("corrupt compressed object")
 // Codec compresses and decompresses objects in the chunked seekable format.
 // Safe for concurrent use: the encoder and decoder it holds are, and it carries
 // no per-stream state.
+//
+// bufPool exists because without it every upload allocates chunkSize bytes it
+// uses once and drops, which at the 1 MiB default is the largest single
+// allocation on the write path. It mirrors Encryptor.bufPool.
 type Codec struct {
 	enc       *zstd.Encoder
 	dec       *zstd.Decoder
 	chunkSize int
 	log       *slog.Logger
 
-	// bufPool holds chunk-sized staging buffers. Without it every upload
-	// allocates chunkSize bytes it uses once and drops, which at the 1 MiB
-	// default is the largest single allocation on the write path. Mirrors
-	// Encryptor.bufPool.
-	bufPool sync.Pool
+	bufPool sync.Pool // chunk-sized staging buffers
 }
+
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
 
 // NewCodec builds a codec at the given zstd level and chunk size.
 //
@@ -167,6 +175,10 @@ func newCodec(level zstd.EncoderLevel, chunkSize int) (*Codec, error) {
 
 // frameMagic is the four bytes every Zstandard data frame starts with.
 var frameMagic = []byte{0x28, 0xB5, 0x2F, 0xFD}
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // HasFrameMagic reports whether bytes begin a Zstandard frame.
 //

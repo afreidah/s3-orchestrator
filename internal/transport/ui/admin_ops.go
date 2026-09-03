@@ -22,6 +22,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
+// -------------------------------------------------------------------------
+// REBALANCE
+// -------------------------------------------------------------------------
+
 // handleAPIRebalance triggers an on-demand rebalance in the background.
 // Returns 202 Accepted immediately; poll /api/rebalance/status for results.
 func (h *Handler) handleAPIRebalance(w http.ResponseWriter, r *http.Request) {
@@ -60,6 +64,10 @@ func (h *Handler) rebalanceOp() adminActionOp[rebalanceStatus] {
 func (h *Handler) handleAPIRebalanceStatus(w http.ResponseWriter, _ *http.Request) {
 	h.writeAdminActionStatus(w, h.rebalanceOp())
 }
+
+// -------------------------------------------------------------------------
+// OVER-REPLICATION CLEANUP
+// -------------------------------------------------------------------------
 
 // handleAPICleanExcess triggers an on-demand over-replication cleanup in the
 // background. Returns 202 Accepted immediately; poll /api/clean-excess/status.

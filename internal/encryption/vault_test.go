@@ -25,6 +25,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newFakeVault creates an httptest server that mimics Vault Transit encrypt,
 // decrypt, and token renew-self endpoints.
 func newFakeVault(t *testing.T) *httptest.Server {
@@ -94,6 +98,10 @@ func newTestVaultProvider(t *testing.T, ts *httptest.Server) *VaultKeyProvider {
 	t.Cleanup(p.Close)
 	return p
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestVaultKeyProvider_WrapUnwrapRoundTrip verifies the vault key provider wrap unwrap round trip contract.
 // Asserts that WrapDEK:.

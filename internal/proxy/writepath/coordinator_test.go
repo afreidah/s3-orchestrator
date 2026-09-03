@@ -30,6 +30,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // httpError is a writepath-package test helper that satisfies the
 // HTTPStatusCode() interface backend.IsNotFound classifies against.
 type httpError struct {
@@ -37,8 +41,16 @@ type httpError struct {
 	msg  string
 }
 
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
+
 func (e *httpError) Error() string       { return e.msg }
 func (e *httpError) HTTPStatusCode() int { return e.code }
+
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
 
 // newCoordinatorWithBackend builds a Coordinator whose infra.BackendRuntime knows
 // about a single named backend. Used by DeleteOrEnqueue branch tests so
@@ -86,6 +98,10 @@ func expectStreamCopyOK(src, dest *backendtest.MockObjectBackend) {
 	dest.EXPECT().PutObject(gomock.Any(), "k", gomock.Any(), int64(4), gomock.Any(), gomock.Any()).
 		Return("etag", nil)
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestMoveObject_CASError_OrphansDestWithProfileReason pins the metadata-CAS
 // failure path: the destination bytes are orphaned with the profile's Orphan

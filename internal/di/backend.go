@@ -52,16 +52,15 @@ import (
 
 // BackendsResult groups the outputs of backend initialization so multiple
 // providers can resolve it without re-running construction.
+//
+// Breakers is carried here so the watchdog registry receives the instances
+// directly, rather than rediscovering them by type assertion at runtime.
 type BackendsResult struct {
 	Backends       map[string]backend.ObjectBackend
 	Order          []string
 	UsageLimits    map[string]core.UsageLimits
 	MaxObjectSizes map[string]int64
-	// Breakers is the per-backend circuit breakers produced when
-	// BackendCircuitBreaker is enabled. Empty when CBs are disabled.
-	// The watchdog registry consumes this so it never has to rediscover
-	// breakers via type assertion at runtime.
-	Breakers []breaker.StaleProbeResetter
+	Breakers       []breaker.StaleProbeResetter // empty when per-backend breakers are disabled
 }
 
 // UsageLimitsFor compiles one backend's configured budgets into the form

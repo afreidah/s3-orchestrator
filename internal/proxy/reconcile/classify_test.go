@@ -23,6 +23,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // siblingStub returns a fixed copy set for every key.
 type siblingStub struct {
 	locs []core.ObjectLocation
@@ -48,6 +52,10 @@ func newTestEncryptor(t *testing.T) *encryption.Encryptor {
 	}
 	return enc
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // encryptInto encrypts body onto be under key and returns the row metadata the
 // write path would have recorded for it.
@@ -88,6 +96,10 @@ func classify(t *testing.T, be *backendtest.InMemory, key string, locs []core.Ob
 		Source:  "test",
 	}, "b1", key, size)
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestClassifyImport_AdoptsKeyFromSurvivingReplica is the recovery the
 // incident had to be done by hand: a replica row survived with the key, so the

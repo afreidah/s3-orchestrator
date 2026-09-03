@@ -24,6 +24,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // freshStore opens a fresh in-memory sqlite store for each test so
 // importPage can exercise the real importer surface end-to-end.
 func freshStore(t *testing.T) (importer, adminStore) {
@@ -47,6 +51,10 @@ func freshStore(t *testing.T) (importer, adminStore) {
 type errorObjectStore struct {
 	err error
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // ImportObject records the import call so the test can assert it
 // happened. The first return value mirrors the real store's
@@ -327,6 +335,10 @@ func TestRun_FailsWithoutLiveBackend(t *testing.T) {
 		t.Errorf("exit code = %d, want 1 (no live S3 backend at fixture URL)", code)
 	}
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // syncTestBackend returns an in-memory backend holding plaintext bytes for
 // every key in a listing page, so the import path's envelope inspection has

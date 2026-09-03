@@ -21,6 +21,10 @@ import (
 	seekable "github.com/SaveTheRbtz/zstd-seekable-format-go/pkg"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // tailPrefetchSize is how much of an object's tail one speculative fetch pulls.
 // Reading the seek table is a footer read followed by a read of the whole table,
 // so a fetch sized to hold both turns two round trips into one. At 12 bytes per
@@ -42,6 +46,10 @@ var (
 	ErrFetchFailed = errors.New("range fetch failed")
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // RangeFetcher supplies arbitrary byte ranges of one stored compressed object.
 // FetchRange returns exactly the bytes at [start, end] inclusive, and may be
 // called concurrently.
@@ -59,6 +67,10 @@ type RangedReader interface {
 	io.ReadSeekCloser
 	io.ReaderAt
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // DecompressRanged returns a reader over the logical bytes of a stored object,
 // pulling only the frames a read touches through f.
@@ -170,6 +182,10 @@ func (e *rangeEnv) GetFrameByIndex(index seekable.FrameOffsetEntry) ([]byte, err
 	return e.fetchAt(off, n)
 }
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // fetchAt pulls exactly n bytes at off. A backend answering with the wrong
 // number of bytes is rejected here rather than downstream, where it would
 // surface as frame corruption instead of a transport fault.
@@ -214,6 +230,10 @@ func classifyDecode(err error) error {
 type decodeGuard struct {
 	inner RangedReader
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // Read implements io.Reader.
 func (g *decodeGuard) Read(p []byte) (int, error) {

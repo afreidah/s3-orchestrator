@@ -18,6 +18,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // cpList runs ListObjectsDelimited and returns CommonPrefixes + leaf keys.
 func leafKeys(t *testing.T, s *Store, prefix, delim, after string, maxKeys int) (cps, leaves []string) {
 	t.Helper()
@@ -31,6 +35,10 @@ func leafKeys(t *testing.T, s *Store, prefix, delim, after string, maxKeys int) 
 	}
 	return cps, leaves
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestListObjectsDelimited_GroupsAndLeaves verifies folding into CommonPrefixes
 // while leaf objects (no delimiter after the prefix) pass through.

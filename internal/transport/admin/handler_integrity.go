@@ -27,6 +27,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// -------------------------------------------------------------------------
+// SCRUB
+// -------------------------------------------------------------------------
+
 // handleScrub triggers an on-demand scrub cycle. Accepts an optional batch_size
 // query parameter. Streams per-object NDJSON progress when the client accepts
 // the stream content type; otherwise returns a single JSON result.
@@ -146,6 +150,10 @@ func (h *Handler) streamScrub(w http.ResponseWriter, r *http.Request, batchSize 
 	})
 }
 
+// -------------------------------------------------------------------------
+// CHECKSUM BACKFILL
+// -------------------------------------------------------------------------
+
 // handleBackfillChecksums triggers a checksum backfill pass. Optional query
 // parameters: batch_size (objects per pass), max (cap objects this request,
 // 0 = drain all), delay_ms (pause between passes to rate-limit backend reads).
@@ -195,6 +203,10 @@ func (h *Handler) streamBackfillChecksums(w http.ResponseWriter, r *http.Request
 		return stepResult{Processed: res.Processed, Fields: map[string]any{"done": res.Done}}, nil
 	})
 }
+
+// -------------------------------------------------------------------------
+// RECONCILE
+// -------------------------------------------------------------------------
 
 // handleReconcile triggers an on-demand reconciliation. Lists objects on
 // each backend, diffs against DB entries, imports untracked objects, and

@@ -32,6 +32,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newObjectsHandlerWithAPI builds a handler over a mocked ObjectAPI and
 // registers it, so a test states the one ops call it cares about.
 func newObjectsHandlerWithAPI(t *testing.T) (*opstest.MockObjectAPI, http.Handler) {
@@ -64,6 +68,10 @@ func tagsRequest(t *testing.T, mux http.Handler, method, key, body string) (int,
 	mux.ServeHTTP(w, doAuth(method, "/admin/api/objects/tags/"+key, body))
 	return w.Code, w.Body.String()
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestAdminGetObjectTags_ReturnsSet verifies a stored set renders as JSON.
 func TestAdminGetObjectTags_ReturnsSet(t *testing.T) {

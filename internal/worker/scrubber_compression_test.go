@@ -28,6 +28,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // scrubChunk is the codec chunk size these tests encode at, small enough that a
 // modest fixture still crosses frame boundaries.
 const scrubChunk = compression.MinChunkSize
@@ -42,6 +46,10 @@ func newScrubCodec(t *testing.T) *compression.Codec {
 	t.Cleanup(c.Close)
 	return c
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // encodeForScrub returns a compressible body with its stored encoding.
 func encodeForScrub(t *testing.T, c *compression.Codec) (plain, stored []byte) {
@@ -70,6 +78,10 @@ func compressedRow(hash string, storedSize int) core.ObjectLocation {
 		CompressionFormatVersion: compression.FormatVersion,
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestScrub_CompressedObjectVerifies is the headline: a copy whose stored bytes
 // are an encoding passes verification against the hash of what the client wrote.

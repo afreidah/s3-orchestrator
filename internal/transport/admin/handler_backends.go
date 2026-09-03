@@ -28,11 +28,19 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // removeConfirmTTL is how long a purge confirmation token is valid.
 const (
 	removeConfirmTTL        = 60 * time.Second
 	errDrainOperationFailed = "drain operation failed"
 )
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // handleStartDrain begins draining a backend.
 func (h *Handler) handleStartDrain(w http.ResponseWriter, r *http.Request) {

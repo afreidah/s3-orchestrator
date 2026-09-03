@@ -6,7 +6,6 @@
 //	mockgen -destination=mocks.go -package=storetest github.com/afreidah/s3-orchestrator/internal/store/storetest MetadataStore
 //
 
-// Package storetest is a generated GoMock package.
 package storetest
 
 import (

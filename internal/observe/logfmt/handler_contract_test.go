@@ -24,6 +24,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // productionLogger builds the slog handler stack the runtime composes
 // for the daemon, minus the trace-handler integration (which would
 // require pulling in opentelemetry just to test stringification).
@@ -48,6 +52,10 @@ func decodeOne(t *testing.T, buf *bytes.Buffer) map[string]any {
 	}
 	return out
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestProductionPipeline_RendersErrorAndComponent pins the three
 // acceptable error-attribute shapes end-to-end. Each case asserts both

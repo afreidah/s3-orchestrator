@@ -36,7 +36,7 @@ var ErrSimulatedBackendFailure = errors.New("simulated backend failure")
 // keys so typos surface as compile errors.
 type Method int
 
-// MethodPut and related constants used by this package.
+// The backend methods a failure can be injected into.
 const (
 	MethodPut Method = iota
 	MethodGet

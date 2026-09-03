@@ -30,6 +30,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // MsgPassFailed / MsgPassCompleted / MsgQuotaMetricsRefreshFailed are
 // the canonical terminal-event log messages shared by the periodic
 // "pass" workers (rebalance, replication, over-replication). Held as
@@ -39,6 +43,10 @@ const (
 	MsgPassCompleted             = "pass completed"
 	MsgQuotaMetricsRefreshFailed = "quota metrics refresh failed after pass"
 )
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // AdvisoryLocker is the consumer-defined slice of the metadata store a
 // Service needs: one TryAdvisoryLock call per tick. The concrete
@@ -54,6 +62,10 @@ type AdvisoryLocker interface {
 type QuotaMetricsRefresher interface {
 	UpdateQuotaMetrics(ctx context.Context) error
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // ComponentLogger returns the canonical scoped logger every Service
 // uses, derived from the snake_case slug so the component attr is the
@@ -107,34 +119,24 @@ func HandlePassResult(ctx context.Context, log *slog.Logger, manager QuotaMetric
 // struct so callers can pin a few fields and leave the rest at their
 // zero values rather than threading a long argument list. ShouldRun,
 // Startup, and OnError are optional; Work and Name are required.
+//
+// Name is the canonical snake_case component slug, used for both the metrics
+// label and the logger's component attribute, so the two cannot disagree.
+// ShouldRun skips a tick without recording a failure, which is how a service
+// its config disabled at runtime stays quiet rather than reporting errors.
+// OnError replaces the default failure log for services that also bump their
+// own metric.
 type Config struct {
-	// Locker acquires the advisory lock around each tick.
-	Locker AdvisoryLocker
-	// Interval is the period between ticks (post-jitter).
-	Interval time.Duration
-	// LockID is the PostgreSQL advisory lock identifier; defined in
-	// internal/store/core (LockRebalancer, LockReplicator, etc.).
-	LockID int64
-	// Name is the canonical snake_case component slug; both the
-	// metrics label and the scoped logger's component attribute use it.
-	Name string
-	// Log is the scoped logger. Pass ComponentLogger(Name) for the
-	// default contract.
-	Log *slog.Logger
+	Locker   AdvisoryLocker
+	Interval time.Duration // between ticks, post-jitter
+	LockID   int64         // core.LockRebalancer and friends
+	Name     string
+	Log      *slog.Logger // ComponentLogger(Name) is the default contract
 
-	// ShouldRun gates each tick; return false to skip the tick without
-	// recording it as a failure (used by services whose config can
-	// disable them at runtime, e.g. rebalance enabled=false).
 	ShouldRun func() bool
-	// Startup runs once at Run() entry before the first ticker fires;
-	// useful for replication's "kick off a pass immediately on boot."
-	Startup func(ctx context.Context) error
-	// Work is the per-tick function; required.
-	Work func(ctx context.Context) error
-	// OnError overrides the default tick-failure logging path (the
-	// default writes a slog.Error). Used by the lifecycle service to
-	// also bump a per-service error metric.
-	OnError func(err error)
+	Startup   func(ctx context.Context) error // runs once before the first tick
+	Work      func(ctx context.Context) error // required
+	OnError   func(err error)
 }
 
 // New constructs a Service from cfg. Required fields (Locker, Interval,
@@ -155,6 +157,10 @@ func New(cfg Config) *Service {
 		onError:   cfg.OnError,
 	}
 }
+
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
 
 // Service runs a function on a fixed interval under an advisory lock.
 // Handles audit context creation, lock acquisition, skip/error logging,
@@ -178,12 +184,13 @@ type Service struct {
 	work      func(ctx context.Context) error
 	onError   func(err error)
 
-	// health is the latest snapshot of per-service liveness, updated by
-	// runOnce after every tick. Read by Health() under healthMu so the
-	// admin endpoint sees consistent reads without blocking the tick.
 	healthMu sync.Mutex
 	health   lifecycle.WorkerHealth
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // Tick drives a single iteration of the work function under the same
 // lock + audit + health-recording path Run uses. Exposed for tests
@@ -222,6 +229,10 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 	}
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // runOnce creates an audit context, acquires the advisory lock, runs
 // fn, and records the resulting health state. Lock-busy and
@@ -285,6 +296,10 @@ func (s *Service) recordHealth(success bool, err error) {
 		telemetry.WorkerConsecutiveFailures.WithLabelValues(s.name).Set(float64(failures))
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // Name returns the snake_case component slug the service was
 // constructed with. Exposed for tests that validate cross-service

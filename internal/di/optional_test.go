@@ -20,6 +20,10 @@ import (
 	"github.com/samber/do/v2"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // optionalProbe is a simple service type used only in these tests; it
 // keeps the test independent of the rest of the package's wiring.
 type optionalProbe struct {
@@ -34,6 +38,10 @@ type optionalDep struct{}
 // assert the error propagates through Optional[T] without losing
 // identity.
 var errBoom = errors.New("boom")
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestOptional_Disabled confirms that with no provider registered for T,
 // Optional[T] reports Disabled, a zero value, and no error.

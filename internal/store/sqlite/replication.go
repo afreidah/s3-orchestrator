@@ -19,6 +19,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// UNDER-REPLICATION
+// -------------------------------------------------------------------------
+
 // GetUnderReplicatedObjects finds objects with fewer copies than the target
 // replication factor. Returns all rows for those objects so callers know which
 // backends already have copies.
@@ -89,6 +93,10 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 	return scanObjectLocations(rows)
 }
 
+// -------------------------------------------------------------------------
+// OVER-REPLICATION
+// -------------------------------------------------------------------------
+
 // GetOverReplicatedObjects finds objects with more copies than the target
 // replication factor. Returns all rows for those objects so callers can
 // score each copy and decide which to remove.
@@ -131,6 +139,10 @@ func (s *Store) CountOverReplicatedObjects(ctx context.Context, factor int) (int
 		 )`,
 		factor)
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // scanObjectLocations converts sql.Rows into a slice of ObjectLocation.
 func scanObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {

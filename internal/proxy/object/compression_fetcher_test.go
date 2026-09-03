@@ -32,6 +32,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // fetchTestKey is the object key every case in this file stores under.
 const fetchTestKey = "compressed/object"
 
@@ -61,6 +65,10 @@ func newFakeRangeRuntime(beName string, limits core.UsageLimits) *fakeRangeRunti
 		acct:  accounting.New(usage, func(string, string, time.Time, error) {}),
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // GetWithTimeout forwards to the backend and records the Range header asked
 // for, which is what the ciphertext translation is asserted on.
@@ -114,6 +122,10 @@ func newTestCodec(t *testing.T) *compression.Codec {
 	t.Cleanup(c.Close)
 	return c
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // storeCompressed compresses src onto an in-memory backend, encrypting it first
 // when encrypt is set. The location row carries the three sizes a read has to
@@ -200,6 +212,10 @@ func assertFetchesCompressedBytes(t *testing.T, s *storedObject, want []byte) {
 		}
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestStoredRangeFetcher_CompressedEncryptedRange covers the composition no
 // pairwise test reaches: a compressed object inside an encryption envelope,
@@ -351,6 +367,10 @@ func TestStoredRangeFetcher_RejectsShortBody(t *testing.T) {
 		t.Error("FetchRange over a truncated body returned no error")
 	}
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // storedFormName labels the encrypted and unencrypted subtests.
 func storedFormName(encrypted bool) string {

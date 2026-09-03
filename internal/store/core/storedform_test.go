@@ -16,6 +16,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // compressedTo builds the update a recompression pass would record for a copy
 // that now occupies size bytes.
 func compressedTo(size int64) *CompressedUpdate {
@@ -27,6 +31,10 @@ func compressedTo(size int64) *CompressedUpdate {
 		SizeBytes:   size,
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestMarkObjectCompressed_ChargesTheSizeDifference pins the contract every
 // stored-form rewrite shares: the row and the counter move together, by

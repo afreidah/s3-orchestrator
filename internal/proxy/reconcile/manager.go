@@ -30,6 +30,10 @@ import (
 
 //go:generate mockgen -destination=mock_manager_test.go -package=reconcile github.com/afreidah/s3-orchestrator/internal/proxy/reconcile Stores,BackendResolver,UsageRecorder
 
+// -------------------------------------------------------------------------
+// CONSUMER INTERFACES
+// -------------------------------------------------------------------------
+
 // Stores is the store surface reconciliation needs: import a discovered key,
 // drop a stale row, walk the ledger in byte order, and sweep cleanup-queue
 // rows belonging to a key that no longer exists.
@@ -71,6 +75,10 @@ var listOp = []s3op.Operation{s3op.ListObjects}
 // work it could afford and is not a failure.
 var errBudgetExhausted = errors.New("backend API budget exhausted mid-walk")
 
+// -------------------------------------------------------------------------
+// PAGE BUDGET
+// -------------------------------------------------------------------------
+
 // pageBudget charges a backend's API quota one listing page at a time and
 // reports whether the walk may continue.
 //
@@ -106,6 +114,10 @@ func (m *Manager) reportBudgetStop(ctx context.Context, op, backendName string) 
 		"backend", backendName,
 		"detail", "the pass covered only part of the bucket; it resumes on the next run once the budget allows")
 }
+
+// -------------------------------------------------------------------------
+// MANAGER
+// -------------------------------------------------------------------------
 
 // Manager orchestrates sync and reconcile passes for one fleet.
 type Manager struct {
@@ -144,6 +156,10 @@ func (m *Manager) logger() *slog.Logger {
 	}
 	return m.log
 }
+
+// -------------------------------------------------------------------------
+// SYNC AND RECONCILE
+// -------------------------------------------------------------------------
 
 // SyncBackend scans a backend's bucket and imports pre-existing objects into
 // the ledger. Objects already tracked for the backend are skipped.

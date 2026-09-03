@@ -32,9 +32,7 @@ const (
 	logTimeWidth      = 8
 	logLevelWidth     = 5
 	logComponentWidth = 16
-	// logFixedWidth is the space the non-message columns and their single-space
-	// separators consume, subtracted from the pane width to size the message.
-	logFixedWidth = logTimeWidth + 1 + logLevelWidth + 1 + logComponentWidth + 1
+	logFixedWidth     = logTimeWidth + 1 + logLevelWidth + 1 + logComponentWidth + 1 // columns plus separators
 )
 
 // logsView holds the state of the logs pane.

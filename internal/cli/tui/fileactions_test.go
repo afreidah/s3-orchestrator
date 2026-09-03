@@ -24,6 +24,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // filesModel returns a model on the Files pane with one directory and one
 // object loaded, the cursor on the object.
 func filesModel(t *testing.T, f *fakeLister) *model {
@@ -64,6 +68,10 @@ func settle(t *testing.T, m *model) transferDoneMsg {
 	t.Fatal("the transfer did not finish within the deadline")
 	return transferDoneMsg{}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestDownload_WritesTheObject asserts a download lands the body at the
 // prompted path and reports what it wrote.

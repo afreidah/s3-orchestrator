@@ -24,6 +24,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // CleanupWorker processes the retry queue for failed object deletions.
 type CleanupWorker struct {
 	log              *slog.Logger
@@ -60,6 +64,10 @@ func NewCleanupWorker(deps CleanupWorkerDeps) *CleanupWorker {
 	}
 }
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // maxCleanupAttempts is the retry ceiling. The 1-minute starting
 // backoff doubled 10 times yields ~17 hours of total retry runway,
 // which is enough to bridge the longest realistic backend outages.
@@ -72,6 +80,10 @@ const maxCleanupAttempts = 10
 // lockstep and the SonarQube duplicate-literal rule (S1192) stays
 // satisfied.
 const logMsgCompleteCleanupFailed = "failed to complete cleanup item"
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // CleanupBackoff returns the backoff duration for the given attempt number.
 // Uses exponential backoff: min(1m * 2^attempts, 24h). Short-circuits the
@@ -91,6 +103,10 @@ func CleanupBackoff(attempts int32) time.Duration {
 func (w *CleanupWorker) ProcessCleanupQueue(ctx context.Context) WorkSummary {
 	return runTickCycle(ctx, "ProcessCleanupQueue", "cleanup_queue", w.processCleanupQueue)
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // processCleanupQueue is the body of ProcessCleanupQueue after the span is open.
 func (w *CleanupWorker) processCleanupQueue(ctx context.Context) WorkSummary {

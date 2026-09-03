@@ -96,6 +96,17 @@ push: builder ## Build and push multi-arch images to registry
 generate: ## Generate sqlc query code and interface mocks
 	go tool sqlc generate
 	go generate ./...
+	@$(MAKE) --no-print-directory strip-mock-package-docs
+
+# mockgen writes "Package X is a generated GoMock package." above every package
+# clause. In a package whose mocks are not _test.go files that comment is a real
+# package comment, and go/doc concatenates it onto the one in doc.go. Strip it
+# from the non-test mocks so doc.go stays the only package comment.
+strip-mock-package-docs:
+	@for f in $$(git ls-files '*.go' | grep -v '_test\.go$$' | xargs grep -l 'is a generated GoMock package\.'); do \
+		perl -0pi -e 's{\n// Package \w+ is a generated GoMock package\.\n(package )}{\n$$1}' $$f; \
+		echo "  stripped mockgen package comment: $$f"; \
+	done
 
 test: ## Run Go tests with coverage
 	go test -race -cover ./...

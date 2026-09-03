@@ -32,6 +32,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
 // pagingRows is how many rows these tests seed: enough to span several batches,
 // since a paging fault is invisible inside a single page.
 const pagingRows = 250
@@ -60,6 +64,10 @@ func newShrinkingSet(n int) *shrinkingSet {
 	}
 	return s
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // page returns the rows after the cursor, up to limit. served bounds the total
 // handed out so a driver that never advances its cursor fails the test instead
@@ -163,6 +171,10 @@ func pagingEnv(t *testing.T) bulkRewriteEnv {
 func pagingCounter() *prometheus.CounterVec {
 	return prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bulk_rewrite_paging_test"}, []string{"status"})
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestRunBulkRewrite_ProcessesEveryRowAsTheSetShrinks is the regression test for
 // the paging fault. Every row here succeeds and therefore leaves the listing,

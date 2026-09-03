@@ -15,9 +15,8 @@ import "sync"
 // StaleProbeResetter is implemented by anything whose half-open probe can
 // time out and need a manual reset. Both *CircuitBreaker and
 // backend.CircuitBreakerBackend (which embeds *CircuitBreaker) satisfy it.
+// ResetStaleProbe reports true when a probe was actually reset.
 type StaleProbeResetter interface {
-	// ResetStaleProbe resets a half-open probe that has exceeded its timeout.
-	// Returns true when a probe was actually reset.
 	ResetStaleProbe() bool
 }
 

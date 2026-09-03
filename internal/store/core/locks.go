@@ -17,40 +17,19 @@
 
 package core
 
-// Advisory lock IDs assigned to each background service.
-//
-//   - LockRebalancer       (1001) periodic object distribution across backends
-//   - LockReplicator       (1002) background replica creation
-//   - LockCleanupQueue     (1003) failed deletion retry processing
-//   - LockMultipartCleanup (1004) stale multipart upload removal
-//   - LockLifecycle        (1005) object expiration rule evaluation
-//   - LockDrain            (1006) backend drain and object migration
-//   - LockUsageFlush       (1007) usage counter flush to the database
-//   - LockOverReplication  (1008) excess replica removal
-//   - LockReconcile        (1009) backend-vs-database consistency check
-//   - LockScrubber         (1010) background integrity verification
-//   - LockPendingReaper    (1011) abandoned PUT-intent resolution
+// LockRebalancer and the other advisory lock IDs, one per background service.
+// The value is the contract: it appears in operator runbooks and in
+// pg_locks output, so an ID is never reassigned or reordered.
 const (
-	// LockRebalancer is held by the periodic rebalancer.
-	LockRebalancer int64 = 1001
-	// LockReplicator is held by the background replicator.
-	LockReplicator int64 = 1002
-	// LockCleanupQueue is held by the cleanup-queue retry worker.
-	LockCleanupQueue int64 = 1003
-	// LockMultipartCleanup is held by the stale-multipart sweeper.
-	LockMultipartCleanup int64 = 1004
-	// LockLifecycle is held by the lifecycle expiration worker.
-	LockLifecycle int64 = 1005
-	// LockDrain is held by an in-progress backend drain.
-	LockDrain int64 = 1006
-	// LockUsageFlush is held by the usage-counter flush worker.
-	LockUsageFlush int64 = 1007
-	// LockOverReplication is held by the excess-replica cleaner.
-	LockOverReplication int64 = 1008
-	// LockReconcile is held by the reconciler.
-	LockReconcile int64 = 1009
-	// LockScrubber is held by the integrity scrubber.
-	LockScrubber int64 = 1010
-	// LockPendingReaper is held by the pending-intent reaper.
-	LockPendingReaper int64 = 1011
+	LockRebalancer       int64 = 1001 // periodic object distribution across backends
+	LockReplicator       int64 = 1002 // background replica creation
+	LockCleanupQueue     int64 = 1003 // failed deletion retry processing
+	LockMultipartCleanup int64 = 1004 // stale multipart upload removal
+	LockLifecycle        int64 = 1005 // object expiration rule evaluation
+	LockDrain            int64 = 1006 // backend drain and object migration
+	LockUsageFlush       int64 = 1007 // usage counter flush to the database
+	LockOverReplication  int64 = 1008 // excess replica removal
+	LockReconcile        int64 = 1009 // backend-vs-database consistency check
+	LockScrubber         int64 = 1010 // background integrity verification
+	LockPendingReaper    int64 = 1011 // abandoned PUT-intent resolution
 )

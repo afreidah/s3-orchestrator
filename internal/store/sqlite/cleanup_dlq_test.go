@@ -15,6 +15,10 @@ import (
 	"testing"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // dlqAll moves every currently-pending cleanup row into the DLQ, stamping
 // lastError, so a test can seed the dead-letter table from enqueued rows.
 func dlqAll(t *testing.T, s *Store, lastError string) {
@@ -30,6 +34,10 @@ func dlqAll(t *testing.T, s *Store, lastError string) {
 		}
 	}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestSqlite_ListCleanupDLQ_ScopeAndFields asserts the listing filters by
 // backend and surfaces last_error and both timestamps.

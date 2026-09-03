@@ -21,6 +21,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // lifecycleStub stands in for *expiry.Manager, reporting a fixed outcome and
 // recording the rules it was handed.
 type lifecycleStub struct {
@@ -32,6 +36,10 @@ type lifecycleStub struct {
 	calls       int
 }
 
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
+
 // Config returns the configured rules, or nil for a deployment with none.
 func (s *lifecycleStub) Config() *config.LifecycleConfig { return s.cfg }
 
@@ -42,6 +50,10 @@ func (s *lifecycleStub) ProcessRules(_ context.Context, rules []config.Lifecycle
 	s.gotRules = rules
 	return s.deleted, s.failed
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // rules is a minimal configured ruleset.
 func rules() *config.LifecycleConfig {
@@ -57,6 +69,10 @@ func captureEvents(t *testing.T) *[]event.Event {
 	t.Cleanup(func() { event.SetEmitter(nil) })
 	return &got
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestLifecycleRun_ReportsWhatItDeleted covers the answer an operator is after,
 // and that the configured rules are what actually reach the sweep.

@@ -23,6 +23,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// CONSTRUCTOR
+// -------------------------------------------------------------------------
+
 // newTestRecorder builds a Recorder over a local counter backend for the named
 // backends, with the given limits applied.
 func newTestRecorder(t *testing.T, names []string, limits map[string]core.UsageLimits) (*Recorder, *counter.UsageTracker) {
@@ -33,6 +37,10 @@ func newTestRecorder(t *testing.T, names []string, limits map[string]core.UsageL
 	}
 	return New(tracker, func(string, string, time.Time, error) {}), tracker
 }
+
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
 
 // requestCap builds limits with a single wildcard request pool, the shape a
 // bare api_request_limit desugars into.
@@ -54,6 +62,10 @@ func byteCaps(t *testing.T, egress, ingress int64) core.UsageLimits {
 	}
 	return lim
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestAllow_UnlimitedBackendAdmitsEverything checks the common case: a backend
 // with no configured limits never refuses, so a deployment that has not opted

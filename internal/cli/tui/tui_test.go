@@ -27,6 +27,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // fakeLister returns canned listing pages keyed by "prefix|continuation" and
 // canned location ledgers keyed by object key.
 type fakeLister struct {
@@ -70,6 +74,10 @@ type fakeLister struct {
 	deletedCount  int                                     // count DeletePrefix reports
 	deleteErr     error                                   // when set, both deletes fail
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func (f *fakeLister) ListObjects(_ context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error) {
 	if p, ok := f.pages[prefix+"|"+continuation]; ok {

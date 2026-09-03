@@ -20,12 +20,11 @@ import "context"
 // Runner opens a transaction and invokes fn with a TxAdapter scoped to
 // it. The transaction commits if fn returns a nil error and rolls back
 // otherwise.
+//
+// WithTx is declared in method form because a method cannot carry its own type
+// parameter. Engines implement this unwrapped signature; core operations call
+// the WithTxVal helper below, which wraps it to return a value.
 type Runner interface {
-	// WithTx is method-form here for Go interface satisfaction; the
-	// generic helper below is the calling convention used by core
-	// operations. A type that implements WithTx with the unwrapped
-	// signature satisfies this interface; the WithTxVal helper wraps
-	// it.
 	WithTx(ctx context.Context, fn func(ctx context.Context, tx TxAdapter) error) error
 }
 

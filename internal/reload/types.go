@@ -19,6 +19,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 )
 
+// -------------------------------------------------------------------------
+// HOOK OUTCOMES
+// -------------------------------------------------------------------------
+
 // HookStatus describes the outcome of a single hook's Apply call.
 type HookStatus string
 
@@ -32,14 +36,18 @@ const (
 )
 
 // HookOutcome captures one hook's contribution to a reload result.
+//
+// Error is rendered rather than error-typed so the result stays
+// JSON-serialisable for the admin reload-status endpoint.
 type HookOutcome struct {
 	Name   string     `json:"name"`
 	Status HookStatus `json:"status"`
-	// Error is the rendered error message when Status is Failed.
-	// Empty otherwise. Rendered (not error-typed) so the result is
-	// JSON-serialisable for the admin reload-status endpoint.
-	Error string `json:"error,omitempty"`
+	Error  string     `json:"error,omitempty"` // set only when Status is Failed
 }
+
+// -------------------------------------------------------------------------
+// PASS RESULT
+// -------------------------------------------------------------------------
 
 // Status describes the overall outcome of a reload pass.
 type Status string
@@ -63,39 +71,37 @@ const (
 // coordinator stores the most recent result atomically; the admin API
 // exposes it for operator inspection. Generation is monotonic and only
 // advances on a successful Apply pass (FullSuccess or PartialApplied).
+//
+// Outcomes lists every hook the coordinator considered, in apply order, skipped
+// ones included, so an operator can see which subsystems took no part.
+// RequiresRestart is present whatever the status, because a field that needs a
+// restart needs it whether or not this pass succeeded.
 type Result struct {
-	Generation int64  `json:"generation"`
-	Status     Status `json:"status"`
-	// Outcomes lists every hook the coordinator considered, in apply
-	// order. Skipped hooks are recorded too so operators can see which
-	// subsystems were not part of the reload.
-	Outcomes []HookOutcome `json:"outcomes"`
-	// RequiresRestart lists non-reloadable config fields whose value
-	// changed since the last successful load. Present regardless of
-	// Status so operators always see the warning.
-	RequiresRestart []string `json:"requires_restart,omitempty"`
-	// LoadError is the rendered LoadConfig error when Status is
-	// LoadFailed. Empty otherwise.
-	LoadError string    `json:"load_error,omitempty"`
-	StartedAt time.Time `json:"started_at"`
-	EndedAt   time.Time `json:"ended_at"`
+	Generation      int64         `json:"generation"`
+	Status          Status        `json:"status"`
+	Outcomes        []HookOutcome `json:"outcomes"`
+	RequiresRestart []string      `json:"requires_restart,omitempty"` // non-reloadable fields that changed
+	LoadError       string        `json:"load_error,omitempty"`       // set only when Status is LoadFailed
+	StartedAt       time.Time     `json:"started_at"`
+	EndedAt         time.Time     `json:"ended_at"`
 }
+
+// -------------------------------------------------------------------------
+// HOOK CONTRACT
+// -------------------------------------------------------------------------
 
 // Hook is the contract every reloadable subsystem implements. The
 // coordinator runs Check on every hook first; any error aborts the
 // pass before mutation. Apply then runs every hook, collecting per-hook
 // outcomes. Apply errors mark the hook failed but do not abort the
 // remaining hooks.
+//
+// Name is a short stable identifier used in logs and outcomes. Check validates
+// the new config against the old without mutating subsystem state. Apply
+// mutates the live subsystem and returns Applied or Skipped; a non-nil error
+// marks the hook Failed whatever status it returned alongside it.
 type Hook interface {
-	// Name is a short stable identifier used in logs and outcomes.
 	Name() string
-	// Check validates the new config against the old one without
-	// mutating any subsystem state. Returning an error aborts the
-	// reload before any Apply fires.
 	Check(oldCfg, newCfg *config.Config) error
-	// Apply mutates the live subsystem. Returns HookApplied when the
-	// mutation ran, HookSkipped when the subsystem is not configured
-	// or not registered. Returning a non-nil error marks the hook
-	// Failed regardless of the returned status.
 	Apply(ctx context.Context, oldCfg, newCfg *config.Config) (HookStatus, error)
 }

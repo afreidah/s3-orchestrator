@@ -23,6 +23,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// TYPES
+// -------------------------------------------------------------------------
+
 // fakeStores records the flush deltas it is handed and returns canned answers
 // for the reconcile, which is the whole persistence surface the service needs.
 type fakeStores struct {
@@ -37,6 +41,10 @@ type fakeStores struct {
 func newFakeStores() *fakeStores {
 	return &fakeStores{flushed: make(map[string]int64), flushedPools: make(map[string]int64)}
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 func (f *fakeStores) FlushUsageDeltas(_ context.Context, backendName, _ string, apiRequests, _, _ int64) error {
 	if f.flushErr != nil {

@@ -32,6 +32,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // putEncrypted writes body through the encryption-enabled proxy and returns the
 // key, the backend it landed on, and the bytes that backend physically holds.
 func putEncrypted(t *testing.T, env *encryptionTestEnv, prefix string, body []byte) (key, backendName string, physical int64) {
@@ -48,6 +52,10 @@ func putEncrypted(t *testing.T, env *encryptionTestEnv, prefix string, body []by
 	backendName = queryObjectBackend(t, key)
 	return key, backendName, backendObjectSize(t, backendName, key)
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestUsage_EncryptedPutChargesCiphertext asserts a write is charged the
 // envelope that landed, not the plaintext the client sent. The row already

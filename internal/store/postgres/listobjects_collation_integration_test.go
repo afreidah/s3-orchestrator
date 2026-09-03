@@ -27,6 +27,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
+// -------------------------------------------------------------------------
+// INTERNALS
+// -------------------------------------------------------------------------
+
 // seedCollationKeys records the adversarial key set under a caller-supplied
 // prefix and returns the prefixed keys. Every test in this package shares one
 // database, so an unprefixed listing would sweep up other tests' objects; a
@@ -105,6 +109,10 @@ func icuOrder(t *testing.T, s *Store, prefix string) []string {
 	}
 	return out
 }
+
+// -------------------------------------------------------------------------
+// PUBLIC API
+// -------------------------------------------------------------------------
 
 // TestStoreInt_ListObjects_ByteOrder asserts the flat listing answers in UTF-8
 // byte order, which is what S3 ListObjectsV2 specifies and what SQLite's BINARY

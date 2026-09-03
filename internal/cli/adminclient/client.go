@@ -17,7 +17,6 @@
 // it never renders, never writes to a terminal, and never chooses an exit code.
 // -------------------------------------------------------------------------------
 
-// Package adminclient is the shared HTTP transport for the admin API.
 package adminclient
 
 import (
@@ -45,8 +44,7 @@ type Client struct {
 	baseAddr string
 	token    string
 	http     *http.Client
-	// stream is deadline-free; see RequestTimeout.
-	stream *http.Client
+	stream   *http.Client // deadline-free; see RequestTimeout
 }
 
 // New builds a client for the resolved target address and token. A trailing
