@@ -186,8 +186,9 @@ Key metrics to alert on:
 | `s3o_over_replication_key_preserved_total` | Any non-zero value means a copy set disagrees about encryption and the cleaner kept the only copy that can still be decrypted. Repair the diverged rows; until then the object stays over-replicated |
 | `s3o_encryption_flag_mismatch_total{component}` | Any non-zero value is an alert: an object's stored bytes disagree with its recorded encryption flag, so that copy cannot be read or hashed. `component` names what noticed (`get`, `head`, `scrubber`) |
 | `s3o_import_classified_total{decision="unreadable"}` | Reconcile or sync found an encrypted object whose key is gone. It is recorded so its space is accounted for, but nothing can serve it. Restore it from elsewhere or delete it |
-| `s3o_integrity_oldest_unverified_seconds` | Alert when it climbs steadily. The scrubber is not completing a sweep. It should settle around the sweep period implied by `scrubber_interval` and `scrubber_batch_size`; a rising value means the batch is too small or the interval too long for the fleet. A copy never verified at all counts from when it was written, so a fleet the sweep has not reached shows its true backlog rather than zero |
-| `s3o_integrity_never_verified_copies` | Stays non-zero on a fleet being written to, since new copies queue behind older data by design. Backfill-checksums adds to it directly, since it gives objects a hash without verifying them. Alert on a climbing value you did not cause, not on it being above zero |
+| `s3o_integrity_oldest_unverified_seconds` | Alert when it climbs steadily. The scrubber is not completing a sweep. It should settle around the sweep period implied by `scrubber_interval` and `scrubber_batch_size`; a rising value means the batch is too small or the interval too long for the fleet. A copy never verified at all counts from when it was written, so a fleet the sweep has not reached shows its true backlog rather than zero. Covers reachable copies only, so read it next to `s3o_integrity_deferred_copies` |
+| `s3o_integrity_never_verified_copies` | Stays non-zero on a fleet being written to, since new copies queue behind older data by design. Alert on a climbing value you did not cause, not on it being above zero. Covers reachable copies only |
+| `s3o_integrity_deferred_copies` | Alert on any sustained non-zero value. These copies sit on backends over their usage limit, so the sweep cannot read them and the two figures above describe only part of the fleet. The scrubber will not clear this on its own: raise the backend's limit, or wait for the usage period to roll over |
 | `s3o_compression_errors_total{operation="decode"}` | Any non-zero rate is an alert: bytes already stored cannot be read back. An `encode` failure only fails the write that caused it, but a decode failure means an object is unreadable now |
 | `s3o_compression_fetched_bytes_total / s3o_compression_served_bytes_total` | Read amplification. Bounded by chunk size relative to the ranges clients ask for, so it should be flat. A climb towards the average object size means reads have stopped being ranged, which is visible nowhere else except the backend bill |
 | `s3o_requests_total{status_code="5xx"}` | Alert on elevated 5xx rates |
@@ -337,8 +338,9 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_cache_admin_invalidations_total` | Counter | — | Admin-triggered single-key cache invalidations |
 | `s3o_integrity_checks_total` | Counter | operation | Integrity hash verifications performed (read, scrub) |
 | `s3o_integrity_errors_total` | Counter | operation | Hash mismatches detected (corrupted copies enqueued for cleanup) |
-| `s3o_integrity_oldest_unverified_seconds` | Gauge | — | How long the most overdue object copy has gone unverified |
-| `s3o_integrity_never_verified_copies` | Gauge | — | Copies with a content hash that have never been verified |
+| `s3o_integrity_oldest_unverified_seconds` | Gauge | — | How long the most overdue reachable object copy has gone unverified |
+| `s3o_integrity_never_verified_copies` | Gauge | — | Reachable copies with a content hash that have never been verified |
+| `s3o_integrity_deferred_copies` | Gauge | — | Copies the scrubber cannot reach because their backend is over its usage limit |
 | `s3o_integrity_usage_declined_total` | Counter | — | Copies the scrubber skipped because the backend holding them was at its usage limit. A sustained rate means coverage is bounded by egress budget, not by scrubber throughput |
 | `s3o_auth_streaming_requests_total` | Counter | variant | Streaming-payload SigV4 PUTs by variant |
 | `s3o_auth_streaming_rejections_total` | Counter | reason | Chunk-validation failures (tampered body, signature mismatch, etc.) |

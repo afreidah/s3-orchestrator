@@ -24,11 +24,17 @@ type StatusResponse struct {
 // IntegrityStatus reports how far behind content verification is. Distinct
 // from a copy lacking a hash: a fleet can be fully hashed and unverified.
 //
+// OldestUnverifiedSeconds and NeverVerifiedCopies describe only the copies the
+// sweep can reach. DeferredCopies is the rest, held on backends over their
+// usage limit: the sweep will not close that gap on its own, so the two figures
+// above are a partial picture whenever it is non-zero.
+//
 // PlaintextCopies is a separate question again: encryption covers new writes
 // only, so it stays at whatever predates it until encrypt-existing is run.
 type IntegrityStatus struct {
 	OldestUnverifiedSeconds int64 `json:"oldest_unverified_seconds"`
 	NeverVerifiedCopies     int64 `json:"never_verified_copies"`
+	DeferredCopies          int64 `json:"deferred_copies"`
 	PlaintextCopies         int64 `json:"plaintext_copies"`
 }
 

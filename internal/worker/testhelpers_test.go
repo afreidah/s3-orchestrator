@@ -86,6 +86,8 @@ type mockMetadataStore struct {
 	oldestUnverifiedErr error
 	oldestUnverified    time.Duration
 	neverVerified       int64
+	deferredCopies      int64
+	coverageReachable   []string
 	lastUpdatedHash     string
 	lastRecordedETag    string
 	underReplicated     []core.ObjectLocation
@@ -210,10 +212,15 @@ func (m *mockMetadataStore) MarkObjectScrubbed(_ context.Context, key, backendNa
 	return m.markScrubbedErr
 }
 
-// OldestUnverifiedAge is a stub on mockMetadataStore; returns either the
-// test-set fixture fields or the zero value.
-func (m *mockMetadataStore) OldestUnverifiedAge(_ context.Context) (time.Duration, int64, error) {
-	return m.oldestUnverified, m.neverVerified, m.oldestUnverifiedErr
+// IntegrityCoverage is a stub on mockMetadataStore; records the backend set the
+// caller scoped the query to and returns the test-set fixture fields.
+func (m *mockMetadataStore) IntegrityCoverage(_ context.Context, reachable []string) (core.CoverageStat, error) {
+	m.coverageReachable = reachable
+	return core.CoverageStat{
+		OldestUnverifiedAge: m.oldestUnverified,
+		NeverVerified:       m.neverVerified,
+		Deferred:            m.deferredCopies,
+	}, m.oldestUnverifiedErr
 }
 
 // GetObjectsWithoutHash is a stub on mockMetadataStore; returns either the test-set

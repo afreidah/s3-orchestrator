@@ -21,6 +21,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -722,18 +723,20 @@ func TestScrub_SelectsEverythingWhenNothingIsOverBudget(t *testing.T) {
 	}
 }
 
-// TestScrub_DeferredCopiesDoNotFlatterCoverage is the assertion the whole
-// policy rests on. Deferred copies were never read, so the coverage gauges must
-// keep reporting them as unverified. If a budget-limited sweep let the age
-// gauge fall, a fleet nobody can afford to verify would look like a verified
-// one, which is the failure the deferred count exists to prevent.
-func TestScrub_DeferredCopiesDoNotFlatterCoverage(t *testing.T) {
+// TestScrub_DeferredCopiesReportSeparately is the assertion the whole policy
+// rests on. Deferred copies were never read, so a sweep must not report them as
+// verified; but they also can never be stamped, so counting them in the age
+// pegs that gauge to wall clock and no amount of scrubbing lowers it. They get
+// their own gauge, which keeps a fleet nobody can afford to verify from reading
+// as a clean one without breaking the figure that tracks the real backlog.
+func TestScrub_DeferredCopiesReportSeparately(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	ops := NewMockScrubberOps(ctrl)
 	ms := &mockMetadataStore{
 		deferredCandidates: 40,
 		oldestUnverified:   72 * time.Hour,
 		neverVerified:      40,
+		deferredCopies:     40,
 	}
 
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
@@ -748,13 +751,17 @@ func TestScrub_DeferredCopiesDoNotFlatterCoverage(t *testing.T) {
 		t.Fatalf("Deferred = %d, want 40", sum.Deferred)
 	}
 
-	// Coverage still reports the backlog the deferred copies represent.
-	if got := promtest.ToFloat64(telemetry.IntegrityNeverVerifiedCopies); got != 40 {
-		t.Errorf("never-verified gauge = %v, want 40: deferred copies are still unverified", got)
+	// The coverage query is scoped to exactly the backends the batch drew from.
+	// Any wider and it would count copies no sweep can stamp, which pegs the
+	// age gauge to wall clock and leaves it there.
+	if !slices.Equal(ms.coverageReachable, []string{"b1"}) {
+		t.Errorf("coverage scoped to %v, want only the affordable backend b1", ms.coverageReachable)
 	}
-	if got := promtest.ToFloat64(telemetry.IntegrityOldestUnverifiedSeconds); got != (72 * time.Hour).Seconds() {
-		t.Errorf("oldest-unverified gauge = %v, want %v: a deferred sweep must not reset coverage age",
-			got, (72 * time.Hour).Seconds())
+
+	// The backlog the deferred copies represent is still reported, on its own
+	// gauge: a fleet nobody can afford to verify must not read as a clean one.
+	if got := promtest.ToFloat64(telemetry.IntegrityDeferredCopies); got != 40 {
+		t.Errorf("deferred gauge = %v, want 40: the sweep could not reach those copies", got)
 	}
 }
 

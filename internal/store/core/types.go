@@ -330,6 +330,25 @@ type NotificationRow struct {
 }
 
 // -------------------------------------------------------------------------
+// INTEGRITY COVERAGE
+// -------------------------------------------------------------------------
+
+// CoverageStat says how far behind integrity verification is, split by whether
+// the sweep can reach the copy at all.
+//
+// OldestUnverifiedAge and NeverVerified describe reachable copies only. A copy
+// on a backend the sweep may not read can never be stamped, so counting it in
+// the age pins that figure to a fixed timestamp and it then climbs by a day
+// every day no matter how much is verified. Deferred is the count it excludes,
+// reported rather than dropped so a fleet holding most of its copies on a
+// backend over its usage limit cannot read as healthy.
+type CoverageStat struct {
+	OldestUnverifiedAge time.Duration
+	NeverVerified       int64
+	Deferred            int64
+}
+
+// -------------------------------------------------------------------------
 // ENCRYPTION ADMIN
 // -------------------------------------------------------------------------
 

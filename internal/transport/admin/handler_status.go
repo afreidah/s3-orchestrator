@@ -71,6 +71,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Integrity: adminapi.IntegrityStatus{
 			OldestUnverifiedSeconds: int64(data.OldestUnverifiedAge.Seconds()),
 			NeverVerifiedCopies:     data.NeverVerifiedCopies,
+			DeferredCopies:          data.DeferredCopies,
 			PlaintextCopies:         data.PlaintextCopies,
 		},
 	})

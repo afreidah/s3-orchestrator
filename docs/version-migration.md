@@ -58,7 +58,24 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.120.x (current)
+### v0.121.x (current)
+
+**Integrity coverage counted copies the scrubber could not reach ([#1367](https://github.com/afreidah/s3-orchestrator/issues/1367), v0.121.0)**
+
+The scrub queue draws only from backends within their usage budget, so a copy on a backend over its limit is never selected and never stamped. The coverage query had no such filter, so it counted those copies anyway. They pinned the minimum the age is measured from, and `s3o_integrity_oldest_unverified_seconds` then climbed by a day every day regardless of how much the sweep verified - on one fleet, 3,542 verifications in 24 hours moved it by nothing at all.
+
+Coverage is now scoped to the same backends the queue draws from, and the copies it excludes are published separately as `s3o_integrity_deferred_copies` rather than dropped. Dropping them would have been the opposite failure: a fleet holding most of its copies on an over-limit backend would have read as fully verified.
+
+The backfill pass was a second source of the same confusion. It reads an object end to end to compute its hash, then wrote only `content_hash` - leaving `last_scrubbed_at` NULL, so a copy it had just verified counted as never verified and sorted to the head of the queue on its original `created_at`. The next sweep re-downloaded and re-hashed the same bytes. Backfill now stamps the copy in the same statement.
+
+**Operator action items after upgrade:**
+
+- **No config change required, and no migration.** The fix is in the query, not the schema.
+- **Both coverage figures will drop on the first sweep after upgrade**, by however many copies sit on over-limit backends. That is the correction, not a regression: watch `s3o_integrity_deferred_copies` for where they went. A sustained non-zero value there means coverage describes only part of the fleet, and the scrubber will not close the gap on its own - raise the backend's limit or wait for the usage period to roll over.
+- **`s3o_integrity_oldest_unverified_seconds` becomes alertable.** It could not fall before, so any threshold on it fired permanently once crossed. It now falls when the sweep verifies the copy at the head of the queue.
+- The admin status endpoint gains `integrity.deferred_copies`, and the dashboard an "Unreachable" row alongside the two existing ones.
+
+### v0.120.x
 
 **Per-operation request budgets ([#235](https://github.com/afreidah/s3-orchestrator/issues/235), v0.120.0)**
 

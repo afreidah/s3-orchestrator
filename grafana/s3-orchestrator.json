@@ -3406,6 +3406,10 @@
     {
      "expr": "s3o_integrity_never_verified_copies",
      "legendFormat": "never verified"
+    },
+    {
+     "expr": "s3o_integrity_deferred_copies",
+     "legendFormat": "unreachable (backend over limit)"
     }
    ],
    "options": {

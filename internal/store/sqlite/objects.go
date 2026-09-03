@@ -509,33 +509,51 @@ func (s *Store) MarkObjectScrubbed(ctx context.Context, key, backendName string)
 	return nil
 }
 
-// OldestUnverifiedAge reports how long the copy at the head of the scrub queue
-// has gone unverified, and how many copies have never been verified at all.
+// IntegrityCoverage reports how far behind verification is, split by whether
+// the sweep can reach the copy. reachable is the same backend set the scrub
+// queue draws from.
+//
+// The age and the never-verified count cover reachable copies only, because a
+// copy the sweep may not read can never be stamped: counting it pins the
+// minimum to a fixed timestamp and the age then tracks wall clock rather than
+// the backlog. Deferred counts the rest, so a fleet holding most of its copies
+// on a backend over its usage limit cannot report as healthy.
 //
 // The age falls back to created_at exactly as the queue ordering does, so a
 // never-verified copy is measured from when it was written. Taking MIN over
 // last_scrubbed_at alone skips those rows entirely, which reports a fleet that
 // has never been scrubbed as an age of zero.
-func (s *Store) OldestUnverifiedAge(ctx context.Context) (time.Duration, int64, error) {
-	var oldest sql.NullString
-	var neverVerified int64
-	err := s.db.QueryRowContext(ctx,
-		`SELECT MIN(COALESCE(last_scrubbed_at, created_at)),
-		        COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL)
-		 FROM object_locations
-		 WHERE content_hash IS NOT NULL AND managed`,
-	).Scan(&oldest, &neverVerified)
+func (s *Store) IntegrityCoverage(ctx context.Context, reachable []string) (core.CoverageStat, error) {
+	backendsJSON, err := json.Marshal(reachable)
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to read oldest unverified age: %w", err)
+		return core.CoverageStat{}, fmt.Errorf("encode reachable backend list: %w", err)
+	}
+
+	var oldest sql.NullString
+	var stat core.CoverageStat
+	err = s.db.QueryRowContext(ctx,
+		`SELECT MIN(CASE WHEN reachable THEN COALESCE(last_scrubbed_at, created_at) END),
+		        COUNT(*) FILTER (WHERE reachable AND last_scrubbed_at IS NULL),
+		        COUNT(*) FILTER (WHERE NOT reachable)
+		 FROM (
+		     SELECT last_scrubbed_at, created_at,
+		            backend_name IN (SELECT value FROM json_each(?)) AS reachable
+		     FROM object_locations
+		     WHERE content_hash IS NOT NULL AND managed
+		 )`, string(backendsJSON),
+	).Scan(&oldest, &stat.NeverVerified, &stat.Deferred)
+	if err != nil {
+		return core.CoverageStat{}, fmt.Errorf("failed to read integrity coverage: %w", err)
 	}
 	if !oldest.Valid {
-		return 0, neverVerified, nil
+		return stat, nil
 	}
 	ts, err := time.Parse(time.RFC3339Nano, oldest.String)
 	if err != nil {
-		return 0, neverVerified, fmt.Errorf("failed to parse scrub queue head timestamp %q: %w", oldest.String, err)
+		return stat, fmt.Errorf("failed to parse scrub queue head timestamp %q: %w", oldest.String, err)
 	}
-	return time.Since(ts), neverVerified, nil
+	stat.OldestUnverifiedAge = time.Since(ts)
+	return stat, nil
 }
 
 // GetObjectsWithoutHash returns object locations that have no stored content
@@ -556,12 +574,18 @@ func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([
 	return collectRows(rows, "objects without hash", scanObjectLocation)
 }
 
-// UpdateContentHash sets the content hash for an object location.
+// UpdateContentHash records the hash the backfill pass computed and stamps the
+// copy as verified in the same statement. The pass read the whole body to
+// produce the digest, so the copy is verified by construction at that moment.
+// Leaving last_scrubbed_at NULL would report it as never verified and sort it
+// to the head of the scrub queue on its original created_at, so the next sweep
+// would re-read the same bytes.
 func (s *Store) UpdateContentHash(ctx context.Context, key, backendName, hash string) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE object_locations
-		SET content_hash = ?
-		WHERE object_key = ? AND backend_name = ?`, hash, key, backendName)
+		SET content_hash = ?, last_scrubbed_at = ?
+		WHERE object_key = ? AND backend_name = ?`,
+		hash, time.Now().UTC().Format(time.RFC3339Nano), key, backendName)
 	return err
 }
 
