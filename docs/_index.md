@@ -1,6 +1,7 @@
 ---
 title: "Documentation"
 linkTitle: "Documentation"
+description: "Configuration, deployment, backends, replication, encryption, compression, monitoring, and the admin API for s3-orchestrator."
 chapter: true
 weight: 20
 alwaysopen: false

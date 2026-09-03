@@ -1,0 +1,13 @@
+{{- /*
+  Renders the page heading, suppressed on the home page.
+
+  The theme prints the front matter title as an h1 on every page. The landing
+  page opens with the logo and states its subject in the body instead, so the
+  theme heading would duplicate that above the image. Skipping it there lets
+  the title carry the page title tag alone, and the landing page keeps the one
+  h1 it declares in its own content.
+*/ -}}
+{{- if not .IsHome }}
+{{- $title := partial "title.gotmpl" (dict "page" .) }}
+<h1 id="{{ $title | plainify | anchorize }}">{{ $title }}</h1>
+{{- end }}

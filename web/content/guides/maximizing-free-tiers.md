@@ -1,5 +1,6 @@
 ---
 title: "Maximizing Free Tiers"
+description: "Combine the free tiers of several S3-compatible providers into one endpoint: account setup, per-backend quotas and request pools, and replication across them."
 weight: 3
 ---
 
@@ -50,9 +51,9 @@ backends:
     access_key_id: "{{ .Data.data.oci_s3_access_key }}"
     secret_access_key: "{{ .Data.data.oci_s3_secret_key }}"
     force_path_style: true
-    quota_bytes: 10737418240
-    api_request_limit: 50000
-    egress_byte_limit: 10737418240
+    quota_bytes: 18000000000          # 20 GB free tier, kept under the cap
+    api_request_limit: 50000          # OCI does not split requests by class
+    egress_byte_limit: 1000000000000  # 1 TB of the tenancy-wide 10 TB
 
   - name: "r2"
     endpoint: "{{ .Data.data.r2_s3_endpoint }}"
@@ -61,8 +62,15 @@ backends:
     access_key_id: "{{ .Data.data.r2_s3_access_key }}"
     secret_access_key: "{{ .Data.data.r2_s3_secret_key }}"
     force_path_style: true
-    quota_bytes: 10737418240
-    api_request_limit: 1000000
+    quota_bytes: 10000000000
+    unmetered: [DeleteObject, DeleteObjects, AbortMultipartUpload]
+    request_limits:
+      - name: class_a
+        operations: [PutObject, CopyObject, ListObjects, ListObjectsV2, CreateMultipartUpload, UploadPart, CompleteMultipartUpload, GetParts]
+        limit: 1000000
+      - name: class_b
+        operations: [GetObject, HeadObject]
+        limit: 10000000
 
   - name: "b2"
     endpoint: "{{ .Data.data.b2_s3_endpoint }}"
@@ -71,9 +79,11 @@ backends:
     access_key_id: "{{ .Data.data.b2_s3_access_key }}"
     secret_access_key: "{{ .Data.data.b2_s3_secret_key }}"
     force_path_style: true
-    quota_bytes: 10737418240
-    egress_byte_limit: 32212254720
-    api_request_limit: 75000
+    # Class A, B and C transactions are free, so this backend carries no
+    # request budget. The egress allowance is 3x the average monthly stored
+    # bytes, so it tracks the quota rather than a fixed monthly figure.
+    quota_bytes: 10000000000
+    egress_byte_limit: 30000000000
 
   - name: "e2"
     endpoint: "{{ .Data.data.e2_s3_endpoint }}"
@@ -83,9 +93,8 @@ backends:
     secret_access_key: "{{ .Data.data.e2_s3_secret_key }}"
     force_path_style: true
     disable_checksum: true
-    quota_bytes: 10737418240
-    egress_byte_limit: 32212254720
-    ingress_byte_limit: 10737418240
+    quota_bytes: 10000000000
+    egress_byte_limit: 30000000000  # 3x active stored bytes
 
   - name: "ibm"
     endpoint: "{{ .Data.data.ibm_s3_endpoint }}"
@@ -94,9 +103,17 @@ backends:
     access_key_id: "{{ .Data.data.ibm_s3_access_key }}"
     secret_access_key: "{{ .Data.data.ibm_s3_secret_key }}"
     force_path_style: true
-    quota_bytes: 5368709120
-    egress_byte_limit: 5368709120
-    ingress_byte_limit: 5368709120
+    # IBM's Class B is "GET and all others", so deletes and aborts charge
+    # there rather than being free as they are on R2 and GCS.
+    quota_bytes: 5000000000
+    egress_byte_limit: 5000000000
+    request_limits:
+      - name: class_a
+        operations: [PutObject, CopyObject, ListObjects, ListObjectsV2, CreateMultipartUpload, UploadPart, CompleteMultipartUpload]
+        limit: 2000
+      - name: class_b
+        operations: [GetObject, HeadObject, GetParts, DeleteObject, DeleteObjects, AbortMultipartUpload]
+        limit: 20000
 
   # GCS requires three extra settings to work with SigV4 signing.
   # See the note below for details.
@@ -110,13 +127,12 @@ backends:
     disable_checksum: true
     unsigned_payload: true
     strip_sdk_headers: true
-    quota_bytes: 5368709120
-    egress_byte_limit: 1073741824
-    ingress_byte_limit: 5368709120
     # GCS bills uploads and listings from the Class A allowance, reads from a
     # far larger Class B one, and does not bill deletes at all. A single
     # api_request_limit charges all three against the smallest of them, which
     # takes the backend out of service with its read allowance untouched.
+    quota_bytes: 5000000000
+    egress_byte_limit: 100000000000  # 100 GB from North America
     unmetered: [DeleteObject, DeleteObjects, AbortMultipartUpload]
     request_limits:
       - name: class_a
@@ -206,21 +222,30 @@ See the [Admin Guide](../../docs/backends/) for more details.
 
 ## Step 1: Identify Your Free-Tier Allowances
 
-Check each provider's free-tier limits. Common examples:
+Check each provider's free-tier limits. The allowances below were checked in September 2026:
 
-| Provider | Free Storage | Free API Requests | Free Egress |
-|----------|-------------|-------------------|-------------|
-| Oracle Cloud (OCI) | 10 GB | 50,000/mo | 10 GB/mo |
-| Cloudflare R2 | 10 GB | 1,000,000/mo | Unlimited |
-| Backblaze B2 | 10 GB | 75,000/mo | 30 GB/mo |
-| iDrive e2 | 10 GB | Unlimited | 30 GB/mo |
-| IBM Cloud | 5 GB | Unlimited | 5 GB/mo |
-| Google Cloud (GCS) | 5 GB | 5,000/mo Class A, 50,000/mo Class B | 1 GB/mo |
-| [g3](https://g3.munchbox.cc) (Gmail + Drive) | 15 GB | 12,000/min (Drive) | Unlimited |
+| Provider | Free storage | Free requests | Free egress |
+|----------|-------------|---------------|-------------|
+| [Cloudflare R2](https://developers.cloudflare.com/r2/pricing/) | 10 GB | 1,000,000 Class A, 10,000,000 Class B; deletes and aborts unbilled | Unlimited |
+| [Oracle Cloud (OCI)](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm) | 20 GB across all storage tiers | 50,000, not split by class | 10 TB/mo, shared by the whole tenancy |
+| [Backblaze B2](https://www.backblaze.com/cloud-storage/pricing) | 10 GB | Class A, B and C transactions are all free | 3x average monthly stored bytes |
+| [IDrive e2](https://e2help.idrive.com/hc/en-us/articles/10910766716573-IDrive-e2-pricing-policies) | 10 GB | No request charges | 3x active stored bytes |
+| [Synology C2](https://c2.synology.com/en-global/pricing/onestorage) | 15 GB | No request charges | 15 GB/mo |
+| [Tigris](https://www.tigrisdata.com/pricing/) | 5 GB | 10,000 Class A, 100,000 Class B; deletes free | Unlimited |
+| [Google Cloud (GCS)](https://docs.cloud.google.com/free/docs/free-cloud-features) | 5 GB, us-east1/us-west1/us-central1 only | 5,000 Class A, 50,000 Class B; deletes free | 100 GB/mo from North America |
+| [IBM Cloud](https://cloud.ibm.com/docs/cloud-object-storage?topic=cloud-object-storage-faq-provision) | 5 GB Smart Tier | 2,000 Class A, 20,000 Class B | 5 GB/mo public egress |
+| [Supabase](https://supabase.com/pricing) | 1 GB | No request charges | 5 GB/mo, shared across the organization |
+| [g3](https://g3.munchbox.cc) (Gmail + Drive) | 15 GB per Google account | Drive API per-minute quotas only | No monthly cap |
 
-With all seven providers you get 65 GB of combined storage behind a single S3 endpoint.
+Together those come to 96 GB of combined storage behind a single S3 endpoint.
 
-Read the request column carefully: most providers do not have a single request allowance. GCS bills uploads and listings as Class A and reads as Class B from separate allowances, and does not bill deletes at all; B2 gives uploads and deletes away free and charges downloads and listings from two different classes. Configure those with `request_limits` rather than collapsing them into one `api_request_limit`, or the strictest class takes the whole backend out of service while the others sit unused. See [backends.md](../../docs/backends/) for the syntax.
+Three things in that table decide how the backend is configured:
+
+**Requests are metered by class, not in total.** GCS bills uploads and listings from the Class A allowance and reads from a Class B one twenty times larger, and does not bill deletes at all. IBM charges deletes to Class B, because its Class B is "GET and all others". B2 charges nothing for any of them. A single `api_request_limit` charges every operation against one number, so it has to be set to the strictest class, which takes the whole backend out of service while the looser allowances sit unused. Declare the grouping with `request_limits` and `unmetered` instead; see [backends.md](../../docs/backends/) for the syntax and the operation vocabulary.
+
+**Two of the egress allowances scale with what is stored.** B2 and IDrive e2 give away a multiple of the bytes actually held, so a fixed `egress_byte_limit` is only safe at the storage level it was computed for. A backend holding 2 GB on B2 has a 6 GB allowance, not the 30 GB a full 10 GB backend would earn.
+
+**Some allowances are narrower than the provider's headline.** The GCS free tier applies only to the three US regions listed; a bucket anywhere else bills from the first operation. The OCI egress allowance covers the entire tenancy, so compute instances draw from the same 10 TB. The g3 storage is a Google account quota shared with Gmail and Photos.
 
 {{% notice tip %}}
 **[g3](https://github.com/afreidah/g3)** is an S3-compatible gateway that uses Google Drive for object data and Gmail for metadata. Each free Google account provides 15 GB of storage. g3 runs as a service in your infrastructure and presents a standard S3 API that S3 Orchestrator connects to like any other backend. See the [g3 project website](https://g3.munchbox.cc) for setup instructions.
@@ -306,9 +331,9 @@ backends:
     access_key_id: "${OCI_ACCESS_KEY}"
     secret_access_key: "${OCI_SECRET_KEY}"
     force_path_style: true
-    quota_bytes: 10737418240
-    api_request_limit: 50000
-    egress_byte_limit: 10737418240
+    quota_bytes: 18000000000          # 20 GB free tier, kept under the cap
+    api_request_limit: 50000          # OCI does not split requests by class
+    egress_byte_limit: 1000000000000  # 1 TB of the tenancy-wide 10 TB
 
   - name: "r2"
     endpoint: "https://<account-id>.r2.cloudflarestorage.com"
@@ -317,8 +342,15 @@ backends:
     access_key_id: "${R2_ACCESS_KEY}"
     secret_access_key: "${R2_SECRET_KEY}"
     force_path_style: true
-    quota_bytes: 10737418240
-    api_request_limit: 1000000
+    quota_bytes: 10000000000
+    unmetered: [DeleteObject, DeleteObjects, AbortMultipartUpload]
+    request_limits:
+      - name: class_a
+        operations: [PutObject, CopyObject, ListObjects, ListObjectsV2, CreateMultipartUpload, UploadPart, CompleteMultipartUpload, GetParts]
+        limit: 1000000
+      - name: class_b
+        operations: [GetObject, HeadObject]
+        limit: 10000000
 
   - name: "b2"
     endpoint: "https://s3.<region>.backblazeb2.com"
@@ -327,9 +359,11 @@ backends:
     access_key_id: "${B2_ACCESS_KEY}"
     secret_access_key: "${B2_SECRET_KEY}"
     force_path_style: true
-    quota_bytes: 10737418240
-    egress_byte_limit: 32212254720
-    api_request_limit: 75000
+    # Class A, B and C transactions are free, so this backend carries no
+    # request budget. The egress allowance is 3x the average monthly stored
+    # bytes, so it tracks the quota rather than a fixed monthly figure.
+    quota_bytes: 10000000000
+    egress_byte_limit: 30000000000
 
   - name: "e2"
     endpoint: "https://<endpoint>.e2.cloudstorage.com"
@@ -339,9 +373,8 @@ backends:
     secret_access_key: "${E2_SECRET_KEY}"
     force_path_style: true
     disable_checksum: true
-    quota_bytes: 10737418240
-    egress_byte_limit: 32212254720
-    ingress_byte_limit: 10737418240
+    quota_bytes: 10000000000
+    egress_byte_limit: 30000000000  # 3x active stored bytes
 
   - name: "ibm"
     endpoint: "https://s3.<region>.cloud-object-storage.appdomain.cloud"
@@ -350,9 +383,17 @@ backends:
     access_key_id: "${IBM_ACCESS_KEY}"
     secret_access_key: "${IBM_SECRET_KEY}"
     force_path_style: true
-    quota_bytes: 5368709120
-    egress_byte_limit: 5368709120
-    ingress_byte_limit: 5368709120
+    # IBM's Class B is "GET and all others", so deletes and aborts charge
+    # there rather than being free as they are on R2 and GCS.
+    quota_bytes: 5000000000
+    egress_byte_limit: 5000000000
+    request_limits:
+      - name: class_a
+        operations: [PutObject, CopyObject, ListObjects, ListObjectsV2, CreateMultipartUpload, UploadPart, CompleteMultipartUpload]
+        limit: 2000
+      - name: class_b
+        operations: [GetObject, HeadObject, GetParts, DeleteObject, DeleteObjects, AbortMultipartUpload]
+        limit: 20000
 
   - name: "gcp"
     endpoint: "https://storage.googleapis.com"
@@ -364,9 +405,8 @@ backends:
     disable_checksum: true
     unsigned_payload: true
     strip_sdk_headers: true
-    quota_bytes: 5368709120
-    egress_byte_limit: 1073741824
-    ingress_byte_limit: 5368709120
+    quota_bytes: 5000000000
+    egress_byte_limit: 100000000000  # 100 GB from North America
     # GCS bills uploads and listings from the Class A allowance, reads from a
     # far larger Class B one, and does not bill deletes at all. A single
     # api_request_limit charges all three against the smallest of them, which
