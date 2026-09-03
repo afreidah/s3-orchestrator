@@ -59,6 +59,16 @@ type completeMultipartUploadResult struct {
 	ETag    string   `xml:"ETag"`
 }
 
+// copyPartResult is the XML response for UploadPartCopy. UploadPart answers
+// with a bare ETag header; the copy form is specified to return the ETag in a
+// document, which is what SDKs read the part's validator out of.
+type copyPartResult struct {
+	XMLName      xml.Name `xml:"CopyPartResult"`
+	Xmlns        string   `xml:"xmlns,attr"`
+	ETag         string   `xml:"ETag"`
+	LastModified string   `xml:"LastModified"`
+}
+
 // listPartsResult is the XML response for ListParts.
 type listPartsResult struct {
 	XMLName  xml.Name   `xml:"ListPartsResult"`
@@ -141,18 +151,147 @@ func (s *Server) handleCreateMultipartUpload(ctx context.Context, w http.Respons
 	return http.StatusOK, nil
 }
 
+// errCopyRangeMalformed and errCopyRangeUnsatisfiable separate a copy-source
+// range this server cannot read from one it reads fine but the source object
+// cannot satisfy. S3 answers the two with different status codes.
+var (
+	errCopyRangeMalformed     = errors.New("malformed x-amz-copy-source-range")
+	errCopyRangeUnsatisfiable = errors.New("x-amz-copy-source-range lies outside the source object")
+)
+
+// parsePartNumber reads the partNumber query parameter both part-upload forms
+// require. ok=false means the response has already been written and the caller
+// must propagate the (status, error) unchanged.
+func parsePartNumber(w http.ResponseWriter, r *http.Request) (int, int, error, bool) {
+	partNumberStr := r.URL.Query().Get("partNumber")
+	partNumber, err := strconv.Atoi(partNumberStr)
+	if err != nil || partNumber < multipart.MinPartNumber || partNumber > multipart.MaxPartNumber {
+		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "Invalid part number")
+		return 0, http.StatusBadRequest, fmt.Errorf("invalid part number: %s", partNumberStr), false
+	}
+	return partNumber, 0, nil, true
+}
+
+// parseCopySourceRange resolves an x-amz-copy-source-range against a source of
+// sourceSize bytes, returning the Range header the source is read with and the
+// number of bytes that selects. An absent range copies the whole object.
+//
+// Only the closed "bytes=first-last" form is accepted, which is the only form
+// UploadPartCopy is specified to take: the part's length has to be known before
+// the read begins, so an open-ended or suffix range has nothing to mean here.
+func parseCopySourceRange(spec string, sourceSize int64) (string, int64, error) {
+	if spec == "" {
+		return "", sourceSize, nil
+	}
+	bounds, found := strings.CutPrefix(spec, "bytes=")
+	if !found {
+		return "", 0, errCopyRangeMalformed
+	}
+	firstStr, lastStr, found := strings.Cut(bounds, "-")
+	if !found {
+		return "", 0, errCopyRangeMalformed
+	}
+	first, firstErr := strconv.ParseInt(firstStr, 10, 64)
+	last, lastErr := strconv.ParseInt(lastStr, 10, 64)
+	if firstErr != nil || lastErr != nil || first < 0 || last < first {
+		return "", 0, errCopyRangeMalformed
+	}
+	if last >= sourceSize {
+		return "", 0, errCopyRangeUnsatisfiable
+	}
+	return fmt.Sprintf("bytes=%d-%d", first, last), last - first + 1, nil
+}
+
+// writeCopySourceRangeError renders a copy-source range failure: one this
+// server cannot parse is the caller's mistake, one the source cannot satisfy
+// is a 416 against that object.
+func writeCopySourceRangeError(w http.ResponseWriter, err error) (int, error) {
+	if errors.Is(err, errCopyRangeUnsatisfiable) {
+		writeS3Error(w, http.StatusRequestedRangeNotSatisfiable, "InvalidRange",
+			"The x-amz-copy-source-range is not satisfiable for the source object")
+		return http.StatusRequestedRangeNotSatisfiable, err
+	}
+	writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "Invalid x-amz-copy-source-range")
+	return http.StatusBadRequest, err
+}
+
+// handleUploadPartCopy handles PUT /{bucket}/{key}?partNumber=N&uploadId=X
+// carrying X-Amz-Copy-Source: the part's bytes come from a range of an object
+// that already exists rather than from the request body. This is how a client
+// copies server-side above the multipart threshold.
+//
+// The bytes stream through the orchestrator rather than taking a backend-native
+// copy, because the part is stored under the upload's own part key, which no
+// backend-side CopySource can name.
+func (s *Server) handleUploadPartCopy(ctx context.Context, w http.ResponseWriter, r *http.Request, rk *objectRouteKey, copySource string) (int, error) {
+	partNumber, status, err, ok := parsePartNumber(w, r)
+	if !ok {
+		return status, err
+	}
+
+	sourceKey, status, err, ok := resolveCopySource(w, rk.bucket, copySource)
+	if !ok {
+		return status, err
+	}
+
+	// HEAD first: the range is validated against the source's real length, so
+	// an out-of-bounds copy costs nothing and the caller learns which end of
+	// the request was wrong.
+	head, err := s.Objects.HeadObject(ctx, sourceKey)
+	if err != nil {
+		return writeStorageError(w, err, "Failed to read copy source"), err
+	}
+
+	rangeHeader, size, err := parseCopySourceRange(r.Header.Get(headerCopySourceRange), head.Size)
+	if err != nil {
+		return writeCopySourceRangeError(w, err)
+	}
+	if s.MaxObjectSize > 0 && size > s.MaxObjectSize {
+		writeS3Error(w, http.StatusRequestEntityTooLarge, "EntityTooLarge", "Part size exceeds the maximum allowed size")
+		return http.StatusRequestEntityTooLarge, fmt.Errorf("copied part size %d exceeds max %d", size, s.MaxObjectSize)
+	}
+
+	source, err := s.Objects.GetObject(ctx, sourceKey, rangeHeader)
+	if err != nil {
+		return writeStorageError(w, err, "Failed to read copy source"), err
+	}
+	defer source.Body.Close()
+
+	// The stream reports the length the part is stored with, rather than the
+	// range arithmetic deciding it: an encrypted or compressed source is served
+	// as plaintext, and only the read path knows what a range over it resolves
+	// to. It falls back to the computed size when the read path says nothing.
+	partSize := source.Size
+	if partSize <= 0 {
+		partSize = size
+	}
+
+	etag, err := s.Multipart.UploadPart(ctx, rk.bucket, rk.key, rk.uploadID, partNumber, source.Body, partSize)
+	if err != nil {
+		return writeStorageError(w, err, "Failed to copy part"), err
+	}
+
+	result := copyPartResult{
+		Xmlns:        s3XMLNS,
+		ETag:         etag,
+		LastModified: head.LastModified.UTC().Format(time.RFC3339),
+	}
+	if err := writeXML(w, http.StatusOK, result); err != nil {
+		return http.StatusOK, fmt.Errorf("failed to encode copy part response: %w", err)
+	}
+	return http.StatusOK, nil
+}
+
 // handleUploadPart handles PUT /{bucket}/{key}?partNumber=N&uploadId=X.
 // bucket and key scope the upload to the request URL so an attacker holding
 // credentials for one bucket cannot write parts to a multipart upload that
 // belongs to another (the manager rejects with 404 NoSuchUpload).
 func (s *Server) handleUploadPart(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string) (int, error) {
 	uploadID := r.URL.Query().Get("uploadId")
-	partNumberStr := r.URL.Query().Get("partNumber")
 
-	partNumber, err := strconv.Atoi(partNumberStr)
-	if err != nil || partNumber < multipart.MinPartNumber || partNumber > multipart.MaxPartNumber {
-		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "Invalid part number")
-		return http.StatusBadRequest, fmt.Errorf("invalid part number: %s", partNumberStr)
+	partNumber, status, err, ok := parsePartNumber(w, r)
+	if !ok {
+		return status, err
 	}
 
 	if status, err, ok := enforceContentLength(w, r, s.MaxObjectSize, "Part"); !ok {

@@ -546,7 +546,8 @@ curl -H "X-Request-Id: my-trace-123" \
 
 The orchestrator implements a practical subset of the S3 API. A few things to be aware of:
 
-- **Same-bucket copies only** — `CopyObject` requires source and destination to be in the same bucket.
+- **Same-bucket copies only** — `CopyObject` and `UploadPartCopy` require source and destination to be in the same bucket. Both are supported, so a client copying a large object server-side copies it part by part rather than pulling the bytes down and pushing them back.
+- **Unimplemented operations answer 501** — S3 selects the operation from the query string, so a request for a subresource this server does not serve (`?lifecycle`, `?policy`, `?versions` and the rest) returns `501 NotImplemented` rather than an empty document that reads as "there are none".
 - **No bucket creation or deletion** — Buckets are configured server-side, so `CreateBucket` and `DeleteBucket` are not supported. `ListBuckets` is: it returns the one bucket the presented credential is authorized for, which is what lets a client that lists before it works pick the right target. `HeadBucket`, `GetBucketLocation` and `GetBucketVersioning` answer as well; versioning always reports disabled.
 - **No ACLs or policies** — Access control is handled entirely through the credential-to-bucket mapping in the server config.
 - **CORS is configured server-side** — `PutBucketCors` and `GetBucketCors` are not supported. Browser origins are declared in the bucket's `cors` block and reloaded with the rest of the config.

@@ -281,30 +281,41 @@ func (s *Server) handleDelete(ctx context.Context, w http.ResponseWriter, _ *htt
 	return http.StatusNoContent, nil
 }
 
-// handleCopyObject processes PUT requests with the x-amz-copy-source header.
-// Copies an object from the source key to the destination key, potentially
-// across backends, with atomic quota tracking. Only same-bucket copies are
-// allowed (no cross-bucket copying).
-func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, destInternalKey, copySource string) (int, error) {
+// resolveCopySource turns an x-amz-copy-source header into the internal key it
+// names. Shared by CopyObject and UploadPartCopy so both read the header the
+// same way and refuse a cross-bucket source alike: a credential authorizes one
+// bucket, so a source outside it is one the caller cannot read.
+//
+// ok=false means the response has already been written and the caller must
+// propagate the (status, error) unchanged.
+func resolveCopySource(w http.ResponseWriter, bucket, copySource string) (string, int, error, bool) {
 	decoded, err := url.PathUnescape(copySource)
 	if err != nil {
 		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "Invalid x-amz-copy-source encoding")
-		return http.StatusBadRequest, fmt.Errorf("invalid copy source encoding: %w", err)
+		return "", http.StatusBadRequest, fmt.Errorf("invalid copy source encoding: %w", err), false
 	}
 	source := strings.TrimPrefix(decoded, "/")
 	sourceBucket, sourceKey, ok := parsePath("/" + source)
 	if !ok || sourceKey == "" {
 		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "Invalid x-amz-copy-source")
-		return http.StatusBadRequest, fmt.Errorf("invalid copy source: %s", copySource)
+		return "", http.StatusBadRequest, fmt.Errorf("invalid copy source: %s", copySource), false
 	}
-
 	if sourceBucket != bucket {
 		writeS3Error(w, http.StatusForbidden, "AccessDenied", "Cross-bucket copy is not allowed")
-		return http.StatusForbidden, fmt.Errorf("cross-bucket copy denied: %s != %s", sourceBucket, bucket)
+		return "", http.StatusForbidden, fmt.Errorf("cross-bucket copy denied: %s != %s", sourceBucket, bucket), false
 	}
+	return internalkey.Make(bucket, sourceKey), 0, nil, true
+}
 
-	// Prefix source key for internal storage
-	sourceInternalKey := internalkey.Make(bucket, sourceKey)
+// handleCopyObject processes PUT requests with the x-amz-copy-source header.
+// Copies an object from the source key to the destination key, potentially
+// across backends, with atomic quota tracking. Only same-bucket copies are
+// allowed (no cross-bucket copying).
+func (s *Server) handleCopyObject(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, destInternalKey, copySource string) (int, error) {
+	sourceInternalKey, status, err, ok := resolveCopySource(w, bucket, copySource)
+	if !ok {
+		return status, err
+	}
 
 	// Refused before the copy so an unusable directive or tag set costs no
 	// transfer, matching how the header is handled on a plain PUT.
