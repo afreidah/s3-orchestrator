@@ -1,3 +1,7 @@
+---
+description: "Run s3-orchestrator locally in under a minute with Go, Docker, and Make: start the proxy, point an S3 client at it, and write the first object."
+---
+
 Get the S3 Orchestrator running locally in under a minute. The only prerequisites are **Go**, **Docker**, and **Make**.
 
 ## Start the orchestrator
@@ -62,7 +66,9 @@ s3o s3 ls s3://photos/
 
 ## Web dashboard
 
-The dashboard is enabled at [http://localhost:9000/ui/](http://localhost:9000/ui/) with credentials `admin` / `admin`.
+The dashboard is enabled at [http://localhost:9000/ui/](http://localhost:9000/ui/) with credentials `admin` / `admin`. It reports per-backend quota and request-budget usage, browses the object tree with each object's backend placement, and uploads files or whole folders into a bucket without a client.
+
+![The dashboard's upload dialog over the object tree](/docs/images/admin-ui-upload.png)
 
 ## Metrics
 

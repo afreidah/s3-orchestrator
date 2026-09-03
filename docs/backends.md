@@ -1,6 +1,7 @@
 ---
 title: "Backends"
 linkTitle: "Backends"
+description: "Configure S3-compatible backends: endpoints, credentials, byte quotas, per-operation request pools, egress limits, and per-backend HTTP transport tuning."
 weight: 23
 ---
 

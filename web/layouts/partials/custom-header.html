@@ -1,0 +1,30 @@
+{{- /*
+  Emits the head elements search engines read and the theme does not provide:
+  a canonical URL on every page, and a machine-readable description of the
+  project on the landing page.
+
+  The canonical link matters because the same content answers on more than one
+  URL - the plain and TLS routes, and the directory and index.html forms of
+  every page - and without it those are four candidates for one page. The
+  landing page also carries a SoftwareApplication record so the project name,
+  repository, and license are stated as data rather than inferred from prose;
+  the name collides with generic S3 tooling in search results, and the record
+  is what ties it to this repository.
+*/ -}}
+<link rel="canonical" href="{{ .Permalink }}">
+{{- if .IsHome }}
+{{- $ld := dict
+  "@context" "https://schema.org"
+  "@type" "SoftwareApplication"
+  "name" "s3-orchestrator"
+  "url" site.Home.Permalink
+  "description" .Description
+  "applicationCategory" "DeveloperApplication"
+  "operatingSystem" "Linux"
+  "codeRepository" "https://github.com/afreidah/s3-orchestrator"
+  "license" "https://opensource.org/licenses/MIT"
+  "author" (dict "@type" "Person" "name" "Alex Freidah")
+  "offers" (dict "@type" "Offer" "price" "0" "priceCurrency" "USD")
+}}
+<script type="application/ld+json">{{ $ld | jsonify | safeJS }}</script>
+{{- end }}
