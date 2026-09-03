@@ -131,6 +131,7 @@ func registerWorkers(inj do.Injector, cfg *config.Config, mode config.Mode) {
 // registerOptionalFeatures.
 func registerTransport(inj do.Injector) {
 	do.Provide(inj, ProvideBucketAuth)
+	do.Provide(inj, ProvideCORS)
 	do.Provide(inj, ProvideS3Server)
 	do.Provide(inj, ProvideOps)
 	do.Provide(inj, ProvideLifecycleManager)

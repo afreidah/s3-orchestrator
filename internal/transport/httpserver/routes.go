@@ -5,8 +5,9 @@
 //
 // Mounts admin, UI, and S3 handlers on the main mux with the configured
 // middleware stack: rate limiting (optional), admission control (split or
-// single-channel), and request shedding. Route registration is gated by
-// daemon mode so the worker-only mode does not expose S3 or UI surfaces.
+// single-channel), request shedding, and browser CORS. Route registration is
+// gated by daemon mode so the worker-only mode does not expose S3 or UI
+// surfaces.
 // -------------------------------------------------------------------------------
 
 package httpserver
@@ -24,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
@@ -106,6 +108,11 @@ func registerUIHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 //   - Neither set: no admission middleware is installed.
 //
 // Either form respects LoadShedThreshold and AdmissionWait when set.
+//
+// CORS wraps the S3 handler directly, inside both the rate limiter and
+// admission control. A preflight carries no credentials, so answering it
+// outside those two would leave the one request on this surface that anybody
+// can send bounded by nothing.
 func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) error {
 	rt, err := do.Invoke[*infra.BackendRuntime](inj)
 	if err != nil {
@@ -115,8 +122,12 @@ func registerS3Handler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) 
 	if err != nil {
 		return fmt.Errorf("initialize S3 server: %w", err)
 	}
+	corsPolicy, err := do.Invoke[*cors.Policy](inj)
+	if err != nil {
+		return fmt.Errorf("initialize CORS policy: %w", err)
+	}
 
-	var s3Handler http.Handler = s3Server
+	s3Handler := corsPolicy.Middleware(s3Server)
 	rlRes := di.Optional[*s3api.RateLimiter](inj)
 	if rlRes.Failed() {
 		slog.WarnContext(context.Background(),

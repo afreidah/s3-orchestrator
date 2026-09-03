@@ -73,6 +73,21 @@ var (
 	ErrNegativeMaxUploads  = errors.New("max_multipart_uploads must be >= 0")
 )
 
+// Bucket CORS validation errors.
+//
+// An origin pattern accepts at most one '*' because the matcher splits the
+// pattern on it: a second wildcard has no unambiguous reading, and guessing
+// one would widen the set of origins a rule admits beyond what the operator
+// wrote.
+var (
+	ErrCORSNoOrigins      = errors.New("cors rule requires at least one allowed_origins entry")
+	ErrCORSNoMethods      = errors.New("cors rule requires at least one allowed_methods entry")
+	ErrCORSEmptyOrigin    = errors.New("cors allowed_origins entry must not be empty")
+	ErrCORSOriginWildcard = errors.New("cors allowed_origins entry accepts at most one '*'")
+	ErrCORSBadMethod      = errors.New("cors allowed_methods entry is not a supported method")
+	ErrCORSNegativeMaxAge = errors.New("cors max_age must be >= 0")
+)
+
 // Backend validation errors.
 //
 // api_request_limit is the single-pool spelling of request_limits, so setting

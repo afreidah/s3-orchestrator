@@ -44,6 +44,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
@@ -247,6 +248,73 @@ func TestBucketAuthHook_FailedResolution(t *testing.T) {
 // registered" path: the hook reports Skipped without touching anything.
 func TestBucketAuthHook_SkippedWhenDisabled(t *testing.T) {
 	h := &bucketAuthHook{inj: do.New()}
+	status, err := h.Apply(context.Background(), nil, &config.Config{})
+	if status != HookSkipped || err != nil {
+		t.Fatalf("Apply = (%s, %v), want (skipped, nil)", status, err)
+	}
+}
+
+// TestCORSHook_Applied proves a reload publishes the new rule set to the
+// live policy, which is what makes adding a browser origin a reload rather
+// than a restart.
+func TestCORSHook_Applied(t *testing.T) {
+	inj := do.New()
+	do.Provide(inj, func(do.Injector) (*cors.Policy, error) {
+		return cors.New(s3api.BucketFromPath, s3api.WriteS3Error), nil
+	})
+	h := &corsHook{inj: inj}
+	cfg := &config.Config{Buckets: []config.BucketConfig{{
+		Name: "photos",
+		CORS: []config.CORSRule{{
+			AllowedOrigins: []string{"https://app.example.com"},
+			AllowedMethods: []string{"GET"},
+		}},
+	}}}
+
+	status, err := h.Apply(context.Background(), nil, cfg)
+	if status != HookApplied || err != nil {
+		t.Fatalf("Apply = (%s, %v), want (applied, nil)", status, err)
+	}
+}
+
+// TestCORSHook_CheckRejectsUnreadableRule proves an unusable pattern aborts
+// the reload during Check, so no hook applies anything and the running
+// server keeps the rules it already had.
+func TestCORSHook_CheckRejectsUnreadableRule(t *testing.T) {
+	h := &corsHook{inj: do.New()}
+	cfg := &config.Config{Buckets: []config.BucketConfig{{
+		Name: "photos",
+		CORS: []config.CORSRule{{
+			AllowedOrigins: []string{"https://*.*.example.com"},
+			AllowedMethods: []string{"GET"},
+		}},
+	}}}
+
+	if err := h.Check(nil, cfg); err == nil {
+		t.Error("Check accepted a pattern the matcher cannot read, want an error")
+	}
+}
+
+// TestCORSHook_FailedResolution proves a broken policy provider surfaces as
+// HookFailed rather than being read as "feature off".
+func TestCORSHook_FailedResolution(t *testing.T) {
+	inj := do.New()
+	failingProvider[*cors.Policy](inj)
+	h := &corsHook{inj: inj}
+
+	status, err := h.Apply(context.Background(), nil, &config.Config{})
+	if status != HookFailed {
+		t.Fatalf("status = %s, want failed", status)
+	}
+	if !errors.Is(err, errResolve) {
+		t.Fatalf("err = %v, want wrap of errResolve", err)
+	}
+}
+
+// TestCORSHook_SkippedWhenUnregistered covers the path where no policy is
+// registered at all, which is the worker-only mode with no S3 surface.
+func TestCORSHook_SkippedWhenUnregistered(t *testing.T) {
+	h := &corsHook{inj: do.New()}
 	status, err := h.Apply(context.Background(), nil, &config.Config{})
 	if status != HookSkipped || err != nil {
 		t.Fatalf("Apply = (%s, %v), want (skipped, nil)", status, err)
@@ -551,6 +619,7 @@ func TestHookNamesStable(t *testing.T) {
 	cases := map[Hook]string{
 		&tlsCertHook{}:       "tls_certificate",
 		&bucketAuthHook{}:    "bucket_credentials",
+		&corsHook{}:          "bucket_cors",
 		&rateLimitHook{}:     "rate_limit",
 		&quotaSyncHook{}:     "quota_sync",
 		&usageLimitsHook{}:   "usage_limits",

@@ -366,6 +366,21 @@ Without this, all requests appear to come from the proxy IP and share a single r
 
 The login throttle (brute-force protection on the dashboard login) also uses the same `trusted_proxies` configuration and IP extraction logic, so it correctly identifies real client IPs behind a reverse proxy.
 
+## Browser Access (CORS)
+
+CORS rules are declared per bucket (see [Configuration](configuration.md#browser-access-cors)) and default to empty, which refuses every cross-origin preflight. A bucket reached only by server-side clients should be left that way: a request with no `Origin` header is not cross-origin and is never affected by these rules.
+
+What a rule does and does not grant:
+
+- **A preflight is answered before authentication.** It has to be — a browser cannot sign one. The preflight grants no access on its own; it reports whether the request the browser intends to send is one the operator permits, and that request authenticates with SigV4 or a presigned signature exactly as any other does. A CORS rule is not a credential and never substitutes for one.
+- **A refused preflight reveals nothing.** The response is identical whether the bucket has no rules, has rules that do not admit the request, or does not exist at all, so the one endpoint reachable without a credential cannot be used to enumerate buckets.
+- **Preflights are rate-limited and admission-controlled.** The CORS middleware sits inside both, so an unsigned preflight is bounded by the same protections as any other request on the surface.
+- **`Access-Control-Allow-Credentials` is not supported.** Authentication travels in headers or a presigned query string, never in cookies, so credentialed mode adds nothing and would forbid wildcard origins.
+
+Scope each rule as narrowly as the application allows. `allowed_origins: ["*"]` lets any site on the internet make a browser read a response from the bucket, which is only appropriate for content that is genuinely public. Prefer naming the origins, and note that a wildcard entry like `https://*.example.com` matches any subdomain — including one an attacker controls if subdomain takeover is possible.
+
+Watch `s3o_cors_preflight_total{result="rejected"}`: a sustained climb from an origin you did not configure is either a misconfigured deployment of your own application or somebody probing the surface from a browser.
+
 ## Request Body Limits
 
 All admin and UI JSON endpoints enforce a 1 MB request body limit via `http.MaxBytesReader`. This prevents memory exhaustion from oversized payloads. File uploads use the configured `max_object_size` limit instead. These limits are built-in and not user-configurable.

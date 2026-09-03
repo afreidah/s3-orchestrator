@@ -1964,12 +1964,52 @@
   },
   {
    "type": "timeseries",
+   "id": 130,
+   "title": "CORS Preflights",
+   "description": "Browser preflights by outcome. Rejections climbing with no allowed series means the bucket's CORS rules do not cover the origin the application is served from, and every browser upload from it is failing.",
+   "gridPos": {
+    "x": 18,
+    "y": 93,
+    "w": 6,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "expr": "increase(s3o_cors_preflight_total[5m])",
+     "legendFormat": "{{result}}"
+    }
+   ],
+   "options": {
+    "tooltip": {
+     "mode": "multi"
+    },
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never"
+     }
+    }
+   }
+  },
+  {
+   "type": "timeseries",
    "id": 65,
    "title": "Load Shedding",
    "gridPos": {
     "x": 0,
     "y": 93,
-    "w": 8,
+    "w": 6,
     "h": 8
    },
    "datasource": {
@@ -2006,9 +2046,9 @@
    "id": 66,
    "title": "Early Upload Rejections",
    "gridPos": {
-    "x": 8,
+    "x": 6,
     "y": 93,
-    "w": 8,
+    "w": 6,
     "h": 8
    },
    "datasource": {
@@ -2045,9 +2085,9 @@
    "id": 67,
    "title": "Write Failovers",
    "gridPos": {
-    "x": 16,
+    "x": 12,
     "y": 93,
-    "w": 8,
+    "w": 6,
     "h": 8
    },
    "datasource": {
@@ -3842,7 +3882,7 @@
   },
   {
    "type": "row",
-   "id": 73,
+   "id": 131,
    "title": "Pending PUT Intents",
    "gridPos": {
     "x": 0,
@@ -3854,7 +3894,7 @@
   },
   {
    "type": "stat",
-   "id": 74,
+   "id": 132,
    "title": "Pending Intents Depth",
    "description": "Unresolved PUT intents waiting for the reaper. Steady-state should be 0; persistent non-zero indicates the reaper is not draining (DB outage, backend HEAD failures, or operator-review-required ambiguous rows).",
    "gridPos": {
@@ -3908,7 +3948,7 @@
   },
   {
    "type": "timeseries",
-   "id": 75,
+   "id": 133,
    "title": "Pending Intent Throughput",
    "description": "Rate of intents enqueued by the write path versus resolved by status. Steady state has enqueued and committed close to equal; promoted/dropped events indicate the reaper is repairing failed commits.",
    "gridPos": {
@@ -3956,7 +3996,7 @@
   },
   {
    "type": "stat",
-   "id": 76,
+   "id": 134,
    "title": "Ambiguous Intents (lifetime)",
    "description": "Lifetime count of pending intents the reaper refused to promote because the destination already held a row for the same key. These rows stay in the database for operator review; any non-zero value warrants investigation.",
    "gridPos": {

@@ -140,6 +140,15 @@ config:
       credentials:
         - access_key_id: "${BUCKET_ACCESS_KEY}"
           secret_access_key: "${BUCKET_SECRET_KEY}"
+      # Browser origins allowed to reach this bucket cross-origin. Required
+      # for direct-from-browser uploads: the preflight arrives unsigned, so
+      # without a matching rule the presigned PUT is never sent.
+      # cors:
+      #   - allowed_origins: ["https://app.example.com"]
+      #     allowed_methods: ["GET", "PUT"]
+      #     allowed_headers: ["content-type", "x-amz-*"]
+      #     expose_headers: ["ETag"]
+      #     max_age: 3600
 
   # Add your storage backends here. Each backend needs an S3-compatible
   # endpoint, credentials, and a quota. Example:

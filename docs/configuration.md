@@ -103,10 +103,43 @@ openssl rand -base64 30
 - Access key IDs must be globally unique across all buckets.
 - Each bucket must have at least one credential set.
 - Each credential needs either `access_key_id` + `secret_access_key` (SigV4) or `token` (legacy).
+- Each CORS rule needs at least one origin and one method, methods must be ones the S3 surface implements, an origin may carry at most one `*`, and `max_age` must not be negative.
 
 Multiple credentials on the same bucket let different services share a namespace with independent keys. This is useful when you want a writer service and a reader service accessing the same files.
 
 SigV4 credentials also support presigned URLs automatically. Clients can generate time-limited presigned URLs using any AWS SDK presign client — no additional configuration is needed on the orchestrator side.
+
+#### Browser access (CORS)
+
+A browser will not send a cross-origin request until a preflight `OPTIONS` succeeds, and it sends that preflight without credentials. A bucket a web application uploads to directly — the usual presigned-URL flow, where the browser PUTs to the orchestrator instead of streaming through your API — needs a `cors` block naming the origins allowed to reach it.
+
+```yaml
+buckets:
+  - name: "app1-files"
+    credentials:
+      - access_key_id: "AKID_APP1"
+        secret_access_key: "secret1"
+    cors:
+      - allowed_origins: ["https://app.example.com", "https://*.staging.example.com"]
+        allowed_methods: ["GET", "PUT"]
+        allowed_headers: ["content-type", "x-amz-*"]
+        expose_headers: ["ETag"]
+        max_age: 3600
+```
+
+| Field | Description |
+|---|---|
+| `allowed_origins` | Origins permitted to make cross-origin requests. Accepts at most one `*` per entry, so `https://*.example.com` and a bare `*` both work. Required. |
+| `allowed_methods` | Methods the browser may use: `GET`, `HEAD`, `PUT`, `POST`, `DELETE`. Required. |
+| `allowed_headers` | Request headers the browser may send, matched case-insensitively. `*` and trailing forms like `x-amz-*` are accepted. |
+| `expose_headers` | Response headers a script may read. Without `ETag` here, a browser upload cannot see the identifier of the object it just wrote. |
+| `max_age` | Seconds the browser may cache the preflight result. Omit it and the browser preflights every request. |
+
+Rules are matched in the order written, and the first admitting the origin, method and announced headers wins. A bucket with no `cors` block refuses every preflight, which is what a bucket reached only by server-side clients wants.
+
+A preflight is answered from these rules alone, before authentication, because a browser cannot sign one. It grants nothing on its own: the request that follows authenticates exactly as any other does. Refused preflights are counted in `s3o_cors_preflight_total{result="rejected"}` — a climbing rejected count with no allowed count means the rules do not cover the origin your application is served from.
+
+`Access-Control-Allow-Credentials` is deliberately not supported. Authentication here travels in SigV4 headers or a presigned query string, never in cookies, so credentialed CORS mode buys nothing and would forbid wildcard origins.
 
 ### database
 
@@ -818,6 +851,7 @@ kill -HUP $(pidof s3-orchestrator)
 | Setting | Reloadable | Notes |
 |---------|:----------:|-------|
 | `buckets` (credentials, limits) | Yes | Credentials and `max_multipart_uploads` take effect immediately |
+| `buckets[].cors` | Yes | The new rule set takes effect on the next request; a rule the matcher cannot read aborts the whole reload before anything is applied |
 | `rate_limit` | Yes | New visitors get updated rates; existing per-IP limiters expire naturally |
 | `backends[].quota_bytes` | Yes | Synced to database on reload |
 | `backends[].api_request_limit` | Yes | |
