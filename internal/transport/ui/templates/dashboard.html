@@ -158,12 +158,17 @@
         <tr>
           <td>Oldest unverified</td>
           <td class="num">{{if ne .Data.OldestUnverifiedAge 0}}{{formatDuration .Data.OldestUnverifiedAge}}{{else}}&mdash;{{end}}</td>
-          <td>How long the most overdue copy has gone unverified. A copy that has never been checked counts from when it was written, so this reflects the whole backlog rather than only the copies the sweep has already reached. Rises when the scrubber cannot keep pace with the fleet.</td>
+          <td>How long the most overdue reachable copy has gone unverified. A copy that has never been checked counts from when it was written, so this covers the whole reachable backlog rather than only what the sweep has already touched. Rises when the scrubber cannot keep pace, and falls once it verifies the copy at the head of the queue.</td>
         </tr>
         <tr>
           <td>Never verified</td>
           <td class="num">{{if ne .Data.NeverVerifiedCopies 0}}<span class="orphan-value">{{formatNumber .Data.NeverVerifiedCopies}}</span>{{else}}&mdash;{{end}}</td>
-          <td>Copies that have a content hash but have never been checked against it. On a busy fleet this stays non-zero: newly written copies are unverified until the sweep reaches them, and they are deliberately queued behind older data. Backfill Checksums moves objects out of the No Hash column and into this one, so it climbs by exactly what that pass processed. A steady value is healthy; a climbing one you did not cause is not.</td>
+          <td>Reachable copies that have a content hash but have never been checked against it. On a busy fleet this stays non-zero: newly written copies are unverified until the sweep reaches them, and they are deliberately queued behind older data. A steady value is healthy; a climbing one you did not cause is not.</td>
+        </tr>
+        <tr>
+          <td>Unreachable</td>
+          <td class="num">{{if ne .Data.DeferredCopies 0}}<span class="orphan-value">{{formatNumber .Data.DeferredCopies}}</span>{{else}}&mdash;{{end}}</td>
+          <td>Copies the sweep cannot read because their backend is over its usage limit. They are excluded from the two figures above, because a copy that can never be stamped would pin the age to the clock and no amount of scrubbing would lower it. The sweep will not clear this on its own: raise the backend's limit or wait for the period to roll over.</td>
         </tr>
       </tbody>
     </table>

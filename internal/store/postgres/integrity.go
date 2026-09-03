@@ -78,16 +78,22 @@ func (s *Store) MarkObjectScrubbed(ctx context.Context, key, backendName string)
 // REPORTING
 // -------------------------------------------------------------------------
 
-// OldestUnverifiedAge reports how long the copy at the head of the scrub queue
-// has gone unverified, and how many copies have never been verified at all.
+// IntegrityCoverage reports how far behind verification is, split by whether
+// the sweep can reach the copy. reachable is the same backend set the scrub
+// queue draws from; a copy outside it can never be stamped, so counting it in
+// the age would pin that figure to wall clock rather than to the backlog.
 // A never-verified copy is measured from when it was written, matching the
 // fallback the queue ordering itself uses.
-func (s *Store) OldestUnverifiedAge(ctx context.Context) (time.Duration, int64, error) {
-	row, err := s.queries.OldestUnverifiedAge(ctx)
+func (s *Store) IntegrityCoverage(ctx context.Context, reachable []string) (core.CoverageStat, error) {
+	row, err := s.queries.IntegrityCoverage(ctx, reachable)
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to read oldest unverified age: %w", err)
+		return core.CoverageStat{}, fmt.Errorf("failed to read integrity coverage: %w", err)
 	}
-	return time.Duration(row.AgeSeconds) * time.Second, row.NeverVerified, nil
+	return core.CoverageStat{
+		OldestUnverifiedAge: time.Duration(row.AgeSeconds) * time.Second,
+		NeverVerified:       row.NeverVerified,
+		Deferred:            row.Deferred,
+	}, nil
 }
 
 // GetObjectsWithoutHash returns object locations that have no stored content
@@ -105,7 +111,9 @@ func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([
 	return toFatObjectLocations(rows), nil
 }
 
-// UpdateContentHash sets the content hash for an object location.
+// UpdateContentHash records the hash the backfill pass computed and stamps the
+// copy as verified in the same statement, because the pass read the whole body
+// to produce the digest.
 func (s *Store) UpdateContentHash(ctx context.Context, key, backendName, hash string) error {
 	return s.queries.UpdateContentHash(ctx, db.UpdateContentHashParams{
 		ObjectKey:   key,

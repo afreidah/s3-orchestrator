@@ -15,6 +15,7 @@ import (
 
 	backend "github.com/afreidah/s3-orchestrator/internal/backend"
 	drain "github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	s3op "github.com/afreidah/s3-orchestrator/internal/s3op"
 	core "github.com/afreidah/s3-orchestrator/internal/store/core"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -146,6 +147,20 @@ func NewMockUsageReader(ctrl *gomock.Controller) *MockUsageReader {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockUsageReader) EXPECT() *MockUsageReaderMockRecorder {
 	return m.recorder
+}
+
+// BackendsWithinLimits mocks base method.
+func (m *MockUsageReader) BackendsWithinLimits(order []string, ops []s3op.Operation, egress, ingress int64) []string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BackendsWithinLimits", order, ops, egress, ingress)
+	ret0, _ := ret[0].([]string)
+	return ret0
+}
+
+// BackendsWithinLimits indicates an expected call of BackendsWithinLimits.
+func (mr *MockUsageReaderMockRecorder) BackendsWithinLimits(order, ops, egress, ingress any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BackendsWithinLimits", reflect.TypeOf((*MockUsageReader)(nil).BackendsWithinLimits), order, ops, egress, ingress)
 }
 
 // GetLimits mocks base method.

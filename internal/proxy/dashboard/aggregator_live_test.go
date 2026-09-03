@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
@@ -40,7 +41,7 @@ func newStubStore(ctrl *gomock.Controller) *storetest.MockDashboardStore {
 	store.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	store.EXPECT().GetUnverifiedObjectCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
-	store.EXPECT().OldestUnverifiedAge(gomock.Any()).Return(time.Duration(0), int64(0), nil).AnyTimes()
+	store.EXPECT().IntegrityCoverage(gomock.Any(), gomock.Any()).Return(core.CoverageStat{}, nil).AnyTimes()
 	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(0), nil).AnyTimes()
 	store.EXPECT().CompressionStats(gomock.Any()).Return(map[string]core.CompressionStat{}, nil).AnyTimes()
 	store.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.UsageStat{}, nil).AnyTimes()
@@ -59,6 +60,8 @@ func newStubStore(ctrl *gomock.Controller) *storetest.MockDashboardStore {
 func stubUsage(ctrl *gomock.Controller) *MockUsageReader {
 	usage := NewMockUsageReader(ctrl)
 	usage.EXPECT().GetLimits().Return(map[string]core.UsageLimits{}).AnyTimes()
+	usage.EXPECT().BackendsWithinLimits(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(order []string, _ []s3op.Operation, _, _ int64) []string { return order }).AnyTimes()
 	return usage
 }
 
