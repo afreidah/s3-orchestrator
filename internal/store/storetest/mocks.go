@@ -819,6 +819,21 @@ func (mr *MockMetadataStoreMockRecorder) InsertPending(ctx, p any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertPending", reflect.TypeOf((*MockMetadataStore)(nil).InsertPending), ctx, p)
 }
 
+// IntegrityCoverage mocks base method.
+func (m *MockMetadataStore) IntegrityCoverage(ctx context.Context, reachable []string) (core.CoverageStat, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IntegrityCoverage", ctx, reachable)
+	ret0, _ := ret[0].(core.CoverageStat)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IntegrityCoverage indicates an expected call of IntegrityCoverage.
+func (mr *MockMetadataStoreMockRecorder) IntegrityCoverage(ctx, reachable any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IntegrityCoverage", reflect.TypeOf((*MockMetadataStore)(nil).IntegrityCoverage), ctx, reachable)
+}
+
 // ListAllEncryptedLocations mocks base method.
 func (m *MockMetadataStore) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.DecryptableLocation, error) {
 	m.ctrl.T.Helper()
@@ -1098,22 +1113,6 @@ func (m *MockMetadataStore) MoveObjectLocation(ctx context.Context, key, fromBac
 func (mr *MockMetadataStoreMockRecorder) MoveObjectLocation(ctx, key, fromBackend, toBackend any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObjectLocation", reflect.TypeOf((*MockMetadataStore)(nil).MoveObjectLocation), ctx, key, fromBackend, toBackend)
-}
-
-// OldestUnverifiedAge mocks base method.
-func (m *MockMetadataStore) OldestUnverifiedAge(ctx context.Context) (time.Duration, int64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "OldestUnverifiedAge", ctx)
-	ret0, _ := ret[0].(time.Duration)
-	ret1, _ := ret[1].(int64)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
-}
-
-// OldestUnverifiedAge indicates an expected call of OldestUnverifiedAge.
-func (mr *MockMetadataStoreMockRecorder) OldestUnverifiedAge(ctx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OldestUnverifiedAge", reflect.TypeOf((*MockMetadataStore)(nil).OldestUnverifiedAge), ctx)
 }
 
 // PendingDepth mocks base method.

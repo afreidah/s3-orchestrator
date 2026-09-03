@@ -3029,42 +3029,41 @@ func keysOf(locs []core.ObjectLocation) []string {
 	return keys
 }
 
-// TestOldestUnverifiedAge_ReportsCoverage verifies the figures the dashboard
-// and the alerting rule read: how long the most overdue copy has gone
-// unverified, and how many have never been verified.
-func TestOldestUnverifiedAge_ReportsCoverage(t *testing.T) {
+// TestIntegrityCoverage_ReportsCoverage verifies the figures the dashboard and
+// the alerting rule read: how long the most overdue reachable copy has gone
+// unverified, and how many reachable copies have never been verified.
+func TestIntegrityCoverage_ReportsCoverage(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
+	reachable := []string{"backend-a"}
 
 	// No hashed copies at all: nothing to report.
-	age, never, err := s.OldestUnverifiedAge(ctx)
+	stat, err := s.IntegrityCoverage(ctx, reachable)
 	if err != nil {
-		t.Fatalf("OldestUnverifiedAge on an empty ledger: %v", err)
+		t.Fatalf("IntegrityCoverage on an empty ledger: %v", err)
 	}
-	if age != 0 || never != 0 {
-		t.Errorf("empty ledger reported age=%s never=%d, want 0/0", age, never)
+	if stat != (core.CoverageStat{}) {
+		t.Errorf("empty ledger reported %+v, want the zero value", stat)
 	}
 
 	for _, key := range []string{"bucket/a", "bucket/b"} {
 		mustRecordObject(t, s, key, "backend-a", 100)
-		if err := s.UpdateContentHash(ctx, key, "backend-a", "sha256:"+key); err != nil {
-			t.Fatalf("UpdateContentHash(%s): %v", key, err)
-		}
+		hashAtWrite(t, s, key, "backend-a")
 	}
 
 	// Hashed but unverified: both count, and the age reports the backlog from
 	// when they were written rather than reading as zero for want of a stamp.
 	backdateCreatedAt(t, s, "bucket/a", "backend-a", 48*time.Hour)
-	age, never, err = s.OldestUnverifiedAge(ctx)
+	stat, err = s.IntegrityCoverage(ctx, reachable)
 	if err != nil {
-		t.Fatalf("OldestUnverifiedAge: %v", err)
+		t.Fatalf("IntegrityCoverage: %v", err)
 	}
-	if never != 2 {
-		t.Errorf("never verified = %d, want 2", never)
+	if stat.NeverVerified != 2 {
+		t.Errorf("never verified = %d, want 2", stat.NeverVerified)
 	}
-	if age < 47*time.Hour {
-		t.Errorf("age = %s, want at least the 48h-old never-verified copy", age)
+	if stat.OldestUnverifiedAge < 47*time.Hour {
+		t.Errorf("age = %s, want at least the 48h-old never-verified copy", stat.OldestUnverifiedAge)
 	}
 
 	// Verifying the backlogged copy retires it from both figures, so the age
@@ -3072,15 +3071,86 @@ func TestOldestUnverifiedAge_ReportsCoverage(t *testing.T) {
 	if err := s.MarkObjectScrubbed(ctx, "bucket/a", "backend-a"); err != nil {
 		t.Fatalf("MarkObjectScrubbed: %v", err)
 	}
-	age, never, err = s.OldestUnverifiedAge(ctx)
+	stat, err = s.IntegrityCoverage(ctx, reachable)
 	if err != nil {
-		t.Fatalf("OldestUnverifiedAge after stamping: %v", err)
+		t.Fatalf("IntegrityCoverage after stamping: %v", err)
 	}
-	if never != 1 {
-		t.Errorf("never verified = %d, want 1", never)
+	if stat.NeverVerified != 1 {
+		t.Errorf("never verified = %d, want 1", stat.NeverVerified)
 	}
-	if age >= 47*time.Hour {
-		t.Errorf("age = %s, want the stamped copy to have left the head of the queue", age)
+	if stat.OldestUnverifiedAge >= 47*time.Hour {
+		t.Errorf("age = %s, want the stamped copy to have left the head of the queue", stat.OldestUnverifiedAge)
+	}
+}
+
+// TestIntegrityCoverage_UnreachableBackendIsDeferred pins the property the
+// figures exist for: a copy the sweep may not read is reported as deferred
+// rather than inflating an age no amount of scrubbing could bring down.
+func TestIntegrityCoverage_UnreachableBackendIsDeferred(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// backend-b stands in for the over-limit backend: the sweep is told it may
+	// read backend-a only, which is what affordableBackends produces.
+	mustRecordObject(t, s, "bucket/old", "backend-b", 100)
+	hashAtWrite(t, s, "bucket/old", "backend-b")
+	backdateCreatedAt(t, s, "bucket/old", "backend-b", 720*time.Hour)
+
+	mustRecordObject(t, s, "bucket/new", "backend-a", 100)
+	hashAtWrite(t, s, "bucket/new", "backend-a")
+
+	stat, err := s.IntegrityCoverage(ctx, []string{"backend-a"})
+	if err != nil {
+		t.Fatalf("IntegrityCoverage: %v", err)
+	}
+	if stat.Deferred != 1 {
+		t.Errorf("deferred = %d, want the copy on the over-limit backend", stat.Deferred)
+	}
+	if stat.NeverVerified != 1 {
+		t.Errorf("never verified = %d, want only the reachable copy", stat.NeverVerified)
+	}
+	if stat.OldestUnverifiedAge >= 720*time.Hour {
+		t.Errorf("age = %s, want the unreachable 30-day copy excluded", stat.OldestUnverifiedAge)
+	}
+}
+
+// TestUpdateContentHash_StampsAsVerified pins that the backfill pass does not
+// leave behind a copy the very next sweep would re-read. The pass hashed the
+// bytes it downloaded, so the copy is verified at that moment.
+func TestUpdateContentHash_StampsAsVerified(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
+	backdateCreatedAt(t, s, "bucket/a", "backend-a", 48*time.Hour)
+	if err := s.UpdateContentHash(ctx, "bucket/a", "backend-a", "sha256:a"); err != nil {
+		t.Fatalf("UpdateContentHash: %v", err)
+	}
+
+	stat, err := s.IntegrityCoverage(ctx, []string{"backend-a"})
+	if err != nil {
+		t.Fatalf("IntegrityCoverage: %v", err)
+	}
+	if stat.NeverVerified != 0 {
+		t.Errorf("never verified = %d, want the backfilled copy stamped", stat.NeverVerified)
+	}
+	if stat.OldestUnverifiedAge >= 47*time.Hour {
+		t.Errorf("age = %s, want the copy measured from the backfill, not its write", stat.OldestUnverifiedAge)
+	}
+}
+
+// hashAtWrite gives a copy a content hash without stamping it, which is what
+// the write path leaves behind. UpdateContentHash cannot stand in for it: that
+// is the backfill pass, and it stamps.
+func hashAtWrite(t *testing.T, s *Store, key, backend string) {
+	t.Helper()
+	if _, err := s.db.ExecContext(context.Background(),
+		`UPDATE object_locations SET content_hash = ? WHERE object_key = ? AND backend_name = ?`,
+		"sha256:"+key, key, backend,
+	); err != nil {
+		t.Fatalf("hashing %s/%s at write: %v", key, backend, err)
 	}
 }
 
@@ -3133,8 +3203,8 @@ func TestScrubQueries_SurfaceDatabaseErrors(t *testing.T) {
 	if err := s.MarkObjectScrubbed(ctx, "bucket/a", "backend-a"); err == nil {
 		t.Error("MarkObjectScrubbed should surface a closed database")
 	}
-	if _, _, err := s.OldestUnverifiedAge(ctx); err == nil {
-		t.Error("OldestUnverifiedAge should surface a closed database")
+	if _, err := s.IntegrityCoverage(ctx, []string{"backend-a"}); err == nil {
+		t.Error("IntegrityCoverage should surface a closed database")
 	}
 }
 
@@ -3482,10 +3552,10 @@ func TestGetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
+	// Hashed at write rather than by backfill, which stamps: the point here is
+	// a copy that carries a hash and has still never been verified.
 	for _, backend := range []string{"backend-a", "backend-b"} {
-		if err := s.UpdateContentHash(ctx, key, backend, "sha256:x"); err != nil {
-			t.Fatalf("UpdateContentHash(%s): %v", backend, err)
-		}
+		hashAtWrite(t, s, key, backend)
 	}
 
 	// Verify one copy, leaving the other untouched. Per-copy is the point: a

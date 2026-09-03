@@ -657,6 +657,46 @@ func (q *Queries) InsertObjectLocationIfNotExists(ctx context.Context, arg Inser
 	return inserted, err
 }
 
+const integrityCoverage = `-- name: IntegrityCoverage :one
+SELECT
+    COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(COALESCE(last_scrubbed_at, created_at))
+        FILTER (WHERE backend_name = ANY($1::text[])))), 0)::bigint AS age_seconds,
+    COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL
+        AND backend_name = ANY($1::text[]))::bigint AS never_verified,
+    COUNT(*) FILTER (WHERE NOT (backend_name = ANY($1::text[])))::bigint AS deferred
+FROM object_locations
+WHERE content_hash IS NOT NULL AND managed
+`
+
+type IntegrityCoverageRow struct {
+	AgeSeconds    int64
+	NeverVerified int64
+	Deferred      int64
+}
+
+// How far behind verification is, split by whether the sweep can reach the copy
+// at all. Reachable is the same backend set the scrub queue draws from.
+//
+// The age and the never-verified count cover reachable copies only. A copy the
+// sweep is not allowed to read can never be stamped, so counting it pins
+// MIN(COALESCE(last_scrubbed_at, created_at)) to a fixed timestamp and the age
+// then tracks wall clock rather than the backlog: it climbs by a day every day
+// no matter how much the sweep verifies, and no amount of scrubbing lowers it.
+//
+// Deferred counts the rest rather than discarding them, so a fleet holding most
+// of its copies on a backend over its usage limit cannot report as healthy.
+//
+// The age falls back to created_at exactly as the queue ordering does, so a
+// never-verified copy is measured from when it was written. Taking MIN over
+// last_scrubbed_at alone skips those rows entirely, which reports a fleet that
+// has never been scrubbed as an age of zero.
+func (q *Queries) IntegrityCoverage(ctx context.Context, reachableBackends []string) (IntegrityCoverageRow, error) {
+	row := q.db.QueryRow(ctx, integrityCoverage, reachableBackends)
+	var i IntegrityCoverageRow
+	err := row.Scan(&i.AgeSeconds, &i.NeverVerified, &i.Deferred)
+	return i, err
+}
+
 const listAllEncryptedLocations = `-- name: ListAllEncryptedLocations :many
 SELECT object_key, backend_name, size_bytes, encryption_key, key_id, plaintext_size
 FROM object_locations
@@ -1577,34 +1617,6 @@ func (q *Queries) MarkObjectScrubbed(ctx context.Context, arg MarkObjectScrubbed
 	return err
 }
 
-const oldestUnverifiedAge = `-- name: OldestUnverifiedAge :one
-SELECT
-    COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(COALESCE(last_scrubbed_at, created_at)))), 0)::bigint AS age_seconds,
-    COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL)::bigint AS never_verified
-FROM object_locations
-WHERE content_hash IS NOT NULL AND managed
-`
-
-type OldestUnverifiedAgeRow struct {
-	AgeSeconds    int64
-	NeverVerified int64
-}
-
-// Age in seconds of the copy at the head of the scrub queue, which is the
-// figure that says whether integrity checking is keeping up, and how many
-// copies have never been verified at all.
-//
-// The age falls back to created_at exactly as the queue ordering does, so a
-// never-verified copy is measured from when it was written. Taking MIN over
-// last_scrubbed_at alone skips those rows entirely, which reports a fleet that
-// has never been scrubbed as an age of zero.
-func (q *Queries) OldestUnverifiedAge(ctx context.Context) (OldestUnverifiedAgeRow, error) {
-	row := q.db.QueryRow(ctx, oldestUnverifiedAge)
-	var i OldestUnverifiedAgeRow
-	err := row.Scan(&i.AgeSeconds, &i.NeverVerified)
-	return i, err
-}
-
 const recordCompressionProbe = `-- name: RecordCompressionProbe :exec
 UPDATE object_locations
 SET compression_probe_size = $3,
@@ -1670,7 +1682,7 @@ func (q *Queries) RecordObjectIdentity(ctx context.Context, arg RecordObjectIden
 
 const updateContentHash = `-- name: UpdateContentHash :exec
 UPDATE object_locations
-SET content_hash = $3
+SET content_hash = $3, last_scrubbed_at = NOW()
 WHERE object_key = $1 AND backend_name = $2
 `
 
@@ -1680,6 +1692,11 @@ type UpdateContentHashParams struct {
 	ContentHash *string
 }
 
+// Record the hash the backfill pass computed and stamp the copy as verified in
+// the same statement. The pass read the whole body to produce the digest, so the
+// copy is verified by construction at that moment. Leaving last_scrubbed_at NULL
+// would report it as never verified and sort it to the head of the scrub queue
+// on its original created_at, so the next sweep would re-read the same bytes.
 func (q *Queries) UpdateContentHash(ctx context.Context, arg UpdateContentHashParams) error {
 	_, err := q.db.Exec(ctx, updateContentHash, arg.ObjectKey, arg.BackendName, arg.ContentHash)
 	return err

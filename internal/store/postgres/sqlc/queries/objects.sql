@@ -366,18 +366,29 @@ UPDATE object_locations
 SET last_scrubbed_at = NOW()
 WHERE object_key = $1 AND backend_name = $2;
 
--- name: OldestUnverifiedAge :one
--- Age in seconds of the copy at the head of the scrub queue, which is the
--- figure that says whether integrity checking is keeping up, and how many
--- copies have never been verified at all.
+-- name: IntegrityCoverage :one
+-- How far behind verification is, split by whether the sweep can reach the copy
+-- at all. Reachable is the same backend set the scrub queue draws from.
+--
+-- The age and the never-verified count cover reachable copies only. A copy the
+-- sweep is not allowed to read can never be stamped, so counting it pins
+-- MIN(COALESCE(last_scrubbed_at, created_at)) to a fixed timestamp and the age
+-- then tracks wall clock rather than the backlog: it climbs by a day every day
+-- no matter how much the sweep verifies, and no amount of scrubbing lowers it.
+--
+-- Deferred counts the rest rather than discarding them, so a fleet holding most
+-- of its copies on a backend over its usage limit cannot report as healthy.
 --
 -- The age falls back to created_at exactly as the queue ordering does, so a
 -- never-verified copy is measured from when it was written. Taking MIN over
 -- last_scrubbed_at alone skips those rows entirely, which reports a fleet that
 -- has never been scrubbed as an age of zero.
 SELECT
-    COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(COALESCE(last_scrubbed_at, created_at)))), 0)::bigint AS age_seconds,
-    COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL)::bigint AS never_verified
+    COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(COALESCE(last_scrubbed_at, created_at))
+        FILTER (WHERE backend_name = ANY(@reachable_backends::text[])))), 0)::bigint AS age_seconds,
+    COUNT(*) FILTER (WHERE last_scrubbed_at IS NULL
+        AND backend_name = ANY(@reachable_backends::text[]))::bigint AS never_verified,
+    COUNT(*) FILTER (WHERE NOT (backend_name = ANY(@reachable_backends::text[])))::bigint AS deferred
 FROM object_locations
 WHERE content_hash IS NOT NULL AND managed;
 
@@ -392,8 +403,13 @@ ORDER BY created_at ASC
 LIMIT $1 OFFSET $2;
 
 -- name: UpdateContentHash :exec
+-- Record the hash the backfill pass computed and stamp the copy as verified in
+-- the same statement. The pass read the whole body to produce the digest, so the
+-- copy is verified by construction at that moment. Leaving last_scrubbed_at NULL
+-- would report it as never verified and sort it to the head of the scrub queue
+-- on its original created_at, so the next sweep would re-read the same bytes.
 UPDATE object_locations
-SET content_hash = $3
+SET content_hash = $3, last_scrubbed_at = NOW()
 WHERE object_key = $1 AND backend_name = $2;
 
 -- RecordObjectIdentity fills in what a read had to ask a backend for, so the

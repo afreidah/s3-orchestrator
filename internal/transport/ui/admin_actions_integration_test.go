@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"go.uber.org/mock/gomock"
 
@@ -64,7 +63,7 @@ func newOpsForTest(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.Worke
 	mock.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.UsageStat{}, nil).AnyTimes()
 	mock.EXPECT().GetPoolUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.PoolUsage{}, nil).AnyTimes()
 	mock.EXPECT().GetLeastRecentlyScrubbedObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
-	mock.EXPECT().OldestUnverifiedAge(gomock.Any()).Return(time.Duration(0), int64(0), nil).AnyTimes()
+	mock.EXPECT().IntegrityCoverage(gomock.Any(), gomock.Any()).Return(core.CoverageStat{}, nil).AnyTimes()
 	mock.EXPECT().GetObjectsWithoutHash(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	st := proxytest.New(t, mock, &proxytest.StackOptions{
 		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{

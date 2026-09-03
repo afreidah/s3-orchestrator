@@ -195,6 +195,9 @@ func TestIntegrityCoverage(t *testing.T) {
 		{"never verified dominates", adminapi.IntegrityStatus{NeverVerifiedCopies: 132986, OldestUnverifiedSeconds: 90}, "132,986 never"},
 		{"fully swept", adminapi.IntegrityStatus{}, "up to date"},
 		{"oldest age once everything has been seen", adminapi.IntegrityStatus{OldestUnverifiedSeconds: 7200}, "2h"},
+		{"unreachable copies are named", adminapi.IntegrityStatus{DeferredCopies: 2686}, "2,686 unreachable"},
+		{"a clean reachable sweep still shows what it could not reach",
+			adminapi.IntegrityStatus{DeferredCopies: 5}, "up to date"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

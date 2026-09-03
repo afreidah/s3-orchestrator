@@ -1383,17 +1383,18 @@ func TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 	ctx := context.Background()
 
 	key := uniqueKey(t, "verified")
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	// Hashed at write, not by backfill, which stamps: the replica insert carries
+	// the hash across without the stamp, leaving two hashed copies that differ
+	// only on whether the bytes were ever read back.
+	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: key, Backend: "backend-a", Size: 100,
+		Form: &core.StoredForm{ContentHash: "abc123"},
+	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
 	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
-	}
-	for _, backend := range []string{"backend-a", "backend-b"} {
-		if err := s.UpdateContentHash(ctx, key, backend, "abc123"); err != nil {
-			t.Fatalf("UpdateContentHash(%s): %v", backend, err)
-		}
 	}
 
 	if err := s.MarkObjectScrubbed(ctx, key, "backend-a"); err != nil {
@@ -1429,7 +1430,7 @@ func TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 	}
 }
 
-// TestStoreInt_OldestUnverifiedAge_CountsNeverVerifiedCopies pins the figure the
+// TestStoreInt_IntegrityCoverage_CountsNeverVerifiedCopies pins the figure the
 // dashboard reads to the backlog rather than to the copies the sweep already
 // reached. A copy with no scrub stamp is measured from when it was written, the
 // same fallback the scrub queue orders on; taking MIN over the stamp alone skips
@@ -1437,45 +1438,59 @@ func TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 //
 // The suite shares one database, so the assertion is a lower bound: other rows
 // can only be younger than the backdated copy, so they cannot mask it.
-func TestStoreInt_OldestUnverifiedAge_CountsNeverVerifiedCopies(t *testing.T) {
+func TestStoreInt_IntegrityCoverage_CountsNeverVerifiedCopies(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
+	reachable := []string{"backend-a", "backend-b"}
 
 	key := uniqueKey(t, "unverified-age")
 	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _ = s.DeleteObject(ctx, key) }()
-	if err := s.UpdateContentHash(ctx, key, "backend-a", "abc123"); err != nil {
-		t.Fatalf("UpdateContentHash: %v", err)
-	}
+	// Hashed at write rather than by backfill, which stamps, so the copy is
+	// hashed and unverified: the state the coverage figures are about.
 	if _, err := s.pool.Exec(ctx,
-		`UPDATE object_locations SET created_at = NOW() - INTERVAL '48 hours'
+		`UPDATE object_locations SET content_hash = 'abc123', created_at = NOW() - INTERVAL '48 hours'
 		 WHERE object_key = $1 AND backend_name = $2`, key, "backend-a",
 	); err != nil {
-		t.Fatalf("backdating created_at: %v", err)
+		t.Fatalf("hashing at write and backdating created_at: %v", err)
 	}
 
-	age, never, err := s.OldestUnverifiedAge(ctx)
+	stat, err := s.IntegrityCoverage(ctx, reachable)
 	if err != nil {
-		t.Fatalf("OldestUnverifiedAge: %v", err)
+		t.Fatalf("IntegrityCoverage: %v", err)
 	}
-	if never < 1 {
-		t.Errorf("never verified = %d, want at least the copy just written", never)
+	if stat.NeverVerified < 1 {
+		t.Errorf("never verified = %d, want at least the copy just written", stat.NeverVerified)
 	}
-	if age < 47*time.Hour {
-		t.Errorf("age = %s, want at least the 48h-old never-verified copy", age)
+	if stat.OldestUnverifiedAge < 47*time.Hour {
+		t.Errorf("age = %s, want at least the 48h-old never-verified copy", stat.OldestUnverifiedAge)
+	}
+
+	// Scoping the query away from the copy's backend moves it out of the age
+	// and into the deferred count, which is what keeps an unreachable copy from
+	// pinning a figure the sweep can never bring down.
+	stat, err = s.IntegrityCoverage(ctx, []string{"backend-b"})
+	if err != nil {
+		t.Fatalf("IntegrityCoverage scoped away from backend-a: %v", err)
+	}
+	if stat.Deferred < 1 {
+		t.Errorf("deferred = %d, want at least the copy on the excluded backend", stat.Deferred)
+	}
+	if stat.OldestUnverifiedAge >= 47*time.Hour {
+		t.Errorf("age = %s, want the excluded copy left out", stat.OldestUnverifiedAge)
 	}
 
 	// Verifying it retires it from both figures.
 	if err := s.MarkObjectScrubbed(ctx, key, "backend-a"); err != nil {
 		t.Fatalf("MarkObjectScrubbed: %v", err)
 	}
-	age, _, err = s.OldestUnverifiedAge(ctx)
+	stat, err = s.IntegrityCoverage(ctx, reachable)
 	if err != nil {
-		t.Fatalf("OldestUnverifiedAge after stamping: %v", err)
+		t.Fatalf("IntegrityCoverage after stamping: %v", err)
 	}
-	if age >= 47*time.Hour {
-		t.Errorf("age = %s, want the stamped copy to have left the head of the queue", age)
+	if stat.OldestUnverifiedAge >= 47*time.Hour {
+		t.Errorf("age = %s, want the stamped copy to have left the head of the queue", stat.OldestUnverifiedAge)
 	}
 }

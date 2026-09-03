@@ -222,10 +222,10 @@ func (s *Scrubber) scrub(ctx context.Context, batchSize int, observer progress.O
 	deferred := s.countDeferred(ctx, declined)
 
 	// Published after the cycle so the gauges reflect the work just done.
-	// Deferred copies are excluded from the batch but not from the gauges: they
-	// were not verified, so the coverage age must keep climbing rather than
-	// reporting the fleet as checked.
-	defer s.reportCoverage(ctx)
+	// Deferred copies get their own gauge rather than being folded into the
+	// coverage age: the sweep cannot stamp them, so counting them there would
+	// pin the age to wall clock and no amount of scrubbing would lower it.
+	defer s.reportCoverage(ctx, affordable)
 
 	// Scrub stays sequential (Concurrency 1): each item reads and hashes a full
 	// object body, so a wider window can hammer the backends. Concurrency is a
@@ -298,14 +298,17 @@ func (s *Scrubber) countDeferred(ctx context.Context, declined []string) int {
 
 // reportCoverage publishes how far behind verification is, which is what says
 // whether the scrubber is keeping up with the fleet rather than merely running.
-func (s *Scrubber) reportCoverage(ctx context.Context) {
-	age, neverVerified, err := s.store.OldestUnverifiedAge(ctx)
+// reachable scopes the age and the never-verified count to the copies this
+// cycle could have read; the rest are published as deferred.
+func (s *Scrubber) reportCoverage(ctx context.Context, reachable []string) {
+	stat, err := s.store.IntegrityCoverage(ctx, reachable)
 	if err != nil {
 		s.log.WarnContext(ctx, "failed to read scrub coverage", "error", err)
 		return
 	}
-	telemetry.IntegrityOldestUnverifiedSeconds.Set(age.Seconds())
-	telemetry.IntegrityNeverVerifiedCopies.Set(float64(neverVerified))
+	telemetry.IntegrityOldestUnverifiedSeconds.Set(stat.OldestUnverifiedAge.Seconds())
+	telemetry.IntegrityNeverVerifiedCopies.Set(float64(stat.NeverVerified))
+	telemetry.IntegrityDeferredCopies.Set(float64(stat.Deferred))
 }
 
 // verifyOne verifies one object's stored hash and classifies the result for the

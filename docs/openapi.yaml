@@ -1247,6 +1247,9 @@ components:
             type: object
         IntegrityStatus:
             properties:
+                deferred_copies:
+                    format: int64
+                    type: integer
                 never_verified_copies:
                     format: int64
                     type: integer
@@ -1259,6 +1262,7 @@ components:
             required:
                 - oldest_unverified_seconds
                 - never_verified_copies
+                - deferred_copies
                 - plaintext_copies
             type: object
         LifecycleResponse:

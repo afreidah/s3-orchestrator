@@ -19,6 +19,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -29,6 +30,10 @@ import (
 // maxDirectoryChildren bounds one page of the lazy-loaded file browser, both
 // for the top-level listing and for a caller-supplied page size.
 const maxDirectoryChildren = 200
+
+// scrubReadOp is the operation the scrub queue is admitted against, so asking
+// which backends it can reach means asking about a read.
+var scrubReadOp = []s3op.Operation{s3op.GetObject}
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -50,6 +55,7 @@ type Data struct {
 	UnverifiedObjectCounts map[string]int64
 	NeverVerifiedCopies    int64
 	OldestUnverifiedAge    time.Duration
+	DeferredCopies         int64
 	PlaintextCopies        int64
 	CompressionStats       map[string]core.CompressionStat
 	ActiveMultipartCounts  map[string]int64
@@ -74,10 +80,16 @@ type FleetView interface {
 }
 
 // UsageReader is the usage surface the aggregator reads: the configured
-// per-backend limits it renders alongside consumption.
-// *counter.UsageTracker satisfies it.
+// per-backend limits it renders alongside consumption, and which backends still
+// have read headroom. *counter.UsageTracker satisfies it.
+//
+// BackendsWithinLimits is here so the integrity figures are scoped to the same
+// backends the scrub queue draws from. Deriving that set anywhere else would
+// let the dashboard and the sweep disagree about which copies are reachable,
+// which is the disagreement that made the coverage age track wall clock.
 type UsageReader interface {
 	GetLimits() map[string]core.UsageLimits
+	BackendsWithinLimits(order []string, ops []s3op.Operation, egress, ingress int64) []string
 }
 
 // DrainProgressReader reports per-backend drain progress.
@@ -108,6 +120,16 @@ func New(store core.DashboardStore, usage UsageReader, order []string, fleet Fle
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
+
+// scrubbableBackends is the set the scrub queue would draw from right now:
+// those still within their read budget. It mirrors the scrubber's own split so
+// the dashboard scopes coverage to exactly the copies the sweep can stamp.
+func (da *Aggregator) scrubbableBackends() []string {
+	if da.usage == nil {
+		return da.order
+	}
+	return da.usage.BackendsWithinLimits(da.order, scrubReadOp, 0, 0)
+}
 
 // decorateLiveState fills in the fields that come from the running fleet
 // rather than the store: which backends are draining and how far along, and
@@ -170,10 +192,13 @@ func (da *Aggregator) GetData(ctx context.Context) (*Data, error) {
 		return nil, err
 	}
 
-	data.OldestUnverifiedAge, data.NeverVerifiedCopies, err = da.store.OldestUnverifiedAge(ctx)
+	coverage, err := da.store.IntegrityCoverage(ctx, da.scrubbableBackends())
 	if err != nil {
 		return nil, err
 	}
+	data.OldestUnverifiedAge = coverage.OldestUnverifiedAge
+	data.NeverVerifiedCopies = coverage.NeverVerified
+	data.DeferredCopies = coverage.Deferred
 
 	data.PlaintextCopies, err = da.store.CountUnencryptedLocations(ctx)
 	if err != nil {

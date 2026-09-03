@@ -77,6 +77,9 @@ var (
 	// pace with the fleet, so it is the figure to alert on. A copy that has
 	// never been verified counts from when it was written, so a fleet the
 	// sweep has not reached is visible here rather than reading as zero.
+	// Copies the sweep is not allowed to read are excluded and counted by
+	// IntegrityDeferredCopies instead: they can never be stamped, so leaving
+	// them in would make this climb by a day every day and never fall.
 	IntegrityOldestUnverifiedSeconds = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "s3o_integrity_oldest_unverified_seconds",
@@ -91,6 +94,18 @@ var (
 		prometheus.GaugeOpts{
 			Name: "s3o_integrity_never_verified_copies",
 			Help: "Object copies with a content hash that have never been verified",
+		},
+	)
+
+	// IntegrityDeferredCopies counts the copies the sweep cannot reach because
+	// their backend is over its usage limit. Non-zero means the coverage
+	// figures above describe only part of the fleet, so alert on it: the sweep
+	// will not close this gap on its own, and raising the limit or excluding
+	// the backend is an operator decision.
+	IntegrityDeferredCopies = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3o_integrity_deferred_copies",
+			Help: "Object copies the scrubber cannot reach because their backend is over its usage limit",
 		},
 	)
 

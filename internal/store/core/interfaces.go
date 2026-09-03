@@ -190,7 +190,7 @@ type IntegrityStore interface {
 	GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]ObjectLocation, error)
 	UpdateContentHash(ctx context.Context, key, backendName, hash string) error
 	MarkObjectScrubbed(ctx context.Context, key, backendName string) error
-	OldestUnverifiedAge(ctx context.Context) (age time.Duration, neverVerified int64, err error)
+	IntegrityCoverage(ctx context.Context, reachable []string) (CoverageStat, error)
 }
 
 // ExpiredObjectsQuery selects the objects one lifecycle rule expires. Prefix
@@ -243,7 +243,7 @@ type DashboardStore interface {
 	GetUsageForPeriod(ctx context.Context, period string) (map[string]UsageStat, error)
 	GetPoolUsageForPeriod(ctx context.Context, period string) (map[string]PoolUsage, error)
 	ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*DirectoryListResult, error)
-	OldestUnverifiedAge(ctx context.Context) (age time.Duration, neverVerified int64, err error)
+	IntegrityCoverage(ctx context.Context, reachable []string) (CoverageStat, error)
 	CountUnencryptedLocations(ctx context.Context) (int64, error)
 	CompressionStats(ctx context.Context) (map[string]CompressionStat, error)
 }

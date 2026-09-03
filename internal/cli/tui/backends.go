@@ -554,9 +554,16 @@ func (m *model) encryptionCoverage() string {
 }
 
 // integrityCoverage renders how far behind verification is. Never-verified
-// copies read as a warning because they are the ones a scrub has never seen.
+// copies read as a warning because they are the ones a scrub has never seen,
+// and deferred copies are appended because no sweep can reach them, so the
+// figure ahead of them describes only part of the fleet.
 func (m *model) integrityCoverage() string {
 	iv := m.backends.integrity
+	return integrityHeadline(iv) + deferredSuffix(iv.DeferredCopies)
+}
+
+// integrityHeadline is the reachable half of the coverage line.
+func integrityHeadline(iv adminapi.IntegrityStatus) string {
 	if iv.NeverVerifiedCopies > 0 {
 		return "verified: " + statusErrStyle.Render(
 			fmt.Sprintf("%s never", humanize.Comma(iv.NeverVerifiedCopies)))
@@ -566,6 +573,16 @@ func (m *model) integrityCoverage() string {
 	}
 	return "verified: oldest " + humanize.Duration(
 		time.Duration(iv.OldestUnverifiedSeconds)*time.Second)
+}
+
+// deferredSuffix names the copies no sweep can reach, or nothing when the whole
+// fleet is within its read budget.
+func deferredSuffix(deferred int64) string {
+	if deferred <= 0 {
+		return ""
+	}
+	return "   " + statusErrStyle.Render(
+		fmt.Sprintf("%s unreachable", humanize.Comma(deferred)))
 }
 
 // usagePercent returns used as a whole-number percentage of limit (0 when

@@ -770,6 +770,21 @@ func (mr *MockDashboardStoreMockRecorder) GetUsageForPeriod(ctx, period any) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUsageForPeriod", reflect.TypeOf((*MockDashboardStore)(nil).GetUsageForPeriod), ctx, period)
 }
 
+// IntegrityCoverage mocks base method.
+func (m *MockDashboardStore) IntegrityCoverage(ctx context.Context, reachable []string) (core.CoverageStat, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IntegrityCoverage", ctx, reachable)
+	ret0, _ := ret[0].(core.CoverageStat)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IntegrityCoverage indicates an expected call of IntegrityCoverage.
+func (mr *MockDashboardStoreMockRecorder) IntegrityCoverage(ctx, reachable any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IntegrityCoverage", reflect.TypeOf((*MockDashboardStore)(nil).IntegrityCoverage), ctx, reachable)
+}
+
 // ListDirectoryChildren mocks base method.
 func (m *MockDashboardStore) ListDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error) {
 	m.ctrl.T.Helper()
@@ -783,22 +798,6 @@ func (m *MockDashboardStore) ListDirectoryChildren(ctx context.Context, prefix, 
 func (mr *MockDashboardStoreMockRecorder) ListDirectoryChildren(ctx, prefix, startAfter, maxKeys any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListDirectoryChildren", reflect.TypeOf((*MockDashboardStore)(nil).ListDirectoryChildren), ctx, prefix, startAfter, maxKeys)
-}
-
-// OldestUnverifiedAge mocks base method.
-func (m *MockDashboardStore) OldestUnverifiedAge(ctx context.Context) (time.Duration, int64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "OldestUnverifiedAge", ctx)
-	ret0, _ := ret[0].(time.Duration)
-	ret1, _ := ret[1].(int64)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
-}
-
-// OldestUnverifiedAge indicates an expected call of OldestUnverifiedAge.
-func (mr *MockDashboardStoreMockRecorder) OldestUnverifiedAge(ctx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OldestUnverifiedAge", reflect.TypeOf((*MockDashboardStore)(nil).OldestUnverifiedAge), ctx)
 }
 
 // MockLifecycleAdmin is a mock of LifecycleAdmin interface.

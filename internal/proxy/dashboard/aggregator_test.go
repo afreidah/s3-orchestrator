@@ -40,7 +40,8 @@ func TestAggregator_Success(t *testing.T) {
 	store.EXPECT().GetObjectCounts(gomock.Any()).Return(map[string]int64{"b1": 5}, nil)
 	store.EXPECT().GetUnverifiedObjectCounts(gomock.Any()).Return(map[string]int64{}, nil)
 	store.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{"b1": 1}, nil)
-	store.EXPECT().OldestUnverifiedAge(gomock.Any()).Return(2*time.Hour, int64(3), nil)
+	store.EXPECT().IntegrityCoverage(gomock.Any(), gomock.Any()).
+		Return(core.CoverageStat{OldestUnverifiedAge: 2 * time.Hour, NeverVerified: 3, Deferred: 4}, nil)
 	store.EXPECT().CountUnencryptedLocations(gomock.Any()).Return(int64(7), nil)
 	store.EXPECT().CompressionStats(gomock.Any()).
 		Return(map[string]core.CompressionStat{"b1": {Objects: 2, LogicalBytes: 1000, StoredBytes: 250}}, nil)
@@ -105,10 +106,10 @@ func dashboardReads() []dashboardRead {
 			}},
 		{"integrity coverage",
 			func(m *storetest.MockDashboardStore) {
-				m.EXPECT().OldestUnverifiedAge(a).Return(time.Duration(0), int64(0), nil)
+				m.EXPECT().IntegrityCoverage(a, a).Return(core.CoverageStat{}, nil)
 			},
 			func(m *storetest.MockDashboardStore, err error) {
-				m.EXPECT().OldestUnverifiedAge(a).Return(time.Duration(0), int64(0), err)
+				m.EXPECT().IntegrityCoverage(a, a).Return(core.CoverageStat{}, err)
 			}},
 		{"plaintext copies",
 			func(m *storetest.MockDashboardStore) {
