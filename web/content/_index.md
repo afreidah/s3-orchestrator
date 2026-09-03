@@ -1,5 +1,6 @@
 ---
-title: " "
+title: "Multi-backend S3 proxy with quotas and replication"
+description: "One S3 endpoint in front of many S3 backends. Per-backend byte and request quotas, cross-cloud replication, drain, rebalance, and integrity scrubbing."
 archetype: "home"
 ---
 
@@ -22,7 +23,7 @@ An open-source, highly available distributed S3 proxy that decouples your applic
 
 <hr style="margin-top: 3rem;">
 
-<h2 style="text-align: center; color: #2a9d73;">Your storage should not be a single point of failure</h2>
+<h1 style="text-align: center; color: #2a9d73;">Your storage should not be a single point of failure</h1>
 
 Most applications talk directly to one S3 backend, which makes them entirely dependent on that cloud's uptime, pricing, features, and security.
 
@@ -313,7 +314,7 @@ Object tagging is handled the same way, in the metadata layer rather than pushed
     <i class="fas fa-user-cog feature-icon" style="color: #2a9d73;"></i>
     <div>
       <strong>Homelabbers</strong>
-      <p>Stack free-tier allocations from several providers into usable storage, with hard caps on transit so there is no surprise bill.</p>
+      <p>Stack free-tier allocations from several providers into usable storage, with hard caps on transit so there is no surprise bill. The <a href="guides/maximizing-free-tiers/">free-tier guide</a> walks through ten providers and what each one meters.</p>
     </div>
   </div>
 </div>

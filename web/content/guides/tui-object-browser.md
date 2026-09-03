@@ -86,9 +86,10 @@ Highlight an object (not a directory) and press `enter` to open the inspector. E
 
 ```
 inspect   photos/2024/img_01.jpg   (2 copies)
-BACKEND    SIZE      CREATED    ENC   KEY ID      HASH
-minio-a    2.4 MiB   2h ago     yes   config-0    9f3a2b1c4d~
-minio-c    2.4 MiB   2h ago     yes   config-0    9f3a2b1c4d~
+tags: (none)
+BACKEND    SIZE      LOGICAL   COMP   CREATED   ENC   KEY ID       HASH          VERIFIED
+minio-a    1.9 MiB   2.4 MiB   zstd   2h ago    yes   vault:tra~   9f3a2b1c4d~   1h ago
+minio-c    1.9 MiB   2.4 MiB   zstd   2h ago    yes   vault:tra~   9f3a2b1c4d~   1h ago
 ```
 
 ![The inspector showing an object's two backend copies](/docs/images/tui-file-details.png?classes=lightbox)
@@ -97,10 +98,13 @@ Reading the columns:
 
 - **BACKEND** - the backend the copy lives on.
 - **SIZE** - stored size in binary units (ciphertext size when the copy is encrypted).
+- **LOGICAL** - the object's size before compression, or `-` when the copy is stored as written.
+- **COMP** - the codec the copy is compressed with, or `-` when it is not compressed.
 - **CREATED** - how long ago the copy was recorded.
 - **ENC** - whether the copy is envelope-encrypted.
 - **KEY ID** - the master key that wrapped this copy's data-encryption key.
 - **HASH** - a prefix of the plaintext SHA-256, once a hash has been computed.
+- **VERIFIED** - how long ago the copy's bytes were last read back and checked against that hash, or `never` while nothing has checked it.
 
 Two copies with matching sizes and hashes is a healthy replicated object. A single row means the object is under-replicated (or replication is disabled); a mismatch in size or hash across copies is worth investigating.
 
@@ -113,12 +117,12 @@ The inspector shows encryption *metadata* only. The wrapped data-encryption key 
 Press `b` (or select **Backends** in the sidebar) to switch to the status view. Each row is one configured backend:
 
 ```
-backends   3 configured   usage period: 2026-07
-db: healthy   total: 11.3 GiB / 20.0 GiB (56%)   verified: oldest 9h
-BACKEND    HEALTH     DRAIN     USED       LIMIT      OBJECTS   API      INGRESS    EGRESS
-minio-a    healthy    -         2.4 GiB    10.0 GiB   1284      9021     4.7 GiB    2.8 GiB
-minio-b    healthy    draining  8.9 GiB    10.0 GiB   4102      512      1.0 GiB    3.1 GiB
-minio-c    unhealthy  -         0 B        -          0         0        0 B        0 B
+backends   3 configured   usage period: 2026-09
+db: healthy   total: 11.3 GiB / 20.0 GiB (56%)   verified: oldest 9h   compression saved: 3.4 GiB
+BACKEND    HEALTH     DRAIN     USED      LIMIT      USE%   OBJECTS   API    INGRESS   EGRESS    SAVED
+minio-a    healthy    -         2.4 GiB   10.0 GiB   24%    1284      9021   4.7 GiB   2.8 GiB   612.0 MiB
+minio-b    healthy    draining  8.9 GiB   10.0 GiB   89%    4102      512    1.0 GiB   3.1 GiB   2.8 GiB
+minio-c    unhealthy  -         0 B       -          -      0         0      0 B       0 B       0 B
 ```
 
 The second line carries fleet-wide state. `verified:` is how far behind
@@ -131,9 +135,10 @@ Reading the columns:
 
 - **HEALTH** - the backend's circuit-breaker state; `unhealthy` means the breaker has tripped and the backend is being skipped.
 - **DRAIN** - `draining` while a drain is evacuating the backend, otherwise `-`.
-- **USED** / **LIMIT** - quota bytes used against the configured limit (`-` when no limit is set).
+- **USED** / **LIMIT** / **USE%** - quota bytes used against the configured limit (`-` when no limit is set), and the fill percentage that follows from them.
 - **OBJECTS** - object copies the backend holds.
 - **API** / **INGRESS** / **EGRESS** - request count and bytes transferred for the current usage period, shown in the title bar.
+- **SAVED** - bytes compression kept off this backend, summed across its copies.
 
 The title bar also reports the metadata database health and the usage period the counters cover. Press `r` to refresh the snapshot. This is the interactive equivalent of `s3-orchestrator admin status`.
 
@@ -142,6 +147,22 @@ The title bar also reports the metadata database health and the usage period the
 Press `l` (or select **Logs** in the sidebar) to switch to the logs view - recent structured log entries from the instance's in-memory buffer, the same source the web dashboard reads. Each row is the time, level, component, and a human-readable message with its structured attributes appended as `key=value` pairs, so you can follow what the instance is doing (PUTs, replication copies, drains, cleanup ticks) without tailing container logs. The level is colour-coded by severity so warnings and errors stand out. Press `L` to cycle the minimum-level filter (all / INFO / WARN / ERROR) and `r` to refresh.
 
 ![The Logs section showing recent structured log entries](/docs/images/tui-logs.png?classes=lightbox)
+
+## Step 6: Check the background services
+
+Press `w` (or select **Workers**) for each registered background service's last-tick health: last success, last failure, consecutive failure count, and last error. A service that runs every tick and fails every tick is indistinguishable from a healthy one in `/health`, so this is where that difference surfaces; the title bar counts the services currently failing.
+
+![The Workers section listing each background service's last-tick health](/docs/images/tui-workers.png?classes=lightbox)
+
+The neighbouring status sections read the same way: `p` for the replication factor and the under- and over-replicated counts, `u` for the cleanup queue and its dead-letter table, and `c` for the object cache's entry count, size, and hit rate.
+
+## Step 7: Run an admin action
+
+Press `o` (or select **Ops**) for the instance-wide actions, grouped into the maintenance passes, cache control, and the encryption transitions. Every entry confirms with `y/N` before it runs, and an entry ending in `...` prompts for a value first.
+
+![The Ops menu listing the instance-wide admin actions](/docs/images/tui-ops.png?classes=lightbox)
+
+Accepting an action switches to a scrolling output pane immediately, so a pass that takes minutes reports what it is doing rather than leaving the menu live until it finishes. Actions that target a single row live on the pane that shows the row instead: drain and reconcile on Backends, requeue on Cleanup.
 
 ## Where it fits
 

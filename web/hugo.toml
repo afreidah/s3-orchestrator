@@ -17,6 +17,10 @@ theme = "hugo-theme-relearn"
 [params]
   themeVariant = ["s3orchestrator"]
   description = "Unified S3-compatible storage across multiple backends"
+  # Social card. The OpenGraph and Twitter partials switch to the large-image
+  # card once a page resolves an image; without one, a link shared to Slack,
+  # Reddit, or X renders as bare text.
+  images = ["images/og-card.png"]
   editURL = "https://github.com/afreidah/s3-orchestrator/edit/main/web/content/"
   showVisitedLinks = false
   disableLandingPageButton = false
