@@ -345,6 +345,18 @@ type routed struct {
 // query combinations matched; the caller emits a 405.
 func (s *Server) routeBucketRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, method, bucket string) (routed, error) {
 	query := r.URL.Query()
+
+	// Refuse before dispatch, for the reason the object path does: S3 selects
+	// the operation from the query string, so an unrecognised key names a
+	// bucket subresource this server does not implement. Falling through
+	// answers a ListBucketResult, which a client that asked for versions, a
+	// policy or a lifecycle configuration parses as "there are none".
+	if sub, unsupported := unsupportedQuery(query, supportedBucketQueryKeys, supportedBucketQueryPrefixes); unsupported {
+		msg := fmt.Sprintf("bucket subresource %q is not supported", sub)
+		writeS3Error(w, http.StatusNotImplemented, "NotImplemented", msg)
+		return routed{operation: "UnsupportedSubresource", status: http.StatusNotImplemented, supported: true}, nil
+	}
+
 	_, hasDelete := query["delete"]
 	_, hasLocation := query["location"]
 	_, hasUploads := query["uploads"]
@@ -397,7 +409,7 @@ func (s *Server) routeObjectRequest(ctx context.Context, w http.ResponseWriter, 
 	// implement; falling through would run PutObject or DeleteObject against
 	// the key instead, overwriting or removing the object the caller was
 	// asking about.
-	if sub, unsupported := unsupportedObjectQuery(query); unsupported {
+	if sub, unsupported := unsupportedQuery(query, supportedObjectQueryKeys, supportedObjectQueryPrefixes); unsupported {
 		msg := fmt.Sprintf("object subresource %q is not supported", sub)
 		writeS3Error(w, http.StatusNotImplemented, "NotImplemented", msg)
 		return routed{operation: "UnsupportedSubresource", status: http.StatusNotImplemented, supported: true}, nil
@@ -425,10 +437,17 @@ func (s *Server) routeObjectRequest(ctx context.Context, w http.ResponseWriter, 
 	}
 }
 
-// routeMultipartRequest dispatches per-uploadID multipart operations.
+// routeMultipartRequest dispatches per-uploadID multipart operations. PUT
+// splits between UploadPart and UploadPartCopy on the X-Amz-Copy-Source
+// header, the same split routePlainObjectRequest makes: an UploadPartCopy
+// carries no body, so handing it to UploadPart stores an empty part.
 func (s *Server) routeMultipartRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, rk *objectRouteKey) (routed, error) {
 	switch rk.method {
 	case http.MethodPut:
+		if copySource := r.Header.Get(headerCopySource); copySource != "" {
+			st, e := s.handleUploadPartCopy(ctx, w, r, rk, copySource)
+			return routed{operation: "UploadPartCopy", status: st, supported: true}, e
+		}
 		st, e := s.handleUploadPart(ctx, w, r, rk.bucket, rk.key)
 		return routed{operation: "UploadPart", status: st, requestSize: r.ContentLength, supported: true}, e
 	case http.MethodPost:
@@ -468,7 +487,7 @@ func (s *Server) routeTaggingRequest(ctx context.Context, w http.ResponseWriter,
 func (s *Server) routePlainObjectRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, method, bucket, internalKey string) (routed, error) {
 	switch method {
 	case http.MethodPut:
-		if copySource := r.Header.Get("X-Amz-Copy-Source"); copySource != "" {
+		if copySource := r.Header.Get(headerCopySource); copySource != "" {
 			st, e := s.handleCopyObject(ctx, w, r, bucket, internalKey, copySource)
 			return routed{operation: "CopyObject", status: st, supported: true}, e
 		}
