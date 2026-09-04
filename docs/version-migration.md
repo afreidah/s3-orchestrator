@@ -1,3 +1,7 @@
+---
+description: "Upgrading between versions: how database migrations run, which configuration changes are required, and where breaking changes land."
+---
+
 This document covers upgrading between versions of the S3 Orchestrator, including database migrations, configuration changes, and breaking changes.
 
 ## How Upgrades Work

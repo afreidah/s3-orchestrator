@@ -1,4 +1,5 @@
 ---
+description: "Interactive high-level diagram of the request path, storage layer, background services, and observability, with implementation notes."
 title: "System Architecture"
 linkTitle: "Architecture"
 weight: -1

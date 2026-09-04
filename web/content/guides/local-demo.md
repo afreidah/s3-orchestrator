@@ -1,5 +1,6 @@
 ---
 title: "Nomad/k8s Full Stack Demo"
+description: "Run the full demo stack locally: three MinIO backends, PostgreSQL, and a complete S3 Orchestrator instance on Nomad or Kubernetes."
 weight: 1
 ---
 

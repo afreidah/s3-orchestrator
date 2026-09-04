@@ -1,5 +1,6 @@
 ---
 title: "Local to Cloud Replication"
+description: "Replicate objects from a local MinIO instance to a cloud backend automatically, with no sync scripts or additional tooling required."
 weight: 4
 ---
 

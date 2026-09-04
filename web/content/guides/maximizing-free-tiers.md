@@ -1,6 +1,6 @@
 ---
 title: "Maximizing Free Tiers"
-description: "Combine the free tiers of several S3-compatible providers into one endpoint: account setup, per-backend quotas and request pools, and replication across them."
+description: "Combine the free tiers of several S3-compatible providers into one endpoint: account setup, per-backend quotas, and replication across them."
 weight: 3
 ---
 
