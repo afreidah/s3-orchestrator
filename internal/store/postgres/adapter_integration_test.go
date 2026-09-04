@@ -315,10 +315,10 @@ func TestPgAdapter_GetExistingCopiesForUpdate_ReturnsAllCopies(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
@@ -374,10 +374,10 @@ func TestPgAdapter_InsertObjectLocation_PreservesEncryptionFields(t *testing.T) 
 		PlaintextSize: 50,
 		ContentHash:   "abc123",
 	}
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 75, Form: form}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 75, Form: form}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
 	locs, err := s.GetAllObjectLocations(ctx, key)
 	if err != nil {
@@ -402,15 +402,15 @@ func TestPgAdapter_DeleteObjectCopies_RemovesAllRows(t *testing.T) {
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
 	other := uniqueKey(t, "other")
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject(target): %v", err)
 	}
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: other, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: other, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject(other): %v", err)
 	}
 	defer func() {
-		_, _ = s.DeleteObject(ctx, key)
-		_, _ = s.DeleteObject(ctx, other)
+		_, _, _ = s.DeleteObject(ctx, key)
+		_, _, _ = s.DeleteObject(ctx, other)
 	}()
 
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
@@ -440,10 +440,10 @@ func TestPgAdapter_CheckObjectExistsOnBackend(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
 		got, err := a.CheckObjectExistsOnBackend(ctx, key, "backend-a")
@@ -477,10 +477,10 @@ func TestPgAdapter_LockObjectOnBackend_ReturnsRow(t *testing.T) {
 		PlaintextSize: 50,
 		ContentHash:   "hash",
 	}
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 75, Form: form}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 75, Form: form}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
 		loc, ok, err := a.LockObjectOnBackend(ctx, key, "backend-a")
@@ -523,13 +523,13 @@ func TestPgAdapter_DeleteObjectFromBackend_RemovesOneRow(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
 		if err := a.DeleteObjectFromBackend(ctx, key, "backend-a"); err != nil {
@@ -552,7 +552,7 @@ func TestPgAdapter_InsertObjectLocationIfNotExists_BothBranches(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
 	if got, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: "backend-a", Size: 50}); err != nil || got != core.ImportInserted {
 		t.Fatalf("ImportObject(insert): got=%s err=%v, want inserted", got, err)
@@ -569,10 +569,10 @@ func TestPgAdapter_InsertReplicaConditional_InsertsWhenSourceExists(t *testing.T
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
 	if _, ok, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil || !ok {
 		t.Fatalf("RecordReplica(insert): got ok=%v err=%v, want (true, nil)", ok, err)
@@ -728,10 +728,10 @@ func TestPgAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState(t *testing.
 		KeyID:         "key-1",
 		PlaintextSize: 1024,
 	}
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1100, Form: form}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1100, Form: form}); err != nil {
 		t.Fatalf("RecordObject encrypted: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
@@ -763,10 +763,10 @@ func TestPgAdapter_GetExistingCopiesForUpdate_ReportsUnencryptedCopy(t *testing.
 	ctx := context.Background()
 	key := uniqueKey(t, "plain")
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
 		copies, err := a.GetExistingCopiesForUpdate(ctx, key)
@@ -806,7 +806,7 @@ func TestPgAdapter_ImportObject_PreservesEncryptionMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 	if inserted != core.ImportInserted {
 		t.Fatalf("ImportObject outcome = %s, want inserted", inserted)
 	}
@@ -852,7 +852,7 @@ func TestPgAdapter_ImportObject_KeylessEncryptedRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 	if inserted != core.ImportInserted {
 		t.Fatalf("ImportObject outcome = %s, want inserted", inserted)
 	}
@@ -883,7 +883,7 @@ func TestPgAdapter_ImportObject_PlaintextStaysPlaintext(t *testing.T) {
 	if _, err := s.ImportObject(ctx, &core.ImportObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("ImportObject: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
 	locs, err := s.GetAllObjectLocations(ctx, key)
 	if err != nil {

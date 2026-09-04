@@ -51,7 +51,7 @@ func hashString(s string) string {
 func setupScrubber(t *testing.T) (*Scrubber, *MockScrubberOps, *MockPlacement, *backendtest.MockObjectBackend, *mockMetadataStore) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
-	ops := NewMockScrubberOps(ctrl)
+	ops := newMockScrubberOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	be := backendtest.NewMockObjectBackend(ctrl)
 	ms := &mockMetadataStore{}
@@ -307,7 +307,7 @@ func TestBackfill_EmptyBatch(t *testing.T) {
 func TestScrubber_SetConfig(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	s := NewScrubber(ScrubberDeps{Ops: NewMockScrubberOps(ctrl), Placement: NewMockPlacement(ctrl), Store: &mockMetadataStore{}})
+	s := NewScrubber(ScrubberDeps{Ops: newMockScrubberOps(ctrl), Placement: NewMockPlacement(ctrl), Store: &mockMetadataStore{}})
 	if s.Config() != nil {
 		t.Fatal("expected nil config initially")
 	}
@@ -680,7 +680,7 @@ func limitedUsage(t *testing.T) *counter.UsageTracker {
 func TestScrub_DeclinesBackendsOverTheirUsageLimit(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockScrubberOps(ctrl)
+	ops := newMockScrubberOps(ctrl)
 	ms := &mockMetadataStore{deferredCandidates: 12}
 
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
@@ -731,7 +731,7 @@ func TestScrub_SelectsEverythingWhenNothingIsOverBudget(t *testing.T) {
 // as a clean one without breaking the figure that tracks the real backlog.
 func TestScrub_DeferredCopiesReportSeparately(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	ops := NewMockScrubberOps(ctrl)
+	ops := newMockScrubberOps(ctrl)
 	ms := &mockMetadataStore{
 		deferredCandidates: 40,
 		oldestUnverified:   72 * time.Hour,
@@ -771,7 +771,7 @@ func TestScrub_DeferredCopiesReportSeparately(t *testing.T) {
 func TestScrub_SurvivesADeferredCountFailure(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockScrubberOps(ctrl)
+	ops := newMockScrubberOps(ctrl)
 	ms := &mockMetadataStore{deferredCandidatesErr: errors.New("ledger unavailable")}
 
 	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
@@ -946,7 +946,7 @@ func TestScrubKey_LookupFailureIsAnError(t *testing.T) {
 func TestScrub_DeclinesCopyWithoutEgressHeadroom(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockScrubberOps(ctrl)
+	ops := newMockScrubberOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 

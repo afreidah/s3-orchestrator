@@ -309,11 +309,13 @@ func (o *Manager) maybeWrapIntegrityReader(
 // object, leaving it below its replication factor until a reconcile sweeps
 // the stale row.
 func (o *Manager) dropCorruptedLocation(ctx context.Context, key, beName string) {
-	if err := o.stores.DeleteObjectLocation(ctx, key, beName); err != nil {
+	removed, err := o.stores.DeleteObjectLocation(ctx, key, beName)
+	if err != nil {
 		o.log.ErrorContext(ctx, "failed to drop location for corrupted copy",
 			"key", key, "backend", beName, "error", err)
 		return
 	}
+	o.core.Quota().Record(beName, -removed)
 	o.cache.Delete(key)
 }
 

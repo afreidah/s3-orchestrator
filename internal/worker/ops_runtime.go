@@ -60,7 +60,7 @@ type DataMover interface {
 // delete-or-enqueue) workers get from *writepath.Coordinator, kept apart from
 // the runtime roles because the runtime deliberately holds no store.
 type Placement interface {
-	SelectReplicaTarget(ctx context.Context, size int64, exclusion map[string]bool) (string, error)
+	SelectReplicaTarget(size int64, exclusion map[string]bool) (string, *counter.Reservation, error)
 	MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error)
 	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
 }
@@ -68,6 +68,13 @@ type Placement interface {
 // UsageAccessor provides usage tracking.
 type UsageAccessor interface {
 	Usage() *counter.UsageTracker
+}
+
+// QuotaAccessor provides the byte-reservation tracker. Background workers that
+// add or remove copies charge it directly: the bytes they move are the same
+// bytes a client write is admitted against.
+type QuotaAccessor interface {
+	Quota() *counter.QuotaTracker
 }
 
 // RecorderProvider provides the shared per-backend accounting recorder.
@@ -89,6 +96,7 @@ type Ops interface {
 	AdmissionControl
 	DataMover
 	UsageAccessor
+	QuotaAccessor
 	RecorderProvider
 }
 
@@ -98,6 +106,7 @@ type CleanupOps interface {
 	AdmissionControl
 	DataMover
 	UsageAccessor
+	QuotaAccessor
 	RecorderProvider
 }
 
@@ -111,6 +120,7 @@ type ScrubberOps interface {
 	BackendAccess
 	DataMover
 	UsageAccessor
+	QuotaAccessor
 	RecorderProvider
 }
 

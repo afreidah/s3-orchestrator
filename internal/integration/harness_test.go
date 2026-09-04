@@ -260,6 +260,13 @@ func (h *harness) buildStack(t *testing.T, spec harnessSpec) {
 		Metrics:         newMetricsAdapter(h.store),
 	})
 	h.stack = proxytest.New(t, stores, &opts)
+	// The tracker starts empty, so admission would judge every write against a
+	// zero ceiling. Production primes it from backend_quotas before serving;
+	// the harness has to do the same or the limits SyncQuotaLimits just wrote
+	// are invisible to routing.
+	if err := h.stack.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
+		t.Fatalf("prime harness quota baselines: %v", err)
+	}
 	if spec.Integrity != nil {
 		h.stack.IntegrityCfg.Store(spec.Integrity)
 	}
@@ -376,9 +383,21 @@ func (h *harness) compressionAlgorithm(key string) string {
 	return algorithm.String
 }
 
+// flushQuota drains the in-memory byte counter into backend_quotas and
+// re-primes the baselines from the rows it wrote. bytes_used is eventually
+// consistent, so anything reading that column has to ask for the flush the
+// usage service would otherwise run on its own tick.
+func (h *harness) flushQuota() {
+	h.t.Helper()
+	if err := h.stack.Usage.FlushQuota(context.Background()); err != nil {
+		h.t.Fatalf("flushQuota: %v", err)
+	}
+}
+
 // quotaUsed returns a backend's committed byte count.
 func (h *harness) quotaUsed(backendName string) int64 {
 	h.t.Helper()
+	h.flushQuota()
 	var used int64
 	if err := h.db.QueryRow(
 		"SELECT bytes_used FROM backend_quotas WHERE backend_name = $1", backendName,
@@ -465,6 +484,11 @@ func (h *harness) setQuota(backendName string, limit int64) {
 		limit, backendName,
 	); err != nil {
 		h.t.Fatalf("setQuota(%s, %d): %v", backendName, limit, err)
+	}
+	// Admission reads the ceiling from the tracker, not the row, so the new
+	// limit means nothing until the baseline is reloaded.
+	if err := h.stack.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
+		h.t.Fatalf("setQuota(%s, %d): refresh baselines: %v", backendName, limit, err)
 	}
 }
 

@@ -27,6 +27,7 @@ import (
 type promoteOutcome struct {
 	result    PendingPromoteResult
 	displaced []DeletedCopy
+	deltas    QuotaDeltas
 }
 
 // promotePendingTx is the transactional body of PromotePending. The
@@ -60,11 +61,11 @@ func promotePendingTx(ctx context.Context, tx TxAdapter, p *PendingObject) (prom
 }
 
 // commitPromotion finalises a non-superseded intent: clears prior copies,
-// inserts the new object_location row, applies all per-backend quota
-// deltas in stable order, and deletes the pending row in the same
-// transaction.
+// inserts the new object_location row, and deletes the pending row in the same
+// transaction. The per-backend byte deltas ride out on the outcome for the
+// caller to apply.
 func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existing []ExistingCopy) (promoteOutcome, error) {
-	deltas := make(map[string]int64, len(existing)+1)
+	deltas := make(QuotaDeltas, len(existing)+1)
 	displaced, err := clearExistingCopies(ctx, tx, p.ObjectKey, p.BackendName, existing, deltas)
 	if err != nil {
 		return promoteOutcome{}, err
@@ -73,22 +74,19 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
 		return promoteOutcome{}, fmt.Errorf("insert promoted location: %w", err)
 	}
-	deltas[p.BackendName] += p.SizeBytes
-	if err := applyQuotaDeltas(ctx, tx, deltas); err != nil {
-		return promoteOutcome{}, err
-	}
+	deltas.Add(p.BackendName, p.SizeBytes)
 	if err := tx.DeletePending(ctx, p.IntentID); err != nil {
 		return promoteOutcome{}, fmt.Errorf("delete promoted pending row: %w", err)
 	}
-	return promoteOutcome{result: PendingPromoteCommitted, displaced: displaced}, nil
+	return promoteOutcome{result: PendingPromoteCommitted, displaced: displaced, deltas: deltas}, nil
 }
 
 // clearExistingCopies deletes every prior copy of the key and accumulates
-// per-backend negative deltas in the supplied map (caller applies the
-// deltas in stable order via applyQuotaDeltas). Copies on
+// per-backend negative deltas in the supplied map, which the caller applies to
+// the byte counter once the transaction has committed. Copies on
 // backends other than newBackend are returned as DeletedCopy entries so
 // the caller can enqueue them for physical orphan cleanup.
-func clearExistingCopies(ctx context.Context, tx TxAdapter, key, newBackend string, existing []ExistingCopy, deltas map[string]int64) ([]DeletedCopy, error) {
+func clearExistingCopies(ctx context.Context, tx TxAdapter, key, newBackend string, existing []ExistingCopy, deltas QuotaDeltas) ([]DeletedCopy, error) {
 	if len(existing) == 0 {
 		return nil, nil
 	}
@@ -96,7 +94,7 @@ func clearExistingCopies(ctx context.Context, tx TxAdapter, key, newBackend stri
 		return nil, fmt.Errorf("delete existing copies: %w", err)
 	}
 	for _, ec := range existing {
-		deltas[ec.BackendName] -= ec.SizeBytes
+		deltas.Add(ec.BackendName, -ec.SizeBytes)
 	}
 	return displacedFromExisting(existing, newBackend), nil
 }

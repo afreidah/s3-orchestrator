@@ -59,7 +59,7 @@ func TestStoreInt_MarkObjectEncrypted_AdjustsBytesUsed(t *testing.T) {
 	resetBytesUsed(t, s, "backend-a")
 	key := uniqueKey(t, "encrypt-quota")
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: plaintextSize}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: plaintextSize}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	before := readBytesUsed(t, s, "backend-a")
@@ -88,7 +88,7 @@ func TestStoreInt_MarkObjectDecrypted_AdjustsBytesUsed(t *testing.T) {
 	resetBytesUsed(t, s, "backend-a")
 	key := uniqueKey(t, "decrypt-quota")
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: plaintextSize}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: plaintextSize}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if err := s.MarkObjectEncrypted(ctx, encUpdate(key, plaintextSize, ciphertextSize)); err != nil {
@@ -117,7 +117,7 @@ func TestStoreInt_MarkObjectEncrypted_ZeroDeltaNoOp(t *testing.T) {
 	resetBytesUsed(t, s, "backend-a")
 	key := uniqueKey(t, "encrypt-zero")
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: size}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: size}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	before := readBytesUsed(t, s, "backend-a")
@@ -149,7 +149,7 @@ func TestStoreInt_MarkObjectEncrypted_BatchSumsCorrectly(t *testing.T) {
 	keys := make([]string, objects)
 	for i := range objects {
 		keys[i] = uniqueKey(t, "encrypt-batch")
-		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: keys[i], Backend: "backend-a", Size: plaintextSize}); err != nil {
+		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: keys[i], Backend: "backend-a", Size: plaintextSize}); err != nil {
 			t.Fatalf("RecordObject %d: %v", i, err)
 		}
 	}
@@ -182,6 +182,16 @@ func readBytesUsed(t *testing.T, s *Store, backendName string) int64 {
 		t.Fatalf("read bytes_used: %v", err)
 	}
 	return v
+}
+
+// commitQuota lands a mutation's byte deltas in backend_quotas. Mutations
+// report their deltas rather than writing the counter themselves, so a test
+// asserting on bytes_used has to do what the usage service's flush does.
+func commitQuota(t *testing.T, s *Store, deltas core.QuotaDeltas) {
+	t.Helper()
+	if err := s.FlushQuotaDeltas(context.Background(), deltas); err != nil {
+		t.Fatalf("FlushQuotaDeltas: %v", err)
+	}
 }
 
 // resetBytesUsed zeroes the bytes_used column on a backend so each test
