@@ -1,5 +1,6 @@
 ---
 title: "Deploying with systemd"
+description: "Install as a systemd service on bare metal or a VM using the Debian package, which ships a unit file, sample config, and directories."
 weight: 7
 ---
 

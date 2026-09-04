@@ -1,4 +1,5 @@
 ---
+description: "Choosing between embedded SQLite and PostgreSQL, sizing the connection pool, and the migrations that manage the metadata schema."
 title: "Database"
 linkTitle: "Database"
 weight: 24

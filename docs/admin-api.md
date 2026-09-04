@@ -1,4 +1,5 @@
 ---
+description: "The operational control plane for a running instance: backend health, worker state, replication and cleanup queues, integrity passes, and caches."
 title: "Admin API"
 linkTitle: "Admin API"
 ---

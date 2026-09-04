@@ -1,3 +1,7 @@
+---
+description: "Structured log/slog conventions: the shared key vocabulary every call site uses, and the sloglint rules that keep it enforced in CI."
+---
+
 # Structured Logging Conventions
 
 All operational logs in s3-orchestrator are structured `log/slog` JSON.

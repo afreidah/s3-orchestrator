@@ -1,4 +1,5 @@
 ---
+description: "How the orchestrator fits together: the request path, the metadata layer, the backend abstraction, and the background workers behind them."
 title: "Architecture"
 linkTitle: "Architecture"
 weight: 20

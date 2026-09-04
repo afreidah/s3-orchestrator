@@ -1,4 +1,5 @@
 ---
+description: "How replicas are created and placed, what over-replication and reconciliation do, and the tunables controlling each of the workers."
 title: "Replication, Over-Replication, and Reconciliation"
 linkTitle: "Replication"
 weight: 25

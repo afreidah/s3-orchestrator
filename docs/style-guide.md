@@ -1,3 +1,7 @@
+---
+description: "The project's Go conventions: comment and file-header format, package layout, error handling, logging, testing, and versioning rules."
+---
+
 **Author:** Alex Freidah
 
 ---

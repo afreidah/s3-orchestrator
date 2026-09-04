@@ -1,4 +1,5 @@
 ---
+description: "How virtual buckets map to credential sets, and how every request is authenticated and authorised against them before reaching a backend."
 title: "Authentication and Credentials"
 linkTitle: "Authentication"
 weight: 22

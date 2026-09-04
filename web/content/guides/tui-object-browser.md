@@ -1,5 +1,6 @@
 ---
 title: "Browsing Objects with the TUI"
+description: "Explore the object namespace from the terminal UI: see which backends hold each copy and check replication state without leaving the shell."
 weight: 8
 ---
 

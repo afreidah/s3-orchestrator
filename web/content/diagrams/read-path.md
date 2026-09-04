@@ -1,4 +1,5 @@
 ---
+description: "Interactive diagram of a GetObject request through location lookup, failover, broadcast reads, decryption, decoding, and streaming."
 title: "Read Path"
 linkTitle: "Read Path"
 weight: 3

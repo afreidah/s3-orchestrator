@@ -1,4 +1,5 @@
 ---
+description: "Day-to-day procedures: draining a backend, rebalancing copies, running integrity scrubs, managing cache, and taking trace snapshots."
 title: "Operations"
 linkTitle: "Operations"
 weight: 30

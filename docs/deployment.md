@@ -1,4 +1,5 @@
 ---
+description: "Production manifests for Nomad and Kubernetes, plus the local demo scripts that stand up a complete environment in one command."
 title: "Deployment"
 linkTitle: "Deployment"
 weight: 35

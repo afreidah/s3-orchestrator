@@ -1,4 +1,5 @@
 ---
+description: "Index of the per-topic operational docs: configuration, backends, replication, encryption, monitoring, cleanup, and the admin API."
 title: "Admin Guide"
 linkTitle: "Admin Guide"
 ---

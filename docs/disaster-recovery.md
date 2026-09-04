@@ -1,3 +1,7 @@
+---
+description: "Failure scenarios and recovery procedures for a lost database, an unreachable backend, or an instance that will not come back up."
+---
+
 This guide covers failure scenarios and recovery procedures for the S3 Orchestrator.
 
 ## Architecture Context

@@ -1,4 +1,5 @@
 ---
+description: "The three observability streams the orchestrator emits - metrics, traces, and structured logs - and how to consume each of them."
 title: "Monitoring"
 linkTitle: "Monitoring"
 weight: 31

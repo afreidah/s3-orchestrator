@@ -1,4 +1,5 @@
 ---
+description: "At-rest chunked zstd compression: what changes on the backend, what stays identical to the object the client wrote, and how to enable it."
 title: "Compression"
 linkTitle: "Compression"
 weight: 28

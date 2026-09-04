@@ -1,4 +1,5 @@
 ---
+description: "Interactive entity-relationship diagram of the PostgreSQL metadata store, with column details and usage context on every table."
 title: "Database Schema"
 linkTitle: "Database Schema"
 weight: 8

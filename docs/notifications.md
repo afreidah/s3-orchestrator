@@ -1,4 +1,5 @@
 ---
+description: "Outbound webhooks for object mutations and operational events, delivered from a durable outbox so nothing is lost across a restart."
 title: "Webhook Notifications"
 linkTitle: "Notifications"
 weight: 33

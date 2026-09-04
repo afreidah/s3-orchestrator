@@ -1,5 +1,6 @@
 ---
 title: "Event Notifications"
+description: "Configure webhook notifications for object creation and deletion, plus operational events such as circuit breaker trips and capacity warnings."
 weight: 4
 ---
 

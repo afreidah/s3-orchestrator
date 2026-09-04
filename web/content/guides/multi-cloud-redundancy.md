@@ -1,5 +1,6 @@
 ---
 title: "Simple Multi-Cloud Redundancy"
+description: "Store every object across multiple providers transparently, with no changes required to your applications or existing S3 clients."
 weight: 5
 ---
 

@@ -1,3 +1,7 @@
+---
+description: "Using the orchestrator from common S3 clients and SDKs, since it presents a standard S3-compatible endpoint to any tool that speaks S3."
+---
+
 This guide shows how to use the S3 Orchestrator from common S3 clients and SDKs. The orchestrator is a standard S3-compatible endpoint — any tool that speaks the S3 protocol will work.
 
 ## Prerequisites

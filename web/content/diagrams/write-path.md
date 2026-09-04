@@ -1,4 +1,5 @@
 ---
+description: "Interactive diagram of a PutObject request through backend selection, encryption, failover, and the metadata recording steps."
 title: "Write Path"
 linkTitle: "Write Path"
 weight: 2

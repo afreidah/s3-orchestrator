@@ -1,4 +1,5 @@
 ---
+description: "Interactive diagram of at-rest compression: how an object is encoded on write, reassembled on read, and why the format is chunked."
 title: "Compression"
 linkTitle: "Compression"
 weight: 6

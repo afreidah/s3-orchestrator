@@ -1,3 +1,7 @@
+---
+description: "Metadata store conventions: the composite interface, the narrow role interfaces consumers depend on, and the checks keeping them aligned."
+---
+
 # Metadata Store Conventions
 
 The metadata store is split into a composite interface plus a set of
