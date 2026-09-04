@@ -80,6 +80,7 @@ func resyncQuotaLimits(t *testing.T, ctx context.Context) {
 	}); err != nil {
 		t.Fatalf("SyncQuotaLimits: %v", err)
 	}
+	refreshQuota(t)
 }
 
 // waitFor polls until cond returns true, failing the test if it never does.

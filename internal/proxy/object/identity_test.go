@@ -52,7 +52,7 @@ func TestPutObject_ReturnsMD5OfClientBytes(t *testing.T) {
 	t.Parallel()
 	const body = "identity contract"
 	be := backendtest.NewInMemory()
-	store, _ := putObjectStore(t, "b1")
+	store, _ := putObjectStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	got, err := mgr.PutObject(context.Background(), &PutObjectRequest{

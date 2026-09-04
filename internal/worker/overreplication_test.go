@@ -31,7 +31,7 @@ import (
 func TestOverReplicationCleaner_SetConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	c := NewOverReplicationCleaner(NewMockOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{})
+	c := NewOverReplicationCleaner(newMockOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{})
 	if c.Config() != nil {
 		t.Fatal("expected nil config before set")
 	}
@@ -47,7 +47,7 @@ func TestOverReplicationCleaner_SetConfig_RoundTrip(t *testing.T) {
 func TestCountPending(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{overReplicatedCount: 5}
 
@@ -66,7 +66,7 @@ func TestCountPending(t *testing.T) {
 func TestScoreCopy_DrainingBackend(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
@@ -84,7 +84,7 @@ func TestScoreCopy_DrainingBackend(t *testing.T) {
 func TestScoreCopy_HealthyBackend(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
@@ -109,7 +109,7 @@ func TestScoreCopy_HealthyBackend(t *testing.T) {
 func TestScoreCopy_UnknownBackend(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
@@ -128,7 +128,7 @@ func TestScoreCopy_UnknownBackend(t *testing.T) {
 func TestCleanObject_RemovesLowestScored(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
@@ -169,7 +169,7 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 func TestCleanObject_DoesNotDoubleCountAPICalls(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
@@ -205,7 +205,7 @@ func TestCleanObject_DoesNotDoubleCountAPICalls(t *testing.T) {
 func TestCleanObject_SkipsBackendDeleteOnRaceNoOp(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{removeExcessNoOp: true}
 
@@ -234,7 +234,7 @@ func TestCleanObject_SkipsBackendDeleteOnRaceNoOp(t *testing.T) {
 func TestClean_FactorOne_Noop(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	c := NewOverReplicationCleaner(NewMockOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{})
+	c := NewOverReplicationCleaner(newMockOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{})
 
 	sum, err := c.Clean(context.Background(), config.ReplicationConfig{Factor: 1}, nil)
 	if err != nil {
@@ -252,7 +252,7 @@ func TestClean_FactorOne_Noop(t *testing.T) {
 // cycle finished last.
 func TestClean_NothingOverReplicated(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
@@ -276,7 +276,7 @@ func TestClean_NothingOverReplicated(t *testing.T) {
 func TestCleanObject_SkipsVictimHoldingOnlyKey(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{removeExcessErr: core.ErrCopyHoldsOnlyDEK}
 

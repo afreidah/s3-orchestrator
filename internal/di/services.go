@@ -130,6 +130,13 @@ func (s *usageFlushService) adjustInterval(ctx context.Context, ticker *time.Tic
 // configured, wraps the flush in an advisory lock so only one instance
 // performs the destructive GETSET.
 func (s *usageFlushService) flushTick(ctx context.Context) {
+	// Outside the advisory lock: the byte deltas are this instance's own, so
+	// every instance flushes its own set. Skipping them on a lost lock would
+	// leave bytes_used short of what this instance wrote.
+	if err := s.flusher.FlushQuota(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
+		s.log.ErrorContext(ctx, "quota flush failed", "error", err)
+	}
+
 	if s.flusher.RedisCounterConfigured() {
 		acquired, err := s.locker.WithAdvisoryLock(ctx, core.LockUsageFlush,
 			func(lockCtx context.Context) error {

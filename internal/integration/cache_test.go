@@ -67,6 +67,7 @@ func setupCacheEnv(t *testing.T) *cacheTestEnv {
 		CacheTTL:       60 * time.Second,
 		BackendTimeout: 30 * time.Second,
 	})
+	registerStack(t, st)
 	_ = proxytest.BuildWorkers(st, stores)
 
 	srv := &s3api.Server{Objects: st.Objects, Multipart: st.Multipart}

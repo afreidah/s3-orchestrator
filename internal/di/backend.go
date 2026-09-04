@@ -389,11 +389,16 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 	}
 	usage := counter.NewUsageTracker(counters, br.UsageLimits)
 
+	// Baselines are empty until the quota flush service primes them from
+	// backend_quotas, which it does before the listener accepts a request.
+	quota := counter.NewQuotaTracker(backendNames)
+
 	rt := infra.New(&infra.Config{
 		Backends:        br.Backends,
 		Order:           br.Order,
 		BackendTimeout:  cfg.Server.BackendTimeout,
 		Usage:           usage,
+		Quota:           quota,
 		RoutingStrategy: cfg.RoutingStrategy,
 		MaxObjectSizes:  br.MaxObjectSizes,
 		AdmissionSem:    admissionSemFor(&cfg.Server),
@@ -513,6 +518,7 @@ func ProvideReconcileManager(i do.Injector) (*reconcile.Manager, error) {
 		Backends: rt,
 		Stores:   stores,
 		Usage:    rt.Acct(),
+		Quota:    rt.Quota(),
 		Codec:    codec,
 		Log:      slog.Default().With(logfmt.Component("reconcile")),
 	}), nil
@@ -534,7 +540,7 @@ func ProvideUsageService(i do.Injector) (*usage.Service, error) {
 		return nil, r.err
 	}
 
-	deps := usage.Deps{Usage: rt.Usage(), Stores: stores}
+	deps := usage.Deps{Usage: rt.Usage(), Quota: rt.Quota(), Stores: stores}
 	if drainManager != nil {
 		deps.Drain = drainManager
 	}

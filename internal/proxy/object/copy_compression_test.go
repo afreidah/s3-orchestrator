@@ -71,7 +71,7 @@ func copyThroughFleet(t *testing.T, loc *core.ObjectLocation, stored []byte, nat
 	}
 
 	loc.ObjectKey, loc.BackendName, loc.SizeBytes = copySrcKey, copySrcBackend, int64(len(stored))
-	store, calls := copyObjectStore(t, []core.ObjectLocation{*loc}, nil, copySrcBackend, nil)
+	store, calls := copyObjectStore(t, []core.ObjectLocation{*loc}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{copySrcBackend: be}, nil)
 
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: copySrcKey, DestKey: copyDstKey}); err != nil {

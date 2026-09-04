@@ -231,10 +231,16 @@ func TestCleanupWorker_RetryNotExhausted_NoOrphanBytesChange(t *testing.T) {
 func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveStore(t)
-	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"b1", "b2"}})
+	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory()}, &fleetOpts{
+		Order: []string{"b1", "b2"},
+		QuotaBaselines: map[string]core.BackendQuotaUsage{
+			"b1": {BackendName: "b1", BytesLimit: 1000},
+			"b2": {BackendName: "b2", BytesLimit: 1000, BytesUsed: 900, OrphanBytes: 50},
+		},
+	})
 
 	exclusion := map[string]bool{"b1": true}
-	target := w.FindReplicaTarget(context.Background(), "key1", 100, exclusion)
+	target, _ := w.FindReplicaTarget(context.Background(), "key1", 100, exclusion)
 	if target != "" {
 		t.Errorf("expected no target (orphan bytes eat available space), got %q", target)
 	}
@@ -246,20 +252,12 @@ func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ int64, eligible []string) (string, error) {
-			if len(eligible) > 0 {
-				return eligible[0], nil
-			}
-			return "", nil
-		}).
-		AnyTimes()
 	storetest.Permissive(store)
 
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"b1", "b2"}})
 
 	exclusion := map[string]bool{"b1": true}
-	target := w.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
+	target, _ := w.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
 	if target != "b2" {
 		t.Errorf("expected b2 (50 bytes fits in 100 free), got %q", target)
 	}
@@ -385,7 +383,13 @@ func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
 		Return(int64(0), true, nil).AnyTimes()
 	storetest.Permissive(store)
 
-	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
+	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{
+		Order: []string{"b1", "b2"},
+		QuotaBaselines: map[string]core.BackendQuotaUsage{
+			"b1": {BackendName: "b1", BytesLimit: 1000, BytesUsed: 100},
+			"b2": {BackendName: "b2", BytesLimit: 1000, BytesUsed: 990, OrphanBytes: 8},
+		},
+	})
 
 	sum, err := w.Replicate(context.Background(), config.ReplicationConfig{
 		Factor:    2,

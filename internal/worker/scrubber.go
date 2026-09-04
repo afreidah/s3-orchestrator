@@ -47,7 +47,7 @@ import (
 // or encrypted.
 type ScrubberStore interface {
 	core.IntegrityStore
-	DeleteObjectLocation(ctx context.Context, key, backendName string) error
+	DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error)
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 	RecordObjectIdentity(ctx context.Context, key string, id *core.ObjectIdentity) error
 }
@@ -387,11 +387,13 @@ func (s *Scrubber) verifyObject(ctx context.Context, loc *core.ObjectLocation) (
 // dropCorruptedLocation removes the ledger row for a discarded copy. Without
 // it the replicator still counts the copy and never rebuilds the object.
 func (s *Scrubber) dropCorruptedLocation(ctx context.Context, loc *core.ObjectLocation) {
-	if err := s.store.DeleteObjectLocation(ctx, loc.ObjectKey, loc.BackendName); err != nil {
+	removed, err := s.store.DeleteObjectLocation(ctx, loc.ObjectKey, loc.BackendName)
+	if err != nil {
 		s.log.ErrorContext(ctx, "failed to drop location for corrupted copy",
 			"key", loc.ObjectKey, "backend", loc.BackendName, "error", err)
 		return
 	}
+	s.deps.Quota().Record(loc.BackendName, -removed)
 	audit.Log(ctx, "integrity.copy_discarded",
 		slog.String("key", loc.ObjectKey),
 		slog.String("backend", loc.BackendName),

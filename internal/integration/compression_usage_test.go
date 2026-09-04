@@ -94,6 +94,7 @@ func setupCompressionEnv(t *testing.T) *compressionEnv {
 		CacheTTL:       60 * time.Second,
 		BackendTimeout: 30 * time.Second,
 	})
+	registerStack(t, st)
 
 	srv := &s3api.Server{Objects: st.Objects, Multipart: st.Multipart}
 	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{

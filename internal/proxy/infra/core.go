@@ -57,6 +57,7 @@ type Config struct {
 	Order            []string
 	BackendTimeout   time.Duration
 	Usage            *counter.UsageTracker
+	Quota            *counter.QuotaTracker
 	RoutingStrategy  config.RoutingStrategy
 	MaxObjectSizes   map[string]int64
 	MetricsCollector *metrics.Collector
@@ -72,6 +73,7 @@ type Config struct {
 type BackendRuntime struct {
 	registry         *backendRegistry
 	usage            *usagePolicy
+	quota            *counter.QuotaTracker
 	timeouts         *timeoutPolicy
 	classifier       *errorClassifier
 	admission        *admissionGate
@@ -91,6 +93,7 @@ func New(cfg *Config) *BackendRuntime {
 	c := &BackendRuntime{
 		registry:         newBackendRegistry(cfg.Backends, cfg.Order),
 		usage:            newUsagePolicy(cfg.Usage, cfg.MaxObjectSizes),
+		quota:            cfg.Quota,
 		timeouts:         newTimeoutPolicy(cfg.BackendTimeout),
 		classifier:       newErrorClassifier(),
 		admission:        newAdmissionGate(cfg.AdmissionSem),
@@ -195,6 +198,13 @@ func (c *BackendRuntime) ExcludeUnhealthy(eligible []string) []string {
 // Usage returns the usage tracker (worker.Ops contract).
 func (c *BackendRuntime) Usage() *counter.UsageTracker {
 	return c.usage.Tracker()
+}
+
+// Quota returns the byte-reservation tracker every write path consults before
+// it writes and credits after it commits. A deployment always has one: it is
+// what answers whether a backend has room, which no other component knows.
+func (c *BackendRuntime) Quota() *counter.QuotaTracker {
+	return c.quota
 }
 
 // MaxObjectSize returns the per-backend max object size; 0 means

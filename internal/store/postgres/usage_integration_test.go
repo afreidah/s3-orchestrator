@@ -28,10 +28,10 @@ func TestStoreInt_ReconcileUsage_CorrectsDrift(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "recon-1"), Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "recon-1"), Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "recon-2"), Backend: "backend-a", Size: 250}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "recon-2"), Backend: "backend-a", Size: 250}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 

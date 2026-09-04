@@ -57,7 +57,7 @@ func TestNewPlacementSet_Empty(t *testing.T) {
 func TestCandidateCache_MemoizesPerSource(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{
 		objectsByBackend:       map[string][]core.ObjectLocation{"b1": {{ObjectKey: "k1", BackendName: "b1"}}},

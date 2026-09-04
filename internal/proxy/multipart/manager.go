@@ -183,10 +183,13 @@ func (mp *Manager) CreateMultipartUpload(ctx context.Context, req *CreateUploadR
 	defer span.End()
 
 	// Pick a backend with available quota (estimate 0 bytes since final size is unknown)
-	backendName, err := mp.coord.SelectWriteTarget(ctx, span, operation, 0)
+	backendName, reserved, err := mp.coord.SelectWriteTarget(span, operation, 0)
 	if err != nil {
 		return "", "", err
 	}
+	// Nothing is claimed by creating an upload: the parts arrive later and the
+	// assembled object is what the counter learns about, at completion.
+	reserved.Release()
 
 	uploadID := audit.NewID()
 
@@ -840,10 +843,13 @@ func (mp *Manager) completeMultipartUploadLocked(
 
 	// The tag set the create call carried lands with the assembled object, in
 	// the same transaction, so a completed upload is never briefly untagged.
+	// No reservation: the parts were written against the backend chosen at
+	// create time, and the assembled object's bytes are charged here from what
+	// the ledger recorded.
 	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
 		Key: mu.ObjectKey, Backend: mu.BackendName, Size: uploadSize, Form: form,
 		Identity: identity, Tags: mu.Tags, IntentID: intentID,
-	}); err != nil {
+	}, nil); err != nil {
 		return "", err
 	}
 

@@ -95,14 +95,14 @@ func stubRecordPart(c *multipartCalls, err error) func(context.Context, *core.Re
 	}
 }
 
-func stubRecordObject(c *multipartCalls, err error) func(context.Context, *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
-	return func(_ context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
+func stubRecordObject(c *multipartCalls, err error) func(context.Context, *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
+	return func(_ context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.recordObject = append(c.recordObject, multipartObjectCall{
 			Key: req.Key, Backend: req.Backend, Size: req.Size, Form: req.Form, Tags: req.Tags,
 		})
-		return nil, err
+		return nil, core.QuotaDeltas{req.Backend: req.Size}, err
 	}
 }
 
@@ -154,8 +154,6 @@ func TestCreateMultipartUpload_Success(t *testing.T) {
 	be := backendtest.NewInMemory()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("b1", nil).AnyTimes()
 	multipartStubs(t, store)
 	storetest.Permissive(store)
 
@@ -173,32 +171,22 @@ func TestCreateMultipartUpload_Success(t *testing.T) {
 	}
 }
 
-// TestCreateMultipartUpload_DBUnavailable surfaces the DB-down branch.
-func TestCreateMultipartUpload_DBUnavailable(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("", core.ErrDBUnavailable).AnyTimes()
-	storetest.Permissive(store)
-
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
-
-	if _, _, err := mgr.CreateMultipartUpload(context.Background(), &CreateUploadRequest{Key: "key"}); !errors.Is(err, core.ErrServiceUnavailable) {
-		t.Fatalf("expected st.ErrServiceUnavailable, got %v", err)
-	}
-}
-
-// TestCreateMultipartUpload_NoSpace surfaces the no-space branch.
+// TestCreateMultipartUpload_NoSpace surfaces the no-space branch. Selection is
+// judged against the in-memory baseline, so a backend already at its limit is
+// how a full fleet is expressed rather than a store error.
 func TestCreateMultipartUpload_NoSpace(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("", core.ErrNoSpaceAvailable).AnyTimes()
 	storetest.Permissive(store)
 
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
+	// Past its limit rather than exactly at it: creating an upload claims no
+	// bytes, so only a backend with negative headroom has nothing to offer.
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{
+		QuotaBaselines: map[string]core.BackendQuotaUsage{
+			"b1": {BackendName: "b1", BytesLimit: 100, BytesUsed: 150},
+		},
+	})
 
 	if _, _, err := mgr.CreateMultipartUpload(context.Background(), &CreateUploadRequest{Key: "key"}); !errors.Is(err, core.ErrInsufficientStorage) {
 		t.Fatalf("expected st.ErrInsufficientStorage, got %v", err)
@@ -947,7 +935,6 @@ func TestCreateMultipartUpload_CreateStoreError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("b1", nil).AnyTimes()
 	store.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).
 		Return(errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
@@ -1096,7 +1083,6 @@ func TestCreateMultipartUpload_WrapDEKError(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("b1", nil).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr := newFailingEncryptionTestManager(t, store, map[string]*backendtest.InMemory{"b1": backendtest.NewInMemory()})
@@ -1112,7 +1098,6 @@ func TestCreateMultipartUpload_EncryptionWrapsSharedDEK(t *testing.T) {
 	be := backendtest.NewInMemory()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("b1", nil).AnyTimes()
 	c := multipartStubs(t, store)
 	storetest.Permissive(store)
 
@@ -1142,7 +1127,6 @@ func TestUploadPart_ReusesSharedDEK(t *testing.T) {
 	var keyID string
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("b1", nil).AnyTimes()
 	store.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, params *core.CreateMultipartUploadParams) error {
 			encKey = params.EncryptionKey
@@ -1183,7 +1167,6 @@ func TestCompleteMultipartUpload_Encrypted_RoundTrips(t *testing.T) {
 	var partsCallsMu sync.Mutex
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("b1", nil).AnyTimes()
 	store.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, params *core.CreateMultipartUploadParams) error {
 			encKey = params.EncryptionKey
@@ -1515,7 +1498,7 @@ func TestCompleteMultipartUpload_CommitFailure_PreservesParts(t *testing.T) {
 	// Registered before multipartStubs so it wins: gomock matches in
 	// declaration order and multipartStubs stubs RecordObject as succeeding.
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
-		Return(nil, errors.New("db down")).AnyTimes()
+		Return(nil, nil, errors.New("db down")).AnyTimes()
 	c := multipartStubs(t, store)
 	storetest.Permissive(store)
 

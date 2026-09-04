@@ -50,6 +50,8 @@ type fleetOpts struct {
 	MaxObjectSizes map[string]int64            // per-backend object size cap, for eligibility tests
 	Draining       []string                    // backends the runtime should report as draining
 	PendingEnabled bool                        // turns on the coordinator's pending-write pattern
+
+	QuotaBaselines map[string]core.BackendQuotaUsage // seeds the byte counter; nil leaves every backend unlimited, non-nil is the whole world
 }
 
 // drainingSet reports a fixed set of backends as draining, standing in for
@@ -91,6 +93,7 @@ func newFleet(
 		Order:           names,
 		BackendTimeout:  fleetTimeout,
 		Usage:           usage,
+		Quota:           newFleetQuota(names, opts.QuotaBaselines),
 		RoutingStrategy: routing,
 		MaxObjectSizes:  opts.MaxObjectSizes,
 	})
@@ -105,6 +108,26 @@ func newFleet(
 		rt.SetDrainChecker(d)
 	}
 	return rt, writepath.New(rt, store, opts.PendingEnabled)
+}
+
+// newFleetQuota builds the byte-reservation tracker with baselines already
+// primed, which production does from backend_quotas before the listener opens.
+//
+// A caller that states no baselines gets every backend unlimited, so a test
+// that is not about quota never has one refuse a write. A caller that states
+// any gets exactly those: a backend left out is one the ledger has no quota row
+// for, which the tracker treats as having no room rather than infinite room.
+func newFleetQuota(names []string, baselines map[string]core.BackendQuotaUsage) *counter.QuotaTracker {
+	primed := baselines
+	if primed == nil {
+		primed = make(map[string]core.BackendQuotaUsage, len(names))
+		for _, name := range names {
+			primed[name] = core.BackendQuotaUsage{BackendName: name}
+		}
+	}
+	quota := counter.NewQuotaTracker(names)
+	quota.SetBaselines(primed)
+	return quota
 }
 
 // newPermissiveStore returns a union store mock that answers every read with

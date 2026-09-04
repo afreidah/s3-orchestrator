@@ -35,7 +35,7 @@ import (
 func TestRebalancer_SetConfig_RoundTrip(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	r := NewRebalancer(NewMockOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{})
+	r := NewRebalancer(newMockOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{})
 	if r.Config() != nil {
 		t.Fatal("expected nil config before set")
 	}
@@ -94,7 +94,7 @@ func TestExceedsThreshold_EmptyStats(t *testing.T) {
 func TestPlanSpreadEven_BalancedSkipped(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
@@ -121,7 +121,7 @@ func TestPlanSpreadEven_BalancedSkipped(t *testing.T) {
 func TestPlanSpreadEven_ImbalancedPlansMoves(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{
 		objectsByBackend: map[string][]core.ObjectLocation{
@@ -160,7 +160,7 @@ func TestPlanSpreadEven_ImbalancedPlansMoves(t *testing.T) {
 func TestPlanSpreadEven_BatchesBackendLookup(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	objs := []core.ObjectLocation{
 		{ObjectKey: "k1", BackendName: "b1", SizeBytes: 50},
@@ -208,7 +208,7 @@ func TestPlanSpreadEven_BatchesBackendLookup(t *testing.T) {
 func TestPlanPackTight_BatchesBackendLookup(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	objs := []core.ObjectLocation{
 		{ObjectKey: "k1", BackendName: "b2", SizeBytes: 50},
@@ -255,7 +255,7 @@ func TestPlanPackTight_BatchesBackendLookup(t *testing.T) {
 func TestExecuteOneMove_Success(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
@@ -290,7 +290,7 @@ func TestExecuteOneMove_Success(t *testing.T) {
 func TestExecuteOneMove_MoveObjectFails(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
@@ -315,7 +315,7 @@ func TestExecuteOneMove_MoveObjectFails(t *testing.T) {
 func TestExecuteOneMove_MoveObjectStale(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
@@ -338,7 +338,7 @@ func TestExecuteOneMove_MoveObjectStale(t *testing.T) {
 func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
@@ -357,7 +357,7 @@ func TestExecuteOneMove_SourceBackendNotFound(t *testing.T) {
 func TestRebalance_UnknownStrategy(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{quotaStats: map[string]core.QuotaStat{
 		"b1": {BytesUsed: 900, BytesLimit: 1000},
@@ -390,7 +390,7 @@ func TestRebalanceMove_ProgressLabel(t *testing.T) {
 func TestRebalance_SkipsWithinThreshold(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	ms := &mockMetadataStore{quotaStats: map[string]core.QuotaStat{
 		"b1": {BytesUsed: 500, BytesLimit: 1000},
 		"b2": {BytesUsed: 500, BytesLimit: 1000},
@@ -523,7 +523,7 @@ func exhaustedIngress(dest string, names ...string) *counter.UsageTracker {
 func TestPlanPackTight_DeclinesMovesIntoAnOverBudgetDestination(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	ms := &mockMetadataStore{
 		objectsByBackend: map[string][]core.ObjectLocation{"b2": {
 			{ObjectKey: "k1", BackendName: "b2", SizeBytes: 50},
@@ -556,7 +556,7 @@ func TestPlanPackTight_DeclinesMovesIntoAnOverBudgetDestination(t *testing.T) {
 func TestPlanSpreadEven_DeclinesMovesIntoAnOverBudgetDestination(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	ms := &mockMetadataStore{
 		objectsByBackend: map[string][]core.ObjectLocation{"b1": {
 			{ObjectKey: "k1", BackendName: "b1", SizeBytes: 100},
@@ -590,7 +590,7 @@ func TestPlanSpreadEven_DeclinesMovesIntoAnOverBudgetDestination(t *testing.T) {
 func TestPlanSpreadEven_StillPlansWhenBudgetAllows(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	ms := &mockMetadataStore{
 		objectsByBackend: map[string][]core.ObjectLocation{"b1": {
 			{ObjectKey: "k1", BackendName: "b1", SizeBytes: 100},

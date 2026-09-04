@@ -47,7 +47,7 @@ func seedCollationKeys(t *testing.T, s *Store, backendName, prefix string) []str
 	keys := make([]string, 0, len(adversarialKeys))
 	for _, k := range adversarialKeys {
 		full := prefix + k
-		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: full, Backend: backendName, Size: 1}); err != nil {
+		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: full, Backend: backendName, Size: 1}); err != nil {
 			t.Fatalf("RecordObject(%q): %v", full, err)
 		}
 		keys = append(keys, full)

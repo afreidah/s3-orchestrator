@@ -48,7 +48,6 @@ func twoBucketServer(t *testing.T, mu *core.MultipartUpload) (*httptest.Server, 
 
 	backend := backendtest.NewInMemory()
 	mockStore := storetest.NewMockMetadataStore(gomock.NewController(t))
-	mockStore.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("b1", nil).AnyTimes()
 	mockStore.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).Return(mu, nil).AnyTimes()
 
 	st := proxytest.New(t, mockStore, &proxytest.StackOptions{

@@ -88,6 +88,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		CacheTTL:       60 * time.Second,
 		BackendTimeout: 30 * time.Second,
 	})
+	registerStack(t, st)
 	workers := proxytest.BuildWorkers(st, stores)
 
 	// Start proxy server
@@ -835,6 +836,7 @@ func TestEncryptedWritePath_RoundTrip(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("raising quota limits: %v", err)
 	}
+	refreshQuota(t)
 	defer resyncQuotaLimits(t, ctx)
 
 	cases := []struct {

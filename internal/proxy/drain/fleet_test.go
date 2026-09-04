@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
 
@@ -60,11 +61,20 @@ func newDrainFleetWithCleanup(
 		names = append(names, name)
 	}
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend(names), nil)
+	// Unlimited baselines: these tests are about drain, not about quota, and an
+	// unprimed tracker would refuse every destination.
+	quota := counter.NewQuotaTracker(names)
+	baselines := make(map[string]core.BackendQuotaUsage, len(names))
+	for _, name := range names {
+		baselines[name] = core.BackendQuotaUsage{BackendName: name}
+	}
+	quota.SetBaselines(baselines)
 	rt := infra.New(&infra.Config{
 		Backends:        backends,
 		Order:           names,
 		BackendTimeout:  fleetTimeout,
 		Usage:           usage,
+		Quota:           quota,
 		RoutingStrategy: config.RoutingPack,
 	})
 	rt.SetMetricsCollector(metrics.New(metrics.CollectorDeps{

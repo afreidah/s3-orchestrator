@@ -74,6 +74,8 @@ type fleetOpts struct {
 	CacheTTL       time.Duration        // overrides the location-cache window, for the expiry tests
 	Draining       []string             // backends the runtime should report as draining
 
+	QuotaBaselines map[string]core.BackendQuotaUsage // seeds the byte counter; unnamed backends are unlimited
+
 	ParallelBroadcast            bool // fans degraded-mode reads out concurrently
 	DegradedBroadcastParallelism int  // caps those concurrent probes; 0 is uncapped
 	DisableDegradedReads         bool // makes the degraded path fail fast instead
@@ -126,6 +128,7 @@ func newFleet(
 		Order:           names,
 		BackendTimeout:  cmp.Or(opts.BackendTimeout, fleetTimeout),
 		Usage:           usage,
+		Quota:           newFleetQuota(names, opts.QuotaBaselines),
 		RoutingStrategy: cmp.Or(opts.Routing, config.RoutingPack),
 		MaxObjectSizes:  opts.MaxObjectSizes,
 		AdmissionSem:    opts.AdmissionSem,
@@ -160,6 +163,23 @@ func newFleet(
 		BackendTimeout:               cmp.Or(opts.BackendTimeout, fleetTimeout),
 	})
 	return &fleet{Manager: om, Runtime: rt, Coord: coord, Integrity: integrity}
+}
+
+// newFleetQuota builds the byte-reservation tracker with baselines already
+// primed, which production does from backend_quotas before the listener opens.
+// A backend the caller said nothing about is unlimited, so a test that is not
+// about quota never has one refuse a write.
+func newFleetQuota(names []string, baselines map[string]core.BackendQuotaUsage) *counter.QuotaTracker {
+	primed := make(map[string]core.BackendQuotaUsage, len(names))
+	for _, name := range names {
+		primed[name] = core.BackendQuotaUsage{BackendName: name}
+	}
+	for name, usage := range baselines {
+		primed[name] = usage
+	}
+	quota := counter.NewQuotaTracker(names)
+	quota.SetBaselines(primed)
+	return quota
 }
 
 // newPermissiveStore returns a union store mock answering every read with an

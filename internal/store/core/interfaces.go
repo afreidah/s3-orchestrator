@@ -45,16 +45,16 @@ import (
 type ObjectStore interface {
 	GetAllObjectLocations(ctx context.Context, key string) ([]ObjectLocation, error)
 	GetObjectBackendsForKeys(ctx context.Context, keys []string) (map[string][]string, error)
-	RecordObject(ctx context.Context, req *RecordObjectRequest) ([]DeletedCopy, error)
-	DeleteObject(ctx context.Context, key string) ([]DeletedCopy, error)
-	DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]DeletedCopy, error)
+	RecordObject(ctx context.Context, req *RecordObjectRequest) ([]DeletedCopy, QuotaDeltas, error)
+	DeleteObject(ctx context.Context, key string) ([]DeletedCopy, QuotaDeltas, error)
+	DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]DeletedCopy, QuotaDeltas, error)
 	ListObjects(ctx context.Context, prefix, startAfter string, maxKeys int) (*ListObjectsResult, error)
 	ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListDelimitedResult, error)
 	ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]ObjectLocation, error)
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]ObjectLocation, error)
 	MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error)
 	ImportObject(ctx context.Context, req *ImportObjectRequest) (ImportOutcome, error)
-	DeleteObjectLocation(ctx context.Context, key, backendName string) error
+	DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error)
 	RecordObjectIdentity(ctx context.Context, key string, id *ObjectIdentity) error
 }
 
@@ -74,16 +74,19 @@ type TagStore interface {
 	DeleteObjectTags(ctx context.Context, key string) error
 }
 
-// QuotaStore defines quota routing queries.
+// QuotaStore defines the byte-counter reads and writes. Placement is not among
+// them: which backend a write lands on is decided from the in-memory tracker,
+// which knows about the writes this instance has admitted since the last flush
+// and the row does not.
 //
 // ReconcileUsage recomputes bytes_used from SUM(object_locations.size_bytes)
 // per backend, correcting drift in the incrementally maintained counter. It
 // returns the delta applied per backend (truth - previous), so backends already
 // in agreement are absent rather than reported as corrected by zero.
 type QuotaStore interface {
-	GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error)
-	GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error)
 	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
+	ListBackendQuotaUsage(ctx context.Context) ([]BackendQuotaUsage, error)
+	FlushQuotaDeltas(ctx context.Context, deltas QuotaDeltas) error
 	ReconcileUsage(ctx context.Context) (map[string]int64, error)
 }
 
@@ -121,7 +124,7 @@ type ReplicationStore interface {
 	RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string) (size int64, inserted bool, err error)
 	GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
 	CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error)
-	RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (removed bool, err error)
+	RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (size int64, removed bool, err error)
 }
 
 // CleanupStore defines cleanup queue and orphan byte tracking operations.
@@ -173,7 +176,7 @@ type PendingStore interface {
 	InsertPending(ctx context.Context, p *PendingObject) error
 	DeletePending(ctx context.Context, intentID string) error
 	GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]PendingObject, error)
-	PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []DeletedCopy, error)
+	PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []DeletedCopy, QuotaDeltas, error)
 	PendingDepth(ctx context.Context) (int64, error)
 	DeletePendingByBackend(ctx context.Context, backendName string) error
 }

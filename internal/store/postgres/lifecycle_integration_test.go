@@ -81,7 +81,7 @@ func sweep(t *testing.T, s *Store, rules []config.LifecycleRule) []string {
 func seedTagged(t *testing.T, s *Store, objects map[string][]core.Tag) {
 	t.Helper()
 	for key, tags := range objects {
-		if _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
+		if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
 			Key: key, Backend: "backend-a", Size: 100, Tags: tags,
 		}); err != nil {
 			t.Fatalf("RecordObject %s: %v", key, err)

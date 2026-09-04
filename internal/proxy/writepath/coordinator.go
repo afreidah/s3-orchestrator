@@ -23,6 +23,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -86,32 +87,62 @@ func (w *Coordinator) SetPendingEnabledForTest(enabled bool) {
 // ROUTING
 // -------------------------------------------------------------------------
 
-// SelectBackendForWrite picks the target backend for a write operation
-// using the configured routing strategy. "pack" returns the first backend
-// with space, "spread" returns the least-utilized backend.
-func (w *Coordinator) SelectBackendForWrite(ctx context.Context, size int64, eligible []string) (string, error) {
-	if w.core.RoutingStrategy() == config.RoutingSpread {
-		return w.stores.GetLeastUtilizedBackend(ctx, size, eligible)
+// SelectBackendForWrite picks the target backend for a write operation using
+// the configured routing strategy and claims the bytes on it. "pack" takes the
+// first eligible backend with room, "spread" the least utilized one. Returns
+// ErrNoSpaceAvailable when no candidate has room.
+//
+// Both the fit test and the ranking read the in-memory tracker rather than
+// backend_quotas. The row only learns about a write at the next flush, so a
+// query here would judge every candidate against a total that stops moving
+// between flushes - which for spread means every selection in the window
+// naming the same winner.
+//
+// A candidate that loses the reservation race to a concurrent write is skipped
+// rather than fatal: another backend may still have room.
+func (w *Coordinator) SelectBackendForWrite(size int64, eligible []string) (string, *counter.Reservation, error) {
+	quota := w.core.Quota()
+	for _, name := range w.rankForWrite(quota, eligible) {
+		if quota.Available(name) < size {
+			continue
+		}
+		if res := quota.Reserve(name, size); res != nil {
+			return name, res, nil
+		}
 	}
-	return w.stores.GetBackendWithSpace(ctx, size, eligible)
+	return "", nil, core.ErrNoSpaceAvailable
+}
+
+// rankForWrite orders the candidates the way the configured strategy wants them
+// tried: pack keeps the configured order so writes fill one backend before
+// moving on, spread puts the least utilized first. The slice is copied before
+// sorting so the caller's eligibility list is left alone.
+func (w *Coordinator) rankForWrite(quota *counter.QuotaTracker, eligible []string) []string {
+	if w.core.RoutingStrategy() != config.RoutingSpread {
+		return eligible
+	}
+	return quota.RankByUtilization(eligible)
 }
 
 // SelectWriteTarget picks a backend for a write operation, combining
 // eligibility filtering, backend selection, and error classification
 // into a single call. Returns ErrInsufficientStorage when no backend can
-// accept the write, or the classified error from the routing query.
-func (w *Coordinator) SelectWriteTarget(ctx context.Context, span trace.Span, operation s3op.Operation, size int64) (string, error) {
+// accept the write, or the classified selection error.
+//
+// The reservation comes back with the name and must be disposed of by the
+// caller: Commit when the write is recorded, Release on any path that gives up.
+func (w *Coordinator) SelectWriteTarget(span trace.Span, operation s3op.Operation, size int64) (string, *counter.Reservation, error) {
 	eligible := w.core.EligibleForWrite([]s3op.Operation{operation}, 0, size)
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation.String(), "write").Inc()
 		observe.MarkSpanError(span, "usage limits exceeded on all backends")
-		return "", core.ErrInsufficientStorage
+		return "", nil, core.ErrInsufficientStorage
 	}
-	name, err := w.SelectBackendForWrite(ctx, size, eligible)
+	name, res, err := w.SelectBackendForWrite(size, eligible)
 	if err != nil {
-		return "", w.core.ClassifyWriteError(span, operation.String(), err)
+		return "", nil, w.core.ClassifyWriteError(span, operation.String(), err)
 	}
-	return name, nil
+	return name, res, nil
 }
 
 // -------------------------------------------------------------------------
@@ -122,15 +153,21 @@ func (w *Coordinator) SelectWriteTarget(ctx context.Context, span trace.Span, op
 // orphaned object from the backend. On success, enqueues cleanup for any
 // displaced copies on other backends (from overwrites). Updates the
 // tracing span on error.
-func (w *Coordinator) RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, req *core.RecordObjectRequest) error {
-	displaced, err := w.stores.RecordObject(ctx, req)
+//
+// res is the reservation the write's target was chosen with: committing it
+// swaps the claimed bytes for what the ledger recorded, which is also where an
+// overwrite's freed bytes are credited back.
+func (w *Coordinator) RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, req *core.RecordObjectRequest, res *counter.Reservation) error {
+	displaced, deltas, err := w.stores.RecordObject(ctx, req)
 	if err != nil {
+		res.Release()
 		w.log.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
 			"key", req.Key, "backend", req.Backend, "error", err)
 		w.RecoverFromRecordFailure(ctx, be, req.Backend, req.Key, "orphan_record_failed", req.Size)
 		observe.RecordSpanError(span, err)
 		return fmt.Errorf("failed to record object: %w", err)
 	}
+	w.settleQuota(res, deltas)
 
 	w.cleanupDisplacedCopies(ctx, req.Key, req.Backend, displaced)
 	return nil
@@ -207,7 +244,7 @@ func (w *Coordinator) InsertPendingIntent(ctx context.Context, key, backendName 
 // When req.IntentID is empty (no pending store configured) this falls back
 // to the legacy RecordObjectOrCleanup behavior so existing call sites
 // and tests retain their previous semantics.
-func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest) error {
+func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest, res *counter.Reservation) error {
 	if req.IntentID == "" {
 		// No pending tracking - caller already wrote bytes, fall back to the
 		// legacy path. The backend is unavailable here, so we cannot use
@@ -215,16 +252,21 @@ func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span tra
 		// backend map.
 		be, ok := w.core.Backends()[req.Backend]
 		if !ok {
+			res.Release()
 			return fmt.Errorf("backend %s not registered", req.Backend)
 		}
-		return w.RecordObjectOrCleanup(ctx, span, be, req)
+		return w.RecordObjectOrCleanup(ctx, span, be, req, res)
 	}
 
-	displaced, err := w.stores.RecordObject(ctx, req)
+	displaced, deltas, err := w.stores.RecordObject(ctx, req)
 	if err == nil {
 		telemetry.PendingIntentsResolvedTotal.WithLabelValues("committed").Inc()
 	}
 	if err != nil {
+		// The claim goes back even though the bytes are still on the backend:
+		// the intent survives, and whichever pass resolves it - the reaper's
+		// promotion or the usage reconcile - accounts for them then.
+		res.Release()
 		w.log.ErrorContext(ctx, "recordObject failed; intent left for reaper",
 			"key", req.Key, "backend", req.Backend, "intent_id", req.IntentID, "error", err)
 		// The successful PUT against the backend still consumed an API
@@ -234,9 +276,25 @@ func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span tra
 		observe.RecordSpanError(span, err)
 		return fmt.Errorf("failed to record object: %w", err)
 	}
+	w.settleQuota(res, deltas)
 
 	w.cleanupDisplacedCopies(ctx, req.Key, req.Backend, displaced)
 	return nil
+}
+
+// settleQuota folds a committed mutation's deltas into the byte counter and
+// drops the claim the write was admitted on.
+//
+// A nil reservation means the write never claimed anything - a multipart upload
+// whose parts were written before the assembled object existed, or an intent
+// promoted by the reaper long after the PUT gave its claim back. The deltas
+// still have to land, which is why this is not simply a method on the handle.
+func (w *Coordinator) settleQuota(res *counter.Reservation, deltas core.QuotaDeltas) {
+	if res == nil {
+		w.core.Quota().Apply(deltas)
+		return
+	}
+	res.Commit(deltas)
 }
 
 // cleanupDisplacedCopies removes stale copies on other backends displaced
@@ -447,6 +505,12 @@ func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, 
 	w.DeleteOrEnqueue(ctx, req.SrcBackend, req.SrcName, req.Key, req.Reasons.SourceDelete, movedSize)
 	w.core.Acct().Egress(s3op.GetObject, req.SrcName, movedSize)
 	w.core.Acct().Ingress(s3op.PutObject, req.DestName, movedSize)
+	// Both ends move at the size the CAS committed. Applied together so no
+	// window has the bytes counted on neither backend or on both.
+	w.core.Quota().Apply(core.QuotaDeltas{
+		req.SrcName:  -movedSize,
+		req.DestName: movedSize,
+	})
 	return movedSize, nil
 }
 
@@ -454,17 +518,20 @@ func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, 
 // same routing strategy as a normal write, excluding backends that already
 // hold a copy. Returns "" with no error when nothing is eligible, so the
 // caller can treat "no room right now" as a skip rather than a failure.
-func (w *Coordinator) SelectReplicaTarget(ctx context.Context, size int64, exclusion map[string]bool) (string, error) {
+//
+// The reservation carries the same disposal obligation as SelectWriteTarget's,
+// and is nil whenever the name is empty.
+func (w *Coordinator) SelectReplicaTarget(size int64, exclusion map[string]bool) (string, *counter.Reservation, error) {
 	eligible := w.core.EligibleForWrite([]s3op.Operation{s3op.PutObject}, 0, size)
 	filtered := slices.DeleteFunc(slices.Clone(eligible), func(name string) bool {
 		return exclusion[name]
 	})
 	if len(filtered) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
-	name, err := w.SelectBackendForWrite(ctx, size, filtered)
+	name, res, err := w.SelectBackendForWrite(size, filtered)
 	if errors.Is(err, core.ErrNoSpaceAvailable) {
-		return "", nil
+		return "", nil, nil
 	}
-	return name, err
+	return name, res, err
 }

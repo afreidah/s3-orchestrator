@@ -132,5 +132,24 @@ UPDATE backend_quotas
 SET bytes_used = @bytes_used, updated_at = NOW()
 WHERE backend_name = @backend_name;
 
+-- name: ListBackendQuotaUsage :many
+-- Every backend's ceiling and what occupies it: the counter, orphans awaiting
+-- cleanup, and the parts of uploads that have not completed. The same three
+-- terms GetBackendWithSpace subtracts, read for the whole fleet in one pass
+-- rather than per candidate, because the quota tracker refreshes its baseline
+-- once per flush instead of asking on every write.
+SELECT q.backend_name,
+       q.bytes_limit,
+       q.bytes_used,
+       q.orphan_bytes,
+       COALESCE(m.inflight, 0)::bigint AS inflight_bytes
+FROM backend_quotas q
+LEFT JOIN (
+    SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
+    FROM multipart_uploads mu
+    JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
+    GROUP BY mu.backend_name
+) m ON m.backend_name = q.backend_name;
+
 -- name: DeleteQuota :exec
 DELETE FROM backend_quotas WHERE backend_name = $1;

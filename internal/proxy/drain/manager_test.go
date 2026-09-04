@@ -47,19 +47,25 @@ func TestCopyAndRemoveSource_UsesDrainMoveReasons(t *testing.T) {
 	srcBe := backendtest.NewMockObjectBackend(ctrl)
 	destBe := backendtest.NewMockObjectBackend(ctrl)
 	usage := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"src", "dest"}), nil)
+	// The source is past its limit and the destination is empty, so the
+	// least-utilized pick is unambiguous.
+	quotaTracker := counter.NewQuotaTracker([]string{"src", "dest"})
+	quotaTracker.SetBaselines(map[string]core.BackendQuotaUsage{
+		"src":  {BackendName: "src", BytesLimit: 100, BytesUsed: 90},
+		"dest": {BackendName: "dest", BytesLimit: 100},
+	})
 	inf := infra.New(&infra.Config{
 		Backends: map[string]backend.ObjectBackend{"src": srcBe, "dest": destBe},
 		Order:    []string{"src", "dest"},
 		Usage:    usage,
+		Quota:    quotaTracker,
 	})
 
-	// Each drain dependency takes its own role: only the quota store is
-	// exercised here, and an unexpected call to either of the others fails the
-	// test rather than being silently absorbed.
+	// Each drain dependency takes its own role, so an unexpected store call
+	// fails the test rather than being silently absorbed.
 	objects := storetest.NewMockObjectStore(ctrl)
 	quota := storetest.NewMockQuotaStore(ctrl)
 	backendLifecycle := storetest.NewMockBackendLifecycleStore(ctrl)
-	quota.EXPECT().GetLeastUtilizedBackend(gomock.Any(), int64(50), gomock.Any()).Return("dest", nil)
 
 	mover := &captureMover{}
 	mgr := New(inf, mover, objects, quota, backendLifecycle,

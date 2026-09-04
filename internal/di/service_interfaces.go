@@ -25,6 +25,7 @@ type usageFlushOps interface {
 	Config() *config.UsageFlushConfig
 	RedisCounterConfigured() bool
 	FlushUsage(ctx context.Context) error
+	FlushQuota(ctx context.Context) error
 }
 
 // nearLimitReporter is the *counter.UsageTracker read that drives the

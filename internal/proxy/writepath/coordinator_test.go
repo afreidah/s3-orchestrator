@@ -62,6 +62,7 @@ func newCoordinatorWithBackend(name string, be s3be.ObjectBackend, store Coordin
 	c := infra.New(&infra.Config{
 		Backends: map[string]s3be.ObjectBackend{name: be},
 		Usage:    usage,
+		Quota:    counter.NewQuotaTracker([]string{name}),
 	})
 	return New(c, store, true)
 }
@@ -73,6 +74,7 @@ func newCoordinatorWithBackend(name string, be s3be.ObjectBackend, store Coordin
 func newCoordinatorWithStore(store CoordinatorStores, pendingEnabled bool) *Coordinator {
 	c := infra.New(&infra.Config{
 		Backends: map[string]s3be.ObjectBackend{},
+		Quota:    counter.NewQuotaTracker(nil),
 	})
 	return New(c, store, pendingEnabled)
 }
@@ -86,6 +88,7 @@ func newCoordinatorWith2Backends(srcName string, src s3be.ObjectBackend, destNam
 		Backends:       map[string]s3be.ObjectBackend{srcName: src, destName: dest},
 		BackendTimeout: 5 * time.Second,
 		Usage:          usage,
+		Quota:          counter.NewQuotaTracker([]string{srcName, destName}),
 	})
 	return New(c, store, true)
 }
@@ -389,7 +392,7 @@ func TestRecordObjectAndPromoteIntent_UnknownBackend(t *testing.T) {
 
 	err := coord.RecordObjectAndPromoteIntent(context.Background(), sp, &core.RecordObjectRequest{
 		Key: "k", Backend: "no-such-backend", Size: 1024,
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("expected error for unregistered backend")
 	}

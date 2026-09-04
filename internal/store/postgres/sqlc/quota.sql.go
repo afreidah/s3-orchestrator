@@ -329,6 +329,60 @@ func (q *Queries) IncrementQuota(ctx context.Context, arg IncrementQuotaParams) 
 	return result.RowsAffected(), nil
 }
 
+const listBackendQuotaUsage = `-- name: ListBackendQuotaUsage :many
+SELECT q.backend_name,
+       q.bytes_limit,
+       q.bytes_used,
+       q.orphan_bytes,
+       COALESCE(m.inflight, 0)::bigint AS inflight_bytes
+FROM backend_quotas q
+LEFT JOIN (
+    SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
+    FROM multipart_uploads mu
+    JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
+    GROUP BY mu.backend_name
+) m ON m.backend_name = q.backend_name
+`
+
+type ListBackendQuotaUsageRow struct {
+	BackendName   string
+	BytesLimit    int64
+	BytesUsed     int64
+	OrphanBytes   int64
+	InflightBytes int64
+}
+
+// Every backend's ceiling and what occupies it: the counter, orphans awaiting
+// cleanup, and the parts of uploads that have not completed. The same three
+// terms GetBackendWithSpace subtracts, read for the whole fleet in one pass
+// rather than per candidate, because the quota tracker refreshes its baseline
+// once per flush instead of asking on every write.
+func (q *Queries) ListBackendQuotaUsage(ctx context.Context) ([]ListBackendQuotaUsageRow, error) {
+	rows, err := q.db.Query(ctx, listBackendQuotaUsage)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBackendQuotaUsageRow{}
+	for rows.Next() {
+		var i ListBackendQuotaUsageRow
+		if err := rows.Scan(
+			&i.BackendName,
+			&i.BytesLimit,
+			&i.BytesUsed,
+			&i.OrphanBytes,
+			&i.InflightBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setBackendBytesUsed = `-- name: SetBackendBytesUsed :exec
 UPDATE backend_quotas
 SET bytes_used = $1, updated_at = NOW()

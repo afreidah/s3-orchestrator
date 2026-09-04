@@ -24,6 +24,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
@@ -313,7 +314,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 	maxAttempts := needed + len(r.ops.Backends())
 	for attempt := 0; out.Created < needed && attempt < maxAttempts; attempt++ {
 		remaining := needed - out.Created
-		target := r.FindReplicaTarget(ctx, key, sizeEstimate, exclusion)
+		target, reserved := r.FindReplicaTarget(ctx, key, sizeEstimate, exclusion)
 		if target == "" {
 			r.log.WarnContext(ctx, "no target backend with space",
 				"key", key, "needed", remaining)
@@ -334,8 +335,12 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 		// and backend_quotas.bytes_used (read from the source row inside the
 		// conditional INSERT). They equal each other unless an overwrite
 		// landed mid-replication.
+		// Each branch below disposes of the attempt's reservation: the claim
+		// covers the copy, and an attempt that does not leave a row behind
+		// must give the room back before the next target is tried.
 		sourceLoc, err := r.CopyToReplica(ctx, key, existingCopies, target)
 		if err != nil {
+			reserved.Release()
 			r.log.WarnContext(ctx, "failed to copy object data",
 				"key", key, "target", target, "error", err)
 			telemetry.ReplicationErrorsTotal.Inc()
@@ -348,12 +353,14 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 		// Checked before the row exists, so a copy that disagrees with its
 		// source never counts toward the replication factor.
 		if !r.admitVerifiedReplica(ctx, key, target, sourceLoc, &out) {
+			reserved.Release()
 			exclusion[target] = true
 			continue
 		}
 
 		recordedSize, inserted, err := r.store.RecordReplica(ctx, key, target, source)
 		if err != nil {
+			reserved.Release()
 			r.log.ErrorContext(ctx, "failed to record replica",
 				"key", key, "target", target, "error", err)
 			r.CleanupOrphan(ctx, target, key, transferredSize)
@@ -365,6 +372,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 
 		if !inserted {
 			// Source copy was deleted/overwritten during replication.
+			reserved.Release()
 			r.log.InfoContext(ctx, "source copy gone, cleaning up orphan",
 				"key", key, "target", target)
 			r.CleanupOrphan(ctx, target, key, transferredSize)
@@ -372,6 +380,10 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 			out.Superseded++
 			continue
 		}
+		// The row is in, so the claim becomes the size the insert recorded,
+		// which is the source row's size rather than the estimate selection
+		// used.
+		reserved.Commit(core.QuotaDeltas{target: recordedSize})
 
 		// Surface the rare race where the source row's size_bytes shifted
 		// between GetUnderReplicatedObjects and the conditional INSERT.
@@ -438,16 +450,19 @@ func maxCopySize(copies []core.ObjectLocation) int64 {
 }
 
 // FindReplicaTarget selects a backend for a replication copy using the same
-// routing strategy as normal writes. Returns empty string if no suitable
-// target exists.
-func (r *Replicator) FindReplicaTarget(ctx context.Context, key string, size int64, exclusion map[string]bool) string {
-	name, err := r.placement.SelectReplicaTarget(ctx, size, exclusion)
+// routing strategy as normal writes. Returns an empty string and a nil
+// reservation if no suitable target exists.
+//
+// The reservation holds the estimated size for the length of the copy, which is
+// the window a concurrent client write would otherwise be admitted into.
+func (r *Replicator) FindReplicaTarget(ctx context.Context, key string, size int64, exclusion map[string]bool) (string, *counter.Reservation) {
+	name, reserved, err := r.placement.SelectReplicaTarget(size, exclusion)
 	if err != nil {
 		r.log.WarnContext(ctx, "target selection failed",
 			"key", key, "error", err)
-		return ""
+		return "", nil
 	}
-	return name
+	return name, reserved
 }
 
 // CopyToReplica reads the object from an existing copy and writes it to the
@@ -555,11 +570,13 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, target
 // backend reported the object missing. Logging-only on DB failure: a
 // stuck stale row is preferable to aborting the replication pass.
 func (r *Replicator) pruneStaleSource(ctx context.Context, key, backendName string) {
-	if delErr := r.store.DeleteObjectLocation(ctx, key, backendName); delErr != nil {
+	removed, delErr := r.store.DeleteObjectLocation(ctx, key, backendName)
+	if delErr != nil {
 		r.log.WarnContext(ctx, "failed to remove stale metadata",
 			"key", key, "backend", backendName, "error", delErr)
 		return
 	}
+	r.ops.Quota().Record(backendName, -removed)
 	r.log.InfoContext(ctx, "removed stale metadata entry",
 		"key", key, "backend", backendName)
 }

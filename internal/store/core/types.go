@@ -193,6 +193,54 @@ type QuotaStat struct {
 	UpdatedAt   time.Time
 }
 
+// QuotaDeltas is the signed per-backend byte change a committed mutation made,
+// keyed by backend name.
+//
+// Returned to the caller rather than written inside the transaction: the
+// counter these feed is held in memory and flushed on an interval, and a
+// transaction that also updated backend_quotas would hold that row's lock
+// until commit, which is what every concurrent write to a backend used to
+// serialize on.
+type QuotaDeltas map[string]int64
+
+// Add accumulates a signed delta for one backend. A nil map is left alone, so
+// a path that never allocated one is not forced to.
+func (q QuotaDeltas) Add(backendName string, delta int64) {
+	if q == nil {
+		return
+	}
+	q[backendName] += delta
+}
+
+// BackendQuotaUsage is one backend's quota row together with the bytes that
+// occupy the backend without appearing in bytes_used: orphans awaiting cleanup,
+// and the parts of multipart uploads that have not completed. Both are
+// subtracted when a write target is chosen, so a view carrying only the row
+// would route to a backend that is fuller than it reports.
+//
+// This is the baseline the in-memory quota tracker holds between flushes, which
+// is why it is a value rather than a live query: the tracker adds its own
+// unflushed delta on top of it.
+type BackendQuotaUsage struct {
+	BackendName   string
+	BytesLimit    int64
+	BytesUsed     int64
+	OrphanBytes   int64
+	InflightBytes int64
+}
+
+// Unlimited reports whether the backend has no byte ceiling. A zero
+// bytes_limit is how the schema spells "no quota enforcement".
+func (b BackendQuotaUsage) Unlimited() bool {
+	return b.BytesLimit <= 0
+}
+
+// Occupied is the byte total a write is judged against: what the ledger has
+// recorded, plus what is on the backend but not yet recorded.
+func (b BackendQuotaUsage) Occupied() int64 {
+	return b.BytesUsed + b.OrphanBytes + b.InflightBytes
+}
+
 // -------------------------------------------------------------------------
 // MULTIPART UPLOADS
 // -------------------------------------------------------------------------

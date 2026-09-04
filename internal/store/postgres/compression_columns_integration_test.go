@@ -113,7 +113,7 @@ func TestPgInsertPaths_PreserveRepresentation(t *testing.T) {
 		{
 			name: "RecordObject",
 			write: func(t *testing.T, key string) {
-				if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1024, Form: form}); err != nil {
+				if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1024, Form: form}); err != nil {
 					t.Fatalf("RecordObject: %v", err)
 				}
 			},
@@ -121,7 +121,7 @@ func TestPgInsertPaths_PreserveRepresentation(t *testing.T) {
 		{
 			name: "RecordObjectAndClearPending",
 			write: func(t *testing.T, key string) {
-				if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+				if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 					Key: key, Backend: "backend-a", Size: 1024, Form: form, IntentID: "intent-absent",
 				}); err != nil {
 					t.Fatalf("RecordObject with intent: %v", err)
@@ -147,7 +147,7 @@ func TestPgInsertPaths_PreserveRepresentation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			key := uniqueKey(t, "representation")
-			defer func() { _, _ = s.DeleteObject(ctx, key) }()
+			defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
 			tt.write(t, key)
 			assertFormPreserved(t, readBackOne(t, s, key), form)
@@ -163,7 +163,7 @@ func TestPgPendingPromote_PreservesRepresentation(t *testing.T) {
 	ctx := context.Background()
 	form := fullyPopulatedForm()
 	key := uniqueKey(t, "promoted")
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
 	intent := &core.PendingObject{
 		IntentID:                 key,
@@ -208,7 +208,7 @@ func TestPgPendingPromote_PreservesRepresentation(t *testing.T) {
 		t.Errorf("pending row lost compression metadata: %+v", found)
 	}
 
-	if _, _, err := s.PromotePending(ctx, found); err != nil {
+	if _, _, _, err := s.PromotePending(ctx, found); err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
 	assertFormPreserved(t, readBackOne(t, s, key), form)
@@ -223,9 +223,9 @@ func TestPgRecordReplica_PreservesRepresentation(t *testing.T) {
 	ctx := context.Background()
 	form := fullyPopulatedForm()
 	key := uniqueKey(t, "replicated")
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1024, Form: form}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1024, Form: form}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if _, inserted, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil || !inserted {
@@ -254,9 +254,9 @@ func TestPgLegacyRow_ReadsAsUncompressed(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "legacy")
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 512}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 512}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if _, err := s.pool.Exec(ctx,

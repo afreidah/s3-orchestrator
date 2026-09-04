@@ -31,7 +31,7 @@ import (
 func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockCleanupOps(ctrl)
+	ops := newMockCleanupOps(ctrl)
 
 	st := core.CleanupItem{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt", SizeBytes: 100}
 	ms := &mockMetadataStore{pendingCleanups: []core.CleanupItem{st}}
@@ -59,7 +59,7 @@ func TestProcessCleanupQueue_DeleteSuccess(t *testing.T) {
 func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockCleanupOps(ctrl)
+	ops := newMockCleanupOps(ctrl)
 
 	st := core.CleanupItem{ID: 2, BackendName: "b1", ObjectKey: "stuck.txt", Attempts: 3}
 	ms := &mockMetadataStore{pendingCleanups: []core.CleanupItem{st}}
@@ -86,7 +86,7 @@ func TestProcessCleanupQueue_DeleteFails_Retries(t *testing.T) {
 func TestProcessCleanupQueue_DeleteReturns404_IdempotentSuccess(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockCleanupOps(ctrl)
+	ops := newMockCleanupOps(ctrl)
 
 	// Attempts=9 puts us at the retry ceiling. Without the 404 special
 	// case this row would graduate straight to DLQ; with it the row must
@@ -128,7 +128,7 @@ func TestProcessCleanupQueue_DeleteReturns404_IdempotentSuccess(t *testing.T) {
 func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockCleanupOps(ctrl)
+	ops := newMockCleanupOps(ctrl)
 
 	st := core.CleanupItem{ID: 1, BackendName: "b1", ObjectKey: "orphan.txt"}
 	ms := &mockMetadataStore{pendingCleanups: []core.CleanupItem{st}}
@@ -149,7 +149,7 @@ func TestProcessCleanupQueue_AdmissionBlocked(t *testing.T) {
 func TestProcessCleanupQueue_BackendNotFound(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockCleanupOps(ctrl)
+	ops := newMockCleanupOps(ctrl)
 
 	st := core.CleanupItem{ID: 1, BackendName: "gone", ObjectKey: "orphan.txt"}
 	ms := &mockMetadataStore{pendingCleanups: []core.CleanupItem{st}}
@@ -177,7 +177,7 @@ func TestProcessCleanupQueue_BackendNotFound(t *testing.T) {
 func TestProcessCleanupQueue_Exhausted_MovesToDLQ(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockCleanupOps(ctrl)
+	ops := newMockCleanupOps(ctrl)
 
 	// Attempts=9 + 1 increment crosses maxCleanupAttempts (10), so the
 	// worker takes the exhausted branch.
@@ -216,7 +216,7 @@ func TestProcessCleanupQueue_Exhausted_MovesToDLQ(t *testing.T) {
 func TestProcessCleanupQueue_Exhausted_DLQMoveFails(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockCleanupOps(ctrl)
+	ops := newMockCleanupOps(ctrl)
 
 	st := core.CleanupItem{ID: 7, BackendName: "b1", ObjectKey: "doomed2.txt", Attempts: 9}
 	ms := &mockMetadataStore{
@@ -248,7 +248,7 @@ func TestProcessCleanupQueue_Exhausted_DLQMoveFails(t *testing.T) {
 // stale-claim-recovered counter exactly once for that row's backend.
 func TestProcessCleanupQueue_ReclaimedRow_IncrementsMetric(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	ops := NewMockCleanupOps(ctrl)
+	ops := newMockCleanupOps(ctrl)
 
 	const backend = "metric-backend"
 	st := core.CleanupItem{ID: 99, BackendName: backend, ObjectKey: "k", Reclaimed: true}

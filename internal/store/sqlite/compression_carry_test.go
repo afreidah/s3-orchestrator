@@ -116,7 +116,7 @@ func TestMoveObjectLocation_CarriesRepresentation(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/moved", Backend: "backend-a", Size: 4096, Form: compressedForm()}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/moved", Backend: "backend-a", Size: 4096, Form: compressedForm()}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -152,7 +152,7 @@ func TestPromotePending_CarriesRepresentation(t *testing.T) {
 		t.Fatal("seed: pending row missing")
 	}
 
-	if _, _, err := s.PromotePending(ctx, &stale[0]); err != nil {
+	if _, _, _, err := s.PromotePending(ctx, &stale[0]); err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
 
@@ -183,16 +183,12 @@ func TestPromotePending_ChargesStoredSize(t *testing.T) {
 		t.Fatal("seed: pending row missing")
 	}
 
-	if _, _, err := s.PromotePending(ctx, &stale[0]); err != nil {
+	_, _, deltas, err := s.PromotePending(ctx, &stale[0])
+	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
-
-	stats, err := s.GetQuotaStats(ctx)
-	if err != nil {
-		t.Fatalf("GetQuotaStats: %v", err)
-	}
-	if got := stats["backend-a"].BytesUsed; got != 4096 {
-		t.Errorf("bytes_used = %d, want the 4096 that landed on the backend", got)
+	if got := deltas["backend-a"]; got != 4096 {
+		t.Errorf("delta = %d, want the 4096 that landed on the backend", got)
 	}
 }
 
@@ -205,7 +201,7 @@ func TestRecordReplica_CarriesRepresentation(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/replicated", Backend: "backend-a", Size: 4096, Form: compressedForm()}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/replicated", Backend: "backend-a", Size: 4096, Form: compressedForm()}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -266,7 +262,7 @@ func TestMoveObjectLocation_CarriesCompressionProbe(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/random.bin", Backend: "backend-a", Size: 4096}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/random.bin", Backend: "backend-a", Size: 4096}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if err := s.RecordCompressionProbe(ctx, &core.CompressionProbe{
@@ -298,7 +294,7 @@ func TestListUncompressedLocations_ExcludesRecordedDeclines(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/random.bin", Backend: "backend-a", Size: 1000}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/random.bin", Backend: "backend-a", Size: 1000}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if err := s.RecordCompressionProbe(ctx, &core.CompressionProbe{
@@ -332,10 +328,10 @@ func TestListUncompressedLocations_ExcludesBelowMinSize(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/small.txt", Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/small.txt", Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/large.bin", Backend: "backend-a", Size: 9000}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/large.bin", Backend: "backend-a", Size: 9000}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -353,10 +349,10 @@ func TestListUncompressedLocations_SelectsOnlyVerbatim(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/plain", Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/plain", Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/encoded", Backend: "backend-a", Size: 40, Form: compressedForm()}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/encoded", Backend: "backend-a", Size: 40, Form: compressedForm()}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -398,7 +394,7 @@ func TestListUncompressedLocations_PagesByCursor(t *testing.T) {
 	const total = 5
 	for i := range total {
 		key := fmt.Sprintf("bucket/obj-%d", i)
-		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 			t.Fatalf("RecordObject %s: %v", key, err)
 		}
 	}
@@ -438,9 +434,12 @@ func TestMarkObjectCompressed_MovesQuota(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/shrinking", Backend: "backend-a", Size: 1000}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/shrinking", Backend: "backend-a", Size: 1000}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
+	// The counter is what this rewrite moves, and a write no longer sets it,
+	// so the object's bytes are put there before the rewrite runs.
+	seedBytesUsed(t, s, "backend-a", 1000)
 	before, err := s.GetQuotaStats(ctx)
 	if err != nil {
 		t.Fatalf("GetQuotaStats: %v", err)
@@ -484,7 +483,7 @@ func TestMarkObjectCompressed_ClearsOnDecompress(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/expanding", Backend: "backend-a", Size: 250, Form: compressedForm()}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/expanding", Backend: "backend-a", Size: 250, Form: compressedForm()}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -518,13 +517,13 @@ func TestCompressionStats_ReportsPerBackendTotals(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/encoded-a", Backend: "backend-a", Size: 250, Form: compressedForm()}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/encoded-a", Backend: "backend-a", Size: 250, Form: compressedForm()}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/encoded-b", Backend: "backend-a", Size: 150, Form: compressedForm()}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/encoded-b", Backend: "backend-a", Size: 150, Form: compressedForm()}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/verbatim", Backend: "backend-b", Size: 900}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/verbatim", Backend: "backend-b", Size: 900}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
