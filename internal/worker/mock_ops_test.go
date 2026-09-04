@@ -189,6 +189,20 @@ func (mr *MockOpsMockRecorder) IsDraining(name any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsDraining", reflect.TypeOf((*MockOps)(nil).IsDraining), name)
 }
 
+// Quota mocks base method.
+func (m *MockOps) Quota() *counter.QuotaTracker {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Quota")
+	ret0, _ := ret[0].(*counter.QuotaTracker)
+	return ret0
+}
+
+// Quota indicates an expected call of Quota.
+func (mr *MockOpsMockRecorder) Quota() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Quota", reflect.TypeOf((*MockOps)(nil).Quota))
+}
+
 // ReleaseAdmission mocks base method.
 func (m *MockOps) ReleaseAdmission() {
 	m.ctrl.T.Helper()
@@ -355,6 +369,20 @@ func (m *MockCleanupOps) HeadWithTimeout(ctx context.Context, be backend.ObjectB
 func (mr *MockCleanupOpsMockRecorder) HeadWithTimeout(ctx, be, key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeadWithTimeout", reflect.TypeOf((*MockCleanupOps)(nil).HeadWithTimeout), ctx, be, key)
+}
+
+// Quota mocks base method.
+func (m *MockCleanupOps) Quota() *counter.QuotaTracker {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Quota")
+	ret0, _ := ret[0].(*counter.QuotaTracker)
+	return ret0
+}
+
+// Quota indicates an expected call of Quota.
+func (mr *MockCleanupOpsMockRecorder) Quota() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Quota", reflect.TypeOf((*MockCleanupOps)(nil).Quota))
 }
 
 // ReleaseAdmission mocks base method.
@@ -567,6 +595,20 @@ func (mr *MockScrubberOpsMockRecorder) IsDraining(name any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsDraining", reflect.TypeOf((*MockScrubberOps)(nil).IsDraining), name)
 }
 
+// Quota mocks base method.
+func (m *MockScrubberOps) Quota() *counter.QuotaTracker {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Quota")
+	ret0, _ := ret[0].(*counter.QuotaTracker)
+	return ret0
+}
+
+// Quota indicates an expected call of Quota.
+func (mr *MockScrubberOpsMockRecorder) Quota() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Quota", reflect.TypeOf((*MockScrubberOps)(nil).Quota))
+}
+
 // StreamCopy mocks base method.
 func (m *MockScrubberOps) StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, key string, sizeEstimate int64) (int64, error) {
 	m.ctrl.T.Helper()
@@ -663,18 +705,19 @@ func (mr *MockPlacementMockRecorder) MoveObject(ctx, req any) *gomock.Call {
 }
 
 // SelectReplicaTarget mocks base method.
-func (m *MockPlacement) SelectReplicaTarget(ctx context.Context, size int64, exclusion map[string]bool) (string, error) {
+func (m *MockPlacement) SelectReplicaTarget(size int64, exclusion map[string]bool) (string, *counter.Reservation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SelectReplicaTarget", ctx, size, exclusion)
+	ret := m.ctrl.Call(m, "SelectReplicaTarget", size, exclusion)
 	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(*counter.Reservation)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // SelectReplicaTarget indicates an expected call of SelectReplicaTarget.
-func (mr *MockPlacementMockRecorder) SelectReplicaTarget(ctx, size, exclusion any) *gomock.Call {
+func (mr *MockPlacementMockRecorder) SelectReplicaTarget(size, exclusion any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SelectReplicaTarget", reflect.TypeOf((*MockPlacement)(nil).SelectReplicaTarget), ctx, size, exclusion)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SelectReplicaTarget", reflect.TypeOf((*MockPlacement)(nil).SelectReplicaTarget), size, exclusion)
 }
 
 // MockBackendSyncer is a mock of BackendSyncer interface.

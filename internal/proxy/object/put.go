@@ -298,10 +298,15 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	// neither the size the client announced nor the size the plan holds: a
 	// compressed write shrank before this point and an encrypted one grows
 	// after it.
-	backendName, err := o.coord.SelectBackendForWrite(ctx, o.physicalSize(plan.storedSize), eligible)
+	backendName, reserved, err := o.coord.SelectBackendForWrite(o.physicalSize(plan.storedSize), eligible)
 	if err != nil {
 		return putAttemptResult{fatalErr: o.core.ClassifyWriteError(span, operation.String(), err)}
 	}
+	// Every path out of this attempt that is not the commit gives the claimed
+	// bytes back. Deferred at the point of reservation so a return added later
+	// cannot forget one; the commit disposes of it first and this becomes a
+	// no-op.
+	defer reserved.Release()
 	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
 
 	be, err := o.core.GetBackend(backendName)
@@ -360,8 +365,11 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
 		Key: key, Backend: backendName, Size: uploadSize, Form: form, Identity: identity,
 		Tags: req.Tags, IntentID: intentID,
-	}); err != nil {
-		return putAttemptResult{backend: backendName, fatalErr: err}
+	}, reserved); err != nil {
+		// Classified like the placement failure above: with placement decided in
+		// memory, the commit is now where a database outage first shows up, and
+		// it owes the client the same 503 the old placement query gave it.
+		return putAttemptResult{backend: backendName, fatalErr: o.core.ClassifyWriteError(span, operation.String(), err)}
 	}
 	// The ETag the client is told is the one recorded, not the one the backend
 	// returned: with compression or encryption on those differ, and a later

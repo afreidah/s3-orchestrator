@@ -16,6 +16,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 )
@@ -24,6 +25,7 @@ import (
 type WriteRuntime interface {
 	Backends() map[string]backend.ObjectBackend
 	RoutingStrategy() config.RoutingStrategy
+	Quota() *counter.QuotaTracker
 	EligibleForWrite(ops []s3op.Operation, egress, ingress int64) []string
 	ClassifyWriteError(span trace.Span, operation string, err error) error
 	DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error

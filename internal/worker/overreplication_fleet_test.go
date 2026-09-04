@@ -30,6 +30,10 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
+// removedCopyBytes is the size every stubbed excess-copy removal reports as
+// freed, so a test can assert the quota credit without threading real sizes.
+const removedCopyBytes = 100
+
 // removeExcessRecord captures one RemoveExcessCopy call.
 type removeExcessRecord struct {
 	key, backend string
@@ -47,19 +51,20 @@ type removeExcessTracker struct {
 	removed *bool
 }
 
-// stubRemoveExcessCopy returns a DoAndReturn that captures into rt.
-func stubRemoveExcessCopy(rt *removeExcessTracker) func(context.Context, string, string, int) (bool, error) {
-	return func(_ context.Context, key, backend string, factor int) (bool, error) {
+// stubRemoveExcessCopy returns a DoAndReturn that captures into rt, reporting
+// removedCopyBytes as the bytes the dropped row freed.
+func stubRemoveExcessCopy(rt *removeExcessTracker) func(context.Context, string, string, int) (int64, bool, error) {
+	return func(_ context.Context, key, backend string, factor int) (int64, bool, error) {
 		rt.mu.Lock()
 		defer rt.mu.Unlock()
 		rt.calls = append(rt.calls, removeExcessRecord{key: key, backend: backend, factor: factor})
 		if rt.err != nil {
-			return false, rt.err
+			return 0, false, rt.err
 		}
 		if rt.removed != nil {
-			return *rt.removed, nil
+			return removedCopyBytes, *rt.removed, nil
 		}
-		return true, nil
+		return removedCopyBytes, true, nil
 	}
 }
 

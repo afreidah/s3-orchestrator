@@ -1,4 +1,5 @@
 ---
+description: "The long-running workers keeping metadata consistent with the backends: replication, cleanup, lifecycle, and observability refresh."
 title: "Background Services"
 linkTitle: "Background Services"
 weight: 32

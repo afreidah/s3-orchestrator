@@ -42,7 +42,7 @@ const verifyOnBody = "replicated payload"
 func verifyingReplicator(t *testing.T, cfg *config.IntegrityConfig) (*Replicator, *MockOps, *MockPlacement, *mockMetadataStore) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
@@ -194,7 +194,7 @@ func TestVerifyReplica_UnreadableCopyIsKept(t *testing.T) {
 // counter, and the scrubber's own decline path increments the same one.
 func TestVerifyReplica_DeclinedByUsageLimitsKeepsTheCopy(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	ms := &mockMetadataStore{}
 
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
@@ -225,7 +225,7 @@ func TestVerifyReplica_DeclinedByUsageLimitsKeepsTheCopy(t *testing.T) {
 func TestVerifyReplica_CompressedCopyIsDecodedFirst(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	ms := &mockMetadataStore{}
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
@@ -255,7 +255,7 @@ func TestVerifyReplica_CompressedCopyIsDecodedFirst(t *testing.T) {
 func TestVerifyReplica_EncryptedCopyIsDecryptedFirst(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	ms := &mockMetadataStore{}
 	ops.EXPECT().Usage().Return(newTestUsageTracker()).AnyTimes()
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
@@ -309,7 +309,7 @@ func TestVerifyReplica_EncryptedCopyIsDecryptedFirst(t *testing.T) {
 func TestReplicator_IntegrityConfigRoundTrips(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	r := newTestReplicator(NewMockOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{})
+	r := newTestReplicator(newMockOps(ctrl), NewMockPlacement(ctrl), &mockMetadataStore{})
 
 	if got := r.IntegrityConfig(); got != nil {
 		t.Errorf("IntegrityConfig() = %+v, want nil before any config is pushed", got)
@@ -356,7 +356,7 @@ func replicateOneWithVerification(t *testing.T, target string, readBack []byte, 
 		Size: int64(len(readBack)),
 	}, func() {}, nil)
 
-	pl.EXPECT().SelectReplicaTarget(gomock.Any(), gomock.Any(), gomock.Any()).Return(target, nil)
+	pl.EXPECT().SelectReplicaTarget(gomock.Any(), gomock.Any()).Return(target, nil, nil)
 
 	copies := []core.ObjectLocation{*sourceRow(hash)}
 	out := r.ReplicateObject(context.Background(), "bucket/key1", copies, 1)
@@ -401,8 +401,8 @@ func TestReplicateObject_MismatchedCopyIsDiscardedNotRecorded(t *testing.T) {
 
 	// Only one target exists, so the retry loop runs out rather than succeeding
 	// elsewhere.
-	pl.EXPECT().SelectReplicaTarget(gomock.Any(), gomock.Any(), gomock.Any()).Return("b2", nil)
-	pl.EXPECT().SelectReplicaTarget(gomock.Any(), gomock.Any(), gomock.Any()).Return("", errors.New("no target")).AnyTimes()
+	pl.EXPECT().SelectReplicaTarget(gomock.Any(), gomock.Any()).Return("b2", nil, nil)
+	pl.EXPECT().SelectReplicaTarget(gomock.Any(), gomock.Any()).Return("", nil, errors.New("no target")).AnyTimes()
 	// The bytes that failed the check are removed from the target.
 	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), dstBe, "b2", "bucket/key1", "replication_orphan", gomock.Any())
 
@@ -437,7 +437,7 @@ func TestReplicateObject_UncheckedCopyIsStillRecorded(t *testing.T) {
 	ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", gomock.Any()).
 		Return(int64(0), nil)
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil).AnyTimes()
-	pl.EXPECT().SelectReplicaTarget(gomock.Any(), gomock.Any(), gomock.Any()).Return("b2", nil)
+	pl.EXPECT().SelectReplicaTarget(gomock.Any(), gomock.Any()).Return("b2", nil, nil)
 	// No read-back: the source carries no hash, so there is nothing to check.
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 

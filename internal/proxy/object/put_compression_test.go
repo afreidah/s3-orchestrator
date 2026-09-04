@@ -106,10 +106,6 @@ func putThroughFleet(t *testing.T, opts *fleetOpts, key string, body []byte) put
 	be := backendtest.NewInMemory()
 	calls := &objectsCalls{}
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetBackend(calls, "b1", nil)).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetLeastUtilized(calls, "b1", nil)).AnyTimes()
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjRecord(calls, nil)).AnyTimes()
 	storetest.Permissive(store)
@@ -256,9 +252,8 @@ func TestPut_CleanupSizedByStoredBytes(t *testing.T) {
 	be.DeleteErr = errors.New("backend down") // force the enqueue rather than a delete
 	calls := &orphanCalls{}
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("b1", nil).AnyTimes()
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
-		Return(nil, errors.New("commit failed")).AnyTimes()
+		Return(nil, nil, errors.New("commit failed")).AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanEnqueue(calls, nil)).AnyTimes()
 	storetest.Permissive(store)
@@ -397,12 +392,7 @@ func (s shortCodec) Compress(dst io.Writer, _ io.Reader) (int64, error) {
 func TestPut_CompressFailureAbortsWrite(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
-	calls := &objectsCalls{}
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetBackend(calls, "b1", nil)).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetLeastUtilized(calls, "b1", nil)).AnyTimes()
 	storetest.Permissive(store)
 
 	boom := errors.New("encoder exploded")

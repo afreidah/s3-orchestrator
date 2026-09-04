@@ -1,5 +1,6 @@
 ---
 title: "Deploying on Nomad with Vault"
+description: "Deploy as a HashiCorp Nomad job with secrets from Vault, rendering the config at deploy time so credentials are never written to disk."
 weight: 6
 ---
 

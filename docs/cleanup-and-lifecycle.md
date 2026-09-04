@@ -1,4 +1,5 @@
 ---
+description: "The always-on cleanup queue, pending write intents, and lifecycle rules, with the tunables controlling how aggressively each one runs."
 title: "Cleanup Queue, Pending Intents, and Lifecycle"
 linkTitle: "Cleanup & Lifecycle"
 weight: 26

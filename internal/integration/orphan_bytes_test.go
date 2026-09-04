@@ -557,6 +557,7 @@ func TestOrphanBytesSpreadRouting_SpreadRoutingRespectsOrphanBytes(t *testing.T)
 		CacheTTL:       60 * time.Second,
 		BackendTimeout: 30 * time.Second,
 	})
+	registerStack(t, spreadStack)
 	_ = proxytest.BuildWorkers(spreadStack, stores)
 	spreadSrv := &s3api.Server{
 		Objects:   spreadStack.Objects,

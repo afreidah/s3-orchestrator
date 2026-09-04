@@ -244,7 +244,7 @@ func TestPromotePending_Committed(t *testing.T) {
 	}
 	intent = stale[0]
 
-	result, displaced, err := s.PromotePending(ctx, &intent)
+	result, displaced, _, err := s.PromotePending(ctx, &intent)
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestPromotePending_AlreadyResolved(t *testing.T) {
 	s := newTestStore(t)
 	intent := pendingFixture("missing", "bucket/k1")
 
-	result, displaced, err := s.PromotePending(context.Background(), &intent)
+	result, displaced, _, err := s.PromotePending(context.Background(), &intent)
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
@@ -306,11 +306,11 @@ func TestPromotePending_Superseded(t *testing.T) {
 	// Now record a successful object_locations row for the same key  -
 	// simulates a retry that committed normally after the original PUT's
 	// metadata commit failed.
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/k1", Backend: "backend-a", Size: 200}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/k1", Backend: "backend-a", Size: 200}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	result, displaced, err := s.PromotePending(ctx, &intent)
+	result, displaced, _, err := s.PromotePending(ctx, &intent)
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestRecordObjectAndClearPending_DeletesIntent(t *testing.T) {
 		t.Fatalf("InsertPending: %v", err)
 	}
 
-	displaced, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: "bucket/k1", Backend: "backend-a", Size: 100, IntentID: "intent-1",
 	})
 	if err != nil {
@@ -382,7 +382,7 @@ func TestRecordObjectAndClearPending_EmptyIntentBehavesLikeRecordObject(t *testi
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	displaced, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: "bucket/k1", Backend: "backend-a", Size: 100,
 	})
 	if err != nil {

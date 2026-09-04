@@ -1,4 +1,5 @@
 ---
+description: "Object tags as key/value labels attached independently of object data: how they are written, stored, read back, and cleared again."
 title: "Object Tagging"
 linkTitle: "Object Tagging"
 weight: 29

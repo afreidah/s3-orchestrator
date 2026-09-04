@@ -1,3 +1,7 @@
+---
+description: "Configuration knobs affecting throughput, latency, and resource use: connection pools, admission limits, and transport settings."
+---
+
 This guide covers configuration knobs that affect throughput, latency, and resource usage.
 
 ## Connection Pool Sizing

@@ -295,7 +295,7 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 		// cleanup queue handles the orphan. removed=false is the benign
 		// race outcome: a parallel client delete or earlier tick already
 		// absorbed the excess, so this victim no longer needs touching.
-		didRemove, err := c.store.RemoveExcessCopy(ctx, key, victim.BackendName, factor)
+		removedBytes, didRemove, err := c.store.RemoveExcessCopy(ctx, key, victim.BackendName, factor)
 		switch {
 		case errors.Is(err, core.ErrCopyHoldsOnlyDEK):
 			// The copy set disagrees about encryption and this victim is the
@@ -321,6 +321,7 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 		if !didRemove {
 			continue
 		}
+		c.ops.Quota().Record(victim.BackendName, -removedBytes)
 
 		be, err := c.ops.GetBackend(victim.BackendName)
 		if err != nil {

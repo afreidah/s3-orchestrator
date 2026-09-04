@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -112,7 +113,7 @@ type replicaFleet struct {
 func newReplicaFleet(t *testing.T, store *mockMetadataStore, source string, targets ...string) *replicaFleet {
 	t.Helper()
 	ctrl := gomock.NewController(t)
-	f := &replicaFleet{ops: NewMockOps(ctrl), pl: NewMockPlacement(ctrl), store: store}
+	f := &replicaFleet{ops: newMockOps(ctrl), pl: NewMockPlacement(ctrl), store: store}
 
 	fleet := map[string]backend.ObjectBackend{source: backendtest.NewMockObjectBackend(ctrl)}
 	for _, name := range targets {
@@ -130,14 +131,14 @@ func newReplicaFleet(t *testing.T, store *mockMetadataStore, source string, targ
 	f.ops.EXPECT().ReleaseAdmission().AnyTimes()
 	f.ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	f.pl.EXPECT().SelectReplicaTarget(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ int64, exclude map[string]bool) (string, error) {
+	f.pl.EXPECT().SelectReplicaTarget(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ int64, exclude map[string]bool) (string, *counter.Reservation, error) {
 			for _, name := range targets {
 				if !exclude[name] {
-					return name, nil
+					return name, nil, nil
 				}
 			}
-			return "", errors.New("no backend with space")
+			return "", nil, errors.New("no backend with space")
 		}).AnyTimes()
 	return f
 }
@@ -247,7 +248,7 @@ func TestReplicate_QueryFailureReportsError(t *testing.T) {
 // gate turned away reports the work it declined rather than a clean pass.
 func TestReplicate_AdmissionBlockedCycleIsNotSuccess(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{
 		"b1": backendtest.NewMockObjectBackend(ctrl),
 	}).AnyTimes()
@@ -333,7 +334,7 @@ type cleanerFleet struct {
 func newCleanerFleet(t *testing.T, store *mockMetadataStore) *cleanerFleet {
 	t.Helper()
 	ctrl := gomock.NewController(t)
-	f := &cleanerFleet{ops: NewMockOps(ctrl), pl: NewMockPlacement(ctrl), store: store}
+	f := &cleanerFleet{ops: newMockOps(ctrl), pl: NewMockPlacement(ctrl), store: store}
 
 	fleet := map[string]backend.ObjectBackend{
 		"b1": backendtest.NewMockObjectBackend(ctrl),
@@ -513,7 +514,7 @@ func wantRebalanceLabel(t *testing.T, want string, fn func()) {
 func newRebalanceFleet(t *testing.T, moveErr error) *Rebalancer {
 	t.Helper()
 	ctrl := gomock.NewController(t)
-	ops := NewMockOps(ctrl)
+	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	store := &mockMetadataStore{
 		quotaStats: map[string]core.QuotaStat{
@@ -565,7 +566,7 @@ func TestRebalance_ReportsCycleOutcome(t *testing.T) {
 // read the fleet's utilization is labelled error rather than skipped.
 func TestRebalance_QuotaQueryFailureReportsError(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	r := NewRebalancer(NewMockOps(ctrl), NewMockPlacement(ctrl),
+	r := NewRebalancer(newMockOps(ctrl), NewMockPlacement(ctrl),
 		&mockMetadataStore{quotaStatsErr: errors.New("ledger unavailable")})
 
 	wantRebalanceLabel(t, OutcomeError, func() {

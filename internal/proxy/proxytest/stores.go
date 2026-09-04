@@ -60,9 +60,31 @@ type RuntimeOptions struct {
 	MaxObjectSizes  map[string]int64
 	AdmissionSem    chan struct{}
 	Backend         counter.Backend
+	QuotaBaselines  map[string]core.BackendQuotaUsage
 
 	Metrics           metrics.Deps // when set, installs a collector
 	ReplicationFactor func() int   // under-replication gauge; read only when Metrics is set
+}
+
+// NewQuotaTracker builds the byte-reservation tracker with baselines already
+// primed, which production does from backend_quotas at startup. Backends the
+// caller said nothing about are unlimited, so a test that does not care about
+// quota never has one refuse a write.
+//
+// Exported for the per-package fleet fixtures that build their own runtime:
+// without a primed baseline every write is refused, which is a confusing way
+// for an unrelated test to fail.
+func NewQuotaTracker(names []string, baselines map[string]core.BackendQuotaUsage) *counter.QuotaTracker {
+	primed := make(map[string]core.BackendQuotaUsage, len(names))
+	for _, name := range names {
+		primed[name] = core.BackendQuotaUsage{BackendName: name}
+	}
+	for name, usage := range baselines {
+		primed[name] = usage
+	}
+	tracker := counter.NewQuotaTracker(names)
+	tracker.SetBaselines(primed)
+	return tracker
 }
 
 // StackOptions carries what the collaborators need beyond the runtime: the
@@ -110,6 +132,7 @@ func NewRuntime(opts *RuntimeOptions) *infra.BackendRuntime {
 		Order:           names,
 		BackendTimeout:  opts.BackendTimeout,
 		Usage:           tracker,
+		Quota:           NewQuotaTracker(names, opts.QuotaBaselines),
 		RoutingStrategy: opts.RoutingStrategy,
 		MaxObjectSizes:  opts.MaxObjectSizes,
 		AdmissionSem:    opts.AdmissionSem,
@@ -129,7 +152,7 @@ func NewRuntime(opts *RuntimeOptions) *infra.BackendRuntime {
 // NewUsage builds the usage service over a runtime and store. drain may be nil,
 // which leaves the flush skipping nothing.
 func NewUsage(rt *infra.BackendRuntime, stores storetest.MetadataStore, dm *drain.Manager) *usage.Service {
-	deps := usage.Deps{Usage: rt.Usage(), Stores: stores}
+	deps := usage.Deps{Usage: rt.Usage(), Quota: rt.Quota(), Stores: stores}
 	if dm != nil {
 		deps.Drain = dm
 	}
