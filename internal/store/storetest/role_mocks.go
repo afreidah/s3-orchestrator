@@ -263,20 +263,6 @@ func (m *MockQuotaStore) EXPECT() *MockQuotaStoreMockRecorder {
 	return m.recorder
 }
 
-// FlushQuotaDeltas mocks base method.
-func (m *MockQuotaStore) FlushQuotaDeltas(ctx context.Context, deltas core.QuotaDeltas) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FlushQuotaDeltas", ctx, deltas)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// FlushQuotaDeltas indicates an expected call of FlushQuotaDeltas.
-func (mr *MockQuotaStoreMockRecorder) FlushQuotaDeltas(ctx, deltas any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushQuotaDeltas", reflect.TypeOf((*MockQuotaStore)(nil).FlushQuotaDeltas), ctx, deltas)
-}
-
 // GetQuotaStats mocks base method.
 func (m *MockQuotaStore) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, error) {
 	m.ctrl.T.Helper()

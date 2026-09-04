@@ -183,7 +183,7 @@ routing_strategy: "pack"       # "pack" or "spread" (default: pack)
 ```
 
 - **pack** (default) — fills the first backend in config order until its quota is full, then overflows to the next. Best for stacking free-tier allocations sequentially.
-- **spread** — places each object on the backend with the lowest utilization ratio (`(bytes_used + orphan_bytes) / bytes_limit`). Best for distributing storage evenly across backends.
+- **spread** — tries backends least-utilized first, by the ratio `(bytes_used + orphan_bytes + in-flight) / bytes_limit`. Best for distributing storage evenly across backends.
 
 Both strategies respect quota limits and usage limits — full or over-limit backends are always skipped.
 
@@ -499,8 +499,7 @@ The write path can run in two modes. **Direct mode** (`enabled: false`) writes t
 
 ```yaml
 write_path:
-  pending_pattern:
-    enabled: true        # default: true; PUT-before-COMMIT crash-recovery pattern
+  pending_pattern:       # the pattern is always on; only the reaper is tunable
     reaper_tick: 1m      # how often PendingReaper sweeps unresolved intents (default: 1m)
     min_age: 5m          # only intents older than this are eligible (default: 5m) — avoids racing in-flight PUTs
     batch_size: 50       # rows claimed per tick (default: 50)

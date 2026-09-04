@@ -25,8 +25,15 @@ import (
 // INTENT LIFECYCLE
 // -------------------------------------------------------------------------
 
-// InsertPending records an in-flight PUT intent.
-func (s *Store) InsertPending(ctx context.Context, p *core.PendingObject) error {
+// InsertPendingIfFits claims the bytes and records the intent in one statement,
+// so admission and the durable record of it cannot disagree. Reports false when
+// the backend had no room, which is the caller's cue to try the next candidate.
+//
+// The headroom is read inside the statement rather than from a snapshot: every
+// instance's committed bytes, orphans, and writes in progress are rows here, so
+// two instances admitting at once are judged against the same totals. A
+// bytes_limit of zero is unlimited, matching every other reader of the column.
+func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) (bool, error) {
 	keyID := nullableString(p.KeyID)
 	plaintextSize := nullableInt64(p.PlaintextSize)
 	contentHash := nullableString(p.ContentHash)
@@ -34,7 +41,7 @@ func (s *Store) InsertPending(ctx context.Context, p *core.PendingObject) error 
 	if p.Encrypted {
 		encrypted = 1
 	}
-	if _, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		// created_at is set here rather than left to the column default: the
 		// default renders milliseconds while every other write renders
 		// nanoseconds, and the reaper's min-age check compares the two as text.
@@ -44,17 +51,45 @@ func (s *Store) InsertPending(ctx context.Context, p *core.PendingObject) error 
 		    compression_algorithm, compression_level, compression_format_version, logical_size,
 		    etag, content_type, user_metadata,
 		    created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		 FROM backend_quotas q
+		 LEFT JOIN (
+		     SELECT backend_name, SUM(bytes_used) AS bytes_used
+		     FROM backend_quota_stripes GROUP BY backend_name
+		 ) s ON s.backend_name = q.backend_name
+		 LEFT JOIN (
+		     SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
+		     FROM multipart_uploads mu
+		     JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
+		     GROUP BY mu.backend_name
+		 ) m ON m.backend_name = q.backend_name
+		 LEFT JOIN (
+		     SELECT backend_name, SUM(size_bytes) AS inflight
+		     FROM pending_objects GROUP BY backend_name
+		 ) pi ON pi.backend_name = q.backend_name
+		 WHERE q.backend_name = ?
+		   AND (q.bytes_limit = 0
+		        OR q.bytes_limit
+		           - MAX(0, COALESCE(s.bytes_used, 0))
+		           - q.orphan_bytes
+		           - COALESCE(m.inflight, 0)
+		           - COALESCE(pi.inflight, 0) >= ?)`,
 		p.IntentID, p.ObjectKey, p.BackendName, p.SizeBytes,
 		encrypted, p.EncryptionKey, keyID, plaintextSize, contentHash,
 		nullableString(p.CompressionAlgorithm), nullableString(p.CompressionLevel),
 		nullableInt64(int64(p.CompressionFormatVersion)), nullableInt64(p.LogicalSize),
 		identityETag(p.Identity), identityContentType(p.Identity), identityMetadataJSON(p.Identity),
 		now(),
-	); err != nil {
-		return fmt.Errorf("insert pending object: %w", err)
+		p.BackendName, p.SizeBytes,
+	)
+	if err != nil {
+		return false, fmt.Errorf("insert pending object: %w", err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("check pending insert: %w", err)
+	}
+	return n > 0, nil
 }
 
 // DeletePending removes a pending intent.

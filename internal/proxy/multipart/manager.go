@@ -182,14 +182,13 @@ func (mp *Manager) CreateMultipartUpload(ctx context.Context, req *CreateUploadR
 	)
 	defer span.End()
 
-	// Pick a backend with available quota (estimate 0 bytes since final size is unknown)
-	backendName, reserved, err := mp.coord.SelectWriteTarget(span, operation, 0)
+	// Pick a backend with available quota (estimate 0 bytes since final size is
+	// unknown). Nothing is claimed here: the parts arrive later and each is
+	// counted against the backend by its own row as it lands.
+	backendName, err := mp.coord.PickWriteTarget(span, operation, 0)
 	if err != nil {
 		return "", "", err
 	}
-	// Nothing is claimed by creating an upload: the parts arrive later and the
-	// assembled object is what the counter learns about, at completion.
-	reserved.Release()
 
 	uploadID := audit.NewID()
 
@@ -809,11 +808,17 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// reaper-promoted object.
 	// The identity was built before the assembly started, so an intent the
 	// reaper promotes carries the same answer the client was given.
-	intentID, err := mp.coord.InsertPendingIntent(ctx, mu.ObjectKey, mu.BackendName, uploadSize, form, identity)
-	if err != nil {
+	//
+	// Claimed against the upload's own backend rather than a freshly ranked
+	// one: the parts are already there, so assembly has nowhere else to go and
+	// a backend without room for the assembled object has to fail rather than
+	// place it elsewhere.
+	intent := writepath.NewPendingIntent(mu.ObjectKey, uploadSize, form, identity)
+	if _, err := mp.coord.ClaimWriteTarget(ctx, intent, []string{mu.BackendName}); err != nil {
 		observe.RecordSpanError(span, err)
 		return "", err
 	}
+	intentID := intent.IntentID
 
 	// Final assembly PUT runs under the configured backend timeout.
 	// The pipe reader is fed by the part-download goroutines,
@@ -849,7 +854,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
 		Key: mu.ObjectKey, Backend: mu.BackendName, Size: uploadSize, Form: form,
 		Identity: identity, Tags: mu.Tags, IntentID: intentID,
-	}, nil); err != nil {
+	}); err != nil {
 		return "", err
 	}
 

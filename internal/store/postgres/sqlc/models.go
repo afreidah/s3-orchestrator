@@ -10,10 +10,15 @@ import (
 
 type BackendQuota struct {
 	BackendName string
-	BytesUsed   int64
 	BytesLimit  int64
 	UpdatedAt   pgtype.Timestamptz
 	OrphanBytes int64
+}
+
+type BackendQuotaStripe struct {
+	BackendName string
+	StripeID    int16
+	BytesUsed   int64
 }
 
 type BackendRequestUsage struct {

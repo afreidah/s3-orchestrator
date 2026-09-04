@@ -187,12 +187,13 @@ func (m *MockObjectStore) EXPECT() *MockObjectStoreMockRecorder {
 }
 
 // DeleteObject mocks base method.
-func (m *MockObjectStore) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, error) {
+func (m *MockObjectStore) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObject", ctx, key)
 	ret0, _ := ret[0].([]core.DeletedCopy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(core.QuotaDeltas)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // DeleteObject indicates an expected call of DeleteObject.
@@ -202,11 +203,12 @@ func (mr *MockObjectStoreMockRecorder) DeleteObject(ctx, key any) *gomock.Call {
 }
 
 // DeleteObjectLocation mocks base method.
-func (m *MockObjectStore) DeleteObjectLocation(ctx context.Context, key, backendName string) error {
+func (m *MockObjectStore) DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, key, backendName)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // DeleteObjectLocation indicates an expected call of DeleteObjectLocation.
@@ -216,12 +218,13 @@ func (mr *MockObjectStoreMockRecorder) DeleteObjectLocation(ctx, key, backendNam
 }
 
 // DeleteObjectsBatch mocks base method.
-func (m *MockObjectStore) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, error) {
+func (m *MockObjectStore) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObjectsBatch", ctx, keys)
 	ret0, _ := ret[0].(map[string][]core.DeletedCopy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(core.QuotaDeltas)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // DeleteObjectsBatch indicates an expected call of DeleteObjectsBatch.
@@ -351,12 +354,13 @@ func (mr *MockObjectStoreMockRecorder) MoveObjectLocation(ctx, key, fromBackend,
 }
 
 // RecordObject mocks base method.
-func (m *MockObjectStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
+func (m *MockObjectStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RecordObject", ctx, req)
 	ret0, _ := ret[0].([]core.DeletedCopy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(core.QuotaDeltas)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // RecordObject indicates an expected call of RecordObject.
