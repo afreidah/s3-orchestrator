@@ -281,6 +281,9 @@ func (t *quotaTxStub) AdjustBackendBytesUsed(_ context.Context, backend string, 
 	if t.adjustErr != nil {
 		return t.adjustErr
 	}
+	if backend == t.failOn {
+		return t.failErr
+	}
 	t.adjustments = append(t.adjustments, quotaOp{backend: backend, delta: delta})
 	return nil
 }
@@ -408,100 +411,102 @@ func (s *quotaTxStub) InsertObjectLocationIfNotExists(_ context.Context, loc *Ob
 // real test fixtures.
 func (*quotaTxStub) DecrementOrphanBytes(context.Context, string, int64) error { return nil }
 
-// TestApplyQuotaDeltas_StableOrderAcrossInputs runs applyQuotaDeltas
-// against the same backend set with two different map insertion orders
-// (Go map iteration is non-deterministic) and asserts both calls
-// produce the same sorted-by-backend-name SQL sequence. This is the
-// invariant that prevents the #687 deadlock: any two transactions that
-// touch the same backend set request locks in identical order.
-func TestApplyQuotaDeltas_StableOrderAcrossInputs(t *testing.T) {
+// TestFlushQuotaDeltas_StableOrderAcrossInputs runs the flush against the same
+// backend set with two different map insertion orders (Go map iteration is
+// non-deterministic) and asserts both produce the same sorted-by-backend-name
+// SQL sequence. This is the invariant that prevents the #687 deadlock: any two
+// transactions that touch the same backend set request locks in identical
+// order.
+func TestFlushQuotaDeltas_StableOrderAcrossInputs(t *testing.T) {
 	t.Parallel()
-	deltasA := map[string]int64{"minio-3": -100, "minio-1": -50, "minio-2": -75}
-	deltasB := map[string]int64{"minio-2": -75, "minio-3": -100, "minio-1": -50}
+	deltasA := QuotaDeltas{"minio-3": -100, "minio-1": -50, "minio-2": -75}
+	deltasB := QuotaDeltas{"minio-2": -75, "minio-3": -100, "minio-1": -50}
 
 	txA := &quotaTxStub{}
 	txB := &quotaTxStub{}
-	if err := applyQuotaDeltas(context.Background(), txA, deltasA); err != nil {
-		t.Fatalf("applyQuotaDeltas A: %v", err)
+	if err := FlushQuotaDeltas(context.Background(), &stubRunner{tx: txA}, deltasA); err != nil {
+		t.Fatalf("FlushQuotaDeltas A: %v", err)
 	}
-	if err := applyQuotaDeltas(context.Background(), txB, deltasB); err != nil {
-		t.Fatalf("applyQuotaDeltas B: %v", err)
+	if err := FlushQuotaDeltas(context.Background(), &stubRunner{tx: txB}, deltasB); err != nil {
+		t.Fatalf("FlushQuotaDeltas B: %v", err)
 	}
-	if len(txA.ops) != 3 || len(txB.ops) != 3 {
-		t.Fatalf("expected 3 ops each, got A=%d B=%d", len(txA.ops), len(txB.ops))
+	if len(txA.adjustments) != 3 || len(txB.adjustments) != 3 {
+		t.Fatalf("expected 3 ops each, got A=%d B=%d", len(txA.adjustments), len(txB.adjustments))
 	}
-	for i := range txA.ops {
-		if txA.ops[i] != txB.ops[i] {
-			t.Errorf("op %d diverged: A=%+v B=%+v", i, txA.ops[i], txB.ops[i])
+	for i := range txA.adjustments {
+		if txA.adjustments[i] != txB.adjustments[i] {
+			t.Errorf("op %d diverged: A=%+v B=%+v", i, txA.adjustments[i], txB.adjustments[i])
 		}
 	}
 	want := []string{"minio-1", "minio-2", "minio-3"}
 	for i, w := range want {
-		if txA.ops[i].backend != w {
-			t.Errorf("op[%d].backend = %q, want %q (sorted backend_name)", i, txA.ops[i].backend, w)
+		if txA.adjustments[i].backend != w {
+			t.Errorf("op[%d].backend = %q, want %q (sorted backend_name)", i, txA.adjustments[i].backend, w)
 		}
 	}
 }
 
-// TestApplyQuotaDeltas_PositiveAndNegative verifies signed deltas route
-// correctly: positive -> Increment, negative -> Decrement, zero ->
-// skipped (so net-zero same-backend overwrites produce no SQL call).
-func TestApplyQuotaDeltas_PositiveAndNegative(t *testing.T) {
+// TestFlushQuotaDeltas_SignedAndZero verifies the deltas reach the store with
+// their sign intact and that a zero delta produces no statement, so a backend
+// whose credits and debits cancelled out costs no row lock.
+func TestFlushQuotaDeltas_SignedAndZero(t *testing.T) {
 	t.Parallel()
 	tx := &quotaTxStub{}
-	deltas := map[string]int64{
+	deltas := QuotaDeltas{
 		"a": -100,
 		"b": 200,
 		"c": 0,
 		"d": -50,
 	}
-	if err := applyQuotaDeltas(context.Background(), tx, deltas); err != nil {
-		t.Fatalf("applyQuotaDeltas: %v", err)
+	if err := FlushQuotaDeltas(context.Background(), &stubRunner{tx: tx}, deltas); err != nil {
+		t.Fatalf("FlushQuotaDeltas: %v", err)
 	}
 	want := []quotaOp{
 		{backend: "a", delta: -100},
 		{backend: "b", delta: 200},
 		{backend: "d", delta: -50},
 	}
-	if len(tx.ops) != len(want) {
-		t.Fatalf("ops = %d, want %d (zero delta should be skipped)", len(tx.ops), len(want))
+	if len(tx.adjustments) != len(want) {
+		t.Fatalf("ops = %d, want %d (zero delta should be skipped)", len(tx.adjustments), len(want))
 	}
 	for i, w := range want {
-		if tx.ops[i] != w {
-			t.Errorf("op[%d] = %+v, want %+v", i, tx.ops[i], w)
+		if tx.adjustments[i] != w {
+			t.Errorf("op[%d] = %+v, want %+v", i, tx.adjustments[i], w)
 		}
 	}
 }
 
-// TestApplyQuotaDeltas_PropagatesError verifies the helper short-circuits
-// on the first SQL error and surfaces it to the caller.
-func TestApplyQuotaDeltas_PropagatesError(t *testing.T) {
+// TestFlushQuotaDeltas_PropagatesError verifies the flush short-circuits on the
+// first SQL error and surfaces it, which is what tells the caller to put the
+// deltas back rather than treat them as written.
+func TestFlushQuotaDeltas_PropagatesError(t *testing.T) {
 	t.Parallel()
 	want := errors.New("simulated DB error")
 	tx := &quotaTxStub{failOn: "b", failErr: want}
-	deltas := map[string]int64{"a": 10, "b": 20, "c": 30}
-	err := applyQuotaDeltas(context.Background(), tx, deltas)
+	deltas := QuotaDeltas{"a": 10, "b": 20, "c": 30}
+	err := FlushQuotaDeltas(context.Background(), &stubRunner{tx: tx}, deltas)
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want wrap of %v", err, want)
 	}
-	if len(tx.ops) != 1 || tx.ops[0].backend != "a" {
-		t.Errorf("expected single op on 'a' before failure, got %+v", tx.ops)
+	if len(tx.adjustments) != 1 || tx.adjustments[0].backend != "a" {
+		t.Errorf("expected single op on 'a' before failure, got %+v", tx.adjustments)
 	}
 }
 
-// TestApplyQuotaDeltas_EmptyMap verifies the no-op path: an empty map
-// (and a nil map) both produce zero SQL calls and no error.
-func TestApplyQuotaDeltas_EmptyMap(t *testing.T) {
+// TestFlushQuotaDeltas_EmptyMap verifies the no-op path: an empty map (and a
+// nil map) both open no transaction and return no error, so a quiet interval
+// costs nothing.
+func TestFlushQuotaDeltas_EmptyMap(t *testing.T) {
 	t.Parallel()
 	tx := &quotaTxStub{}
-	if err := applyQuotaDeltas(context.Background(), tx, nil); err != nil {
+	if err := FlushQuotaDeltas(context.Background(), &stubRunner{tx: tx}, nil); err != nil {
 		t.Errorf("nil map err = %v, want nil", err)
 	}
-	if err := applyQuotaDeltas(context.Background(), tx, map[string]int64{}); err != nil {
+	if err := FlushQuotaDeltas(context.Background(), &stubRunner{tx: tx}, QuotaDeltas{}); err != nil {
 		t.Errorf("empty map err = %v, want nil", err)
 	}
-	if len(tx.ops) != 0 {
-		t.Errorf("expected no ops, got %+v", tx.ops)
+	if len(tx.adjustments) != 0 {
+		t.Errorf("expected no ops, got %+v", tx.adjustments)
 	}
 }
 

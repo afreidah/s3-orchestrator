@@ -1,5 +1,6 @@
 ---
 title: "Encrypting Existing Data"
+description: "Enable server-side encryption on an instance that already holds unencrypted objects, and migrate the existing data across its backends."
 weight: 2
 ---
 

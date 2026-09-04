@@ -131,7 +131,7 @@ func TestDropCorruptedLocation_RemovesRowAndCachedLocation(t *testing.T) {
 	const key, beName = "bucket/corrupt.txt", "b1"
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), key, beName).Return(nil).Times(1)
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), key, beName).Return(int64(0), nil).Times(1)
 	storetest.Permissive(store)
 
 	f := newFleet(t, store, map[string]backend.ObjectBackend{beName: backendtest.NewInMemory()}, nil)
@@ -155,7 +155,7 @@ func TestDropCorruptedLocation_KeepsCacheWhenDeleteFails(t *testing.T) {
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	store.EXPECT().DeleteObjectLocation(gomock.Any(), key, beName).
-		Return(errors.New("ledger unavailable")).Times(1)
+		Return(int64(0), errors.New("ledger unavailable")).Times(1)
 	storetest.Permissive(store)
 
 	f := newFleet(t, store, map[string]backend.ObjectBackend{beName: backendtest.NewInMemory()}, nil)
@@ -178,7 +178,7 @@ func TestMaybeWrapIntegrityReader_DiscardsCopyOnMismatch(t *testing.T) {
 	stored := "these are not the bytes that were written"
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
-	store.EXPECT().DeleteObjectLocation(gomock.Any(), key, beName).Return(nil).Times(1)
+	store.EXPECT().DeleteObjectLocation(gomock.Any(), key, beName).Return(int64(0), nil).Times(1)
 	storetest.Permissive(store)
 
 	be := backendtest.NewInMemory()
@@ -308,9 +308,9 @@ func TestGet_FullReadStillVerifies(t *testing.T) {
 	deleted := make(chan struct{}, 1)
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	store.EXPECT().DeleteObjectLocation(gomock.Any(), key, beName).
-		DoAndReturn(func(context.Context, string, string) error {
+		DoAndReturn(func(context.Context, string, string) (int64, error) {
 			deleted <- struct{}{}
-			return nil
+			return 0, nil
 		}).Times(1)
 	store.EXPECT().GetAllObjectLocations(gomock.Any(), key).Return([]core.ObjectLocation{{
 		ObjectKey:   key,

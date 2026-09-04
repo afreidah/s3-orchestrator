@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -354,7 +355,7 @@ func TestMain(m *testing.M) {
 	testStack = stack
 	testCoord = writepath.New(stack.Runtime, db, false)
 	testReconciler = reconcile.NewManager(&reconcile.Deps{
-		Backends: stack.Runtime, Stores: db, Usage: stack.Runtime.Acct(),
+		Backends: stack.Runtime, Stores: db, Usage: stack.Runtime.Acct(), Quota: stack.Runtime.Quota(),
 	})
 	testWorkers = workers
 
@@ -461,6 +462,7 @@ func queryObjectBackend(t *testing.T, key string) string {
 // queryQuotaUsed returns the bytes_used value for a backend.
 func queryQuotaUsed(t *testing.T, backendName string) int64 {
 	t.Helper()
+	flushQuota(t)
 	var bytesUsed int64
 	err := testDB.QueryRow("SELECT bytes_used FROM backend_quotas WHERE backend_name = $1", backendName).Scan(&bytesUsed)
 	if err != nil {
@@ -581,6 +583,7 @@ func setQuotaLimits(t *testing.T, limit int64) {
 	if _, err := testDB.Exec("UPDATE backend_quotas SET bytes_limit = $1", limit); err != nil {
 		t.Fatalf("set quota limits: %v", err)
 	}
+	refreshQuota(t)
 	t.Cleanup(func() {
 		for name, value := range original {
 			if _, err := testDB.Exec(
@@ -588,6 +591,7 @@ func setQuotaLimits(t *testing.T, limit int64) {
 				t.Errorf("restore quota limit for %s: %v", name, err)
 			}
 		}
+		refreshQuota(t)
 	})
 }
 
@@ -621,8 +625,84 @@ func resetState(t *testing.T) {
 	if _, err := testDB.Exec("UPDATE backend_quotas SET bytes_used = 0, orphan_bytes = 0, updated_at = NOW()"); err != nil {
 		t.Fatalf("resetState: %v", err)
 	}
+	// The byte counter lives in memory, one per stack. Drop whatever is still
+	// unflushed, then reload the baselines so every tracker agrees with the rows
+	// just zeroed rather than carrying a stale ceiling and occupancy.
+	for _, st := range quotaStacks() {
+		st.Runtime.Quota().SwapDeltas()
+	}
+	refreshQuota(t)
 	testStack.Objects.LocationCache().Clear()
 	testStack.Drain.ClearState()
+}
+
+// extraStacks holds the test-owned stacks built alongside the shared fixture.
+// Each carries its own in-memory byte counter, so a helper that touches
+// backend_quotas has to reach all of them and not just testStack.
+var (
+	extraStacksMu sync.Mutex
+	extraStacks   []*proxytest.Stack
+)
+
+// registerStack primes a test-owned stack's quota baselines the way production
+// does at startup and makes it visible to flushQuota and refreshQuota for as
+// long as the test runs.
+func registerStack(t *testing.T, st *proxytest.Stack) *proxytest.Stack {
+	t.Helper()
+	if err := st.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
+		t.Fatalf("prime stack quota baselines: %v", err)
+	}
+	extraStacksMu.Lock()
+	extraStacks = append(extraStacks, st)
+	extraStacksMu.Unlock()
+	t.Cleanup(func() {
+		extraStacksMu.Lock()
+		defer extraStacksMu.Unlock()
+		extraStacks = slices.DeleteFunc(extraStacks, func(s *proxytest.Stack) bool { return s == st })
+	})
+	return st
+}
+
+// quotaStacks returns every stack whose counter is live right now.
+func quotaStacks() []*proxytest.Stack {
+	extraStacksMu.Lock()
+	defer extraStacksMu.Unlock()
+	return append([]*proxytest.Stack{testStack}, extraStacks...)
+}
+
+// refreshQuota reloads the trackers' baselines from backend_quotas. Admission
+// judges a write against the snapshot, not the row, so a test that edits the
+// table behind the proxy has to say so or the change stays invisible.
+func refreshQuota(t *testing.T) {
+	t.Helper()
+	for _, st := range quotaStacks() {
+		if err := st.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
+			t.Fatalf("refreshQuota: %v", err)
+		}
+	}
+}
+
+// commitQuota lands a direct store mutation's byte deltas in backend_quotas.
+// A test driving testStore rather than the proxy is handed the deltas and
+// nothing applies them, so the counter has to be moved here.
+func commitQuota(t *testing.T, deltas core.QuotaDeltas) {
+	t.Helper()
+	if err := testStore.FlushQuotaDeltas(context.Background(), deltas); err != nil {
+		t.Fatalf("commitQuota: %v", err)
+	}
+}
+
+// flushQuota drains the in-memory byte counter into backend_quotas and
+// re-primes the baselines from the rows it wrote. bytes_used is eventually
+// consistent, so anything reading that column has to ask for the flush the
+// usage service would otherwise run on its own tick.
+func flushQuota(t *testing.T) {
+	t.Helper()
+	for _, st := range quotaStacks() {
+		if err := st.Usage.FlushQuota(context.Background()); err != nil {
+			t.Fatalf("flushQuota: %v", err)
+		}
+	}
 }
 
 // uniqueKey generates a collision-free object key.
@@ -710,6 +790,7 @@ func setOrphanBytes(t *testing.T, backendName string, amount int64) {
 	if err != nil {
 		t.Fatalf("setOrphanBytes(%q, %d): %v", backendName, amount, err)
 	}
+	refreshQuota(t)
 }
 
 // newThreeBackendStack creates a proxy stack with all 3 backends for
@@ -731,6 +812,7 @@ func newThreeBackendStack(t *testing.T) (*proxytest.Stack, *proxytest.Workers) {
 		CacheTTL:       60 * time.Second,
 		BackendTimeout: 30 * time.Second,
 	})
+	registerStack(t, st)
 	return st, proxytest.BuildWorkers(st, stores)
 }
 
@@ -851,12 +933,12 @@ func (f *FailableStore) GetAllObjectLocations(ctx context.Context, key string) (
 // ErrDBUnavailable, triggers degraded-mode fallbacks), while the one-shot blip
 // surfaces as errSimulatedCommitFailure (plain) so the caller fails the PUT
 // instead of reading the error as a degraded-mode signal.
-func (f *FailableStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
+func (f *FailableStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBOutage
+		return nil, nil, errSimulatedDBOutage
 	}
 	if req.IntentID != "" && f.consumeFailCommitOnce() {
-		return nil, errSimulatedCommitFailure
+		return nil, nil, errSimulatedCommitFailure
 	}
 	return f.inner.RecordObject(ctx, req)
 }
@@ -886,9 +968,9 @@ func (f *FailableStore) consumeFailCommitOnce() bool {
 
 // DeleteObject is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, error) {
+func (f *FailableStore) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, core.QuotaDeltas, error) {
 	if f.isFailing() {
-		return nil, errSimulatedDBOutage
+		return nil, nil, errSimulatedDBOutage
 	}
 	return f.inner.DeleteObject(ctx, key)
 }
@@ -902,22 +984,22 @@ func (f *FailableStore) ListObjects(ctx context.Context, prefix, startAfter stri
 	return f.inner.ListObjects(ctx, prefix, startAfter, maxKeys)
 }
 
-// GetBackendWithSpace is an integration-test fixture helper; see file header for
-// the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error) {
+// ListBackendQuotaUsage is an integration-test fixture helper; see file header
+// for the surrounding lifecycle the helpers participate in.
+func (f *FailableStore) ListBackendQuotaUsage(ctx context.Context) ([]core.BackendQuotaUsage, error) {
 	if f.isFailing() {
-		return "", errSimulatedDBOutage
+		return nil, errSimulatedDBOutage
 	}
-	return f.inner.GetBackendWithSpace(ctx, size, backendOrder)
+	return f.inner.ListBackendQuotaUsage(ctx)
 }
 
-// GetLeastUtilizedBackend is an integration-test fixture helper; see file header for
+// FlushQuotaDeltas is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
+func (f *FailableStore) FlushQuotaDeltas(ctx context.Context, deltas core.QuotaDeltas) error {
 	if f.isFailing() {
-		return "", errSimulatedDBOutage
+		return errSimulatedDBOutage
 	}
-	return f.inner.GetLeastUtilizedBackend(ctx, size, eligible)
+	return f.inner.FlushQuotaDeltas(ctx, deltas)
 }
 
 // CreateMultipartUpload is an integration-test fixture helper; see file header for
@@ -1066,9 +1148,9 @@ func (f *FailableStore) CountOverReplicatedObjects(ctx context.Context, factor i
 
 // RemoveExcessCopy is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (bool, error) {
+func (f *FailableStore) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (int64, bool, error) {
 	if f.isFailing() {
-		return false, errSimulatedDBOutage
+		return 0, false, errSimulatedDBOutage
 	}
 	return f.inner.RemoveExcessCopy(ctx, key, backendName, factor)
 }

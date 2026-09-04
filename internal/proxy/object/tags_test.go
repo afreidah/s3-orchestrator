@@ -156,7 +156,7 @@ func TestGetObjectTags_ReadError(t *testing.T) {
 // the commit, so the object and its tags land in one transaction rather than
 // leaving the object briefly untagged.
 func TestPutObject_CarriesTagsIntoTheRecord(t *testing.T) {
-	store, calls := putObjectStore(t, "b1")
+	store, calls := putObjectStore(t)
 	f := newFleet(t, store, map[string]backend.ObjectBackend{
 		"b1": backendtest.NewInMemory(),
 	}, nil)
@@ -183,7 +183,7 @@ func TestPutObject_CarriesTagsIntoTheRecord(t *testing.T) {
 // commits an empty set, which is what clears whatever the key held: a PUT is
 // a full replacement rather than a merge.
 func TestPutObject_UntaggedWriteRecordsNoTags(t *testing.T) {
-	store, calls := putObjectStore(t, "b1")
+	store, calls := putObjectStore(t)
 	f := newFleet(t, store, map[string]backend.ObjectBackend{
 		"b1": backendtest.NewInMemory(),
 	}, nil)

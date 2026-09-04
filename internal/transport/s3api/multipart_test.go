@@ -293,8 +293,6 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 			Return([]core.MultipartPart{
 				{PartNumber: 1, ETag: `"part1"`, SizeBytes: 4},
 			}, nil).AnyTimes()
-		m.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-			Return("b1", nil).AnyTimes()
 	})
 
 	// Store has a multipart upload with one part
@@ -681,8 +679,6 @@ func newTestServerWithMultipartLimit(t *testing.T, maxUploads int, opts ...func(
 	for _, opt := range opts {
 		opt(mockStore)
 	}
-	mockStore.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("b1", nil).AnyTimes()
 	storetest.Permissive(mockStore)
 
 	st := proxytest.New(t, mockStore, &proxytest.StackOptions{

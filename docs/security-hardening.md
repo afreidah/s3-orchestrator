@@ -1,3 +1,7 @@
+---
+description: "Recommended practices for production: TLS configuration, credential handling, network exposure, and restricting the admin API."
+---
+
 This guide covers recommended security practices for production deployments of the S3 Orchestrator.
 
 ## TLS Configuration

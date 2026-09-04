@@ -1,4 +1,5 @@
 ---
+description: "Interactive state machine for the three-state circuit breaker shared by the database wrapper and every per-backend wrapper."
 title: "Circuit Breaker"
 linkTitle: "Circuit Breaker"
 weight: 4

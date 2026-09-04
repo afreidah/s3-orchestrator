@@ -43,12 +43,10 @@ import (
 
 // objectsCalls holds the per-test capture state for assertions.
 type objectsCalls struct {
-	mu                       sync.Mutex
-	recordObject             []objRecordCall
-	insertPending            []core.PendingObject
-	enqueueCleanup           []core.CleanupItem
-	getBackendWithSpaceCalls atomic.Int64
-	getLeastUtilizedCalls    atomic.Int64
+	mu             sync.Mutex
+	recordObject   []objRecordCall
+	insertPending  []core.PendingObject
+	enqueueCleanup []core.CleanupItem
 }
 
 type objRecordCall struct {
@@ -62,38 +60,14 @@ type objRecordCall struct {
 // INTERNALS
 // -------------------------------------------------------------------------
 
-func stubObjGetBackend(c *objectsCalls, resp string, err error) func(context.Context, int64, []string) (string, error) {
-	return func(_ context.Context, _ int64, _ []string) (string, error) {
-		c.getBackendWithSpaceCalls.Add(1)
-		return resp, err
-	}
-}
-
-func stubObjGetBackendEligible(c *objectsCalls) func(context.Context, int64, []string) (string, error) {
-	return func(_ context.Context, _ int64, eligible []string) (string, error) {
-		c.getBackendWithSpaceCalls.Add(1)
-		if len(eligible) > 0 {
-			return eligible[0], nil
-		}
-		return "", core.ErrNoSpaceAvailable
-	}
-}
-
-func stubObjGetLeastUtilized(c *objectsCalls, resp string, err error) func(context.Context, int64, []string) (string, error) {
-	return func(_ context.Context, _ int64, _ []string) (string, error) {
-		c.getLeastUtilizedCalls.Add(1)
-		return resp, err
-	}
-}
-
-func stubObjRecord(c *objectsCalls, err error) func(context.Context, *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
-	return func(_ context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
+func stubObjRecord(c *objectsCalls, err error) func(context.Context, *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
+	return func(_ context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.recordObject = append(c.recordObject, objRecordCall{
 			Key: req.Key, Backend: req.Backend, Size: req.Size, Form: req.Form, Tags: req.Tags,
 		})
-		return nil, err
+		return nil, core.QuotaDeltas{req.Backend: req.Size}, err
 	}
 }
 
@@ -131,44 +105,23 @@ func objectsStubs(store *storetest.MockMetadataStore) *objectsCalls {
 }
 
 // putObjectStore returns a store wired for a successful PutObject path.
-func putObjectStore(t *testing.T, getBackendResp string) (*storetest.MockMetadataStore, *objectsCalls) {
+// Placement is decided from the in-memory byte counter rather than the store,
+// so the backend a write lands on is whichever the fleet's order and baselines
+// admit rather than anything stubbed here.
+func putObjectStore(t *testing.T) (*storetest.MockMetadataStore, *objectsCalls) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	c := objectsStubs(store)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetBackend(c, getBackendResp, nil)).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetLeastUtilized(c, getBackendResp, nil)).AnyTimes()
 	storetest.Permissive(store)
 	return store, c
 }
 
-// putObjectErrStore returns a store where GetBackendWithSpace + GetLeastUtilizedBackend fail.
-func putObjectErrStore(t *testing.T, err error) *storetest.MockMetadataStore {
-	t.Helper()
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	objectsStubs(store)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).Return("", err).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).Return("", err).AnyTimes()
-	storetest.Permissive(store)
-	return store
-}
-
-// eligibleStore returns a store where GetBackendWithSpace returns the
-// first eligible candidate.
+// eligibleStore is putObjectStore under its older name, kept for the tests that
+// read as "any eligible backend will do".
 func eligibleStore(t *testing.T) (*storetest.MockMetadataStore, *objectsCalls) {
 	t.Helper()
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	c := objectsStubs(store)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetBackendEligible(c)).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetBackendEligible(c)).AnyTimes()
-	storetest.Permissive(store)
-	return store, c
+	return putObjectStore(t)
 }
 
 // locationsStore returns a store with GetAllObjectLocations stubbed.
@@ -214,7 +167,7 @@ func deleteObjectStore(t *testing.T, resp []core.DeletedCopy, err error) *storet
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	objectsStubs(store)
-	store.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(resp, err).AnyTimes()
+	store.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(resp, nil, err).AnyTimes()
 	storetest.Permissive(store)
 	return store
 }
@@ -223,7 +176,7 @@ func deleteObjectStore(t *testing.T, resp []core.DeletedCopy, err error) *storet
 func TestPutObject_Success(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
-	store, c := putObjectStore(t, "b1")
+	store, c := putObjectStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	etag, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "mykey", Body: bytes.NewReader([]byte("hello")), Size: 5, ContentType: "text/plain"})
@@ -352,48 +305,64 @@ func (a *allFlippingDrainChecker) IsDraining(name string) bool {
 	return a.calls[name] > 1
 }
 
-// TestPutObject_PackStrategy_UsesGetBackendWithSpace pins the pack
-// strategy routing.
-func TestPutObject_PackStrategy_UsesGetBackendWithSpace(t *testing.T) {
+// TestPutObject_PackStrategy_FillsTheFirstBackend pins pack routing: the
+// configured order decides, so a write lands on the first backend with room
+// even when a later one is emptier.
+func TestPutObject_PackStrategy_FillsTheFirstBackend(t *testing.T) {
 	t.Parallel()
-	be := backendtest.NewInMemory()
-	store, c := putObjectStore(t, "b1")
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, &fleetOpts{Order: []string{"b1"}, BackendTimeout: 30 * time.Second, PendingDisabled: true})
+	first, second := backendtest.NewInMemory(), backendtest.NewInMemory()
+	store, _ := putObjectStore(t)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": first, "b2": second}, &fleetOpts{
+		Order:           []string{"b1", "b2"},
+		BackendTimeout:  30 * time.Second,
+		PendingDisabled: true,
+		QuotaBaselines: map[string]core.BackendQuotaUsage{
+			"b1": {BackendName: "b1", BytesLimit: 1000, BytesUsed: 900},
+			"b2": {BackendName: "b2", BytesLimit: 1000},
+		},
+	})
 
 	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "pack-key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
-	if c.getBackendWithSpaceCalls.Load() != 1 {
-		t.Errorf("expected 1 GetBackendWithSpace call, got %d", c.getBackendWithSpaceCalls.Load())
+	if !first.Has("pack-key") {
+		t.Error("pack routing should fill the first backend in order")
 	}
-	if c.getLeastUtilizedCalls.Load() != 0 {
-		t.Errorf("expected 0 GetLeastUtilizedBackend calls, got %d", c.getLeastUtilizedCalls.Load())
+	if second.Has("pack-key") {
+		t.Error("pack routing moved on while the first backend still had room")
 	}
 }
 
-// TestPutObject_SpreadStrategy_UsesGetLeastUtilized pins the spread
-// strategy routing.
-func TestPutObject_SpreadStrategy_UsesGetLeastUtilized(t *testing.T) {
+// TestPutObject_SpreadStrategy_PicksTheEmptiest pins spread routing against the
+// same fleet: the emptiest backend wins regardless of where it sits in the
+// order, and the utilization it is judged on comes from the in-memory counter.
+func TestPutObject_SpreadStrategy_PicksTheEmptiest(t *testing.T) {
 	t.Parallel()
-	be := backendtest.NewInMemory()
-	store, c := putObjectStore(t, "b1")
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, &fleetOpts{Order: []string{"b1"}, Routing: config.RoutingSpread, BackendTimeout: 30 * time.Second, PendingDisabled: true})
+	first, second := backendtest.NewInMemory(), backendtest.NewInMemory()
+	store, _ := putObjectStore(t)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": first, "b2": second}, &fleetOpts{
+		Order:           []string{"b1", "b2"},
+		Routing:         config.RoutingSpread,
+		BackendTimeout:  30 * time.Second,
+		PendingDisabled: true,
+		QuotaBaselines: map[string]core.BackendQuotaUsage{
+			"b1": {BackendName: "b1", BytesLimit: 1000, BytesUsed: 900},
+			"b2": {BackendName: "b2", BytesLimit: 1000},
+		},
+	})
 
 	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "spread-key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
-	if c.getLeastUtilizedCalls.Load() != 1 {
-		t.Errorf("expected 1 GetLeastUtilizedBackend call, got %d", c.getLeastUtilizedCalls.Load())
-	}
-	if c.getBackendWithSpaceCalls.Load() != 0 {
-		t.Errorf("expected 0 GetBackendWithSpace calls, got %d", c.getBackendWithSpaceCalls.Load())
+	if !second.Has("spread-key") {
+		t.Error("spread routing should land on the least utilized backend")
 	}
 }
 
 // TestCanAcceptWrite_HasCapacity asserts the positive-capacity branch.
 func TestCanAcceptWrite_HasCapacity(t *testing.T) {
 	t.Parallel()
-	store, _ := putObjectStore(t, "b1")
+	store, _ := putObjectStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 
 	if !mgr.CanAcceptWrite(100) {
@@ -494,19 +463,31 @@ func TestPutObject_PlacementErrors(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
-		storeErr  error
+		baseline  core.BackendQuotaUsage
 		wantSent  error
 		wantWhyOf string
 	}{
-		{"no backend has room", core.ErrNoSpaceAvailable, core.ErrInsufficientStorage, "insufficient storage"},
-		{"the ledger is down", core.ErrDBUnavailable, core.ErrServiceUnavailable, "service unavailable"},
+		{
+			name:      "no backend has room",
+			baseline:  core.BackendQuotaUsage{BackendName: "b1", BytesLimit: 100, BytesUsed: 100},
+			wantSent:  core.ErrInsufficientStorage,
+			wantWhyOf: "insufficient storage",
+		},
+		{
+			name:      "the only backend is over its limit",
+			baseline:  core.BackendQuotaUsage{BackendName: "b1", BytesLimit: 100, BytesUsed: 500},
+			wantSent:  core.ErrInsufficientStorage,
+			wantWhyOf: "insufficient storage",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			store := putObjectErrStore(t, tt.storeErr)
-			mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
+			store, _ := putObjectStore(t)
+			mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{
+				QuotaBaselines: map[string]core.BackendQuotaUsage{"b1": tt.baseline},
+			})
 
 			_, err := mgr.PutObject(context.Background(), &PutObjectRequest{
 				Key: "key", Body: bytes.NewReader([]byte("x")), Size: 1,
@@ -524,7 +505,7 @@ func TestPutObject_BackendFailure_StillRecordsUsage(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
 	be.PutErr = errors.New("be timeout")
-	store, _ := putObjectStore(t, "b1")
+	store, _ := putObjectStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err == nil {
@@ -547,10 +528,6 @@ func TestPutObject_RecordFailure_LeavesBackendBytesAndPendingIntent(t *testing.T
 	c := &objectsCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetBackend(c, "b1", nil)).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetLeastUtilized(c, "b1", nil)).AnyTimes()
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjRecord(c, errors.New("db write failed"))).AnyTimes()
 	store.EXPECT().InsertPending(gomock.Any(), gomock.Any()).
@@ -586,10 +563,6 @@ func TestPutObject_RecordFailure_LegacyPath(t *testing.T) {
 	c := &objectsCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetBackend(c, "b1", nil)).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetLeastUtilized(c, "b1", nil)).AnyTimes()
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjRecord(c, errors.New("db write failed"))).AnyTimes()
 	store.EXPECT().InsertPending(gomock.Any(), gomock.Any()).
@@ -683,7 +656,7 @@ func TestPutObject_WriteFailover_SkipsMultipleFailedBackends(t *testing.T) {
 	b2.PutErr = errors.New("b2 down")
 	b3 := backendtest.NewInMemory()
 
-	store, c := eligibleStore(t)
+	store, _ := eligibleStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2, "b3": b3}, &fleetOpts{Order: []string{"b1", "b2", "b3"}})
 
 	etag, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"})
@@ -696,8 +669,13 @@ func TestPutObject_WriteFailover_SkipsMultipleFailedBackends(t *testing.T) {
 	if !b3.Has("key") {
 		t.Error("object should be on b3")
 	}
-	if c.getBackendWithSpaceCalls.Load() != 3 {
-		t.Errorf("GetBackendWithSpace calls = %d, want 3", c.getBackendWithSpaceCalls.Load())
+	// Each failed attempt gave its claim back, or the two dead backends would
+	// still be holding the write's bytes against their limits.
+	if delta := mgr.core.Quota().Delta("b1"); delta != 0 {
+		t.Errorf("b1 delta = %d, want 0 after its attempt failed", delta)
+	}
+	if delta := mgr.core.Quota().Delta("b2"); delta != 0 {
+		t.Errorf("b2 delta = %d, want 0 after its attempt failed", delta)
 	}
 }
 
@@ -797,52 +775,29 @@ func TestPutObject_WriteFailover_BufferBodyError(t *testing.T) {
 }
 
 // TestPutObject_WriteFailover_SelectBackendErrorDuringRetry exercises a
-// second-call DB failure during failover retry.
-func TestPutObject_WriteFailover_SelectBackendErrorDuringRetry(t *testing.T) {
+// second attempt has nowhere left to go.
+func TestPutObject_WriteFailover_NoRoomOnTheRetry(t *testing.T) {
 	t.Parallel()
 	b1 := backendtest.NewInMemory()
 	b1.PutErr = errors.New("b1 down")
 
-	c := &objectsCalls{}
-	callCount := 0
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ int64, eligible []string) (string, error) {
-			callCount++
-			if callCount == 1 {
-				return eligible[0], nil
-			}
-			return "", core.ErrDBUnavailable
-		}).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ int64, eligible []string) (string, error) {
-			callCount++
-			if callCount == 1 {
-				return eligible[0], nil
-			}
-			return "", core.ErrDBUnavailable
-		}).AnyTimes()
 	objectsStubs(store)
 	storetest.Permissive(store)
-	_ = c
 
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"b1", "b2"}})
-
-	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); !errors.Is(err, core.ErrServiceUnavailable) {
-		t.Fatalf("expected st.ErrServiceUnavailable, got %v", err)
-	}
-}
-
-// TestPutObject_WriteFailover_BackendNotInMap rejects an unknown
-// backend.
-func TestPutObject_WriteFailover_BackendNotInMap(t *testing.T) {
-	t.Parallel()
-	store, _ := putObjectStore(t, "ghost")
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"b1"}})
+	// b1 takes the write and fails it; b2 is past its limit, so the retry has
+	// no candidate left and the write surfaces the storage sentinel rather than
+	// looping.
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": backendtest.NewInMemory()}, &fleetOpts{
+		Order: []string{"b1", "b2"},
+		QuotaBaselines: map[string]core.BackendQuotaUsage{
+			"b2": {BackendName: "b2", BytesLimit: 100, BytesUsed: 500},
+		},
+	})
 
 	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err == nil {
-		t.Fatal("expected error when backend not in map")
+		t.Fatal("expected the write to fail once no backend could take it")
 	}
 }
 
@@ -942,17 +897,12 @@ func TestHeadObject_WithEncryption(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := &objectsCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
 		Return([]core.ObjectLocation{
 			{ObjectKey: "enc-key", BackendName: "b1", SizeBytes: 100, Encrypted: true, PlaintextSize: 25, EncryptionKey: []byte("wrapped-dek")},
 		}, nil).AnyTimes()
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetBackend(c, "b1", nil)).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetLeastUtilized(c, "b1", nil)).AnyTimes()
 	objectsStubs(store)
 	storetest.Permissive(store)
 
@@ -1287,9 +1237,16 @@ func TestDeleteObject_DBUnavailable(t *testing.T) {
 }
 
 // stubBatchDelete returns a DoAndReturn that drives DeleteObjectsBatch.
-func stubBatchDelete(fn func(keys []string) (map[string][]core.DeletedCopy, error)) func(context.Context, []string) (map[string][]core.DeletedCopy, error) {
-	return func(_ context.Context, keys []string) (map[string][]core.DeletedCopy, error) {
-		return fn(keys)
+func stubBatchDelete(fn func(keys []string) (map[string][]core.DeletedCopy, error)) func(context.Context, []string) (map[string][]core.DeletedCopy, core.QuotaDeltas, error) {
+	return func(_ context.Context, keys []string) (map[string][]core.DeletedCopy, core.QuotaDeltas, error) {
+		copies, err := fn(keys)
+		deltas := make(core.QuotaDeltas)
+		for _, perKey := range copies {
+			for _, dc := range perKey {
+				deltas.Add(dc.BackendName, -dc.SizeBytes)
+			}
+		}
+		return copies, deltas, err
 	}
 }
 
@@ -1339,7 +1296,7 @@ func TestDeleteObjects_DBFailureFailsAll(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	objectsStubs(store)
 	store.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
-		Return(nil, errors.New("db error")).AnyTimes()
+		Return(nil, nil, errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
@@ -1516,17 +1473,13 @@ func TestDeleteObjects_RecordsOneAPICallPerCopy(t *testing.T) {
 // copyObjectStore wires a CopyObject success path: locations + a chosen
 // destination backend. Placement and record calls land in one accumulator so a
 // caller can assert on the row the copy wrote, not just on where it went.
-func copyObjectStore(t *testing.T, locs []core.ObjectLocation, locsErr error, getBackend string, getBackendErr error) (*storetest.MockMetadataStore, *objectsCalls) {
+func copyObjectStore(t *testing.T, locs []core.ObjectLocation, locsErr error) (*storetest.MockMetadataStore, *objectsCalls) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	c := objectsStubs(store)
 	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
 		Return(locs, locsErr).AnyTimes()
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetBackend(c, getBackend, getBackendErr)).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetLeastUtilized(c, getBackend, getBackendErr)).AnyTimes()
 	storetest.Permissive(store)
 	return store, c
 }
@@ -1540,7 +1493,7 @@ func copyObjectStore(t *testing.T, locs []core.ObjectLocation, locsErr error, ge
 func TestPutObject_IntegrityEnabled_PersistsContentHash(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
-	store, c := putObjectStore(t, "b1")
+	store, c := putObjectStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	mgr.SetIntegrityConfig(&config.IntegrityConfig{Enabled: true})
@@ -1575,7 +1528,7 @@ func TestCopyObject_HeadSourceForCopy_SkipsUnknownBackend(t *testing.T) {
 		[]core.ObjectLocation{
 			{ObjectKey: "src", BackendName: "ghost"}, // unknown -> skip branch
 			{ObjectKey: "src", BackendName: "b1"},    // real -> succeeds
-		}, nil, "b1", nil)
+		}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err != nil {
@@ -1590,22 +1543,6 @@ func TestCopyObject_HeadSourceForCopy_SkipsUnknownBackend(t *testing.T) {
 // branch in CopyObject: SelectWriteTarget returns a backend name the
 // orchestrator does not know about (config drift or test misuse), so
 // GetBackend errors and the copy fails fast instead of nil-derefing
-// the missing backend.
-func TestCopyObject_DestBackendNotInMap(t *testing.T) {
-	t.Parallel()
-	src := backendtest.NewInMemory()
-	_, _ = src.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
-
-	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
-		"ghost", nil) // SelectWriteTarget returns a name not in the backend map
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": src}, nil)
-
-	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err == nil {
-		t.Fatal("expected error when destination backend is unknown")
-	}
-}
-
 // TestCopyObject_RecordFailureSurfaces exercises the
 // RecordObjectOrCleanup error branch: the destination PUT succeeds but
 // the metadata commit fails. RecordObjectOrCleanup recovers the
@@ -1621,10 +1558,6 @@ func TestCopyObject_RecordFailureSurfaces(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
 		Return([]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil).AnyTimes()
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetBackend(c, "b1", nil)).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubObjGetLeastUtilized(c, "b1", nil)).AnyTimes()
 	// RecordObject returns an error -> RecordObjectOrCleanup wraps + recovers + returns.
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjRecord(c, errors.New("commit failed"))).AnyTimes()
@@ -1646,8 +1579,7 @@ func TestCopyObject_Success(t *testing.T) {
 	_, _ = be.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
-		"b1", nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	etag, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"})
@@ -1682,8 +1614,7 @@ func TestCopyObject_SameBackendFastPath_UsesNativeCopy(t *testing.T) {
 	be.LastPutBodySeekable = false // reset so we can detect a no-PUT fast path
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
-		"b1", nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	etag, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"})
@@ -1719,8 +1650,7 @@ func TestCopyObject_FastPathFallsBackOnNativeError(t *testing.T) {
 	be.LastPutBodySeekable = false
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
-		"b1", nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err != nil {
@@ -1755,8 +1685,7 @@ func TestCopyObject_AmbiguousNativeFailure_HeadConfirmsTreatsAsSuccess(t *testin
 	be.LastPutBodySeekable = false
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
-		"b1", nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	etag, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"})
@@ -1787,8 +1716,7 @@ func TestCopyObject_AmbiguousNativeFailure_HeadMissingFallsBack(t *testing.T) {
 	be.LastPutBodySeekable = false
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
-		"b1", nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err != nil {
@@ -1821,8 +1749,7 @@ func TestCopyObject_AmbiguousNativeFailure_SizeMismatchFallsBack(t *testing.T) {
 	be.LastPutBodySeekable = false
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
-		"b1", nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err != nil {
@@ -1847,9 +1774,15 @@ func TestCopyObject_FastPathSkippedCrossBackend(t *testing.T) {
 	dst.CopyEnabled = true // destination supports native copy, but source is elsewhere
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
-		"b2", nil)
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
+	// b1 holds the source and has no room, so the copy is placed on b2 and the
+	// cross-backend path is the one under test.
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{
+		Order: []string{"b1", "b2"},
+		QuotaBaselines: map[string]core.BackendQuotaUsage{
+			"b1": {BackendName: "b1", BytesLimit: 100, BytesUsed: 100},
+		},
+	})
 
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err != nil {
 		t.Fatalf("CopyObject: %v", err)
@@ -1886,20 +1819,23 @@ func TestCopyObject_DBUnavailable_SourceLookup(t *testing.T) {
 	}
 }
 
-// TestCopyObject_DBUnavailable_DestLookup surfaces a DB failure on the
-// destination lookup.
-func TestCopyObject_DBUnavailable_DestLookup(t *testing.T) {
+// TestCopyObject_NoRoomForTheDestination surfaces the refusal when the only
+// backend cannot take the copy.
+func TestCopyObject_NoRoomForTheDestination(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
 	_, _ = be.PutObject(context.Background(), "src", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
-		"", core.ErrDBUnavailable)
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1", SizeBytes: 4}}, nil)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, &fleetOpts{
+		QuotaBaselines: map[string]core.BackendQuotaUsage{
+			"b1": {BackendName: "b1", BytesLimit: 100, BytesUsed: 100},
+		},
+	})
 
-	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); !errors.Is(err, core.ErrServiceUnavailable) {
-		t.Fatalf("expected st.ErrServiceUnavailable, got %v", err)
+	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); !errors.Is(err, core.ErrInsufficientStorage) {
+		t.Fatalf("expected st.ErrInsufficientStorage, got %v", err)
 	}
 }
 
@@ -2011,8 +1947,7 @@ func TestCopyObject_BackendTimeout_SourceGetSlow(t *testing.T) {
 	slow := &slowMockBackend{InMemory: be, delay: 200 * time.Millisecond, delayGets: true}
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
-		"b1", nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": slow}, &fleetOpts{Order: []string{"b1"}, BackendTimeout: 50 * time.Millisecond, PendingDisabled: true})
 
 	_, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"})
@@ -2036,9 +1971,16 @@ func TestCopyObject_BackendTimeout_DestPutSlow(t *testing.T) {
 	slowDst := &slowMockBackend{InMemory: dstBE, delay: 200 * time.Millisecond}
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
-		"b2", nil)
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": srcBE, "b2": slowDst}, &fleetOpts{Order: []string{"b1", "b2"}, BackendTimeout: 50 * time.Millisecond, PendingDisabled: true})
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": srcBE, "b2": slowDst}, &fleetOpts{
+		Order:           []string{"b1", "b2"},
+		BackendTimeout:  50 * time.Millisecond,
+		PendingDisabled: true,
+		// b1 is full, so the copy lands on the slow destination under test.
+		QuotaBaselines: map[string]core.BackendQuotaUsage{
+			"b1": {BackendName: "b1", BytesLimit: 100, BytesUsed: 100},
+		},
+	})
 
 	_, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"})
 	if err == nil {
@@ -2055,7 +1997,7 @@ func TestPutObject_BackendTimeout(t *testing.T) {
 	be := backendtest.NewInMemory()
 	slowBackend := &slowMockBackend{InMemory: be, delay: 200 * time.Millisecond}
 
-	store, _ := putObjectStore(t, "b1")
+	store, _ := putObjectStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": slowBackend}, &fleetOpts{Order: []string{"b1"}, BackendTimeout: 50 * time.Millisecond, PendingDisabled: true})
 
 	_, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "timeout-key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"})
@@ -2149,7 +2091,7 @@ func TestLocationCache_Overwrite(t *testing.T) {
 func TestPutObject_InvalidatesCache(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
-	store, _ := putObjectStore(t, "b1")
+	store, _ := putObjectStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
 	mgr.LocationCache().Set("mykey", "old-be")
@@ -2192,7 +2134,7 @@ func TestPutObject_UsageLimitOverflow(t *testing.T) {
 		"b1": requestCapped(t, 10, 0, 0),
 		"b2": requestCapped(t, 100, 0, 0),
 	}
-	store, _ := putObjectStore(t, "b2")
+	store, _ := putObjectStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{UsageLimits: limits})
 
 	alreadySpent(mgr, "b1", 10, 0, 0)
@@ -2293,7 +2235,7 @@ func TestPutObject_UsageLimitRejectionsMetric(t *testing.T) {
 	limits := map[string]core.UsageLimits{
 		"b1": requestCapped(t, 10, 0, 0),
 	}
-	store, _ := putObjectStore(t, "b1")
+	store, _ := putObjectStore(t)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{UsageLimits: limits})
 
 	alreadySpent(mgr, "b1", 10, 0, 0)
@@ -2702,8 +2644,7 @@ func TestCopyObject_AllSourceHeadsFail(t *testing.T) {
 	b1.HeadErr = errors.New("head failed")
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
-		"b1", nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1}, nil)
 
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err == nil {
@@ -2720,9 +2661,17 @@ func TestCopyObject_DestWriteFails(t *testing.T) {
 	dst.PutErr = errors.New("write failed")
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "src-be"}}, nil,
-		"dst-be", nil)
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"src-be": src, "dst-be": dst}, &fleetOpts{Order: []string{"src-be", "dst-be"}, BackendTimeout: 30 * time.Second, PendingDisabled: true})
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "src-be"}}, nil)
+	// The source's own backend has no room, so the copy is placed on the
+	// destination whose write fails.
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"src-be": src, "dst-be": dst}, &fleetOpts{
+		Order:           []string{"src-be", "dst-be"},
+		BackendTimeout:  30 * time.Second,
+		PendingDisabled: true,
+		QuotaBaselines: map[string]core.BackendQuotaUsage{
+			"src-be": {BackendName: "src-be", BytesLimit: 100, BytesUsed: 100},
+		},
+	})
 
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err == nil {
 		t.Fatal("expected error when dest PutObject fails")
@@ -2738,8 +2687,7 @@ func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
 	dst := backendtest.NewInMemory()
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "src-be"}}, nil,
-		"dst-be", nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "src-be"}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"src-be": src, "dst-be": dst},
 		&fleetOpts{
 			Order:           []string{"src-be", "dst-be"},
@@ -2763,8 +2711,7 @@ func TestCopyObject_SourceReadFails(t *testing.T) {
 	src.GetReadErr = errors.New("disk I/O error")
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "src-be"}}, nil,
-		"dst-be", nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "src-be"}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"src-be": src, "dst-be": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"src-be", "dst-be"}, BackendTimeout: 30 * time.Second, PendingDisabled: true})
 
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err == nil {
@@ -2780,8 +2727,7 @@ func TestCopyObject_AllSourceGetObjectsFail(t *testing.T) {
 	src.GetErr = errors.New("get unavailable")
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "src-be"}}, nil,
-		"dst-be", nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "src-be"}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"src-be": src, "dst-be": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"src-be", "dst-be"}, BackendTimeout: 30 * time.Second, PendingDisabled: true})
 
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err == nil {
@@ -2908,8 +2854,7 @@ func TestCopyObject_SourceGetPanics(t *testing.T) {
 	srcBackend.GetPanic = true
 
 	store, _ := copyObjectStore(t,
-		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil,
-		"b1", nil)
+		[]core.ObjectLocation{{ObjectKey: "src", BackendName: "b1"}}, nil)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": srcBackend}, nil)
 
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err == nil {

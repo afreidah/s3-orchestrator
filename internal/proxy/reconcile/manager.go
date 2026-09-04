@@ -22,6 +22,7 @@ import (
 	"log/slog"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -40,7 +41,7 @@ import (
 type Stores interface {
 	ImportObject(ctx context.Context, req *core.ImportObjectRequest) (core.ImportOutcome, error)
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
-	DeleteObjectLocation(ctx context.Context, key, backendName string) error
+	DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error)
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error)
 	SweepStaleCleanupQueueRows(ctx context.Context, key, backendName string) (int64, error)
 }
@@ -124,6 +125,7 @@ type Manager struct {
 	backends BackendResolver
 	stores   Stores
 	usage    UsageRecorder
+	quota    *counter.QuotaTracker
 	codec    StoredInspector
 	log      *slog.Logger
 }
@@ -136,6 +138,7 @@ type Deps struct {
 	Backends BackendResolver
 	Stores   Stores
 	Usage    UsageRecorder
+	Quota    *counter.QuotaTracker
 	Codec    StoredInspector
 	Log      *slog.Logger
 }
@@ -146,7 +149,15 @@ func NewManager(d *Deps) *Manager {
 	must.NotNil("d.Backends", d.Backends)
 	must.NotNil("d.Stores", d.Stores)
 	must.NotNil("d.Usage", d.Usage)
-	return &Manager{backends: d.Backends, stores: d.Stores, usage: d.Usage, codec: d.Codec, log: d.Log}
+	must.NotNil("d.Quota", d.Quota)
+	return &Manager{
+		backends: d.Backends,
+		stores:   d.Stores,
+		usage:    d.Usage,
+		quota:    d.Quota,
+		codec:    d.Codec,
+		log:      d.Log,
+	}
 }
 
 // logger returns the configured logger or the default.
@@ -329,9 +340,11 @@ func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, know
 // reason to fail the reconcile.
 func (m *Manager) deleter() DeleterFn {
 	return func(ctx context.Context, key, backendName string) error {
-		if err := m.stores.DeleteObjectLocation(ctx, key, backendName); err != nil {
+		removed, err := m.stores.DeleteObjectLocation(ctx, key, backendName)
+		if err != nil {
 			return err
 		}
+		m.quota.Record(backendName, -removed)
 		if _, err := m.stores.SweepStaleCleanupQueueRows(ctx, key, backendName); err != nil {
 			m.logger().WarnContext(ctx, "failed to sweep cleanup_queue rows for stale key",
 				slog.String("key", key), slog.String("backend", backendName), "error", err)

@@ -282,7 +282,7 @@ func TestAdapter_LockObjectOnBackend_ReturnsRow(t *testing.T) {
 		KeyID:         "kid-1",
 		PlaintextSize: 50,
 	}
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/k", Backend: "backend-a", Size: 75, Form: form}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/k", Backend: "backend-a", Size: 75, Form: form}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -830,7 +830,7 @@ func TestAdapter_DecrementBackendQuota_SubtractsBytesUsed(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
-	mustRecordObject(t, s, "bucket/k", "backend-a", 1000)
+	seedBytesUsed(t, s, "backend-a", 1000)
 
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
 		if err := a.DecrementBackendQuota(ctx, "backend-a", 600); err != nil {
@@ -946,7 +946,7 @@ func TestAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState(t *testing.T)
 		KeyID:         "key-1",
 		PlaintextSize: 1024,
 	}
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1100, Form: form}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1100, Form: form}); err != nil {
 		t.Fatalf("RecordObject encrypted: %v", err)
 	}
 	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
@@ -981,7 +981,7 @@ func TestAdapter_GetExistingCopiesForUpdate_ReportsUnencryptedCopy(t *testing.T)
 	ctx := context.Background()
 	key := "bucket/plain"
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 

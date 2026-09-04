@@ -44,11 +44,12 @@ func (m *MockStores) EXPECT() *MockStoresMockRecorder {
 }
 
 // DeleteObjectLocation mocks base method.
-func (m *MockStores) DeleteObjectLocation(ctx context.Context, key, backendName string) error {
+func (m *MockStores) DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, key, backendName)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // DeleteObjectLocation indicates an expected call of DeleteObjectLocation.

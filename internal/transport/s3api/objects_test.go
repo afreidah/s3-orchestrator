@@ -41,14 +41,24 @@ import (
 // Returns the server, a cleanup func, and the mock store/backend for assertions.
 func newTestServer(t *testing.T, opts ...func(*storetest.MockMetadataStore)) (*httptest.Server, *storetest.MockMetadataStore, *backendtest.InMemory) {
 	t.Helper()
+	return newTestServerWithQuota(t, nil, opts...)
+}
+
+// newTestServerWithQuota is newTestServer with the byte counter seeded, for the
+// tests whose subject is what the transport reports when a backend has no room.
+// A nil baseline leaves the single backend unlimited.
+func newTestServerWithQuota(
+	t *testing.T,
+	baselines map[string]core.BackendQuotaUsage,
+	opts ...func(*storetest.MockMetadataStore),
+) (*httptest.Server, *storetest.MockMetadataStore, *backendtest.InMemory) {
+	t.Helper()
 
 	backend := backendtest.NewInMemory()
 	mockStore := storetest.NewMockMetadataStore(gomock.NewController(t))
 	for _, opt := range opts {
 		opt(mockStore)
 	}
-	mockStore.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("b1", nil).AnyTimes()
 	storetest.Permissive(mockStore)
 
 	st := proxytest.New(t, mockStore, &proxytest.StackOptions{
@@ -56,6 +66,7 @@ func newTestServer(t *testing.T, opts ...func(*storetest.MockMetadataStore)) (*h
 			Backends:        map[string]s3be.ObjectBackend{"b1": backend},
 			Order:           []string{"b1"},
 			RoutingStrategy: config.RoutingPack,
+			QuotaBaselines:  baselines,
 			Metrics:         mockStore,
 		}),
 	})
@@ -292,9 +303,8 @@ func TestPut_IfNoneMatchSpecificETagIgnored(t *testing.T) {
 // Asserts that status = , want 507.
 func TestPut_QuotaExhausted(t *testing.T) {
 	t.Parallel()
-	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-			Return("", core.ErrNoSpaceAvailable).AnyTimes()
+	ts, _, _ := newTestServerWithQuota(t, map[string]core.BackendQuotaUsage{
+		"b1": {BackendName: "b1", BytesLimit: 100, BytesUsed: 100},
 	})
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
@@ -323,8 +333,6 @@ func TestPut_QuotaExhausted(t *testing.T) {
 func TestPut_NoBackendCapacity_BodyIncludesCapacityHint(t *testing.T) {
 	t.Parallel()
 	mockStore := storetest.NewMockMetadataStore(gomock.NewController(t))
-	mockStore.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("b1", nil).AnyTimes()
 	mockStore.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(map[string]core.QuotaStat{
 			"alpha": {BackendName: "alpha", BytesUsed: 1024, BytesLimit: 4096},
@@ -370,8 +378,6 @@ func TestPut_NoBackendCapacity_BodyIncludesCapacityHint(t *testing.T) {
 func TestPut_NoBackendCapacity_QuotaStatsErrFallsBack(t *testing.T) {
 	t.Parallel()
 	mockStore := storetest.NewMockMetadataStore(gomock.NewController(t))
-	mockStore.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("b1", nil).AnyTimes()
 	storetest.Permissive(mockStore)
 	mockStore.EXPECT().GetQuotaStats(gomock.Any()).
 		Return(nil, core.ErrDBUnavailable).AnyTimes()
@@ -433,9 +439,11 @@ func newCapacityHintTestServer(t *testing.T, mockStore *storetest.MockMetadataSt
 // Asserts that status = , want 503.
 func TestPut_DBUnavailable(t *testing.T) {
 	t.Parallel()
+	// The ledger is what fails now: placement is decided in memory, so a DB
+	// outage surfaces when the write is recorded rather than when it is placed.
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-			Return("", core.ErrDBUnavailable).AnyTimes()
+		m.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
+			Return(nil, nil, core.ErrDBUnavailable).AnyTimes()
 	})
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
@@ -820,7 +828,7 @@ func TestDelete_Success(t *testing.T) {
 		m.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
 			Return([]core.DeletedCopy{
 				{BackendName: "b1", SizeBytes: 2},
-			}, nil).AnyTimes()
+			}, core.QuotaDeltas{"b1": -2}, nil).AnyTimes()
 	})
 
 	backend.Objects["mybucket/testkey"] = backendtest.Object{Data: []byte("hi")}
@@ -838,7 +846,7 @@ func TestDelete_IdempotentForMissing(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
-			Return(nil, core.ErrObjectNotFound).AnyTimes()
+			Return(nil, nil, core.ErrObjectNotFound).AnyTimes()
 	})
 
 	resp := doReq(t, ts, http.MethodDelete, ts.URL+"/mybucket/nonexistent", nil)
@@ -860,14 +868,16 @@ func TestDeleteObjects_Success(t *testing.T) {
 	t.Parallel()
 	ts, _, backend := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
-			Return([]core.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, nil).AnyTimes()
+			Return([]core.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, core.QuotaDeltas{"b1": -1}, nil).AnyTimes()
 		m.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
-			DoAndReturn(func(_ context.Context, keys []string) (map[string][]core.DeletedCopy, error) {
+			DoAndReturn(func(_ context.Context, keys []string) (map[string][]core.DeletedCopy, core.QuotaDeltas, error) {
 				out := make(map[string][]core.DeletedCopy, len(keys))
+				deltas := core.QuotaDeltas{}
 				for _, k := range keys {
 					out[k] = []core.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}
+					deltas.Add("b1", -1)
 				}
-				return out, nil
+				return out, deltas, nil
 			}).AnyTimes()
 	})
 
@@ -896,14 +906,16 @@ func TestDeleteObjects_QuietMode(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
-			Return([]core.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, nil).AnyTimes()
+			Return([]core.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}, core.QuotaDeltas{"b1": -1}, nil).AnyTimes()
 		m.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
-			DoAndReturn(func(_ context.Context, keys []string) (map[string][]core.DeletedCopy, error) {
+			DoAndReturn(func(_ context.Context, keys []string) (map[string][]core.DeletedCopy, core.QuotaDeltas, error) {
 				out := make(map[string][]core.DeletedCopy, len(keys))
+				deltas := core.QuotaDeltas{}
 				for _, k := range keys {
 					out[k] = []core.DeletedCopy{{BackendName: "b1", SizeBytes: 1}}
+					deltas.Add("b1", -1)
 				}
-				return out, nil
+				return out, deltas, nil
 			}).AnyTimes()
 	})
 
@@ -980,7 +992,7 @@ func TestDeleteObjects_WholeBatchFailure(t *testing.T) {
 	t.Parallel()
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
-			Return(nil, &core.S3Error{StatusCode: 500, Code: "InternalError", Message: "db error"}).AnyTimes()
+			Return(nil, nil, &core.S3Error{StatusCode: 500, Code: "InternalError", Message: "db error"}).AnyTimes()
 	})
 
 	body := strings.NewReader(`<Delete><Object><Key>good</Key></Object><Object><Key>bad</Key></Object></Delete>`)
@@ -1012,7 +1024,7 @@ func TestDeleteObjects_TypedErrorSurfaces(t *testing.T) {
 	// Typed S3Error case.
 	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
-			Return(nil, &core.S3Error{StatusCode: 503, Code: "ServiceUnavailable", Message: "db down"}).AnyTimes()
+			Return(nil, nil, &core.S3Error{StatusCode: 503, Code: "ServiceUnavailable", Message: "db down"}).AnyTimes()
 	})
 
 	body := strings.NewReader(`<Delete><Object><Key>k1</Key></Object><Object><Key>k2</Key></Object></Delete>`)
@@ -1031,7 +1043,7 @@ func TestDeleteObjects_TypedErrorSurfaces(t *testing.T) {
 	// Untyped error case -> InternalError fallback.
 	tsUntyped, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
 		m.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).
-			Return(nil, errors.New("untyped backend error")).AnyTimes()
+			Return(nil, nil, errors.New("untyped backend error")).AnyTimes()
 	})
 
 	bodyUntyped := strings.NewReader(`<Delete><Object><Key>k1</Key></Object></Delete>`)

@@ -23,6 +23,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -88,7 +89,12 @@ func newTestManager(t *testing.T, ctrl *gomock.Controller) (*Manager, *MockStore
 	// Admitted by default so each test states only the accounting it cares
 	// about; the refusal path has its own test.
 	usage.EXPECT().Allow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true).AnyTimes()
-	return NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage}), stores, backends, usage
+	return NewManager(&Deps{
+		Backends: backends,
+		Stores:   stores,
+		Usage:    usage,
+		Quota:    counter.NewQuotaTracker(nil),
+	}), stores, backends, usage
 }
 
 // importOf matches the import request for one discovered key. The write time
@@ -125,11 +131,14 @@ func TestDeleter_SweepsCleanupQueue(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	m, stores, _, _ := newTestManager(t, ctrl)
 
-	stores.EXPECT().DeleteObjectLocation(gomock.Any(), "bucket/k1", "b1").Return(nil).Times(1)
+	stores.EXPECT().DeleteObjectLocation(gomock.Any(), "bucket/k1", "b1").Return(int64(512), nil).Times(1)
 	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), "bucket/k1", "b1").Return(int64(0), nil).Times(1)
 
 	if err := m.deleter()(t.Context(), "bucket/k1", "b1"); err != nil {
 		t.Fatalf("deleter: %v", err)
+	}
+	if got := m.quota.Delta("b1"); got != -512 {
+		t.Errorf("quota delta = %d, want -512", got)
 	}
 }
 
@@ -140,7 +149,7 @@ func TestDeleter_SweepFailureNotPropagated(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	m, stores, _, _ := newTestManager(t, ctrl)
 
-	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil)
 	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(int64(0), errors.New("sweep boom"))
 
@@ -157,7 +166,7 @@ func TestDeleter_DeleteFailurePropagates(t *testing.T) {
 	m, stores, _, _ := newTestManager(t, ctrl)
 
 	want := errors.New("delete boom")
-	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).Return(want)
+	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), want)
 	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	if err := m.deleter()(t.Context(), "bucket/k1", "b1"); !errors.Is(err, want) {
@@ -241,7 +250,7 @@ func TestReconcileBackend_ImportsAndDeletes(t *testing.T) {
 	// a and c are backend-only; b matches; x is ledger-only.
 	stores.EXPECT().ImportObject(gomock.Any(), importOf("vb/a", "b1", 1, false)).Return(core.ImportInserted, nil)
 	stores.EXPECT().ImportObject(gomock.Any(), importOf("vb/c", "b1", 3, false)).Return(core.ImportInserted, nil)
-	stores.EXPECT().DeleteObjectLocation(gomock.Any(), "vb/x", "b1").Return(nil)
+	stores.EXPECT().DeleteObjectLocation(gomock.Any(), "vb/x", "b1").Return(int64(0), nil)
 	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), "vb/x", "b1").Return(int64(0), nil)
 	usage.EXPECT().APICalls(s3op.ListObjects, "b1", gomock.Any()).Times(1)
 
@@ -495,7 +504,7 @@ func TestSyncBackend_RefusedWhenOutOfAPIBudget(t *testing.T) {
 	backends := NewMockBackendResolver(ctrl)
 	usage := NewMockUsageRecorder(ctrl)
 	usage.EXPECT().Allow("b1", gomock.Any(), int64(0), int64(0)).Return(false)
-	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage})
+	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage, Quota: counter.NewQuotaTracker(nil)})
 
 	// The backend is never resolved and no page is ever charged: the refusal
 	// has to land before any of that, or it has not saved anything.
@@ -567,7 +576,7 @@ func TestSyncBackend_StopsAtTheAPIBudget(t *testing.T) {
 	stores := NewMockStores(ctrl)
 	backends := NewMockBackendResolver(ctrl)
 	usage := NewMockUsageRecorder(ctrl)
-	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage})
+	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage, Quota: counter.NewQuotaTracker(nil)})
 
 	lister := newPagedLister([][]backend.ListedObject{
 		{{Key: "vb/a", SizeBytes: 1}},
@@ -631,7 +640,7 @@ func TestReconcileBackend_RefusesAnExhaustedBackend(t *testing.T) {
 	stores := NewMockStores(ctrl)
 	backends := NewMockBackendResolver(ctrl)
 	usage := NewMockUsageRecorder(ctrl)
-	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage})
+	m := NewManager(&Deps{Backends: backends, Stores: stores, Usage: usage, Quota: counter.NewQuotaTracker(nil)})
 
 	backends.EXPECT().GetBackend("b1").Return(newPagedLister(nil), nil).AnyTimes()
 	usage.EXPECT().Allow("b1", gomock.Any(), int64(0), int64(0)).Return(false)

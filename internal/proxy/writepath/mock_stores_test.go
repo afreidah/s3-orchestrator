@@ -116,12 +116,13 @@ func (mr *MockCoordinatorStoresMockRecorder) DecrementOrphanBytes(ctx, backendNa
 }
 
 // DeleteObject mocks base method.
-func (m *MockCoordinatorStores) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, error) {
+func (m *MockCoordinatorStores) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObject", ctx, key)
 	ret0, _ := ret[0].([]core.DeletedCopy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(core.QuotaDeltas)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // DeleteObject indicates an expected call of DeleteObject.
@@ -131,11 +132,12 @@ func (mr *MockCoordinatorStoresMockRecorder) DeleteObject(ctx, key any) *gomock.
 }
 
 // DeleteObjectLocation mocks base method.
-func (m *MockCoordinatorStores) DeleteObjectLocation(ctx context.Context, key, backendName string) error {
+func (m *MockCoordinatorStores) DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, key, backendName)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // DeleteObjectLocation indicates an expected call of DeleteObjectLocation.
@@ -145,12 +147,13 @@ func (mr *MockCoordinatorStoresMockRecorder) DeleteObjectLocation(ctx, key, back
 }
 
 // DeleteObjectsBatch mocks base method.
-func (m *MockCoordinatorStores) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, error) {
+func (m *MockCoordinatorStores) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObjectsBatch", ctx, keys)
 	ret0, _ := ret[0].(map[string][]core.DeletedCopy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(core.QuotaDeltas)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // DeleteObjectsBatch indicates an expected call of DeleteObjectsBatch.
@@ -201,6 +204,20 @@ func (mr *MockCoordinatorStoresMockRecorder) EnqueueCleanup(ctx, backendName, ob
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnqueueCleanup", reflect.TypeOf((*MockCoordinatorStores)(nil).EnqueueCleanup), ctx, backendName, objectKey, reason, sizeBytes)
 }
 
+// FlushQuotaDeltas mocks base method.
+func (m *MockCoordinatorStores) FlushQuotaDeltas(ctx context.Context, deltas core.QuotaDeltas) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FlushQuotaDeltas", ctx, deltas)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// FlushQuotaDeltas indicates an expected call of FlushQuotaDeltas.
+func (mr *MockCoordinatorStoresMockRecorder) FlushQuotaDeltas(ctx, deltas any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushQuotaDeltas", reflect.TypeOf((*MockCoordinatorStores)(nil).FlushQuotaDeltas), ctx, deltas)
+}
+
 // GetAllObjectLocations mocks base method.
 func (m *MockCoordinatorStores) GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
@@ -214,36 +231,6 @@ func (m *MockCoordinatorStores) GetAllObjectLocations(ctx context.Context, key s
 func (mr *MockCoordinatorStoresMockRecorder) GetAllObjectLocations(ctx, key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllObjectLocations", reflect.TypeOf((*MockCoordinatorStores)(nil).GetAllObjectLocations), ctx, key)
-}
-
-// GetBackendWithSpace mocks base method.
-func (m *MockCoordinatorStores) GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetBackendWithSpace", ctx, size, backendOrder)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetBackendWithSpace indicates an expected call of GetBackendWithSpace.
-func (mr *MockCoordinatorStoresMockRecorder) GetBackendWithSpace(ctx, size, backendOrder any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBackendWithSpace", reflect.TypeOf((*MockCoordinatorStores)(nil).GetBackendWithSpace), ctx, size, backendOrder)
-}
-
-// GetLeastUtilizedBackend mocks base method.
-func (m *MockCoordinatorStores) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetLeastUtilizedBackend", ctx, size, eligible)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetLeastUtilizedBackend indicates an expected call of GetLeastUtilizedBackend.
-func (mr *MockCoordinatorStoresMockRecorder) GetLeastUtilizedBackend(ctx, size, eligible any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeastUtilizedBackend", reflect.TypeOf((*MockCoordinatorStores)(nil).GetLeastUtilizedBackend), ctx, size, eligible)
 }
 
 // GetObjectBackendsForKeys mocks base method.
@@ -347,6 +334,21 @@ func (m *MockCoordinatorStores) InsertPending(ctx context.Context, p *core.Pendi
 func (mr *MockCoordinatorStoresMockRecorder) InsertPending(ctx, p any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertPending", reflect.TypeOf((*MockCoordinatorStores)(nil).InsertPending), ctx, p)
+}
+
+// ListBackendQuotaUsage mocks base method.
+func (m *MockCoordinatorStores) ListBackendQuotaUsage(ctx context.Context) ([]core.BackendQuotaUsage, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListBackendQuotaUsage", ctx)
+	ret0, _ := ret[0].([]core.BackendQuotaUsage)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListBackendQuotaUsage indicates an expected call of ListBackendQuotaUsage.
+func (mr *MockCoordinatorStoresMockRecorder) ListBackendQuotaUsage(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBackendQuotaUsage", reflect.TypeOf((*MockCoordinatorStores)(nil).ListBackendQuotaUsage), ctx)
 }
 
 // ListCleanupDLQ mocks base method.
@@ -470,13 +472,14 @@ func (mr *MockCoordinatorStoresMockRecorder) PendingDepth(ctx any) *gomock.Call 
 }
 
 // PromotePending mocks base method.
-func (m *MockCoordinatorStores) PromotePending(ctx context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.DeletedCopy, error) {
+func (m *MockCoordinatorStores) PromotePending(ctx context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.DeletedCopy, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "PromotePending", ctx, p)
 	ret0, _ := ret[0].(core.PendingPromoteResult)
 	ret1, _ := ret[1].([]core.DeletedCopy)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
+	ret2, _ := ret[2].(core.QuotaDeltas)
+	ret3, _ := ret[3].(error)
+	return ret0, ret1, ret2, ret3
 }
 
 // PromotePending indicates an expected call of PromotePending.
@@ -501,12 +504,13 @@ func (mr *MockCoordinatorStoresMockRecorder) ReconcileUsage(ctx any) *gomock.Cal
 }
 
 // RecordObject mocks base method.
-func (m *MockCoordinatorStores) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
+func (m *MockCoordinatorStores) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RecordObject", ctx, req)
 	ret0, _ := ret[0].([]core.DeletedCopy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(core.QuotaDeltas)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // RecordObject indicates an expected call of RecordObject.
