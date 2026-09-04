@@ -20,6 +20,7 @@ import (
 	"time"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
@@ -117,10 +118,14 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 	// different validators.
 	srcIdentity := copyIdentity(locations, contentType, metadata)
 
-	destBackendName, err := o.coord.SelectWriteTarget(ctx, span, operation, size)
+	destBackendName, reserved, err := o.coord.SelectWriteTarget(span, operation, size)
 	if err != nil {
 		return "", err
 	}
+	// Released on every path that does not reach a finalizer, including the
+	// native attempt falling back to the materialized one - which reserves
+	// nothing new, because the destination was already chosen.
+	defer reserved.Release()
 	destBackend, err := o.core.GetBackend(destBackendName)
 	if err != nil {
 		observe.RecordSpanError(span, err)
@@ -147,6 +152,7 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 			srcForm:         srcForm,
 			identity:        srcIdentity,
 			tags:            tags,
+			reserved:        reserved,
 			start:           start,
 		}
 		if etag, handled, nerr := o.tryNativeCopy(ctx, req); handled {
@@ -185,6 +191,7 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 		srcForm:         srcForm,
 		identity:        srcIdentity,
 		tags:            tags,
+		reserved:        reserved,
 		start:           start,
 	}, etag)
 }
@@ -277,6 +284,7 @@ type materializedCopyContext struct {
 	srcForm         *core.StoredForm
 	identity        *core.ObjectIdentity
 	tags            []core.Tag
+	reserved        *counter.Reservation
 	start           time.Time
 }
 
@@ -292,6 +300,7 @@ type nativeCopyContext struct {
 	srcForm         *core.StoredForm
 	identity        *core.ObjectIdentity
 	tags            []core.Tag
+	reserved        *counter.Reservation
 	start           time.Time
 }
 

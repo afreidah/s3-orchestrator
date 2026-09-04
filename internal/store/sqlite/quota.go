@@ -13,94 +13,11 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
-
-// -------------------------------------------------------------------------
-// ROUTING ELIGIBILITY
-// -------------------------------------------------------------------------
-
-// GetBackendWithSpace finds a backend with enough quota for the given size.
-// Returns the backend name or ErrNoSpaceAvailable if none have enough space.
-func (s *Store) GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error) {
-	for _, name := range backendOrder {
-		var available int64
-		err := s.db.QueryRowContext(ctx, `
-			SELECT CASE
-				WHEN q.bytes_limit = 0 THEN 9223372036854775807
-				ELSE (q.bytes_limit - q.bytes_used - q.orphan_bytes - COALESCE(m.inflight, 0))
-			END AS available
-			FROM backend_quotas q
-			LEFT JOIN (
-				SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
-				FROM multipart_uploads mu
-				JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
-				GROUP BY mu.backend_name
-			) m ON m.backend_name = q.backend_name
-			WHERE q.backend_name = ?`, name).Scan(&available)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return "", fmt.Errorf("failed to check quota for %s: %w", name, err)
-		}
-
-		if available >= size {
-			return name, nil
-		}
-	}
-
-	return "", core.ErrNoSpaceAvailable
-}
-
-// GetLeastUtilizedBackend finds the backend with the lowest utilization ratio
-// that has enough space for the given size. Used by the "spread" routing
-// strategy. The eligible list expands inside SQLite via the JSON1
-// extension's json_each, so the query body is a fixed literal with no
-// dynamic SQL string construction.
-func (s *Store) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
-	if len(eligible) == 0 {
-		return "", core.ErrNoSpaceAvailable
-	}
-
-	eligibleJSON, err := json.Marshal(eligible)
-	if err != nil {
-		return "", fmt.Errorf("encode eligible backend list: %w", err)
-	}
-
-	const query = `
-		SELECT q.backend_name
-		FROM backend_quotas q
-		LEFT JOIN (
-			SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
-			FROM multipart_uploads mu
-			JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
-			GROUP BY mu.backend_name
-		) m ON m.backend_name = q.backend_name
-		WHERE q.backend_name IN (SELECT value FROM json_each(?))
-		  AND CASE WHEN q.bytes_limit = 0 THEN 9223372036854775807
-		           ELSE (q.bytes_limit - q.bytes_used - q.orphan_bytes - COALESCE(m.inflight, 0))
-		      END >= ?
-		ORDER BY CASE WHEN q.bytes_limit = 0 THEN 0.0
-		              ELSE CAST(q.bytes_used + q.orphan_bytes AS REAL) / CAST(q.bytes_limit AS REAL)
-		         END ASC
-		LIMIT 1`
-
-	var backendName string
-	err = s.db.QueryRowContext(ctx, query, string(eligibleJSON), size).Scan(&backendName)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", core.ErrNoSpaceAvailable
-	}
-	if err != nil {
-		return "", fmt.Errorf("failed to find least utilized backend: %w", err)
-	}
-	return backendName, nil
-}
 
 // -------------------------------------------------------------------------
 // QUOTA ADMIN AND STATS
@@ -148,6 +65,33 @@ func (s *Store) GetQuotaStats(ctx context.Context) (map[string]core.QuotaStat, e
 		}
 		qs.UpdatedAt = parsed
 		return qs.BackendName, qs, nil
+	})
+}
+
+// ListBackendQuotaUsage returns each backend's ceiling and the byte totals a
+// write is judged against, for the quota tracker's baseline refresh. The
+// in-flight join mirrors GetBackendWithSpace: parts of uploads that have not
+// completed occupy the backend without appearing in bytes_used.
+func (s *Store) ListBackendQuotaUsage(ctx context.Context) ([]core.BackendQuotaUsage, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT q.backend_name, q.bytes_limit, q.bytes_used, q.orphan_bytes,
+		       COALESCE(m.inflight, 0) AS inflight_bytes
+		FROM backend_quotas q
+		LEFT JOIN (
+			SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
+			FROM multipart_uploads mu
+			JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
+			GROUP BY mu.backend_name
+		) m ON m.backend_name = q.backend_name`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query backend quota usage: %w", err)
+	}
+	return collectRows(rows, "backend quota usage", func(rows *sql.Rows) (core.BackendQuotaUsage, error) {
+		var u core.BackendQuotaUsage
+		if err := rows.Scan(&u.BackendName, &u.BytesLimit, &u.BytesUsed, &u.OrphanBytes, &u.InflightBytes); err != nil {
+			return core.BackendQuotaUsage{}, fmt.Errorf("failed to scan backend quota usage: %w", err)
+		}
+		return u, nil
 	})
 }
 

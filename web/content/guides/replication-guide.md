@@ -1,5 +1,6 @@
 ---
 title: "Understanding Replication"
+description: "How replication works internally: where replicas are placed, what side effects to expect, and how to monitor and tune the workers."
 weight: 3
 ---
 

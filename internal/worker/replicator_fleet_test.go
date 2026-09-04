@@ -153,20 +153,6 @@ func replicateSuccessStubs(store *storetest.MockMetadataStore, locations []core.
 		Return(locations, nil).AnyTimes()
 	store.EXPECT().GetUnderReplicatedObjectsExcluding(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(locations, nil).AnyTimes()
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ int64, eligible []string) (string, error) {
-			if len(eligible) > 0 {
-				return eligible[0], nil
-			}
-			return "", core.ErrNoSpaceAvailable
-		}).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ int64, eligible []string) (string, error) {
-			if len(eligible) > 0 {
-				return eligible[0], nil
-			}
-			return "", core.ErrNoSpaceAvailable
-		}).AnyTimes()
 	store.EXPECT().RecordReplica(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubRecordReplica(rt)).AnyTimes()
 }
@@ -209,19 +195,12 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ int64, eligible []string) (string, error) {
-			if len(eligible) > 0 {
-				return eligible[0], nil
-			}
-			return "", nil
-		}).AnyTimes()
 	storetest.Permissive(store)
 
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory(), "b3": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"b1", "b2", "b3"}})
 
 	exclusion := map[string]bool{"b1": true, "b2": true}
-	target := w.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
+	target, _ := w.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
 	if target != "b3" {
 		t.Errorf("expected b3, got %q", target)
 	}
@@ -232,10 +211,16 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveStore(t)
-	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"b1", "b2"}})
+	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory()}, &fleetOpts{
+		Order: []string{"b1", "b2"},
+		QuotaBaselines: map[string]core.BackendQuotaUsage{
+			"b1": {BackendName: "b1", BytesLimit: 1000},
+			"b2": {BackendName: "b2", BytesLimit: 1000, BytesUsed: 990},
+		},
+	})
 
 	exclusion := map[string]bool{"b1": true}
-	if target := w.FindReplicaTarget(context.Background(), "key1", 50, exclusion); target != "" {
+	if target, _ := w.FindReplicaTarget(context.Background(), "key1", 50, exclusion); target != "" {
 		t.Errorf("expected empty (no space), got %q", target)
 	}
 }
@@ -246,27 +231,35 @@ func TestSelectReplicaTarget_NoSpaceAvailable(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("", core.ErrNoSpaceAvailable).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("", core.ErrNoSpaceAvailable).AnyTimes()
 	storetest.Permissive(store)
 
-	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"b1", "b2"}})
+	// b2 is the only candidate left once b1 is excluded, and it is past its
+	// limit, so the target selection has nowhere to place the replica.
+	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory()}, &fleetOpts{
+		Order: []string{"b1", "b2"},
+		QuotaBaselines: map[string]core.BackendQuotaUsage{
+			"b2": {BackendName: "b2", BytesLimit: 100, BytesUsed: 500},
+		},
+	})
 
 	exclusion := map[string]bool{"b1": true}
-	if target := w.FindReplicaTarget(context.Background(), "key1", 50, exclusion); target != "" {
+	if target, _ := w.FindReplicaTarget(context.Background(), "key1", 50, exclusion); target != "" {
 		t.Errorf("expected empty (no space available), got %q", target)
 	}
 }
 
-// TestFindReplicaTarget_EmptyStats handles a missing stats map.
+// TestFindReplicaTarget_EmptyStats asserts a backend the counter holds no
+// baseline for is not a target. An unprovisioned backend is one nothing can
+// prove has room, so it drops out of routing rather than being selected and
+// failing at write time.
 func TestFindReplicaTarget_EmptyStats(t *testing.T) {
 	t.Parallel()
 	store := newPermissiveStore(t)
-	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{})
+	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{
+		QuotaBaselines: map[string]core.BackendQuotaUsage{},
+	})
 
-	if target := w.FindReplicaTarget(context.Background(), "key1", 50, map[string]bool{}); target != "" {
+	if target, _ := w.FindReplicaTarget(context.Background(), "key1", 50, map[string]bool{}); target != "" {
 		t.Errorf("expected empty with no quota stats, got %q", target)
 	}
 }

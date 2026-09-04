@@ -1,7 +1,7 @@
 ---
 title: "s3-orchestrator guides"
 linkTitle: "Guides"
-description: "Step-by-step walkthroughs: stacking provider free tiers, multi-cloud redundancy, MinIO cloud replication, deployment on Nomad or systemd, and the terminal object browser."
+description: "Step-by-step walkthroughs: stacking provider free tiers, multi-cloud redundancy, MinIO replication, and deployment on Nomad or systemd."
 chapter: true
 weight: 30
 ---

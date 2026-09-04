@@ -807,7 +807,7 @@ func TestReconcile_StaleRowSweepsCleanupQueue(t *testing.T) {
 	// Seed an object_locations row pointing at a key that was never
 	// uploaded to the backend, plus a cleanup_queue entry for the same
 	// key+backend with a corresponding orphan_bytes credit.
-	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: staleKey, Backend: backend, Size: sizeBytes}); err != nil {
+	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: staleKey, Backend: backend, Size: sizeBytes}); err != nil {
 		t.Fatalf("seed RecordObject: %v", err)
 	}
 	if err := testStore.EnqueueCleanup(ctx, backend, staleKey, "test-seed", sizeBytes); err != nil {
@@ -959,6 +959,7 @@ func TestSpreadWriteRouting_DistributesAcrossBackends(t *testing.T) {
 		CacheTTL:       60 * time.Second,
 		BackendTimeout: 30 * time.Second,
 	})
+	registerStack(t, spreadStack)
 	_ = proxytest.BuildWorkers(spreadStack, stores)
 	spreadSrv := &s3api.Server{
 		Objects:   spreadStack.Objects,
@@ -1053,6 +1054,7 @@ func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
 		CacheTTL:       60 * time.Second,
 		BackendTimeout: 30 * time.Second,
 	})
+	registerStack(t, spreadStack)
 	_ = proxytest.BuildWorkers(spreadStack, stores)
 	spreadSrv := &s3api.Server{
 		Objects:   spreadStack.Objects,
@@ -1089,9 +1091,14 @@ func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
 	resetState(t)
 	spreadStack.Objects.LocationCache().Clear()
 
-	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "prefill"), Backend: "minio-1", Size: 512}); err != nil {
+	_, prefillDeltas, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "prefill"), Backend: "minio-1", Size: 512})
+	if err != nil {
 		t.Fatalf("RecordObject prefill: %v", err)
 	}
+	// The imbalance this test is about only exists once the counter carries it
+	// and the tracker has reloaded, or spread ranks both backends at zero.
+	commitQuota(t, prefillDeltas)
+	refreshQuota(t)
 
 	keys := make([]string, 3)
 	for i := range keys {
@@ -1132,6 +1139,7 @@ func TestSpreadWriteRouting_ContrastWithPackBehavior(t *testing.T) {
 		CacheTTL:       60 * time.Second,
 		BackendTimeout: 30 * time.Second,
 	})
+	registerStack(t, spreadStack)
 	_ = proxytest.BuildWorkers(spreadStack, stores)
 	spreadSrv := &s3api.Server{
 		Objects:   spreadStack.Objects,
@@ -1265,6 +1273,7 @@ func TestRebalancePackTight(t *testing.T) {
 		Threshold: 0,
 	}
 
+	flushQuota(t)
 	movedSum, err := testWorkers.Rebalancer.Rebalance(ctx, packCfg, nil)
 	moved := movedSum.Succeeded
 	if err != nil {
@@ -1297,6 +1306,7 @@ func TestRebalancePackTight(t *testing.T) {
 	ws.seed(ctx, "rebal-pack/noop", 5, 200)
 
 	// minio-1 is 97.6% (1000/1024), minio-2 is 0%  -  nothing to consolidate
+	flushQuota(t)
 	movedSum, err = testWorkers.Rebalancer.Rebalance(ctx, packCfg, nil)
 	moved = movedSum.Succeeded
 	if err != nil {
@@ -1340,6 +1350,7 @@ func TestRebalancePackTinyToFuller_DestHasRoom(t *testing.T) {
 	t.Logf("before: minio-1=%d (%.1f%%) minio-2=%d (%.1f%%)",
 		m1Before, float64(m1Before)/1024*100, m2Before, float64(m2Before)/2048*100)
 
+	flushQuota(t)
 	movedSum, err := testWorkers.Rebalancer.Rebalance(ctx, packCfg, nil)
 	moved := movedSum.Succeeded
 	if err != nil {
@@ -1393,6 +1404,7 @@ func TestRebalancePackTinyToFuller_DestIsFull(t *testing.T) {
 	t.Logf("before: minio-1=%d minio-2=%d",
 		queryQuotaUsed(t, "minio-1"), queryQuotaUsed(t, "minio-2"))
 
+	flushQuota(t)
 	movedSum, err := testWorkers.Rebalancer.Rebalance(ctx, packCfg, nil)
 	moved := movedSum.Succeeded
 	if err != nil {
@@ -1440,6 +1452,7 @@ func TestRebalanceSpreadEven(t *testing.T) {
 		Threshold: 0,
 	}
 
+	flushQuota(t)
 	movedSum, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg, nil)
 	moved := movedSum.Succeeded
 	if err != nil {
@@ -1535,6 +1548,7 @@ func TestRebalanceSpreadAlreadyBalanced(t *testing.T) {
 		Threshold: 0,
 	}
 
+	flushQuota(t)
 	movedSum, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg, nil)
 	moved := movedSum.Succeeded
 	if err != nil {
@@ -1571,6 +1585,7 @@ func TestRebalanceSpreadOversizedObject(t *testing.T) {
 		Threshold: 0,
 	}
 
+	flushQuota(t)
 	movedSum, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg, nil)
 	moved := movedSum.Succeeded
 	if err != nil {
@@ -1615,6 +1630,7 @@ func TestRebalanceSpreadStableAcrossCycles(t *testing.T) {
 	}
 
 	// Cycle 1
+	flushQuota(t)
 	moved1Sum, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg, nil)
 	moved1 := moved1Sum.Succeeded
 	if err != nil {
@@ -1625,6 +1641,7 @@ func TestRebalanceSpreadStableAcrossCycles(t *testing.T) {
 	t.Logf("cycle 1: moved %d, minio-1=%d minio-2=%d", moved1, m1After1, m2After1)
 
 	// Cycle 2  -  should be a no-op, nothing bounces
+	flushQuota(t)
 	moved2Sum, err := testWorkers.Rebalancer.Rebalance(ctx, spreadCfg, nil)
 	moved2 := moved2Sum.Succeeded
 	if err != nil {
@@ -1668,6 +1685,7 @@ func TestRebalanceSpreadBatchLimited(t *testing.T) {
 	}
 
 	// Cycle 1: moves 2
+	flushQuota(t)
 	moved1Sum, err := testWorkers.Rebalancer.Rebalance(ctx, smallBatchCfg, nil)
 	moved1 := moved1Sum.Succeeded
 	if err != nil {
@@ -1682,6 +1700,7 @@ func TestRebalanceSpreadBatchLimited(t *testing.T) {
 	}
 
 	// Cycle 2: moves remaining needed
+	flushQuota(t)
 	moved2Sum, err := testWorkers.Rebalancer.Rebalance(ctx, smallBatchCfg, nil)
 	moved2 := moved2Sum.Succeeded
 	if err != nil {
@@ -1697,6 +1716,7 @@ func TestRebalanceSpreadBatchLimited(t *testing.T) {
 	}
 
 	// Cycle 3: should stabilize
+	flushQuota(t)
 	moved3Sum, err := testWorkers.Rebalancer.Rebalance(ctx, smallBatchCfg, nil)
 	moved3 := moved3Sum.Succeeded
 	if err != nil {
@@ -1743,6 +1763,7 @@ func TestRebalanceThresholdSkip(t *testing.T) {
 		Threshold: 0.99, // extremely high threshold
 	}
 
+	flushQuota(t)
 	movedSum, err := testWorkers.Rebalancer.Rebalance(ctx, skipCfg, nil)
 	moved := movedSum.Succeeded
 	if err != nil {
@@ -2142,6 +2163,7 @@ func TestRebalancerWithReplicas(t *testing.T) {
 		BatchSize: 10,
 		Threshold: 0,
 	}
+	flushQuota(t)
 	_, err = testWorkers.Rebalancer.Rebalance(ctx, rebalCfg, nil)
 	if err != nil {
 		t.Fatalf("Rebalance: %v", err)
@@ -2872,16 +2894,20 @@ func TestStore_RecordObject_OverwriteUpdatesQuota(t *testing.T) {
 
 	key := uniqueKey(t, "store-overwrite")
 
-	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: internalKey(key), Backend: "minio-1", Size: 100}); err != nil {
+	_, deltasA, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: internalKey(key), Backend: "minio-1", Size: 100})
+	if err != nil {
 		t.Fatalf("RecordObject A: %v", err)
 	}
+	commitQuota(t, deltasA)
 	if used := queryQuotaUsed(t, "minio-1"); used != 100 {
 		t.Fatalf("minio-1 after first record = %d, want 100", used)
 	}
 
-	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: internalKey(key), Backend: "minio-2", Size: 200}); err != nil {
+	_, deltasB, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: internalKey(key), Backend: "minio-2", Size: 200})
+	if err != nil {
 		t.Fatalf("RecordObject B: %v", err)
 	}
+	commitQuota(t, deltasB)
 
 	if used := queryQuotaUsed(t, "minio-1"); used != 0 {
 		t.Errorf("minio-1 after overwrite = %d, want 0", used)
@@ -2908,7 +2934,7 @@ func TestStore_DeleteObject_NotFound(t *testing.T) {
 
 	resetState(t)
 
-	_, err := testStore.DeleteObject(ctx, "nonexistent-key-"+fmt.Sprintf("%d", time.Now().UnixNano()))
+	_, _, err := testStore.DeleteObject(ctx, "nonexistent-key-"+fmt.Sprintf("%d", time.Now().UnixNano()))
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -2932,9 +2958,11 @@ func TestStore_MoveObjectLocation_RaceSafe(t *testing.T) {
 
 	key := uniqueKey(t, "store-move")
 
-	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-1", Size: 100}); err != nil {
+	_, deltas, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-1", Size: 100})
+	if err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
+	commitQuota(t, deltas)
 
 	size, err := testStore.MoveObjectLocation(ctx, key, "minio-1", "minio-2")
 	if err != nil {
@@ -2943,6 +2971,9 @@ func TestStore_MoveObjectLocation_RaceSafe(t *testing.T) {
 	if size != 100 {
 		t.Errorf("moved size = %d, want 100", size)
 	}
+	// The move reports the bytes it shifted rather than charging them, so the
+	// counter only follows the row once the caller says so.
+	commitQuota(t, core.QuotaDeltas{"minio-1": -size, "minio-2": size})
 
 	if used := queryQuotaUsed(t, "minio-1"); used != 0 {
 		t.Errorf("minio-1 after move = %d, want 0", used)
@@ -2958,6 +2989,7 @@ func TestStore_MoveObjectLocation_RaceSafe(t *testing.T) {
 	if size != 0 {
 		t.Errorf("second move size = %d, want 0 (source gone)", size)
 	}
+	commitQuota(t, core.QuotaDeltas{"minio-1": -size, "minio-2": size})
 
 	if used := queryQuotaUsed(t, "minio-1"); used != 0 {
 		t.Errorf("minio-1 after second move = %d, want 0", used)
@@ -2982,7 +3014,7 @@ func TestStore_ListObjects_PaginationAndEscaping(t *testing.T) {
 		prefix + "has_underscore",
 	}
 	for _, key := range wildcardKeys {
-		if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-1", Size: 10}); err != nil {
+		if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-1", Size: 10}); err != nil {
 			t.Fatalf("RecordObject(%q): %v", key, err)
 		}
 	}
@@ -3027,88 +3059,74 @@ func TestStore_ListObjects_PaginationAndEscaping(t *testing.T) {
 	}
 }
 
-// TestStore_GetBackendWithSpace_RespectsOrder is one of the sub-cases extracted from the
-// original mega-TestStore; behaviour is preserved.
-func TestStore_GetBackendWithSpace_RespectsOrder(t *testing.T) {
+// TestStore_FlushQuotaDeltas_MovesTheCounter drives the write half of the
+// batched counter against Postgres: a flush applies the signed deltas to
+// backend_quotas, which is the only place bytes_used moves now that writes
+// report their deltas instead of updating the row.
+func TestStore_FlushQuotaDeltas_MovesTheCounter(t *testing.T) {
 	ctx := context.Background()
-	_ = ctx
 
 	resetState(t)
 
-	name, err := testStore.GetBackendWithSpace(ctx, 10, []string{"minio-1", "minio-2"})
-	if err != nil {
-		t.Fatalf("GetBackendWithSpace: %v", err)
+	if err := testStore.FlushQuotaDeltas(ctx, core.QuotaDeltas{"minio-1": 900, "minio-2": 100}); err != nil {
+		t.Fatalf("FlushQuotaDeltas: %v", err)
 	}
-	if name != "minio-1" {
-		t.Errorf("got %q, want %q (first in order)", name, "minio-1")
+	stats, err := testStore.GetQuotaStats(ctx)
+	if err != nil {
+		t.Fatalf("GetQuotaStats: %v", err)
+	}
+	if stats["minio-1"].BytesUsed != 900 || stats["minio-2"].BytesUsed != 100 {
+		t.Fatalf("bytes_used = %d/%d, want 900/100", stats["minio-1"].BytesUsed, stats["minio-2"].BytesUsed)
 	}
 
-	name, err = testStore.GetBackendWithSpace(ctx, 10, []string{"minio-2", "minio-1"})
+	// A negative delta debits, and the SQL clamps rather than going below zero,
+	// which is what keeps a delta-arithmetic bug from making a backend look
+	// like it holds a negative number of bytes.
+	if err := testStore.FlushQuotaDeltas(ctx, core.QuotaDeltas{"minio-1": -400, "minio-2": -5000}); err != nil {
+		t.Fatalf("FlushQuotaDeltas (debit): %v", err)
+	}
+	stats, err = testStore.GetQuotaStats(ctx)
 	if err != nil {
-		t.Fatalf("GetBackendWithSpace reversed: %v", err)
+		t.Fatalf("GetQuotaStats after debit: %v", err)
 	}
-	if name != "minio-2" {
-		t.Errorf("got %q, want %q (first in reversed order)", name, "minio-2")
+	if stats["minio-1"].BytesUsed != 500 {
+		t.Errorf("minio-1 bytes_used = %d, want 500", stats["minio-1"].BytesUsed)
 	}
-
-	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "fill"), Backend: "minio-1", Size: 1024}); err != nil {
-		t.Fatalf("RecordObject fill: %v", err)
-	}
-	name, err = testStore.GetBackendWithSpace(ctx, 1, []string{"minio-1", "minio-2"})
-	if err != nil {
-		t.Fatalf("GetBackendWithSpace after fill: %v", err)
-	}
-	if name != "minio-2" {
-		t.Errorf("got %q, want %q (minio-1 full)", name, "minio-2")
+	if stats["minio-2"].BytesUsed != 0 {
+		t.Errorf("minio-2 bytes_used = %d, want 0 (clamped)", stats["minio-2"].BytesUsed)
 	}
 }
 
-// TestStore_GetLeastUtilizedBackend_PicksLeastFull is one of the sub-cases extracted from the
-// original mega-TestStore; behaviour is preserved.
-func TestStore_GetLeastUtilizedBackend_PicksLeastFull(t *testing.T) {
+// TestStore_ListBackendQuotaUsage_ReportsOccupancy drives the read half: the
+// baseline the tracker is primed from carries the ceiling, the counter, and the
+// bytes on the backend the counter does not cover.
+func TestStore_ListBackendQuotaUsage_ReportsOccupancy(t *testing.T) {
 	ctx := context.Background()
-	_ = ctx
 
 	resetState(t)
 
-	name, err := testStore.GetLeastUtilizedBackend(ctx, 10, []string{"minio-1", "minio-2"})
+	if err := testStore.FlushQuotaDeltas(ctx, core.QuotaDeltas{"minio-1": 700}); err != nil {
+		t.Fatalf("FlushQuotaDeltas: %v", err)
+	}
+
+	usage, err := testStore.ListBackendQuotaUsage(ctx)
 	if err != nil {
-		t.Fatalf("GetLeastUtilizedBackend empty: %v", err)
+		t.Fatalf("ListBackendQuotaUsage: %v", err)
 	}
-	if name != "minio-1" && name != "minio-2" {
-		t.Errorf("unexpected backend %q", name)
+	var got core.BackendQuotaUsage
+	for _, u := range usage {
+		if u.BackendName == "minio-1" {
+			got = u
+		}
 	}
-
-	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "fill"), Backend: "minio-1", Size: 500}); err != nil {
-		t.Fatalf("RecordObject fill: %v", err)
+	if got.BackendName == "" {
+		t.Fatal("minio-1 absent from the usage listing")
 	}
-	name, err = testStore.GetLeastUtilizedBackend(ctx, 10, []string{"minio-1", "minio-2"})
-	if err != nil {
-		t.Fatalf("GetLeastUtilizedBackend after fill: %v", err)
+	if got.BytesUsed != 700 {
+		t.Errorf("BytesUsed = %d, want 700", got.BytesUsed)
 	}
-	if name != "minio-2" {
-		t.Errorf("got %q, want %q (minio-2 is least utilized)", name, "minio-2")
-	}
-}
-
-// TestStore_GetLeastUtilizedBackend_RespectsMinSize is one of the sub-cases extracted from the
-// original mega-TestStore; behaviour is preserved.
-func TestStore_GetLeastUtilizedBackend_RespectsMinSize(t *testing.T) {
-	ctx := context.Background()
-	_ = ctx
-
-	resetState(t)
-
-	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "full"), Backend: "minio-1", Size: 1024}); err != nil {
-		t.Fatalf("RecordObject: %v", err)
-	}
-
-	name, err := testStore.GetLeastUtilizedBackend(ctx, 1, []string{"minio-1", "minio-2"})
-	if err != nil {
-		t.Fatalf("GetLeastUtilizedBackend: %v", err)
-	}
-	if name != "minio-2" {
-		t.Errorf("got %q, want %q (minio-1 full)", name, "minio-2")
+	if got.Occupied() < got.BytesUsed {
+		t.Errorf("Occupied() = %d, want at least BytesUsed %d", got.Occupied(), got.BytesUsed)
 	}
 }
 
@@ -3122,28 +3140,35 @@ func TestStore_RecordReplica_StaleSourceSkipped(t *testing.T) {
 
 	key := uniqueKey(t, "store-replica")
 
-	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-1", Size: 100}); err != nil {
+	_, deltas, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-1", Size: 100})
+	if err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
+	commitQuota(t, deltas)
 
-	_, ok, err := testStore.RecordReplica(ctx, key, "minio-2", "minio-1")
+	repSize, ok, err := testStore.RecordReplica(ctx, key, "minio-2", "minio-1")
 	if err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 	if !ok {
 		t.Error("first RecordReplica = false, want true")
 	}
+	commitQuota(t, core.QuotaDeltas{"minio-2": repSize})
 	if used := queryQuotaUsed(t, "minio-2"); used != 100 {
 		t.Errorf("minio-2 after replica = %d, want 100", used)
 	}
 
-	if _, err := testStore.DeleteObject(ctx, key); err != nil {
+	_, delDeltas, err := testStore.DeleteObject(ctx, key)
+	if err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
+	commitQuota(t, delDeltas)
 
-	if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-2", Size: 50}); err != nil {
+	_, freshDeltas, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-2", Size: 50})
+	if err != nil {
 		t.Fatalf("RecordObject fresh: %v", err)
 	}
+	commitQuota(t, freshDeltas)
 
 	_, ok, err = testStore.RecordReplica(ctx, key, "minio-1", "minio-1")
 	if err != nil {
@@ -4287,7 +4312,7 @@ func TestRemoveBackend(t *testing.T) {
 	// remove without affecting minio-1 (which other tests depend on).
 	for i := range 3 {
 		key := fmt.Sprintf("%s/remove-test-%d-%d", virtualBucket, i, time.Now().UnixNano())
-		if _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-2", Size: 100}); err != nil {
+		if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-2", Size: 100}); err != nil {
 			t.Fatalf("RecordObject: %v", err)
 		}
 	}

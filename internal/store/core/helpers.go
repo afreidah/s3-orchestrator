@@ -11,9 +11,7 @@
 package core
 
 import (
-	"context"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
@@ -130,42 +128,6 @@ func objectFromStoredForm(key, backend string, size int64, form *StoredForm, id 
 		loc.LogicalSize = form.LogicalSize
 	}
 	return loc
-}
-
-// -------------------------------------------------------------------------
-// QUOTA DELTA APPLICATION
-// -------------------------------------------------------------------------
-
-// applyQuotaDeltas applies signed byte deltas to backend_quotas rows
-// in stable backend_name order. The deterministic ordering prevents
-// row-lock cycles: concurrent transactions touching the same backend
-// set acquire locks in the same sequence and queue rather than
-// deadlock. Negative deltas decrement (SQL clamps to zero); positive
-// increment; zero is skipped so net-zero same-backend overwrites
-// produce no SQL call.
-func applyQuotaDeltas(ctx context.Context, tx TxAdapter, deltas map[string]int64) error {
-	if len(deltas) == 0 {
-		return nil
-	}
-	backends := make([]string, 0, len(deltas))
-	for b := range deltas {
-		backends = append(backends, b)
-	}
-	slices.Sort(backends)
-	for _, b := range backends {
-		d := deltas[b]
-		switch {
-		case d > 0:
-			if err := tx.IncrementBackendQuota(ctx, b, d); err != nil {
-				return err
-			}
-		case d < 0:
-			if err := tx.DecrementBackendQuota(ctx, b, -d); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 // -------------------------------------------------------------------------

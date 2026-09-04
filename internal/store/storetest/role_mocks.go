@@ -43,12 +43,13 @@ func (m *MockObjectStore) EXPECT() *MockObjectStoreMockRecorder {
 }
 
 // DeleteObject mocks base method.
-func (m *MockObjectStore) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, error) {
+func (m *MockObjectStore) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObject", ctx, key)
 	ret0, _ := ret[0].([]core.DeletedCopy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(core.QuotaDeltas)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // DeleteObject indicates an expected call of DeleteObject.
@@ -58,11 +59,12 @@ func (mr *MockObjectStoreMockRecorder) DeleteObject(ctx, key any) *gomock.Call {
 }
 
 // DeleteObjectLocation mocks base method.
-func (m *MockObjectStore) DeleteObjectLocation(ctx context.Context, key, backendName string) error {
+func (m *MockObjectStore) DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, key, backendName)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // DeleteObjectLocation indicates an expected call of DeleteObjectLocation.
@@ -72,12 +74,13 @@ func (mr *MockObjectStoreMockRecorder) DeleteObjectLocation(ctx, key, backendNam
 }
 
 // DeleteObjectsBatch mocks base method.
-func (m *MockObjectStore) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, error) {
+func (m *MockObjectStore) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObjectsBatch", ctx, keys)
 	ret0, _ := ret[0].(map[string][]core.DeletedCopy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(core.QuotaDeltas)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // DeleteObjectsBatch indicates an expected call of DeleteObjectsBatch.
@@ -207,12 +210,13 @@ func (mr *MockObjectStoreMockRecorder) MoveObjectLocation(ctx, key, fromBackend,
 }
 
 // RecordObject mocks base method.
-func (m *MockObjectStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
+func (m *MockObjectStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RecordObject", ctx, req)
 	ret0, _ := ret[0].([]core.DeletedCopy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(core.QuotaDeltas)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // RecordObject indicates an expected call of RecordObject.
@@ -259,34 +263,18 @@ func (m *MockQuotaStore) EXPECT() *MockQuotaStoreMockRecorder {
 	return m.recorder
 }
 
-// GetBackendWithSpace mocks base method.
-func (m *MockQuotaStore) GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error) {
+// FlushQuotaDeltas mocks base method.
+func (m *MockQuotaStore) FlushQuotaDeltas(ctx context.Context, deltas core.QuotaDeltas) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetBackendWithSpace", ctx, size, backendOrder)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret := m.ctrl.Call(m, "FlushQuotaDeltas", ctx, deltas)
+	ret0, _ := ret[0].(error)
+	return ret0
 }
 
-// GetBackendWithSpace indicates an expected call of GetBackendWithSpace.
-func (mr *MockQuotaStoreMockRecorder) GetBackendWithSpace(ctx, size, backendOrder any) *gomock.Call {
+// FlushQuotaDeltas indicates an expected call of FlushQuotaDeltas.
+func (mr *MockQuotaStoreMockRecorder) FlushQuotaDeltas(ctx, deltas any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBackendWithSpace", reflect.TypeOf((*MockQuotaStore)(nil).GetBackendWithSpace), ctx, size, backendOrder)
-}
-
-// GetLeastUtilizedBackend mocks base method.
-func (m *MockQuotaStore) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetLeastUtilizedBackend", ctx, size, eligible)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetLeastUtilizedBackend indicates an expected call of GetLeastUtilizedBackend.
-func (mr *MockQuotaStoreMockRecorder) GetLeastUtilizedBackend(ctx, size, eligible any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeastUtilizedBackend", reflect.TypeOf((*MockQuotaStore)(nil).GetLeastUtilizedBackend), ctx, size, eligible)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushQuotaDeltas", reflect.TypeOf((*MockQuotaStore)(nil).FlushQuotaDeltas), ctx, deltas)
 }
 
 // GetQuotaStats mocks base method.
@@ -302,6 +290,21 @@ func (m *MockQuotaStore) GetQuotaStats(ctx context.Context) (map[string]core.Quo
 func (mr *MockQuotaStoreMockRecorder) GetQuotaStats(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQuotaStats", reflect.TypeOf((*MockQuotaStore)(nil).GetQuotaStats), ctx)
+}
+
+// ListBackendQuotaUsage mocks base method.
+func (m *MockQuotaStore) ListBackendQuotaUsage(ctx context.Context) ([]core.BackendQuotaUsage, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListBackendQuotaUsage", ctx)
+	ret0, _ := ret[0].([]core.BackendQuotaUsage)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListBackendQuotaUsage indicates an expected call of ListBackendQuotaUsage.
+func (mr *MockQuotaStoreMockRecorder) ListBackendQuotaUsage(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBackendQuotaUsage", reflect.TypeOf((*MockQuotaStore)(nil).ListBackendQuotaUsage), ctx)
 }
 
 // ReconcileUsage mocks base method.

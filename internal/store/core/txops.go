@@ -29,28 +29,29 @@ func NewTxOps(r Runner) TxOps { return TxOps{runner: r} }
 // SHARED TRANSACTIONAL OPERATIONS
 // -------------------------------------------------------------------------
 
-// RecordObject records an object's location, its tag set and the backend
-// quota in one transaction, removing and returning any copies the write
-// displaces. A non-empty IntentID also clears the matching pending intent.
-func (o TxOps) RecordObject(ctx context.Context, req *RecordObjectRequest) ([]DeletedCopy, error) {
+// RecordObject records an object's location and its tag set in one
+// transaction, removing and returning any copies the write displaces along
+// with the byte deltas the caller applies. A non-empty IntentID also clears
+// the matching pending intent.
+func (o TxOps) RecordObject(ctx context.Context, req *RecordObjectRequest) ([]DeletedCopy, QuotaDeltas, error) {
 	return RecordObject(ctx, o.runner, req)
 }
 
-// DeleteObject removes every copy of an object and decrements the quotas,
-// returning the deleted copies for backend cleanup.
-func (o TxOps) DeleteObject(ctx context.Context, key string) ([]DeletedCopy, error) {
+// DeleteObject removes every copy of an object, returning the deleted copies
+// for backend cleanup and the byte deltas their removal made.
+func (o TxOps) DeleteObject(ctx context.Context, key string) ([]DeletedCopy, QuotaDeltas, error) {
 	return DeleteObject(ctx, o.runner, key)
 }
 
 // DeleteObjectsBatch removes every supplied key in one transaction and
-// returns the displaced copies per key.
-func (o TxOps) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]DeletedCopy, error) {
+// returns the displaced copies per key, plus the deltas folded per backend.
+func (o TxOps) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]DeletedCopy, QuotaDeltas, error) {
 	return DeleteObjectsBatch(ctx, o.runner, keys)
 }
 
-// DeleteObjectLocation removes a single copy and decrements that backend's
-// quota.
-func (o TxOps) DeleteObjectLocation(ctx context.Context, key, backendName string) error {
+// DeleteObjectLocation removes a single copy and returns the bytes it removed
+// so the caller can debit that backend.
+func (o TxOps) DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error) {
 	return DeleteObjectLocation(ctx, o.runner, key, backendName)
 }
 
@@ -88,14 +89,15 @@ func (o TxOps) MoveCleanupToDLQ(ctx context.Context, id int64, lastError string)
 	return MoveCleanupToDLQ(ctx, o.runner, id, lastError)
 }
 
-// RecordReplica records a new copy on a target backend and charges its quota.
+// RecordReplica records a new copy on a target backend and reports the bytes
+// it wrote so the caller can charge them.
 func (o TxOps) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string) (int64, bool, error) {
 	return RecordReplica(ctx, o.runner, key, targetBackend, sourceBackend)
 }
 
 // RemoveExcessCopy drops one copy of an over-replicated object, refusing the
-// copy that would leave the object unreadable.
-func (o TxOps) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (bool, error) {
+// copy that would leave the object unreadable. Reports the bytes removed.
+func (o TxOps) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (int64, bool, error) {
 	return RemoveExcessCopy(ctx, o.runner, key, backendName, factor)
 }
 
@@ -105,8 +107,14 @@ func (o TxOps) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
 	return ReconcileUsage(ctx, o.runner)
 }
 
+// FlushQuotaDeltas writes a flush interval's accumulated byte deltas to
+// backend_quotas, one statement per backend.
+func (o TxOps) FlushQuotaDeltas(ctx context.Context, deltas QuotaDeltas) error {
+	return FlushQuotaDeltas(ctx, o.runner, deltas)
+}
+
 // PromotePending resolves a surviving PUT intent into a committed location.
-func (o TxOps) PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []DeletedCopy, error) {
+func (o TxOps) PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []DeletedCopy, QuotaDeltas, error) {
 	return PromotePending(ctx, o.runner, p)
 }
 

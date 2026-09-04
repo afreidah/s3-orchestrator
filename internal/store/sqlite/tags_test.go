@@ -39,7 +39,7 @@ func tagNames(tags []core.Tag) []string {
 // hang off.
 func seedObject(t *testing.T, s *Store, key, backend string) {
 	t.Helper()
-	if _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{Key: key, Backend: backend, Size: 1024}); err != nil {
+	if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{Key: key, Backend: backend, Size: 1024}); err != nil {
 		t.Fatalf("RecordObject(%s, %s): %v", key, backend, err)
 	}
 }
@@ -372,7 +372,7 @@ func TestObjectTags_DeleteObjectCascades(t *testing.T) {
 	if err := s.ReplaceObjectTags(ctx, "bucket/doomed", []core.Tag{{Key: "k", Value: "v"}}); err != nil {
 		t.Fatalf("ReplaceObjectTags: %v", err)
 	}
-	if _, err := s.DeleteObject(ctx, "bucket/doomed"); err != nil {
+	if _, _, err := s.DeleteObject(ctx, "bucket/doomed"); err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
 
@@ -399,7 +399,7 @@ func TestObjectTags_BatchDeleteCascades(t *testing.T) {
 		}
 	}
 
-	if _, err := s.DeleteObjectsBatch(ctx, keys); err != nil {
+	if _, _, err := s.DeleteObjectsBatch(ctx, keys); err != nil {
 		t.Fatalf("DeleteObjectsBatch: %v", err)
 	}
 
@@ -431,7 +431,7 @@ func TestObjectTags_ReplicaRemovalKeepsTags(t *testing.T) {
 		t.Fatalf("ReplaceObjectTags: %v", err)
 	}
 
-	if err := s.DeleteObjectLocation(ctx, "bucket/replicated", "backend-b"); err != nil {
+	if _, err := s.DeleteObjectLocation(ctx, "bucket/replicated", "backend-b"); err != nil {
 		t.Fatalf("DeleteObjectLocation: %v", err)
 	}
 
@@ -444,7 +444,7 @@ func TestObjectTags_ReplicaRemovalKeepsTags(t *testing.T) {
 	}
 
 	// Removing what is now the last copy takes them.
-	if err := s.DeleteObjectLocation(ctx, "bucket/replicated", "backend-a"); err != nil {
+	if _, err := s.DeleteObjectLocation(ctx, "bucket/replicated", "backend-a"); err != nil {
 		t.Fatalf("DeleteObjectLocation (last): %v", err)
 	}
 	got, err = s.GetObjectTags(ctx, "bucket/replicated")

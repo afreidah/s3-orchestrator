@@ -121,8 +121,20 @@ func dropColumns(t *testing.T, s *Store, table string, columns ...string) {
 // mustRecordObject records an object, failing the test on error.
 func mustRecordObject(t *testing.T, s *Store, key, backend string, size int64) {
 	t.Helper()
-	if _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{Key: key, Backend: backend, Size: size}); err != nil {
+	if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{Key: key, Backend: backend, Size: size}); err != nil {
 		t.Fatalf("RecordObject(%s, %s): %v", key, backend, err)
+	}
+}
+
+// seedBytesUsed writes a backend's counter directly, for the tests whose
+// subject is the SQL that reads or moves bytes_used. Recording an object no
+// longer touches it - a write reports its delta and the caller applies it to
+// the in-memory tracker - so a seed has to say what it means.
+func seedBytesUsed(t *testing.T, s *Store, backend string, used int64) {
+	t.Helper()
+	if _, err := s.db.ExecContext(context.Background(),
+		`UPDATE backend_quotas SET bytes_used = ? WHERE backend_name = ?`, used, backend); err != nil {
+		t.Fatalf("seed bytes_used(%s, %d): %v", backend, used, err)
 	}
 }
 
@@ -176,7 +188,7 @@ func TestRecordObject_And_GetAllLocations(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	displaced, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/key1", Backend: "backend-a", Size: 1024})
+	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/key1", Backend: "backend-a", Size: 1024})
 	if err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
@@ -205,7 +217,7 @@ func TestRecordObject_Overwrite_DisplacesCopy(t *testing.T) {
 	mustRecordObject(t, s, "bucket/key1", "backend-a", 1024)
 
 	// Overwrite on a different backend
-	displaced, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/key1", Backend: "backend-b", Size: 2048})
+	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/key1", Backend: "backend-b", Size: 2048})
 	if err != nil {
 		t.Fatalf("RecordObject overwrite: %v", err)
 	}
@@ -226,7 +238,7 @@ func TestDeleteObject(t *testing.T) {
 
 	mustRecordObject(t, s, "bucket/key1", "backend-a", 1024)
 
-	deleted, err := s.DeleteObject(ctx, "bucket/key1")
+	deleted, _, err := s.DeleteObject(ctx, "bucket/key1")
 	if err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
@@ -246,7 +258,7 @@ func TestDeleteObject_NotFound(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	_, err := s.DeleteObject(ctx, "bucket/nonexistent")
+	_, _, err := s.DeleteObject(ctx, "bucket/nonexistent")
 	if !errors.Is(err, core.ErrObjectNotFound) {
 		t.Errorf("expected ErrObjectNotFound, got %v", err)
 	}
@@ -595,7 +607,7 @@ func TestRecordObject_Overwrite_SameBackend(t *testing.T) {
 
 	mustRecordObject(t, s, "bucket/k", "backend-a", 500)
 
-	displaced, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/k", Backend: "backend-a", Size: 700})
+	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/k", Backend: "backend-a", Size: 700})
 	if err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
@@ -604,53 +616,46 @@ func TestRecordObject_Overwrite_SameBackend(t *testing.T) {
 	}
 }
 
-// TestMoveObjectLocation_QuotaExceeded covers the ErrNoSpaceAvailable
-// branch in moveObjectRows  -  the destination quota update touches zero
-// rows when the move would exceed bytes_limit.
-func TestMoveObjectLocation_QuotaExceeded(t *testing.T) {
+// TestRecordObject_ReportsDeltaForTheWrite pins what replaced the in-transaction
+// quota guard: the write reports the bytes it added, and the caller applies them
+// to the counter the limit is enforced against.
+func TestRecordObject_ReportsDeltaForTheWrite(t *testing.T) {
 	t.Parallel()
+	s := newTestStore(t)
 	ctx := context.Background()
-	s, err := NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"}, nil)
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
 
-	if err := s.SyncQuotaLimits(ctx, []config.BackendConfig{
-		{Name: "big", QuotaBytes: 10_000},
-		{Name: "small", QuotaBytes: 100}, // tiny  -  cannot hold 500-byte object
-	}); err != nil {
-		t.Fatalf("SyncQuotaLimits: %v", err)
-	}
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/huge", Backend: "big", Size: 500}); err != nil {
+	_, deltas, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: "bucket/new", Backend: "backend-a", Size: 500,
+	})
+	if err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	_, err = s.MoveObjectLocation(ctx, "bucket/huge", "big", "small")
-	if !errors.Is(err, core.ErrNoSpaceAvailable) {
-		t.Errorf("expected ErrNoSpaceAvailable, got %v", err)
+	if deltas["backend-a"] != 500 {
+		t.Errorf("delta = %d, want 500", deltas["backend-a"])
 	}
 }
 
-// TestRecordObject_QuotaExceeded covers the ErrNoSpaceAvailable branch
-// in incrementSQLiteQuota  -  the guarded UPDATE touches zero rows when
-// the quota ceiling would be exceeded.
-func TestRecordObject_QuotaExceeded(t *testing.T) {
+// TestRecordObject_OverwriteNetsTheDelta covers the overwrite arithmetic the
+// caller depends on: the replaced copy's bytes come off in the same map the new
+// copy's go on, so a same-size overwrite moves the counter by nothing.
+func TestRecordObject_OverwriteNetsTheDelta(t *testing.T) {
 	t.Parallel()
+	s := newTestStore(t)
 	ctx := context.Background()
-	s, err := NewStore(ctx, &config.DatabaseConfig{Driver: "sqlite", Path: ":memory:"}, nil)
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
 
-	if err := s.SyncQuotaLimits(ctx, []config.BackendConfig{
-		{Name: "tight", QuotaBytes: 100},
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: "bucket/k", Backend: "backend-a", Size: 500,
 	}); err != nil {
-		t.Fatalf("SyncQuotaLimits: %v", err)
+		t.Fatalf("seed RecordObject: %v", err)
 	}
-	_, err = s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/over", Backend: "tight", Size: 500})
-	if !errors.Is(err, core.ErrNoSpaceAvailable) {
-		t.Errorf("expected ErrNoSpaceAvailable, got %v", err)
+	_, deltas, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: "bucket/k", Backend: "backend-a", Size: 800,
+	})
+	if err != nil {
+		t.Fatalf("overwrite RecordObject: %v", err)
+	}
+	if deltas["backend-a"] != 300 {
+		t.Errorf("delta = %d, want 300 (800 written less 500 replaced)", deltas["backend-a"])
 	}
 }
 
@@ -714,7 +719,7 @@ func TestRecordObject_WithEncryption(t *testing.T) {
 		PlaintextSize: 1024,
 		ContentHash:   "abc123",
 	}
-	_, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/encrypted", Backend: "backend-a", Size: 1100, Form: form})
+	_, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/encrypted", Backend: "backend-a", Size: 1100, Form: form})
 	if err != nil {
 		t.Fatalf("RecordObject with encryption: %v", err)
 	}
@@ -735,72 +740,78 @@ func TestRecordObject_WithEncryption(t *testing.T) {
 // QUOTA OPERATIONS
 // -------------------------------------------------------------------------
 
-// TestGetBackendWithSpace verifies the get backend with space contract.
-// Asserts that GetBackendWithSpace:.
-func TestGetBackendWithSpace(t *testing.T) {
+// TestListBackendQuotaUsage_ReportsCeilingAndOccupancy verifies the baseline
+// read the quota tracker is primed from: the limit, the counter, and the bytes
+// on the backend that the counter does not carry. Placement is judged against
+// these three, so a column missing here is a backend that reads emptier than it
+// is.
+func TestListBackendQuotaUsage_ReportsCeilingAndOccupancy(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	name, err := s.GetBackendWithSpace(ctx, 100, []string{"backend-a", "backend-b"})
-	if err != nil {
-		t.Fatalf("GetBackendWithSpace: %v", err)
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE backend_quotas SET bytes_used = 400, orphan_bytes = 100, bytes_limit = 1000
+		 WHERE backend_name = 'backend-a'`); err != nil {
+		t.Fatalf("seed quota row: %v", err)
 	}
-	if name != "backend-a" {
-		t.Errorf("expected backend-a (first with space), got %q", name)
+
+	usage, err := s.ListBackendQuotaUsage(ctx)
+	if err != nil {
+		t.Fatalf("ListBackendQuotaUsage: %v", err)
+	}
+	var got core.BackendQuotaUsage
+	for _, u := range usage {
+		if u.BackendName == "backend-a" {
+			got = u
+		}
+	}
+	if got.BytesLimit != 1000 || got.BytesUsed != 400 || got.OrphanBytes != 100 {
+		t.Fatalf("usage = %+v, want limit 1000, used 400, orphan 100", got)
+	}
+	if got.Occupied() != 500 {
+		t.Errorf("Occupied() = %d, want 500 (used + orphan + inflight)", got.Occupied())
 	}
 }
 
-// TestGetLeastUtilizedBackend verifies the get least utilized backend contract.
-// Asserts that GetLeastUtilizedBackend:.
-func TestGetLeastUtilizedBackend(t *testing.T) {
+// TestListBackendQuotaUsage_CountsInflightParts asserts the parts of an upload
+// that has not completed are reported as occupancy. They are on the backend
+// without being in bytes_used, and a baseline that ignored them would admit
+// writes into space already spoken for.
+func TestListBackendQuotaUsage_CountsInflightParts(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	// Put some data on backend-a
-	mustRecordObject(t, s, "bucket/big", "backend-a", 500<<20)
+	if err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+		UploadID:    "upload-inflight",
+		ObjectKey:   "bucket/big",
+		BackendName: "backend-a",
+	}); err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+	if err := s.RecordPart(ctx, &core.RecordPartParams{
+		UploadID:   "upload-inflight",
+		PartNumber: 1,
+		ETag:       `"p1"`,
+		SizeBytes:  777,
+	}); err != nil {
+		t.Fatalf("RecordPart: %v", err)
+	}
 
-	name, err := s.GetLeastUtilizedBackend(ctx, 100, []string{"backend-a", "backend-b"})
+	usage, err := s.ListBackendQuotaUsage(ctx)
 	if err != nil {
-		t.Fatalf("GetLeastUtilizedBackend: %v", err)
+		t.Fatalf("ListBackendQuotaUsage: %v", err)
 	}
-	if name != "backend-b" {
-		t.Errorf("expected backend-b (less utilized), got %q", name)
+	for _, u := range usage {
+		if u.BackendName == "backend-a" {
+			if u.InflightBytes != 777 {
+				t.Errorf("InflightBytes = %d, want 777", u.InflightBytes)
+			}
+			return
+		}
 	}
-}
-
-// TestGetLeastUtilizedBackend_FiltersByEligibleList confirms the IN clause
-// genuinely filters: backend-a has more free space than backend-b, but
-// the eligible list contains only backend-b, so backend-b must win.
-func TestGetLeastUtilizedBackend_FiltersByEligibleList(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	mustRecordObject(t, s, "bucket/big", "backend-b", 500<<20)
-
-	name, err := s.GetLeastUtilizedBackend(ctx, 100, []string{"backend-b"})
-	if err != nil {
-		t.Fatalf("GetLeastUtilizedBackend: %v", err)
-	}
-	if name != "backend-b" {
-		t.Errorf("eligible=[backend-b] forced selection failed, got %q", name)
-	}
-}
-
-// TestGetLeastUtilizedBackend_RejectsUnknownEligibleNames asserts the IN
-// filter does not silently fall back to a registered-but-not-eligible
-// backend when the caller's list contains only unknown names.
-func TestGetLeastUtilizedBackend_RejectsUnknownEligibleNames(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-
-	_, err := s.GetLeastUtilizedBackend(ctx, 100, []string{"never-registered"})
-	if !errors.Is(err, core.ErrNoSpaceAvailable) {
-		t.Errorf("err = %v, want ErrNoSpaceAvailable", err)
-	}
+	t.Fatal("backend-a absent from the usage listing")
 }
 
 // TestGetQuotaStats verifies per-backend quota statistics retrieval.
@@ -1179,7 +1190,7 @@ func TestRemoveExcessCopy(t *testing.T) {
 	mustRecordObject(t, s, "bucket/key1", "backend-a", 1024)
 	mustRecordReplica(t, s, "bucket/key1", "backend-b", "backend-a", 1024)
 
-	removed, err := s.RemoveExcessCopy(ctx, "bucket/key1", "backend-b", 1)
+	_, removed, err := s.RemoveExcessCopy(ctx, "bucket/key1", "backend-b", 1)
 	if err != nil {
 		t.Fatalf("RemoveExcessCopy: %v", err)
 	}
@@ -1206,7 +1217,7 @@ func TestRemoveExcessCopy_NoOpWhenAtFactor(t *testing.T) {
 
 	mustRecordObject(t, s, "bucket/k-atfactor", "backend-a", 1024)
 
-	removed, err := s.RemoveExcessCopy(ctx, "bucket/k-atfactor", "backend-a", 1)
+	_, removed, err := s.RemoveExcessCopy(ctx, "bucket/k-atfactor", "backend-a", 1)
 	if err != nil {
 		t.Fatalf("RemoveExcessCopy: %v", err)
 	}
@@ -1235,11 +1246,11 @@ func TestRemoveExcessCopy_NoOpWhenVictimGone(t *testing.T) {
 
 	// Simulate a parallel client landing the delete on backend-b
 	// before the cleaner's per-victim tx executes.
-	if err := s.DeleteObjectLocation(ctx, "bucket/k-vgone", "backend-b"); err != nil {
+	if _, err := s.DeleteObjectLocation(ctx, "bucket/k-vgone", "backend-b"); err != nil {
 		t.Fatalf("setup DeleteObjectLocation: %v", err)
 	}
 
-	removed, err := s.RemoveExcessCopy(ctx, "bucket/k-vgone", "backend-b", 1)
+	_, removed, err := s.RemoveExcessCopy(ctx, "bucket/k-vgone", "backend-b", 1)
 	if err != nil {
 		t.Fatalf("RemoveExcessCopy: %v", err)
 	}
@@ -2403,12 +2414,12 @@ func TestDeleteObjectLocation(t *testing.T) {
 	mustRecordObject(t, s, "bucket/key1", "backend-a", 100)
 	mustRecordReplica(t, s, "bucket/key1", "backend-b", "backend-a", 100)
 
-	if stats, _ := s.GetQuotaStats(ctx); stats["backend-b"].BytesUsed != 100 {
-		t.Fatalf("backend-b bytes_used before delete = %d, want 100", stats["backend-b"].BytesUsed)
-	}
-
-	if err := s.DeleteObjectLocation(ctx, "bucket/key1", "backend-b"); err != nil {
+	removed, err := s.DeleteObjectLocation(ctx, "bucket/key1", "backend-b")
+	if err != nil {
 		t.Fatalf("DeleteObjectLocation: %v", err)
+	}
+	if removed != 100 {
+		t.Errorf("removed = %d, want the copy's 100 bytes reported for the debit", removed)
 	}
 
 	locs, _ := s.GetAllObjectLocations(ctx, "bucket/key1")
@@ -2416,24 +2427,26 @@ func TestDeleteObjectLocation(t *testing.T) {
 		t.Errorf("expected only backend-a, got %+v", locs)
 	}
 
-	// The removed copy's bytes must be debited so bytes_used stays equal to
-	// SUM(object_locations.size_bytes) - the ledger invariant #1084 broke.
-	if stats, _ := s.GetQuotaStats(ctx); stats["backend-b"].BytesUsed != 0 {
-		t.Errorf("backend-b bytes_used after delete = %d, want 0", stats["backend-b"].BytesUsed)
-	}
-
-	// With the counter kept honest, usage-reconcile finds no drift to correct.
-	adjustments, err := s.ReconcileUsage(ctx)
-	if err != nil {
+	// Reconcile recomputes the counter from the rows that survived, which is
+	// what the reported delta has to agree with: the backend that lost its copy
+	// holds nothing, and the one that kept it holds the object.
+	if _, err := s.ReconcileUsage(ctx); err != nil {
 		t.Fatalf("ReconcileUsage: %v", err)
 	}
-	if len(adjustments) != 0 {
-		t.Errorf("reconcile should find no drift, got %v", adjustments)
+	stats, err := s.GetQuotaStats(ctx)
+	if err != nil {
+		t.Fatalf("GetQuotaStats: %v", err)
+	}
+	if stats["backend-b"].BytesUsed != 0 {
+		t.Errorf("backend-b bytes_used = %d, want 0 after its copy was removed", stats["backend-b"].BytesUsed)
+	}
+	if stats["backend-a"].BytesUsed != 100 {
+		t.Errorf("backend-a bytes_used = %d, want the 100 bytes it still holds", stats["backend-a"].BytesUsed)
 	}
 
 	// Deleting a copy that is already gone is a benign no-op: no error and no
 	// spurious debit against the backend that still holds the object.
-	if err := s.DeleteObjectLocation(ctx, "bucket/key1", "backend-b"); err != nil {
+	if _, err := s.DeleteObjectLocation(ctx, "bucket/key1", "backend-b"); err != nil {
 		t.Fatalf("DeleteObjectLocation (already gone): %v", err)
 	}
 	if stats, _ := s.GetQuotaStats(ctx); stats["backend-a"].BytesUsed != 100 {
@@ -2475,7 +2488,7 @@ func TestGetUnverifiedObjectCounts(t *testing.T) {
 	// One object on backend-a has no content hash (NULL); one does.
 	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
 	hashed := &core.StoredForm{ContentHash: "deadbeef"}
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/b", Backend: "backend-a", Size: 200, Form: hashed}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/b", Backend: "backend-a", Size: 200, Form: hashed}); err != nil {
 		t.Fatalf("RecordObject hashed: %v", err)
 	}
 	// One object on backend-b has no content hash.
@@ -2641,7 +2654,7 @@ func TestGetObjectBackendsForKeys_GroupsByKey(t *testing.T) {
 func TestDeleteObjectsBatch_EmptyInput(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	got, err := s.DeleteObjectsBatch(context.Background(), nil)
+	got, _, err := s.DeleteObjectsBatch(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("DeleteObjectsBatch(nil): %v", err)
 	}
@@ -2662,7 +2675,7 @@ func TestDeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T) {
 	mustRecordReplica(t, s, "bucket/k1", "backend-b", "backend-a", 100)
 	mustRecordObject(t, s, "bucket/k2", "backend-a", 50)
 
-	got, err := s.DeleteObjectsBatch(ctx, []string{"bucket/k1", "bucket/k2", "bucket/missing"})
+	got, _, err := s.DeleteObjectsBatch(ctx, []string{"bucket/k1", "bucket/k2", "bucket/missing"})
 	if err != nil {
 		t.Fatalf("DeleteObjectsBatch: %v", err)
 	}
@@ -2709,7 +2722,7 @@ func TestListAllEncryptedLocations(t *testing.T) {
 		KeyID:         "key-1",
 		PlaintextSize: 1024,
 	}
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/enc", Backend: "backend-a", Size: 1100, Form: form}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/enc", Backend: "backend-a", Size: 1100, Form: form}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -3219,7 +3232,7 @@ func TestSqlite_ScrubQueue_BackendFilterExcludesUnaffordableBackends(t *testing.
 	ctx := context.Background()
 
 	for backend, key := range map[string]string{"backend-a": "bucket/a", "backend-b": "bucket/b"} {
-		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: backend, Size: 10}); err != nil {
+		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: backend, Size: 10}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
 		if err := s.UpdateContentHash(ctx, key, backend, "sha256:"+key); err != nil {
@@ -3254,7 +3267,7 @@ func TestSqlite_CountScrubCandidatesOnBackends(t *testing.T) {
 	ctx := context.Background()
 
 	for _, key := range []string{"bucket/x", "bucket/y"} {
-		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-b", Size: 10}); err != nil {
+		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-b", Size: 10}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
 		if err := s.UpdateContentHash(ctx, key, "backend-b", "sha256:"+key); err != nil {
@@ -3262,7 +3275,7 @@ func TestSqlite_CountScrubCandidatesOnBackends(t *testing.T) {
 		}
 	}
 	// Hashless copies are not scrub candidates and must not be counted.
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/z", Backend: "backend-b", Size: 10}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/z", Backend: "backend-b", Size: 10}); err != nil {
 		t.Fatalf("RecordObject(z): %v", err)
 	}
 

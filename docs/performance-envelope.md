@@ -1,4 +1,5 @@
 ---
+description: "A runbook and results template for characterising throughput and latency, so numbers stay comparable across releases and hardware."
 title: "Performance envelope"
 ---
 

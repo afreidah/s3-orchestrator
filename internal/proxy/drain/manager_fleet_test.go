@@ -33,6 +33,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
+// purgedObjectSize is the per-object size every purge fixture stores, and so
+// the bytes each ledger-row delete reports as freed.
+const purgedObjectSize = 5
+
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
@@ -77,13 +81,14 @@ func pagedLister(pages [][]core.ObjectLocation, gate <-chan struct{}, err error)
 	}
 }
 
-// stubDeleteObjectLocation captures DeleteObjectLocation calls.
-func stubDeleteObjectLocation(c *drainCalls, err error) func(context.Context, string, string) error {
-	return func(_ context.Context, key, backend string) error {
+// stubDeleteObjectLocation captures DeleteObjectLocation calls, reporting size
+// as the bytes the removed row freed.
+func stubDeleteObjectLocation(c *drainCalls, size int64, err error) func(context.Context, string, string) (int64, error) {
+	return func(_ context.Context, key, backend string) (int64, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.deletedLocation = append(c.deletedLocation, deleteLocationRecord{key: key, backend: backend})
-		return err
+		return size, err
 	}
 }
 
@@ -133,7 +138,7 @@ func TestPurgeBackendObjects_DeletesDBRecords(t *testing.T) {
 			{},
 		}, nil, nil)).AnyTimes()
 	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubDeleteObjectLocation(c, nil)).AnyTimes()
+		DoAndReturn(stubDeleteObjectLocation(c, purgedObjectSize, nil)).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr, rt := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": be})
@@ -184,7 +189,7 @@ func TestPurgeBackendObjects_EmitsProgressPerObject(t *testing.T) {
 			{},
 		}, nil, nil)).AnyTimes()
 	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubDeleteObjectLocation(c, nil)).AnyTimes()
+		DoAndReturn(stubDeleteObjectLocation(c, purgedObjectSize, nil)).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": be})
@@ -226,7 +231,7 @@ func TestPurgeBackendObjects_ContinuesOnS3DeleteFailure(t *testing.T) {
 			{},
 		}, nil, nil)).AnyTimes()
 	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubDeleteObjectLocation(c, nil)).AnyTimes()
+		DoAndReturn(stubDeleteObjectLocation(c, purgedObjectSize, nil)).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": be})
@@ -269,7 +274,7 @@ func TestPurgeBackendObjects_BailsOnZeroDBProgress(t *testing.T) {
 		}).AnyTimes()
 	// Every DeleteObjectLocation fails -> dbDeleted stays 0 -> bail.
 	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(errors.New("simulated persistent DB failure")).AnyTimes()
+		Return(int64(0), errors.New("simulated persistent DB failure")).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": be})
@@ -364,10 +369,6 @@ func TestDrainOneObject_NoCopy_MovesObjectWithSize(t *testing.T) {
 		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		}, nil).AnyTimes()
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("b2", nil).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("b2", nil).AnyTimes()
 	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(int64(4), nil).AnyTimes()
 	storetest.Permissive(store)
@@ -399,10 +400,6 @@ func TestDrainOneObject_MoveLocationFails_EnqueuesOrphanWithSize(t *testing.T) {
 		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		}, nil).AnyTimes()
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("b2", nil).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("b2", nil).AnyTimes()
 	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(int64(0), errors.New("serialization failure")).AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -442,10 +439,6 @@ func TestDrainOneObject_StaleObject_EnqueuesOrphanWithSize(t *testing.T) {
 		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		}, nil).AnyTimes()
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("b2", nil).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("b2", nil).AnyTimes()
 	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(int64(0), nil).AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -823,7 +816,7 @@ func TestDrainOneObject_DeleteSourceLocationFails(t *testing.T) {
 			{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
 		}, nil).AnyTimes()
 	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(errors.New("db error")).AnyTimes()
+		Return(int64(0), errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
 
 	srcBackend := backendtest.NewInMemory()
@@ -846,42 +839,16 @@ func TestDrainOneObject_NoDestinationAvailable(t *testing.T) {
 		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		}, nil).AnyTimes()
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("", core.ErrNoSpaceAvailable).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("", core.ErrNoSpaceAvailable).AnyTimes()
 	storetest.Permissive(store)
 
+	// The draining backend is the only one in the fleet, so there is nowhere to
+	// move its objects to.
 	srcBackend := backendtest.NewInMemory()
 	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": srcBackend})
 
 	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
 	if mgr.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
 		t.Error("expected failure when no destination available")
-	}
-}
-
-// TestDrainOneObject_DestBackendNotFound handles an unknown destination.
-func TestDrainOneObject_DestBackendNotFound(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{
-			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
-		}, nil).AnyTimes()
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("ghost", nil).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("ghost", nil).AnyTimes()
-	storetest.Permissive(store)
-
-	srcBackend := backendtest.NewInMemory()
-	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": srcBackend})
-
-	obj := &core.ObjectLocation{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}
-	if mgr.DrainOneObject(context.Background(), srcBackend, "b1", obj) {
-		t.Error("expected failure when destination backend not found")
 	}
 }
 
@@ -899,10 +866,6 @@ func TestDrainOneObject_StreamCopyFails(t *testing.T) {
 		Return([]core.ObjectLocation{
 			{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		}, nil).AnyTimes()
-	store.EXPECT().GetBackendWithSpace(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("b2", nil).AnyTimes()
-	store.EXPECT().GetLeastUtilizedBackend(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return("b2", nil).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": srcBackend, "b2": dstBackend})
@@ -944,7 +907,7 @@ func TestPurgeBackendObjects_S3DeleteFails_LogsWarning(t *testing.T) {
 			{},
 		}, nil, nil)).AnyTimes()
 	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubDeleteObjectLocation(c, nil)).AnyTimes()
+		DoAndReturn(stubDeleteObjectLocation(c, purgedObjectSize, nil)).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": be})
@@ -970,7 +933,7 @@ func TestPurgeBackendObjects_DBDeleteFails(t *testing.T) {
 			{},
 		}, nil, nil)).AnyTimes()
 	store.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(errors.New("db error")).AnyTimes()
+		Return(int64(0), errors.New("db error")).AnyTimes()
 	storetest.Permissive(store)
 
 	mgr, _ := newDrainFleet(t, store, map[string]backend.ObjectBackend{"b1": be})

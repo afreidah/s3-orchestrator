@@ -1,4 +1,5 @@
 ---
+description: "Interactive diagram of the request lifecycle through the admission control pipeline, with upstream and downstream paths shown on hover."
 title: "Admission Control Flow"
 linkTitle: "Admission Control"
 weight: 1

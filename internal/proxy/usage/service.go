@@ -16,6 +16,7 @@ package usage
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
@@ -44,6 +45,7 @@ type DrainReader interface {
 // Deps groups the constructor parameters. Drain is the only optional one.
 type Deps struct {
 	Usage  *counter.UsageTracker
+	Quota  *counter.QuotaTracker
 	Stores Stores
 	Drain  DrainReader
 }
@@ -55,19 +57,21 @@ type Deps struct {
 // Holds an atomic config value, so it must not be copied after construction.
 type Service struct {
 	usage  *counter.UsageTracker
+	quota  *counter.QuotaTracker
 	stores Stores
 	drain  DrainReader
 	cfg    syncutil.AtomicConfig[config.UsageFlushConfig]
 }
 
-// New constructs the service. Usage and Stores are required; a nil Drain
+// New constructs the service. Usage, Quota and Stores are required; a nil Drain
 // leaves the flush skipping nothing, which is what a deployment that never
 // drains a backend wants.
 func New(d *Deps) *Service {
 	must.NotNil("d", d)
 	must.NotNil("d.Usage", d.Usage)
+	must.NotNil("d.Quota", d.Quota)
 	must.NotNil("d.Stores", d.Stores)
-	return &Service{usage: d.Usage, stores: d.Stores, drain: d.Drain}
+	return &Service{usage: d.Usage, quota: d.Quota, stores: d.Stores, drain: d.Drain}
 }
 
 // -------------------------------------------------------------------------
@@ -89,8 +93,65 @@ func (s *Service) FlushUsage(ctx context.Context) error {
 // ledger. The counter is otherwise maintained incrementally and drifts
 // permanently once any mutation path misses an adjustment, so this is the
 // self-heal rather than a diagnostic.
+//
+// Baselines are refreshed from the corrected rows, or admission would keep
+// judging writes against the totals the reconcile just replaced.
 func (s *Service) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
-	return s.stores.ReconcileUsage(ctx)
+	adjustments, err := s.stores.ReconcileUsage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.RefreshQuotaBaselines(ctx); err != nil {
+		return adjustments, err
+	}
+	return adjustments, nil
+}
+
+// -------------------------------------------------------------------------
+// QUOTA FLUSH
+// -------------------------------------------------------------------------
+
+// FlushQuota writes the byte deltas accumulated since the last pass to
+// backend_quotas and refreshes the baselines admission is judged against.
+//
+// The deltas are taken in one swap, so a write landing mid-flush is counted in
+// the next pass rather than lost. A failed write puts them back: they describe
+// bytes that are on a backend, and dropping them would leave bytes_used short
+// until a reconcile noticed.
+//
+// The refresh runs even when the write failed, because the baseline is what
+// bounds admission and a stale one is the more dangerous of the two.
+func (s *Service) FlushQuota(ctx context.Context) error {
+	deltas := s.quota.SwapDeltas()
+	flushErr := s.stores.FlushQuotaDeltas(ctx, deltas)
+	if flushErr != nil {
+		s.quota.RestoreDeltas(deltas)
+	}
+
+	if err := s.RefreshQuotaBaselines(ctx); err != nil {
+		if flushErr != nil {
+			return flushErr
+		}
+		return err
+	}
+	return flushErr
+}
+
+// RefreshQuotaBaselines reloads each backend's ceiling and occupancy from the
+// store into the tracker. Called at startup before the listener opens, so the
+// first write is judged against real rows rather than an empty snapshot, and
+// after every flush so the deltas just written are not counted twice.
+func (s *Service) RefreshQuotaBaselines(ctx context.Context) error {
+	usage, err := s.stores.ListBackendQuotaUsage(ctx)
+	if err != nil {
+		return fmt.Errorf("read backend quota usage: %w", err)
+	}
+	baselines := make(map[string]core.BackendQuotaUsage, len(usage))
+	for _, u := range usage {
+		baselines[u.BackendName] = u
+	}
+	s.quota.SetBaselines(baselines)
+	return nil
 }
 
 // RedisCounterConfigured reports whether the counters live in Redis, whatever

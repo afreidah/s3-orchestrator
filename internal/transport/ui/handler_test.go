@@ -56,7 +56,7 @@ const (
 // testSync builds the reconcile manager the UI's sync action invokes.
 func testSync(st *proxytest.Stack, store reconcile.Stores) *reconcile.Manager {
 	return reconcile.NewManager(&reconcile.Deps{
-		Backends: st.Runtime, Stores: store, Usage: st.Runtime.Acct(),
+		Backends: st.Runtime, Stores: store, Usage: st.Runtime.Acct(), Quota: st.Runtime.Quota(),
 	})
 }
 
@@ -864,7 +864,7 @@ func TestAPIDelete_Success(t *testing.T) {
 func TestAPIDelete_ManagerError(t *testing.T) {
 	t.Parallel()
 	h, mux, _ := newTestHandlerWithMock(t, func(m *storetest.MockMetadataStore) {
-		m.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(nil, errors.New("db down")).AnyTimes()
+		m.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(nil, nil, errors.New("db down")).AnyTimes()
 	})
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete",
@@ -981,7 +981,7 @@ func TestAPIDeletePrefix_DeleteError(t *testing.T) {
 				{ObjectKey: "test-bucket/a.txt", BackendName: "b1", SizeBytes: 100},
 			},
 		}, nil).AnyTimes()
-		m.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).Return(nil, errors.New("delete failed")).AnyTimes()
+		m.EXPECT().DeleteObjectsBatch(gomock.Any(), gomock.Any()).Return(nil, nil, errors.New("delete failed")).AnyTimes()
 	})
 
 	req := authedRequest(t, h, mux, http.MethodPost, "/ui/api/delete-prefix",

@@ -1,4 +1,5 @@
 ---
+description: "Every s3-orchestrator subcommand: serving, admin control, database migrations, the object browser, benchmarks, and version reporting."
 title: "CLI Subcommands"
 linkTitle: "CLI Subcommands"
 weight: 34

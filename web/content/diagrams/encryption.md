@@ -1,4 +1,5 @@
 ---
+description: "Interactive diagram of the envelope encryption and decryption paths, using chunked AES-256-GCM with pluggable key providers."
 title: "Encryption Flow"
 linkTitle: "Encryption Flow"
 weight: 5

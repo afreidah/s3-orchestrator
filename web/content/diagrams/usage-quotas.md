@@ -1,4 +1,5 @@
 ---
+description: "Interactive diagram of how a backend call is admitted against its monthly budgets, what it charges, and where those counters live."
 title: "Usage Quotas"
 linkTitle: "Usage Quotas"
 weight: 10
