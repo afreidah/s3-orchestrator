@@ -1,5 +1,6 @@
 ---
 title: "Key Rotation"
+description: "Rotate the encryption master key on a running instance. DEKs are re-wrapped as a metadata-only operation, so stored objects are never rewritten."
 weight: 2
 ---
 

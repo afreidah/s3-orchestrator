@@ -1,4 +1,5 @@
 ---
+description: "Micro-benchmarks for hot-path operations: how to run them, how to read the output, and how to compare results between two revisions."
 title: Benchmarking
 weight: 80
 ---

@@ -1,4 +1,5 @@
 ---
+description: "Walkthrough of every YAML block in the config file, with examples, validation rules, and links to the per-topic operational docs."
 title: "Configuration Walkthrough"
 linkTitle: "Configuration"
 weight: 21

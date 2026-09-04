@@ -1,3 +1,7 @@
+---
+description: "Reference for the UI JSON API serving the built-in dashboard: authentication, the endpoints it exposes, and how it differs from the admin API."
+---
+
 This document covers the UI JSON API the built-in dashboard is served by. For the operational control plane, see the [Admin API](../admin-api/). For the S3-compatible API, see the [S3 API Coverage](../README.md#s3-api-coverage) section of the README.
 
 ## Authentication

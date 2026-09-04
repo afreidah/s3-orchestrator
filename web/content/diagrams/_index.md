@@ -1,4 +1,5 @@
 ---
+description: "Interactive diagrams of the request paths, storage layer, background workers, and database schema, with per-component implementation notes."
 title: "s3-orchestrator diagrams"
 linkTitle: "Diagrams"
 chapter: true
