@@ -35,6 +35,7 @@ type WriteRuntime interface {
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
 	EligibleForWrite(ops []s3op.Operation, egress, ingress int64) []string
 	ClassifyWriteError(span trace.Span, operation string, err error) error
+	Quota() *counter.QuotaTracker
 	Acct() *accounting.Recorder
 }
 
@@ -97,8 +98,8 @@ type Runtime interface {
 // write-target backend given a size and an optional eligibility filter.
 // Tests that exercise only routing decisions can mock this alone.
 type WriteRouter interface {
-	SelectBackendForWrite(ctx context.Context, size int64, eligible []string) (string, error)
-	SelectWriteTarget(ctx context.Context, span trace.Span, operation s3op.Operation, size int64) (string, error)
+	SelectBackendForWrite(size int64, eligible []string) (string, *counter.Reservation, error)
+	SelectWriteTarget(span trace.Span, operation s3op.Operation, size int64) (string, *counter.Reservation, error)
 }
 
 // PendingWriter is the pending-intent subset of *writepath.Coordinator:
@@ -107,7 +108,7 @@ type WriteRouter interface {
 // pending-pattern handoff can mock this alone.
 type PendingWriter interface {
 	InsertPendingIntent(ctx context.Context, key, backendName string, size int64, form *core.StoredForm, id *core.ObjectIdentity) (string, error)
-	RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest) error
+	RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest, res *counter.Reservation) error
 }
 
 // CleanupWriter is the post-write commit + recovery subset of
@@ -117,7 +118,7 @@ type PendingWriter interface {
 // RecoverFromRecordFailure also backs the drain-race abort path in
 // attemptPutOnBackend (when the post-PUT IsDraining re-check fires).
 type CleanupWriter interface {
-	RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, req *core.RecordObjectRequest) error
+	RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, req *core.RecordObjectRequest, res *counter.Reservation) error
 	RecoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, backendName, key, cleanupReason string, size int64)
 	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
 }

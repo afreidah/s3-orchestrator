@@ -66,6 +66,8 @@ type fleetOpts struct {
 	AdmissionSem       chan struct{}            // bounds concurrent backend writes, for admission tests
 	BackendTimeout     time.Duration            // overrides the per-call bound; defaults to fleetTimeout
 	EnforceMinPartSize bool                     // turns on the S3 5 MiB non-final part floor
+
+	QuotaBaselines map[string]core.BackendQuotaUsage // seeds the byte counter; unnamed backends are unlimited
 }
 
 // fleet is a multipart Manager plus the collaborators a test asserts against:
@@ -108,6 +110,7 @@ func newFleet(
 		Order:           names,
 		BackendTimeout:  timeout,
 		Usage:           usage,
+		Quota:           newFleetQuota(names, opts.QuotaBaselines),
 		RoutingStrategy: config.RoutingPack,
 		AdmissionSem:    opts.AdmissionSem,
 	})
@@ -130,6 +133,23 @@ func newFleet(
 	})
 	t.Cleanup(mp.Close)
 	return &fleet{Manager: mp, Runtime: rt, Integrity: integrity}
+}
+
+// newFleetQuota builds the byte-reservation tracker with baselines already
+// primed, which production does from backend_quotas before the listener opens.
+// A backend the caller said nothing about is unlimited, so a test that is not
+// about quota never has one refuse a write.
+func newFleetQuota(names []string, baselines map[string]core.BackendQuotaUsage) *counter.QuotaTracker {
+	primed := make(map[string]core.BackendQuotaUsage, len(names))
+	for _, name := range names {
+		primed[name] = core.BackendQuotaUsage{BackendName: name}
+	}
+	for name, usage := range baselines {
+		primed[name] = usage
+	}
+	quota := counter.NewQuotaTracker(names)
+	quota.SetBaselines(primed)
+	return quota
 }
 
 // newPermissiveStore returns a union store mock answering every read with an

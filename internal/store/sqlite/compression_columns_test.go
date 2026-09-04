@@ -113,7 +113,7 @@ func TestInsertPaths_PreserveRepresentation(t *testing.T) {
 			name: "RecordObject",
 			key:  "bucket/record",
 			write: func(t *testing.T, s *Store, key string) {
-				if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1024, Form: form}); err != nil {
+				if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1024, Form: form}); err != nil {
 					t.Fatalf("RecordObject: %v", err)
 				}
 			},
@@ -122,7 +122,7 @@ func TestInsertPaths_PreserveRepresentation(t *testing.T) {
 			name: "RecordObjectAndClearPending",
 			key:  "bucket/record-clear",
 			write: func(t *testing.T, s *Store, key string) {
-				if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+				if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 					Key: key, Backend: "backend-a", Size: 1024, Form: form, IntentID: "intent-x",
 				}); err != nil {
 					t.Fatalf("RecordObject with intent: %v", err)
@@ -201,7 +201,7 @@ func TestPendingPromote_PreservesRepresentation(t *testing.T) {
 		t.Errorf("pending row lost compression metadata: %+v", stale[0])
 	}
 
-	if _, _, err := s.PromotePending(ctx, &stale[0]); err != nil {
+	if _, _, _, err := s.PromotePending(ctx, &stale[0]); err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
 	assertFormPreserved(t, readBackOne(t, s, "bucket/promoted"), form)
@@ -217,7 +217,7 @@ func TestRecordReplica_PreservesRepresentation(t *testing.T) {
 	ctx := context.Background()
 	form := fullyPopulatedForm()
 
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/replicated", Backend: "backend-a", Size: 1024, Form: form}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/replicated", Backend: "backend-a", Size: 1024, Form: form}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if _, inserted, err := s.RecordReplica(ctx, "bucket/replicated", "backend-b", "backend-a"); err != nil || !inserted {

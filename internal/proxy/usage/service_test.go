@@ -30,16 +30,26 @@ import (
 // fakeStores records the flush deltas it is handed and returns canned answers
 // for the reconcile, which is the whole persistence surface the service needs.
 type fakeStores struct {
-	flushed        map[string]int64
-	flushedPools   map[string]int64
-	flushErr       error
-	reconciled     map[string]int64
-	reconcileErr   error
-	reconcileCalls int
+	flushed         map[string]int64
+	flushedPools    map[string]int64
+	flushErr        error
+	reconciled      map[string]int64
+	reconcileErr    error
+	reconcileCalls  int
+	quotaFlushed    map[string]int64
+	quotaFlushCalls int
+	quotaFlushErr   error
+	baselines       []core.BackendQuotaUsage
+	baselineCalls   int
+	baselineErr     error
 }
 
 func newFakeStores() *fakeStores {
-	return &fakeStores{flushed: make(map[string]int64), flushedPools: make(map[string]int64)}
+	return &fakeStores{
+		flushed:      make(map[string]int64),
+		flushedPools: make(map[string]int64),
+		quotaFlushed: make(map[string]int64),
+	}
 }
 
 // -------------------------------------------------------------------------
@@ -71,16 +81,28 @@ func (f *fakeStores) ReconcileUsage(_ context.Context) (map[string]int64, error)
 	return f.reconciled, f.reconcileErr
 }
 
-func (f *fakeStores) GetBackendWithSpace(_ context.Context, _ int64, _ []string) (string, error) {
-	return "", nil
-}
-
-func (f *fakeStores) GetLeastUtilizedBackend(_ context.Context, _ int64, _ []string) (string, error) {
-	return "", nil
-}
-
 func (f *fakeStores) GetQuotaStats(_ context.Context) (map[string]core.QuotaStat, error) {
 	return nil, nil
+}
+
+// FlushQuotaDeltas records the byte deltas a quota flush wrote, or refuses them
+// with the seeded error so the restore path can be driven.
+func (f *fakeStores) FlushQuotaDeltas(_ context.Context, deltas core.QuotaDeltas) error {
+	if f.quotaFlushErr != nil {
+		return f.quotaFlushErr
+	}
+	f.quotaFlushCalls++
+	for name, delta := range deltas {
+		f.quotaFlushed[name] += delta
+	}
+	return nil
+}
+
+// ListBackendQuotaUsage answers the baseline refresh with whatever the test
+// seeded, so a flush can be checked for reloading what it just wrote.
+func (f *fakeStores) ListBackendQuotaUsage(_ context.Context) ([]core.BackendQuotaUsage, error) {
+	f.baselineCalls++
+	return f.baselines, f.baselineErr
 }
 
 // fakeDrain reports a fixed completed set.
@@ -97,7 +119,12 @@ func newService(t *testing.T, stores Stores, drain DrainReader) *Service {
 	tracker := counter.NewUsageTracker(counter.NewLocalCounterBackend([]string{"b1", "b2"}), nil)
 	tracker.Record("b1", s3op.GetObject, 0, 0)
 	tracker.Record("b2", s3op.GetObject, 0, 0)
-	return New(&Deps{Usage: tracker, Stores: stores, Drain: drain})
+	return New(&Deps{
+		Usage:  tracker,
+		Quota:  counter.NewQuotaTracker([]string{"b1", "b2"}),
+		Stores: stores,
+		Drain:  drain,
+	})
 }
 
 // TestFlushUsage_NilDrainFlushesEverything pins the deployment that never

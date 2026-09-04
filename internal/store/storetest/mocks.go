@@ -290,12 +290,13 @@ func (mr *MockMetadataStoreMockRecorder) DeleteMultipartUpload(ctx, uploadID any
 }
 
 // DeleteObject mocks base method.
-func (m *MockMetadataStore) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, error) {
+func (m *MockMetadataStore) DeleteObject(ctx context.Context, key string) ([]core.DeletedCopy, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObject", ctx, key)
 	ret0, _ := ret[0].([]core.DeletedCopy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(core.QuotaDeltas)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // DeleteObject indicates an expected call of DeleteObject.
@@ -305,11 +306,12 @@ func (mr *MockMetadataStoreMockRecorder) DeleteObject(ctx, key any) *gomock.Call
 }
 
 // DeleteObjectLocation mocks base method.
-func (m *MockMetadataStore) DeleteObjectLocation(ctx context.Context, key, backendName string) error {
+func (m *MockMetadataStore) DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObjectLocation", ctx, key, backendName)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // DeleteObjectLocation indicates an expected call of DeleteObjectLocation.
@@ -333,12 +335,13 @@ func (mr *MockMetadataStoreMockRecorder) DeleteObjectTags(ctx, key any) *gomock.
 }
 
 // DeleteObjectsBatch mocks base method.
-func (m *MockMetadataStore) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, error) {
+func (m *MockMetadataStore) DeleteObjectsBatch(ctx context.Context, keys []string) (map[string][]core.DeletedCopy, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeleteObjectsBatch", ctx, keys)
 	ret0, _ := ret[0].(map[string][]core.DeletedCopy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(core.QuotaDeltas)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // DeleteObjectsBatch indicates an expected call of DeleteObjectsBatch.
@@ -403,6 +406,20 @@ func (mr *MockMetadataStoreMockRecorder) FlushPoolDeltas(ctx, backendName, perio
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushPoolDeltas", reflect.TypeOf((*MockMetadataStore)(nil).FlushPoolDeltas), ctx, backendName, period, deltas)
 }
 
+// FlushQuotaDeltas mocks base method.
+func (m *MockMetadataStore) FlushQuotaDeltas(ctx context.Context, deltas core.QuotaDeltas) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FlushQuotaDeltas", ctx, deltas)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// FlushQuotaDeltas indicates an expected call of FlushQuotaDeltas.
+func (mr *MockMetadataStoreMockRecorder) FlushQuotaDeltas(ctx, deltas any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushQuotaDeltas", reflect.TypeOf((*MockMetadataStore)(nil).FlushQuotaDeltas), ctx, deltas)
+}
+
 // FlushUsageDeltas mocks base method.
 func (m *MockMetadataStore) FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error {
 	m.ctrl.T.Helper()
@@ -447,21 +464,6 @@ func (mr *MockMetadataStoreMockRecorder) GetAllObjectLocations(ctx, key any) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllObjectLocations", reflect.TypeOf((*MockMetadataStore)(nil).GetAllObjectLocations), ctx, key)
 }
 
-// GetBackendWithSpace mocks base method.
-func (m *MockMetadataStore) GetBackendWithSpace(ctx context.Context, size int64, backendOrder []string) (string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetBackendWithSpace", ctx, size, backendOrder)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetBackendWithSpace indicates an expected call of GetBackendWithSpace.
-func (mr *MockMetadataStoreMockRecorder) GetBackendWithSpace(ctx, size, backendOrder any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBackendWithSpace", reflect.TypeOf((*MockMetadataStore)(nil).GetBackendWithSpace), ctx, size, backendOrder)
-}
-
 // GetLeastRecentlyScrubbedObjects mocks base method.
 func (m *MockMetadataStore) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
@@ -475,21 +477,6 @@ func (m *MockMetadataStore) GetLeastRecentlyScrubbedObjects(ctx context.Context,
 func (mr *MockMetadataStoreMockRecorder) GetLeastRecentlyScrubbedObjects(ctx, limit, backends any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeastRecentlyScrubbedObjects", reflect.TypeOf((*MockMetadataStore)(nil).GetLeastRecentlyScrubbedObjects), ctx, limit, backends)
-}
-
-// GetLeastUtilizedBackend mocks base method.
-func (m *MockMetadataStore) GetLeastUtilizedBackend(ctx context.Context, size int64, eligible []string) (string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetLeastUtilizedBackend", ctx, size, eligible)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetLeastUtilizedBackend indicates an expected call of GetLeastUtilizedBackend.
-func (mr *MockMetadataStoreMockRecorder) GetLeastUtilizedBackend(ctx, size, eligible any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeastUtilizedBackend", reflect.TypeOf((*MockMetadataStore)(nil).GetLeastUtilizedBackend), ctx, size, eligible)
 }
 
 // GetMultipartUpload mocks base method.
@@ -849,6 +836,21 @@ func (mr *MockMetadataStoreMockRecorder) ListAllEncryptedLocations(ctx, limit, a
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListAllEncryptedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListAllEncryptedLocations), ctx, limit, after)
 }
 
+// ListBackendQuotaUsage mocks base method.
+func (m *MockMetadataStore) ListBackendQuotaUsage(ctx context.Context) ([]core.BackendQuotaUsage, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListBackendQuotaUsage", ctx)
+	ret0, _ := ret[0].([]core.BackendQuotaUsage)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListBackendQuotaUsage indicates an expected call of ListBackendQuotaUsage.
+func (mr *MockMetadataStoreMockRecorder) ListBackendQuotaUsage(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBackendQuotaUsage", reflect.TypeOf((*MockMetadataStore)(nil).ListBackendQuotaUsage), ctx)
+}
+
 // ListCleanupDLQ mocks base method.
 func (m *MockMetadataStore) ListCleanupDLQ(ctx context.Context, backend string, limit int) ([]core.CleanupDLQItem, error) {
 	m.ctrl.T.Helper()
@@ -1131,13 +1133,14 @@ func (mr *MockMetadataStoreMockRecorder) PendingDepth(ctx any) *gomock.Call {
 }
 
 // PromotePending mocks base method.
-func (m *MockMetadataStore) PromotePending(ctx context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.DeletedCopy, error) {
+func (m *MockMetadataStore) PromotePending(ctx context.Context, p *core.PendingObject) (core.PendingPromoteResult, []core.DeletedCopy, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "PromotePending", ctx, p)
 	ret0, _ := ret[0].(core.PendingPromoteResult)
 	ret1, _ := ret[1].([]core.DeletedCopy)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
+	ret2, _ := ret[2].(core.QuotaDeltas)
+	ret3, _ := ret[3].(error)
+	return ret0, ret1, ret2, ret3
 }
 
 // PromotePending indicates an expected call of PromotePending.
@@ -1176,12 +1179,13 @@ func (mr *MockMetadataStoreMockRecorder) RecordCompressionProbe(ctx, probe any) 
 }
 
 // RecordObject mocks base method.
-func (m *MockMetadataStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, error) {
+func (m *MockMetadataStore) RecordObject(ctx context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RecordObject", ctx, req)
 	ret0, _ := ret[0].([]core.DeletedCopy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(core.QuotaDeltas)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // RecordObject indicates an expected call of RecordObject.
@@ -1235,12 +1239,13 @@ func (mr *MockMetadataStoreMockRecorder) RecordReplica(ctx, key, targetBackend, 
 }
 
 // RemoveExcessCopy mocks base method.
-func (m *MockMetadataStore) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (bool, error) {
+func (m *MockMetadataStore) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (int64, bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RemoveExcessCopy", ctx, key, backendName, factor)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // RemoveExcessCopy indicates an expected call of RemoveExcessCopy.

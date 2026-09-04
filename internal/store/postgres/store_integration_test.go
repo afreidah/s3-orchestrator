@@ -178,10 +178,10 @@ func TestStoreInt_GetObjectsWithoutHash(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
 	rows, err := s.GetObjectsWithoutHash(ctx, 1000, 0)
 	if err != nil {
@@ -218,10 +218,10 @@ func TestStoreInt_GetLeastRecentlyScrubbedObjects(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 	if err := s.UpdateContentHash(ctx, key, "backend-a", "abc123"); err != nil {
 		t.Fatalf("UpdateContentHash: %v", err)
 	}
@@ -541,40 +541,30 @@ func TestStoreInt_RecordPart_PreservesEncryptionFields(t *testing.T) {
 // QUOTA
 // -------------------------------------------------------------------------
 
-// TestStoreInt_GetBackendWithSpace verifies the iteration finds the
-// first backend with sufficient space, skipping unknown names.
-func TestStoreInt_GetBackendWithSpace(t *testing.T) {
+// TestStoreInt_ListBackendQuotaUsage verifies the routing view carries a row
+// per configured backend with the three byte totals a placement decision is
+// judged against. This is the query that replaced the placement SQL: the
+// tracker loads it once per flush and decides in memory from there, so a row
+// missing a total would route against a backend that is fuller than it reports.
+func TestStoreInt_ListBackendQuotaUsage(t *testing.T) {
 	s := adapterPgStore(t)
-	ctx := context.Background()
-	got, err := s.GetBackendWithSpace(ctx, 100, []string{"unknown-backend", "backend-a"})
+	usage, err := s.ListBackendQuotaUsage(context.Background())
 	if err != nil {
-		t.Fatalf("GetBackendWithSpace: %v", err)
+		t.Fatalf("ListBackendQuotaUsage: %v", err)
 	}
-	if got != "backend-a" {
-		t.Errorf("expected backend-a, got %q", got)
+	byName := make(map[string]core.BackendQuotaUsage, len(usage))
+	for _, u := range usage {
+		byName[u.BackendName] = u
 	}
-	// Empty order yields ErrNoSpaceAvailable.
-	if _, err := s.GetBackendWithSpace(ctx, 100, nil); !errors.Is(err, core.ErrNoSpaceAvailable) {
-		t.Errorf("expected ErrNoSpaceAvailable, got %v", err)
+	got, ok := byName["backend-a"]
+	if !ok {
+		t.Fatalf("backend-a missing from usage: %+v", usage)
 	}
-}
-
-// TestStoreInt_GetLeastUtilizedBackend verifies the helper returns
-// a backend with enough space, and ErrNoSpaceAvailable when none
-// fits.
-func TestStoreInt_GetLeastUtilizedBackend(t *testing.T) {
-	s := adapterPgStore(t)
-	ctx := context.Background()
-	got, err := s.GetLeastUtilizedBackend(ctx, 100, []string{"backend-a", "backend-b"})
-	if err != nil {
-		t.Fatalf("GetLeastUtilizedBackend: %v", err)
+	if got.BytesUsed < 0 || got.OrphanBytes < 0 || got.InflightBytes < 0 {
+		t.Errorf("negative byte total in usage row: %+v", got)
 	}
-	if got != "backend-a" && got != "backend-b" {
-		t.Errorf("unexpected backend %q", got)
-	}
-	// Asking for an unrealistic size yields ErrNoSpaceAvailable.
-	if _, err := s.GetLeastUtilizedBackend(ctx, 1<<62, []string{"backend-a"}); !errors.Is(err, core.ErrNoSpaceAvailable) {
-		t.Errorf("expected ErrNoSpaceAvailable, got %v", err)
+	if got.Occupied() != got.BytesUsed+got.OrphanBytes+got.InflightBytes {
+		t.Errorf("Occupied disagrees with its parts: %+v", got)
 	}
 }
 
@@ -650,10 +640,10 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
 	// Initially unencrypted.
 	rows, err := s.ListUnencryptedLocations(ctx, 1000, core.Cursor{})
@@ -862,7 +852,7 @@ func TestStoreInt_ListExpiredObjectsTagFilter(t *testing.T) {
 		{prefix + "none", nil},
 	}
 	for _, o := range objects {
-		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 			Key: o.key, Backend: "backend-a", Size: 100, Tags: o.tags,
 		}); err != nil {
 			t.Fatalf("RecordObject %s: %v", o.key, err)
@@ -973,17 +963,17 @@ func TestStoreInt_GetObjectBackendsForKeys_GroupsByKey(t *testing.T) {
 	k1 := uniqueKey(t, "k1")
 	k2 := uniqueKey(t, "k2")
 	missing := uniqueKey(t, "missing")
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject(k1): %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, k1) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, k1) }()
 	if _, _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Backend: "backend-a", Size: 50}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Backend: "backend-a", Size: 50}); err != nil {
 		t.Fatalf("RecordObject(k2): %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, k2) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, k2) }()
 
 	got, err := s.GetObjectBackendsForKeys(ctx, []string{k1, k2, missing})
 	if err != nil {
@@ -1008,7 +998,7 @@ func TestStoreInt_GetObjectBackendsForKeys_GroupsByKey(t *testing.T) {
 // short-circuits on an empty input without opening a transaction.
 func TestStoreInt_DeleteObjectsBatch_EmptyInput(t *testing.T) {
 	s := adapterPgStore(t)
-	got, err := s.DeleteObjectsBatch(context.Background(), nil)
+	got, _, err := s.DeleteObjectsBatch(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("DeleteObjectsBatch(nil): %v", err)
 	}
@@ -1027,25 +1017,32 @@ func TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T
 	k1 := uniqueKey(t, "k1")
 	k2 := uniqueKey(t, "k2")
 	missing := uniqueKey(t, "missing")
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Backend: "backend-a", Size: 100}); err != nil {
+	_, d1, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Backend: "backend-a", Size: 100})
+	if err != nil {
 		t.Fatalf("RecordObject(k1): %v", err)
 	}
-	if _, _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a"); err != nil {
+	commitQuota(t, s, d1)
+	repSize, _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a")
+	if err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Backend: "backend-a", Size: 50}); err != nil {
+	commitQuota(t, s, core.QuotaDeltas{"backend-b": repSize})
+	_, d2, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Backend: "backend-a", Size: 50})
+	if err != nil {
 		t.Fatalf("RecordObject(k2): %v", err)
 	}
+	commitQuota(t, s, d2)
 
 	beforeA, err := s.GetQuotaStats(ctx)
 	if err != nil {
 		t.Fatalf("GetQuotaStats(before): %v", err)
 	}
 
-	got, err := s.DeleteObjectsBatch(ctx, []string{k1, k2, missing})
+	got, delDeltas, err := s.DeleteObjectsBatch(ctx, []string{k1, k2, missing})
 	if err != nil {
 		t.Fatalf("DeleteObjectsBatch: %v", err)
 	}
+	commitQuota(t, s, delDeltas)
 	if len(got[k1]) != 2 {
 		t.Errorf("%s should have 2 displaced copies, got %v", k1, got[k1])
 	}
@@ -1179,10 +1176,10 @@ func TestStoreInt_ScrubQueue_FreshWritesDoNotJumpTheQueue(t *testing.T) {
 	oldKey := uniqueKey(t, "old")
 	freshKey := uniqueKey(t, "fresh")
 	for _, key := range []string{oldKey, freshKey} {
-		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
-		defer func() { _, _ = s.DeleteObject(ctx, key) }()
+		defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 		if err := s.UpdateContentHash(ctx, key, "backend-a", "abc123"); err != nil {
 			t.Fatalf("UpdateContentHash(%s): %v", key, err)
 		}
@@ -1280,10 +1277,10 @@ func TestStoreInt_ScrubQueue_BackendFilter(t *testing.T) {
 	keyA := uniqueKey(t, "affordable")
 	keyB := uniqueKey(t, "declined")
 	for backend, key := range map[string]string{"backend-a": keyA, "backend-b": keyB} {
-		if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: backend, Size: 10}); err != nil {
+		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: backend, Size: 10}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
-		defer func() { _, _ = s.DeleteObject(ctx, key) }()
+		defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 		if err := s.UpdateContentHash(ctx, key, backend, "abc123"); err != nil {
 			t.Fatalf("UpdateContentHash(%s): %v", key, err)
 		}
@@ -1335,10 +1332,10 @@ func TestStoreInt_CountUnencryptedLocations(t *testing.T) {
 	}
 
 	key := uniqueKey(t, "plaintext")
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
 	after, err := s.CountUnencryptedLocations(ctx)
 	if err != nil {
@@ -1386,13 +1383,13 @@ func TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 	// Hashed at write, not by backfill, which stamps: the replica insert carries
 	// the hash across without the stamp, leaving two hashed copies that differ
 	// only on whether the bytes were ever read back.
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
 		Key: key, Backend: "backend-a", Size: 100,
 		Form: &core.StoredForm{ContentHash: "abc123"},
 	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
@@ -1444,10 +1441,10 @@ func TestStoreInt_IntegrityCoverage_CountsNeverVerifiedCopies(t *testing.T) {
 	reachable := []string{"backend-a", "backend-b"}
 
 	key := uniqueKey(t, "unverified-age")
-	if _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	defer func() { _, _ = s.DeleteObject(ctx, key) }()
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 	// Hashed at write rather than by backfill, which stamps, so the copy is
 	// hashed and unverified: the state the coverage figures are about.
 	if _, err := s.pool.Exec(ctx,

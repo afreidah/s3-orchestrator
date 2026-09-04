@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -42,6 +43,7 @@ type Runtime interface {
 	BackendOrder() []string
 	StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, key string, sizeEstimate int64) (int64, error)
 	DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error
+	Quota() *counter.QuotaTracker
 	Acct() *accounting.Recorder
 }
 
@@ -420,11 +422,13 @@ func findOtherBackend(locations []core.ObjectLocation, srcName string) string {
 // exists on another backend, so the source-side row and bytes can be
 // dropped without a data transfer.
 func (d *Manager) removeReplicaSource(ctx context.Context, srcBackend backend.ObjectBackend, srcName string, obj *core.ObjectLocation, replicaBackend string) bool {
-	if err := d.objects.DeleteObjectLocation(ctx, obj.ObjectKey, srcName); err != nil {
+	removed, err := d.objects.DeleteObjectLocation(ctx, obj.ObjectKey, srcName)
+	if err != nil {
 		d.log.WarnContext(ctx, "failed to delete source location",
 			slog.String("key", obj.ObjectKey), slog.String("backend", srcName), "error", err)
 		return false
 	}
+	d.infra.Quota().Record(srcName, -removed)
 	d.mover.DeleteOrEnqueue(ctx, srcBackend, srcName, obj.ObjectKey, "drain_source_delete", obj.SizeBytes)
 
 	audit.Log(ctx, "storage.DrainRemoveReplica",
@@ -488,10 +492,10 @@ func (d *Manager) pickDrainDestination(ctx context.Context, srcName string, obj 
 		}
 		filtered = append(filtered, name)
 	}
-	destName, err := d.quota.GetLeastUtilizedBackend(ctx, obj.SizeBytes, filtered)
-	if err != nil {
+	destName, ok := d.leastUtilizedWithRoom(filtered, obj.SizeBytes)
+	if !ok {
 		d.log.WarnContext(ctx, "no destination backend available",
-			slog.String("key", obj.ObjectKey), slog.Int64("size_bytes", obj.SizeBytes), "error", err)
+			slog.String("key", obj.ObjectKey), slog.Int64("size_bytes", obj.SizeBytes))
 		return "", nil, false
 	}
 	destBackend, err := d.infra.GetBackend(destName)
@@ -500,6 +504,19 @@ func (d *Manager) pickDrainDestination(ctx context.Context, srcName string, obj 
 		return "", nil, false
 	}
 	return destName, destBackend, true
+}
+
+// leastUtilizedWithRoom picks the emptiest candidate that can still take size
+// bytes, reading the same in-memory view the write path is admitted against so
+// a drain and a client write cannot disagree about where there is room.
+func (d *Manager) leastUtilizedWithRoom(candidates []string, size int64) (string, bool) {
+	quota := d.infra.Quota()
+	for _, name := range quota.RankByUtilization(candidates) {
+		if quota.Available(name) >= size {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // -------------------------------------------------------------------------
@@ -587,11 +604,13 @@ func (d *Manager) purgeOneObject(ctx context.Context, be backend.ObjectBackend, 
 	}
 	d.infra.Acct().APICall(s3op.DeleteObject, name)
 
-	if err := d.objects.DeleteObjectLocation(ctx, key, name); err != nil {
+	removed, err := d.objects.DeleteObjectLocation(ctx, key, name)
+	if err != nil {
 		d.log.WarnContext(ctx, "failed to delete DB record during purge",
 			slog.String("backend", name), slog.String("key", key), "error", err)
 		return progress.StatusFailed
 	}
+	d.infra.Quota().Record(name, -removed)
 	*dbDeleted++
 	return progress.StatusOK
 }

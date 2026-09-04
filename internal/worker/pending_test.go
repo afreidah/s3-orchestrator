@@ -36,7 +36,7 @@ import (
 func setupReaper(t *testing.T) (*PendingReaper, *MockCleanupOps, *MockPlacement, *backendtest.MockObjectBackend, *mockMetadataStore) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
-	ops := NewMockCleanupOps(ctrl)
+	ops := newMockCleanupOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	be := backendtest.NewMockObjectBackend(ctrl)
 	ms := &mockMetadataStore{}
@@ -64,7 +64,7 @@ func pendingFixture(intentID, key, backendName string) core.PendingObject {
 func TestNewPendingReaper_AppliesZeroDefaults(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	r := NewPendingReaper(PendingReaperDeps{Ops: NewMockCleanupOps(ctrl), Placement: NewMockPlacement(ctrl), Store: &mockMetadataStore{}})
+	r := NewPendingReaper(PendingReaperDeps{Ops: newMockCleanupOps(ctrl), Placement: NewMockPlacement(ctrl), Store: &mockMetadataStore{}})
 	if r.concurrency != 4 {
 		t.Errorf("concurrency = %d, want 4", r.concurrency)
 	}
@@ -471,7 +471,7 @@ func (f *failingDeleteStore) DeletePending(_ context.Context, _ string) error {
 func TestDropIntent_DeleteFailureCountedAsFailed(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
-	ops := NewMockCleanupOps(ctrl)
+	ops := newMockCleanupOps(ctrl)
 	pl := NewMockPlacement(ctrl)
 	ms := &failingDeleteStore{
 		mockMetadataStore: &mockMetadataStore{},

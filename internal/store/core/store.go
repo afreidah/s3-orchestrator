@@ -30,7 +30,7 @@ import (
 // intent makes it provably stale (Superseded); a pending row that vanished
 // between GetStalePending and the lock means another reaper won
 // (AlreadyResolved).
-func PromotePending(ctx context.Context, runner Runner, p *PendingObject) (PendingPromoteResult, []DeletedCopy, error) {
+func PromotePending(ctx context.Context, runner Runner, p *PendingObject) (PendingPromoteResult, []DeletedCopy, QuotaDeltas, error) {
 	out, err := WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (promoteOutcome, error) {
 		return promotePendingTx(ctx, tx, p)
 	})
@@ -39,7 +39,7 @@ func PromotePending(ctx context.Context, runner Runner, p *PendingObject) (Pendi
 		// err first. Returning Ambiguous keeps the legacy contract
 		// intact for any caller that ignores err and inspects the
 		// result anyway.
-		return PendingPromoteAmbiguous, nil, fmt.Errorf("promote pending: %w", err)
+		return PendingPromoteAmbiguous, nil, nil, fmt.Errorf("promote pending: %w", err)
 	}
-	return out.result, out.displaced, nil
+	return out.result, out.displaced, out.deltas, nil
 }
