@@ -21,6 +21,11 @@ theme = "hugo-theme-relearn"
   # card once a page resolves an image; without one, a link shared to Slack,
   # Reddit, or X renders as bare text.
   images = ["images/og-card.png"]
+  # Address pages by their directory rather than ".../index.html". The theme
+  # appends that suffix so a build still works opened from disk; served over
+  # HTTP it disagrees with the canonical tag every page carries, leaving og:url
+  # naming a different URL than the page claims for itself.
+  disableExplicitIndexURLs = true
   editURL = "https://github.com/afreidah/s3-orchestrator/edit/main/web/content/"
   showVisitedLinks = false
   disableLandingPageButton = false
