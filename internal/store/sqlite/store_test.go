@@ -144,7 +144,7 @@ func dropColumns(t *testing.T, s *Store, table string, columns ...string) {
 // mustRecordObject records an object, failing the test on error.
 func mustRecordObject(t *testing.T, s *Store, key, backend string, size int64) {
 	t.Helper()
-	if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{Key: key, Backend: backend, Size: size}); err != nil {
+	if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: size}); err != nil {
 		t.Fatalf("RecordObject(%s, %s): %v", key, backend, err)
 	}
 }
@@ -217,7 +217,7 @@ func TestRecordObject_And_GetAllLocations(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/key1", Backend: "backend-a", Size: 1024})
+	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/key1", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1024})
 	if err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestRecordObject_Overwrite_DisplacesCopy(t *testing.T) {
 	mustRecordObject(t, s, "bucket/key1", "backend-a", 1024)
 
 	// Overwrite on a different backend
-	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/key1", Backend: "backend-b", Size: 2048})
+	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/key1", Copies: []core.ObjectCopy{{Backend: "backend-b"}}, Size: 2048})
 	if err != nil {
 		t.Fatalf("RecordObject overwrite: %v", err)
 	}
@@ -636,7 +636,7 @@ func TestRecordObject_Overwrite_SameBackend(t *testing.T) {
 
 	mustRecordObject(t, s, "bucket/k", "backend-a", 500)
 
-	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/k", Backend: "backend-a", Size: 700})
+	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/k", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 700})
 	if err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
@@ -654,7 +654,7 @@ func TestRecordObject_ReportsDeltaForTheWrite(t *testing.T) {
 	ctx := context.Background()
 
 	_, deltas, err := s.RecordObject(ctx, &core.RecordObjectRequest{
-		Key: "bucket/new", Backend: "backend-a", Size: 500,
+		Key: "bucket/new", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 500,
 	})
 	if err != nil {
 		t.Fatalf("RecordObject: %v", err)
@@ -673,12 +673,12 @@ func TestRecordObject_OverwriteNetsTheDelta(t *testing.T) {
 	ctx := context.Background()
 
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
-		Key: "bucket/k", Backend: "backend-a", Size: 500,
+		Key: "bucket/k", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 500,
 	}); err != nil {
 		t.Fatalf("seed RecordObject: %v", err)
 	}
 	_, deltas, err := s.RecordObject(ctx, &core.RecordObjectRequest{
-		Key: "bucket/k", Backend: "backend-a", Size: 800,
+		Key: "bucket/k", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 800,
 	})
 	if err != nil {
 		t.Fatalf("overwrite RecordObject: %v", err)
@@ -748,7 +748,7 @@ func TestRecordObject_WithEncryption(t *testing.T) {
 		PlaintextSize: 1024,
 		ContentHash:   "abc123",
 	}
-	_, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/encrypted", Backend: "backend-a", Size: 1100, Form: form})
+	_, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/encrypted", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1100, Form: form})
 	if err != nil {
 		t.Fatalf("RecordObject with encryption: %v", err)
 	}
@@ -2523,7 +2523,7 @@ func TestGetUnverifiedObjectCounts(t *testing.T) {
 	// One object on backend-a has no content hash (NULL); one does.
 	mustRecordObject(t, s, "bucket/a", "backend-a", 100)
 	hashed := &core.StoredForm{ContentHash: "deadbeef"}
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/b", Backend: "backend-a", Size: 200, Form: hashed}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/b", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 200, Form: hashed}); err != nil {
 		t.Fatalf("RecordObject hashed: %v", err)
 	}
 	// One object on backend-b has no content hash.
@@ -2757,7 +2757,7 @@ func TestListAllEncryptedLocations(t *testing.T) {
 		KeyID:         "key-1",
 		PlaintextSize: 1024,
 	}
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/enc", Backend: "backend-a", Size: 1100, Form: form}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/enc", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1100, Form: form}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -3267,7 +3267,7 @@ func TestSqlite_ScrubQueue_BackendFilterExcludesUnaffordableBackends(t *testing.
 	ctx := context.Background()
 
 	for backend, key := range map[string]string{"backend-a": "bucket/a", "backend-b": "bucket/b"} {
-		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: backend, Size: 10}); err != nil {
+		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: 10}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
 		if err := s.UpdateContentHash(ctx, key, backend, "sha256:"+key); err != nil {
@@ -3302,7 +3302,7 @@ func TestSqlite_CountScrubCandidatesOnBackends(t *testing.T) {
 	ctx := context.Background()
 
 	for _, key := range []string{"bucket/x", "bucket/y"} {
-		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-b", Size: 10}); err != nil {
+		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-b"}}, Size: 10}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
 		if err := s.UpdateContentHash(ctx, key, "backend-b", "sha256:"+key); err != nil {
@@ -3310,7 +3310,7 @@ func TestSqlite_CountScrubCandidatesOnBackends(t *testing.T) {
 		}
 	}
 	// Hashless copies are not scrub candidates and must not be counted.
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/z", Backend: "backend-b", Size: 10}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/z", Copies: []core.ObjectCopy{{Backend: "backend-b"}}, Size: 10}); err != nil {
 		t.Fatalf("RecordObject(z): %v", err)
 	}
 

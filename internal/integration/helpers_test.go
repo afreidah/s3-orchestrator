@@ -927,10 +927,21 @@ func (f *FailableStore) RecordObject(ctx context.Context, req *core.RecordObject
 	if f.isFailing() {
 		return nil, nil, errSimulatedDBOutage
 	}
-	if req.IntentID != "" && f.consumeFailCommitOnce() {
+	if commitCarriesIntent(req) && f.consumeFailCommitOnce() {
 		return nil, nil, errSimulatedCommitFailure
 	}
 	return f.inner.RecordObject(ctx, req)
+}
+
+// commitCarriesIntent reports whether any copy the commit records resolves a
+// pending intent, which is what the one-shot failure is armed against.
+func commitCarriesIntent(req *core.RecordObjectRequest) bool {
+	for _, c := range req.Copies {
+		if c.IntentID != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // SetFailCommitOnce arms a one-shot failure on RecordObjectAndClearPending

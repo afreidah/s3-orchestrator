@@ -42,7 +42,7 @@ func tagNames(tags []core.Tag) []string {
 func seedTaggedObject(t *testing.T, s *Store, key, backend string, tags []core.Tag) {
 	t.Helper()
 	ctx := context.Background()
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: backend, Size: 1024}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: 1024}); err != nil {
 		t.Fatalf("RecordObject(%s, %s): %v", key, backend, err)
 	}
 	if tags != nil {
@@ -278,7 +278,7 @@ func TestStoreInt_ObjectTags_OverwriteClearsSet(t *testing.T) {
 	key := uniqueKey(t, "tags-overwrite")
 
 	seedTaggedObject(t, s, key, "backend-a", []core.Tag{{Key: "old", Value: "1"}})
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 2048}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 2048}); err != nil {
 		t.Fatalf("RecordObject (overwrite): %v", err)
 	}
 	assertNoTags(t, s, key, "overwrite left the previous object's tags behind")
@@ -331,7 +331,7 @@ func TestStoreInt_ObjectTags_ReplicaRemovalKeepsTags(t *testing.T) {
 	if _, err := s.MoveObjectLocation(ctx, key, "backend-a", "backend-b"); err != nil {
 		t.Fatalf("MoveObjectLocation: %v", err)
 	}
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1024}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1024}); err != nil {
 		t.Fatalf("RecordObject (second copy): %v", err)
 	}
 	if err := s.ReplaceObjectTags(ctx, key, []core.Tag{{Key: "keep", Value: "me"}}); err != nil {
