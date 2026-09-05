@@ -560,39 +560,39 @@ func queryMultipartBackend(t *testing.T, uploadID string) string {
 // multi-chunk object, or needing a limit pitched at one exact size, has to move
 // them, and leaving them moved would quietly change the placement decisions
 // every later test asserts on.
-func setQuotaLimits(t *testing.T, limit int64) {
-	t.Helper()
+func setQuotaLimits(tb testing.TB, limit int64) {
+	tb.Helper()
 	original := map[string]int64{}
 	rows, err := testDB.Query("SELECT backend_name, bytes_limit FROM backend_quotas")
 	if err != nil {
-		t.Fatalf("read quota limits: %v", err)
+		tb.Fatalf("read quota limits: %v", err)
 	}
 	for rows.Next() {
 		var name string
 		var value int64
 		if err := rows.Scan(&name, &value); err != nil {
 			rows.Close()
-			t.Fatalf("scan quota limit: %v", err)
+			tb.Fatalf("scan quota limit: %v", err)
 		}
 		original[name] = value
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		t.Fatalf("read quota limits: %v", err)
+		tb.Fatalf("read quota limits: %v", err)
 	}
 
 	if _, err := testDB.Exec("UPDATE backend_quotas SET bytes_limit = $1", limit); err != nil {
-		t.Fatalf("set quota limits: %v", err)
+		tb.Fatalf("set quota limits: %v", err)
 	}
-	refreshQuota(t)
-	t.Cleanup(func() {
+	refreshQuota(tb)
+	tb.Cleanup(func() {
 		for name, value := range original {
 			if _, err := testDB.Exec(
 				"UPDATE backend_quotas SET bytes_limit = $1 WHERE backend_name = $2", value, name); err != nil {
-				t.Errorf("restore quota limit for %s: %v", name, err)
+				tb.Errorf("restore quota limit for %s: %v", name, err)
 			}
 		}
-		refreshQuota(t)
+		refreshQuota(tb)
 	})
 }
 
@@ -673,11 +673,11 @@ func quotaStacks() []*proxytest.Stack {
 // refreshQuota reloads the trackers' baselines from backend_quotas. Admission
 // judges a write against the snapshot, not the row, so a test that edits the
 // table behind the proxy has to say so or the change stays invisible.
-func refreshQuota(t *testing.T) {
-	t.Helper()
+func refreshQuota(tb testing.TB) {
+	tb.Helper()
 	for _, st := range quotaStacks() {
 		if err := st.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
-			t.Fatalf("refreshQuota: %v", err)
+			tb.Fatalf("refreshQuota: %v", err)
 		}
 	}
 }
