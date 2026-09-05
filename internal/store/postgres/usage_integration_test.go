@@ -45,10 +45,17 @@ func TestStoreInt_ReconcileUsage_CorrectsDrift(t *testing.T) {
 	}
 
 	// Corrupt the counter to simulate the drift a degraded-backend cycle leaves
-	// behind, then reconcile back to truth.
+	// behind, then reconcile back to truth. The stripes are cleared first so
+	// the corrupted figure is the whole of what the counter reports, not the
+	// whole plus whatever earlier tests in the shared container left behind.
 	corrupted := truth + 99999
 	if _, err := s.pool.Exec(ctx,
-		`UPDATE backend_quotas SET bytes_used = $1 WHERE backend_name = 'backend-a'`, corrupted); err != nil {
+		`DELETE FROM backend_quota_stripes WHERE backend_name = 'backend-a'`); err != nil {
+		t.Fatalf("clear stripes: %v", err)
+	}
+	if _, err := s.pool.Exec(ctx,
+		`INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used) VALUES ('backend-a', 0, $1)`,
+		corrupted); err != nil {
 		t.Fatalf("corrupt bytes_used: %v", err)
 	}
 

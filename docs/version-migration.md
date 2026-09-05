@@ -62,7 +62,25 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.121.x (current)
+### v0.129.x (current)
+
+**Quota admission moved into the database ([#1388](https://github.com/afreidah/s3-orchestrator/issues/1388), v0.129.0)**
+
+Whether a write fits is decided by the statement that claims the space. A PUT's pending intent is inserted only if the target backend's live rows still have headroom, and a replica row likewise. A backend that declines is skipped and the next candidate tried; a write no candidate accepts fails with 507. Because the test reads rows rather than a per-process figure, every instance in a fleet is judged against the same totals, and the intents of writes in progress occupy their backend for all of them.
+
+The byte total lives in `backend_quota_stripes`, 16 rows per backend rather than one, so concurrent writes charging a backend take different row locks. It is charged inside the transaction that writes the `object_locations` rows it summarizes, so it cannot drift from them.
+
+Routing keeps a periodically reloaded snapshot and decides only the order candidates are tried. A stale ranking costs an uneven spread that the next reload corrects.
+
+**Operator action items after upgrade:**
+
+- **Two migrations apply automatically** (Postgres `00025`, SQLite `0013`). They create the stripe table, carry each backend's existing total onto stripe zero, and drop `backend_quotas.bytes_used`. Anything reading that column directly - a dashboard query, an operational script - must move to `SUM(bytes_used)` over `backend_quota_stripes`, or to `GET /admin/api/status`, which is unchanged.
+- **`write_path.pending_pattern.enabled` has been removed, and a config still setting it is ignored rather than rejected** - the loader does not reject unknown keys. Delete the line so the file does not imply a control that no longer exists. If you had set it to `false`, note that intents and the reaper are now always on: every write claims its bytes with an intent, so a deployment without the pattern would have nothing to judge writes against, and one without the reaper would strand rows holding a backend's headroom against writes that are never coming. The remaining `reaper_tick`, `min_age` and `batch_size` keys are unchanged.
+- **`s3o_quota_reconcile_corrections_total` becomes an alert rather than a statistic.** It is expected to stay at zero; any increase means a mutation path is storing bytes without charging them.
+- **New metric `s3o_quota_claims_declined_total{backend}`** counts writes a backend refused for want of room. Sustained non-zero on one backend means it needs capacity or a drain.
+- **Watch `s3o_pending_intents_depth` after upgrade.** An intent holds its bytes against its backend's headroom for as long as it lives, so a stuck one is space no write can use. Steady state is zero.
+
+### v0.121.x
 
 **Integrity coverage counted copies the scrubber could not reach ([#1367](https://github.com/afreidah/s3-orchestrator/issues/1367), v0.121.0)**
 

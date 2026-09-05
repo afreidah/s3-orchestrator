@@ -75,6 +75,9 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 		return promoteOutcome{}, fmt.Errorf("insert promoted location: %w", err)
 	}
 	deltas.Add(p.BackendName, p.SizeBytes)
+	if err := chargeStripes(ctx, tx, p.ObjectKey, deltas); err != nil {
+		return promoteOutcome{}, err
+	}
 	if err := tx.DeletePending(ctx, p.IntentID); err != nil {
 		return promoteOutcome{}, fmt.Errorf("delete promoted pending row: %w", err)
 	}

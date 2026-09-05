@@ -200,67 +200,42 @@ func TestFindReplicaTarget_ExcludesExistingCopies(t *testing.T) {
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory(), "b3": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"b1", "b2", "b3"}})
 
 	exclusion := map[string]bool{"b1": true, "b2": true}
-	target, _ := w.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
+	target := w.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
 	if target != "b3" {
 		t.Errorf("expected b3, got %q", target)
 	}
 }
 
-// TestFindReplicaTarget_SkipsFullBackends asserts a too-full backend is
-// skipped.
-func TestFindReplicaTarget_SkipsFullBackends(t *testing.T) {
-	t.Parallel()
-	store := newPermissiveStore(t)
-	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory()}, &fleetOpts{
-		Order: []string{"b1", "b2"},
-		QuotaBaselines: map[string]core.BackendQuotaUsage{
-			"b1": {BackendName: "b1", BytesLimit: 1000},
-			"b2": {BackendName: "b2", BytesLimit: 1000, BytesUsed: 990},
-		},
-	})
-
-	exclusion := map[string]bool{"b1": true}
-	if target, _ := w.FindReplicaTarget(context.Background(), "key1", 50, exclusion); target != "" {
-		t.Errorf("expected empty (no space), got %q", target)
-	}
-}
-
-// TestSelectReplicaTarget_NoSpaceAvailable asserts the no-space short-
-// circuit.
-func TestSelectReplicaTarget_NoSpaceAvailable(t *testing.T) {
+// TestReplicate_FullTargetRecordsNoCopy asserts a target without room produces
+// no copy.
+//
+// The refusal is the conditional insert declining the row, not the ranking
+// passing the backend over: ranking only proposes an order, and a backend that
+// looked roomy when it was ranked can be full by the time the copy lands. The
+// bytes written to it become an orphan, which the cleanup queue owns.
+func TestReplicate_FullTargetRecordsNoCopy(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 50}}, nil).AnyTimes()
+	// Every target declines, which is how a full backend reports itself.
+	store.EXPECT().RecordReplica(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(int64(0), false, nil).AnyTimes()
 	storetest.Permissive(store)
 
-	// b2 is the only candidate left once b1 is excluded, and it is past its
-	// limit, so the target selection has nowhere to place the replica.
-	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory()}, &fleetOpts{
-		Order: []string{"b1", "b2"},
-		QuotaBaselines: map[string]core.BackendQuotaUsage{
-			"b2": {BackendName: "b2", BytesLimit: 100, BytesUsed: 500},
-		},
-	})
+	src := backendtest.NewInMemory()
+	_, _ = src.PutObject(context.Background(), "key1", bytes.NewReader([]byte("0123456789")), 10, "text/plain", nil)
+	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{
+		"b1": src, "b2": backendtest.NewInMemory(),
+	}, &fleetOpts{Order: []string{"b1", "b2"}})
 
-	exclusion := map[string]bool{"b1": true}
-	if target, _ := w.FindReplicaTarget(context.Background(), "key1", 50, exclusion); target != "" {
-		t.Errorf("expected empty (no space available), got %q", target)
+	out, err := w.Replicate(context.Background(), config.ReplicationConfig{Factor: 2, BatchSize: 10}, nil)
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
 	}
-}
-
-// TestFindReplicaTarget_EmptyStats asserts a backend the counter holds no
-// baseline for is not a target. An unprovisioned backend is one nothing can
-// prove has room, so it drops out of routing rather than being selected and
-// failing at write time.
-func TestFindReplicaTarget_EmptyStats(t *testing.T) {
-	t.Parallel()
-	store := newPermissiveStore(t)
-	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{
-		QuotaBaselines: map[string]core.BackendQuotaUsage{},
-	})
-
-	if target, _ := w.FindReplicaTarget(context.Background(), "key1", 50, map[string]bool{}); target != "" {
-		t.Errorf("expected empty with no quota stats, got %q", target)
+	if out.CopiesCreated != 0 {
+		t.Errorf("created %d copies, want 0 when every target declines the row", out.CopiesCreated)
 	}
 }
 

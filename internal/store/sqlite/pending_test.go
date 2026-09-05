@@ -82,7 +82,7 @@ func TestPending_InsertAndDepth(t *testing.T) {
 	intent.KeyID = "kid-1"
 	intent.PlaintextSize = 90
 	intent.ContentHash = "abc"
-	if err := s.InsertPending(ctx, &intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 
@@ -122,7 +122,7 @@ func TestPending_DeleteRemovesRow(t *testing.T) {
 	ctx := context.Background()
 
 	intent := pendingFixture("intent-1", "bucket/k1")
-	if err := s.InsertPending(ctx, &intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	if err := s.DeletePending(ctx, "intent-1"); err != nil {
@@ -155,7 +155,7 @@ func TestPending_GetStaleRespectsCutoff(t *testing.T) {
 	ctx := context.Background()
 
 	intent := pendingFixture("fresh", "bucket/k1")
-	if err := s.InsertPending(ctx, &intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 
@@ -178,7 +178,7 @@ func TestPending_GetStaleHonoursLimit(t *testing.T) {
 
 	for i := range 5 {
 		intent := pendingFixture("intent-"+string(rune('a'+i)), "bucket/k")
-		if err := s.InsertPending(ctx, &intent); err != nil {
+		if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
 			t.Fatalf("InsertPending(%d): %v", i, err)
 		}
 	}
@@ -207,7 +207,7 @@ func TestPending_DeleteByBackend(t *testing.T) {
 	b := pendingFixture("b", "k-b")
 	b.BackendName = "backend-b"
 	for _, p := range []core.PendingObject{a, b} {
-		if err := s.InsertPending(ctx, &p); err != nil {
+		if _, err := s.InsertPendingIfFits(ctx, &p); err != nil {
 			t.Fatalf("InsertPending: %v", err)
 		}
 	}
@@ -234,7 +234,7 @@ func TestPromotePending_Committed(t *testing.T) {
 	ctx := context.Background()
 
 	intent := pendingFixture("intent-1", "bucket/k1")
-	if err := s.InsertPending(ctx, &intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	// Reload so CreatedAt reflects the database default rather than the zero value.
@@ -293,7 +293,7 @@ func TestPromotePending_Superseded(t *testing.T) {
 
 	// Insert a pending intent first so its created_at is older.
 	intent := pendingFixture("intent-1", "bucket/k1")
-	if err := s.InsertPending(ctx, &intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	stale, _ := s.GetStalePending(ctx, time.Now().Add(time.Hour), 10)
@@ -352,7 +352,7 @@ func TestRecordObjectAndClearPending_DeletesIntent(t *testing.T) {
 	ctx := context.Background()
 
 	intent := pendingFixture("intent-1", "bucket/k1")
-	if err := s.InsertPending(ctx, &intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 

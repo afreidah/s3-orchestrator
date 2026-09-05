@@ -248,34 +248,13 @@ type quotaOp struct {
 	delta   int64 // positive=increment, negative=decrement (mirrors caller intent)
 }
 
-// IncrementBackendQuota records the credit and honours the failOn hook. One
-// of the two instrumented methods: the call order it captures is what the
-// deadlock regression asserts on.
-func (t *quotaTxStub) IncrementBackendQuota(_ context.Context, backend string, delta int64) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if backend == t.failOn {
-		return t.failErr
-	}
-	t.ops = append(t.ops, quotaOp{backend: backend, delta: delta})
-	return nil
-}
-
-// DecrementBackendQuota records the debit as a negative delta and honours the
-// failOn hook, mirroring IncrementBackendQuota.
-func (t *quotaTxStub) DecrementBackendQuota(_ context.Context, backend string, delta int64) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if backend == t.failOn {
-		return t.failErr
-	}
-	t.ops = append(t.ops, quotaOp{backend: backend, delta: -delta})
-	return nil
-}
-
-// AdjustBackendBytesUsed records the signed delta a stored-form rewrite asked
-// for, which is what the rewrite tests assert on.
-func (t *quotaTxStub) AdjustBackendBytesUsed(_ context.Context, backend string, delta int64) error {
+// AdjustQuotaStripe records the signed delta and honours the failure hooks. It
+// is the only instrumented quota mutator, so it feeds both views the tests read
+// from: ops carries the call order the flush's deadlock regression asserts on,
+// adjustments carries the deltas the stored-form rewrite tests assert on. The
+// stripe is deliberately not recorded - which row a charge lands on is the
+// engine's business, and pinning it here would fail the moment the hash changes.
+func (t *quotaTxStub) AdjustQuotaStripe(_ context.Context, backend string, _ int16, delta int64) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.adjustErr != nil {
@@ -284,7 +263,9 @@ func (t *quotaTxStub) AdjustBackendBytesUsed(_ context.Context, backend string, 
 	if backend == t.failOn {
 		return t.failErr
 	}
-	t.adjustments = append(t.adjustments, quotaOp{backend: backend, delta: delta})
+	op := quotaOp{backend: backend, delta: delta}
+	t.ops = append(t.ops, op)
+	t.adjustments = append(t.adjustments, op)
 	return nil
 }
 
@@ -411,24 +392,23 @@ func (s *quotaTxStub) InsertObjectLocationIfNotExists(_ context.Context, loc *Ob
 // real test fixtures.
 func (*quotaTxStub) DecrementOrphanBytes(context.Context, string, int64) error { return nil }
 
-// TestFlushQuotaDeltas_StableOrderAcrossInputs runs the flush against the same
-// backend set with two different map insertion orders (Go map iteration is
-// non-deterministic) and asserts both produce the same sorted-by-backend-name
-// SQL sequence. This is the invariant that prevents the #687 deadlock: any two
-// transactions that touch the same backend set request locks in identical
-// order.
-func TestFlushQuotaDeltas_StableOrderAcrossInputs(t *testing.T) {
+// TestChargeStripes_StableOrderAcrossInputs charges the same backend set with
+// two different map insertion orders (Go map iteration is non-deterministic)
+// and asserts both produce the same sorted-by-backend-name sequence. This is
+// the invariant that prevents the #687 deadlock: any two transactions touching
+// the same backend set request the rows in identical order.
+func TestChargeStripes_StableOrderAcrossInputs(t *testing.T) {
 	t.Parallel()
 	deltasA := QuotaDeltas{"minio-3": -100, "minio-1": -50, "minio-2": -75}
 	deltasB := QuotaDeltas{"minio-2": -75, "minio-3": -100, "minio-1": -50}
 
 	txA := &quotaTxStub{}
 	txB := &quotaTxStub{}
-	if err := FlushQuotaDeltas(context.Background(), &stubRunner{tx: txA}, deltasA); err != nil {
-		t.Fatalf("FlushQuotaDeltas A: %v", err)
+	if err := chargeStripes(context.Background(), txA, "bucket/key", deltasA); err != nil {
+		t.Fatalf("chargeStripes A: %v", err)
 	}
-	if err := FlushQuotaDeltas(context.Background(), &stubRunner{tx: txB}, deltasB); err != nil {
-		t.Fatalf("FlushQuotaDeltas B: %v", err)
+	if err := chargeStripes(context.Background(), txB, "bucket/key", deltasB); err != nil {
+		t.Fatalf("chargeStripes B: %v", err)
 	}
 	if len(txA.adjustments) != 3 || len(txB.adjustments) != 3 {
 		t.Fatalf("expected 3 ops each, got A=%d B=%d", len(txA.adjustments), len(txB.adjustments))
@@ -446,10 +426,10 @@ func TestFlushQuotaDeltas_StableOrderAcrossInputs(t *testing.T) {
 	}
 }
 
-// TestFlushQuotaDeltas_SignedAndZero verifies the deltas reach the store with
+// TestChargeStripes_SignedAndZero verifies the deltas reach the store with
 // their sign intact and that a zero delta produces no statement, so a backend
 // whose credits and debits cancelled out costs no row lock.
-func TestFlushQuotaDeltas_SignedAndZero(t *testing.T) {
+func TestChargeStripes_SignedAndZero(t *testing.T) {
 	t.Parallel()
 	tx := &quotaTxStub{}
 	deltas := QuotaDeltas{
@@ -458,8 +438,8 @@ func TestFlushQuotaDeltas_SignedAndZero(t *testing.T) {
 		"c": 0,
 		"d": -50,
 	}
-	if err := FlushQuotaDeltas(context.Background(), &stubRunner{tx: tx}, deltas); err != nil {
-		t.Fatalf("FlushQuotaDeltas: %v", err)
+	if err := chargeStripes(context.Background(), tx, "bucket/key", deltas); err != nil {
+		t.Fatalf("chargeStripes: %v", err)
 	}
 	want := []quotaOp{
 		{backend: "a", delta: -100},
@@ -476,15 +456,15 @@ func TestFlushQuotaDeltas_SignedAndZero(t *testing.T) {
 	}
 }
 
-// TestFlushQuotaDeltas_PropagatesError verifies the flush short-circuits on the
-// first SQL error and surfaces it, which is what tells the caller to put the
-// deltas back rather than treat them as written.
-func TestFlushQuotaDeltas_PropagatesError(t *testing.T) {
+// TestChargeStripes_PropagatesError verifies the charge short-circuits on the
+// first SQL error and surfaces it, which is what rolls the whole transaction
+// back rather than committing the rows without the bytes.
+func TestChargeStripes_PropagatesError(t *testing.T) {
 	t.Parallel()
 	want := errors.New("simulated DB error")
 	tx := &quotaTxStub{failOn: "b", failErr: want}
 	deltas := QuotaDeltas{"a": 10, "b": 20, "c": 30}
-	err := FlushQuotaDeltas(context.Background(), &stubRunner{tx: tx}, deltas)
+	err := chargeStripes(context.Background(), tx, "bucket/key", deltas)
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want wrap of %v", err, want)
 	}
@@ -493,21 +473,51 @@ func TestFlushQuotaDeltas_PropagatesError(t *testing.T) {
 	}
 }
 
-// TestFlushQuotaDeltas_EmptyMap verifies the no-op path: an empty map (and a
-// nil map) both open no transaction and return no error, so a quiet interval
-// costs nothing.
-func TestFlushQuotaDeltas_EmptyMap(t *testing.T) {
+// TestChargeStripes_EmptyMap verifies the no-op path: an empty map and a nil
+// map both issue no statement, so a mutation that moved no bytes costs nothing.
+func TestChargeStripes_EmptyMap(t *testing.T) {
 	t.Parallel()
 	tx := &quotaTxStub{}
-	if err := FlushQuotaDeltas(context.Background(), &stubRunner{tx: tx}, nil); err != nil {
+	if err := chargeStripes(context.Background(), tx, "bucket/key", nil); err != nil {
 		t.Errorf("nil map err = %v, want nil", err)
 	}
-	if err := FlushQuotaDeltas(context.Background(), &stubRunner{tx: tx}, QuotaDeltas{}); err != nil {
+	if err := chargeStripes(context.Background(), tx, "bucket/key", QuotaDeltas{}); err != nil {
 		t.Errorf("empty map err = %v, want nil", err)
 	}
 	if len(tx.adjustments) != 0 {
 		t.Errorf("expected no ops, got %+v", tx.adjustments)
 	}
+}
+
+// TestChargeStripes_KeySelectsTheStripe asserts every backend in one mutation
+// is charged on the same stripe - the one the key selects - and that a
+// different key selects a different row. Charges for one object meeting on one
+// row is what lets its later credit cancel them exactly.
+func TestChargeStripes_KeySelectsTheStripe(t *testing.T) {
+	t.Parallel()
+	tx := &stripeRecordingTxStub{}
+	deltas := QuotaDeltas{"a": 100, "b": 100}
+	if err := chargeStripes(context.Background(), tx, "bucket/one", deltas); err != nil {
+		t.Fatalf("chargeStripes: %v", err)
+	}
+	if len(tx.stripes) != 2 || tx.stripes[0] != tx.stripes[1] {
+		t.Errorf("stripes = %v, want both backends on the key's single stripe", tx.stripes)
+	}
+	if want := StripeFor("bucket/one"); tx.stripes[0] != want {
+		t.Errorf("stripe = %d, want %d from the key", tx.stripes[0], want)
+	}
+}
+
+// stripeRecordingTxStub captures which stripe each charge landed on, which the
+// shared quotaTxStub deliberately discards.
+type stripeRecordingTxStub struct {
+	noopTxAdapter
+	stripes []int16
+}
+
+func (s *stripeRecordingTxStub) AdjustQuotaStripe(_ context.Context, _ string, stripe int16, _ int64) error {
+	s.stripes = append(s.stripes, stripe)
+	return nil
 }
 
 // TestValidateEncryptionMetadata covers every self-consistency rule the read

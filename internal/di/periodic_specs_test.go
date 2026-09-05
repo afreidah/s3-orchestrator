@@ -108,7 +108,6 @@ func TestPeriodicServiceSpecs_IntervalsSane(t *testing.T) {
 func lifecycleManagerForMode(t *testing.T, mode config.Mode) *lifecycle.Manager {
 	t.Helper()
 	cfg := happyPathConfig(t.TempDir())
-	cfg.WritePath.PendingPattern.Enabled = new(true)
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Fatalf("config validation: %v", err)
 	}

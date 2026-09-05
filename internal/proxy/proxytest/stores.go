@@ -97,8 +97,6 @@ type StackOptions struct {
 	ObjectCache objcache.ObjectCache
 	CacheTTL    time.Duration
 
-	PendingEnabled bool // selects the PUT-before-COMMIT write path
-
 	ParallelBroadcast            bool
 	DegradedBroadcastParallelism int
 	DisableDegradedReads         bool
@@ -213,7 +211,7 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 	// shared by everything: production wires it this way, and a fixture that
 	// hands out two of either lets a test pass against a shape that cannot exist.
 	integrityCfg := &syncutil.AtomicConfig[config.IntegrityConfig]{}
-	coord := writepath.New(rt, store, opts.PendingEnabled)
+	coord := writepath.New(rt, store)
 
 	mp := multipart.New(&multipart.Deps{
 		Core:         rt,

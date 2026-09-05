@@ -159,23 +159,23 @@ type TagsTxAdapter interface {
 // QUOTA
 // -------------------------------------------------------------------------
 
-// QuotaTxAdapter exposes the transactional operations on the backend_quotas
-// table.
+// QuotaTxAdapter exposes the transactional operations on the quota tables.
 //
-// Increment enforces the limit and Decrement does not, because refusing to
-// give bytes back would strand a backend above its ceiling. The two
-// authoritative writers, SetBackendBytesUsed and AdjustBackendBytesUsed, carry
-// no limit guard at all: usage reconciliation and the stored-form rewrites
-// describe bytes that already moved on the backend, and the counter has to
-// follow them in either direction.
+// Byte movements carry no limit guard. Every one of them describes bytes that
+// already moved on a backend - an object recorded, an import adopted, a
+// stored-form rewrite resized - so the counter has to follow in either
+// direction. The ceiling is enforced before a write is admitted, never by
+// refusing to write down what happened.
+//
+// AdjustQuotaStripe names the stripe rather than the backend because the total
+// is split across rows; callers derive it from the object key with StripeFor so
+// a charge and the credit reversing it meet on one row.
 type QuotaTxAdapter interface {
-	IncrementBackendQuota(ctx context.Context, backendName string, delta int64) error // ErrNoSpaceAvailable when the limit would be exceeded
-	DecrementBackendQuota(ctx context.Context, backendName string, delta int64) error
+	AdjustQuotaStripe(ctx context.Context, backendName string, stripe int16, delta int64) error
 	DecrementOrphanBytes(ctx context.Context, backendName string, delta int64) error // clamped at zero
 
-	AllBackendBytesUsed(ctx context.Context) (map[string]int64, error)     // the stored counter
+	AllBackendBytesUsed(ctx context.Context) (map[string]int64, error)     // the striped total per backend
 	SumObjectSizesByBackend(ctx context.Context) (map[string]int64, error) // the ledger truth it is diffed against
 
 	SetBackendBytesUsed(ctx context.Context, backendName string, value int64) error
-	AdjustBackendBytesUsed(ctx context.Context, backendName string, delta int64) error // signed, clamped at zero
 }

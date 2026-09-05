@@ -286,13 +286,12 @@ func ProvideIntegrityConfig(_ do.Injector) (*syncutil.AtomicConfig[config.Integr
 // object manager, and drain manager all route writes through.
 func ProvideWriteCoordinator(i do.Injector) (*writepath.Coordinator, error) {
 	r := newResolver(i)
-	cfg := r.Resolve[*config.Config]()
 	rt := r.Resolve[*infra.BackendRuntime]()
 	stores := r.Resolve[metadataStore]()
 	if r.err != nil {
 		return nil, r.err
 	}
-	return writepath.New(rt, stores, cfg.WritePath.PendingPattern.IsEnabled()), nil
+	return writepath.New(rt, stores), nil
 }
 
 // writePathDeps is the collaborator set the object and multipart managers

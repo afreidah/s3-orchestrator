@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -64,19 +65,19 @@ func newCoordinatorWithBackend(name string, be s3be.ObjectBackend, store Coordin
 		Usage:    usage,
 		Quota:    counter.NewQuotaTracker([]string{name}),
 	})
-	return New(c, store, true)
+	return New(c, store)
 }
 
 // newCoordinatorWithStore builds a minimal Coordinator backed by the
 // supplied store. Avoids the live-fleet fixture so coordinator branches
 // can be exercised in isolation without dragging real backends into
 // every test.
-func newCoordinatorWithStore(store CoordinatorStores, pendingEnabled bool) *Coordinator {
+func newCoordinatorWithStore(store CoordinatorStores) *Coordinator {
 	c := infra.New(&infra.Config{
 		Backends: map[string]s3be.ObjectBackend{},
 		Quota:    counter.NewQuotaTracker(nil),
 	})
-	return New(c, store, pendingEnabled)
+	return New(c, store)
 }
 
 // newCoordinatorWith2Backends builds a Coordinator that knows a source and a
@@ -90,7 +91,7 @@ func newCoordinatorWith2Backends(srcName string, src s3be.ObjectBackend, destNam
 		Usage:          usage,
 		Quota:          counter.NewQuotaTracker([]string{srcName, destName}),
 	})
-	return New(c, store, true)
+	return New(c, store)
 }
 
 // expectStreamCopyOK wires the happy StreamCopy: read 4 bytes from src, write
@@ -192,22 +193,13 @@ func moveReq(src, dest s3be.ObjectBackend) *MoveRequest {
 	}
 }
 
-// TestInsertPendingIntent_CopiesStoredForm drives the form != nil
-// branch so the PendingObject is populated with the wrapped DEK,
-// keyID, plaintext size, and content hash.
-func TestInsertPendingIntent_CopiesStoredForm(t *testing.T) {
+// TestNewPendingIntent_CopiesStoredForm drives the form != nil branch so the
+// PendingObject carries the wrapped DEK, keyID, plaintext size, and content
+// hash. The intent is the only record of how the bytes were written until the
+// commit lands, so a field missing here is a crash-recovered object whose row
+// describes something nothing can read.
+func TestNewPendingIntent_CopiesStoredForm(t *testing.T) {
 	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := NewMockCoordinatorStores(ctrl)
-
-	var got core.PendingObject
-	store.EXPECT().InsertPending(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, p *core.PendingObject) error {
-			got = *p
-			return nil
-		}).Times(1)
-
-	coord := newCoordinatorWithStore(store, true)
 	form := &core.StoredForm{
 		Encrypted:     true,
 		EncryptionKey: []byte("wrapped-dek-bytes"),
@@ -216,12 +208,13 @@ func TestInsertPendingIntent_CopiesStoredForm(t *testing.T) {
 		ContentHash:   "deadbeef",
 	}
 
-	intentID, err := coord.InsertPendingIntent(context.Background(), "k", "b1", 4096, form, nil)
-	if err != nil {
-		t.Fatalf("InsertPendingIntent: %v", err)
+	got := NewPendingIntent("k", 4096, form, nil)
+
+	if got.IntentID == "" {
+		t.Fatal("expected a minted intent ID")
 	}
-	if intentID == "" {
-		t.Fatal("expected non-empty intentID")
+	if got.BackendName != "" {
+		t.Errorf("backend = %q, want it left for the claim to decide", got.BackendName)
 	}
 	if !got.Encrypted || got.KeyID != "kid-1" || got.PlaintextSize != 4096 || got.ContentHash != "deadbeef" {
 		t.Errorf("encryption metadata not copied onto PendingObject: %+v", got)
@@ -231,27 +224,14 @@ func TestInsertPendingIntent_CopiesStoredForm(t *testing.T) {
 	}
 }
 
-// TestInsertPendingIntent_CopiesCompression pins the rest of the description an
-// intent has to carry. The intent is the only record of how the bytes were
-// written until the commit lands, so a field missing here is a crash-recovered
-// object whose row says verbatim over an encoding nothing then decodes.
+// TestNewPendingIntent_CopiesCompression pins the rest of the description an
+// intent has to carry.
 //
-// SizeBytes is asserted alongside because it is what quota is reconciled
-// against on recovery: the bytes that occupy the backend, not the larger object
-// they decode to.
-func TestInsertPendingIntent_CopiesCompression(t *testing.T) {
+// SizeBytes is asserted alongside because it is both what quota is judged
+// against while the write runs and what it is reconciled against on recovery:
+// the bytes that occupy the backend, not the larger object they decode to.
+func TestNewPendingIntent_CopiesCompression(t *testing.T) {
 	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := NewMockCoordinatorStores(ctrl)
-
-	var got core.PendingObject
-	store.EXPECT().InsertPending(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, p *core.PendingObject) error {
-			got = *p
-			return nil
-		}).Times(1)
-
-	coord := newCoordinatorWithStore(store, true)
 	form := &core.StoredForm{
 		ContentHash:              "deadbeef",
 		CompressionAlgorithm:     "zstd",
@@ -260,9 +240,8 @@ func TestInsertPendingIntent_CopiesCompression(t *testing.T) {
 		LogicalSize:              8192,
 	}
 
-	if _, err := coord.InsertPendingIntent(context.Background(), "k", "b1", 4096, form, nil); err != nil {
-		t.Fatalf("InsertPendingIntent: %v", err)
-	}
+	got := NewPendingIntent("k", 4096, form, nil)
+
 	if got.CompressionAlgorithm != "zstd" {
 		t.Errorf("CompressionAlgorithm = %q, want %q", got.CompressionAlgorithm, "zstd")
 	}
@@ -280,23 +259,77 @@ func TestInsertPendingIntent_CopiesCompression(t *testing.T) {
 	}
 }
 
-// TestInsertPendingIntent_StoreError covers the InsertPending failure
-// branch: the wrapped error is returned and the intent ID is empty.
-func TestInsertPendingIntent_StoreError(t *testing.T) {
+// TestClaimWriteTarget_TriesTheNextCandidateWhenOneIsFull asserts a backend
+// whose insert declines is skipped rather than fatal. Declining is how a full
+// backend reports itself now, so it has to read as "try the next one" and not
+// as an error.
+func TestClaimWriteTarget_TriesTheNextCandidateWhenOneIsFull(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().InsertPending(gomock.Any(), gomock.Any()).
-		Return(errors.New("db down")).Times(1)
 
-	coord := newCoordinatorWithStore(store, true)
+	var claimed []string
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, p *core.PendingObject) (bool, error) {
+			claimed = append(claimed, p.BackendName)
+			return p.BackendName == "b2", nil
+		}).Times(2)
 
-	intentID, err := coord.InsertPendingIntent(context.Background(), "k", "b1", 4096, nil, nil)
-	if err == nil {
-		t.Fatal("expected error from InsertPending failure")
+	coord := newCoordinatorWithStore(store)
+
+	name, err := coord.ClaimWriteTarget(context.Background(),
+		NewPendingIntent("k", 4096, nil, nil), []string{"b1", "b2"})
+	if err != nil {
+		t.Fatalf("ClaimWriteTarget: %v", err)
 	}
-	if intentID != "" {
-		t.Errorf("expected empty intentID on error, got %q", intentID)
+	if name != "b2" {
+		t.Errorf("claimed %q, want b2 after b1 declined", name)
+	}
+	if want := []string{"b1", "b2"}; !slices.Equal(claimed, want) {
+		t.Errorf("tried %v, want %v in order", claimed, want)
+	}
+}
+
+// TestClaimWriteTarget_NoCandidateFits asserts the caller is told there is no
+// room rather than being handed a backend that refused, so the request ends as
+// insufficient storage instead of a write against a full backend.
+func TestClaimWriteTarget_NoCandidateFits(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
+		Return(false, nil).Times(2)
+
+	coord := newCoordinatorWithStore(store)
+
+	if _, err := coord.ClaimWriteTarget(context.Background(),
+		NewPendingIntent("k", 4096, nil, nil), []string{"b1", "b2"}); !errors.Is(err, core.ErrNoSpaceAvailable) {
+		t.Errorf("err = %v, want ErrNoSpaceAvailable", err)
+	}
+}
+
+// TestClaimWriteTarget_StoreError covers the insert failure branch: a database
+// error is surfaced rather than read as a full backend, because treating an
+// outage as "no room" would silently place the write elsewhere.
+func TestClaimWriteTarget_StoreError(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
+		Return(false, errors.New("db down")).Times(1)
+
+	coord := newCoordinatorWithStore(store)
+
+	name, err := coord.ClaimWriteTarget(context.Background(),
+		NewPendingIntent("k", 4096, nil, nil), []string{"b1", "b2"})
+	if err == nil {
+		t.Fatal("expected the insert failure to surface")
+	}
+	if errors.Is(err, core.ErrNoSpaceAvailable) {
+		t.Error("a database error was reported as a full backend")
+	}
+	if name != "" {
+		t.Errorf("claimed %q, want no backend on error", name)
 	}
 }
 
@@ -384,7 +417,7 @@ func TestRecordObjectAndPromoteIntent_UnknownBackend(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := NewMockCoordinatorStores(ctrl)
 
-	coord := newCoordinatorWithStore(store, false)
+	coord := newCoordinatorWithStore(store)
 
 	tracer := noop.NewTracerProvider().Tracer("test")
 	_, sp := tracer.Start(context.Background(), "test")
@@ -392,7 +425,7 @@ func TestRecordObjectAndPromoteIntent_UnknownBackend(t *testing.T) {
 
 	err := coord.RecordObjectAndPromoteIntent(context.Background(), sp, &core.RecordObjectRequest{
 		Key: "k", Backend: "no-such-backend", Size: 1024,
-	}, nil)
+	})
 	if err == nil {
 		t.Fatal("expected error for unregistered backend")
 	}
