@@ -47,6 +47,28 @@ func (a *pgTxAdapter) AcquireKeyLock(ctx context.Context, objectKey string) erro
 // PENDING TX OPERATIONS
 // -------------------------------------------------------------------------
 
+// ClearPendingForKey removes the key's intents apart from the ones the caller
+// is committing, reporting each so its bytes can be cleaned off the backend
+// after the transaction commits.
+func (a *pgTxAdapter) ClearPendingForKey(ctx context.Context, objectKey string, keep []string) ([]core.SupersededIntent, error) {
+	if keep == nil {
+		keep = []string{}
+	}
+	rows, err := a.q.ClearPendingForKey(ctx, db.ClearPendingForKeyParams{ObjectKey: objectKey, Keep: keep})
+	if err != nil {
+		return nil, fmt.Errorf("clear pending intents for key: %w", err)
+	}
+	cleared := make([]core.SupersededIntent, len(rows))
+	for i, row := range rows {
+		cleared[i] = core.SupersededIntent{
+			IntentID:    row.IntentID,
+			BackendName: row.BackendName,
+			SizeBytes:   row.SizeBytes,
+		}
+	}
+	return cleared, nil
+}
+
 // ClaimPending returns true if the pending row exists and was locked
 // FOR UPDATE; false if it has already been resolved.
 func (a *pgTxAdapter) ClaimPending(ctx context.Context, intentID string) (bool, error) {

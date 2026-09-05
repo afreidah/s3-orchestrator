@@ -16,6 +16,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"slices"
 )
 
 // -------------------------------------------------------------------------
@@ -34,6 +35,12 @@ type promoteOutcome struct {
 // orchestration reads as five ordered steps: claim, key-lock, supersession
 // check, commit, and the same-tx delete of the pending row.
 func promotePendingTx(ctx context.Context, tx TxAdapter, p *PendingObject) (promoteOutcome, error) {
+	// The key lock comes first, ahead of the claim. A write takes it and then
+	// deletes this key's intent rows, so claiming the row first would leave the
+	// two transactions each holding what the other is waiting for.
+	if err := tx.AcquireKeyLock(ctx, p.ObjectKey); err != nil {
+		return promoteOutcome{}, err
+	}
 	claimed, err := tx.ClaimPending(ctx, p.IntentID)
 	if err != nil {
 		return promoteOutcome{}, err
@@ -42,12 +49,13 @@ func promotePendingTx(ctx context.Context, tx TxAdapter, p *PendingObject) (prom
 		return promoteOutcome{result: PendingPromoteAlreadyResolved}, nil
 	}
 
-	if err := tx.AcquireKeyLock(ctx, p.ObjectKey); err != nil {
-		return promoteOutcome{}, err
-	}
 	existing, err := tx.GetExistingCopiesForUpdate(ctx, p.ObjectKey)
 	if err != nil {
 		return promoteOutcome{}, err
+	}
+
+	if p.IsCompanion() {
+		return resolveCompanion(ctx, tx, p, existing)
 	}
 
 	if intentSuperseded(existing, p.CreatedAt) {
@@ -82,6 +90,67 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 		return promoteOutcome{}, fmt.Errorf("delete promoted pending row: %w", err)
 	}
 	return promoteOutcome{result: PendingPromoteCommitted, displaced: displaced, deltas: deltas}, nil
+}
+
+// resolveCompanion settles an intent for one of the further copies a write was
+// placing, left behind by a process that died before it could clean up.
+//
+// It never promotes. The bytes on that backend cannot be told apart from an
+// older object at the same path, and there is a copy we can vouch for - the
+// client was told the write succeeded, which only happens once a copy commits -
+// so rebuilding from that copy is cheaper than being wrong. The replication
+// worker sees the shortfall and fills it on its next pass.
+//
+// The one case that leaves the backend alone is a copy already recorded there,
+// because those bytes are that copy rather than the intent's.
+func resolveCompanion(ctx context.Context, tx TxAdapter, p *PendingObject, existing []ExistingCopy) (promoteOutcome, error) {
+	if err := tx.DeletePending(ctx, p.IntentID); err != nil {
+		return promoteOutcome{}, fmt.Errorf("delete companion pending row: %w", err)
+	}
+	for _, ec := range existing {
+		if ec.BackendName == p.BackendName {
+			return promoteOutcome{result: PendingPromoteCompanionKept}, nil
+		}
+	}
+	return promoteOutcome{
+		result: PendingPromoteCompanionDiscarded,
+		displaced: []DeletedCopy{{
+			BackendName: p.BackendName,
+			SizeBytes:   p.SizeBytes,
+			Reason:      CleanupReasonCompanionDiscarded,
+		}},
+	}, nil
+}
+
+// clearSupersededIntents removes every intent for the key and reports the ones
+// whose bytes now need deleting off their backend.
+//
+// Every intent for a key is resolved by a write to it: the ones this write is
+// committing are claims it has just honoured, and the rest describe an object it
+// has replaced. Clearing them here is what leaves the reaper with only the
+// intents of a process that died.
+//
+// landedOn names the backends this write placed a copy on. An intent naming one
+// of them is dropped without touching the backend, because the object sitting
+// at that path is this write's copy - the same reason an overwrite does not
+// treat the backend it landed on as displaced.
+func clearSupersededIntents(ctx context.Context, tx TxAdapter, key string, landedOn []string) ([]DeletedCopy, error) {
+	cleared, err := tx.ClearPendingForKey(ctx, key, nil)
+	if err != nil {
+		return nil, fmt.Errorf("clear superseded intents: %w", err)
+	}
+	var stale []DeletedCopy
+	for _, si := range cleared {
+		if slices.Contains(landedOn, si.BackendName) {
+			continue
+		}
+		stale = append(stale, DeletedCopy{
+			BackendName: si.BackendName,
+			SizeBytes:   si.SizeBytes,
+			Reason:      CleanupReasonSupersededIntent,
+		})
+	}
+	return stale, nil
 }
 
 // clearExistingCopies deletes every prior copy of the key and accumulates
