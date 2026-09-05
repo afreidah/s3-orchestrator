@@ -363,12 +363,15 @@ func (a *sqliteTxAdapter) InsertObjectLocationIfNotExists(ctx context.Context, l
 	return true, nil
 }
 
-// InsertReplicaConditional inserts a replica row only if the source
-// copy still exists and the target does not already have a copy.
-// Returns the inserted size_bytes (read from the locked source row, so
-// it agrees with whatever object_locations.size_bytes the SQLite row
-// got) on success, or (0, false, nil) when the source is missing or the
-// target already has a copy.
+// InsertReplicaConditional inserts a replica row only if the source copy still
+// exists, the target does not already have a copy, and the target has room.
+// Returns the inserted size_bytes (read from the locked source row, so it
+// agrees with whatever object_locations.size_bytes the SQLite row got) on
+// success, or (0, false, nil) when any of the three does not hold.
+//
+// The headroom test lives here rather than in the caller so a replica is
+// admitted the same way a PUT is: against live rows, inside the transaction
+// that claims the space.
 func (a *sqliteTxAdapter) InsertReplicaConditional(ctx context.Context, objectKey, targetBackend, sourceBackend string) (int64, bool, error) {
 	srcLoc, ok, err := a.LockObjectOnBackend(ctx, objectKey, sourceBackend)
 	if err != nil {
@@ -384,6 +387,10 @@ func (a *sqliteTxAdapter) InsertReplicaConditional(ctx context.Context, objectKe
 	if targetExists {
 		return 0, false, nil
 	}
+	fits, err := a.backendHasRoom(ctx, targetBackend, srcLoc.SizeBytes)
+	if err != nil || !fits {
+		return 0, false, err
+	}
 	// The whole source row is carried over rather than a hand-listed subset of
 	// its fields: the replica holds the same stored bytes, so anything omitted
 	// here is a column describing bytes that the copy then contradicts. That is
@@ -395,6 +402,40 @@ func (a *sqliteTxAdapter) InsertReplicaConditional(ctx context.Context, objectKe
 		return 0, false, err
 	}
 	return srcLoc.SizeBytes, true, nil
+}
+
+// backendHasRoom reports whether a backend can take size more bytes, judged
+// against the same four terms every other admission test uses: the striped
+// total, orphans awaiting cleanup, incomplete multipart parts, and the intents
+// of writes in progress. A bytes_limit of zero is unlimited.
+func (a *sqliteTxAdapter) backendHasRoom(ctx context.Context, backendName string, size int64) (bool, error) {
+	var fits bool
+	if err := a.tx.QueryRowContext(ctx, `
+		SELECT q.bytes_limit = 0
+		       OR q.bytes_limit
+		          - MAX(0, COALESCE(s.bytes_used, 0))
+		          - q.orphan_bytes
+		          - COALESCE(m.inflight, 0)
+		          - COALESCE(p.inflight, 0) >= ?
+		FROM backend_quotas q
+		LEFT JOIN (
+			SELECT backend_name, SUM(bytes_used) AS bytes_used
+			FROM backend_quota_stripes GROUP BY backend_name
+		) s ON s.backend_name = q.backend_name
+		LEFT JOIN (
+			SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
+			FROM multipart_uploads mu
+			JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
+			GROUP BY mu.backend_name
+		) m ON m.backend_name = q.backend_name
+		LEFT JOIN (
+			SELECT backend_name, SUM(size_bytes) AS inflight
+			FROM pending_objects GROUP BY backend_name
+		) p ON p.backend_name = q.backend_name
+		WHERE q.backend_name = ?`, size, backendName).Scan(&fits); err != nil {
+		return false, fmt.Errorf("check backend headroom: %w", err)
+	}
+	return fits, nil
 }
 
 // -------------------------------------------------------------------------
@@ -513,41 +554,18 @@ func (a *sqliteTxAdapter) HasPendingCleanup(ctx context.Context, objectKey, back
 // QUOTA TX OPERATIONS
 // -------------------------------------------------------------------------
 
-// IncrementBackendQuota credits delta bytes to backendName. Returns
-// core.ErrNoSpaceAvailable when the guarded UPDATE touches zero rows
-// (quota ceiling would be exceeded). orphan_bytes counts toward the ceiling
-// because those bytes are still on the backend until their cleanup lands, and
-// target selection already declines them; leaving them out here would admit
-// writes the placement layer had already ruled out.
-func (a *sqliteTxAdapter) IncrementBackendQuota(ctx context.Context, backendName string, delta int64) error {
-	now := now()
-	res, err := a.tx.ExecContext(ctx, `
-		UPDATE backend_quotas
-		SET bytes_used = bytes_used + ?, updated_at = ?
-		WHERE backend_name = ?
-		  AND (bytes_limit = 0 OR bytes_used + orphan_bytes + ? <= bytes_limit)`,
-		delta, now, backendName, delta)
-	if err != nil {
-		return fmt.Errorf("increment quota: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("check quota update: %w", err)
-	}
-	if n == 0 {
-		return core.ErrNoSpaceAvailable
-	}
-	return nil
-}
-
-// DecrementBackendQuota debits delta bytes from backendName.
-func (a *sqliteTxAdapter) DecrementBackendQuota(ctx context.Context, backendName string, delta int64) error {
-	now := now()
+// AdjustQuotaStripe applies a signed delta to one of a backend's byte-counter
+// stripes, materializing the row on first use so nothing has to seed a
+// backend's stripes up front. No clamp: a stripe is signed, and the total it
+// contributes to is what gets clamped when read.
+func (a *sqliteTxAdapter) AdjustQuotaStripe(ctx context.Context, backendName string, stripe int16, delta int64) error {
 	if _, err := a.tx.ExecContext(ctx, `
-		UPDATE backend_quotas
-		SET bytes_used = MAX(0, bytes_used - ?), updated_at = ?
-		WHERE backend_name = ?`, delta, now, backendName); err != nil {
-		return fmt.Errorf("decrement quota for %s: %w", backendName, err)
+		INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
+		VALUES (?, ?, ?)
+		ON CONFLICT (backend_name, stripe_id) DO UPDATE
+		SET bytes_used = bytes_used + excluded.bytes_used`,
+		backendName, stripe, delta); err != nil {
+		return fmt.Errorf("adjust quota stripe for %s: %w", backendName, err)
 	}
 	return nil
 }
@@ -565,10 +583,21 @@ func (a *sqliteTxAdapter) DecrementOrphanBytes(ctx context.Context, backendName 
 	return nil
 }
 
-// AllBackendBytesUsed returns the current bytes_used for every
-// backend_quotas row, keyed by backend name.
+// AllBackendBytesUsed returns each backend's striped byte total, keyed by
+// backend name. Clamped at zero on the sum rather than per stripe, because an
+// individual stripe is signed and may sit negative while the total is right.
 func (a *sqliteTxAdapter) AllBackendBytesUsed(ctx context.Context) (map[string]int64, error) {
-	rows, err := a.tx.QueryContext(ctx, `SELECT backend_name, bytes_used FROM backend_quotas`)
+	// Driven from backend_quotas rather than the stripes: a backend that has
+	// never been charged has no stripe rows, and reconciliation has to see it
+	// at zero to correct it rather than skipping it entirely.
+	rows, err := a.tx.QueryContext(ctx, `
+		SELECT q.backend_name, COALESCE(MAX(0, s.bytes_used), 0)
+		FROM backend_quotas q
+		LEFT JOIN (
+			SELECT backend_name, SUM(bytes_used) AS bytes_used
+			FROM backend_quota_stripes
+			GROUP BY backend_name
+		) s ON s.backend_name = q.backend_name`)
 	if err != nil {
 		return nil, fmt.Errorf("read all bytes_used: %w", err)
 	}
@@ -586,27 +615,22 @@ func (a *sqliteTxAdapter) SumObjectSizesByBackend(ctx context.Context) (map[stri
 	return collectMap(rows, "object size sums", scanNameValue)
 }
 
-// SetBackendBytesUsed overwrites bytes_used with the authoritative value.
+// SetBackendBytesUsed replaces a backend's byte total with the authoritative
+// recomputed value, collapsing it onto stripe zero and clearing the rest. The
+// distribution that produced the old value carries no information once the
+// total has been recomputed from the ledger.
 func (a *sqliteTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName string, value int64) error {
-	now := now()
 	if _, err := a.tx.ExecContext(ctx, `
-		UPDATE backend_quotas
-		SET bytes_used = ?, updated_at = ?
-		WHERE backend_name = ?`, value, now, backendName); err != nil {
-		return fmt.Errorf("set backend bytes_used: %w", err)
+		UPDATE backend_quota_stripes SET bytes_used = 0
+		WHERE backend_name = ? AND stripe_id <> 0`, backendName); err != nil {
+		return fmt.Errorf("clear quota stripes: %w", err)
 	}
-	return nil
-}
-
-// AdjustBackendBytesUsed applies a signed delta to bytes_used. MAX(0, ...)
-// clamps it: a stale size must not leave the counter negative, which would
-// over-admit every later write.
-func (a *sqliteTxAdapter) AdjustBackendBytesUsed(ctx context.Context, backendName string, delta int64) error {
 	if _, err := a.tx.ExecContext(ctx, `
-		UPDATE backend_quotas
-		SET bytes_used = MAX(0, bytes_used + ?), updated_at = ?
-		WHERE backend_name = ?`, delta, now(), backendName); err != nil {
-		return fmt.Errorf("adjust backend bytes_used: %w", err)
+		INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
+		VALUES (?, 0, ?)
+		ON CONFLICT (backend_name, stripe_id) DO UPDATE
+		SET bytes_used = excluded.bytes_used`, backendName, value); err != nil {
+		return fmt.Errorf("set backend bytes_used: %w", err)
 	}
 	return nil
 }

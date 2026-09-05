@@ -86,7 +86,7 @@ func newDrainFleetWithCleanup(
 	}
 	// Both callbacks are funcs so drain depends on neither the multipart
 	// manager nor the cleanup worker. Nothing here aborts uploads.
-	mgr := New(rt, writepath.New(rt, store, false), store, store, store,
+	mgr := New(rt, writepath.New(rt, store), store, store, store,
 		func(context.Context, string) {}, processCleanup)
 	rt.SetDrainChecker(mgr)
 	return mgr, rt

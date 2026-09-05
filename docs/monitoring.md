@@ -178,6 +178,8 @@ Key metrics to alert on:
 |--------|---------------|
 | `s3o_quota_bytes_available{backend="..."}` | Alert when approaching 0 — backend is almost full (accounts for orphan bytes) |
 | `s3o_quota_orphan_bytes{backend="..."}` | Elevated values mean backends have physically unreleased space from pending cleanups |
+| `s3o_quota_claims_declined_total{backend="..."}` | Sustained non-zero means that backend is full and refusing writes; when every candidate refuses, the request fails with 507 |
+| `s3o_quota_reconcile_corrections_total` | Any increase is a bug: a write path is storing bytes without charging them |
 | `s3o_circuit_breaker_state{name="database"}` | Alert when > 0 — database is unreachable (1=open, 2=half-open) |
 | `s3o_circuit_breaker_state{name="<backend>"}` | Alert when > 0 — backend is unreachable or credentials expired |
 | `s3o_replication_pending` | Alert when consistently > 0 — replicas are falling behind |
@@ -248,6 +250,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_quota_bytes_limit` | Gauge | backend | Quota limit |
 | `s3o_quota_orphan_bytes` | Gauge | backend | Bytes reserved by pending cleanup items |
 | `s3o_quota_bytes_available` | Gauge | backend | Remaining space (limit − used − orphan) |
+| `s3o_quota_claims_declined_total` | Counter | backend | Writes a backend refused for want of room |
 | `s3o_objects_count` | Gauge | backend | Stored object count |
 | `s3o_active_multipart_uploads` | Gauge | backend | In-progress uploads |
 | `s3o_rebalance_objects_moved_total` | Counter | strategy, status | Objects moved by rebalancer |
@@ -279,7 +282,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_degraded_broadcast_drain_timeout_total` | Counter | — | Loser-drain goroutines that gave up at the bounded timeout because a cancelled probe never returned. Non-zero means a backend is stranding goroutines under degraded fan-out |
 | `s3o_degraded_broadcast_mixed_outcomes_total` | Counter | — | Broadcasts whose all-failed terminal saw both 404 and non-404 failures, which surfaces provider divergence otherwise hidden under not_found |
 | `s3o_write_failover_total` | Counter | — | Write operations that failed over to a different backend |
-| `s3o_quota_reconcile_corrections_total` | Counter | backend | Per-backend `bytes_used` drift corrections applied by usage reconciliation |
+| `s3o_quota_reconcile_corrections_total` | Counter | — | Byte-total drift corrections applied by usage reconciliation. Expected to stay at zero: the counter is charged in the same transaction that writes the rows it summarizes, so any increase means a mutation path is storing bytes without charging them |
 | `s3o_usage_api_requests` | Gauge | backend | Current month API request count |
 | `s3o_usage_egress_bytes` | Gauge | backend | Current month egress bytes |
 | `s3o_usage_ingress_bytes` | Gauge | backend | Current month ingress bytes |

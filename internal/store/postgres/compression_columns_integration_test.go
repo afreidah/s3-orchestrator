@@ -180,7 +180,7 @@ func TestPgPendingPromote_PreservesRepresentation(t *testing.T) {
 		CompressionFormatVersion: form.CompressionFormatVersion,
 		LogicalSize:              form.LogicalSize,
 	}
-	if err := s.InsertPending(ctx, intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, intent); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	defer func() { _ = s.DeletePending(ctx, key) }()

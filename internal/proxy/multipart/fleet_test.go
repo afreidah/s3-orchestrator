@@ -62,7 +62,6 @@ type fleetOpts struct {
 	Codec              Codec                    // with Compression below, encodes the assembled object
 	Compression        config.CompressionConfig //
 	ObjectCache        objcache.ObjectCache     // attaches a cache so completion-time invalidation runs
-	PendingEnabled     bool                     // turns on the coordinator's pending-write pattern
 	AdmissionSem       chan struct{}            // bounds concurrent backend writes, for admission tests
 	BackendTimeout     time.Duration            // overrides the per-call bound; defaults to fleetTimeout
 	EnforceMinPartSize bool                     // turns on the S3 5 MiB non-final part floor
@@ -121,7 +120,7 @@ func newFleet(
 	integrity := &syncutil.AtomicConfig[config.IntegrityConfig]{}
 	mp := New(&Deps{
 		Core:               rt,
-		Coord:              writepath.New(rt, store, opts.PendingEnabled),
+		Coord:              writepath.New(rt, store),
 		Stores:             store,
 		Encryptor:          opts.Encryptor,
 		Codec:              opts.Codec,

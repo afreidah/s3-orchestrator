@@ -82,8 +82,7 @@ The write path can run in two modes. **Direct mode** (`enabled: false`) writes t
 
 ```yaml
 write_path:
-  pending_pattern:
-    enabled: true        # default: true; PUT-before-COMMIT crash-recovery pattern
+  pending_pattern:       # the pattern is always on; only the reaper is tunable
     reaper_tick: 1m      # how often PendingReaper sweeps unresolved intents (default: 1m)
     min_age: 5m          # only intents older than this are eligible (default: 5m) — avoids racing in-flight PUTs
     batch_size: 50       # rows claimed per tick (default: 50)

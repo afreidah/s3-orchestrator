@@ -27,7 +27,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -131,14 +130,15 @@ func newReplicaFleet(t *testing.T, store *mockMetadataStore, source string, targ
 	f.ops.EXPECT().ReleaseAdmission().AnyTimes()
 	f.ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	f.pl.EXPECT().SelectReplicaTarget(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ int64, exclude map[string]bool) (string, *counter.Reservation, error) {
+	f.pl.EXPECT().RankReplicaTargets(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ int64, exclude map[string]bool) []string {
+			var ranked []string
 			for _, name := range targets {
 				if !exclude[name] {
-					return name, nil, nil
+					ranked = append(ranked, name)
 				}
 			}
-			return "", nil, errors.New("no backend with space")
+			return ranked
 		}).AnyTimes()
 	return f
 }

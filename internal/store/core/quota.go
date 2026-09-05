@@ -19,33 +19,43 @@ import (
 )
 
 // -------------------------------------------------------------------------
-// FLUSH
+// CHARGE
 // -------------------------------------------------------------------------
 
-// FlushQuotaDeltas applies accumulated per-backend byte deltas to
-// backend_quotas in a single transaction.
+// chargeStripes records a mutation's byte movements inside the transaction
+// that produced them, on the stripe the object key selects.
 //
-// Backends are written in sorted order for the reason the per-write path used
-// to sort them: two flushes touching the same backends acquire the row locks in
-// the same sequence and queue rather than deadlock. The adjustment is
-// unconditional - the limit was enforced in memory before the bytes were
-// written, and a flush that declined to record them would leave bytes_used
-// permanently short of what the backend holds.
-func FlushQuotaDeltas(ctx context.Context, runner Runner, deltas QuotaDeltas) error {
+// Being in the same transaction as the object_locations rows is the whole
+// point: the counter commits and rolls back with the ledger it summarizes, so
+// it cannot drift from it. Reconciliation stays as an audit for the rows that
+// predate this, not as the repair the counter depends on.
+//
+// Backends are written in sorted order so two transactions touching the same
+// pair acquire the rows in the same sequence and queue rather than deadlock.
+func chargeStripes(ctx context.Context, tx TxAdapter, key string, deltas QuotaDeltas) error {
 	if len(deltas) == 0 {
 		return nil
 	}
-	backends := slices.Sorted(maps.Keys(deltas))
-	return runner.WithTx(ctx, func(ctx context.Context, tx TxAdapter) error {
-		for _, name := range backends {
-			delta := deltas[name]
-			if delta == 0 {
-				continue
-			}
-			if err := tx.AdjustBackendBytesUsed(ctx, name, delta); err != nil {
-				return fmt.Errorf("flush quota delta for %s: %w", name, err)
-			}
+	stripe := StripeFor(key)
+	for _, name := range slices.Sorted(maps.Keys(deltas)) {
+		if deltas[name] == 0 {
+			continue
 		}
-		return nil
-	})
+		if err := tx.AdjustQuotaStripe(ctx, name, stripe, deltas[name]); err != nil {
+			return fmt.Errorf("charge quota stripe for %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// chargeStripesByKey is the batch form: each key's copies are charged to that
+// key's own stripe, so a batch spreads across rows the way the individual
+// writes it replaces would have.
+func chargeStripesByKey(ctx context.Context, tx TxAdapter, perKey map[string]QuotaDeltas) error {
+	for _, key := range slices.Sorted(maps.Keys(perKey)) {
+		if err := chargeStripes(ctx, tx, key, perKey[key]); err != nil {
+			return err
+		}
+	}
+	return nil
 }

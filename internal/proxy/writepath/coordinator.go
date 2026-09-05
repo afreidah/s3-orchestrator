@@ -55,10 +55,9 @@ type CoordinatorStores interface {
 }
 
 type Coordinator struct {
-	core           WriteRuntime // infrastructure subset: backends, usage, routing, eligibility, error classification, delete-with-timeout
-	stores         CoordinatorStores
-	pendingEnabled bool
-	log            *slog.Logger
+	core   WriteRuntime // infrastructure subset: backends, usage, routing, eligibility, error classification, delete-with-timeout
+	stores CoordinatorStores
+	log    *slog.Logger
 }
 
 // New constructs a Coordinator. The supplied core must observe the same
@@ -66,21 +65,14 @@ type Coordinator struct {
 // in production they are all handed the one *infra.BackendRuntime. The
 // component-scoped logger is built in the constructor body per the
 // project's logging convention.
-func New(core WriteRuntime, stores CoordinatorStores, pendingEnabled bool) *Coordinator {
+func New(core WriteRuntime, stores CoordinatorStores) *Coordinator {
 	must.NotNil("core", core)
 	must.NotNil("stores", stores)
 	return &Coordinator{
-		core:           core,
-		stores:         stores,
-		pendingEnabled: pendingEnabled,
-		log:            slog.Default().With(logfmt.Component("writepath")),
+		core:   core,
+		stores: stores,
+		log:    slog.Default().With(logfmt.Component("writepath")),
 	}
-}
-
-// SetPendingEnabledForTest toggles the pending-pattern flag. Test-only:
-// production wiring always passes the flag through New.
-func (w *Coordinator) SetPendingEnabledForTest(enabled bool) {
-	w.pendingEnabled = enabled
 }
 
 // -------------------------------------------------------------------------
@@ -93,24 +85,32 @@ func (w *Coordinator) SetPendingEnabledForTest(enabled bool) {
 // ErrNoSpaceAvailable when no candidate has room.
 //
 // Both the fit test and the ranking read the in-memory tracker rather than
-// backend_quotas. The row only learns about a write at the next flush, so a
-// query here would judge every candidate against a total that stops moving
-// between flushes - which for spread means every selection in the window
-// naming the same winner.
+// The ranking reads the in-memory snapshot, which is allowed to be stale: a
+// slightly wrong order costs an uneven spread that the next refresh corrects.
+// The fit test is not allowed to be stale, so it is the intent insert itself -
+// one statement that claims the bytes only if the backend's live rows still
+// have room. Ranking proposes; the insert decides.
 //
-// A candidate that loses the reservation race to a concurrent write is skipped
-// rather than fatal: another backend may still have room.
-func (w *Coordinator) SelectBackendForWrite(size int64, eligible []string) (string, *counter.Reservation, error) {
-	quota := w.core.Quota()
-	for _, name := range w.rankForWrite(quota, eligible) {
-		if quota.Available(name) < size {
-			continue
+// A candidate the insert declines is skipped rather than fatal: another backend
+// may still have room. Returns ErrNoSpaceAvailable when none does.
+func (w *Coordinator) ClaimWriteTarget(ctx context.Context, p *core.PendingObject, eligible []string) (string, error) {
+	for _, name := range w.rankForWrite(w.core.Quota(), eligible) {
+		p.BackendName = name
+		fits, err := w.stores.InsertPendingIfFits(ctx, p)
+		if err != nil {
+			return "", fmt.Errorf("claim write target: %w", err)
 		}
-		if res := quota.Reserve(name, size); res != nil {
-			return name, res, nil
+		if fits {
+			// Tell the ranking what this instance just placed, or every write
+			// in the interval before the next reload ranks the candidates
+			// identically and spread stops spreading.
+			w.core.Quota().NotePlacement(name, p.SizeBytes)
+			telemetry.PendingIntentsEnqueuedTotal.Inc()
+			return name, nil
 		}
+		telemetry.QuotaClaimsDeclinedTotal.WithLabelValues(name).Inc()
 	}
-	return "", nil, core.ErrNoSpaceAvailable
+	return "", core.ErrNoSpaceAvailable
 }
 
 // rankForWrite orders the candidates the way the configured strategy wants them
@@ -124,25 +124,26 @@ func (w *Coordinator) rankForWrite(quota *counter.QuotaTracker, eligible []strin
 	return quota.RankByUtilization(eligible)
 }
 
-// SelectWriteTarget picks a backend for a write operation, combining
-// eligibility filtering, backend selection, and error classification
-// into a single call. Returns ErrInsufficientStorage when no backend can
-// accept the write, or the classified selection error.
+// SelectWriteTarget picks a backend for a write and claims it, combining
+// eligibility filtering, ranking, admission, and error classification into a
+// single call. Returns ErrInsufficientStorage when no backend can accept the
+// write, or the classified selection error.
 //
-// The reservation comes back with the name and must be disposed of by the
-// caller: Commit when the write is recorded, Release on any path that gives up.
-func (w *Coordinator) SelectWriteTarget(span trace.Span, operation s3op.Operation, size int64) (string, *counter.Reservation, error) {
-	eligible := w.core.EligibleForWrite([]s3op.Operation{operation}, 0, size)
+// The claim is the pending intent, which the caller owns from here: it is
+// cleared by the transaction that records the object, and left for the reaper
+// on any path that gives up.
+func (w *Coordinator) SelectWriteTarget(ctx context.Context, span trace.Span, operation s3op.Operation, p *core.PendingObject) (string, error) {
+	eligible := w.core.EligibleForWrite([]s3op.Operation{operation}, 0, p.SizeBytes)
 	if len(eligible) == 0 {
 		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation.String(), "write").Inc()
 		observe.MarkSpanError(span, "usage limits exceeded on all backends")
-		return "", nil, core.ErrInsufficientStorage
+		return "", core.ErrInsufficientStorage
 	}
-	name, res, err := w.SelectBackendForWrite(size, eligible)
+	name, err := w.ClaimWriteTarget(ctx, p, eligible)
 	if err != nil {
-		return "", nil, w.core.ClassifyWriteError(span, operation.String(), err)
+		return "", w.core.ClassifyWriteError(span, operation.String(), err)
 	}
-	return name, res, nil
+	return name, nil
 }
 
 // -------------------------------------------------------------------------
@@ -154,21 +155,18 @@ func (w *Coordinator) SelectWriteTarget(span trace.Span, operation s3op.Operatio
 // displaced copies on other backends (from overwrites). Updates the
 // tracing span on error.
 //
-// res is the reservation the write's target was chosen with: committing it
-// swaps the claimed bytes for what the ledger recorded, which is also where an
-// overwrite's freed bytes are credited back.
-func (w *Coordinator) RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, req *core.RecordObjectRequest, res *counter.Reservation) error {
-	displaced, deltas, err := w.stores.RecordObject(ctx, req)
+// Nothing is settled against a counter here. The transaction charged the bytes
+// to the backend's stripes and cleared the intent that had been holding them,
+// so the ledger is already correct the moment it commits.
+func (w *Coordinator) RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, req *core.RecordObjectRequest) error {
+	displaced, _, err := w.stores.RecordObject(ctx, req)
 	if err != nil {
-		res.Release()
 		w.log.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
 			"key", req.Key, "backend", req.Backend, "error", err)
 		w.RecoverFromRecordFailure(ctx, be, req.Backend, req.Key, "orphan_record_failed", req.Size)
 		observe.RecordSpanError(span, err)
 		return fmt.Errorf("failed to record object: %w", err)
 	}
-	w.settleQuota(res, deltas)
-
 	w.cleanupDisplacedCopies(ctx, req.Key, req.Backend, displaced)
 	return nil
 }
@@ -203,35 +201,29 @@ func (w *Coordinator) RecoverFromRecordFailure(ctx context.Context, be backend.O
 	w.EnqueueCleanup(ctx, backendName, key, cleanupReason, size)
 }
 
-// InsertPendingIntent records an in-flight PUT intent before the backend
-// upload. Returns the generated intent ID, or empty string if no pending
-// store is configured (in which case the legacy delete-on-record-failure
-// path remains in effect for that PUT). A failure to insert the intent
-// while pending tracking is configured fails the PUT - proceeding without
-// the intent would reintroduce the data-loss window the pattern exists to
-// close.
-func (w *Coordinator) InsertPendingIntent(ctx context.Context, key, backendName string, size int64, form *core.StoredForm, id *core.ObjectIdentity) (string, error) {
-	if !w.pendingEnabled {
-		return "", nil
-	}
-	intentID := audit.NewID()
-	// size is what will land on the backend, which is what quota is reconciled
-	// against if this intent is recovered rather than committed. id is what the
-	// client will be told the object is; carrying it here is what lets a
-	// reaper-promoted object answer a HEAD without re-learning it.
-	p := core.PendingObject{
-		IntentID:    intentID,
-		ObjectKey:   key,
-		BackendName: backendName,
-		SizeBytes:   size,
-		Identity:    id,
+// NewPendingIntent builds the intent a write will be admitted on. The backend
+// is left unset: which one it names is decided by ClaimWriteTarget, because the
+// insert that writes this row is the same statement that tests whether the
+// backend has room for it.
+//
+// The row is not only a recovery breadcrumb. Admission subtracts the intents a
+// backend is holding from its headroom, so the bytes of a write in progress
+// occupy the backend for every instance rather than only the one performing it.
+// That is why there is no longer a mode without it.
+//
+// size is what will land on the backend, which is what quota is reconciled
+// against if this intent is recovered rather than committed. id is what the
+// client will be told the object is; carrying it here is what lets a
+// reaper-promoted object answer a HEAD without re-learning it.
+func NewPendingIntent(key string, size int64, form *core.StoredForm, id *core.ObjectIdentity) *core.PendingObject {
+	p := &core.PendingObject{
+		IntentID:  audit.NewID(),
+		ObjectKey: key,
+		SizeBytes: size,
+		Identity:  id,
 	}
 	p.ApplyStoredForm(form)
-	if err := w.stores.InsertPending(ctx, &p); err != nil {
-		return "", fmt.Errorf("insert pending intent: %w", err)
-	}
-	telemetry.PendingIntentsEnqueuedTotal.Inc()
-	return intentID, nil
+	return p
 }
 
 // RecordObjectAndPromoteIntent commits the object location, updates
@@ -241,32 +233,29 @@ func (w *Coordinator) InsertPendingIntent(ctx context.Context, key, backendName 
 // HEADing the backend, promoting the metadata if the bytes are present
 // and removing the intent if they are absent.
 //
-// When req.IntentID is empty (no pending store configured) this falls back
-// to the legacy RecordObjectOrCleanup behavior so existing call sites
-// and tests retain their previous semantics.
-func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest, res *counter.Reservation) error {
+// When req.IntentID is empty - a caller that wrote bytes without claiming an
+// intent first, which only the assembly paths do - this falls back to
+// RecordObjectOrCleanup.
+func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest) error {
 	if req.IntentID == "" {
-		// No pending tracking - caller already wrote bytes, fall back to the
-		// legacy path. The backend is unavailable here, so we cannot use
+		// The backend is unavailable here, so we cannot use
 		// RecordObjectOrCleanup (which deletes on failure). Resolve via the
 		// backend map.
 		be, ok := w.core.Backends()[req.Backend]
 		if !ok {
-			res.Release()
 			return fmt.Errorf("backend %s not registered", req.Backend)
 		}
-		return w.RecordObjectOrCleanup(ctx, span, be, req, res)
+		return w.RecordObjectOrCleanup(ctx, span, be, req)
 	}
 
-	displaced, deltas, err := w.stores.RecordObject(ctx, req)
+	displaced, _, err := w.stores.RecordObject(ctx, req)
 	if err == nil {
 		telemetry.PendingIntentsResolvedTotal.WithLabelValues("committed").Inc()
 	}
 	if err != nil {
-		// The claim goes back even though the bytes are still on the backend:
-		// the intent survives, and whichever pass resolves it - the reaper's
-		// promotion or the usage reconcile - accounts for them then.
-		res.Release()
+		// The intent stays, so the bytes stay claimed against the backend
+		// until whichever pass resolves it - the reaper's promotion or its
+		// removal - settles what they are worth.
 		w.log.ErrorContext(ctx, "recordObject failed; intent left for reaper",
 			"key", req.Key, "backend", req.Backend, "intent_id", req.IntentID, "error", err)
 		// The successful PUT against the backend still consumed an API
@@ -276,25 +265,8 @@ func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span tra
 		observe.RecordSpanError(span, err)
 		return fmt.Errorf("failed to record object: %w", err)
 	}
-	w.settleQuota(res, deltas)
-
 	w.cleanupDisplacedCopies(ctx, req.Key, req.Backend, displaced)
 	return nil
-}
-
-// settleQuota folds a committed mutation's deltas into the byte counter and
-// drops the claim the write was admitted on.
-//
-// A nil reservation means the write never claimed anything - a multipart upload
-// whose parts were written before the assembled object existed, or an intent
-// promoted by the reaper long after the PUT gave its claim back. The deltas
-// still have to land, which is why this is not simply a method on the handle.
-func (w *Coordinator) settleQuota(res *counter.Reservation, deltas core.QuotaDeltas) {
-	if res == nil {
-		w.core.Quota().Apply(deltas)
-		return
-	}
-	res.Commit(deltas)
 }
 
 // cleanupDisplacedCopies removes stale copies on other backends displaced
@@ -505,33 +477,46 @@ func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, 
 	w.DeleteOrEnqueue(ctx, req.SrcBackend, req.SrcName, req.Key, req.Reasons.SourceDelete, movedSize)
 	w.core.Acct().Egress(s3op.GetObject, req.SrcName, movedSize)
 	w.core.Acct().Ingress(s3op.PutObject, req.DestName, movedSize)
-	// Both ends move at the size the CAS committed. Applied together so no
-	// window has the bytes counted on neither backend or on both.
-	w.core.Quota().Apply(core.QuotaDeltas{
-		req.SrcName:  -movedSize,
-		req.DestName: movedSize,
-	})
+	// Both ends moved at the size the CAS committed, charged by the move's own
+	// transaction so neither window exists where the bytes are counted on
+	// neither backend or on both.
 	return movedSize, nil
 }
 
-// SelectReplicaTarget picks a destination for a replication copy using the
-// same routing strategy as a normal write, excluding backends that already
-// hold a copy. Returns "" with no error when nothing is eligible, so the
-// caller can treat "no room right now" as a skip rather than a failure.
+// PickWriteTarget names the backend a write should target without claiming
+// anything on it.
 //
-// The reservation carries the same disposal obligation as SelectWriteTarget's,
-// and is nil whenever the name is empty.
-func (w *Coordinator) SelectReplicaTarget(size int64, exclusion map[string]bool) (string, *counter.Reservation, error) {
+// For the writes whose bytes are accounted for by rows of their own: a
+// multipart create decides where the upload will live long before any part
+// exists, and each part is counted against the backend by its own
+// multipart_parts row as it arrives. Claiming at create time would hold bytes
+// nobody has sent yet.
+func (w *Coordinator) PickWriteTarget(span trace.Span, operation s3op.Operation, size int64) (string, error) {
+	eligible := w.core.EligibleForWrite([]s3op.Operation{operation}, 0, size)
+	if len(eligible) == 0 {
+		telemetry.UsageLimitRejectionsTotal.WithLabelValues(operation.String(), "write").Inc()
+		observe.MarkSpanError(span, "usage limits exceeded on all backends")
+		return "", core.ErrInsufficientStorage
+	}
+	ranked := w.rankForWrite(w.core.Quota(), eligible)
+	return ranked[0], nil
+}
+
+// RankReplicaTargets orders the destinations a replication copy may go to,
+// emptiest first under the same routing strategy a normal write uses, excluding
+// backends that already hold a copy. An empty result means nothing is eligible,
+// which the caller treats as a skip rather than a failure.
+//
+// Only the order is decided here. Whether a candidate has room is settled by
+// the conditional insert that records the copy, so a caller walks this list
+// until one of them accepts the row.
+func (w *Coordinator) RankReplicaTargets(size int64, exclusion map[string]bool) []string {
 	eligible := w.core.EligibleForWrite([]s3op.Operation{s3op.PutObject}, 0, size)
 	filtered := slices.DeleteFunc(slices.Clone(eligible), func(name string) bool {
 		return exclusion[name]
 	})
 	if len(filtered) == 0 {
-		return "", nil, nil
+		return nil
 	}
-	name, res, err := w.SelectBackendForWrite(size, filtered)
-	if errors.Is(err, core.ErrNoSpaceAvailable) {
-		return "", nil, nil
-	}
-	return name, res, err
+	return w.rankForWrite(w.core.Quota(), filtered)
 }

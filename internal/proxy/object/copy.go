@@ -20,9 +20,9 @@ import (
 	"time"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 
@@ -118,14 +118,17 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 	// different validators.
 	srcIdentity := copyIdentity(locations, contentType, metadata)
 
-	destBackendName, reserved, err := o.coord.SelectWriteTarget(span, operation, size)
+	// The copy claims its destination the way a PUT does: the intent both holds
+	// the bytes against the backend while they are being written and gives a
+	// failed commit something the reaper can resolve. A native attempt falling
+	// back to the materialized one claims nothing new, because the destination
+	// was already chosen.
+	intent := writepath.NewPendingIntent(destKey, size, srcForm, srcIdentity)
+	destBackendName, err := o.coord.SelectWriteTarget(ctx, span, operation, intent)
 	if err != nil {
 		return "", err
 	}
-	// Released on every path that does not reach a finalizer, including the
-	// native attempt falling back to the materialized one - which reserves
-	// nothing new, because the destination was already chosen.
-	defer reserved.Release()
+	intentID := intent.IntentID
 	destBackend, err := o.core.GetBackend(destBackendName)
 	if err != nil {
 		observe.RecordSpanError(span, err)
@@ -152,7 +155,7 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 			srcForm:         srcForm,
 			identity:        srcIdentity,
 			tags:            tags,
-			reserved:        reserved,
+			intentID:        intentID,
 			start:           start,
 		}
 		if etag, handled, nerr := o.tryNativeCopy(ctx, req); handled {
@@ -191,7 +194,7 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 		srcForm:         srcForm,
 		identity:        srcIdentity,
 		tags:            tags,
-		reserved:        reserved,
+		intentID:        intentID,
 		start:           start,
 	}, etag)
 }
@@ -284,7 +287,7 @@ type materializedCopyContext struct {
 	srcForm         *core.StoredForm
 	identity        *core.ObjectIdentity
 	tags            []core.Tag
-	reserved        *counter.Reservation
+	intentID        string
 	start           time.Time
 }
 
@@ -300,7 +303,7 @@ type nativeCopyContext struct {
 	srcForm         *core.StoredForm
 	identity        *core.ObjectIdentity
 	tags            []core.Tag
-	reserved        *counter.Reservation
+	intentID        string
 	start           time.Time
 }
 
