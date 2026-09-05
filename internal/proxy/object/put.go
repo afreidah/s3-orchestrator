@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/etag"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
@@ -298,35 +299,27 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	// neither the size the client announced nor the size the plan holds: a
 	// compressed write shrank before this point and an encrypted one grows
 	// after it.
-	backendName, reserved, err := o.coord.SelectBackendForWrite(o.physicalSize(plan.storedSize), eligible)
-	if err != nil {
-		return putAttemptResult{fatalErr: o.core.ClassifyWriteError(span, operation.String(), err)}
-	}
-	// Every path out of this attempt that is not the commit gives the claimed
-	// bytes back. Deferred at the point of reservation so a return added later
-	// cannot forget one; the commit disposes of it first and this becomes a
-	// no-op.
-	defer reserved.Release()
-	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
-
-	be, err := o.core.GetBackend(backendName)
-	if err != nil {
-		observe.RecordSpanError(span, err)
-		return putAttemptResult{backend: backendName, fatalErr: err}
-	}
-
 	uploadBody, uploadSize, form, err := o.buildPutPayload(ctx, plan, dekState)
 	if err != nil {
 		observe.RecordSpanError(span, err)
-		return putAttemptResult{backend: backendName, fatalErr: err}
+		return putAttemptResult{fatalErr: err}
 	}
 
-	// Insert the pending intent before the backend PUT so a metadata
-	// commit failure after the bytes land has a recovery breadcrumb: the
-	// pending reaper promotes the intent on a later tick instead of the
-	// old failure path silently deleting the just-written copy.
+	// Claiming and choosing are one step. The intent row is both the recovery
+	// breadcrumb a failed commit is resolved from and the bytes admission
+	// counts against the backend, so the insert that writes it is the statement
+	// that decides whether the backend has room. Ranking only proposes an order
+	// to try.
 	identity := putIdentity(plan.etagDigest, req)
-	intentID, err := o.coord.InsertPendingIntent(ctx, key, backendName, uploadSize, form, identity)
+	intent := writepath.NewPendingIntent(key, uploadSize, form, identity)
+	backendName, err := o.coord.ClaimWriteTarget(ctx, intent, eligible)
+	if err != nil {
+		return putAttemptResult{fatalErr: o.core.ClassifyWriteError(span, operation.String(), err)}
+	}
+	intentID := intent.IntentID
+	span.SetAttributes(telemetry.AttrBackendName.String(backendName))
+
+	be, err := o.core.GetBackend(backendName)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return putAttemptResult{backend: backendName, fatalErr: err}
@@ -365,7 +358,7 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
 		Key: key, Backend: backendName, Size: uploadSize, Form: form, Identity: identity,
 		Tags: req.Tags, IntentID: intentID,
-	}, reserved); err != nil {
+	}); err != nil {
 		// Classified like the placement failure above: with placement decided in
 		// memory, the commit is now where a database outage first shows up, and
 		// it owes the client the same 503 the old placement query gave it.

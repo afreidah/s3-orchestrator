@@ -3,61 +3,46 @@
 --
 -- Author: Alex Freidah
 --
--- sqlc-input definitions for backend_quotas - the per-backend bytes_used,
--- bytes_limit, and orphan_bytes counters. The increment query is guarded
--- (WHERE bytes_used + delta <= bytes_limit) so an INSERT exceeding the
--- limit touches zero rows and the engine returns ErrNoSpaceAvailable. Lock
--- acquisition order across multi-row updates is enforced at the call site
--- (sorted backend_name) to avoid deadlock.
+-- sqlc-input definitions for backend_quotas - the per-backend bytes_limit and
+-- orphan_bytes counters - and backend_quota_stripes, which holds the stored
+-- byte total split across rows so concurrent writers do not contend on one.
+--
+-- A backend's byte total is always SUM(bytes_used) over its stripes, never a
+-- single row, and the clamp at zero belongs on that sum: a stripe is signed and
+-- may sit negative while the total is correct. Lock acquisition order across
+-- multi-row updates is enforced at the call site (sorted backend_name) to avoid
+-- deadlock.
 -- -----------------------------------------------------------------------------
 
 -- name: UpsertQuotaLimit :exec
-INSERT INTO backend_quotas (backend_name, bytes_limit, bytes_used, updated_at)
-VALUES ($1, $2, 0, NOW())
+INSERT INTO backend_quotas (backend_name, bytes_limit, updated_at)
+VALUES ($1, $2, NOW())
 ON CONFLICT (backend_name) DO UPDATE SET
     bytes_limit = $2,
     updated_at = NOW();
 
--- name: GetBackendAvailableSpace :one
--- bytes_limit = 0 means unlimited (no quota enforcement)
-SELECT CASE
-    WHEN q.bytes_limit = 0 THEN 9223372036854775807  -- max int64
-    ELSE (q.bytes_limit - q.bytes_used - q.orphan_bytes - COALESCE(m.inflight, 0))
-END::bigint AS available
-FROM backend_quotas q
-LEFT JOIN (
-    SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
-    FROM multipart_uploads mu
-    JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
-    GROUP BY mu.backend_name
-) m ON m.backend_name = q.backend_name
-WHERE q.backend_name = $1;
-
--- name: GetLeastUtilizedBackend :one
--- Finds the backend with the lowest utilization ratio that has enough space.
-SELECT q.backend_name,
-       CASE WHEN q.bytes_limit = 0 THEN 9223372036854775807
-            ELSE (q.bytes_limit - q.bytes_used - q.orphan_bytes - COALESCE(m.inflight, 0))
-       END::bigint AS available
-FROM backend_quotas q
-LEFT JOIN (
-    SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
-    FROM multipart_uploads mu
-    JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
-    GROUP BY mu.backend_name
-) m ON m.backend_name = q.backend_name
-WHERE q.backend_name = ANY(@backend_names::text[])
-  AND CASE WHEN q.bytes_limit = 0 THEN 9223372036854775807
-           ELSE (q.bytes_limit - q.bytes_used - q.orphan_bytes - COALESCE(m.inflight, 0))
-      END >= @min_size::bigint
-ORDER BY CASE WHEN q.bytes_limit = 0 THEN 0
-              ELSE (q.bytes_used + q.orphan_bytes)::float8 / q.bytes_limit::float8
-         END ASC
-LIMIT 1;
+-- name: AdjustQuotaStripe :exec
+-- Applies a signed delta to one stripe, materializing the row on first use so
+-- nothing has to seed a backend's stripes up front. No bytes_limit guard: the
+-- ceiling is enforced before the write is admitted, and a counter that declined
+-- to record bytes already on a backend would understate it permanently.
+INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
+VALUES (@backend_name, @stripe_id, @delta)
+ON CONFLICT (backend_name, stripe_id) DO UPDATE
+SET bytes_used = backend_quota_stripes.bytes_used + EXCLUDED.bytes_used;
 
 -- name: GetAllQuotaStats :many
-SELECT backend_name, bytes_used, bytes_limit, orphan_bytes, updated_at
-FROM backend_quotas;
+SELECT q.backend_name,
+       GREATEST(0, COALESCE(s.bytes_used, 0))::bigint AS bytes_used,
+       q.bytes_limit,
+       q.orphan_bytes,
+       q.updated_at
+FROM backend_quotas q
+LEFT JOIN (
+    SELECT backend_name, SUM(bytes_used) AS bytes_used
+    FROM backend_quota_stripes
+    GROUP BY backend_name
+) s ON s.backend_name = q.backend_name;
 
 -- name: GetObjectCountsByBackend :many
 SELECT backend_name, COUNT(*) AS object_count
@@ -74,30 +59,6 @@ SELECT backend_name, COUNT(*) AS object_count
 FROM object_locations
 WHERE content_hash IS NULL
 GROUP BY backend_name;
-
--- name: IncrementQuota :execrows
-UPDATE backend_quotas
-SET bytes_used = bytes_used + @amount, updated_at = NOW()
-WHERE backend_name = @backend_name
-  AND (bytes_limit = 0 OR bytes_used + orphan_bytes + @amount <= bytes_limit);
-
--- name: DecrementQuota :exec
-UPDATE backend_quotas
-SET bytes_used = GREATEST(0, bytes_used - @amount), updated_at = NOW()
-WHERE backend_name = @backend_name;
-
--- name: AdjustBackendBytesUsed :exec
--- Applies a signed delta to bytes_used without the bytes_limit guard
--- IncrementQuota uses, because the on-disk byte count is reality and
--- the counter must follow it whether or not the limit would otherwise
--- be exceeded. GREATEST(0, ...) clamps so a delta-arithmetic bug
--- cannot drive the counter negative. Used by MarkObjectEncrypted and
--- MarkObjectDecrypted to keep bytes_used in step with size_bytes
--- after the bulk encrypt-existing / decrypt-existing rewrite path
--- changes the on-disk size.
-UPDATE backend_quotas
-SET bytes_used = GREATEST(0, bytes_used + @delta), updated_at = NOW()
-WHERE backend_name = @backend_name;
 
 -- name: GetObjectSizeBytes :one
 -- Returns the current size_bytes of an object_locations row. Used
@@ -126,30 +87,52 @@ FROM object_locations
 GROUP BY backend_name;
 
 -- name: SetBackendBytesUsed :exec
--- Overwrites bytes_used with an authoritative value (no bytes_limit guard,
--- because the recomputed total is reality and the counter must follow it).
-UPDATE backend_quotas
-SET bytes_used = @bytes_used, updated_at = NOW()
-WHERE backend_name = @backend_name;
+-- Replaces a backend's byte total with an authoritative recomputed value by
+-- collapsing it onto stripe zero and clearing the rest. Reconciliation is the
+-- one caller: it has recomputed the total from the ledger, so the distribution
+-- that produced the old value carries no information worth preserving.
+WITH cleared AS (
+    UPDATE backend_quota_stripes
+    SET bytes_used = 0
+    WHERE backend_name = @backend_name AND stripe_id <> 0
+    RETURNING 1
+)
+INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
+VALUES (@backend_name, 0, @bytes_used)
+ON CONFLICT (backend_name, stripe_id) DO UPDATE
+SET bytes_used = EXCLUDED.bytes_used;
 
 -- name: ListBackendQuotaUsage :many
--- Every backend's ceiling and what occupies it: the counter, orphans awaiting
--- cleanup, and the parts of uploads that have not completed. The same three
--- terms GetBackendWithSpace subtracts, read for the whole fleet in one pass
--- rather than per candidate, because the quota tracker refreshes its baseline
--- once per flush instead of asking on every write.
+-- Every backend's ceiling and what occupies it: the striped byte total, orphans
+-- awaiting cleanup, and the writes that have not landed yet.
+--
+-- In-flight is the parts of incomplete multipart uploads plus the intents of
+-- single-object PUTs still in progress. Both describe bytes on their way to a
+-- backend that no object_locations row covers, and both are rows every instance
+-- can read - which is what makes the figure fleet-wide rather than a view of
+-- what this process happens to have started.
 SELECT q.backend_name,
        q.bytes_limit,
-       q.bytes_used,
+       GREATEST(0, COALESCE(s.bytes_used, 0))::bigint AS bytes_used,
        q.orphan_bytes,
-       COALESCE(m.inflight, 0)::bigint AS inflight_bytes
+       (COALESCE(m.inflight, 0) + COALESCE(p.inflight, 0))::bigint AS inflight_bytes
 FROM backend_quotas q
+LEFT JOIN (
+    SELECT backend_name, SUM(bytes_used) AS bytes_used
+    FROM backend_quota_stripes
+    GROUP BY backend_name
+) s ON s.backend_name = q.backend_name
 LEFT JOIN (
     SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
     FROM multipart_uploads mu
     JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
     GROUP BY mu.backend_name
-) m ON m.backend_name = q.backend_name;
+) m ON m.backend_name = q.backend_name
+LEFT JOIN (
+    SELECT backend_name, SUM(size_bytes) AS inflight
+    FROM pending_objects
+    GROUP BY backend_name
+) p ON p.backend_name = q.backend_name;
 
 -- name: DeleteQuota :exec
 DELETE FROM backend_quotas WHERE backend_name = $1;

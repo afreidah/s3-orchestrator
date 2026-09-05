@@ -146,10 +146,12 @@ Controls how the orchestrator selects a backend when writing new objects.
 routing_strategy: "pack"       # "pack" or "spread" (default: pack)
 ```
 
-- **pack** (default) — fills the first backend in config order until its quota is full, then overflows to the next. Best for stacking free-tier allocations sequentially.
-- **spread** — places each object on the backend with the lowest utilization ratio (`(bytes_used + orphan_bytes) / bytes_limit`). Best for distributing storage evenly across backends.
+- **pack** (default) — tries backends in config order, filling the first until it is full and overflowing to the next. Best for stacking free-tier allocations sequentially.
+- **spread** — tries backends least-utilized first, by the ratio `(bytes_used + orphan_bytes + in-flight) / bytes_limit`. Best for distributing storage evenly across backends.
 
-Both strategies respect quota limits and usage limits — full or over-limit backends are always skipped.
+The strategy decides the order candidates are tried, not which one accepts. A backend admits a write by letting its pending intent insert succeed, and that insert tests the backend's live headroom — stored bytes, orphans awaiting cleanup, and writes already in flight — against its ceiling. A backend with no room declines and the next candidate is tried; a write no candidate accepts fails with 507.
+
+Usage limits are separate and are applied when building the candidate list, so a backend over its monthly API or bandwidth allowance is never ranked in the first place.
 
 
 ## Multi-backend configurations

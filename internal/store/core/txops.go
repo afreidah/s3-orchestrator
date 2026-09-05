@@ -107,12 +107,6 @@ func (o TxOps) ReconcileUsage(ctx context.Context) (map[string]int64, error) {
 	return ReconcileUsage(ctx, o.runner)
 }
 
-// FlushQuotaDeltas writes a flush interval's accumulated byte deltas to
-// backend_quotas, one statement per backend.
-func (o TxOps) FlushQuotaDeltas(ctx context.Context, deltas QuotaDeltas) error {
-	return FlushQuotaDeltas(ctx, o.runner, deltas)
-}
-
 // PromotePending resolves a surviving PUT intent into a committed location.
 func (o TxOps) PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []DeletedCopy, QuotaDeltas, error) {
 	return PromotePending(ctx, o.runner, p)

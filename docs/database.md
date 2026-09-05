@@ -63,7 +63,8 @@ The schema currently provisions:
 
 | Table | Purpose |
 |-------|---------|
-| `backend_quotas` | Per-backend byte limits, usage counters, and orphan bytes tracking |
+| `backend_quotas` | Per-backend byte limit and orphan bytes tracking |
+| `backend_quota_stripes` | Each backend's stored byte total, split across rows so concurrent writes do not serialize on one |
 | `object_locations` | Maps object keys to backends with size tracking. `size_bytes` counts what the backend holds, so the `compression_*` columns and `logical_size` are what describe the object it decodes to; a NULL algorithm means the bytes are stored verbatim. The `managed` flag is false for objects reconcile found outside every configured virtual bucket prefix: they count toward quota, but replication, rebalance, integrity and drain skip them |
 | `object_tags` | One row per [tag](tagging.md) on an object, keyed `(object_key, tag_key)`. Keyed by object key alone, not by backend, because a tag set describes the object and per-replica rows would let copies of one key disagree. `idx_object_tags_lookup` on `(tag_key, tag_value)` serves the reverse lookup: which objects carry a given tag |
 | `multipart_uploads` | In-progress multipart upload metadata, including the `tagging` column holding a query-string-encoded tag set from `CreateMultipartUpload` until the upload completes |

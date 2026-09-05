@@ -64,14 +64,16 @@ FROM (
 
 -- name: InsertReplicaConditional :one
 -- Returns the size_bytes that was actually inserted into object_locations
--- (read from the source row in the same statement). Caller uses this size
--- for IncrementBackendQuota so object_locations.size_bytes and
--- backend_quotas.bytes_used always agree, even if the in-memory copy size
--- the caller observed before InsertReplicaConditional differs from the
--- source row's current size_bytes (e.g. a concurrent overwrite landed
--- between GetUnderReplicatedObjects and the conditional insert).
--- ON CONFLICT or missing source returns no rows; the caller treats that
--- as inserted=false.
+-- (read from the source row in the same statement), which is what the caller
+-- charges the backend so the row and the counter always agree even if a
+-- concurrent overwrite changed the source between the caller's scan and this
+-- insert. ON CONFLICT, a missing source, or a target without room returns no
+-- rows; the caller treats that as inserted=false and tries the next candidate.
+--
+-- The target's headroom is tested here rather than by the caller beforehand.
+-- A replica is admitted the same way a PUT is - against live rows, inside the
+-- statement that claims the space - so two instances replicating at once are
+-- judged against the same totals rather than each against its own view.
 --
 -- created_at is carried from the source rather than stamped NOW(): it is the
 -- object's write time, and it reaches clients as Last-Modified. Stamping it
@@ -79,8 +81,32 @@ FROM (
 -- which replica answered, and moves that time again whenever the oldest copy
 -- is rebalanced away.
 INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at)
-SELECT $1, $2, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.etag, ol.content_type, ol.user_metadata, ol.created_at
+-- Cast for the reason the pending claim casts: these parameters appear both in
+-- this SELECT list, where a bare parameter takes no type from the INSERT
+-- target, and in the predicates below.
+SELECT @object_key::text, @target_backend::text, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.etag, ol.content_type, ol.user_metadata, ol.created_at
 FROM object_locations ol
-WHERE ol.object_key = $1 AND ol.backend_name = $3
+JOIN backend_quotas q ON q.backend_name = @target_backend::text
+LEFT JOIN (
+    SELECT backend_name, SUM(bytes_used) AS bytes_used
+    FROM backend_quota_stripes GROUP BY backend_name
+) s ON s.backend_name = q.backend_name
+LEFT JOIN (
+    SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
+    FROM multipart_uploads mu
+    JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
+    GROUP BY mu.backend_name
+) m ON m.backend_name = q.backend_name
+LEFT JOIN (
+    SELECT backend_name, SUM(size_bytes) AS inflight
+    FROM pending_objects GROUP BY backend_name
+) p ON p.backend_name = q.backend_name
+WHERE ol.object_key = @object_key::text AND ol.backend_name = @source_backend
+  AND (q.bytes_limit = 0
+       OR q.bytes_limit
+          - GREATEST(0, COALESCE(s.bytes_used, 0))::bigint
+          - q.orphan_bytes
+          - COALESCE(m.inflight, 0)
+          - COALESCE(p.inflight, 0) >= ol.size_bytes)
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING size_bytes;

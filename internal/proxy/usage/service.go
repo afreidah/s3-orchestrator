@@ -108,33 +108,19 @@ func (s *Service) ReconcileUsage(ctx context.Context) (map[string]int64, error) 
 }
 
 // -------------------------------------------------------------------------
-// QUOTA FLUSH
+// QUOTA VIEW
 // -------------------------------------------------------------------------
 
-// FlushQuota writes the byte deltas accumulated since the last pass to
-// backend_quotas and refreshes the baselines admission is judged against.
+// FlushQuota reloads the occupancy snapshot placement ranks against.
 //
-// The deltas are taken in one swap, so a write landing mid-flush is counted in
-// the next pass rather than lost. A failed write puts them back: they describe
-// bytes that are on a backend, and dropping them would leave bytes_used short
-// until a reconcile noticed.
+// Nothing is written and nothing is accumulated. The byte counter moves inside
+// the transaction that writes the object rows, and whether a write fits is
+// decided by the statement that claims the space, so the only thing left in
+// memory is a view used to order candidates. Reloading it is the whole job.
 //
-// The refresh runs even when the write failed, because the baseline is what
-// bounds admission and a stale one is the more dangerous of the two.
+// The name is kept for the service tick that drives it; there is no flush.
 func (s *Service) FlushQuota(ctx context.Context) error {
-	deltas := s.quota.SwapDeltas()
-	flushErr := s.stores.FlushQuotaDeltas(ctx, deltas)
-	if flushErr != nil {
-		s.quota.RestoreDeltas(deltas)
-	}
-
-	if err := s.RefreshQuotaBaselines(ctx); err != nil {
-		if flushErr != nil {
-			return flushErr
-		}
-		return err
-	}
-	return flushErr
+	return s.RefreshQuotaBaselines(ctx)
 }
 
 // RefreshQuotaBaselines reloads each backend's ceiling and occupancy from the

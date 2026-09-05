@@ -238,46 +238,47 @@ func TestPut_HonoursMinRatio(t *testing.T) {
 	}
 }
 
-// TestPut_CleanupSizedByStoredBytes pins what an orphan is worth. A PUT whose
-// metadata commit fails leaves bytes on the backend and a cleanup row that
-// credits orphan_bytes back when it runs, so the row has to carry what actually
-// landed. Sizing it by the object the client sent would drift quota by the
-// compression ratio on every failed write.
-func TestPut_CleanupSizedByStoredBytes(t *testing.T) {
+// TestPut_PendingIntentSizedByStoredBytes pins what a write in progress is
+// worth. The intent is what a failed commit leaves for the reaper to resolve,
+// and what admission subtracts from every backend's headroom while the upload
+// is running, so it has to carry the bytes that actually land. Sizing it by the
+// object the client sent would misstate both by the compression ratio.
+func TestPut_PendingIntentSizedByStoredBytes(t *testing.T) {
 	t.Parallel()
 	codec := newPutCodec(t)
 	src := compressibleBody(putCompressChunk * 3)
 
 	be := backendtest.NewInMemory()
-	be.DeleteErr = errors.New("backend down") // force the enqueue rather than a delete
-	calls := &orphanCalls{}
+	var intents []core.PendingObject
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		Return(nil, nil, errors.New("commit failed")).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(stubOrphanEnqueue(calls, nil)).AnyTimes()
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, p *core.PendingObject) (bool, error) {
+			intents = append(intents, *p)
+			return true, nil
+		}).AnyTimes()
 	storetest.Permissive(store)
 
 	f := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, &fleetOpts{
-		Order:           []string{"b1"},
-		Codec:           codec,
-		Compression:     compressionOn(0),
-		PendingDisabled: true,
+		Order:       []string{"b1"},
+		Codec:       codec,
+		Compression: compressionOn(0),
 	})
 
 	if _, err := f.PutObject(context.Background(), &PutObjectRequest{Key: "key", Body: bytes.NewReader(src), Size: int64(len(src)), ContentType: "text/plain"}); err == nil {
 		t.Fatal("expected the PUT to fail when the commit does")
 	}
-	if len(calls.enqueue) != 1 {
-		t.Fatalf("enqueued %d cleanup rows, want 1", len(calls.enqueue))
+	if len(intents) != 1 {
+		t.Fatalf("inserted %d intents, want 1", len(intents))
 	}
 
 	stored := be.Objects["key"].Data
 	if len(stored) >= len(src) {
 		t.Fatalf("stored %d bytes for a %d byte object; compression did not apply", len(stored), len(src))
 	}
-	if got := calls.enqueue[0].SizeBytes; got != int64(len(stored)) {
-		t.Errorf("cleanup size = %d, want the %d bytes on the backend (client sent %d)",
+	if got := intents[0].SizeBytes; got != int64(len(stored)) {
+		t.Errorf("intent size = %d, want the %d bytes on the backend (client sent %d)",
 			got, len(stored), len(src))
 	}
 }

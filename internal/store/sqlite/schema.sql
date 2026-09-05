@@ -22,10 +22,19 @@ CREATE TABLE IF NOT EXISTS schema_version (
 -- Track quota usage per backend.
 CREATE TABLE IF NOT EXISTS backend_quotas (
     backend_name TEXT PRIMARY KEY,
-    bytes_used   INTEGER NOT NULL DEFAULT 0,
     bytes_limit  INTEGER NOT NULL,
     orphan_bytes INTEGER NOT NULL DEFAULT 0,
     updated_at   TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+-- A backend's stored byte total, split across stripe rows so concurrent writers
+-- take different row locks. The total is the sum; an individual stripe is
+-- signed and carries no meaning on its own.
+CREATE TABLE IF NOT EXISTS backend_quota_stripes (
+    backend_name TEXT    NOT NULL REFERENCES backend_quotas(backend_name) ON DELETE CASCADE,
+    stripe_id    INTEGER NOT NULL,
+    bytes_used   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (backend_name, stripe_id)
 );
 
 -- Track which backend stores which object (composite PK supports replication).
@@ -254,4 +263,4 @@ CREATE INDEX IF NOT EXISTS idx_object_tags_lookup
     ON object_tags(tag_key, tag_value);
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (11);
+INSERT INTO schema_version (version) VALUES (13);

@@ -33,7 +33,7 @@ func MarkObjectCompressed(ctx context.Context, runner Runner, u *CompressedUpdat
 		if err := tx.UpdateCompressedForm(ctx, u); err != nil {
 			return fmt.Errorf("mark compressed: %w", err)
 		}
-		return resizeBackendUsage(ctx, tx, u.BackendName, u.SizeBytes-previousSize, "compression")
+		return resizeBackendUsage(ctx, tx, u.BackendName, u.ObjectKey, u.SizeBytes-previousSize, "compression")
 	})
 }
 
@@ -45,7 +45,7 @@ func MarkObjectEncrypted(ctx context.Context, runner Runner, u *EncryptedUpdate)
 		if err := tx.MarkCopyEncrypted(ctx, u); err != nil {
 			return fmt.Errorf("mark encrypted: %w", err)
 		}
-		return resizeBackendUsage(ctx, tx, u.BackendName, u.CiphertextSize-u.PlaintextSize, "encryption")
+		return resizeBackendUsage(ctx, tx, u.BackendName, u.ObjectKey, u.CiphertextSize-u.PlaintextSize, "encryption")
 	})
 }
 
@@ -65,7 +65,7 @@ func MarkObjectDecrypted(ctx context.Context, runner Runner, objectKey, backendN
 		if err := tx.MarkCopyDecrypted(ctx, objectKey, backendName, plaintextSize); err != nil {
 			return fmt.Errorf("mark decrypted: %w", err)
 		}
-		return resizeBackendUsage(ctx, tx, backendName, plaintextSize-currentSize, "decryption")
+		return resizeBackendUsage(ctx, tx, backendName, objectKey, plaintextSize-currentSize, "decryption")
 	})
 }
 
@@ -77,11 +77,11 @@ func MarkObjectDecrypted(ctx context.Context, runner Runner, objectKey, backendN
 // zero: the bytes on disk are reality and the counter follows them whether or
 // not the limit would otherwise be exceeded, while a stale size must never
 // drive the counter negative and over-admit every later write.
-func resizeBackendUsage(ctx context.Context, tx TxAdapter, backendName string, delta int64, pass string) error {
+func resizeBackendUsage(ctx context.Context, tx TxAdapter, backendName, key string, delta int64, pass string) error {
 	if delta == 0 {
 		return nil
 	}
-	if err := tx.AdjustBackendBytesUsed(ctx, backendName, delta); err != nil {
+	if err := tx.AdjustQuotaStripe(ctx, backendName, StripeFor(key), delta); err != nil {
 		return fmt.Errorf("adjust quota for %s: %w", pass, err)
 	}
 	return nil

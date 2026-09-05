@@ -28,7 +28,8 @@ PostgreSQL (or embedded SQLite) stores:
 - **`object_locations`** - every object's exact backend placement + content hash + per-copy size, plus a `managed` flag marking objects that count toward quota but that the workers do not act on, and the client-facing identity (ETag, content type, user metadata) that lets a HEAD answer without a backend request
 
   `created_at` is the **object's write time, not the copy's**, and every copy of a key carries the same value. A replica inherits it from the source rather than being stamped when it was made, and a discovered object takes whatever modification time the backend reported, falling back to the moment of discovery when the backend reports none. It is what reads return as `Last-Modified`, in preference to whatever the serving backend says, so an unmodified object reports the same time no matter which copy answered - the same reason ETag is stored per object rather than read from the backend. Note that this makes `created_at` unsuitable as a per-copy age: the scrub queue tracks that separately in `last_scrubbed_at`.
-- **`backend_quotas`** — per-backend quota counters + orphan-bytes tracking
+- **`backend_quotas`** — per-backend ceiling + orphan-bytes tracking
+- **`backend_quota_stripes`** — each backend's stored byte total, split across rows so concurrent writes charging one backend take different row locks
 - **`backend_usage`** - per-backend monthly API-call and egress counters
 - **`backend_request_usage`** - per-backend monthly request counts per configured budget pool
 - **`multipart_uploads`** / **`multipart_parts`** — multipart upload state
@@ -74,10 +75,12 @@ See [docs/compression.md](compression.md) and [docs/encryption.md](encryption.md
 
 The `routing_strategy` config selects how a write picks its target backend:
 
-- **`pack`** (default) — fill backends in config order, first one with available quota wins. Good for stacking free-tier allocations sequentially.
-- **`spread`** — pick the backend with the lowest utilization ratio (`(bytes_used + orphan_bytes) / bytes_limit`). Good for distributing load evenly.
+- **`pack`** (default) — try backends in config order, so writes fill one before moving on. Good for stacking free-tier allocations sequentially.
+- **`spread`** — try backends least-utilized first. Good for distributing load evenly.
 
-Quota updates are written atomically in the same transaction as the object location record. Set `quota_bytes: 0` (or omit it) to disable quota enforcement on a backend — useful when you want unified access or replication without cost control. Backends with a `max_object_size` limit automatically skip objects that exceed the limit during routing, rebalancing, and replication, preventing repeated 413 errors from providers with per-object size restrictions.
+The strategy only decides the order candidates are tried. Whether a backend has room is settled by the statement that claims the space: the write's pending intent is inserted only if the backend's live rows still have headroom, so a candidate that has filled up since it was ranked declines and the next one is tried. A write that no candidate accepts fails with 507. Because the test reads rows rather than an in-memory figure, every instance in a fleet is judged against the same totals.
+
+Quota is charged in the same transaction as the object location record, so the counter cannot drift from the ledger. Set `quota_bytes: 0` (or omit it) to disable quota enforcement on a backend — useful when you want unified access or replication without cost control. Backends with a `max_object_size` limit automatically skip objects that exceed the limit during routing, rebalancing, and replication, preventing repeated 413 errors from providers with per-object size restrictions.
 
 See [docs/backends.md](backends.md) for full routing semantics.
 

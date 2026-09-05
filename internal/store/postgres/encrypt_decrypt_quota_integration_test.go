@@ -177,21 +177,12 @@ func readBytesUsed(t *testing.T, s *Store, backendName string) int64 {
 	t.Helper()
 	var v int64
 	if err := s.pool.QueryRow(context.Background(),
-		`SELECT bytes_used FROM backend_quotas WHERE backend_name = $1`, backendName,
+		`SELECT GREATEST(0, COALESCE(SUM(bytes_used), 0)) FROM backend_quota_stripes WHERE backend_name = $1`,
+		backendName,
 	).Scan(&v); err != nil {
 		t.Fatalf("read bytes_used: %v", err)
 	}
 	return v
-}
-
-// commitQuota lands a mutation's byte deltas in backend_quotas. Mutations
-// report their deltas rather than writing the counter themselves, so a test
-// asserting on bytes_used has to do what the usage service's flush does.
-func commitQuota(t *testing.T, s *Store, deltas core.QuotaDeltas) {
-	t.Helper()
-	if err := s.FlushQuotaDeltas(context.Background(), deltas); err != nil {
-		t.Fatalf("FlushQuotaDeltas: %v", err)
-	}
 }
 
 // resetBytesUsed zeroes the bytes_used column on a backend so each test
@@ -200,7 +191,7 @@ func commitQuota(t *testing.T, s *Store, deltas core.QuotaDeltas) {
 func resetBytesUsed(t *testing.T, s *Store, backendName string) {
 	t.Helper()
 	if _, err := s.pool.Exec(context.Background(),
-		`UPDATE backend_quotas SET bytes_used = 0 WHERE backend_name = $1`, backendName,
+		`DELETE FROM backend_quota_stripes WHERE backend_name = $1`, backendName,
 	); err != nil {
 		t.Fatalf("reset bytes_used: %v", err)
 	}

@@ -222,7 +222,6 @@ func (h *harness) buildStack(t *testing.T, spec harnessSpec) {
 	opts := proxytest.StackOptions{
 		CacheTTL:       60 * time.Second,
 		BackendTimeout: 30 * time.Second,
-		PendingEnabled: spec.Pending,
 	}
 	if spec.Encrypt {
 		provider, err := encryption.NewConfigKeyProvider(testMasterKey, "test-key")
@@ -400,7 +399,8 @@ func (h *harness) quotaUsed(backendName string) int64 {
 	h.flushQuota()
 	var used int64
 	if err := h.db.QueryRow(
-		"SELECT bytes_used FROM backend_quotas WHERE backend_name = $1", backendName,
+		`SELECT GREATEST(0, COALESCE(SUM(bytes_used), 0)) FROM backend_quota_stripes WHERE backend_name = $1`,
+		backendName,
 	).Scan(&used); err != nil {
 		h.t.Fatalf("quotaUsed(%s): %v", backendName, err)
 	}

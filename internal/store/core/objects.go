@@ -111,6 +111,9 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 		return mutationResult{}, fmt.Errorf("insert object location: %w", err)
 	}
 	deltas.Add(req.Backend, req.Size)
+	if err := chargeStripes(ctx, tx, req.Key, deltas); err != nil {
+		return mutationResult{}, err
+	}
 	if req.IntentID != "" {
 		if err := tx.DeletePending(ctx, req.IntentID); err != nil {
 			return mutationResult{}, fmt.Errorf("clear pending intent: %w", err)
@@ -155,6 +158,9 @@ func DeleteObject(ctx context.Context, runner Runner, key string) ([]DeletedCopy
 			copies[i] = DeletedCopy{BackendName: ec.BackendName, SizeBytes: ec.SizeBytes}
 			deltas.Add(ec.BackendName, -ec.SizeBytes)
 		}
+		if err := chargeStripes(ctx, tx, key, deltas); err != nil {
+			return mutationResult{}, err
+		}
 		return mutationResult{displaced: copies, deltas: deltas}, nil
 	})
 	return res.displaced, res.deltas, err
@@ -192,21 +198,35 @@ func DeleteObjectsBatch(ctx context.Context, runner Runner, keys []string) (map[
 		if err := clearTagsForKeys(ctx, tx, keys); err != nil {
 			return batchDeleteResult{}, err
 		}
-		// Per-key copies for the caller, plus per-backend totals so each
-		// backend's counter moves once for the batch instead of once per
-		// displaced copy.
-		copies := make(map[string][]DeletedCopy, len(keys))
-		deltas := make(QuotaDeltas)
-		for _, r := range rows {
-			copies[r.ObjectKey] = append(copies[r.ObjectKey], DeletedCopy{
-				BackendName: r.BackendName,
-				SizeBytes:   r.SizeBytes,
-			})
-			deltas.Add(r.BackendName, -r.SizeBytes)
+		copies, deltas, perKey := splitRemovedCopies(rows, len(keys))
+		if err := chargeStripesByKey(ctx, tx, perKey); err != nil {
+			return batchDeleteResult{}, err
 		}
 		return batchDeleteResult{copies: copies, deltas: deltas}, nil
 	})
 	return res.copies, res.deltas, err
+}
+
+// splitRemovedCopies folds the removed rows into the three views the batch
+// needs: the copies each key owes cleanup for, the per-backend totals the
+// caller reports, and the per-key totals the stripe charge uses, since each
+// key's bytes belong on the stripe its own name selects.
+func splitRemovedCopies(rows []KeyedExistingCopy, keyCount int) (map[string][]DeletedCopy, QuotaDeltas, map[string]QuotaDeltas) {
+	copies := make(map[string][]DeletedCopy, keyCount)
+	deltas := make(QuotaDeltas)
+	perKey := make(map[string]QuotaDeltas, keyCount)
+	for _, r := range rows {
+		copies[r.ObjectKey] = append(copies[r.ObjectKey], DeletedCopy{
+			BackendName: r.BackendName,
+			SizeBytes:   r.SizeBytes,
+		})
+		deltas.Add(r.BackendName, -r.SizeBytes)
+		if perKey[r.ObjectKey] == nil {
+			perKey[r.ObjectKey] = make(QuotaDeltas)
+		}
+		perKey[r.ObjectKey].Add(r.BackendName, -r.SizeBytes)
+	}
+	return copies, deltas, perKey
 }
 
 // lockKeysInOrder takes the per-key lock for every supplied key, sorted and
@@ -268,6 +288,9 @@ func DeleteObjectLocation(ctx context.Context, runner Runner, key, backendName s
 				return 0, err
 			}
 		}
+		if err := chargeStripes(ctx, tx, key, QuotaDeltas{backendName: -size}); err != nil {
+			return 0, err
+		}
 		return size, nil
 	})
 }
@@ -310,6 +333,12 @@ func MoveObjectLocation(ctx context.Context, runner Runner, key, fromBackend, to
 			return 0, err
 		}
 		if err := carryCompressionProbe(ctx, tx, src, key, toBackend); err != nil {
+			return 0, err
+		}
+		if err := chargeStripes(ctx, tx, key, QuotaDeltas{
+			fromBackend: -src.SizeBytes,
+			toBackend:   src.SizeBytes,
+		}); err != nil {
 			return 0, err
 		}
 		return src.SizeBytes, nil
@@ -417,7 +446,10 @@ func ImportObject(ctx context.Context, runner Runner, req *ImportObjectRequest) 
 		if !inserted {
 			return ImportSkippedExisting, nil
 		}
-		if err := tx.IncrementBackendQuota(ctx, req.Backend, req.Size); err != nil {
+		// Unconditional: an import adopts bytes the backend already holds, so
+		// refusing the charge at the ceiling would leave the counter
+		// understating what is stored rather than freeing anything.
+		if err := tx.AdjustQuotaStripe(ctx, req.Backend, StripeFor(req.Key), req.Size); err != nil {
 			return ImportSkippedExisting, err
 		}
 		return ImportInserted, nil

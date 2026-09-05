@@ -137,9 +137,6 @@ func TestDeleter_SweepsCleanupQueue(t *testing.T) {
 	if err := m.deleter()(t.Context(), "bucket/k1", "b1"); err != nil {
 		t.Fatalf("deleter: %v", err)
 	}
-	if got := m.quota.Delta("b1"); got != -512 {
-		t.Errorf("quota delta = %d, want -512", got)
-	}
 }
 
 // TestDeleter_SweepFailureNotPropagated asserts a failed sweep is logged and

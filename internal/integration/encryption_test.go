@@ -487,7 +487,7 @@ func TestDecryptExisting_BackendNotFound(t *testing.T) {
 	// rewrite the object's backend_name to point at it. The manager doesn't
 	// know about this backend, so GetBackend will fail.
 	_, err = testDB.ExecContext(ctx,
-		"INSERT INTO backend_quotas (backend_name, bytes_used, bytes_limit, updated_at) VALUES ('ghost-backend', 0, 0, NOW()) ON CONFLICT DO NOTHING")
+		"INSERT INTO backend_quotas (backend_name, bytes_limit, updated_at) VALUES ('ghost-backend', 0, NOW()) ON CONFLICT DO NOTHING")
 	if err != nil {
 		t.Fatalf("insert ghost backend: %v", err)
 	}
@@ -722,7 +722,7 @@ func TestEncryptExisting_BackendNotFound(t *testing.T) {
 	// Create a fake backend in the quotas table to satisfy the FK, then
 	// rewrite the object's backend_name to point at it.
 	_, err = testDB.ExecContext(ctx,
-		"INSERT INTO backend_quotas (backend_name, bytes_used, bytes_limit, updated_at) VALUES ('ghost-backend', 0, 0, NOW()) ON CONFLICT DO NOTHING")
+		"INSERT INTO backend_quotas (backend_name, bytes_limit, updated_at) VALUES ('ghost-backend', 0, NOW()) ON CONFLICT DO NOTHING")
 	if err != nil {
 		t.Fatalf("insert ghost backend: %v", err)
 	}

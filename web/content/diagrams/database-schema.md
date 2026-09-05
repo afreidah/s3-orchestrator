@@ -51,10 +51,15 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     'erDiagram',
     '    backend_quotas {',
     '        TEXT backend_name PK',
-    '        BIGINT bytes_used',
     '        BIGINT bytes_limit',
     '        BIGINT orphan_bytes',
     '        TIMESTAMPTZ updated_at',
+    '    }',
+    '',
+    '    backend_quota_stripes {',
+    '        TEXT backend_name "PK, FK"',
+    '        SMALLINT stripe_id PK',
+    '        BIGINT bytes_used',
     '    }',
     '',
     '    object_locations {',
@@ -179,6 +184,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        TEXT last_error',
     '    }',
     '',
+    '    backend_quotas ||--o{ backend_quota_stripes : "striped byte total"',
     '    backend_quotas ||--o{ object_locations : "tracks objects"',
     '    backend_quotas ||--o{ multipart_uploads : "tracks uploads"',
     '    backend_quotas ||--o{ backend_usage : "monthly usage"',
@@ -208,13 +214,26 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
       body: '<p>Central registry of S3 backends. Every other table references this via <code>backend_name</code> foreign key. Created at startup from config; quota limits synced on each boot via <code>UpsertQuotaLimit</code>.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">backend_name</td><td>TEXT</td><td>PRIMARY KEY</td></tr>' +
-        '<tr><td>bytes_used</td><td>BIGINT</td><td>Running total, atomically incremented/decremented</td></tr>' +
         '<tr><td>bytes_limit</td><td>BIGINT</td><td>Quota cap (0 = unlimited)</td></tr>' +
         '<tr><td>orphan_bytes</td><td>BIGINT</td><td>Bytes freed logically but not yet deleted from backend</td></tr>' +
         '<tr><td>updated_at</td><td>TIMESTAMPTZ</td><td>Last modification time</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK on backend_name</p>' +
+        '<p>Holds the ceiling and the orphan count. The stored byte total lives in <code>backend_quota_stripes</code>.</p>' +
         '<p>Used by: <a href="../write-path/">write path</a> (backend selection), quota enforcement, <a href="../background-services/">rebalancer</a>, dashboard stats.</p>' +
-        '<p class="ac-metric">Key queries: GetLeastUtilizedBackend, GetBackendAvailableSpace, IncrementQuota, DecrementQuota, IncrementOrphanBytes</p>'
+        '<p class="ac-metric">Key queries: UpsertQuotaLimit, ListBackendQuotaUsage, IncrementOrphanBytes, DecrementOrphanBytes</p>'
+    },
+    backend_quota_stripes: {
+      title: 'backend_quota_stripes',
+      badge: 'core', badgeText: 'core table',
+      body: '<p>A backend\'s stored byte total, split across rows so concurrent writes do not queue. Row locks are per row, so writers landing on different stripes never wait on one another; the backend holds <code>QuotaStripeCount</code> (16) of them.</p>' +
+        '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
+        '<tr><td class="pk">backend_name</td><td>TEXT</td><td>PRIMARY KEY, FK to backend_quotas</td></tr>' +
+        '<tr><td class="pk">stripe_id</td><td>SMALLINT</td><td>PRIMARY KEY; chosen from the object key, so a charge and the credit reversing it meet on one row</td></tr>' +
+        '<tr><td>bytes_used</td><td>BIGINT</td><td>Signed. A stripe carries no meaning alone and may sit negative; the backend total is the SUM, clamped at zero when read</td></tr></table>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on (backend_name, stripe_id)</p>' +
+        '<p>Charged inside the same transaction that writes the <code>object_locations</code> rows it summarizes, so it cannot drift from the ledger. Usage reconciliation is an audit rather than a repair the counter depends on.</p>' +
+        '<p>Used by: <a href="../write-path/">write path</a> (admission and charging), <a href="../usage-quotas/">quota reporting</a>, <a href="../background-services/">reconcile</a>.</p>' +
+        '<p class="ac-metric">Key queries: AdjustQuotaStripe, ListBackendQuotaUsage, GetAllQuotaStats, SetBackendBytesUsed</p>'
     },
     object_locations: {
       title: 'object_locations',

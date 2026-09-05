@@ -262,8 +262,8 @@ func (a *pgTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string) er
 func (a *pgTxAdapter) InsertReplicaConditional(ctx context.Context, objectKey, targetBackend, sourceBackend string) (int64, bool, error) {
 	size, err := a.q.InsertReplicaConditional(ctx, db.InsertReplicaConditionalParams{
 		ObjectKey:     objectKey,
-		BackendName:   targetBackend,
-		BackendName_2: sourceBackend,
+		TargetBackend: targetBackend,
+		SourceBackend: sourceBackend,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, false, nil
@@ -378,30 +378,15 @@ func (a *pgTxAdapter) HasPendingCleanup(ctx context.Context, objectKey, backend 
 // QUOTA TX OPERATIONS
 // -------------------------------------------------------------------------
 
-// IncrementBackendQuota credits delta bytes to backendName. Returns
-// core.ErrNoSpaceAvailable when the quota row reports zero rows updated
-// (insufficient quota).
-func (a *pgTxAdapter) IncrementBackendQuota(ctx context.Context, backendName string, delta int64) error {
-	n, err := a.q.IncrementQuota(ctx, db.IncrementQuotaParams{
-		Amount:      delta,
+// AdjustQuotaStripe applies a signed delta to one of a backend's byte-counter
+// stripes, materializing the row on first use.
+func (a *pgTxAdapter) AdjustQuotaStripe(ctx context.Context, backendName string, stripe int16, delta int64) error {
+	if err := a.q.AdjustQuotaStripe(ctx, db.AdjustQuotaStripeParams{
 		BackendName: backendName,
-	})
-	if err != nil {
-		return fmt.Errorf("increment quota: %w", err)
-	}
-	if n == 0 {
-		return core.ErrNoSpaceAvailable
-	}
-	return nil
-}
-
-// DecrementBackendQuota debits delta bytes from backendName.
-func (a *pgTxAdapter) DecrementBackendQuota(ctx context.Context, backendName string, delta int64) error {
-	if err := a.q.DecrementQuota(ctx, db.DecrementQuotaParams{
-		Amount:      delta,
-		BackendName: backendName,
+		StripeID:    stripe,
+		Delta:       delta,
 	}); err != nil {
-		return fmt.Errorf("decrement quota for %s: %w", backendName, err)
+		return fmt.Errorf("adjust quota stripe for %s: %w", backendName, err)
 	}
 	return nil
 }
@@ -461,18 +446,6 @@ func (a *pgTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName strin
 		BackendName: backendName,
 	}); err != nil {
 		return fmt.Errorf("set backend bytes_used: %w", err)
-	}
-	return nil
-}
-
-// AdjustBackendBytesUsed applies a signed delta to bytes_used, clamped at zero
-// and without the bytes_limit guard.
-func (a *pgTxAdapter) AdjustBackendBytesUsed(ctx context.Context, backendName string, delta int64) error {
-	if err := a.q.AdjustBackendBytesUsed(ctx, db.AdjustBackendBytesUsedParams{
-		Delta:       delta,
-		BackendName: backendName,
-	}); err != nil {
-		return fmt.Errorf("adjust backend bytes_used: %w", err)
 	}
 	return nil
 }

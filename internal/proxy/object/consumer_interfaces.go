@@ -94,21 +94,19 @@ type Runtime interface {
 // WRITE PATH COLLABORATORS
 // -------------------------------------------------------------------------
 
-// WriteRouter is the routing subset of *writepath.Coordinator: pick a
-// write-target backend given a size and an optional eligibility filter.
-// Tests that exercise only routing decisions can mock this alone.
+// WriteRouter is the placement subset of *writepath.Coordinator: choose a
+// backend and claim the write's bytes on it. Tests that exercise only routing
+// decisions can mock this alone.
 type WriteRouter interface {
-	SelectBackendForWrite(size int64, eligible []string) (string, *counter.Reservation, error)
-	SelectWriteTarget(span trace.Span, operation s3op.Operation, size int64) (string, *counter.Reservation, error)
+	ClaimWriteTarget(ctx context.Context, p *core.PendingObject, eligible []string) (string, error)
+	SelectWriteTarget(ctx context.Context, span trace.Span, operation s3op.Operation, p *core.PendingObject) (string, error)
 }
 
 // PendingWriter is the pending-intent subset of *writepath.Coordinator:
-// insert the pre-PUT intent row and (on success) promote it into a
-// permanent object_locations row. Tests that exercise only the
-// pending-pattern handoff can mock this alone.
+// promote a claimed intent into a permanent object_locations row. Tests that
+// exercise only the pending-pattern handoff can mock this alone.
 type PendingWriter interface {
-	InsertPendingIntent(ctx context.Context, key, backendName string, size int64, form *core.StoredForm, id *core.ObjectIdentity) (string, error)
-	RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest, res *counter.Reservation) error
+	RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest) error
 }
 
 // CleanupWriter is the post-write commit + recovery subset of
@@ -118,7 +116,7 @@ type PendingWriter interface {
 // RecoverFromRecordFailure also backs the drain-race abort path in
 // attemptPutOnBackend (when the post-PUT IsDraining re-check fires).
 type CleanupWriter interface {
-	RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, req *core.RecordObjectRequest, res *counter.Reservation) error
+	RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, req *core.RecordObjectRequest) error
 	RecoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, backendName, key, cleanupReason string, size int64)
 	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
 }

@@ -101,9 +101,7 @@ func (*noopTxAdapter) DeleteObjectTags(context.Context, string) error { return n
 
 func (*noopTxAdapter) DeleteObjectTagsForKeys(context.Context, []string) error { return nil }
 
-func (*noopTxAdapter) IncrementBackendQuota(context.Context, string, int64) error { return nil }
-
-func (*noopTxAdapter) DecrementBackendQuota(context.Context, string, int64) error { return nil }
+func (*noopTxAdapter) AdjustQuotaStripe(context.Context, string, int16, int64) error { return nil }
 
 func (*noopTxAdapter) DecrementOrphanBytes(context.Context, string, int64) error { return nil }
 
@@ -116,5 +114,3 @@ func (*noopTxAdapter) SumObjectSizesByBackend(context.Context) (map[string]int64
 }
 
 func (*noopTxAdapter) SetBackendBytesUsed(context.Context, string, int64) error { return nil }
-
-func (*noopTxAdapter) AdjustBackendBytesUsed(context.Context, string, int64) error { return nil }

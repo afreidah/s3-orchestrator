@@ -79,7 +79,6 @@ type fleetOpts struct {
 	ParallelBroadcast            bool // fans degraded-mode reads out concurrently
 	DegradedBroadcastParallelism int  // caps those concurrent probes; 0 is uncapped
 	DisableDegradedReads         bool // makes the degraded path fail fast instead
-	PendingDisabled              bool
 }
 
 // drainingSet reports a fixed set of backends as draining, standing in for
@@ -145,7 +144,7 @@ func newFleet(
 	}
 
 	integrity := &syncutil.AtomicConfig[config.IntegrityConfig]{}
-	coord := writepath.New(rt, store, !opts.PendingDisabled)
+	coord := writepath.New(rt, store)
 	om := New(&Deps{
 		Core:                         rt,
 		BroadcastCore:                rt,

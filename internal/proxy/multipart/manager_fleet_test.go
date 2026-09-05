@@ -174,22 +174,40 @@ func TestCreateMultipartUpload_Success(t *testing.T) {
 // TestCreateMultipartUpload_NoSpace surfaces the no-space branch. Selection is
 // judged against the in-memory baseline, so a backend already at its limit is
 // how a full fleet is expressed rather than a store error.
-func TestCreateMultipartUpload_NoSpace(t *testing.T) {
+// TestCompleteMultipartUpload_NoSpaceForAssembledObject asserts an upload whose
+// backend has no room for the assembled object fails at completion.
+//
+// Creating the upload cannot be where that is decided: the final size is
+// unknown then, and each part is counted against the backend by its own row as
+// it arrives. Completion is the first moment the size is known, and it claims
+// against the upload's own backend because the parts are already there.
+func TestCompleteMultipartUpload_NoSpaceForAssembledObject(t *testing.T) {
 	t.Parallel()
+	be := backendtest.NewInMemory()
+	ctx := context.Background()
+	_, _ = be.PutObject(ctx, "__multipart/upload-1/1", bytes.NewReader([]byte("AAA")), 3, "application/octet-stream", nil)
+
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
+	// Declared before the permissive defaults so this is the expectation the
+	// claim matches: the backend declines, which is how one without room
+	// reports itself now that the headroom test lives in the insert.
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
+		Return(false, nil).AnyTimes()
+	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
+		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).AnyTimes()
+	store.EXPECT().GetParts(gomock.Any(), gomock.Any()).
+		Return([]core.MultipartPart{{PartNumber: 1, ETag: "e1", SizeBytes: 3}}, nil).AnyTimes()
+	multipartStubs(t, store)
 	storetest.Permissive(store)
 
-	// Past its limit rather than exactly at it: creating an upload claims no
-	// bytes, so only a backend with negative headroom has nothing to offer.
-	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{
-		QuotaBaselines: map[string]core.BackendQuotaUsage{
-			"b1": {BackendName: "b1", BytesLimit: 100, BytesUsed: 150},
-		},
-	})
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
 
-	if _, _, err := mgr.CreateMultipartUpload(context.Background(), &CreateUploadRequest{Key: "key"}); !errors.Is(err, core.ErrInsufficientStorage) {
-		t.Fatalf("expected st.ErrInsufficientStorage, got %v", err)
+	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", partsOf(1)); !errors.Is(err, core.ErrNoSpaceAvailable) {
+		t.Fatalf("expected core.ErrNoSpaceAvailable, got %v", err)
+	}
+	if be.Has("multi/key") {
+		t.Error("assembled object was written to a backend that declined it")
 	}
 }
 

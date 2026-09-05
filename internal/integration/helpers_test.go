@@ -347,13 +347,12 @@ func TestMain(m *testing.M) {
 			RoutingStrategy: config.RoutingPack,
 			Metrics:         newMetricsAdapter(failableStore),
 		}),
-		PendingEnabled: true,
 		CacheTTL:       60 * time.Second,
 		BackendTimeout: 30 * time.Second,
 	})
 	workers := proxytest.BuildWorkers(stack, stores)
 	testStack = stack
-	testCoord = writepath.New(stack.Runtime, db, false)
+	testCoord = writepath.New(stack.Runtime, db)
 	testReconciler = reconcile.NewManager(&reconcile.Deps{
 		Backends: stack.Runtime, Stores: db, Usage: stack.Runtime.Acct(), Quota: stack.Runtime.Quota(),
 	})
@@ -464,7 +463,9 @@ func queryQuotaUsed(t *testing.T, backendName string) int64 {
 	t.Helper()
 	flushQuota(t)
 	var bytesUsed int64
-	err := testDB.QueryRow("SELECT bytes_used FROM backend_quotas WHERE backend_name = $1", backendName).Scan(&bytesUsed)
+	err := testDB.QueryRow(
+		`SELECT GREATEST(0, COALESCE(SUM(bytes_used), 0)) FROM backend_quota_stripes WHERE backend_name = $1`,
+		backendName).Scan(&bytesUsed)
 	if err != nil {
 		t.Fatalf("queryQuotaUsed(%q): %v", backendName, err)
 	}
@@ -622,15 +623,14 @@ func resetState(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("resetState: SyncQuotaLimits: %v", err)
 	}
-	if _, err := testDB.Exec("UPDATE backend_quotas SET bytes_used = 0, orphan_bytes = 0, updated_at = NOW()"); err != nil {
+	if _, err := testDB.Exec("UPDATE backend_quotas SET orphan_bytes = 0, updated_at = NOW()"); err != nil {
 		t.Fatalf("resetState: %v", err)
 	}
-	// The byte counter lives in memory, one per stack. Drop whatever is still
-	// unflushed, then reload the baselines so every tracker agrees with the rows
-	// just zeroed rather than carrying a stale ceiling and occupancy.
-	for _, st := range quotaStacks() {
-		st.Runtime.Quota().SwapDeltas()
+	if _, err := testDB.Exec("DELETE FROM backend_quota_stripes"); err != nil {
+		t.Fatalf("resetState: %v", err)
 	}
+	// Each stack ranks against its own snapshot, so every one of them has to
+	// reload or placement keeps ordering backends by the rows just deleted.
 	refreshQuota(t)
 	testStack.Objects.LocationCache().Clear()
 	testStack.Drain.ClearState()
@@ -679,16 +679,6 @@ func refreshQuota(t *testing.T) {
 		if err := st.Usage.RefreshQuotaBaselines(context.Background()); err != nil {
 			t.Fatalf("refreshQuota: %v", err)
 		}
-	}
-}
-
-// commitQuota lands a direct store mutation's byte deltas in backend_quotas.
-// A test driving testStore rather than the proxy is handed the deltas and
-// nothing applies them, so the counter has to be moved here.
-func commitQuota(t *testing.T, deltas core.QuotaDeltas) {
-	t.Helper()
-	if err := testStore.FlushQuotaDeltas(context.Background(), deltas); err != nil {
-		t.Fatalf("commitQuota: %v", err)
 	}
 }
 
@@ -991,15 +981,6 @@ func (f *FailableStore) ListBackendQuotaUsage(ctx context.Context) ([]core.Backe
 		return nil, errSimulatedDBOutage
 	}
 	return f.inner.ListBackendQuotaUsage(ctx)
-}
-
-// FlushQuotaDeltas is an integration-test fixture helper; see file header for
-// the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) FlushQuotaDeltas(ctx context.Context, deltas core.QuotaDeltas) error {
-	if f.isFailing() {
-		return errSimulatedDBOutage
-	}
-	return f.inner.FlushQuotaDeltas(ctx, deltas)
 }
 
 // CreateMultipartUpload is an integration-test fixture helper; see file header for

@@ -24,7 +24,6 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
-	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 )
@@ -226,42 +225,9 @@ func TestCleanupWorker_RetryNotExhausted_NoOrphanBytesChange(t *testing.T) {
 	}
 }
 
-// TestFindReplicaTarget_RespectsOrphanBytes asserts orphan-bytes count
-// against the available-space check.
-func TestFindReplicaTarget_RespectsOrphanBytes(t *testing.T) {
-	t.Parallel()
-	store := newPermissiveStore(t)
-	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory()}, &fleetOpts{
-		Order: []string{"b1", "b2"},
-		QuotaBaselines: map[string]core.BackendQuotaUsage{
-			"b1": {BackendName: "b1", BytesLimit: 1000},
-			"b2": {BackendName: "b2", BytesLimit: 1000, BytesUsed: 900, OrphanBytes: 50},
-		},
-	})
-
-	exclusion := map[string]bool{"b1": true}
-	target, _ := w.FindReplicaTarget(context.Background(), "key1", 100, exclusion)
-	if target != "" {
-		t.Errorf("expected no target (orphan bytes eat available space), got %q", target)
-	}
-}
-
-// TestFindReplicaTarget_OrphanBytesStillFits asserts that capacity check
-// still allows fits within remaining space.
-func TestFindReplicaTarget_OrphanBytesStillFits(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	storetest.Permissive(store)
-
-	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory(), "b2": backendtest.NewInMemory()}, &fleetOpts{Order: []string{"b1", "b2"}})
-
-	exclusion := map[string]bool{"b1": true}
-	target, _ := w.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
-	if target != "b2" {
-		t.Errorf("expected b2 (50 bytes fits in 100 free), got %q", target)
-	}
-}
+// Whether orphan bytes leave room for a copy is settled by the conditional
+// insert, against live rows, so it is pinned where that arithmetic lives:
+// TestAdapter_BackendHasRoom_CountsOrphanBytes in the sqlite adapter tests.
 
 // TestCleanupOrphan_PassesSizeToEnqueue pins that the replicator's
 // CleanupOrphan helper enqueues with the correct size.
@@ -357,52 +323,6 @@ func TestCleanupWorker_Exhausted_DLQMoveFails(t *testing.T) {
 	}
 	if len(c.decrement) != 0 {
 		t.Errorf("orphan_bytes must NOT be decremented when DLQ move fails; got %d calls", len(c.decrement))
-	}
-}
-
-// TestReplicate_OrphanBytesBlockTarget pins the replicator capacity
-// check excluding orphan bytes.
-func TestReplicate_OrphanBytesBlockTarget(t *testing.T) {
-	t.Parallel()
-	b1 := backendtest.NewInMemory()
-	b2 := backendtest.NewInMemory()
-	_, _ = b1.PutObject(context.Background(), "key1", bytes.NewReader([]byte("data")), 4, "text/plain", nil)
-
-	ctrl := gomock.NewController(t)
-	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}, nil).AnyTimes()
-	store.EXPECT().GetUnderReplicatedObjectsExcluding(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}, nil).AnyTimes()
-	store.EXPECT().GetQuotaStats(gomock.Any()).
-		Return(map[string]core.QuotaStat{
-			"b1": {BytesUsed: 100, BytesLimit: 1000},
-			"b2": {BytesUsed: 990, BytesLimit: 1000, OrphanBytes: 8},
-		}, nil).AnyTimes()
-	store.EXPECT().RecordReplica(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(int64(0), true, nil).AnyTimes()
-	storetest.Permissive(store)
-
-	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{
-		Order: []string{"b1", "b2"},
-		QuotaBaselines: map[string]core.BackendQuotaUsage{
-			"b1": {BackendName: "b1", BytesLimit: 1000, BytesUsed: 100},
-			"b2": {BackendName: "b2", BytesLimit: 1000, BytesUsed: 990, OrphanBytes: 8},
-		},
-	})
-
-	sum, err := w.Replicate(context.Background(), config.ReplicationConfig{
-		Factor:    2,
-		BatchSize: 10,
-	}, nil)
-	if err != nil {
-		t.Fatalf("Replicate: %v", err)
-	}
-	if sum.CopiesCreated != 0 {
-		t.Errorf("expected 0 created (orphan bytes block target), got %d", sum.CopiesCreated)
-	}
-	if b2.Has("key1") {
-		t.Error("b2 should not have received replica - orphan bytes make it too full")
 	}
 }
 

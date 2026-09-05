@@ -114,9 +114,10 @@ func registerWorkers(inj do.Injector, cfg *config.Config, mode config.Mode) {
 	do.Provide(inj, ProvideReplicator)
 	do.Provide(inj, ProvideOverReplicationCleaner)
 	do.Provide(inj, ProvideCleanupWorker)
-	if cfg.WritePath.PendingPattern.IsEnabled() {
-		do.Provide(inj, ProvidePendingReaper)
-	}
+	// Always registered: every write claims its bytes with an intent, so a
+	// deployment without the reaper would accumulate rows that hold a backend's
+	// headroom against writes that are never coming.
+	do.Provide(inj, ProvidePendingReaper)
 	do.Provide(inj, ProvideScrubber)
 	do.Provide(inj, ProvideDrainManager)
 	if mode.IsWorker() {

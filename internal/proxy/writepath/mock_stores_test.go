@@ -204,20 +204,6 @@ func (mr *MockCoordinatorStoresMockRecorder) EnqueueCleanup(ctx, backendName, ob
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnqueueCleanup", reflect.TypeOf((*MockCoordinatorStores)(nil).EnqueueCleanup), ctx, backendName, objectKey, reason, sizeBytes)
 }
 
-// FlushQuotaDeltas mocks base method.
-func (m *MockCoordinatorStores) FlushQuotaDeltas(ctx context.Context, deltas core.QuotaDeltas) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FlushQuotaDeltas", ctx, deltas)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// FlushQuotaDeltas indicates an expected call of FlushQuotaDeltas.
-func (mr *MockCoordinatorStoresMockRecorder) FlushQuotaDeltas(ctx, deltas any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushQuotaDeltas", reflect.TypeOf((*MockCoordinatorStores)(nil).FlushQuotaDeltas), ctx, deltas)
-}
-
 // GetAllObjectLocations mocks base method.
 func (m *MockCoordinatorStores) GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
@@ -322,18 +308,19 @@ func (mr *MockCoordinatorStoresMockRecorder) IncrementOrphanBytes(ctx, backendNa
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IncrementOrphanBytes", reflect.TypeOf((*MockCoordinatorStores)(nil).IncrementOrphanBytes), ctx, backendName, amount)
 }
 
-// InsertPending mocks base method.
-func (m *MockCoordinatorStores) InsertPending(ctx context.Context, p *core.PendingObject) error {
+// InsertPendingIfFits mocks base method.
+func (m *MockCoordinatorStores) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "InsertPending", ctx, p)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "InsertPendingIfFits", ctx, p)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
-// InsertPending indicates an expected call of InsertPending.
-func (mr *MockCoordinatorStoresMockRecorder) InsertPending(ctx, p any) *gomock.Call {
+// InsertPendingIfFits indicates an expected call of InsertPendingIfFits.
+func (mr *MockCoordinatorStoresMockRecorder) InsertPendingIfFits(ctx, p any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertPending", reflect.TypeOf((*MockCoordinatorStores)(nil).InsertPending), ctx, p)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertPendingIfFits", reflect.TypeOf((*MockCoordinatorStores)(nil).InsertPendingIfFits), ctx, p)
 }
 
 // ListBackendQuotaUsage mocks base method.

@@ -356,7 +356,7 @@ func replicateOneWithVerification(t *testing.T, target string, readBack []byte, 
 		Size: int64(len(readBack)),
 	}, func() {}, nil)
 
-	pl.EXPECT().SelectReplicaTarget(gomock.Any(), gomock.Any()).Return(target, nil, nil)
+	pl.EXPECT().RankReplicaTargets(gomock.Any(), gomock.Any()).Return([]string{target})
 
 	copies := []core.ObjectLocation{*sourceRow(hash)}
 	out := r.ReplicateObject(context.Background(), "bucket/key1", copies, 1)
@@ -401,8 +401,8 @@ func TestReplicateObject_MismatchedCopyIsDiscardedNotRecorded(t *testing.T) {
 
 	// Only one target exists, so the retry loop runs out rather than succeeding
 	// elsewhere.
-	pl.EXPECT().SelectReplicaTarget(gomock.Any(), gomock.Any()).Return("b2", nil, nil)
-	pl.EXPECT().SelectReplicaTarget(gomock.Any(), gomock.Any()).Return("", nil, errors.New("no target")).AnyTimes()
+	pl.EXPECT().RankReplicaTargets(gomock.Any(), gomock.Any()).Return([]string{"b2"})
+	pl.EXPECT().RankReplicaTargets(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	// The bytes that failed the check are removed from the target.
 	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), dstBe, "b2", "bucket/key1", "replication_orphan", gomock.Any())
 
@@ -437,7 +437,7 @@ func TestReplicateObject_UncheckedCopyIsStillRecorded(t *testing.T) {
 	ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", gomock.Any()).
 		Return(int64(0), nil)
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil).AnyTimes()
-	pl.EXPECT().SelectReplicaTarget(gomock.Any(), gomock.Any()).Return("b2", nil, nil)
+	pl.EXPECT().RankReplicaTargets(gomock.Any(), gomock.Any()).Return([]string{"b2"})
 	// No read-back: the source carries no hash, so there is nothing to check.
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 

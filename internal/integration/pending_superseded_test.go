@@ -41,7 +41,7 @@ func TestInt_PendingReaper_SupersededByNewerLocation(t *testing.T) {
 		BackendName: "minio-2",
 		SizeBytes:   42,
 	}
-	if err := testStore.InsertPending(ctx, intent); err != nil {
+	if _, err := testStore.InsertPendingIfFits(ctx, intent); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 

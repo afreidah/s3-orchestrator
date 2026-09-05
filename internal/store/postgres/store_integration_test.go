@@ -1017,32 +1017,25 @@ func TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T
 	k1 := uniqueKey(t, "k1")
 	k2 := uniqueKey(t, "k2")
 	missing := uniqueKey(t, "missing")
-	_, d1, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Backend: "backend-a", Size: 100})
-	if err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Backend: "backend-a", Size: 100}); err != nil {
 		t.Fatalf("RecordObject(k1): %v", err)
 	}
-	commitQuota(t, s, d1)
-	repSize, _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a")
-	if err != nil {
+	if _, _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
-	commitQuota(t, s, core.QuotaDeltas{"backend-b": repSize})
-	_, d2, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Backend: "backend-a", Size: 50})
-	if err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Backend: "backend-a", Size: 50}); err != nil {
 		t.Fatalf("RecordObject(k2): %v", err)
 	}
-	commitQuota(t, s, d2)
 
 	beforeA, err := s.GetQuotaStats(ctx)
 	if err != nil {
 		t.Fatalf("GetQuotaStats(before): %v", err)
 	}
 
-	got, delDeltas, err := s.DeleteObjectsBatch(ctx, []string{k1, k2, missing})
+	got, _, err := s.DeleteObjectsBatch(ctx, []string{k1, k2, missing})
 	if err != nil {
 		t.Fatalf("DeleteObjectsBatch: %v", err)
 	}
-	commitQuota(t, s, delDeltas)
 	if len(got[k1]) != 2 {
 		t.Errorf("%s should have 2 displaced copies, got %v", k1, got[k1])
 	}

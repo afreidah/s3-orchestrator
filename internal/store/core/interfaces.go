@@ -79,14 +79,18 @@ type TagStore interface {
 // which knows about the writes this instance has admitted since the last flush
 // and the row does not.
 //
-// ReconcileUsage recomputes bytes_used from SUM(object_locations.size_bytes)
-// per backend, correcting drift in the incrementally maintained counter. It
-// returns the delta applied per backend (truth - previous), so backends already
-// in agreement are absent rather than reported as corrected by zero.
+// ReconcileUsage recomputes the byte counter from
+// SUM(object_locations.size_bytes) per backend. It returns the delta applied
+// per backend (truth - previous), so backends already in agreement are absent
+// rather than reported as corrected by zero.
+//
+// The counter now moves inside the transaction that writes the rows it
+// summarizes, so this is an audit rather than the repair the counter depends
+// on. It still earns its keep against rows written before that was true, and
+// against a stripe left behind by a restore.
 type QuotaStore interface {
 	GetQuotaStats(ctx context.Context) (map[string]QuotaStat, error)
 	ListBackendQuotaUsage(ctx context.Context) ([]BackendQuotaUsage, error)
-	FlushQuotaDeltas(ctx context.Context, deltas QuotaDeltas) error
 	ReconcileUsage(ctx context.Context) (map[string]int64, error)
 }
 
@@ -173,7 +177,7 @@ type CleanupStore interface {
 // a failed commit so a DB outage between PUT and RecordObject cannot
 // silently destroy the prior copy of an overwritten key.
 type PendingStore interface {
-	InsertPending(ctx context.Context, p *PendingObject) error
+	InsertPendingIfFits(ctx context.Context, p *PendingObject) (bool, error)
 	DeletePending(ctx context.Context, intentID string) error
 	GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]PendingObject, error)
 	PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []DeletedCopy, QuotaDeltas, error)

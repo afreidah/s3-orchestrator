@@ -281,12 +281,12 @@ func TestPutObject_RecordFails_DoesNotEnqueueOrphanCleanup(t *testing.T) {
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		Return(nil, nil, errors.New("db error")).
 		AnyTimes()
-	store.EXPECT().InsertPending(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, p *core.PendingObject) error {
+	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, p *core.PendingObject) (bool, error) {
 			calls.mu.Lock()
 			defer calls.mu.Unlock()
 			calls.pending = append(calls.pending, *p)
-			return nil
+			return true, nil
 		}).
 		AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).

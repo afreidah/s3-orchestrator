@@ -3,9 +3,13 @@
 //
 // Author: Alex Freidah
 //
-// Tests for the in-memory byte-reservation tracker: reservation against a
-// backend's ceiling, the handle's commit and release semantics, the routing
-// answers placement reads, and the flush swap the usage service drains.
+// Tests for the routing view of what each backend holds: the snapshot it is
+// primed with, and the ordering placement reads from it.
+//
+// Whether a write fits is not tested here, because the tracker does not decide
+// it. That lives with the statements that claim the space - the conditional
+// inserts of a pending intent and of a replica - and is tested against a real
+// database, where the concurrency it guards against actually exists.
 // -------------------------------------------------------------------------------
 
 package counter
@@ -13,7 +17,6 @@ package counter
 import (
 	"math"
 	"slices"
-	"sync"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -24,7 +27,7 @@ import (
 // -------------------------------------------------------------------------
 
 // trackerWith builds a tracker over the named baselines, which is the state
-// production leaves it in after a flush.
+// production leaves it in after a refresh.
 func trackerWith(baselines map[string]core.BackendQuotaUsage) *QuotaTracker {
 	names := make([]string, 0, len(baselines))
 	for name := range baselines {
@@ -40,302 +43,38 @@ func trackerWith(baselines map[string]core.BackendQuotaUsage) *QuotaTracker {
 // -------------------------------------------------------------------------
 
 // TestQuotaTracker_Baseline_ReportsWhetherItHoldsTheRow asserts a backend the
-// tracker was never given is reported as absent rather than as a zero row,
-// which is what keeps an unprovisioned backend out of routing.
+// snapshot has never seen is distinguishable from one recorded as empty, so a
+// caller can tell "no room" from "nothing known".
 func TestQuotaTracker_Baseline_ReportsWhetherItHoldsTheRow(t *testing.T) {
 	t.Parallel()
 	q := trackerWith(map[string]core.BackendQuotaUsage{
-		"b1": {BackendName: "b1", BytesLimit: 1000, BytesUsed: 100},
+		"b1": {BackendName: "b1", BytesLimit: 1000},
 	})
 
-	got, ok := q.Baseline("b1")
-	if !ok {
-		t.Fatal("b1 baseline missing")
-	}
-	if got.BytesUsed != 100 || got.BytesLimit != 1000 {
-		t.Errorf("baseline = %+v, want limit 1000 / used 100", got)
-	}
 	if _, ok := q.Baseline("nope"); ok {
-		t.Error("unknown backend reported a baseline")
+		t.Error("a backend the snapshot never held reported as present")
+	}
+	if base, ok := q.Baseline("b1"); !ok || base.BytesLimit != 1000 {
+		t.Errorf("baseline = %+v (ok=%v), want the row it was primed with", base, ok)
 	}
 }
 
-// TestQuotaTracker_SetBaselines_NilClearsRatherThanPanics asserts a nil
-// snapshot leaves the tracker holding no rows, so a refresh that came back
-// empty refuses writes instead of dereferencing nothing.
+// TestQuotaTracker_SetBaselines_NilClearsRatherThanPanics asserts a refresh
+// that read no rows leaves an empty snapshot rather than a nil map every later
+// read would fault on.
 func TestQuotaTracker_SetBaselines_NilClearsRatherThanPanics(t *testing.T) {
 	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{"b1": {BackendName: "b1"}})
+	q := trackerWith(map[string]core.BackendQuotaUsage{
+		"b1": {BackendName: "b1", BytesLimit: 1000},
+	})
 
 	q.SetBaselines(nil)
 
 	if _, ok := q.Baseline("b1"); ok {
-		t.Error("baseline survived a nil refresh")
+		t.Error("baseline survived being cleared")
 	}
 	if got := q.Available("b1"); got != 0 {
-		t.Errorf("available = %d, want 0 after the rows were cleared", got)
-	}
-}
-
-// -------------------------------------------------------------------------
-// RESERVATION
-// -------------------------------------------------------------------------
-
-// TestQuotaTracker_Reserve_AdmitsWhatFits asserts a write inside the headroom
-// is admitted and its bytes show up in the unflushed delta.
-func TestQuotaTracker_Reserve_AdmitsWhatFits(t *testing.T) {
-	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
-		"b1": {BackendName: "b1", BytesLimit: 1000, BytesUsed: 900},
-	})
-
-	res := q.Reserve("b1", 100)
-	if res == nil {
-		t.Fatal("reservation refused a write that fits exactly")
-	}
-	if res.Backend() != "b1" {
-		t.Errorf("Backend() = %q, want b1", res.Backend())
-	}
-	if got := q.Delta("b1"); got != 100 {
-		t.Errorf("delta = %d, want 100", got)
-	}
-}
-
-// TestQuotaTracker_Reserve_RefusesWhatWouldCrossTheLimit asserts a refused
-// reservation changes nothing, so the caller can try the next candidate.
-func TestQuotaTracker_Reserve_RefusesWhatWouldCrossTheLimit(t *testing.T) {
-	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
-		"b1": {BackendName: "b1", BytesLimit: 1000, BytesUsed: 900},
-	})
-
-	if q.Reserve("b1", 101) != nil {
-		t.Fatal("reservation admitted a write past the ceiling")
-	}
-	if got := q.Delta("b1"); got != 0 {
-		t.Errorf("delta = %d, want 0 after a refusal", got)
-	}
-}
-
-// TestQuotaTracker_Reserve_CountsOrphanAndInflightBytes asserts the headroom is
-// judged against everything occupying the backend, not just what the ledger
-// recorded. A backend holding orphans is fuller than its bytes_used says.
-func TestQuotaTracker_Reserve_CountsOrphanAndInflightBytes(t *testing.T) {
-	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
-		"b1": {BackendName: "b1", BytesLimit: 1000, BytesUsed: 800, OrphanBytes: 100, InflightBytes: 50},
-	})
-
-	if q.Reserve("b1", 100) != nil {
-		t.Fatal("orphan and in-flight bytes were not counted against the headroom")
-	}
-	if q.Reserve("b1", 50) == nil {
-		t.Error("reservation refused a write that fits the remaining 50 bytes")
-	}
-}
-
-// TestQuotaTracker_Reserve_UnlimitedBackendAlwaysAdmits asserts a zero
-// bytes_limit means no enforcement, which is how the schema spells it.
-func TestQuotaTracker_Reserve_UnlimitedBackendAlwaysAdmits(t *testing.T) {
-	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
-		"b1": {BackendName: "b1", BytesUsed: 1 << 40},
-	})
-
-	res := q.Reserve("b1", 1<<30)
-	if res == nil {
-		t.Fatal("unlimited backend refused a reservation")
-	}
-	if got := q.Delta("b1"); got != 1<<30 {
-		t.Errorf("delta = %d, want the reserved bytes", got)
-	}
-}
-
-// TestQuotaTracker_Reserve_UnknownBackendIsRefused asserts a backend the
-// tracker holds no row for cannot be proven to have room, so it is refused
-// rather than optimistically admitted.
-func TestQuotaTracker_Reserve_UnknownBackendIsRefused(t *testing.T) {
-	t.Parallel()
-	q := NewQuotaTracker([]string{"b1"})
-
-	if q.Reserve("b1", 1) != nil {
-		t.Error("a tracker with no baselines admitted a reservation")
-	}
-}
-
-// TestQuotaTracker_Reserve_ConcurrentWritesCannotBothFit asserts the
-// compare-and-swap loop admits only as many concurrent writes as the headroom
-// holds. Two writes that each fit on their own must not both succeed when only
-// one of them fits.
-func TestQuotaTracker_Reserve_ConcurrentWritesCannotBothFit(t *testing.T) {
-	t.Parallel()
-	const writers = 32
-	// Room for exactly 10 of the 32 attempted writes.
-	q := trackerWith(map[string]core.BackendQuotaUsage{
-		"b1": {BackendName: "b1", BytesLimit: 100, BytesUsed: 0},
-	})
-
-	var (
-		wg       sync.WaitGroup
-		mu       sync.Mutex
-		admitted int
-	)
-	for range writers {
-		wg.Go(func() {
-			if q.Reserve("b1", 10) != nil {
-				mu.Lock()
-				admitted++
-				mu.Unlock()
-			}
-		})
-	}
-	wg.Wait()
-
-	if admitted != 10 {
-		t.Errorf("admitted %d writes, want exactly 10", admitted)
-	}
-	if got := q.Delta("b1"); got != 100 {
-		t.Errorf("delta = %d, want 100", got)
-	}
-}
-
-// -------------------------------------------------------------------------
-// RESERVATION HANDLE
-// -------------------------------------------------------------------------
-
-// TestReservation_Commit_ReplacesTheClaimWithTheCommittedBytes asserts the
-// claim is dropped in the same breath as the deltas land, so the write's bytes
-// are counted once rather than twice.
-func TestReservation_Commit_ReplacesTheClaimWithTheCommittedBytes(t *testing.T) {
-	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
-		"b1": {BackendName: "b1", BytesLimit: 1000},
-		"b2": {BackendName: "b2", BytesLimit: 1000},
-	})
-
-	res := q.Reserve("b1", 100)
-	// The ledger recorded the write on b1 and displaced an older copy on b2.
-	res.Commit(core.QuotaDeltas{"b1": 100, "b2": -40})
-
-	if got := q.Delta("b1"); got != 100 {
-		t.Errorf("b1 delta = %d, want 100 (committed bytes, claim dropped)", got)
-	}
-	if got := q.Delta("b2"); got != -40 {
-		t.Errorf("b2 delta = %d, want -40", got)
-	}
-}
-
-// TestReservation_Release_ReturnsTheClaim asserts a write that did not land
-// gives its bytes back, since a leaked reservation is flushed into bytes_used
-// as though bytes had been stored.
-func TestReservation_Release_ReturnsTheClaim(t *testing.T) {
-	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
-		"b1": {BackendName: "b1", BytesLimit: 1000},
-	})
-
-	q.Reserve("b1", 100).Release()
-
-	if got := q.Delta("b1"); got != 0 {
-		t.Errorf("delta = %d, want 0 after the claim was returned", got)
-	}
-}
-
-// TestReservation_DisposedOnlyOnce asserts a Release deferred at the point of
-// reservation is a no-op once the write committed, which is what lets every
-// error path share one deferred call.
-func TestReservation_DisposedOnlyOnce(t *testing.T) {
-	t.Parallel()
-	q := trackerWith(map[string]core.BackendQuotaUsage{
-		"b1": {BackendName: "b1", BytesLimit: 1000},
-	})
-
-	res := q.Reserve("b1", 100)
-	res.Commit(core.QuotaDeltas{"b1": 100})
-	res.Release()
-	res.Release()
-
-	if got := q.Delta("b1"); got != 100 {
-		t.Errorf("delta = %d, want 100; a disposed reservation was refunded again", got)
-	}
-}
-
-// TestReservation_NilHandleIsSafe asserts the refused reservation accepts both
-// disposal methods, so a caller can defer Release on the result of Reserve
-// before deciding whether it got anything.
-func TestReservation_NilHandleIsSafe(t *testing.T) {
-	t.Parallel()
-	var res *Reservation
-
-	res.Commit(core.QuotaDeltas{"b1": 1})
-	res.Release()
-
-	if got := res.Backend(); got != "" {
-		t.Errorf("Backend() = %q, want empty for a refused reservation", got)
-	}
-}
-
-// -------------------------------------------------------------------------
-// RECORDING
-// -------------------------------------------------------------------------
-
-// TestQuotaTracker_Apply_FoldsEveryBackendsDelta asserts a committed
-// transaction's deltas all land, for the mutations that never reserved.
-func TestQuotaTracker_Apply_FoldsEveryBackendsDelta(t *testing.T) {
-	t.Parallel()
-	q := NewQuotaTracker([]string{"b1", "b2"})
-
-	q.Apply(core.QuotaDeltas{"b1": -100, "b2": 250})
-
-	if got := q.Delta("b1"); got != -100 {
-		t.Errorf("b1 delta = %d, want -100", got)
-	}
-	if got := q.Delta("b2"); got != 250 {
-		t.Errorf("b2 delta = %d, want 250", got)
-	}
-}
-
-// TestQuotaTracker_Record_IgnoresAZeroDelta asserts a no-op mutation does not
-// create a delta entry, so a quiet backend costs no UPDATE at flush time.
-func TestQuotaTracker_Record_IgnoresAZeroDelta(t *testing.T) {
-	t.Parallel()
-	q := NewQuotaTracker(nil)
-
-	q.Record("b1", 0)
-
-	if got := q.SwapDeltas(); len(got) != 0 {
-		t.Errorf("deltas = %v, want none", got)
-	}
-}
-
-// TestQuotaTracker_Record_AccumulatesForAnUnnamedBackend asserts a backend the
-// tracker was not constructed with still accumulates, since a delta arrives
-// from a mutation whether or not the backend was named up front.
-func TestQuotaTracker_Record_AccumulatesForAnUnnamedBackend(t *testing.T) {
-	t.Parallel()
-	q := NewQuotaTracker(nil)
-
-	q.Record("late", -50)
-	q.Record("late", -25)
-
-	if got := q.Delta("late"); got != -75 {
-		t.Errorf("delta = %d, want -75", got)
-	}
-	if got := q.Delta("never-charged"); got != 0 {
-		t.Errorf("delta = %d, want 0 for a backend nothing accumulated under", got)
-	}
-}
-
-// TestQuotaDeltas_Add_LeavesANilMapAlone asserts a path that never allocated a
-// map is not forced to, which is what lets a caller pass nil through.
-func TestQuotaDeltas_Add_LeavesANilMapAlone(t *testing.T) {
-	t.Parallel()
-	var deltas core.QuotaDeltas
-
-	deltas.Add("b1", 100)
-
-	if deltas != nil {
-		t.Errorf("deltas = %v, want nil", deltas)
+		t.Errorf("available = %d, want 0 against a cleared snapshot", got)
 	}
 }
 
@@ -343,21 +82,18 @@ func TestQuotaDeltas_Add_LeavesANilMapAlone(t *testing.T) {
 // ROUTING
 // -------------------------------------------------------------------------
 
-// TestQuotaTracker_Available_SubtractsTheUnflushedDelta asserts routing sees
-// the writes this instance admitted since the last flush, which the row does
-// not yet know about.
-func TestQuotaTracker_Available_SubtractsTheUnflushedDelta(t *testing.T) {
+// TestQuotaTracker_Available_ReportsTheSnapshotHeadroom asserts the figure
+// placement ranks on covers everything occupying the backend, not just the
+// bytes stored: orphans awaiting cleanup and writes in flight are room a
+// candidate does not have.
+func TestQuotaTracker_Available_ReportsTheSnapshotHeadroom(t *testing.T) {
 	t.Parallel()
 	q := trackerWith(map[string]core.BackendQuotaUsage{
-		"b1": {BackendName: "b1", BytesLimit: 1000, BytesUsed: 400, OrphanBytes: 100},
+		"b1": {BackendName: "b1", BytesLimit: 1000, BytesUsed: 400, OrphanBytes: 100, InflightBytes: 50},
 	})
 
-	if got := q.Available("b1"); got != 500 {
-		t.Fatalf("available = %d, want 500", got)
-	}
-	q.Reserve("b1", 200)
-	if got := q.Available("b1"); got != 300 {
-		t.Errorf("available = %d, want 300 once 200 bytes were claimed", got)
+	if got := q.Available("b1"); got != 450 {
+		t.Errorf("available = %d, want 450 (1000 - 400 - 100 - 50)", got)
 	}
 }
 
@@ -393,21 +129,17 @@ func TestQuotaTracker_Available_UnlimitedAndUnknownBackends(t *testing.T) {
 }
 
 // TestQuotaTracker_Utilization_ReportsTheFractionSpokenFor asserts utilization
-// covers baseline plus unflushed delta, and that an unlimited or unknown
+// covers everything occupying the backend, and that an unlimited or unknown
 // backend reports zero so it ranks ahead of any bounded one.
 func TestQuotaTracker_Utilization_ReportsTheFractionSpokenFor(t *testing.T) {
 	t.Parallel()
 	q := trackerWith(map[string]core.BackendQuotaUsage{
-		"half":      {BackendName: "half", BytesLimit: 1000, BytesUsed: 500},
+		"half":      {BackendName: "half", BytesLimit: 1000, BytesUsed: 400, OrphanBytes: 100},
 		"unlimited": {BackendName: "unlimited", BytesUsed: 1 << 40},
 	})
 
 	if got := q.Utilization("half"); got != 0.5 {
 		t.Errorf("utilization = %v, want 0.5", got)
-	}
-	q.Reserve("half", 250)
-	if got := q.Utilization("half"); got != 0.75 {
-		t.Errorf("utilization = %v, want 0.75 once 250 bytes were claimed", got)
 	}
 	if got := q.Utilization("unlimited"); got != 0 {
 		t.Errorf("unlimited utilization = %v, want 0", got)
@@ -439,42 +171,88 @@ func TestQuotaTracker_RankByUtilization_OrdersEmptiestFirst(t *testing.T) {
 	}
 }
 
-// -------------------------------------------------------------------------
-// FLUSH
-// -------------------------------------------------------------------------
-
-// TestQuotaTracker_SwapDeltas_DrainsAndResets asserts the flush reads every
-// backend's total in one swap and leaves the counter empty, so bytes are not
-// written twice.
-func TestQuotaTracker_SwapDeltas_DrainsAndResets(t *testing.T) {
+// TestQuotaTracker_RankByUtilization_FollowsWhatThisInstancePlaced asserts the
+// ranking moves as writes land rather than staying fixed until the next
+// reload.
+//
+// Without this the snapshot is the only input, every write in the interval
+// ranks the candidates identically, and spread routing degenerates into pack
+// until the reload catches up.
+func TestQuotaTracker_RankByUtilization_FollowsWhatThisInstancePlaced(t *testing.T) {
 	t.Parallel()
-	q := NewQuotaTracker([]string{"b1", "b2", "quiet"})
-	q.Record("b1", 500)
-	q.Record("b2", -120)
+	q := trackerWith(map[string]core.BackendQuotaUsage{
+		"a": {BackendName: "a", BytesLimit: 1000},
+		"b": {BackendName: "b", BytesLimit: 1000},
+	})
 
-	got := q.SwapDeltas()
+	first := q.RankByUtilization([]string{"a", "b"})[0]
+	q.NotePlacement(first, 600)
 
-	if len(got) != 2 || got["b1"] != 500 || got["b2"] != -120 {
-		t.Errorf("deltas = %v, want b1:500 b2:-120 and no quiet backend", got)
-	}
-	if after := q.SwapDeltas(); len(after) != 0 {
-		t.Errorf("deltas = %v, want none after the swap drained them", after)
+	if got := q.RankByUtilization([]string{"a", "b"})[0]; got == first {
+		t.Errorf("ranked %q first again after placing 600 bytes on it", got)
 	}
 }
 
-// TestQuotaTracker_RestoreDeltas_CarriesAFailedFlushForward asserts a flush
-// that could not write gives its bytes back, rather than silently losing an
-// interval of writes from bytes_used.
-func TestQuotaTracker_RestoreDeltas_CarriesAFailedFlushForward(t *testing.T) {
+// TestQuotaTracker_SetBaselines_DropsWhatWasPlaced asserts the correction is
+// spent once the rows it was correcting have been re-read, or the same bytes
+// would be counted twice.
+func TestQuotaTracker_SetBaselines_DropsWhatWasPlaced(t *testing.T) {
 	t.Parallel()
-	q := NewQuotaTracker([]string{"b1"})
-	q.Record("b1", 500)
+	q := trackerWith(map[string]core.BackendQuotaUsage{
+		"a": {BackendName: "a", BytesLimit: 1000},
+	})
+	q.NotePlacement("a", 400)
+	if got := q.Available("a"); got != 600 {
+		t.Fatalf("available = %d, want 600 with the placement counted", got)
+	}
 
-	drained := q.SwapDeltas()
-	q.Record("b1", 25) // a write admitted while the flush was in flight
-	q.RestoreDeltas(drained)
+	// The reload reports the bytes as stored, so the correction must go.
+	q.SetBaselines(map[string]core.BackendQuotaUsage{
+		"a": {BackendName: "a", BytesLimit: 1000, BytesUsed: 400},
+	})
 
-	if got := q.Delta("b1"); got != 525 {
-		t.Errorf("delta = %d, want 525 (restored 500 plus the 25 admitted since)", got)
+	if got := q.Available("a"); got != 600 {
+		t.Errorf("available = %d, want 600; the placement was counted on top of the rows", got)
+	}
+}
+
+// TestQuotaTracker_RankByUtilization_RefreshChangesTheOrder asserts the ranking
+// follows the snapshot rather than any state of its own, which is the whole of
+// what reloading it is for.
+func TestQuotaTracker_RankByUtilization_RefreshChangesTheOrder(t *testing.T) {
+	t.Parallel()
+	q := trackerWith(map[string]core.BackendQuotaUsage{
+		"a": {BackendName: "a", BytesLimit: 1000, BytesUsed: 100},
+		"b": {BackendName: "b", BytesLimit: 1000, BytesUsed: 900},
+	})
+
+	if got := q.RankByUtilization([]string{"a", "b"}); got[0] != "a" {
+		t.Fatalf("ranked %v, want a first while it is the emptier", got)
+	}
+
+	q.SetBaselines(map[string]core.BackendQuotaUsage{
+		"a": {BackendName: "a", BytesLimit: 1000, BytesUsed: 900},
+		"b": {BackendName: "b", BytesLimit: 1000, BytesUsed: 100},
+	})
+
+	if got := q.RankByUtilization([]string{"a", "b"}); got[0] != "b" {
+		t.Errorf("ranked %v, want b first once the refresh reversed them", got)
+	}
+}
+
+// -------------------------------------------------------------------------
+// DELTAS
+// -------------------------------------------------------------------------
+
+// TestQuotaDeltas_Add_LeavesANilMapAlone asserts a path that never allocated a
+// map is not forced to, which is what lets a caller pass nil through.
+func TestQuotaDeltas_Add_LeavesANilMapAlone(t *testing.T) {
+	t.Parallel()
+	var deltas core.QuotaDeltas
+
+	deltas.Add("b1", 100)
+
+	if deltas != nil {
+		t.Errorf("deltas = %v, want nil", deltas)
 	}
 }

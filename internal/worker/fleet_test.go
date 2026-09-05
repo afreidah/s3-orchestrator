@@ -49,7 +49,6 @@ type fleetOpts struct {
 	UsageLimits    map[string]core.UsageLimits // per-backend API and bandwidth caps
 	MaxObjectSizes map[string]int64            // per-backend object size cap, for eligibility tests
 	Draining       []string                    // backends the runtime should report as draining
-	PendingEnabled bool                        // turns on the coordinator's pending-write pattern
 
 	QuotaBaselines map[string]core.BackendQuotaUsage // seeds the byte counter; nil leaves every backend unlimited, non-nil is the whole world
 }
@@ -107,7 +106,7 @@ func newFleet(
 		}
 		rt.SetDrainChecker(d)
 	}
-	return rt, writepath.New(rt, store, opts.PendingEnabled)
+	return rt, writepath.New(rt, store)
 }
 
 // newFleetQuota builds the byte-reservation tracker with baselines already

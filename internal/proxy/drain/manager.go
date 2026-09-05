@@ -422,13 +422,12 @@ func findOtherBackend(locations []core.ObjectLocation, srcName string) string {
 // exists on another backend, so the source-side row and bytes can be
 // dropped without a data transfer.
 func (d *Manager) removeReplicaSource(ctx context.Context, srcBackend backend.ObjectBackend, srcName string, obj *core.ObjectLocation, replicaBackend string) bool {
-	removed, err := d.objects.DeleteObjectLocation(ctx, obj.ObjectKey, srcName)
+	_, err := d.objects.DeleteObjectLocation(ctx, obj.ObjectKey, srcName)
 	if err != nil {
 		d.log.WarnContext(ctx, "failed to delete source location",
 			slog.String("key", obj.ObjectKey), slog.String("backend", srcName), "error", err)
 		return false
 	}
-	d.infra.Quota().Record(srcName, -removed)
 	d.mover.DeleteOrEnqueue(ctx, srcBackend, srcName, obj.ObjectKey, "drain_source_delete", obj.SizeBytes)
 
 	audit.Log(ctx, "storage.DrainRemoveReplica",
@@ -604,13 +603,12 @@ func (d *Manager) purgeOneObject(ctx context.Context, be backend.ObjectBackend, 
 	}
 	d.infra.Acct().APICall(s3op.DeleteObject, name)
 
-	removed, err := d.objects.DeleteObjectLocation(ctx, key, name)
+	_, err := d.objects.DeleteObjectLocation(ctx, key, name)
 	if err != nil {
 		d.log.WarnContext(ctx, "failed to delete DB record during purge",
 			slog.String("backend", name), slog.String("key", key), "error", err)
 		return progress.StatusFailed
 	}
-	d.infra.Quota().Record(name, -removed)
 	*dbDeleted++
 	return progress.StatusOK
 }

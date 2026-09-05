@@ -52,14 +52,27 @@ var (
 		[]string{"backend"},
 	)
 
-	// UsageReconcileCorrectionsTotal counts per-backend bytes_used corrections
-	// applied by usage reconciliation. A steadily rising value means a write
-	// path is leaking the counter; the reconcile dashboard panel reads this.
+	// UsageReconcileCorrectionsTotal counts per-backend byte-total corrections
+	// applied by usage reconciliation. The counter moves inside the transaction
+	// that writes the rows it summarizes, so this should never rise: any
+	// increase means a mutation path is not charging what it stored.
 	UsageReconcileCorrectionsTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "s3o_quota_reconcile_corrections_total",
-			Help: "Per-backend bytes_used drift corrections applied by usage reconciliation",
+			Help: "Byte-total drift corrections applied by usage reconciliation; expected to stay at zero",
 		},
+	)
+
+	// QuotaClaimsDeclinedTotal counts writes a backend refused for want of
+	// room, judged by the insert that claims the space rather than by any
+	// in-memory figure. A backend appearing here is full: the write either
+	// moved to another candidate or, if none had room, failed with 507.
+	QuotaClaimsDeclinedTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3o_quota_claims_declined_total",
+			Help: "Write claims a backend declined for insufficient room",
+		},
+		[]string{"backend"},
 	)
 
 	// ObjectCount tracks the number of objects stored per backend.

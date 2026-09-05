@@ -92,21 +92,17 @@ func (m *MultipartConfig) IsMinPartSizeEnforced() bool {
 	return m.EnforceMinPartSize == nil || *m.EnforceMinPartSize
 }
 
-// PendingPatternConfig configures the pending-row pattern used by the
-// write path to avoid losing the prior copy of an overwritten key when
-// the metadata commit fails.
+// PendingPatternConfig tunes the reaper that resolves abandoned PUT intents.
+//
+// The pattern itself cannot be turned off. Every write claims its bytes by
+// inserting an intent, and that row is what admission subtracts from a
+// backend's headroom while the upload runs, so a deployment without intents
+// would have nothing to judge writes against. Only the reaper's cadence is an
+// operator concern.
 type PendingPatternConfig struct {
-	Enabled    *bool         `yaml:"enabled"`     // Default: true. Set to false to disable.
 	ReaperTick time.Duration `yaml:"reaper_tick"` // How often the reaper resolves abandoned intents (default: 1m)
 	MinAge     time.Duration `yaml:"min_age"`     // Don't reap intents younger than this  -  guards in-flight PUTs (default: 5m)
 	BatchSize  int           `yaml:"batch_size"`  // Max intents resolved per tick (default: 50)
-}
-
-// IsEnabled returns true unless the operator has explicitly disabled the
-// pending pattern. The pointer-typed Enabled field lets the YAML loader
-// distinguish "absent" (default true) from "explicitly false".
-func (p *PendingPatternConfig) IsEnabled() bool {
-	return p.Enabled == nil || *p.Enabled
 }
 
 // ReconcileConfig controls the background orphan reconciler that periodically

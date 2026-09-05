@@ -704,20 +704,18 @@ func (mr *MockPlacementMockRecorder) MoveObject(ctx, req any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObject", reflect.TypeOf((*MockPlacement)(nil).MoveObject), ctx, req)
 }
 
-// SelectReplicaTarget mocks base method.
-func (m *MockPlacement) SelectReplicaTarget(size int64, exclusion map[string]bool) (string, *counter.Reservation, error) {
+// RankReplicaTargets mocks base method.
+func (m *MockPlacement) RankReplicaTargets(size int64, exclusion map[string]bool) []string {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SelectReplicaTarget", size, exclusion)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(*counter.Reservation)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
+	ret := m.ctrl.Call(m, "RankReplicaTargets", size, exclusion)
+	ret0, _ := ret[0].([]string)
+	return ret0
 }
 
-// SelectReplicaTarget indicates an expected call of SelectReplicaTarget.
-func (mr *MockPlacementMockRecorder) SelectReplicaTarget(size, exclusion any) *gomock.Call {
+// RankReplicaTargets indicates an expected call of RankReplicaTargets.
+func (mr *MockPlacementMockRecorder) RankReplicaTargets(size, exclusion any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SelectReplicaTarget", reflect.TypeOf((*MockPlacement)(nil).SelectReplicaTarget), size, exclusion)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RankReplicaTargets", reflect.TypeOf((*MockPlacement)(nil).RankReplicaTargets), size, exclusion)
 }
 
 // MockBackendSyncer is a mock of BackendSyncer interface.
