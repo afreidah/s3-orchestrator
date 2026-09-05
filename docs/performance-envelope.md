@@ -190,15 +190,17 @@ scenario. Typical candidates:
 - **Multipart Postgres contention** on the per-uploadId advisory
   lock at high concurrency
 
-### Known bottleneck: `backend_quotas` row contention
+### Quota row contention
 
-PUT throughput is bounded by row-level lock contention on
-`backend_quotas`. Every successful write transaction holds an
-`UPDATE backend_quotas SET bytes_used = bytes_used + $size WHERE
-backend_name = $name` lock for the duration of the commit, so all
-concurrent writes to the same backend serialize on a single row.
+Every write charges the backend it lands on, inside its own
+transaction. The byte total is held in `backend_quota_stripes` as
+`QuotaStripeCount` (16) rows per backend rather than one, and a writer
+picks its stripe from the object key. Row locks are per row, so
+writers landing on different stripes do not wait on one another and
+the contended row count per backend is the stripe count.
 
-Diagnosis pattern in `pg_stat_activity`:
+If PUT throughput walls, check whether the stripes are the cause. The
+diagnosis pattern in `pg_stat_activity` is:
 
 ```
 state | count | wait_event_type | wait_event
@@ -206,28 +208,21 @@ state | count | wait_event_type | wait_event
 active |   200 | Lock            | transactionid
 ```
 
-with the blocked query being `IncrementQuota` (on the steady-state
-write path) or `DecrementQuota` (when displaced-copy cleanup is
-running for overwrites). Symptom on the client side: P50 stays sub-ms
-but P95/P99 blow out to seconds — most requests are fast, but a tail
-queues behind the row lock and admission control sheds them.
+with the blocked query being `AdjustQuotaStripe`. That means the
+stripe count is too low for the write rate. `QuotaStripeCount` is safe
+to raise between releases: a larger value leaves the new stripes empty
+until writes reach them, and the backend total is their sum either
+way.
 
-Observed wall on the local Nomad demo (3-backend spread, 1 KB objects,
-`max_concurrent_writes: 1000`, `max_conns: 200`): ~500 PUT/s before
-load shedding fires. Pool size and Postgres `max_connections` do not
-move the wall — only the count of contended rows does.
+Symptom on the client side is P50 staying sub-ms while P95/P99 blow
+out to seconds — most requests are fast, but a tail queues behind a
+row lock and admission control sheds them.
 
-Mitigations available today:
+Other mitigations:
 
-- **Add backends** to spread writes across more `backend_quotas` rows
-  (linear scaling of the per-row write rate)
-- **Cap concurrent writes per backend** below the lock-serialization
-  rate to avoid the wait queue building up
-
-Architectural fix (not in this branch): batch quota deltas in memory
-and flush periodically, mirroring the `usage_flush` worker pattern,
-so the hot row is updated O(1) times per flush interval instead of
-once per write.
+- **Add backends** to spread writes across more stripe sets
+- **Cap concurrent writes per backend** below the serialization rate
+  so the wait queue cannot build
 
 ## Recommended configuration per scale tier
 

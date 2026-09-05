@@ -28,14 +28,19 @@ import (
 // PENDING OBJECT OPERATIONS
 // -------------------------------------------------------------------------
 
-// InsertPending records an in-flight PUT intent. Called before the backend
-// upload so a metadata commit failure cannot silently destroy the prior
-// copy of an overwritten key.
-func (s *Store) InsertPending(ctx context.Context, p *core.PendingObject) error {
-	if err := s.queries.InsertPendingObject(ctx, pendingInsertParams(p)); err != nil {
-		return fmt.Errorf("insert pending object: %w", err)
+// InsertPendingIfFits claims the bytes and records the intent in one statement,
+// so admission and the durable record of it cannot disagree. Reports false when
+// the backend had no room, which is the caller's cue to try the next candidate.
+//
+// Called before the backend upload, so a metadata commit failure cannot
+// silently destroy the prior copy of an overwritten key, and so the bytes are
+// occupying the backend for every instance for as long as the write runs.
+func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) (bool, error) {
+	n, err := s.queries.InsertPendingObjectIfFits(ctx, pendingInsertParams(p))
+	if err != nil {
+		return false, fmt.Errorf("insert pending object: %w", err)
 	}
-	return nil
+	return n > 0, nil
 }
 
 // DeletePending removes a pending intent. Called by the write path on a
@@ -89,7 +94,7 @@ func (s *Store) DeletePendingByBackend(ctx context.Context, backendName string) 
 // pendingInsertParams maps a PendingObject onto the sqlc insert struct.
 // Pointer-typed columns stay nil when their string/int64 source is empty
 // so the database stores SQL NULL rather than the zero value.
-func pendingInsertParams(p *core.PendingObject) db.InsertPendingObjectParams {
+func pendingInsertParams(p *core.PendingObject) db.InsertPendingObjectIfFitsParams {
 	var (
 		etag        *string
 		contentType *string
@@ -100,7 +105,7 @@ func pendingInsertParams(p *core.PendingObject) db.InsertPendingObjectParams {
 		contentType = strPtr(id.ContentType)
 		userMeta, _ = core.EncodeUserMetadata(id.UserMetadata)
 	}
-	return db.InsertPendingObjectParams{
+	return db.InsertPendingObjectIfFitsParams{
 		Etag:                     etag,
 		ContentType:              contentType,
 		UserMetadata:             userMeta,

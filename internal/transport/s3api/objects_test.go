@@ -303,8 +303,12 @@ func TestPut_IfNoneMatchSpecificETagIgnored(t *testing.T) {
 // Asserts that status = , want 507.
 func TestPut_QuotaExhausted(t *testing.T) {
 	t.Parallel()
-	ts, _, _ := newTestServerWithQuota(t, map[string]core.BackendQuotaUsage{
-		"b1": {BackendName: "b1", BytesLimit: 100, BytesUsed: 100},
+	// The backend declines the claim, which is how one out of room reports
+	// itself: the headroom test is the insert that writes the write's intent,
+	// not a figure held in memory. Registered before the permissive defaults so
+	// this is the expectation the claim matches.
+	ts, _, _ := newTestServerWithQuota(t, nil, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
 	})
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))

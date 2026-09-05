@@ -230,7 +230,7 @@ func (r *PendingReaper) dropIntent(ctx context.Context, p *core.PendingObject, r
 // handlers. Each handler updates metrics, audit logs, and the resolved/
 // failed counters as appropriate.
 func (r *PendingReaper) handlePromotion(ctx context.Context, p *core.PendingObject) ItemOutcome {
-	result, displaced, deltas, err := r.store.PromotePending(ctx, p)
+	result, displaced, _, err := r.store.PromotePending(ctx, p)
 	if err != nil {
 		r.log.ErrorContext(ctx, "promote pending intent",
 			"intent_id", p.IntentID, "error", err, logfmt.Outcome(logfmt.OutcomeError))
@@ -238,9 +238,9 @@ func (r *PendingReaper) handlePromotion(ctx context.Context, p *core.PendingObje
 	}
 	switch result {
 	case core.PendingPromoteCommitted:
-		// The PUT that wrote these bytes gave its claim back when its commit
-		// failed, so the promotion is where they are charged.
-		r.deps.Quota().Apply(deltas)
+		// The promotion charged the bytes and cleared the intent in one
+		// transaction, moving them from what the backend has in flight to what
+		// it stores without either total ever missing them.
 		r.onPromoteCommitted(ctx, p, displaced)
 		return ItemSucceeded
 	case core.PendingPromoteSuperseded:

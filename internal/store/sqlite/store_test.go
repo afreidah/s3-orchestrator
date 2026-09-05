@@ -64,9 +64,32 @@ func newTestStore(t *testing.T) *Store {
 //
 // Each additive migration therefore needs its columns undone here to be
 // rewound past.
+// unstripeQuotaCounter puts the byte counter back in backend_quotas and drops
+// the stripe table.
+//
+// schema.sql builds the post-migration shape directly, so a structural
+// migration has to be undone before it can be replayed; otherwise it runs
+// against a schema that already has the structure, which is a state no real
+// installation is ever in.
+func unstripeQuotaCounter(t *testing.T, s *Store) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx,
+		`ALTER TABLE backend_quotas ADD COLUMN bytes_used INTEGER NOT NULL DEFAULT 0`); err != nil {
+		t.Fatalf("restore bytes_used column: %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE IF EXISTS backend_quota_stripes`); err != nil {
+		t.Fatalf("drop quota stripes: %v", err)
+	}
+}
+
 func rewindToSchemaVersion(t *testing.T, s *Store, version int) {
 	t.Helper()
 	ctx := context.Background()
+
+	if version < 13 {
+		unstripeQuotaCounter(t, s)
+	}
 
 	if version < 11 {
 		for _, table := range []string{"object_locations", "pending_objects"} {
@@ -132,8 +155,14 @@ func mustRecordObject(t *testing.T, s *Store, key, backend string, size int64) {
 // the in-memory tracker - so a seed has to say what it means.
 func seedBytesUsed(t *testing.T, s *Store, backend string, used int64) {
 	t.Helper()
-	if _, err := s.db.ExecContext(context.Background(),
-		`UPDATE backend_quotas SET bytes_used = ? WHERE backend_name = ?`, used, backend); err != nil {
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM backend_quota_stripes WHERE backend_name = ?`, backend); err != nil {
+		t.Fatalf("clear stripes(%s): %v", backend, err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used) VALUES (?, 0, ?)`,
+		backend, used); err != nil {
 		t.Fatalf("seed bytes_used(%s, %d): %v", backend, used, err)
 	}
 }
@@ -751,10 +780,11 @@ func TestListBackendQuotaUsage_ReportsCeilingAndOccupancy(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := s.db.ExecContext(ctx,
-		`UPDATE backend_quotas SET bytes_used = 400, orphan_bytes = 100, bytes_limit = 1000
+		`UPDATE backend_quotas SET orphan_bytes = 100, bytes_limit = 1000
 		 WHERE backend_name = 'backend-a'`); err != nil {
 		t.Fatalf("seed quota row: %v", err)
 	}
+	seedBytesUsed(t, s, "backend-a", 400)
 
 	usage, err := s.ListBackendQuotaUsage(ctx)
 	if err != nil {
@@ -1278,8 +1308,18 @@ func TestReconcileUsage_CorrectsDrift(t *testing.T) {
 	mustRecordObject(t, s, "bucket/k1", "backend-a", 100)
 	mustRecordObject(t, s, "bucket/k2", "backend-a", 250)
 
+	// Spread the corruption across two stripes so the reconcile has to collapse
+	// them, not just overwrite the one it happens to read. The stripes the
+	// records charged are cleared first, so the corrupted figure is the whole
+	// of what the counter reports.
 	if _, err := s.rawDB.ExecContext(ctx,
-		`UPDATE backend_quotas SET bytes_used = 99999 WHERE backend_name = 'backend-a'`); err != nil {
+		`DELETE FROM backend_quota_stripes WHERE backend_name = 'backend-a'`); err != nil {
+		t.Fatalf("clear stripes: %v", err)
+	}
+	if _, err := s.rawDB.ExecContext(ctx,
+		`INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
+		 VALUES ('backend-a', 0, 99999), ('backend-a', 7, 12345)`,
+	); err != nil {
 		t.Fatalf("corrupt bytes_used: %v", err)
 	}
 
@@ -1288,16 +1328,11 @@ func TestReconcileUsage_CorrectsDrift(t *testing.T) {
 		t.Fatalf("ReconcileUsage: %v", err)
 	}
 
-	var got int64
-	if err := s.rawDB.QueryRowContext(ctx,
-		`SELECT bytes_used FROM backend_quotas WHERE backend_name = 'backend-a'`).Scan(&got); err != nil {
-		t.Fatalf("read bytes_used: %v", err)
-	}
-	if got != 350 {
+	if got := quotaBytesUsed(t, s, "backend-a"); got != 350 {
 		t.Errorf("bytes_used = %d, want 350 (ledger truth)", got)
 	}
-	if adj["backend-a"] != 350-99999 {
-		t.Errorf("adjustment = %d, want %d", adj["backend-a"], 350-99999)
+	if want := int64(350 - (99999 + 12345)); adj["backend-a"] != want {
+		t.Errorf("adjustment = %d, want %d (both corrupted stripes collapsed)", adj["backend-a"], want)
 	}
 }
 
@@ -3606,12 +3641,14 @@ func TestGetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 	}
 }
 
-// quotaBytesUsed reads a backend's current bytes_used counter.
+// quotaBytesUsed reads a backend's byte total, summed across its stripes and
+// clamped the way every production read of the counter clamps it.
 func quotaBytesUsed(t *testing.T, s *Store, backend string) int64 {
 	t.Helper()
 	var used int64
 	if err := s.db.QueryRowContext(context.Background(),
-		`SELECT bytes_used FROM backend_quotas WHERE backend_name = ?`, backend,
+		`SELECT COALESCE(MAX(0, SUM(bytes_used)), 0) FROM backend_quota_stripes WHERE backend_name = ?`,
+		backend,
 	).Scan(&used); err != nil {
 		t.Fatalf("read bytes_used: %v", err)
 	}
@@ -3639,11 +3676,7 @@ func TestMarkObjectDecrypted_DoesNotDriveQuotaNegative(t *testing.T) {
 
 	// Drop the counter below what decryption is about to subtract, standing in
 	// for a ledger that drifted from the recorded object sizes.
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE backend_quotas SET bytes_used = 50 WHERE backend_name = ?`, "backend-a",
-	); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
+	seedBytesUsed(t, s, "backend-a", 50)
 
 	// 900 -> 100 is a -800 delta against a counter holding 50.
 	if err := s.MarkObjectDecrypted(ctx, "bucket/secret", "backend-a", 100); err != nil {
@@ -3664,11 +3697,7 @@ func TestMarkObjectEncrypted_DoesNotDriveQuotaNegative(t *testing.T) {
 	ctx := context.Background()
 
 	mustRecordObject(t, s, "bucket/plain", "backend-a", 900)
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE backend_quotas SET bytes_used = 50 WHERE backend_name = ?`, "backend-a",
-	); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
+	seedBytesUsed(t, s, "backend-a", 50)
 
 	// 900 plaintext -> 100 ciphertext is a -800 delta against a counter of 50.
 	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{

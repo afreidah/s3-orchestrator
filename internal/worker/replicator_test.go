@@ -27,7 +27,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
 	"github.com/afreidah/s3-orchestrator/internal/config"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
@@ -212,11 +211,11 @@ func TestFindReplicaTarget_SelectsBackendWithSpace(t *testing.T) {
 	ms := &mockMetadataStore{}
 
 	exclusion := map[string]bool{"b1": true}
-	pl.EXPECT().SelectReplicaTarget(int64(50), exclusion).Return("b2", nil, nil)
+	pl.EXPECT().RankReplicaTargets(int64(50), exclusion).Return([]string{"b2"})
 
 	r := newTestReplicator(ops, pl, ms)
 
-	target, _ := r.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
+	target := r.FindReplicaTarget(context.Background(), "key1", 50, exclusion)
 	if target != "b2" {
 		t.Errorf("FindReplicaTarget = %q, want b2", target)
 	}
@@ -231,11 +230,11 @@ func TestFindReplicaTarget_NoSpace(t *testing.T) {
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
-	pl.EXPECT().SelectReplicaTarget(int64(50), gomock.Any()).Return("", nil, nil)
+	pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).Return(nil)
 
 	r := newTestReplicator(ops, pl, ms)
 
-	target, _ := r.FindReplicaTarget(context.Background(), "key1", 50, nil)
+	target := r.FindReplicaTarget(context.Background(), "key1", 50, nil)
 	if target != "" {
 		t.Errorf("FindReplicaTarget = %q, want empty (no space)", target)
 	}
@@ -250,12 +249,11 @@ func TestFindReplicaTarget_SelectionError(t *testing.T) {
 	pl := NewMockPlacement(ctrl)
 	ms := &mockMetadataStore{}
 
-	pl.EXPECT().SelectReplicaTarget(int64(50), gomock.Any()).
-		Return("", nil, fmt.Errorf("database unavailable"))
+	pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).Return(nil)
 
 	r := newTestReplicator(ops, pl, ms)
 
-	target, _ := r.FindReplicaTarget(context.Background(), "key1", 50, nil)
+	target := r.FindReplicaTarget(context.Background(), "key1", 50, nil)
 	if target != "" {
 		t.Errorf("FindReplicaTarget = %q, want empty (error)", target)
 	}
@@ -584,7 +582,7 @@ func TestReplicateObject_Success(t *testing.T) {
 
 	ms := &mockMetadataStore{recordReplicaOK: true}
 
-	pl.EXPECT().SelectReplicaTarget(int64(50), gomock.Any()).Return("b2", nil, nil)
+	pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).Return([]string{"b2"})
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil)
 	ops.EXPECT().StreamCopy(gomock.Any(), endpointOf{srcBe}, endpointOf{dstBe}, "key1", gomock.Any()).Return(int64(0), nil)
@@ -627,22 +625,22 @@ func TestReplicateObject_WriteFailureExcludesTarget(t *testing.T) {
 	// First call selects "fail", second (with "fail" excluded) selects "ok",
 	// third finds no remaining targets and returns "" to end the loop.
 	gomock.InOrder(
-		pl.EXPECT().SelectReplicaTarget(int64(50), gomock.Any()).
-			DoAndReturn(func(_ int64, excl map[string]bool) (string, *counter.Reservation, error) {
+		pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).
+			DoAndReturn(func(_ int64, excl map[string]bool) []string {
 				if excl["fail"] {
 					t.Fatal("first call should not exclude 'fail'")
 				}
-				return "fail", nil, nil
+				return []string{"fail"}
 			}),
-		pl.EXPECT().SelectReplicaTarget(int64(50), gomock.Any()).
-			DoAndReturn(func(_ int64, excl map[string]bool) (string, *counter.Reservation, error) {
+		pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).
+			DoAndReturn(func(_ int64, excl map[string]bool) []string {
 				if !excl["fail"] {
 					t.Fatal("second call must exclude 'fail' after write failure")
 				}
-				return "ok", nil, nil
+				return []string{"ok"}
 			}),
-		pl.EXPECT().SelectReplicaTarget(int64(50), gomock.Any()).
-			Return("", nil, nil),
+		pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).
+			Return(nil),
 	)
 
 	// "fail" backend: GetBackend succeeds, StreamCopy returns write error
@@ -690,14 +688,14 @@ func TestReplicateObject_RecordReplicaErrorExcludesTarget(t *testing.T) {
 	}).AnyTimes()
 
 	gomock.InOrder(
-		pl.EXPECT().SelectReplicaTarget(int64(50), gomock.Any()).Return("fail", nil, nil),
+		pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).Return([]string{"fail"}),
 		// After RecordReplica error, "fail" is excluded; no targets left.
-		pl.EXPECT().SelectReplicaTarget(int64(50), gomock.Any()).
-			DoAndReturn(func(_ int64, excl map[string]bool) (string, *counter.Reservation, error) {
+		pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).
+			DoAndReturn(func(_ int64, excl map[string]bool) []string {
 				if !excl["fail"] {
 					t.Fatal("must exclude 'fail' after RecordReplica error")
 				}
-				return "", nil, nil
+				return nil
 			}),
 	)
 
@@ -737,14 +735,14 @@ func TestReplicateObject_NotInsertedExcludesTarget(t *testing.T) {
 	}).AnyTimes()
 
 	gomock.InOrder(
-		pl.EXPECT().SelectReplicaTarget(int64(50), gomock.Any()).Return("stale", nil, nil),
+		pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).Return([]string{"stale"}),
 		// After !inserted, "stale" is excluded; no targets left.
-		pl.EXPECT().SelectReplicaTarget(int64(50), gomock.Any()).
-			DoAndReturn(func(_ int64, excl map[string]bool) (string, *counter.Reservation, error) {
+		pl.EXPECT().RankReplicaTargets(int64(50), gomock.Any()).
+			DoAndReturn(func(_ int64, excl map[string]bool) []string {
 				if !excl["stale"] {
 					t.Fatal("must exclude 'stale' after !inserted")
 				}
-				return "", nil, nil
+				return nil
 			}),
 	)
 

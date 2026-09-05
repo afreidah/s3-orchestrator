@@ -211,11 +211,9 @@ func TestStoreInt_MarkObjectCompressed_MovesQuotaAndEnvelope(t *testing.T) {
 
 	resetBytesUsed(t, s, "backend-a")
 	key := uniqueKey(t, "compress-quota")
-	_, deltas, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1000})
-	if err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1000}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	commitQuota(t, s, deltas)
 	before := readBytesUsed(t, s, "backend-a")
 
 	update := &core.CompressedUpdate{

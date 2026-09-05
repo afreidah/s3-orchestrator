@@ -11,27 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const adjustBackendBytesUsed = `-- name: AdjustBackendBytesUsed :exec
-UPDATE backend_quotas
-SET bytes_used = GREATEST(0, bytes_used + $1), updated_at = NOW()
-WHERE backend_name = $2
+const adjustQuotaStripe = `-- name: AdjustQuotaStripe :exec
+INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
+VALUES ($1, $2, $3)
+ON CONFLICT (backend_name, stripe_id) DO UPDATE
+SET bytes_used = backend_quota_stripes.bytes_used + EXCLUDED.bytes_used
 `
 
-type AdjustBackendBytesUsedParams struct {
-	Delta       int64
+type AdjustQuotaStripeParams struct {
 	BackendName string
+	StripeID    int16
+	Delta       int64
 }
 
-// Applies a signed delta to bytes_used without the bytes_limit guard
-// IncrementQuota uses, because the on-disk byte count is reality and
-// the counter must follow it whether or not the limit would otherwise
-// be exceeded. GREATEST(0, ...) clamps so a delta-arithmetic bug
-// cannot drive the counter negative. Used by MarkObjectEncrypted and
-// MarkObjectDecrypted to keep bytes_used in step with size_bytes
-// after the bulk encrypt-existing / decrypt-existing rewrite path
-// changes the on-disk size.
-func (q *Queries) AdjustBackendBytesUsed(ctx context.Context, arg AdjustBackendBytesUsedParams) error {
-	_, err := q.db.Exec(ctx, adjustBackendBytesUsed, arg.Delta, arg.BackendName)
+// Applies a signed delta to one stripe, materializing the row on first use so
+// nothing has to seed a backend's stripes up front. No bytes_limit guard: the
+// ceiling is enforced before the write is admitted, and a counter that declined
+// to record bytes already on a backend would understate it permanently.
+func (q *Queries) AdjustQuotaStripe(ctx context.Context, arg AdjustQuotaStripeParams) error {
+	_, err := q.db.Exec(ctx, adjustQuotaStripe, arg.BackendName, arg.StripeID, arg.Delta)
 	return err
 }
 
@@ -48,22 +46,6 @@ type DecrementOrphanBytesParams struct {
 
 func (q *Queries) DecrementOrphanBytes(ctx context.Context, arg DecrementOrphanBytesParams) error {
 	_, err := q.db.Exec(ctx, decrementOrphanBytes, arg.Amount, arg.BackendName)
-	return err
-}
-
-const decrementQuota = `-- name: DecrementQuota :exec
-UPDATE backend_quotas
-SET bytes_used = GREATEST(0, bytes_used - $1), updated_at = NOW()
-WHERE backend_name = $2
-`
-
-type DecrementQuotaParams struct {
-	Amount      int64
-	BackendName string
-}
-
-func (q *Queries) DecrementQuota(ctx context.Context, arg DecrementQuotaParams) error {
-	_, err := q.db.Exec(ctx, decrementQuota, arg.Amount, arg.BackendName)
 	return err
 }
 
@@ -108,8 +90,17 @@ func (q *Queries) GetActiveMultipartCountsByBackend(ctx context.Context) ([]GetA
 }
 
 const getAllQuotaStats = `-- name: GetAllQuotaStats :many
-SELECT backend_name, bytes_used, bytes_limit, orphan_bytes, updated_at
-FROM backend_quotas
+SELECT q.backend_name,
+       GREATEST(0, COALESCE(s.bytes_used, 0))::bigint AS bytes_used,
+       q.bytes_limit,
+       q.orphan_bytes,
+       q.updated_at
+FROM backend_quotas q
+LEFT JOIN (
+    SELECT backend_name, SUM(bytes_used) AS bytes_used
+    FROM backend_quota_stripes
+    GROUP BY backend_name
+) s ON s.backend_name = q.backend_name
 `
 
 type GetAllQuotaStatsRow struct {
@@ -144,69 +135,6 @@ func (q *Queries) GetAllQuotaStats(ctx context.Context) ([]GetAllQuotaStatsRow, 
 		return nil, err
 	}
 	return items, nil
-}
-
-const getBackendAvailableSpace = `-- name: GetBackendAvailableSpace :one
-SELECT CASE
-    WHEN q.bytes_limit = 0 THEN 9223372036854775807  -- max int64
-    ELSE (q.bytes_limit - q.bytes_used - q.orphan_bytes - COALESCE(m.inflight, 0))
-END::bigint AS available
-FROM backend_quotas q
-LEFT JOIN (
-    SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
-    FROM multipart_uploads mu
-    JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
-    GROUP BY mu.backend_name
-) m ON m.backend_name = q.backend_name
-WHERE q.backend_name = $1
-`
-
-// bytes_limit = 0 means unlimited (no quota enforcement)
-func (q *Queries) GetBackendAvailableSpace(ctx context.Context, backendName string) (int64, error) {
-	row := q.db.QueryRow(ctx, getBackendAvailableSpace, backendName)
-	var available int64
-	err := row.Scan(&available)
-	return available, err
-}
-
-const getLeastUtilizedBackend = `-- name: GetLeastUtilizedBackend :one
-SELECT q.backend_name,
-       CASE WHEN q.bytes_limit = 0 THEN 9223372036854775807
-            ELSE (q.bytes_limit - q.bytes_used - q.orphan_bytes - COALESCE(m.inflight, 0))
-       END::bigint AS available
-FROM backend_quotas q
-LEFT JOIN (
-    SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
-    FROM multipart_uploads mu
-    JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
-    GROUP BY mu.backend_name
-) m ON m.backend_name = q.backend_name
-WHERE q.backend_name = ANY($1::text[])
-  AND CASE WHEN q.bytes_limit = 0 THEN 9223372036854775807
-           ELSE (q.bytes_limit - q.bytes_used - q.orphan_bytes - COALESCE(m.inflight, 0))
-      END >= $2::bigint
-ORDER BY CASE WHEN q.bytes_limit = 0 THEN 0
-              ELSE (q.bytes_used + q.orphan_bytes)::float8 / q.bytes_limit::float8
-         END ASC
-LIMIT 1
-`
-
-type GetLeastUtilizedBackendParams struct {
-	BackendNames []string
-	MinSize      int64
-}
-
-type GetLeastUtilizedBackendRow struct {
-	BackendName string
-	Available   int64
-}
-
-// Finds the backend with the lowest utilization ratio that has enough space.
-func (q *Queries) GetLeastUtilizedBackend(ctx context.Context, arg GetLeastUtilizedBackendParams) (GetLeastUtilizedBackendRow, error) {
-	row := q.db.QueryRow(ctx, getLeastUtilizedBackend, arg.BackendNames, arg.MinSize)
-	var i GetLeastUtilizedBackendRow
-	err := row.Scan(&i.BackendName, &i.Available)
-	return i, err
 }
 
 const getObjectCountsByBackend = `-- name: GetObjectCountsByBackend :many
@@ -309,39 +237,29 @@ func (q *Queries) IncrementOrphanBytes(ctx context.Context, arg IncrementOrphanB
 	return err
 }
 
-const incrementQuota = `-- name: IncrementQuota :execrows
-UPDATE backend_quotas
-SET bytes_used = bytes_used + $1, updated_at = NOW()
-WHERE backend_name = $2
-  AND (bytes_limit = 0 OR bytes_used + orphan_bytes + $1 <= bytes_limit)
-`
-
-type IncrementQuotaParams struct {
-	Amount      int64
-	BackendName string
-}
-
-func (q *Queries) IncrementQuota(ctx context.Context, arg IncrementQuotaParams) (int64, error) {
-	result, err := q.db.Exec(ctx, incrementQuota, arg.Amount, arg.BackendName)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const listBackendQuotaUsage = `-- name: ListBackendQuotaUsage :many
 SELECT q.backend_name,
        q.bytes_limit,
-       q.bytes_used,
+       GREATEST(0, COALESCE(s.bytes_used, 0))::bigint AS bytes_used,
        q.orphan_bytes,
-       COALESCE(m.inflight, 0)::bigint AS inflight_bytes
+       (COALESCE(m.inflight, 0) + COALESCE(p.inflight, 0))::bigint AS inflight_bytes
 FROM backend_quotas q
+LEFT JOIN (
+    SELECT backend_name, SUM(bytes_used) AS bytes_used
+    FROM backend_quota_stripes
+    GROUP BY backend_name
+) s ON s.backend_name = q.backend_name
 LEFT JOIN (
     SELECT mu.backend_name, SUM(mp.size_bytes) AS inflight
     FROM multipart_uploads mu
     JOIN multipart_parts mp ON mp.upload_id = mu.upload_id
     GROUP BY mu.backend_name
 ) m ON m.backend_name = q.backend_name
+LEFT JOIN (
+    SELECT backend_name, SUM(size_bytes) AS inflight
+    FROM pending_objects
+    GROUP BY backend_name
+) p ON p.backend_name = q.backend_name
 `
 
 type ListBackendQuotaUsageRow struct {
@@ -352,11 +270,14 @@ type ListBackendQuotaUsageRow struct {
 	InflightBytes int64
 }
 
-// Every backend's ceiling and what occupies it: the counter, orphans awaiting
-// cleanup, and the parts of uploads that have not completed. The same three
-// terms GetBackendWithSpace subtracts, read for the whole fleet in one pass
-// rather than per candidate, because the quota tracker refreshes its baseline
-// once per flush instead of asking on every write.
+// Every backend's ceiling and what occupies it: the striped byte total, orphans
+// awaiting cleanup, and the writes that have not landed yet.
+//
+// In-flight is the parts of incomplete multipart uploads plus the intents of
+// single-object PUTs still in progress. Both describe bytes on their way to a
+// backend that no object_locations row covers, and both are rows every instance
+// can read - which is what makes the figure fleet-wide rather than a view of
+// what this process happens to have started.
 func (q *Queries) ListBackendQuotaUsage(ctx context.Context) ([]ListBackendQuotaUsageRow, error) {
 	rows, err := q.db.Query(ctx, listBackendQuotaUsage)
 	if err != nil {
@@ -384,20 +305,29 @@ func (q *Queries) ListBackendQuotaUsage(ctx context.Context) ([]ListBackendQuota
 }
 
 const setBackendBytesUsed = `-- name: SetBackendBytesUsed :exec
-UPDATE backend_quotas
-SET bytes_used = $1, updated_at = NOW()
-WHERE backend_name = $2
+WITH cleared AS (
+    UPDATE backend_quota_stripes
+    SET bytes_used = 0
+    WHERE backend_name = $1 AND stripe_id <> 0
+    RETURNING 1
+)
+INSERT INTO backend_quota_stripes (backend_name, stripe_id, bytes_used)
+VALUES ($1, 0, $2)
+ON CONFLICT (backend_name, stripe_id) DO UPDATE
+SET bytes_used = EXCLUDED.bytes_used
 `
 
 type SetBackendBytesUsedParams struct {
-	BytesUsed   int64
 	BackendName string
+	BytesUsed   int64
 }
 
-// Overwrites bytes_used with an authoritative value (no bytes_limit guard,
-// because the recomputed total is reality and the counter must follow it).
+// Replaces a backend's byte total with an authoritative recomputed value by
+// collapsing it onto stripe zero and clearing the rest. Reconciliation is the
+// one caller: it has recomputed the total from the ledger, so the distribution
+// that produced the old value carries no information worth preserving.
 func (q *Queries) SetBackendBytesUsed(ctx context.Context, arg SetBackendBytesUsedParams) error {
-	_, err := q.db.Exec(ctx, setBackendBytesUsed, arg.BytesUsed, arg.BackendName)
+	_, err := q.db.Exec(ctx, setBackendBytesUsed, arg.BackendName, arg.BytesUsed)
 	return err
 }
 
@@ -437,8 +367,8 @@ func (q *Queries) SumObjectSizesByBackend(ctx context.Context) ([]SumObjectSizes
 
 const upsertQuotaLimit = `-- name: UpsertQuotaLimit :exec
 
-INSERT INTO backend_quotas (backend_name, bytes_limit, bytes_used, updated_at)
-VALUES ($1, $2, 0, NOW())
+INSERT INTO backend_quotas (backend_name, bytes_limit, updated_at)
+VALUES ($1, $2, NOW())
 ON CONFLICT (backend_name) DO UPDATE SET
     bytes_limit = $2,
     updated_at = NOW()
@@ -454,12 +384,15 @@ type UpsertQuotaLimitParams struct {
 //
 // Author: Alex Freidah
 //
-// sqlc-input definitions for backend_quotas - the per-backend bytes_used,
-// bytes_limit, and orphan_bytes counters. The increment query is guarded
-// (WHERE bytes_used + delta <= bytes_limit) so an INSERT exceeding the
-// limit touches zero rows and the engine returns ErrNoSpaceAvailable. Lock
-// acquisition order across multi-row updates is enforced at the call site
-// (sorted backend_name) to avoid deadlock.
+// sqlc-input definitions for backend_quotas - the per-backend bytes_limit and
+// orphan_bytes counters - and backend_quota_stripes, which holds the stored
+// byte total split across rows so concurrent writers do not contend on one.
+//
+// A backend's byte total is always SUM(bytes_used) over its stripes, never a
+// single row, and the clamp at zero belongs on that sum: a stripe is signed and
+// may sit negative while the total is correct. Lock acquisition order across
+// multi-row updates is enforced at the call site (sorted backend_name) to avoid
+// deadlock.
 // -----------------------------------------------------------------------------
 func (q *Queries) UpsertQuotaLimit(ctx context.Context, arg UpsertQuotaLimitParams) error {
 	_, err := q.db.Exec(ctx, upsertQuotaLimit, arg.BackendName, arg.BytesLimit)

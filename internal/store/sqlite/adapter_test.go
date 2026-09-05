@@ -66,7 +66,7 @@ func TestAdapter_ClaimPending_TrueWhenInserted(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
-	if err := s.InsertPending(ctx, &core.PendingObject{
+	if _, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
 		IntentID: "i-1", ObjectKey: "k", BackendName: "backend-a", SizeBytes: 1,
 	}); err != nil {
 		t.Fatalf("InsertPending: %v", err)
@@ -105,7 +105,7 @@ func TestInsertPending_NullableFieldsOmitted(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
-	if err := s.InsertPending(ctx, &core.PendingObject{
+	if _, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
 		IntentID: "i-2", ObjectKey: "k", BackendName: "backend-a", SizeBytes: 5,
 	}); err != nil {
 		t.Fatalf("InsertPending: %v", err)
@@ -128,7 +128,7 @@ func TestAdapter_DeletePending_RemovesRow(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
-	if err := s.InsertPending(ctx, &core.PendingObject{
+	if _, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
 		IntentID: "i-3", ObjectKey: "k", BackendName: "backend-a", SizeBytes: 1,
 	}); err != nil {
 		t.Fatalf("InsertPending: %v", err)
@@ -752,120 +752,174 @@ func TestAdapter_DeleteCleanupItem_RemovesRow(t *testing.T) {
 // QUOTA TX
 // -------------------------------------------------------------------------
 
-// TestAdapter_IncrementBackendQuota_AddsBytesUsed verifies the increment
-// updates bytes_used.
-func TestAdapter_IncrementBackendQuota_AddsBytesUsed(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		if err := a.IncrementBackendQuota(ctx, "backend-a", 500); err != nil {
-			t.Fatalf("IncrementBackendQuota: %v", err)
-		}
-		var used int64
-		if err := a.tx.QueryRowContext(ctx,
-			`SELECT bytes_used FROM backend_quotas WHERE backend_name = ?`, "backend-a",
-		).Scan(&used); err != nil {
-			t.Fatalf("query: %v", err)
-		}
-		if used != 500 {
-			t.Errorf("bytes_used=%d, want 500", used)
-		}
-	})
-}
-
-// TestAdapter_IncrementBackendQuota_ReturnsErrNoSpaceWhenExceeded
-// verifies the guarded UPDATE returns ErrNoSpaceAvailable when the
-// quota ceiling would be exceeded.
-func TestAdapter_IncrementBackendQuota_ReturnsErrNoSpaceWhenExceeded(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := context.Background()
-	// Set bytes_limit to a small value via direct SQL on the test store
-	// so the increment can exceed it.
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE backend_quotas SET bytes_limit = 100 WHERE backend_name = ?`, "backend-a",
-	); err != nil {
-		t.Fatalf("setup: %v", err)
+// stripeBytes reads one stripe's raw value, which is the only way to observe
+// that the counter is actually split rather than summed into a single row.
+func stripeBytes(t *testing.T, a *sqliteTxAdapter, backend string, stripe int16) int64 {
+	t.Helper()
+	var used int64
+	if err := a.tx.QueryRowContext(context.Background(),
+		`SELECT COALESCE(SUM(bytes_used), 0) FROM backend_quota_stripes
+		 WHERE backend_name = ? AND stripe_id = ?`, backend, stripe,
+	).Scan(&used); err != nil {
+		t.Fatalf("read stripe %d: %v", stripe, err)
 	}
-
-	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		err := a.IncrementBackendQuota(ctx, "backend-a", 200)
-		if !errors.Is(err, core.ErrNoSpaceAvailable) {
-			t.Errorf("got %v, want ErrNoSpaceAvailable", err)
-		}
-	})
+	return used
 }
 
-// TestAdapter_IncrementBackendQuota_CountsOrphanBytesTowardCeiling asserts
-// bytes awaiting physical cleanup still occupy the backend. Target selection
-// already declines them, so a ceiling that ignored them would admit a write
-// the placement layer had ruled out, and the backend would pass bytes_limit.
-func TestAdapter_IncrementBackendQuota_CountsOrphanBytesTowardCeiling(t *testing.T) {
+// TestAdapter_BackendHasRoom_CountsOrphanBytes asserts bytes awaiting physical
+// cleanup still occupy the backend.
+//
+// They are on disk until their cleanup lands, so a headroom test that ignored
+// them would admit a write the backend cannot actually hold, and the ceiling
+// would be crossed for real rather than on paper.
+func TestAdapter_BackendHasRoom_CountsOrphanBytes(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	if _, err := s.db.ExecContext(ctx,
-		`UPDATE backend_quotas SET bytes_limit = 1000, bytes_used = 500, orphan_bytes = 400
-		 WHERE backend_name = ?`, "backend-a",
-	); err != nil {
+		`UPDATE backend_quotas SET bytes_limit = 1000, orphan_bytes = 50 WHERE backend_name = ?`,
+		"backend-a"); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
+	seedBytesUsed(t, s, "backend-a", 900)
 
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		// 500 used + 400 orphaned + 200 = 1100, past the 1000 limit.
-		if err := a.IncrementBackendQuota(ctx, "backend-a", 200); !errors.Is(err, core.ErrNoSpaceAvailable) {
-			t.Errorf("got %v, want ErrNoSpaceAvailable", err)
+		// 900 stored + 50 orphaned leaves 50 free.
+		fits, err := a.backendHasRoom(ctx, "backend-a", 100)
+		if err != nil {
+			t.Fatalf("backendHasRoom: %v", err)
 		}
-		// 500 + 400 + 100 = 1000 exactly, which still fits.
-		if err := a.IncrementBackendQuota(ctx, "backend-a", 100); err != nil {
-			t.Errorf("increment to exactly the limit: %v", err)
+		if fits {
+			t.Error("admitted 100 bytes into 50 of room; orphan bytes were not counted")
+		}
+		fits, err = a.backendHasRoom(ctx, "backend-a", 50)
+		if err != nil {
+			t.Fatalf("backendHasRoom: %v", err)
+		}
+		if !fits {
+			t.Error("refused 50 bytes that fit the remaining room exactly")
 		}
 	})
 }
 
-// TestAdapter_DecrementBackendQuota_SubtractsBytesUsed verifies the
-// decrement subtracts and clamps at zero.
-func TestAdapter_DecrementBackendQuota_SubtractsBytesUsed(t *testing.T) {
+// TestAdapter_BackendHasRoom_UnlimitedAlwaysFits asserts a zero bytes_limit
+// means no enforcement, which is how the schema spells unlimited.
+func TestAdapter_BackendHasRoom_UnlimitedAlwaysFits(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
-	seedBytesUsed(t, s, "backend-a", 1000)
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE backend_quotas SET bytes_limit = 0 WHERE backend_name = ?`, "backend-a"); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	seedBytesUsed(t, s, "backend-a", 1<<40)
 
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		if err := a.DecrementBackendQuota(ctx, "backend-a", 600); err != nil {
-			t.Fatalf("DecrementBackendQuota: %v", err)
+		fits, err := a.backendHasRoom(ctx, "backend-a", 1<<30)
+		if err != nil {
+			t.Fatalf("backendHasRoom: %v", err)
 		}
-		var used int64
-		if err := a.tx.QueryRowContext(ctx,
-			`SELECT bytes_used FROM backend_quotas WHERE backend_name = ?`, "backend-a",
-		).Scan(&used); err != nil {
-			t.Fatalf("query: %v", err)
-		}
-		if used != 400 {
-			t.Errorf("bytes_used=%d, want 400", used)
+		if !fits {
+			t.Error("an unlimited backend refused a write")
 		}
 	})
 }
 
-// TestAdapter_DecrementBackendQuota_ClampsAtZero verifies the decrement
-// clamps at zero rather than going negative.
-func TestAdapter_DecrementBackendQuota_ClampsAtZero(t *testing.T) {
+// TestAdapter_AdjustQuotaStripe_MaterializesAndAccumulates asserts the first
+// adjustment creates the stripe row and later ones add to it, so nothing has to
+// seed a backend's stripes before it can be charged.
+func TestAdapter_AdjustQuotaStripe_MaterializesAndAccumulates(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		if err := a.DecrementBackendQuota(ctx, "backend-a", 100); err != nil {
-			t.Fatalf("DecrementBackendQuota: %v", err)
+		if err := a.AdjustQuotaStripe(ctx, "backend-a", 3, 500); err != nil {
+			t.Fatalf("AdjustQuotaStripe: %v", err)
 		}
-		var used int64
-		if err := a.tx.QueryRowContext(ctx,
-			`SELECT bytes_used FROM backend_quotas WHERE backend_name = ?`, "backend-a",
-		).Scan(&used); err != nil {
-			t.Fatalf("query: %v", err)
+		if got := stripeBytes(t, a, "backend-a", 3); got != 500 {
+			t.Errorf("stripe 3 = %d, want 500 after the row was created", got)
 		}
-		if used != 0 {
-			t.Errorf("bytes_used=%d, want 0 (clamped)", used)
+		if err := a.AdjustQuotaStripe(ctx, "backend-a", 3, 250); err != nil {
+			t.Fatalf("AdjustQuotaStripe: %v", err)
+		}
+		if got := stripeBytes(t, a, "backend-a", 3); got != 750 {
+			t.Errorf("stripe 3 = %d, want 750 after a second charge", got)
+		}
+	})
+}
+
+// TestAdapter_AdjustQuotaStripe_StripesAreIndependent asserts a charge lands on
+// the named stripe only, which is what lets concurrent writers take different
+// row locks, and that the backend's total is their sum.
+func TestAdapter_AdjustQuotaStripe_StripesAreIndependent(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	withAdapter(t, s, func(a *sqliteTxAdapter) {
+		for stripe, delta := range map[int16]int64{0: 100, 5: 200, 11: 300} {
+			if err := a.AdjustQuotaStripe(ctx, "backend-a", stripe, delta); err != nil {
+				t.Fatalf("AdjustQuotaStripe(%d): %v", stripe, err)
+			}
+		}
+		if got := stripeBytes(t, a, "backend-a", 5); got != 200 {
+			t.Errorf("stripe 5 = %d, want only its own 200", got)
+		}
+		totals, err := a.AllBackendBytesUsed(ctx)
+		if err != nil {
+			t.Fatalf("AllBackendBytesUsed: %v", err)
+		}
+		if totals["backend-a"] != 600 {
+			t.Errorf("total = %d, want 600 (100+200+300)", totals["backend-a"])
+		}
+	})
+}
+
+// TestAdapter_AdjustQuotaStripe_NegativeStripeClampsOnlyTheTotal asserts a
+// stripe is allowed to go negative while the total it feeds is clamped. A
+// credit for an object recorded before the stripes existed lands on whichever
+// stripe its key hashes to, not the one holding the backfilled bytes, so
+// clamping per stripe would silently discard the debit.
+func TestAdapter_AdjustQuotaStripe_NegativeStripeClampsOnlyTheTotal(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	withAdapter(t, s, func(a *sqliteTxAdapter) {
+		if err := a.AdjustQuotaStripe(ctx, "backend-a", 0, 1000); err != nil {
+			t.Fatalf("seed stripe 0: %v", err)
+		}
+		if err := a.AdjustQuotaStripe(ctx, "backend-a", 6, -400); err != nil {
+			t.Fatalf("credit stripe 6: %v", err)
+		}
+		if got := stripeBytes(t, a, "backend-a", 6); got != -400 {
+			t.Errorf("stripe 6 = %d, want -400 held unclamped", got)
+		}
+		totals, err := a.AllBackendBytesUsed(ctx)
+		if err != nil {
+			t.Fatalf("AllBackendBytesUsed: %v", err)
+		}
+		if totals["backend-a"] != 600 {
+			t.Errorf("total = %d, want 600 (1000 - 400)", totals["backend-a"])
+		}
+	})
+}
+
+// TestAdapter_AllBackendBytesUsed_ClampsNegativeTotalAtZero asserts a total
+// driven below zero by stale sizes reads as zero, because a negative counter
+// would over-admit every later write.
+func TestAdapter_AllBackendBytesUsed_ClampsNegativeTotalAtZero(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	withAdapter(t, s, func(a *sqliteTxAdapter) {
+		if err := a.AdjustQuotaStripe(ctx, "backend-a", 2, -750); err != nil {
+			t.Fatalf("AdjustQuotaStripe: %v", err)
+		}
+		totals, err := a.AllBackendBytesUsed(ctx)
+		if err != nil {
+			t.Fatalf("AllBackendBytesUsed: %v", err)
+		}
+		if totals["backend-a"] != 0 {
+			t.Errorf("total = %d, want 0 (clamped)", totals["backend-a"])
 		}
 	})
 }

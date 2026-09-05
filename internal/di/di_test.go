@@ -614,11 +614,10 @@ func TestNewInjector_WorkerModeResolvesLifecycle(t *testing.T) {
 	if _, err := do.Invoke[*drain.Manager](inj); err != nil {
 		t.Errorf("DrainManager: %v", err)
 	}
-	// PendingReaper is conditionally registered (#830). happyPathConfig
-	// leaves PendingPattern at the default (enabled), so the provider
-	// is registered and resolves cleanly.
+	// Always registered: every write claims its bytes with an intent, so a
+	// deployment without the reaper would strand rows holding headroom.
 	if !IsRegistered[*worker.PendingReaper](inj) {
-		t.Error("PendingReaper not registered with default config")
+		t.Error("PendingReaper not registered")
 	}
 	if _, err := do.Invoke[*worker.PendingReaper](inj); err != nil {
 		t.Errorf("PendingReaper: %v", err)
@@ -651,39 +650,6 @@ func TestNewInjector_RootsResolveInEveryMode(t *testing.T) {
 				t.Fatalf("lifecycle.Manager: %v", err)
 			}
 		})
-	}
-}
-
-// TestNewInjector_PendingReaperDisabled covers the conditional
-// registration (#830): when the pending pattern is off in config,
-// no PendingReaper provider is registered and Optional reports
-// Disabled (not Failed), so callers can distinguish "feature off"
-// from "feature on but broken."
-func TestNewInjector_PendingReaperDisabled(t *testing.T) {
-	t.Parallel()
-	cfg := happyPathConfig(t.TempDir())
-	disabled := false
-	cfg.WritePath.PendingPattern.Enabled = &disabled
-	if err := cfg.SetDefaultsAndValidate(); err != nil {
-		t.Fatalf("config validation: %v", err)
-	}
-	inj := NewInjector(InjectorDeps{Config: cfg, Mode: "all", LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
-	t.Cleanup(func() { _ = inj.Shutdown() })
-
-	if IsRegistered[*worker.PendingReaper](inj) {
-		t.Error("PendingReaper should NOT be registered when feature disabled")
-	}
-	res := Optional[*worker.PendingReaper](inj)
-	if res.Resolution != ResolutionDisabled {
-		t.Errorf("Optional[*worker.PendingReaper].Resolution = %s, want disabled", res.Resolution)
-	}
-	if res.Failed() {
-		t.Errorf("Optional reported Failed for a disabled feature: %v", res.Err)
-	}
-
-	// WireManager must still succeed with the feature off.
-	if err := WireManager(inj); err != nil {
-		t.Errorf("WireManager with PendingReaper disabled: %v", err)
 	}
 }
 

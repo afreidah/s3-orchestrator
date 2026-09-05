@@ -144,7 +144,7 @@ func TestPromotePending_CarriesRepresentation(t *testing.T) {
 		SizeBytes:   4096,
 	}
 	intent.ApplyStoredForm(compressedForm())
-	if err := s.InsertPending(ctx, &intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	stale, _ := s.GetStalePending(ctx, time.Now().Add(time.Hour), 10)
@@ -175,7 +175,7 @@ func TestPromotePending_ChargesStoredSize(t *testing.T) {
 	}
 	// LogicalSize is twice what landed, so a charge against the wrong one shows.
 	intent.ApplyStoredForm(compressedForm())
-	if err := s.InsertPending(ctx, &intent); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &intent); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	stale, _ := s.GetStalePending(ctx, time.Now().Add(time.Hour), 10)

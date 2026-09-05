@@ -52,6 +52,9 @@ func RecordReplica(ctx context.Context, runner Runner, key, targetBackend, sourc
 		if err != nil || !inserted {
 			return recordReplicaResult{}, err
 		}
+		if err := chargeStripes(ctx, tx, key, QuotaDeltas{targetBackend: size}); err != nil {
+			return recordReplicaResult{}, err
+		}
 		return recordReplicaResult{size: size, inserted: true}, nil
 	})
 	return res.size, res.inserted, err
@@ -98,6 +101,9 @@ func RemoveExcessCopy(ctx context.Context, runner Runner, key, backendName strin
 			return removedCopy{}, nil
 		}
 		if err := tx.DeleteObjectFromBackend(ctx, key, backendName); err != nil {
+			return removedCopy{}, err
+		}
+		if err := chargeStripes(ctx, tx, key, QuotaDeltas{backendName: -size}); err != nil {
 			return removedCopy{}, err
 		}
 		return removedCopy{size: size, removed: true}, nil
