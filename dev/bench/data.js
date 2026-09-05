@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788508263044,
+  "lastUpdate": 1788593551295,
   "repoUrl": "https://github.com/afreidah/s3-orchestrator",
   "entries": {
     "Go benchmarks": [
@@ -286286,6 +286286,2716 @@ window.BENCHMARK_DATA = {
             "value": 0,
             "unit": "allocs/op",
             "extra": "316754305 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Alex Freidah",
+            "username": "afreidah",
+            "email": "alex.freidah@gmail.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "7d5b7d2d02bff13dbe9f7f88bcaea0d65e11e5fc",
+          "message": "test(quota): benchmark the striped counter and the write-path claim (#1398) (#1399)\n\nNothing measured what #1388 changed. The serial BenchmarkPutObject exercises\nthe new path but cannot queue on it, so neither the contention the stripes\nrelieve nor the cost of holding the counter update inside the write\ntransaction was visible.\n\nAdds parallel benchmarks over the charge and the claim. The charge varies the\nstripe fan-out rather than reading QuotaStripeCount, so one stripe reproduces\nthe pre-#1388 single-row lock and the fan-out has a number attached to it: on\n12 writers, 1 stripe costs ~133us per charge against ~49us at 16, and 64 gives\nnothing back. Claims cost ~56us to admit and ~28us to decline.\n\nCo-authored-by: Alex Freidah <afreidah@gmail.com>",
+          "timestamp": "2026-09-05T04:55:30Z",
+          "url": "https://github.com/afreidah/s3-orchestrator/commit/7d5b7d2d02bff13dbe9f7f88bcaea0d65e11e5fc"
+        },
+        "date": 1788593548507,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkPreCheck_Closed (github.com/afreidah/s3-orchestrator/internal/breaker)",
+            "value": 11.43,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "100000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkPreCheck_Closed (github.com/afreidah/s3-orchestrator/internal/breaker) - ns/op",
+            "value": 11.43,
+            "unit": "ns/op",
+            "extra": "100000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkPreCheck_Closed (github.com/afreidah/s3-orchestrator/internal/breaker) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "100000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkPreCheck_Closed (github.com/afreidah/s3-orchestrator/internal/breaker) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "100000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkPostCheck_Success (github.com/afreidah/s3-orchestrator/internal/breaker)",
+            "value": 74.47,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "16181527 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkPostCheck_Success (github.com/afreidah/s3-orchestrator/internal/breaker) - ns/op",
+            "value": 74.47,
+            "unit": "ns/op",
+            "extra": "16181527 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkPostCheck_Success (github.com/afreidah/s3-orchestrator/internal/breaker) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "16181527 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkPostCheck_Success (github.com/afreidah/s3-orchestrator/internal/breaker) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "16181527 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkPrePostCheck_RoundTrip (github.com/afreidah/s3-orchestrator/internal/breaker)",
+            "value": 116,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "10337175 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkPrePostCheck_RoundTrip (github.com/afreidah/s3-orchestrator/internal/breaker) - ns/op",
+            "value": 116,
+            "unit": "ns/op",
+            "extra": "10337175 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkPrePostCheck_RoundTrip (github.com/afreidah/s3-orchestrator/internal/breaker) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "10337175 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkPrePostCheck_RoundTrip (github.com/afreidah/s3-orchestrator/internal/breaker) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "10337175 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkPreCheck_Concurrent (github.com/afreidah/s3-orchestrator/internal/breaker)",
+            "value": 31.82,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "38133649 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkPreCheck_Concurrent (github.com/afreidah/s3-orchestrator/internal/breaker) - ns/op",
+            "value": 31.82,
+            "unit": "ns/op",
+            "extra": "38133649 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkPreCheck_Concurrent (github.com/afreidah/s3-orchestrator/internal/breaker) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "38133649 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkPreCheck_Concurrent (github.com/afreidah/s3-orchestrator/internal/breaker) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "38133649 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Get_Hit (github.com/afreidah/s3-orchestrator/internal/cache)",
+            "value": 76.34,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "15693210 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Get_Hit (github.com/afreidah/s3-orchestrator/internal/cache) - ns/op",
+            "value": 76.34,
+            "unit": "ns/op",
+            "extra": "15693210 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Get_Hit (github.com/afreidah/s3-orchestrator/internal/cache) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "15693210 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Get_Hit (github.com/afreidah/s3-orchestrator/internal/cache) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "15693210 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Get_Miss (github.com/afreidah/s3-orchestrator/internal/cache)",
+            "value": 9.67,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "124088210 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Get_Miss (github.com/afreidah/s3-orchestrator/internal/cache) - ns/op",
+            "value": 9.67,
+            "unit": "ns/op",
+            "extra": "124088210 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Get_Miss (github.com/afreidah/s3-orchestrator/internal/cache) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "124088210 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Get_Miss (github.com/afreidah/s3-orchestrator/internal/cache) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "124088210 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Put (github.com/afreidah/s3-orchestrator/internal/cache)",
+            "value": 243.6,
+            "unit": "ns/op\t     208 B/op\t       3 allocs/op",
+            "extra": "4946706 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Put (github.com/afreidah/s3-orchestrator/internal/cache) - ns/op",
+            "value": 243.6,
+            "unit": "ns/op",
+            "extra": "4946706 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Put (github.com/afreidah/s3-orchestrator/internal/cache) - B/op",
+            "value": 208,
+            "unit": "B/op",
+            "extra": "4946706 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Put (github.com/afreidah/s3-orchestrator/internal/cache) - allocs/op",
+            "value": 3,
+            "unit": "allocs/op",
+            "extra": "4946706 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Put_Eviction (github.com/afreidah/s3-orchestrator/internal/cache)",
+            "value": 257.8,
+            "unit": "ns/op\t     208 B/op\t       3 allocs/op",
+            "extra": "4608662 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Put_Eviction (github.com/afreidah/s3-orchestrator/internal/cache) - ns/op",
+            "value": 257.8,
+            "unit": "ns/op",
+            "extra": "4608662 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Put_Eviction (github.com/afreidah/s3-orchestrator/internal/cache) - B/op",
+            "value": 208,
+            "unit": "B/op",
+            "extra": "4608662 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Put_Eviction (github.com/afreidah/s3-orchestrator/internal/cache) - allocs/op",
+            "value": 3,
+            "unit": "allocs/op",
+            "extra": "4608662 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Concurrent_ReadWrite (github.com/afreidah/s3-orchestrator/internal/cache)",
+            "value": 140.5,
+            "unit": "ns/op\t      20 B/op\t       0 allocs/op",
+            "extra": "8383792 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Concurrent_ReadWrite (github.com/afreidah/s3-orchestrator/internal/cache) - ns/op",
+            "value": 140.5,
+            "unit": "ns/op",
+            "extra": "8383792 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Concurrent_ReadWrite (github.com/afreidah/s3-orchestrator/internal/cache) - B/op",
+            "value": 20,
+            "unit": "B/op",
+            "extra": "8383792 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkMemoryCache_Concurrent_ReadWrite (github.com/afreidah/s3-orchestrator/internal/cache) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "8383792 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompress (github.com/afreidah/s3-orchestrator/internal/compression)",
+            "value": 1439242,
+            "unit": "ns/op\t2914.24 MB/s\t   26251 B/op\t      29 allocs/op",
+            "extra": "829 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompress (github.com/afreidah/s3-orchestrator/internal/compression) - ns/op",
+            "value": 1439242,
+            "unit": "ns/op",
+            "extra": "829 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompress (github.com/afreidah/s3-orchestrator/internal/compression) - MB/s",
+            "value": 2914.24,
+            "unit": "MB/s",
+            "extra": "829 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompress (github.com/afreidah/s3-orchestrator/internal/compression) - B/op",
+            "value": 26251,
+            "unit": "B/op",
+            "extra": "829 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompress (github.com/afreidah/s3-orchestrator/internal/compression) - allocs/op",
+            "value": 29,
+            "unit": "allocs/op",
+            "extra": "829 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDecompress (github.com/afreidah/s3-orchestrator/internal/compression)",
+            "value": 1944413,
+            "unit": "ns/op\t2157.11 MB/s\t 4229276 B/op\t      27 allocs/op",
+            "extra": "607 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDecompress (github.com/afreidah/s3-orchestrator/internal/compression) - ns/op",
+            "value": 1944413,
+            "unit": "ns/op",
+            "extra": "607 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDecompress (github.com/afreidah/s3-orchestrator/internal/compression) - MB/s",
+            "value": 2157.11,
+            "unit": "MB/s",
+            "extra": "607 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDecompress (github.com/afreidah/s3-orchestrator/internal/compression) - B/op",
+            "value": 4229276,
+            "unit": "B/op",
+            "extra": "607 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDecompress (github.com/afreidah/s3-orchestrator/internal/compression) - allocs/op",
+            "value": 27,
+            "unit": "allocs/op",
+            "extra": "607 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompressIncompressible (github.com/afreidah/s3-orchestrator/internal/compression)",
+            "value": 2711829,
+            "unit": "ns/op\t1546.67 MB/s\t         1.000 ratio\t16529455 B/op\t      46 allocs/op",
+            "extra": "424 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompressIncompressible (github.com/afreidah/s3-orchestrator/internal/compression) - ns/op",
+            "value": 2711829,
+            "unit": "ns/op",
+            "extra": "424 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompressIncompressible (github.com/afreidah/s3-orchestrator/internal/compression) - MB/s",
+            "value": 1546.67,
+            "unit": "MB/s",
+            "extra": "424 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompressIncompressible (github.com/afreidah/s3-orchestrator/internal/compression) - ratio",
+            "value": 1,
+            "unit": "ratio",
+            "extra": "424 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompressIncompressible (github.com/afreidah/s3-orchestrator/internal/compression) - B/op",
+            "value": 16529455,
+            "unit": "B/op",
+            "extra": "424 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompressIncompressible (github.com/afreidah/s3-orchestrator/internal/compression) - allocs/op",
+            "value": 46,
+            "unit": "allocs/op",
+            "extra": "424 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompressLogLike (github.com/afreidah/s3-orchestrator/internal/compression)",
+            "value": 21357788,
+            "unit": "ns/op\t 196.38 MB/s\t         0.1853 ratio\t 3775680 B/op\t      46 allocs/op",
+            "extra": "48 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompressLogLike (github.com/afreidah/s3-orchestrator/internal/compression) - ns/op",
+            "value": 21357788,
+            "unit": "ns/op",
+            "extra": "48 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompressLogLike (github.com/afreidah/s3-orchestrator/internal/compression) - MB/s",
+            "value": 196.38,
+            "unit": "MB/s",
+            "extra": "48 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompressLogLike (github.com/afreidah/s3-orchestrator/internal/compression) - ratio",
+            "value": 0.1853,
+            "unit": "ratio",
+            "extra": "48 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompressLogLike (github.com/afreidah/s3-orchestrator/internal/compression) - B/op",
+            "value": 3775680,
+            "unit": "B/op",
+            "extra": "48 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCompressLogLike (github.com/afreidah/s3-orchestrator/internal/compression) - allocs/op",
+            "value": 46,
+            "unit": "allocs/op",
+            "extra": "48 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkUsageTracker_WithinLimits (github.com/afreidah/s3-orchestrator/internal/counter)",
+            "value": 273.5,
+            "unit": "ns/op\t     256 B/op\t       2 allocs/op",
+            "extra": "4419584 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkUsageTracker_WithinLimits (github.com/afreidah/s3-orchestrator/internal/counter) - ns/op",
+            "value": 273.5,
+            "unit": "ns/op",
+            "extra": "4419584 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkUsageTracker_WithinLimits (github.com/afreidah/s3-orchestrator/internal/counter) - B/op",
+            "value": 256,
+            "unit": "B/op",
+            "extra": "4419584 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkUsageTracker_WithinLimits (github.com/afreidah/s3-orchestrator/internal/counter) - allocs/op",
+            "value": 2,
+            "unit": "allocs/op",
+            "extra": "4419584 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkUsageTracker_WithinLimits_Parallel (github.com/afreidah/s3-orchestrator/internal/counter)",
+            "value": 191.8,
+            "unit": "ns/op\t     256 B/op\t       2 allocs/op",
+            "extra": "6147598 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkUsageTracker_WithinLimits_Parallel (github.com/afreidah/s3-orchestrator/internal/counter) - ns/op",
+            "value": 191.8,
+            "unit": "ns/op",
+            "extra": "6147598 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkUsageTracker_WithinLimits_Parallel (github.com/afreidah/s3-orchestrator/internal/counter) - B/op",
+            "value": 256,
+            "unit": "B/op",
+            "extra": "6147598 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkUsageTracker_WithinLimits_Parallel (github.com/afreidah/s3-orchestrator/internal/counter) - allocs/op",
+            "value": 2,
+            "unit": "allocs/op",
+            "extra": "6147598 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkUsageTracker_Record (github.com/afreidah/s3-orchestrator/internal/counter)",
+            "value": 284.1,
+            "unit": "ns/op\t     256 B/op\t       2 allocs/op",
+            "extra": "4255701 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkUsageTracker_Record (github.com/afreidah/s3-orchestrator/internal/counter) - ns/op",
+            "value": 284.1,
+            "unit": "ns/op",
+            "extra": "4255701 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkUsageTracker_Record (github.com/afreidah/s3-orchestrator/internal/counter) - B/op",
+            "value": 256,
+            "unit": "B/op",
+            "extra": "4255701 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkUsageTracker_Record (github.com/afreidah/s3-orchestrator/internal/counter) - allocs/op",
+            "value": 2,
+            "unit": "allocs/op",
+            "extra": "4255701 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkEncryptReader (github.com/afreidah/s3-orchestrator/internal/encryption)",
+            "value": 344125,
+            "unit": "ns/op\t3047.08 MB/s\t  141020 B/op\t      10 allocs/op",
+            "extra": "3362 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkEncryptReader (github.com/afreidah/s3-orchestrator/internal/encryption) - ns/op",
+            "value": 344125,
+            "unit": "ns/op",
+            "extra": "3362 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkEncryptReader (github.com/afreidah/s3-orchestrator/internal/encryption) - MB/s",
+            "value": 3047.08,
+            "unit": "MB/s",
+            "extra": "3362 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkEncryptReader (github.com/afreidah/s3-orchestrator/internal/encryption) - B/op",
+            "value": 141020,
+            "unit": "B/op",
+            "extra": "3362 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkEncryptReader (github.com/afreidah/s3-orchestrator/internal/encryption) - allocs/op",
+            "value": 10,
+            "unit": "allocs/op",
+            "extra": "3362 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDecryptReader (github.com/afreidah/s3-orchestrator/internal/encryption)",
+            "value": 352922,
+            "unit": "ns/op\t2971.13 MB/s\t  141081 B/op\t      11 allocs/op",
+            "extra": "3399 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDecryptReader (github.com/afreidah/s3-orchestrator/internal/encryption) - ns/op",
+            "value": 352922,
+            "unit": "ns/op",
+            "extra": "3399 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDecryptReader (github.com/afreidah/s3-orchestrator/internal/encryption) - MB/s",
+            "value": 2971.13,
+            "unit": "MB/s",
+            "extra": "3399 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDecryptReader (github.com/afreidah/s3-orchestrator/internal/encryption) - B/op",
+            "value": 141081,
+            "unit": "B/op",
+            "extra": "3399 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDecryptReader (github.com/afreidah/s3-orchestrator/internal/encryption) - allocs/op",
+            "value": 11,
+            "unit": "allocs/op",
+            "extra": "3399 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRoundTrip (github.com/afreidah/s3-orchestrator/internal/encryption)",
+            "value": 1242710,
+            "unit": "ns/op\t 843.78 MB/s\t 2521917 B/op\t      47 allocs/op",
+            "extra": "1069 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRoundTrip (github.com/afreidah/s3-orchestrator/internal/encryption) - ns/op",
+            "value": 1242710,
+            "unit": "ns/op",
+            "extra": "1069 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRoundTrip (github.com/afreidah/s3-orchestrator/internal/encryption) - MB/s",
+            "value": 843.78,
+            "unit": "MB/s",
+            "extra": "1069 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRoundTrip (github.com/afreidah/s3-orchestrator/internal/encryption) - B/op",
+            "value": 2521917,
+            "unit": "B/op",
+            "extra": "1069 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRoundTrip (github.com/afreidah/s3-orchestrator/internal/encryption) - allocs/op",
+            "value": 47,
+            "unit": "allocs/op",
+            "extra": "1069 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDeriveNonce (github.com/afreidah/s3-orchestrator/internal/encryption)",
+            "value": 11.39,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "100000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDeriveNonce (github.com/afreidah/s3-orchestrator/internal/encryption) - ns/op",
+            "value": 11.39,
+            "unit": "ns/op",
+            "extra": "100000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDeriveNonce (github.com/afreidah/s3-orchestrator/internal/encryption) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "100000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDeriveNonce (github.com/afreidah/s3-orchestrator/internal/encryption) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "100000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDeriveNonce_Sequential (github.com/afreidah/s3-orchestrator/internal/encryption)",
+            "value": 10535,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "116500 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDeriveNonce_Sequential (github.com/afreidah/s3-orchestrator/internal/encryption) - ns/op",
+            "value": 10535,
+            "unit": "ns/op",
+            "extra": "116500 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDeriveNonce_Sequential (github.com/afreidah/s3-orchestrator/internal/encryption) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "116500 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDeriveNonce_Sequential (github.com/afreidah/s3-orchestrator/internal/encryption) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "116500 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkEncryptReader_StreamingAllocs (github.com/afreidah/s3-orchestrator/internal/encryption)",
+            "value": 312466,
+            "unit": "ns/op\t    1509 B/op\t       6 allocs/op",
+            "extra": "3813 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkEncryptReader_StreamingAllocs (github.com/afreidah/s3-orchestrator/internal/encryption) - ns/op",
+            "value": 312466,
+            "unit": "ns/op",
+            "extra": "3813 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkEncryptReader_StreamingAllocs (github.com/afreidah/s3-orchestrator/internal/encryption) - B/op",
+            "value": 1509,
+            "unit": "B/op",
+            "extra": "3813 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkEncryptReader_StreamingAllocs (github.com/afreidah/s3-orchestrator/internal/encryption) - allocs/op",
+            "value": 6,
+            "unit": "allocs/op",
+            "extra": "3813 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDecryptReader_StreamingAllocs (github.com/afreidah/s3-orchestrator/internal/encryption)",
+            "value": 325099,
+            "unit": "ns/op\t    1526 B/op\t       6 allocs/op",
+            "extra": "3662 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDecryptReader_StreamingAllocs (github.com/afreidah/s3-orchestrator/internal/encryption) - ns/op",
+            "value": 325099,
+            "unit": "ns/op",
+            "extra": "3662 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDecryptReader_StreamingAllocs (github.com/afreidah/s3-orchestrator/internal/encryption) - B/op",
+            "value": 1526,
+            "unit": "B/op",
+            "extra": "3662 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDecryptReader_StreamingAllocs (github.com/afreidah/s3-orchestrator/internal/encryption) - allocs/op",
+            "value": 6,
+            "unit": "allocs/op",
+            "extra": "3662 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLog_WithCallback (github.com/afreidah/s3-orchestrator/internal/observe/audit)",
+            "value": 180.7,
+            "unit": "ns/op\t     480 B/op\t       2 allocs/op",
+            "extra": "6694316 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLog_WithCallback (github.com/afreidah/s3-orchestrator/internal/observe/audit) - ns/op",
+            "value": 180.7,
+            "unit": "ns/op",
+            "extra": "6694316 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLog_WithCallback (github.com/afreidah/s3-orchestrator/internal/observe/audit) - B/op",
+            "value": 480,
+            "unit": "B/op",
+            "extra": "6694316 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLog_WithCallback (github.com/afreidah/s3-orchestrator/internal/observe/audit) - allocs/op",
+            "value": 2,
+            "unit": "allocs/op",
+            "extra": "6694316 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLog_WithoutCallback (github.com/afreidah/s3-orchestrator/internal/observe/audit)",
+            "value": 88.62,
+            "unit": "ns/op\t     160 B/op\t       1 allocs/op",
+            "extra": "13527987 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLog_WithoutCallback (github.com/afreidah/s3-orchestrator/internal/observe/audit) - ns/op",
+            "value": 88.62,
+            "unit": "ns/op",
+            "extra": "13527987 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLog_WithoutCallback (github.com/afreidah/s3-orchestrator/internal/observe/audit) - B/op",
+            "value": 160,
+            "unit": "B/op",
+            "extra": "13527987 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLog_WithoutCallback (github.com/afreidah/s3-orchestrator/internal/observe/audit) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "13527987 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLog_Concurrent (github.com/afreidah/s3-orchestrator/internal/observe/audit)",
+            "value": 61.34,
+            "unit": "ns/op\t     160 B/op\t       1 allocs/op",
+            "extra": "16914463 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLog_Concurrent (github.com/afreidah/s3-orchestrator/internal/observe/audit) - ns/op",
+            "value": 61.34,
+            "unit": "ns/op",
+            "extra": "16914463 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLog_Concurrent (github.com/afreidah/s3-orchestrator/internal/observe/audit) - B/op",
+            "value": 160,
+            "unit": "B/op",
+            "extra": "16914463 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLog_Concurrent (github.com/afreidah/s3-orchestrator/internal/observe/audit) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "16914463 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/4KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra)",
+            "value": 32.56,
+            "unit": "ns/op\t125781.75 MB/s\t      48 B/op\t       1 allocs/op",
+            "extra": "37105252 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/4KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - ns/op",
+            "value": 32.56,
+            "unit": "ns/op",
+            "extra": "37105252 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/4KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - MB/s",
+            "value": 125781.75,
+            "unit": "MB/s",
+            "extra": "37105252 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/4KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - B/op",
+            "value": 48,
+            "unit": "B/op",
+            "extra": "37105252 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/4KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "37105252 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/64KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra)",
+            "value": 37.27,
+            "unit": "ns/op\t1758403.44 MB/s\t      48 B/op\t       1 allocs/op",
+            "extra": "37739895 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/64KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - ns/op",
+            "value": 37.27,
+            "unit": "ns/op",
+            "extra": "37739895 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/64KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - MB/s",
+            "value": 1758403.44,
+            "unit": "MB/s",
+            "extra": "37739895 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/64KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - B/op",
+            "value": 48,
+            "unit": "B/op",
+            "extra": "37739895 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/64KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "37739895 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/1024KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra)",
+            "value": 33.5,
+            "unit": "ns/op\t31304346.74 MB/s\t      48 B/op\t       1 allocs/op",
+            "extra": "36249324 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/1024KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - ns/op",
+            "value": 33.5,
+            "unit": "ns/op",
+            "extra": "36249324 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/1024KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - MB/s",
+            "value": 31304346.74,
+            "unit": "MB/s",
+            "extra": "36249324 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/1024KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - B/op",
+            "value": 48,
+            "unit": "B/op",
+            "extra": "36249324 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/1024KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "36249324 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/16384KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra)",
+            "value": 23.01,
+            "unit": "ns/op\t729066594.04 MB/s\t      48 B/op\t       1 allocs/op",
+            "extra": "51702952 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/16384KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - ns/op",
+            "value": 23.01,
+            "unit": "ns/op",
+            "extra": "51702952 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/16384KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - MB/s",
+            "value": 729066594.04,
+            "unit": "MB/s",
+            "extra": "51702952 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/16384KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - B/op",
+            "value": 48,
+            "unit": "B/op",
+            "extra": "51702952 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOCopy/16384KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "51702952 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkStreamCopy/64KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra)",
+            "value": 62146,
+            "unit": "ns/op\t1054.55 MB/s\t  204478 B/op\t      31 allocs/op",
+            "extra": "19311 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkStreamCopy/64KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - ns/op",
+            "value": 62146,
+            "unit": "ns/op",
+            "extra": "19311 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkStreamCopy/64KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - MB/s",
+            "value": 1054.55,
+            "unit": "MB/s",
+            "extra": "19311 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkStreamCopy/64KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - B/op",
+            "value": 204478,
+            "unit": "B/op",
+            "extra": "19311 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkStreamCopy/64KB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - allocs/op",
+            "value": 31,
+            "unit": "allocs/op",
+            "extra": "19311 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkStreamCopy/1MB (github.com/afreidah/s3-orchestrator/internal/proxy/infra)",
+            "value": 695496,
+            "unit": "ns/op\t1507.67 MB/s\t 3277646 B/op\t      40 allocs/op",
+            "extra": "1933 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkStreamCopy/1MB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - ns/op",
+            "value": 695496,
+            "unit": "ns/op",
+            "extra": "1933 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkStreamCopy/1MB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - MB/s",
+            "value": 1507.67,
+            "unit": "MB/s",
+            "extra": "1933 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkStreamCopy/1MB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - B/op",
+            "value": 3277646,
+            "unit": "B/op",
+            "extra": "1933 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkStreamCopy/1MB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - allocs/op",
+            "value": 40,
+            "unit": "allocs/op",
+            "extra": "1933 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkStreamCopy/16MB (github.com/afreidah/s3-orchestrator/internal/proxy/infra)",
+            "value": 5160045,
+            "unit": "ns/op\t3251.37 MB/s\t53003422 B/op\t      50 allocs/op",
+            "extra": "229 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkStreamCopy/16MB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - ns/op",
+            "value": 5160045,
+            "unit": "ns/op",
+            "extra": "229 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkStreamCopy/16MB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - MB/s",
+            "value": 3251.37,
+            "unit": "MB/s",
+            "extra": "229 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkStreamCopy/16MB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - B/op",
+            "value": 53003422,
+            "unit": "B/op",
+            "extra": "229 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkStreamCopy/16MB (github.com/afreidah/s3-orchestrator/internal/proxy/infra) - allocs/op",
+            "value": 50,
+            "unit": "allocs/op",
+            "extra": "229 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Get_Hit (github.com/afreidah/s3-orchestrator/internal/proxy/object)",
+            "value": 84.14,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "14234812 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Get_Hit (github.com/afreidah/s3-orchestrator/internal/proxy/object) - ns/op",
+            "value": 84.14,
+            "unit": "ns/op",
+            "extra": "14234812 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Get_Hit (github.com/afreidah/s3-orchestrator/internal/proxy/object) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "14234812 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Get_Hit (github.com/afreidah/s3-orchestrator/internal/proxy/object) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "14234812 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Get_Miss (github.com/afreidah/s3-orchestrator/internal/proxy/object)",
+            "value": 19.86,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "60366864 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Get_Miss (github.com/afreidah/s3-orchestrator/internal/proxy/object) - ns/op",
+            "value": 19.86,
+            "unit": "ns/op",
+            "extra": "60366864 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Get_Miss (github.com/afreidah/s3-orchestrator/internal/proxy/object) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "60366864 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Get_Miss (github.com/afreidah/s3-orchestrator/internal/proxy/object) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "60366864 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Set (github.com/afreidah/s3-orchestrator/internal/proxy/object)",
+            "value": 104.2,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "11411922 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Set (github.com/afreidah/s3-orchestrator/internal/proxy/object) - ns/op",
+            "value": 104.2,
+            "unit": "ns/op",
+            "extra": "11411922 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Set (github.com/afreidah/s3-orchestrator/internal/proxy/object) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "11411922 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Set (github.com/afreidah/s3-orchestrator/internal/proxy/object) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "11411922 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Concurrent_ReadHeavy (github.com/afreidah/s3-orchestrator/internal/proxy/object)",
+            "value": 120,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "9963589 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Concurrent_ReadHeavy (github.com/afreidah/s3-orchestrator/internal/proxy/object) - ns/op",
+            "value": 120,
+            "unit": "ns/op",
+            "extra": "9963589 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Concurrent_ReadHeavy (github.com/afreidah/s3-orchestrator/internal/proxy/object) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "9963589 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Concurrent_ReadHeavy (github.com/afreidah/s3-orchestrator/internal/proxy/object) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "9963589 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Concurrent_WriteHeavy (github.com/afreidah/s3-orchestrator/internal/proxy/object)",
+            "value": 84.85,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "14264864 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Concurrent_WriteHeavy (github.com/afreidah/s3-orchestrator/internal/proxy/object) - ns/op",
+            "value": 84.85,
+            "unit": "ns/op",
+            "extra": "14264864 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Concurrent_WriteHeavy (github.com/afreidah/s3-orchestrator/internal/proxy/object) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "14264864 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Concurrent_WriteHeavy (github.com/afreidah/s3-orchestrator/internal/proxy/object) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "14264864 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Contention_GetSetDelete (github.com/afreidah/s3-orchestrator/internal/proxy/object)",
+            "value": 98.72,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "12158871 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Contention_GetSetDelete (github.com/afreidah/s3-orchestrator/internal/proxy/object) - ns/op",
+            "value": 98.72,
+            "unit": "ns/op",
+            "extra": "12158871 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Contention_GetSetDelete (github.com/afreidah/s3-orchestrator/internal/proxy/object) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "12158871 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLocationCache_Contention_GetSetDelete (github.com/afreidah/s3-orchestrator/internal/proxy/object) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "12158871 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkListObjectsDelimited/keys=1000 (github.com/afreidah/s3-orchestrator/internal/store/sqlite)",
+            "value": 547392,
+            "unit": "ns/op\t    8283 B/op\t     165 allocs/op",
+            "extra": "2202 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkListObjectsDelimited/keys=1000 (github.com/afreidah/s3-orchestrator/internal/store/sqlite) - ns/op",
+            "value": 547392,
+            "unit": "ns/op",
+            "extra": "2202 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkListObjectsDelimited/keys=1000 (github.com/afreidah/s3-orchestrator/internal/store/sqlite) - B/op",
+            "value": 8283,
+            "unit": "B/op",
+            "extra": "2202 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkListObjectsDelimited/keys=1000 (github.com/afreidah/s3-orchestrator/internal/store/sqlite) - allocs/op",
+            "value": 165,
+            "unit": "allocs/op",
+            "extra": "2202 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkListObjectsDelimited/keys=10000 (github.com/afreidah/s3-orchestrator/internal/store/sqlite)",
+            "value": 639459,
+            "unit": "ns/op\t    8280 B/op\t     165 allocs/op",
+            "extra": "1890 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkListObjectsDelimited/keys=10000 (github.com/afreidah/s3-orchestrator/internal/store/sqlite) - ns/op",
+            "value": 639459,
+            "unit": "ns/op",
+            "extra": "1890 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkListObjectsDelimited/keys=10000 (github.com/afreidah/s3-orchestrator/internal/store/sqlite) - B/op",
+            "value": 8280,
+            "unit": "B/op",
+            "extra": "1890 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkListObjectsDelimited/keys=10000 (github.com/afreidah/s3-orchestrator/internal/store/sqlite) - allocs/op",
+            "value": 165,
+            "unit": "allocs/op",
+            "extra": "1890 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkListObjectsDelimited/keys=100000 (github.com/afreidah/s3-orchestrator/internal/store/sqlite)",
+            "value": 627175,
+            "unit": "ns/op\t    8280 B/op\t     165 allocs/op",
+            "extra": "1936 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkListObjectsDelimited/keys=100000 (github.com/afreidah/s3-orchestrator/internal/store/sqlite) - ns/op",
+            "value": 627175,
+            "unit": "ns/op",
+            "extra": "1936 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkListObjectsDelimited/keys=100000 (github.com/afreidah/s3-orchestrator/internal/store/sqlite) - B/op",
+            "value": 8280,
+            "unit": "B/op",
+            "extra": "1936 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkListObjectsDelimited/keys=100000 (github.com/afreidah/s3-orchestrator/internal/store/sqlite) - allocs/op",
+            "value": 165,
+            "unit": "allocs/op",
+            "extra": "1936 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifySigV4 (github.com/afreidah/s3-orchestrator/internal/transport/auth)",
+            "value": 5833,
+            "unit": "ns/op\t    4024 B/op\t      56 allocs/op",
+            "extra": "201153 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifySigV4 (github.com/afreidah/s3-orchestrator/internal/transport/auth) - ns/op",
+            "value": 5833,
+            "unit": "ns/op",
+            "extra": "201153 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifySigV4 (github.com/afreidah/s3-orchestrator/internal/transport/auth) - B/op",
+            "value": 4024,
+            "unit": "B/op",
+            "extra": "201153 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifySigV4 (github.com/afreidah/s3-orchestrator/internal/transport/auth) - allocs/op",
+            "value": 56,
+            "unit": "allocs/op",
+            "extra": "201153 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDeriveSigningKey (github.com/afreidah/s3-orchestrator/internal/transport/auth)",
+            "value": 2390,
+            "unit": "ns/op\t    2144 B/op\t      29 allocs/op",
+            "extra": "486513 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDeriveSigningKey (github.com/afreidah/s3-orchestrator/internal/transport/auth) - ns/op",
+            "value": 2390,
+            "unit": "ns/op",
+            "extra": "486513 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDeriveSigningKey (github.com/afreidah/s3-orchestrator/internal/transport/auth) - B/op",
+            "value": 2144,
+            "unit": "B/op",
+            "extra": "486513 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkDeriveSigningKey (github.com/afreidah/s3-orchestrator/internal/transport/auth) - allocs/op",
+            "value": 29,
+            "unit": "allocs/op",
+            "extra": "486513 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParseSigV4Fields/map (github.com/afreidah/s3-orchestrator/internal/transport/auth)",
+            "value": 176.6,
+            "unit": "ns/op\t     336 B/op\t       2 allocs/op",
+            "extra": "6766125 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParseSigV4Fields/map (github.com/afreidah/s3-orchestrator/internal/transport/auth) - ns/op",
+            "value": 176.6,
+            "unit": "ns/op",
+            "extra": "6766125 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParseSigV4Fields/map (github.com/afreidah/s3-orchestrator/internal/transport/auth) - B/op",
+            "value": 336,
+            "unit": "B/op",
+            "extra": "6766125 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParseSigV4Fields/map (github.com/afreidah/s3-orchestrator/internal/transport/auth) - allocs/op",
+            "value": 2,
+            "unit": "allocs/op",
+            "extra": "6766125 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParseSigV4Fields/direct (github.com/afreidah/s3-orchestrator/internal/transport/auth)",
+            "value": 41.61,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "28633568 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParseSigV4Fields/direct (github.com/afreidah/s3-orchestrator/internal/transport/auth) - ns/op",
+            "value": 41.61,
+            "unit": "ns/op",
+            "extra": "28633568 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParseSigV4Fields/direct (github.com/afreidah/s3-orchestrator/internal/transport/auth) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "28633568 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParseSigV4Fields/direct (github.com/afreidah/s3-orchestrator/internal/transport/auth) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "28633568 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAuthenticateAndResolveBucket (github.com/afreidah/s3-orchestrator/internal/transport/auth)",
+            "value": 6108,
+            "unit": "ns/op\t    4024 B/op\t      56 allocs/op",
+            "extra": "202292 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAuthenticateAndResolveBucket (github.com/afreidah/s3-orchestrator/internal/transport/auth) - ns/op",
+            "value": 6108,
+            "unit": "ns/op",
+            "extra": "202292 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAuthenticateAndResolveBucket (github.com/afreidah/s3-orchestrator/internal/transport/auth) - B/op",
+            "value": 4024,
+            "unit": "B/op",
+            "extra": "202292 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAuthenticateAndResolveBucket (github.com/afreidah/s3-orchestrator/internal/transport/auth) - allocs/op",
+            "value": 56,
+            "unit": "allocs/op",
+            "extra": "202292 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifySigV4_WithQueryParams/0_params (github.com/afreidah/s3-orchestrator/internal/transport/auth)",
+            "value": 5919,
+            "unit": "ns/op\t    4024 B/op\t      56 allocs/op",
+            "extra": "196731 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifySigV4_WithQueryParams/0_params (github.com/afreidah/s3-orchestrator/internal/transport/auth) - ns/op",
+            "value": 5919,
+            "unit": "ns/op",
+            "extra": "196731 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifySigV4_WithQueryParams/0_params (github.com/afreidah/s3-orchestrator/internal/transport/auth) - B/op",
+            "value": 4024,
+            "unit": "B/op",
+            "extra": "196731 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifySigV4_WithQueryParams/0_params (github.com/afreidah/s3-orchestrator/internal/transport/auth) - allocs/op",
+            "value": 56,
+            "unit": "allocs/op",
+            "extra": "196731 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifySigV4_WithQueryParams/5_params (github.com/afreidah/s3-orchestrator/internal/transport/auth)",
+            "value": 7180,
+            "unit": "ns/op\t    4680 B/op\t      68 allocs/op",
+            "extra": "165482 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifySigV4_WithQueryParams/5_params (github.com/afreidah/s3-orchestrator/internal/transport/auth) - ns/op",
+            "value": 7180,
+            "unit": "ns/op",
+            "extra": "165482 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifySigV4_WithQueryParams/5_params (github.com/afreidah/s3-orchestrator/internal/transport/auth) - B/op",
+            "value": 4680,
+            "unit": "B/op",
+            "extra": "165482 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifySigV4_WithQueryParams/5_params (github.com/afreidah/s3-orchestrator/internal/transport/auth) - allocs/op",
+            "value": 68,
+            "unit": "allocs/op",
+            "extra": "165482 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifySigV4_WithQueryParams/20_params (github.com/afreidah/s3-orchestrator/internal/transport/auth)",
+            "value": 12350,
+            "unit": "ns/op\t    8352 B/op\t     104 allocs/op",
+            "extra": "96104 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifySigV4_WithQueryParams/20_params (github.com/afreidah/s3-orchestrator/internal/transport/auth) - ns/op",
+            "value": 12350,
+            "unit": "ns/op",
+            "extra": "96104 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifySigV4_WithQueryParams/20_params (github.com/afreidah/s3-orchestrator/internal/transport/auth) - B/op",
+            "value": 8352,
+            "unit": "B/op",
+            "extra": "96104 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifySigV4_WithQueryParams/20_params (github.com/afreidah/s3-orchestrator/internal/transport/auth) - allocs/op",
+            "value": 104,
+            "unit": "allocs/op",
+            "extra": "96104 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBuildCanonicalRequest (github.com/afreidah/s3-orchestrator/internal/transport/auth)",
+            "value": 1996,
+            "unit": "ns/op\t     896 B/op\t      17 allocs/op",
+            "extra": "600380 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBuildCanonicalRequest (github.com/afreidah/s3-orchestrator/internal/transport/auth) - ns/op",
+            "value": 1996,
+            "unit": "ns/op",
+            "extra": "600380 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBuildCanonicalRequest (github.com/afreidah/s3-orchestrator/internal/transport/auth) - B/op",
+            "value": 896,
+            "unit": "B/op",
+            "extra": "600380 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBuildCanonicalRequest (github.com/afreidah/s3-orchestrator/internal/transport/auth) - allocs/op",
+            "value": 17,
+            "unit": "allocs/op",
+            "extra": "600380 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifyPresignedSigV4 (github.com/afreidah/s3-orchestrator/internal/transport/auth)",
+            "value": 9672,
+            "unit": "ns/op\t    6088 B/op\t      82 allocs/op",
+            "extra": "124065 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifyPresignedSigV4 (github.com/afreidah/s3-orchestrator/internal/transport/auth) - ns/op",
+            "value": 9672,
+            "unit": "ns/op",
+            "extra": "124065 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifyPresignedSigV4 (github.com/afreidah/s3-orchestrator/internal/transport/auth) - B/op",
+            "value": 6088,
+            "unit": "B/op",
+            "extra": "124065 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkVerifyPresignedSigV4 (github.com/afreidah/s3-orchestrator/internal/transport/auth) - allocs/op",
+            "value": 82,
+            "unit": "allocs/op",
+            "extra": "124065 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTokenAuth/1_bucket (github.com/afreidah/s3-orchestrator/internal/transport/auth)",
+            "value": 194.7,
+            "unit": "ns/op\t      48 B/op\t       1 allocs/op",
+            "extra": "5742578 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTokenAuth/1_bucket (github.com/afreidah/s3-orchestrator/internal/transport/auth) - ns/op",
+            "value": 194.7,
+            "unit": "ns/op",
+            "extra": "5742578 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTokenAuth/1_bucket (github.com/afreidah/s3-orchestrator/internal/transport/auth) - B/op",
+            "value": 48,
+            "unit": "B/op",
+            "extra": "5742578 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTokenAuth/1_bucket (github.com/afreidah/s3-orchestrator/internal/transport/auth) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "5742578 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTokenAuth/5_buckets (github.com/afreidah/s3-orchestrator/internal/transport/auth)",
+            "value": 282.3,
+            "unit": "ns/op\t      48 B/op\t       1 allocs/op",
+            "extra": "4242474 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTokenAuth/5_buckets (github.com/afreidah/s3-orchestrator/internal/transport/auth) - ns/op",
+            "value": 282.3,
+            "unit": "ns/op",
+            "extra": "4242474 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTokenAuth/5_buckets (github.com/afreidah/s3-orchestrator/internal/transport/auth) - B/op",
+            "value": 48,
+            "unit": "B/op",
+            "extra": "4242474 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTokenAuth/5_buckets (github.com/afreidah/s3-orchestrator/internal/transport/auth) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "4242474 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTokenAuth/20_buckets (github.com/afreidah/s3-orchestrator/internal/transport/auth)",
+            "value": 744.9,
+            "unit": "ns/op\t      48 B/op\t       1 allocs/op",
+            "extra": "1606555 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTokenAuth/20_buckets (github.com/afreidah/s3-orchestrator/internal/transport/auth) - ns/op",
+            "value": 744.9,
+            "unit": "ns/op",
+            "extra": "1606555 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTokenAuth/20_buckets (github.com/afreidah/s3-orchestrator/internal/transport/auth) - B/op",
+            "value": 48,
+            "unit": "B/op",
+            "extra": "1606555 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTokenAuth/20_buckets (github.com/afreidah/s3-orchestrator/internal/transport/auth) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "1606555 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSigV4KnownVsUnknown/known (github.com/afreidah/s3-orchestrator/internal/transport/auth)",
+            "value": 6448,
+            "unit": "ns/op\t    4168 B/op\t      56 allocs/op",
+            "extra": "181534 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSigV4KnownVsUnknown/known (github.com/afreidah/s3-orchestrator/internal/transport/auth) - ns/op",
+            "value": 6448,
+            "unit": "ns/op",
+            "extra": "181534 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSigV4KnownVsUnknown/known (github.com/afreidah/s3-orchestrator/internal/transport/auth) - B/op",
+            "value": 4168,
+            "unit": "B/op",
+            "extra": "181534 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSigV4KnownVsUnknown/known (github.com/afreidah/s3-orchestrator/internal/transport/auth) - allocs/op",
+            "value": 56,
+            "unit": "allocs/op",
+            "extra": "181534 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSigV4KnownVsUnknown/unknown (github.com/afreidah/s3-orchestrator/internal/transport/auth)",
+            "value": 6391,
+            "unit": "ns/op\t    4152 B/op\t      57 allocs/op",
+            "extra": "188566 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSigV4KnownVsUnknown/unknown (github.com/afreidah/s3-orchestrator/internal/transport/auth) - ns/op",
+            "value": 6391,
+            "unit": "ns/op",
+            "extra": "188566 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSigV4KnownVsUnknown/unknown (github.com/afreidah/s3-orchestrator/internal/transport/auth) - B/op",
+            "value": 4152,
+            "unit": "B/op",
+            "extra": "188566 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSigV4KnownVsUnknown/unknown (github.com/afreidah/s3-orchestrator/internal/transport/auth) - allocs/op",
+            "value": 57,
+            "unit": "allocs/op",
+            "extra": "188566 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAdmission_AcquireRelease (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 29.31,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "40433091 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAdmission_AcquireRelease (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 29.31,
+            "unit": "ns/op",
+            "extra": "40433091 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAdmission_AcquireRelease (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "40433091 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAdmission_AcquireRelease (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "40433091 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAdmission_AcquireRelease_Concurrent (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 64.98,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "18586479 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAdmission_AcquireRelease_Concurrent (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 64.98,
+            "unit": "ns/op",
+            "extra": "18586479 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAdmission_AcquireRelease_Concurrent (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "18586479 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAdmission_AcquireRelease_Concurrent (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "18586479 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAdmission_SplitPool_AcquireRelease/read (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 29.28,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "41007405 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAdmission_SplitPool_AcquireRelease/read (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 29.28,
+            "unit": "ns/op",
+            "extra": "41007405 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAdmission_SplitPool_AcquireRelease/read (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "41007405 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAdmission_SplitPool_AcquireRelease/read (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "41007405 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAdmission_SplitPool_AcquireRelease/write (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 28.96,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "41364202 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAdmission_SplitPool_AcquireRelease/write (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 28.96,
+            "unit": "ns/op",
+            "extra": "41364202 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAdmission_SplitPool_AcquireRelease/write (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "41364202 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAdmission_SplitPool_AcquireRelease/write (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "41364202 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParsePath/bucket_only (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 34.02,
+            "unit": "ns/op\t      32 B/op\t       1 allocs/op",
+            "extra": "35893132 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParsePath/bucket_only (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 34.02,
+            "unit": "ns/op",
+            "extra": "35893132 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParsePath/bucket_only (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 32,
+            "unit": "B/op",
+            "extra": "35893132 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParsePath/bucket_only (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "35893132 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParsePath/bucket_and_key (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 35.75,
+            "unit": "ns/op\t      32 B/op\t       1 allocs/op",
+            "extra": "32688201 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParsePath/bucket_and_key (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 35.75,
+            "unit": "ns/op",
+            "extra": "32688201 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParsePath/bucket_and_key (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 32,
+            "unit": "B/op",
+            "extra": "32688201 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParsePath/bucket_and_key (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "32688201 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParsePath/deep_path (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 39.74,
+            "unit": "ns/op\t      32 B/op\t       1 allocs/op",
+            "extra": "33787468 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParsePath/deep_path (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 39.74,
+            "unit": "ns/op",
+            "extra": "33787468 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParsePath/deep_path (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 32,
+            "unit": "B/op",
+            "extra": "33787468 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkParsePath/deep_path (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "33787468 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIsValidRequestID/valid_32 (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 27.81,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "43092738 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIsValidRequestID/valid_32 (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 27.81,
+            "unit": "ns/op",
+            "extra": "43092738 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIsValidRequestID/valid_32 (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "43092738 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIsValidRequestID/valid_32 (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "43092738 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIsValidRequestID/valid_64 (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 53.19,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "22911846 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIsValidRequestID/valid_64 (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 53.19,
+            "unit": "ns/op",
+            "extra": "22911846 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIsValidRequestID/valid_64 (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "22911846 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIsValidRequestID/valid_64 (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "22911846 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIsValidRequestID/invalid_chars (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 11.55,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "100000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIsValidRequestID/invalid_chars (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 11.55,
+            "unit": "ns/op",
+            "extra": "100000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIsValidRequestID/invalid_chars (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "100000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIsValidRequestID/invalid_chars (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "100000000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIsValidRequestID/empty (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 1.388,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "973940208 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIsValidRequestID/empty (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 1.388,
+            "unit": "ns/op",
+            "extra": "973940208 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIsValidRequestID/empty (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "973940208 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIsValidRequestID/empty (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "973940208 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkExtractUserMetadata/no_meta (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 226.7,
+            "unit": "ns/op\t      48 B/op\t       3 allocs/op",
+            "extra": "5041680 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkExtractUserMetadata/no_meta (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 226.7,
+            "unit": "ns/op",
+            "extra": "5041680 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkExtractUserMetadata/no_meta (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 48,
+            "unit": "B/op",
+            "extra": "5041680 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkExtractUserMetadata/no_meta (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 3,
+            "unit": "allocs/op",
+            "extra": "5041680 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkExtractUserMetadata/3_meta (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 629.2,
+            "unit": "ns/op\t     432 B/op\t       8 allocs/op",
+            "extra": "1916440 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkExtractUserMetadata/3_meta (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 629.2,
+            "unit": "ns/op",
+            "extra": "1916440 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkExtractUserMetadata/3_meta (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 432,
+            "unit": "B/op",
+            "extra": "1916440 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkExtractUserMetadata/3_meta (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 8,
+            "unit": "allocs/op",
+            "extra": "1916440 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkExtractUserMetadata/10_meta (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 1733,
+            "unit": "ns/op\t    1160 B/op\t      18 allocs/op",
+            "extra": "705908 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkExtractUserMetadata/10_meta (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 1733,
+            "unit": "ns/op",
+            "extra": "705908 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkExtractUserMetadata/10_meta (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 1160,
+            "unit": "B/op",
+            "extra": "705908 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkExtractUserMetadata/10_meta (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 18,
+            "unit": "allocs/op",
+            "extra": "705908 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkExtractUserMetadata/50_meta (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 8031,
+            "unit": "ns/op\t    5320 B/op\t      62 allocs/op",
+            "extra": "151014 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkExtractUserMetadata/50_meta (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 8031,
+            "unit": "ns/op",
+            "extra": "151014 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkExtractUserMetadata/50_meta (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 5320,
+            "unit": "B/op",
+            "extra": "151014 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkExtractUserMetadata/50_meta (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 62,
+            "unit": "allocs/op",
+            "extra": "151014 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkValidateUserMetadata/small_2keys (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 69.12,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "17625186 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkValidateUserMetadata/small_2keys (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 69.12,
+            "unit": "ns/op",
+            "extra": "17625186 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkValidateUserMetadata/small_2keys (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "17625186 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkValidateUserMetadata/small_2keys (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "17625186 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkValidateUserMetadata/large_20keys (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 524.7,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "2319883 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkValidateUserMetadata/large_20keys (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 524.7,
+            "unit": "ns/op",
+            "extra": "2319883 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkValidateUserMetadata/large_20keys (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "2319883 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkValidateUserMetadata/large_20keys (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "2319883 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkWriteS3Error (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 1152,
+            "unit": "ns/op\t    1299 B/op\t      14 allocs/op",
+            "extra": "940850 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkWriteS3Error (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 1152,
+            "unit": "ns/op",
+            "extra": "940850 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkWriteS3Error (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 1299,
+            "unit": "B/op",
+            "extra": "940850 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkWriteS3Error (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 14,
+            "unit": "allocs/op",
+            "extra": "940850 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkWriteXML_ListV2/10_objects (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 16848,
+            "unit": "ns/op\t    7946 B/op\t      30 allocs/op",
+            "extra": "71876 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkWriteXML_ListV2/10_objects (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 16848,
+            "unit": "ns/op",
+            "extra": "71876 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkWriteXML_ListV2/10_objects (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 7946,
+            "unit": "B/op",
+            "extra": "71876 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkWriteXML_ListV2/10_objects (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 30,
+            "unit": "allocs/op",
+            "extra": "71876 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkWriteXML_ListV2/100_objects (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 130532,
+            "unit": "ns/op\t   24709 B/op\t     122 allocs/op",
+            "extra": "8660 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkWriteXML_ListV2/100_objects (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 130532,
+            "unit": "ns/op",
+            "extra": "8660 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkWriteXML_ListV2/100_objects (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 24709,
+            "unit": "B/op",
+            "extra": "8660 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkWriteXML_ListV2/100_objects (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 122,
+            "unit": "allocs/op",
+            "extra": "8660 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkWriteXML_ListV2/1000_objects (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 1261875,
+            "unit": "ns/op\t  190822 B/op\t    1022 allocs/op",
+            "extra": "943 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkWriteXML_ListV2/1000_objects (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 1261875,
+            "unit": "ns/op",
+            "extra": "943 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkWriteXML_ListV2/1000_objects (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 190822,
+            "unit": "B/op",
+            "extra": "943 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkWriteXML_ListV2/1000_objects (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 1022,
+            "unit": "allocs/op",
+            "extra": "943 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBuildListContents/1000_objects_3_prefixes (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 88153,
+            "unit": "ns/op\t   97776 B/op\t    1002 allocs/op",
+            "extra": "13623 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBuildListContents/1000_objects_3_prefixes (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 88153,
+            "unit": "ns/op",
+            "extra": "13623 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBuildListContents/1000_objects_3_prefixes (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 97776,
+            "unit": "B/op",
+            "extra": "13623 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBuildListContents/1000_objects_3_prefixes (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 1002,
+            "unit": "allocs/op",
+            "extra": "13623 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRateLimiter_Allow_SingleIP (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 176.1,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "6801261 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRateLimiter_Allow_SingleIP (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 176.1,
+            "unit": "ns/op",
+            "extra": "6801261 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRateLimiter_Allow_SingleIP (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "6801261 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRateLimiter_Allow_SingleIP (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "6801261 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRateLimiter_Allow_MultiIP (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 177,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "6778020 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRateLimiter_Allow_MultiIP (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 177,
+            "unit": "ns/op",
+            "extra": "6778020 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRateLimiter_Allow_MultiIP (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "6778020 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRateLimiter_Allow_MultiIP (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "6778020 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRateLimiter_Allow_Concurrent (github.com/afreidah/s3-orchestrator/internal/transport/s3api)",
+            "value": 205.1,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "6328910 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRateLimiter_Allow_Concurrent (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - ns/op",
+            "value": 205.1,
+            "unit": "ns/op",
+            "extra": "6328910 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRateLimiter_Allow_Concurrent (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "6328910 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRateLimiter_Allow_Concurrent (github.com/afreidah/s3-orchestrator/internal/transport/s3api) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "6328910 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLogin_InvalidKey (github.com/afreidah/s3-orchestrator/internal/transport/ui)",
+            "value": 73173528,
+            "unit": "ns/op\t   17225 B/op\t      85 allocs/op",
+            "extra": "15 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLogin_InvalidKey (github.com/afreidah/s3-orchestrator/internal/transport/ui) - ns/op",
+            "value": 73173528,
+            "unit": "ns/op",
+            "extra": "15 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLogin_InvalidKey (github.com/afreidah/s3-orchestrator/internal/transport/ui) - B/op",
+            "value": 17225,
+            "unit": "B/op",
+            "extra": "15 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLogin_InvalidKey (github.com/afreidah/s3-orchestrator/internal/transport/ui) - allocs/op",
+            "value": 85,
+            "unit": "allocs/op",
+            "extra": "15 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLogin_ValidKeyWrongSecret (github.com/afreidah/s3-orchestrator/internal/transport/ui)",
+            "value": 73146553,
+            "unit": "ns/op\t   16781 B/op\t      81 allocs/op",
+            "extra": "15 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLogin_ValidKeyWrongSecret (github.com/afreidah/s3-orchestrator/internal/transport/ui) - ns/op",
+            "value": 73146553,
+            "unit": "ns/op",
+            "extra": "15 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLogin_ValidKeyWrongSecret (github.com/afreidah/s3-orchestrator/internal/transport/ui) - B/op",
+            "value": 16781,
+            "unit": "B/op",
+            "extra": "15 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkLogin_ValidKeyWrongSecret (github.com/afreidah/s3-orchestrator/internal/transport/ui) - allocs/op",
+            "value": 81,
+            "unit": "allocs/op",
+            "extra": "15 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/4KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool)",
+            "value": 43.1,
+            "unit": "ns/op\t95035.33 MB/s\t      48 B/op\t       1 allocs/op",
+            "extra": "27969758 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/4KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool) - ns/op",
+            "value": 43.1,
+            "unit": "ns/op",
+            "extra": "27969758 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/4KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool) - MB/s",
+            "value": 95035.33,
+            "unit": "MB/s",
+            "extra": "27969758 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/4KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool) - B/op",
+            "value": 48,
+            "unit": "B/op",
+            "extra": "27969758 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/4KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "27969758 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/64KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool)",
+            "value": 42.76,
+            "unit": "ns/op\t1532637.67 MB/s\t      48 B/op\t       1 allocs/op",
+            "extra": "27513199 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/64KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool) - ns/op",
+            "value": 42.76,
+            "unit": "ns/op",
+            "extra": "27513199 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/64KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool) - MB/s",
+            "value": 1532637.67,
+            "unit": "MB/s",
+            "extra": "27513199 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/64KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool) - B/op",
+            "value": 48,
+            "unit": "B/op",
+            "extra": "27513199 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/64KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "27513199 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/1024KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool)",
+            "value": 44.66,
+            "unit": "ns/op\t23480060.82 MB/s\t      48 B/op\t       1 allocs/op",
+            "extra": "27535724 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/1024KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool) - ns/op",
+            "value": 44.66,
+            "unit": "ns/op",
+            "extra": "27535724 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/1024KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool) - MB/s",
+            "value": 23480060.82,
+            "unit": "MB/s",
+            "extra": "27535724 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/1024KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool) - B/op",
+            "value": 48,
+            "unit": "B/op",
+            "extra": "27535724 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/1024KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "27535724 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/16384KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool)",
+            "value": 39.68,
+            "unit": "ns/op\t422845335.09 MB/s\t      48 B/op\t       1 allocs/op",
+            "extra": "28638534 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/16384KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool) - ns/op",
+            "value": 39.68,
+            "unit": "ns/op",
+            "extra": "28638534 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/16384KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool) - MB/s",
+            "value": 422845335.09,
+            "unit": "MB/s",
+            "extra": "28638534 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/16384KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool) - B/op",
+            "value": 48,
+            "unit": "B/op",
+            "extra": "28638534 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkCopy/16384KB (github.com/afreidah/s3-orchestrator/internal/util/bufpool) - allocs/op",
+            "value": 1,
+            "unit": "allocs/op",
+            "extra": "28638534 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/4KB_memory (github.com/afreidah/s3-orchestrator/internal/util/materialize)",
+            "value": 4180,
+            "unit": "ns/op\t 979.94 MB/s\t    4459 B/op\t       8 allocs/op",
+            "extra": "294888 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/4KB_memory (github.com/afreidah/s3-orchestrator/internal/util/materialize) - ns/op",
+            "value": 4180,
+            "unit": "ns/op",
+            "extra": "294888 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/4KB_memory (github.com/afreidah/s3-orchestrator/internal/util/materialize) - MB/s",
+            "value": 979.94,
+            "unit": "MB/s",
+            "extra": "294888 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/4KB_memory (github.com/afreidah/s3-orchestrator/internal/util/materialize) - B/op",
+            "value": 4459,
+            "unit": "B/op",
+            "extra": "294888 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/4KB_memory (github.com/afreidah/s3-orchestrator/internal/util/materialize) - allocs/op",
+            "value": 8,
+            "unit": "allocs/op",
+            "extra": "294888 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/1MB_memory (github.com/afreidah/s3-orchestrator/internal/util/materialize)",
+            "value": 986201,
+            "unit": "ns/op\t1063.25 MB/s\t 1049121 B/op\t       8 allocs/op",
+            "extra": "1218 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/1MB_memory (github.com/afreidah/s3-orchestrator/internal/util/materialize) - ns/op",
+            "value": 986201,
+            "unit": "ns/op",
+            "extra": "1218 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/1MB_memory (github.com/afreidah/s3-orchestrator/internal/util/materialize) - MB/s",
+            "value": 1063.25,
+            "unit": "MB/s",
+            "extra": "1218 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/1MB_memory (github.com/afreidah/s3-orchestrator/internal/util/materialize) - B/op",
+            "value": 1049121,
+            "unit": "B/op",
+            "extra": "1218 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/1MB_memory (github.com/afreidah/s3-orchestrator/internal/util/materialize) - allocs/op",
+            "value": 8,
+            "unit": "allocs/op",
+            "extra": "1218 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/32MB_memory_at_threshold (github.com/afreidah/s3-orchestrator/internal/util/materialize)",
+            "value": 26562130,
+            "unit": "ns/op\t1263.24 MB/s\t33555887 B/op\t       9 allocs/op",
+            "extra": "40 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/32MB_memory_at_threshold (github.com/afreidah/s3-orchestrator/internal/util/materialize) - ns/op",
+            "value": 26562130,
+            "unit": "ns/op",
+            "extra": "40 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/32MB_memory_at_threshold (github.com/afreidah/s3-orchestrator/internal/util/materialize) - MB/s",
+            "value": 1263.24,
+            "unit": "MB/s",
+            "extra": "40 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/32MB_memory_at_threshold (github.com/afreidah/s3-orchestrator/internal/util/materialize) - B/op",
+            "value": 33555887,
+            "unit": "B/op",
+            "extra": "40 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/32MB_memory_at_threshold (github.com/afreidah/s3-orchestrator/internal/util/materialize) - allocs/op",
+            "value": 9,
+            "unit": "allocs/op",
+            "extra": "40 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/64MB_tempfile (github.com/afreidah/s3-orchestrator/internal/util/materialize)",
+            "value": 79341662,
+            "unit": "ns/op\t 845.82 MB/s\t    5023 B/op\t      12 allocs/op",
+            "extra": "14 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/64MB_tempfile (github.com/afreidah/s3-orchestrator/internal/util/materialize) - ns/op",
+            "value": 79341662,
+            "unit": "ns/op",
+            "extra": "14 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/64MB_tempfile (github.com/afreidah/s3-orchestrator/internal/util/materialize) - MB/s",
+            "value": 845.82,
+            "unit": "MB/s",
+            "extra": "14 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/64MB_tempfile (github.com/afreidah/s3-orchestrator/internal/util/materialize) - B/op",
+            "value": 5023,
+            "unit": "B/op",
+            "extra": "14 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody/64MB_tempfile (github.com/afreidah/s3-orchestrator/internal/util/materialize) - allocs/op",
+            "value": 12,
+            "unit": "allocs/op",
+            "extra": "14 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody_Reset/1024KB (github.com/afreidah/s3-orchestrator/internal/util/materialize)",
+            "value": 35,
+            "unit": "ns/op\t      72 B/op\t       2 allocs/op",
+            "extra": "32896771 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody_Reset/1024KB (github.com/afreidah/s3-orchestrator/internal/util/materialize) - ns/op",
+            "value": 35,
+            "unit": "ns/op",
+            "extra": "32896771 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody_Reset/1024KB (github.com/afreidah/s3-orchestrator/internal/util/materialize) - B/op",
+            "value": 72,
+            "unit": "B/op",
+            "extra": "32896771 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody_Reset/1024KB (github.com/afreidah/s3-orchestrator/internal/util/materialize) - allocs/op",
+            "value": 2,
+            "unit": "allocs/op",
+            "extra": "32896771 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody_Reset/65536KB (github.com/afreidah/s3-orchestrator/internal/util/materialize)",
+            "value": 31916,
+            "unit": "ns/op\t     215 B/op\t       7 allocs/op",
+            "extra": "37364 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody_Reset/65536KB (github.com/afreidah/s3-orchestrator/internal/util/materialize) - ns/op",
+            "value": 31916,
+            "unit": "ns/op",
+            "extra": "37364 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody_Reset/65536KB (github.com/afreidah/s3-orchestrator/internal/util/materialize) - B/op",
+            "value": 215,
+            "unit": "B/op",
+            "extra": "37364 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkBody_Reset/65536KB (github.com/afreidah/s3-orchestrator/internal/util/materialize) - allocs/op",
+            "value": 7,
+            "unit": "allocs/op",
+            "extra": "37364 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTTLCache_Eviction/100_entries (github.com/afreidah/s3-orchestrator/internal/util/syncutil)",
+            "value": 5406,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "249438 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTTLCache_Eviction/100_entries (github.com/afreidah/s3-orchestrator/internal/util/syncutil) - ns/op",
+            "value": 5406,
+            "unit": "ns/op",
+            "extra": "249438 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTTLCache_Eviction/100_entries (github.com/afreidah/s3-orchestrator/internal/util/syncutil) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "249438 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTTLCache_Eviction/100_entries (github.com/afreidah/s3-orchestrator/internal/util/syncutil) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "249438 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTTLCache_Eviction/1000_entries (github.com/afreidah/s3-orchestrator/internal/util/syncutil)",
+            "value": 47341,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "25363 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTTLCache_Eviction/1000_entries (github.com/afreidah/s3-orchestrator/internal/util/syncutil) - ns/op",
+            "value": 47341,
+            "unit": "ns/op",
+            "extra": "25363 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTTLCache_Eviction/1000_entries (github.com/afreidah/s3-orchestrator/internal/util/syncutil) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "25363 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTTLCache_Eviction/1000_entries (github.com/afreidah/s3-orchestrator/internal/util/syncutil) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "25363 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTTLCache_Eviction/10000_entries (github.com/afreidah/s3-orchestrator/internal/util/syncutil)",
+            "value": 477742,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "2491 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTTLCache_Eviction/10000_entries (github.com/afreidah/s3-orchestrator/internal/util/syncutil) - ns/op",
+            "value": 477742,
+            "unit": "ns/op",
+            "extra": "2491 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTTLCache_Eviction/10000_entries (github.com/afreidah/s3-orchestrator/internal/util/syncutil) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "2491 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkTTLCache_Eviction/10000_entries (github.com/afreidah/s3-orchestrator/internal/util/syncutil) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "2491 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/1 (github.com/afreidah/s3-orchestrator/internal/util/workerpool)",
+            "value": 6.709,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "178803513 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/1 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - ns/op",
+            "value": 6.709,
+            "unit": "ns/op",
+            "extra": "178803513 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/1 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "178803513 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/1 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "178803513 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/16 (github.com/afreidah/s3-orchestrator/internal/util/workerpool)",
+            "value": 6345,
+            "unit": "ns/op\t     416 B/op\t      10 allocs/op",
+            "extra": "190968 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/16 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - ns/op",
+            "value": 6345,
+            "unit": "ns/op",
+            "extra": "190968 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/16 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - B/op",
+            "value": 416,
+            "unit": "B/op",
+            "extra": "190968 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/16 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - allocs/op",
+            "value": 10,
+            "unit": "allocs/op",
+            "extra": "190968 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/64 (github.com/afreidah/s3-orchestrator/internal/util/workerpool)",
+            "value": 16899,
+            "unit": "ns/op\t     416 B/op\t      10 allocs/op",
+            "extra": "70124 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/64 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - ns/op",
+            "value": 16899,
+            "unit": "ns/op",
+            "extra": "70124 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/64 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - B/op",
+            "value": 416,
+            "unit": "B/op",
+            "extra": "70124 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/64 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - allocs/op",
+            "value": 10,
+            "unit": "allocs/op",
+            "extra": "70124 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/256 (github.com/afreidah/s3-orchestrator/internal/util/workerpool)",
+            "value": 61080,
+            "unit": "ns/op\t     416 B/op\t      10 allocs/op",
+            "extra": "19700 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/256 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - ns/op",
+            "value": 61080,
+            "unit": "ns/op",
+            "extra": "19700 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/256 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - B/op",
+            "value": 416,
+            "unit": "B/op",
+            "extra": "19700 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/256 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - allocs/op",
+            "value": 10,
+            "unit": "allocs/op",
+            "extra": "19700 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/1024 (github.com/afreidah/s3-orchestrator/internal/util/workerpool)",
+            "value": 236945,
+            "unit": "ns/op\t     417 B/op\t      10 allocs/op",
+            "extra": "5000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/1024 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - ns/op",
+            "value": 236945,
+            "unit": "ns/op",
+            "extra": "5000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/1024 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - B/op",
+            "value": 417,
+            "unit": "B/op",
+            "extra": "5000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_Dispatch/1024 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - allocs/op",
+            "value": 10,
+            "unit": "allocs/op",
+            "extra": "5000 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_CPU/16 (github.com/afreidah/s3-orchestrator/internal/util/workerpool)",
+            "value": 13663,
+            "unit": "ns/op\t     416 B/op\t      10 allocs/op",
+            "extra": "85792 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_CPU/16 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - ns/op",
+            "value": 13663,
+            "unit": "ns/op",
+            "extra": "85792 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_CPU/16 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - B/op",
+            "value": 416,
+            "unit": "B/op",
+            "extra": "85792 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_CPU/16 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - allocs/op",
+            "value": 10,
+            "unit": "allocs/op",
+            "extra": "85792 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_CPU/256 (github.com/afreidah/s3-orchestrator/internal/util/workerpool)",
+            "value": 170686,
+            "unit": "ns/op\t     416 B/op\t      10 allocs/op",
+            "extra": "6812 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_CPU/256 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - ns/op",
+            "value": 170686,
+            "unit": "ns/op",
+            "extra": "6812 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_CPU/256 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - B/op",
+            "value": 416,
+            "unit": "B/op",
+            "extra": "6812 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_CPU/256 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - allocs/op",
+            "value": 10,
+            "unit": "allocs/op",
+            "extra": "6812 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_CPU/1024 (github.com/afreidah/s3-orchestrator/internal/util/workerpool)",
+            "value": 659597,
+            "unit": "ns/op\t     416 B/op\t      10 allocs/op",
+            "extra": "1816 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_CPU/1024 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - ns/op",
+            "value": 659597,
+            "unit": "ns/op",
+            "extra": "1816 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_CPU/1024 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - B/op",
+            "value": 416,
+            "unit": "B/op",
+            "extra": "1816 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_CPU/1024 (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - allocs/op",
+            "value": 10,
+            "unit": "allocs/op",
+            "extra": "1816 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_SingleItem (github.com/afreidah/s3-orchestrator/internal/util/workerpool)",
+            "value": 6.647,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "178462656 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_SingleItem (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - ns/op",
+            "value": 6.647,
+            "unit": "ns/op",
+            "extra": "178462656 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_SingleItem (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "178462656 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkRun_SingleItem (github.com/afreidah/s3-orchestrator/internal/util/workerpool) - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "178462656 times\n4 procs"
           }
         ]
       }
