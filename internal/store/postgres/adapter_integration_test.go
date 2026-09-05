@@ -47,8 +47,13 @@ var (
 // test backends, and returns a *Store whose pool every test can issue
 // transactions against. Container lifecycle relies on Ryuk for
 // teardown.
-func adapterPgStore(t *testing.T) *Store {
-	t.Helper()
+//
+// Takes testing.TB so the benchmarks share the container with the tests. The
+// pool is sized for the parallel ones: a benchmark with more goroutines than
+// connections measures the queue in front of the pool rather than the
+// contention it is trying to observe.
+func adapterPgStore(tb testing.TB) *Store {
+	tb.Helper()
 	pgFixtureOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
@@ -88,7 +93,7 @@ func adapterPgStore(t *testing.T) *Store {
 			User:     "s3proxy",
 			Password: "s3proxy",
 			SSLMode:  "disable",
-			MaxConns: 4,
+			MaxConns: 16,
 			MinConns: 1,
 		}, nil)
 		if err != nil {
@@ -109,10 +114,10 @@ func adapterPgStore(t *testing.T) *Store {
 		pgFixture = s
 	})
 	if pgFixtureErr != nil {
-		t.Fatalf("postgres fixture: %v", pgFixtureErr)
+		tb.Fatalf("postgres fixture: %v", pgFixtureErr)
 	}
 	if pgFixture == nil {
-		t.Fatal("postgres fixture nil")
+		tb.Fatal("postgres fixture nil")
 	}
 	return pgFixture
 }
