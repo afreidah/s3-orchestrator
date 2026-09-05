@@ -191,7 +191,7 @@ func TestPending_ReaperDropsIntentWhenBackendHas404(t *testing.T) {
 		BackendName: "minio-1",
 		SizeBytes:   42,
 	}
-	if err := testStore.InsertPending(ctx, intent); err != nil {
+	if _, err := testStore.InsertPendingIfFits(ctx, intent); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	if got := queryPendingCount(t, key); got != 1 {
@@ -226,7 +226,7 @@ func TestPending_ReaperRespectsMinAge(t *testing.T) {
 		BackendName: "minio-1",
 		SizeBytes:   10,
 	}
-	if err := testStore.InsertPending(ctx, intent); err != nil {
+	if _, err := testStore.InsertPendingIfFits(ctx, intent); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 

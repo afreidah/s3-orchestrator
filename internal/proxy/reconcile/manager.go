@@ -340,11 +340,11 @@ func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, know
 // reason to fail the reconcile.
 func (m *Manager) deleter() DeleterFn {
 	return func(ctx context.Context, key, backendName string) error {
-		removed, err := m.stores.DeleteObjectLocation(ctx, key, backendName)
-		if err != nil {
+		// The delete credits the backend's stripes in its own transaction, so
+		// there is nothing to tell the routing snapshot; it reloads on its tick.
+		if _, err := m.stores.DeleteObjectLocation(ctx, key, backendName); err != nil {
 			return err
 		}
-		m.quota.Record(backendName, -removed)
 		if _, err := m.stores.SweepStaleCleanupQueueRows(ctx, key, backendName); err != nil {
 			m.logger().WarnContext(ctx, "failed to sweep cleanup_queue rows for stale key",
 				slog.String("key", key), slog.String("backend", backendName), "error", err)

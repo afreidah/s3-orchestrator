@@ -165,7 +165,7 @@ func TestPgAdapter_ClaimPending_TrueWhenInserted(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	intentID := uniqueKey(t, "intent")
-	if err := s.InsertPending(ctx, &core.PendingObject{
+	if _, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
 		IntentID: intentID, ObjectKey: uniqueKey(t, "k"), BackendName: "backend-a", SizeBytes: 1,
 	}); err != nil {
 		t.Fatalf("InsertPending: %v", err)
@@ -217,7 +217,7 @@ func TestPgAdapter_InsertPending_PreservesAllFields(t *testing.T) {
 		PlaintextSize: 180,
 		ContentHash:   "abc123",
 	}
-	if err := s.InsertPending(ctx, &want); err != nil {
+	if _, err := s.InsertPendingIfFits(ctx, &want); err != nil {
 		t.Fatalf("InsertPending: %v", err)
 	}
 	defer func() { _ = s.DeletePending(ctx, intentID) }()
@@ -255,7 +255,7 @@ func TestPgInsertPending_NullableFieldsOmitted(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	intentID := uniqueKey(t, "intent")
-	if err := s.InsertPending(ctx, &core.PendingObject{
+	if _, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
 		IntentID: intentID, ObjectKey: uniqueKey(t, "k"), BackendName: "backend-a", SizeBytes: 5,
 	}); err != nil {
 		t.Fatalf("InsertPending: %v", err)
@@ -285,7 +285,7 @@ func TestPgAdapter_DeletePending_RemovesRow(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	intentID := uniqueKey(t, "intent")
-	if err := s.InsertPending(ctx, &core.PendingObject{
+	if _, err := s.InsertPendingIfFits(ctx, &core.PendingObject{
 		IntentID: intentID, ObjectKey: uniqueKey(t, "k"), BackendName: "backend-a", SizeBytes: 1,
 	}); err != nil {
 		t.Fatalf("InsertPending: %v", err)
@@ -653,50 +653,55 @@ func TestPgAdapter_SumAndDeleteCleanupQueueRows_NoRowsReturnsZero(t *testing.T) 
 // QUOTA TX
 // -------------------------------------------------------------------------
 
-// TestPgAdapter_IncrementBackendQuota_AddsBytesUsed verifies the
-// increment updates bytes_used and returns nil error inside a tx.
-func TestPgAdapter_IncrementBackendQuota_AddsBytesUsed(t *testing.T) {
+// TestPgAdapter_AdjustQuotaStripe_MaterializesAndAccumulates asserts the first
+// adjustment creates the stripe row and later ones add to it, so nothing has to
+// seed a backend's stripes before it can be charged.
+func TestPgAdapter_AdjustQuotaStripe_MaterializesAndAccumulates(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		if err := a.IncrementBackendQuota(ctx, "backend-a", 500); err != nil {
-			t.Fatalf("IncrementBackendQuota: %v", err)
+		before := pgBytesUsed(t, ctx, a, "backend-a")
+		if err := a.AdjustQuotaStripe(ctx, "backend-a", 4, 500); err != nil {
+			t.Fatalf("AdjustQuotaStripe: %v", err)
+		}
+		if err := a.AdjustQuotaStripe(ctx, "backend-a", 4, 250); err != nil {
+			t.Fatalf("AdjustQuotaStripe: %v", err)
+		}
+		if got := pgBytesUsed(t, ctx, a, "backend-a") - before; got != 750 {
+			t.Errorf("total moved by %d, want 750 across two charges on one stripe", got)
 		}
 	})
 }
 
-// TestPgAdapter_IncrementBackendQuota_ReturnsErrNoSpaceWhenExceeded
-// verifies the guarded UPDATE returns ErrNoSpaceAvailable when the
-// quota ceiling would be exceeded.
-func TestPgAdapter_IncrementBackendQuota_ReturnsErrNoSpaceWhenExceeded(t *testing.T) {
-	s := adapterPgStore(t)
-	ctx := context.Background()
-	if _, err := s.pool.Exec(ctx,
-		`UPDATE backend_quotas SET bytes_limit = 100 WHERE backend_name = $1`, "backend-a",
-	); err != nil {
-		t.Fatalf("setup: %v", err)
+// pgBytesUsed reads a backend's striped byte total through the adapter.
+func pgBytesUsed(t *testing.T, ctx context.Context, a *pgTxAdapter, backend string) int64 {
+	t.Helper()
+	totals, err := a.AllBackendBytesUsed(ctx)
+	if err != nil {
+		t.Fatalf("AllBackendBytesUsed: %v", err)
 	}
-	defer func() {
-		_, _ = s.pool.Exec(ctx,
-			`UPDATE backend_quotas SET bytes_limit = $1 WHERE backend_name = $2`, int64(1<<30), "backend-a",
-		)
-	}()
-
-	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		err := a.IncrementBackendQuota(ctx, "backend-a", 200)
-		if !errors.Is(err, core.ErrNoSpaceAvailable) {
-			t.Errorf("got %v, want ErrNoSpaceAvailable", err)
-		}
-	})
+	return totals[backend]
 }
 
-// TestPgAdapter_DecrementBackendQuota_NoErrorOnZero verifies the
-// decrement returns nil when there's no row drift.
-func TestPgAdapter_DecrementBackendQuota_NoErrorOnZero(t *testing.T) {
+// TestPgAdapter_AdjustQuotaStripe_NegativeStripeIsHeldUnclamped asserts a
+// stripe may sit negative. A credit for an object recorded before the stripes
+// existed lands on whichever stripe its key hashes to rather than the one
+// holding the backfilled bytes, so clamping per stripe would discard the debit
+// and leave the total permanently high.
+func TestPgAdapter_AdjustQuotaStripe_NegativeStripeIsHeldUnclamped(t *testing.T) {
 	s := adapterPgStore(t)
+	ctx := context.Background()
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		if err := a.DecrementBackendQuota(context.Background(), "backend-b", 100); err != nil {
-			t.Errorf("DecrementBackendQuota: %v", err)
+		if err := a.AdjustQuotaStripe(ctx, "backend-a", 8, 1000); err != nil {
+			t.Fatalf("seed stripe 8: %v", err)
+		}
+		before := pgBytesUsed(t, ctx, a, "backend-a")
+		if err := a.AdjustQuotaStripe(ctx, "backend-a", 9, -400); err != nil {
+			t.Fatalf("credit stripe 9: %v", err)
+		}
+		// A stripe clamped at zero would leave the total unchanged.
+		if got := pgBytesUsed(t, ctx, a, "backend-a") - before; got != -400 {
+			t.Errorf("total moved by %d, want -400 from a stripe allowed to go negative", got)
 		}
 	})
 }

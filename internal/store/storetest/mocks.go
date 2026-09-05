@@ -406,20 +406,6 @@ func (mr *MockMetadataStoreMockRecorder) FlushPoolDeltas(ctx, backendName, perio
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushPoolDeltas", reflect.TypeOf((*MockMetadataStore)(nil).FlushPoolDeltas), ctx, backendName, period, deltas)
 }
 
-// FlushQuotaDeltas mocks base method.
-func (m *MockMetadataStore) FlushQuotaDeltas(ctx context.Context, deltas core.QuotaDeltas) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FlushQuotaDeltas", ctx, deltas)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// FlushQuotaDeltas indicates an expected call of FlushQuotaDeltas.
-func (mr *MockMetadataStoreMockRecorder) FlushQuotaDeltas(ctx, deltas any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushQuotaDeltas", reflect.TypeOf((*MockMetadataStore)(nil).FlushQuotaDeltas), ctx, deltas)
-}
-
 // FlushUsageDeltas mocks base method.
 func (m *MockMetadataStore) FlushUsageDeltas(ctx context.Context, backendName, period string, apiRequests, egressBytes, ingressBytes int64) error {
 	m.ctrl.T.Helper()
@@ -792,18 +778,19 @@ func (mr *MockMetadataStoreMockRecorder) InsertNotification(ctx, eventType, payl
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertNotification", reflect.TypeOf((*MockMetadataStore)(nil).InsertNotification), ctx, eventType, payload, endpointURL)
 }
 
-// InsertPending mocks base method.
-func (m *MockMetadataStore) InsertPending(ctx context.Context, p *core.PendingObject) error {
+// InsertPendingIfFits mocks base method.
+func (m *MockMetadataStore) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "InsertPending", ctx, p)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "InsertPendingIfFits", ctx, p)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
-// InsertPending indicates an expected call of InsertPending.
-func (mr *MockMetadataStoreMockRecorder) InsertPending(ctx, p any) *gomock.Call {
+// InsertPendingIfFits indicates an expected call of InsertPendingIfFits.
+func (mr *MockMetadataStoreMockRecorder) InsertPendingIfFits(ctx, p any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertPending", reflect.TypeOf((*MockMetadataStore)(nil).InsertPending), ctx, p)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertPendingIfFits", reflect.TypeOf((*MockMetadataStore)(nil).InsertPendingIfFits), ctx, p)
 }
 
 // IntegrityCoverage mocks base method.

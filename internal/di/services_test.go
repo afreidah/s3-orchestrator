@@ -105,7 +105,7 @@ func newServicesFixture(t *testing.T) *servicesFixture {
 	})
 
 	rt := st.Runtime
-	coord := writepath.New(rt, mock, false)
+	coord := writepath.New(rt, mock)
 	rb := worker.NewRebalancer(rt, coord, mock)
 	rb.SetConfig(&config.RebalanceConfig{})
 

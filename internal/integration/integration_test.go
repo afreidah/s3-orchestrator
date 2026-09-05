@@ -1091,13 +1091,11 @@ func TestSpreadWriteRouting_PreferLeastUtilizedAfterImbalance(t *testing.T) {
 	resetState(t)
 	spreadStack.Objects.LocationCache().Clear()
 
-	_, prefillDeltas, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "prefill"), Backend: "minio-1", Size: 512})
-	if err != nil {
+	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: uniqueKey(t, "prefill"), Backend: "minio-1", Size: 512}); err != nil {
 		t.Fatalf("RecordObject prefill: %v", err)
 	}
-	// The imbalance this test is about only exists once the counter carries it
-	// and the tracker has reloaded, or spread ranks both backends at zero.
-	commitQuota(t, prefillDeltas)
+	// The record charged the counter in its own transaction; the tracker still
+	// has to reload before spread sees the imbalance rather than two zeros.
 	refreshQuota(t)
 
 	keys := make([]string, 3)
@@ -2894,20 +2892,16 @@ func TestStore_RecordObject_OverwriteUpdatesQuota(t *testing.T) {
 
 	key := uniqueKey(t, "store-overwrite")
 
-	_, deltasA, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: internalKey(key), Backend: "minio-1", Size: 100})
-	if err != nil {
+	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: internalKey(key), Backend: "minio-1", Size: 100}); err != nil {
 		t.Fatalf("RecordObject A: %v", err)
 	}
-	commitQuota(t, deltasA)
 	if used := queryQuotaUsed(t, "minio-1"); used != 100 {
 		t.Fatalf("minio-1 after first record = %d, want 100", used)
 	}
 
-	_, deltasB, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: internalKey(key), Backend: "minio-2", Size: 200})
-	if err != nil {
+	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: internalKey(key), Backend: "minio-2", Size: 200}); err != nil {
 		t.Fatalf("RecordObject B: %v", err)
 	}
-	commitQuota(t, deltasB)
 
 	if used := queryQuotaUsed(t, "minio-1"); used != 0 {
 		t.Errorf("minio-1 after overwrite = %d, want 0", used)
@@ -2958,11 +2952,9 @@ func TestStore_MoveObjectLocation_RaceSafe(t *testing.T) {
 
 	key := uniqueKey(t, "store-move")
 
-	_, deltas, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-1", Size: 100})
-	if err != nil {
+	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-1", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	commitQuota(t, deltas)
 
 	size, err := testStore.MoveObjectLocation(ctx, key, "minio-1", "minio-2")
 	if err != nil {
@@ -2971,9 +2963,6 @@ func TestStore_MoveObjectLocation_RaceSafe(t *testing.T) {
 	if size != 100 {
 		t.Errorf("moved size = %d, want 100", size)
 	}
-	// The move reports the bytes it shifted rather than charging them, so the
-	// counter only follows the row once the caller says so.
-	commitQuota(t, core.QuotaDeltas{"minio-1": -size, "minio-2": size})
 
 	if used := queryQuotaUsed(t, "minio-1"); used != 0 {
 		t.Errorf("minio-1 after move = %d, want 0", used)
@@ -2989,7 +2978,6 @@ func TestStore_MoveObjectLocation_RaceSafe(t *testing.T) {
 	if size != 0 {
 		t.Errorf("second move size = %d, want 0 (source gone)", size)
 	}
-	commitQuota(t, core.QuotaDeltas{"minio-1": -size, "minio-2": size})
 
 	if used := queryQuotaUsed(t, "minio-1"); used != 0 {
 		t.Errorf("minio-1 after second move = %d, want 0", used)
@@ -3059,41 +3047,40 @@ func TestStore_ListObjects_PaginationAndEscaping(t *testing.T) {
 	}
 }
 
-// TestStore_FlushQuotaDeltas_MovesTheCounter drives the write half of the
-// batched counter against Postgres: a flush applies the signed deltas to
-// backend_quotas, which is the only place bytes_used moves now that writes
-// report their deltas instead of updating the row.
-func TestStore_FlushQuotaDeltas_MovesTheCounter(t *testing.T) {
+// TestStore_MutationChargesTheCounterInItsOwnTransaction pins what makes the
+// counter unable to drift: a mutation moves it in the transaction that writes
+// the ledger row, so the byte total is correct against Postgres with no flush,
+// no in-memory state, and no reconcile in between.
+func TestStore_MutationChargesTheCounterInItsOwnTransaction(t *testing.T) {
 	ctx := context.Background()
 
 	resetState(t)
 
-	if err := testStore.FlushQuotaDeltas(ctx, core.QuotaDeltas{"minio-1": 900, "minio-2": 100}); err != nil {
-		t.Fatalf("FlushQuotaDeltas: %v", err)
+	key := internalKey(uniqueKey(t, "tx-charge"))
+	if _, _, err := testStore.RecordObject(ctx,
+		&core.RecordObjectRequest{Key: key, Backend: "minio-1", Size: 700}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
 	}
+
 	stats, err := testStore.GetQuotaStats(ctx)
 	if err != nil {
 		t.Fatalf("GetQuotaStats: %v", err)
 	}
-	if stats["minio-1"].BytesUsed != 900 || stats["minio-2"].BytesUsed != 100 {
-		t.Fatalf("bytes_used = %d/%d, want 900/100", stats["minio-1"].BytesUsed, stats["minio-2"].BytesUsed)
+	if stats["minio-1"].BytesUsed != 700 {
+		t.Fatalf("minio-1 bytes_used = %d, want 700 charged by the record's own tx", stats["minio-1"].BytesUsed)
 	}
 
-	// A negative delta debits, and the SQL clamps rather than going below zero,
-	// which is what keeps a delta-arithmetic bug from making a backend look
-	// like it holds a negative number of bytes.
-	if err := testStore.FlushQuotaDeltas(ctx, core.QuotaDeltas{"minio-1": -400, "minio-2": -5000}); err != nil {
-		t.Fatalf("FlushQuotaDeltas (debit): %v", err)
+	// The credit lands on the same stripe the charge did, so the two cancel
+	// exactly rather than leaving one row high and another low.
+	if _, _, err := testStore.DeleteObject(ctx, key); err != nil {
+		t.Fatalf("DeleteObject: %v", err)
 	}
 	stats, err = testStore.GetQuotaStats(ctx)
 	if err != nil {
-		t.Fatalf("GetQuotaStats after debit: %v", err)
+		t.Fatalf("GetQuotaStats after delete: %v", err)
 	}
-	if stats["minio-1"].BytesUsed != 500 {
-		t.Errorf("minio-1 bytes_used = %d, want 500", stats["minio-1"].BytesUsed)
-	}
-	if stats["minio-2"].BytesUsed != 0 {
-		t.Errorf("minio-2 bytes_used = %d, want 0 (clamped)", stats["minio-2"].BytesUsed)
+	if stats["minio-1"].BytesUsed != 0 {
+		t.Errorf("minio-1 bytes_used = %d, want 0 after the delete credited it back", stats["minio-1"].BytesUsed)
 	}
 }
 
@@ -3105,8 +3092,10 @@ func TestStore_ListBackendQuotaUsage_ReportsOccupancy(t *testing.T) {
 
 	resetState(t)
 
-	if err := testStore.FlushQuotaDeltas(ctx, core.QuotaDeltas{"minio-1": 700}); err != nil {
-		t.Fatalf("FlushQuotaDeltas: %v", err)
+	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: internalKey(uniqueKey(t, "baseline")), Backend: "minio-1", Size: 700,
+	}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
 	}
 
 	usage, err := testStore.ListBackendQuotaUsage(ctx)
@@ -3140,35 +3129,28 @@ func TestStore_RecordReplica_StaleSourceSkipped(t *testing.T) {
 
 	key := uniqueKey(t, "store-replica")
 
-	_, deltas, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-1", Size: 100})
-	if err != nil {
+	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-1", Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	commitQuota(t, deltas)
 
-	repSize, ok, err := testStore.RecordReplica(ctx, key, "minio-2", "minio-1")
+	_, ok, err := testStore.RecordReplica(ctx, key, "minio-2", "minio-1")
 	if err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 	if !ok {
 		t.Error("first RecordReplica = false, want true")
 	}
-	commitQuota(t, core.QuotaDeltas{"minio-2": repSize})
 	if used := queryQuotaUsed(t, "minio-2"); used != 100 {
 		t.Errorf("minio-2 after replica = %d, want 100", used)
 	}
 
-	_, delDeltas, err := testStore.DeleteObject(ctx, key)
-	if err != nil {
+	if _, _, err := testStore.DeleteObject(ctx, key); err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
-	commitQuota(t, delDeltas)
 
-	_, freshDeltas, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-2", Size: 50})
-	if err != nil {
+	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "minio-2", Size: 50}); err != nil {
 		t.Fatalf("RecordObject fresh: %v", err)
 	}
-	commitQuota(t, freshDeltas)
 
 	_, ok, err = testStore.RecordReplica(ctx, key, "minio-1", "minio-1")
 	if err != nil {

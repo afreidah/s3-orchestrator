@@ -41,7 +41,7 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 	)
 	defer span.End()
 
-	copies, deltas, err := o.stores.DeleteObject(ctx, key)
+	copies, _, err := o.stores.DeleteObject(ctx, key)
 	if err != nil {
 		if errors.Is(err, core.ErrObjectNotFound) {
 			// Object not in our tracking - treat as success (idempotent delete)
@@ -50,12 +50,10 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 		}
 		return o.core.ClassifyWriteError(span, operation.String(), err)
 	}
-	// Credited as soon as the rows are gone rather than after the backend
-	// fanout: the ledger no longer claims the bytes, so a write racing this
-	// delete should see the room immediately. The physical delete that follows
-	// can fail and leave an orphan, which the cleanup queue owns.
-	o.core.Quota().Apply(deltas)
-
+	// Credited by the same transaction that removed the rows, so a write racing
+	// this delete sees the room the moment the ledger stops claiming the bytes.
+	// The physical delete that follows can fail and leave an orphan, which the
+	// cleanup queue owns.
 	span.SetAttributes(attribute.Int("copies.deleted", len(copies)))
 
 	// Drop the location cache entry up front so concurrent readers
@@ -126,7 +124,7 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 		results[i].Key = key
 	}
 
-	copiesByKey, deltas, err := o.stores.DeleteObjectsBatch(ctx, keys)
+	copiesByKey, _, err := o.stores.DeleteObjectsBatch(ctx, keys)
 	if err != nil {
 		// Whole-tx failure: every key surfaces the error. The cache and
 		// backend cleanup paths are skipped; nothing was changed.
@@ -136,8 +134,6 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 		}
 		return results
 	}
-	o.core.Quota().Apply(deltas)
-
 	// A key absent from copiesByKey was already gone (not-found is silent
 	// success), so its cache entries are also stale and worth flushing.
 	for _, key := range keys {

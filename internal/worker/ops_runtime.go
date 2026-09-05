@@ -60,7 +60,7 @@ type DataMover interface {
 // delete-or-enqueue) workers get from *writepath.Coordinator, kept apart from
 // the runtime roles because the runtime deliberately holds no store.
 type Placement interface {
-	SelectReplicaTarget(size int64, exclusion map[string]bool) (string, *counter.Reservation, error)
+	RankReplicaTargets(size int64, exclusion map[string]bool) []string
 	MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error)
 	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
 }
