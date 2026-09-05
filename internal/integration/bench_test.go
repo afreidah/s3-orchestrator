@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -80,6 +81,45 @@ func BenchmarkPutObject(b *testing.B) {
 			}
 		})
 	}
+}
+
+// BenchmarkPutObject_Parallel measures PUT throughput under concurrent writers,
+// which is the shape the striped quota counter and the pending-intent claim were
+// built for: several writes charging one backend at the same time. The serial
+// benchmark above exercises the same path but can never queue on it.
+//
+// The fleet is provisioned at 64 MiB per backend, which a benchmark fills. Since
+// admission reads live rows, a full backend refuses every later claim and the
+// run dies on 507 rather than reporting a number, so the ceiling is raised for
+// the duration and restored afterwards.
+func BenchmarkPutObject_Parallel(b *testing.B) {
+	setQuotaLimits(b, 1<<40)
+
+	client := newBenchS3Client()
+	ctx := context.Background()
+	data := bytes.Repeat([]byte("X"), 1<<10)
+
+	var goroutines atomic.Int64
+	b.SetBytes(1 << 10)
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		g := goroutines.Add(1)
+		i := 0
+		for pb.Next() {
+			key := fmt.Sprintf("bench-put-parallel/%d-%d", g, i)
+			i++
+			_, err := client.PutObject(ctx, &s3.PutObjectInput{
+				Bucket:        aws.String(virtualBucket),
+				Key:           aws.String(key),
+				Body:          bytes.NewReader(data),
+				ContentLength: aws.Int64(int64(len(data))),
+			})
+			if err != nil {
+				b.Errorf("PutObject: %v", err)
+				return
+			}
+		}
+	})
 }
 
 // BenchmarkListObjects measures the list objects path by exercising context.Background, fmt.Sprintf, client.PutObject.
