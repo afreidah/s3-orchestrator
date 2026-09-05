@@ -82,7 +82,7 @@ func seedTagged(t *testing.T, s *Store, objects map[string][]core.Tag) {
 	t.Helper()
 	for key, tags := range objects {
 		if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{
-			Key: key, Backend: "backend-a", Size: 100, Tags: tags,
+			Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100, Tags: tags,
 		}); err != nil {
 			t.Fatalf("RecordObject %s: %v", key, err)
 		}

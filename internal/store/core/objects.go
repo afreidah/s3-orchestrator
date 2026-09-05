@@ -24,8 +24,21 @@ import (
 // RECORD OBJECT
 // -------------------------------------------------------------------------
 
+// ObjectCopy names one backend a write landed on and the pending intent it
+// resolves there. Everything describing the bytes lives on the request instead,
+// because every copy of a key holds the same ones: replication moves them
+// verbatim, so a copy that differed could not be made by any other path.
+type ObjectCopy struct {
+	Backend  string
+	IntentID string
+}
+
 // RecordObjectRequest is one committed write: where the object landed, how its
-// bytes are stored, the tag set it carries, and the pending intent it resolves.
+// bytes are stored, the tag set it carries, and the pending intents it resolves.
+//
+// Copies is a set because a write may place the object on several backends at
+// once. They commit together or not at all, which is what keeps a partly
+// recorded write from looking like an overwrite that displaced its own copies.
 //
 // Tags are separate from Form because Form describes the bytes and rides
 // through replication and moves; a tag set carried there would be re-inserted
@@ -33,12 +46,20 @@ import (
 // them however many copies exist.
 type RecordObjectRequest struct {
 	Key      string
-	Backend  string
 	Size     int64
 	Form     *StoredForm
 	Identity *ObjectIdentity
 	Tags     []Tag
-	IntentID string
+	Copies   []ObjectCopy
+}
+
+// Backends lists the backends the request places a copy on, in order.
+func (r *RecordObjectRequest) Backends() []string {
+	names := make([]string, len(r.Copies))
+	for i := range r.Copies {
+		names[i] = r.Copies[i].Backend
+	}
+	return names
 }
 
 // mutationResult is what a mutation's transactional body hands back: the copies
@@ -69,6 +90,12 @@ type batchDeleteResult struct {
 // inside the same transaction, so a successful PUT's intent never outlives the
 // location it was covering.
 func RecordObject(ctx context.Context, runner Runner, req *RecordObjectRequest) ([]DeletedCopy, QuotaDeltas, error) {
+	// A request with no copies would clear the key's existing rows and put
+	// nothing back, which reads as a delete rather than the write the caller
+	// meant. Refused here rather than in the transaction so no lock is taken.
+	if len(req.Copies) == 0 {
+		return nil, nil, ErrNoCopiesToRecord
+	}
 	if err := ValidateTags(req.Tags); err != nil {
 		return nil, nil, err
 	}
@@ -90,8 +117,8 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 	if err != nil {
 		return mutationResult{}, err
 	}
-	deltas := make(QuotaDeltas, len(existing)+1)
-	displaced, err := clearExistingCopies(ctx, tx, req.Key, req.Backend, existing, deltas)
+	deltas := make(QuotaDeltas, len(existing)+len(req.Copies))
+	displaced, err := clearExistingCopies(ctx, tx, req.Key, req.Backends(), existing, deltas)
 	if err != nil {
 		return mutationResult{}, err
 	}
@@ -107,16 +134,21 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 	if err := replaceObjectTagsTx(ctx, tx, req.Key, req.Tags); err != nil {
 		return mutationResult{}, err
 	}
-	if err := tx.InsertObjectLocation(ctx, objectFromStoredForm(req.Key, req.Backend, req.Size, req.Form, req.Identity)); err != nil {
-		return mutationResult{}, fmt.Errorf("insert object location: %w", err)
+	for _, c := range req.Copies {
+		if err := tx.InsertObjectLocation(ctx, objectFromStoredForm(req.Key, c.Backend, req.Size, req.Form, req.Identity)); err != nil {
+			return mutationResult{}, fmt.Errorf("insert object location on %s: %w", c.Backend, err)
+		}
+		deltas.Add(c.Backend, req.Size)
 	}
-	deltas.Add(req.Backend, req.Size)
 	if err := chargeStripes(ctx, tx, req.Key, deltas); err != nil {
 		return mutationResult{}, err
 	}
-	if req.IntentID != "" {
-		if err := tx.DeletePending(ctx, req.IntentID); err != nil {
-			return mutationResult{}, fmt.Errorf("clear pending intent: %w", err)
+	for _, c := range req.Copies {
+		if c.IntentID == "" {
+			continue
+		}
+		if err := tx.DeletePending(ctx, c.IntentID); err != nil {
+			return mutationResult{}, fmt.Errorf("clear pending intent %s: %w", c.IntentID, err)
 		}
 	}
 	return mutationResult{displaced: displaced, deltas: deltas}, nil

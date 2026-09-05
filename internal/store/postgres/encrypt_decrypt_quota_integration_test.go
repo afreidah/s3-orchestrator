@@ -59,7 +59,7 @@ func TestStoreInt_MarkObjectEncrypted_AdjustsBytesUsed(t *testing.T) {
 	resetBytesUsed(t, s, "backend-a")
 	key := uniqueKey(t, "encrypt-quota")
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: plaintextSize}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: plaintextSize}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	before := readBytesUsed(t, s, "backend-a")
@@ -88,7 +88,7 @@ func TestStoreInt_MarkObjectDecrypted_AdjustsBytesUsed(t *testing.T) {
 	resetBytesUsed(t, s, "backend-a")
 	key := uniqueKey(t, "decrypt-quota")
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: plaintextSize}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: plaintextSize}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if err := s.MarkObjectEncrypted(ctx, encUpdate(key, plaintextSize, ciphertextSize)); err != nil {
@@ -117,7 +117,7 @@ func TestStoreInt_MarkObjectEncrypted_ZeroDeltaNoOp(t *testing.T) {
 	resetBytesUsed(t, s, "backend-a")
 	key := uniqueKey(t, "encrypt-zero")
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: size}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: size}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	before := readBytesUsed(t, s, "backend-a")
@@ -149,7 +149,7 @@ func TestStoreInt_MarkObjectEncrypted_BatchSumsCorrectly(t *testing.T) {
 	keys := make([]string, objects)
 	for i := range objects {
 		keys[i] = uniqueKey(t, "encrypt-batch")
-		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: keys[i], Backend: "backend-a", Size: plaintextSize}); err != nil {
+		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: keys[i], Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: plaintextSize}); err != nil {
 			t.Fatalf("RecordObject %d: %v", i, err)
 		}
 	}

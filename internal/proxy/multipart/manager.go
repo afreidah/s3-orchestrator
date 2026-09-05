@@ -852,8 +852,8 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// create time, and the assembled object's bytes are charged here from what
 	// the ledger recorded.
 	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
-		Key: mu.ObjectKey, Backend: mu.BackendName, Size: uploadSize, Form: form,
-		Identity: identity, Tags: mu.Tags, IntentID: intentID,
+		Key: mu.ObjectKey, Size: uploadSize, Form: form, Identity: identity, Tags: mu.Tags,
+		Copies: []core.ObjectCopy{{Backend: mu.BackendName, IntentID: intentID}},
 	}); err != nil {
 		return "", err
 	}

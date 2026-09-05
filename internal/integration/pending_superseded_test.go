@@ -53,7 +53,7 @@ func TestInt_PendingReaper_SupersededByNewerLocation(t *testing.T) {
 	// Now record a real object_locations row for the same key on a
 	// different backend (minio-1). Its created_at = NOW() is newer than
 	// the backdated pending row, satisfying intentSuperseded.
-	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: internalKey(key), Backend: "minio-1", Size: 100}); err != nil {
+	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: internalKey(key), Copies: []core.ObjectCopy{{Backend: "minio-1"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if got := queryObjectCopies(t, key); got != 1 {

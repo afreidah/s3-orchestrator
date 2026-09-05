@@ -356,8 +356,8 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	}
 
 	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
-		Key: key, Backend: backendName, Size: uploadSize, Form: form, Identity: identity,
-		Tags: req.Tags, IntentID: intentID,
+		Key: key, Size: uploadSize, Form: form, Identity: identity, Tags: req.Tags,
+		Copies: []core.ObjectCopy{{Backend: backendName, IntentID: intentID}},
 	}); err != nil {
 		// Classified like the placement failure above: with placement decided in
 		// memory, the commit is now where a database outage first shows up, and

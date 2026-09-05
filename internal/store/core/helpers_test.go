@@ -93,11 +93,11 @@ func TestObjectFromStoredForm_PlaintextFormWithoutEncryption(t *testing.T) {
 // returns nil rather than an allocated zero-length slice.
 func TestDisplacedFromExisting_EmptyInput(t *testing.T) {
 	t.Parallel()
-	got := displacedFromExisting(nil, "b1")
+	got := displacedFromExisting(nil, []string{"b1"})
 	if got != nil {
 		t.Errorf("expected nil for empty input, got %+v", got)
 	}
-	got = displacedFromExisting([]ExistingCopy{}, "b1")
+	got = displacedFromExisting([]ExistingCopy{}, []string{"b1"})
 	if got != nil {
 		t.Errorf("expected nil for empty slice, got %+v", got)
 	}
@@ -111,9 +111,25 @@ func TestDisplacedFromExisting_AllOnNewBackend(t *testing.T) {
 	existing := []ExistingCopy{
 		{BackendName: "b1", SizeBytes: 100},
 	}
-	got := displacedFromExisting(existing, "b1")
+	got := displacedFromExisting(existing, []string{"b1"})
 	if got != nil {
 		t.Errorf("expected nil when every copy is on the target backend, got %+v", got)
+	}
+}
+
+// TestDisplacedFromExisting_SeveralNewBackends verifies that a write landing on
+// more than one backend excludes every one of them, so its own copies are not
+// reported as displaced by each other.
+func TestDisplacedFromExisting_SeveralNewBackends(t *testing.T) {
+	t.Parallel()
+	existing := []ExistingCopy{
+		{BackendName: "b1", SizeBytes: 100},
+		{BackendName: "b2", SizeBytes: 200},
+		{BackendName: "b3", SizeBytes: 300},
+	}
+	got := displacedFromExisting(existing, []string{"b1", "b2"})
+	if len(got) != 1 || got[0].BackendName != "b3" {
+		t.Errorf("expected only b3 displaced, got %+v", got)
 	}
 }
 
@@ -127,7 +143,7 @@ func TestDisplacedFromExisting_OtherBackends(t *testing.T) {
 		{BackendName: "b2", SizeBytes: 200}, // becomes orphan
 		{BackendName: "b3", SizeBytes: 300}, // becomes orphan
 	}
-	got := displacedFromExisting(existing, "b1")
+	got := displacedFromExisting(existing, []string{"b1"})
 	if len(got) != 2 {
 		t.Fatalf("expected 2 displaced copies, got %d", len(got))
 	}
