@@ -158,18 +158,42 @@ func (w *Coordinator) SelectWriteTarget(ctx context.Context, span trace.Span, op
 // Nothing is settled against a counter here. The transaction charged the bytes
 // to the backend's stripes and cleared the intent that had been holding them,
 // so the ledger is already correct the moment it commits.
+//
+// The supplied backend handle is what the failure path deletes from, so this
+// records one copy. A write placing several needs recovery that knows which of
+// them landed, which is the caller's to hold rather than this helper's.
 func (w *Coordinator) RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, req *core.RecordObjectRequest) error {
+	backendName, err := soleBackend(req)
+	if err != nil {
+		observe.RecordSpanError(span, err)
+		return err
+	}
 	displaced, _, err := w.stores.RecordObject(ctx, req)
 	if err != nil {
 		w.log.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
-			"key", req.Key, "backend", req.Backend, "error", err)
-		w.RecoverFromRecordFailure(ctx, be, req.Backend, req.Key, "orphan_record_failed", req.Size)
+			"key", req.Key, "backend", backendName, "error", err)
+		w.RecoverFromRecordFailure(ctx, be, backendName, req.Key, "orphan_record_failed", req.Size)
 		observe.RecordSpanError(span, err)
 		return fmt.Errorf("failed to record object: %w", err)
 	}
-	w.cleanupDisplacedCopies(ctx, req.Key, req.Backend, displaced)
+	w.cleanupDisplacedCopies(ctx, req.Key, backendName, displaced)
 	return nil
 }
+
+// soleBackend names the single copy a request places, or reports why it cannot.
+// The helpers that clean up after a failed commit delete from one backend, so a
+// request naming any other number is a caller error rather than a state they
+// can recover from.
+func soleBackend(req *core.RecordObjectRequest) (string, error) {
+	if len(req.Copies) != 1 {
+		return "", fmt.Errorf("%w: record request for %s names %d copies", errSingleCopyOnly, req.Key, len(req.Copies))
+	}
+	return req.Copies[0].Backend, nil
+}
+
+// errSingleCopyOnly reports a multi-copy request handed to a helper whose
+// recovery path can only account for one.
+var errSingleCopyOnly = errors.New("write path: helper records a single copy")
 
 // RecoverFromRecordFailure runs the post-record-failure cleanup
 // sequence shared by RecordObjectOrCleanup and the multipart
@@ -233,17 +257,23 @@ func NewPendingIntent(key string, size int64, form *core.StoredForm, id *core.Ob
 // HEADing the backend, promoting the metadata if the bytes are present
 // and removing the intent if they are absent.
 //
-// When req.IntentID is empty - a caller that wrote bytes without claiming an
-// intent first, which only the assembly paths do - this falls back to
+// When the copy carries no intent - a caller that wrote bytes without claiming
+// one first, which only the assembly paths do - this falls back to
 // RecordObjectOrCleanup.
 func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest) error {
-	if req.IntentID == "" {
+	backendName, err := soleBackend(req)
+	if err != nil {
+		observe.RecordSpanError(span, err)
+		return err
+	}
+	intentID := req.Copies[0].IntentID
+	if intentID == "" {
 		// The backend is unavailable here, so we cannot use
 		// RecordObjectOrCleanup (which deletes on failure). Resolve via the
 		// backend map.
-		be, ok := w.core.Backends()[req.Backend]
+		be, ok := w.core.Backends()[backendName]
 		if !ok {
-			return fmt.Errorf("backend %s not registered", req.Backend)
+			return fmt.Errorf("backend %s not registered", backendName)
 		}
 		return w.RecordObjectOrCleanup(ctx, span, be, req)
 	}
@@ -257,15 +287,15 @@ func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span tra
 		// until whichever pass resolves it - the reaper's promotion or its
 		// removal - settles what they are worth.
 		w.log.ErrorContext(ctx, "recordObject failed; intent left for reaper",
-			"key", req.Key, "backend", req.Backend, "intent_id", req.IntentID, "error", err)
+			"key", req.Key, "backend", backendName, "intent_id", intentID, "error", err)
 		// The successful PUT against the backend still consumed an API
 		// call. The success-path usage record runs only when this returns
 		// nil, so account for it here.
-		w.core.Acct().APICall(s3op.PutObject, req.Backend)
+		w.core.Acct().APICall(s3op.PutObject, backendName)
 		observe.RecordSpanError(span, err)
 		return fmt.Errorf("failed to record object: %w", err)
 	}
-	w.cleanupDisplacedCopies(ctx, req.Key, req.Backend, displaced)
+	w.cleanupDisplacedCopies(ctx, req.Key, backendName, displaced)
 	return nil
 }
 

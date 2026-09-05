@@ -68,7 +68,7 @@ func seedDelimitedKeys(b *testing.B, s *Store, n, dirs int) {
 	ctx := context.Background()
 	for i := range n {
 		key := fmt.Sprintf("logs/dir%02d/key%08d.txt", i%dirs, i)
-		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1}); err != nil {
+		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1}); err != nil {
 			b.Fatalf("RecordObject: %v", err)
 		}
 	}

@@ -253,7 +253,7 @@ func TestRecordObject_RejectsInvalidTags(t *testing.T) {
 	stub := &quotaTxStub{existingCopies: storedCopy()}
 
 	_, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
-		Key: "k", Backend: "b1", Size: 100,
+		Key: "k", Copies: []ObjectCopy{{Backend: "b1"}}, Size: 100,
 		Tags: []Tag{{Key: "a", Value: "1"}, {Key: "a", Value: "2"}},
 	})
 	if !errors.Is(err, ErrDuplicateTagKey) {

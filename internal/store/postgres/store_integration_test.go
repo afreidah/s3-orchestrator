@@ -178,7 +178,7 @@ func TestStoreInt_GetObjectsWithoutHash(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
@@ -218,7 +218,7 @@ func TestStoreInt_GetLeastRecentlyScrubbedObjects(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
@@ -640,7 +640,7 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
@@ -853,7 +853,7 @@ func TestStoreInt_ListExpiredObjectsTagFilter(t *testing.T) {
 	}
 	for _, o := range objects {
 		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
-			Key: o.key, Backend: "backend-a", Size: 100, Tags: o.tags,
+			Key: o.key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100, Tags: o.tags,
 		}); err != nil {
 			t.Fatalf("RecordObject %s: %v", o.key, err)
 		}
@@ -963,14 +963,14 @@ func TestStoreInt_GetObjectBackendsForKeys_GroupsByKey(t *testing.T) {
 	k1 := uniqueKey(t, "k1")
 	k2 := uniqueKey(t, "k2")
 	missing := uniqueKey(t, "missing")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject(k1): %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, k1) }()
 	if _, _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Backend: "backend-a", Size: 50}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 50}); err != nil {
 		t.Fatalf("RecordObject(k2): %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, k2) }()
@@ -1017,13 +1017,13 @@ func TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T
 	k1 := uniqueKey(t, "k1")
 	k2 := uniqueKey(t, "k2")
 	missing := uniqueKey(t, "missing")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject(k1): %v", err)
 	}
 	if _, _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a"); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Backend: "backend-a", Size: 50}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 50}); err != nil {
 		t.Fatalf("RecordObject(k2): %v", err)
 	}
 
@@ -1169,7 +1169,7 @@ func TestStoreInt_ScrubQueue_FreshWritesDoNotJumpTheQueue(t *testing.T) {
 	oldKey := uniqueKey(t, "old")
 	freshKey := uniqueKey(t, "fresh")
 	for _, key := range []string{oldKey, freshKey} {
-		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
 		defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
@@ -1270,7 +1270,7 @@ func TestStoreInt_ScrubQueue_BackendFilter(t *testing.T) {
 	keyA := uniqueKey(t, "affordable")
 	keyB := uniqueKey(t, "declined")
 	for backend, key := range map[string]string{"backend-a": keyA, "backend-b": keyB} {
-		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: backend, Size: 10}); err != nil {
+		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: 10}); err != nil {
 			t.Fatalf("RecordObject(%s): %v", key, err)
 		}
 		defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
@@ -1325,7 +1325,7 @@ func TestStoreInt_CountUnencryptedLocations(t *testing.T) {
 	}
 
 	key := uniqueKey(t, "plaintext")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
@@ -1377,7 +1377,7 @@ func TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 	// the hash across without the stamp, leaving two hashed copies that differ
 	// only on whether the bytes were ever read back.
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
-		Key: key, Backend: "backend-a", Size: 100,
+		Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100,
 		Form: &core.StoredForm{ContentHash: "abc123"},
 	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
@@ -1434,7 +1434,7 @@ func TestStoreInt_IntegrityCoverage_CountsNeverVerifiedCopies(t *testing.T) {
 	reachable := []string{"backend-a", "backend-b"}
 
 	key := uniqueKey(t, "unverified-age")
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 100}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()

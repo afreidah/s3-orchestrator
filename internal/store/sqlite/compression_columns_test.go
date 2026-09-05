@@ -113,7 +113,7 @@ func TestInsertPaths_PreserveRepresentation(t *testing.T) {
 			name: "RecordObject",
 			key:  "bucket/record",
 			write: func(t *testing.T, s *Store, key string) {
-				if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Backend: "backend-a", Size: 1024, Form: form}); err != nil {
+				if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1024, Form: form}); err != nil {
 					t.Fatalf("RecordObject: %v", err)
 				}
 			},
@@ -123,7 +123,8 @@ func TestInsertPaths_PreserveRepresentation(t *testing.T) {
 			key:  "bucket/record-clear",
 			write: func(t *testing.T, s *Store, key string) {
 				if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
-					Key: key, Backend: "backend-a", Size: 1024, Form: form, IntentID: "intent-x",
+					Key: key, Size: 1024, Form: form,
+					Copies: []core.ObjectCopy{{Backend: "backend-a", IntentID: "intent-x"}},
 				}); err != nil {
 					t.Fatalf("RecordObject with intent: %v", err)
 				}
@@ -217,7 +218,7 @@ func TestRecordReplica_PreservesRepresentation(t *testing.T) {
 	ctx := context.Background()
 	form := fullyPopulatedForm()
 
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/replicated", Backend: "backend-a", Size: 1024, Form: form}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/replicated", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1024, Form: form}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if _, inserted, err := s.RecordReplica(ctx, "bucket/replicated", "backend-b", "backend-a"); err != nil || !inserted {

@@ -39,7 +39,7 @@ func tagNames(tags []core.Tag) []string {
 // hang off.
 func seedObject(t *testing.T, s *Store, key, backend string) {
 	t.Helper()
-	if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{Key: key, Backend: backend, Size: 1024}); err != nil {
+	if _, _, err := s.RecordObject(context.Background(), &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: backend}}, Size: 1024}); err != nil {
 		t.Fatalf("RecordObject(%s, %s): %v", key, backend, err)
 	}
 }

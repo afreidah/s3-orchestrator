@@ -66,7 +66,7 @@ func promotePendingTx(ctx context.Context, tx TxAdapter, p *PendingObject) (prom
 // caller to apply.
 func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existing []ExistingCopy) (promoteOutcome, error) {
 	deltas := make(QuotaDeltas, len(existing)+1)
-	displaced, err := clearExistingCopies(ctx, tx, p.ObjectKey, p.BackendName, existing, deltas)
+	displaced, err := clearExistingCopies(ctx, tx, p.ObjectKey, []string{p.BackendName}, existing, deltas)
 	if err != nil {
 		return promoteOutcome{}, err
 	}
@@ -86,10 +86,14 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 
 // clearExistingCopies deletes every prior copy of the key and accumulates
 // per-backend negative deltas in the supplied map, which the caller applies to
-// the byte counter once the transaction has committed. Copies on
-// backends other than newBackend are returned as DeletedCopy entries so
-// the caller can enqueue them for physical orphan cleanup.
-func clearExistingCopies(ctx context.Context, tx TxAdapter, key, newBackend string, existing []ExistingCopy, deltas QuotaDeltas) ([]DeletedCopy, error) {
+// the byte counter once the transaction has committed. Copies on backends the
+// write is not landing on are returned as DeletedCopy entries so the caller can
+// enqueue them for physical orphan cleanup.
+//
+// newBackends is the whole set the write places, not just one: a write landing
+// on two backends that reported only the first would hand its own second copy
+// to orphan cleanup.
+func clearExistingCopies(ctx context.Context, tx TxAdapter, key string, newBackends []string, existing []ExistingCopy, deltas QuotaDeltas) ([]DeletedCopy, error) {
 	if len(existing) == 0 {
 		return nil, nil
 	}
@@ -99,5 +103,5 @@ func clearExistingCopies(ctx context.Context, tx TxAdapter, key, newBackend stri
 	for _, ec := range existing {
 		deltas.Add(ec.BackendName, -ec.SizeBytes)
 	}
-	return displacedFromExisting(existing, newBackend), nil
+	return displacedFromExisting(existing, newBackends), nil
 }

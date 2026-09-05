@@ -51,7 +51,7 @@ func TestRecordObject_RoundTripsIdentity(t *testing.T) {
 	ctx := context.Background()
 
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
-		Key: "bucket/k", Backend: "backend-a", Size: 100,
+		Key: "bucket/k", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100,
 		Identity: &core.ObjectIdentity{
 			ETag:         `"written"`,
 			ContentType:  "text/plain",
@@ -82,7 +82,7 @@ func TestRecordObjectIdentity_FillsOnlyWhatIsUnknown(t *testing.T) {
 	ctx := context.Background()
 
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
-		Key: "bucket/k", Backend: "backend-a", Size: 100,
+		Key: "bucket/k", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100,
 		Identity: &core.ObjectIdentity{ETag: `"original"`},
 	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
@@ -143,7 +143,7 @@ func TestListObjects_CarriesTheStoredETag(t *testing.T) {
 	ctx := context.Background()
 
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
-		Key: "bucket/with-etag", Backend: "backend-a", Size: 10,
+		Key: "bucket/with-etag", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10,
 		Identity: &core.ObjectIdentity{ETag: `"listed"`},
 	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
@@ -174,7 +174,7 @@ func TestListObjectsDelimited_CarriesTheStoredETag(t *testing.T) {
 	ctx := context.Background()
 
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
-		Key: "bucket/leaf.txt", Backend: "backend-a", Size: 10,
+		Key: "bucket/leaf.txt", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10,
 		Identity: &core.ObjectIdentity{ETag: `"leaf-etag"`},
 	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
@@ -204,7 +204,7 @@ func TestRecordObjectIdentity_NilIsANoOp(t *testing.T) {
 	ctx := context.Background()
 
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
-		Key: "bucket/k", Backend: "backend-a", Size: 100,
+		Key: "bucket/k", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100,
 		Identity: &core.ObjectIdentity{ETag: `"kept"`},
 	}); err != nil {
 		t.Fatalf("RecordObject: %v", err)

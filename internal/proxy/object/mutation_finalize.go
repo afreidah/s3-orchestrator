@@ -59,8 +59,8 @@ func (o *Manager) finalizePutSuccess(ctx context.Context, span trace.Span, opera
 func (o *Manager) finalizeMaterializedCopy(ctx context.Context, req *materializedCopyContext, etag string) (string, error) {
 	const operation = s3op.CopyObject
 	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, &core.RecordObjectRequest{
-		Key: req.destKey, Backend: req.destBackendName, Size: req.size, Form: req.srcForm,
-		Identity: req.identity, Tags: req.tags, IntentID: req.intentID,
+		Key: req.destKey, Size: req.size, Form: req.srcForm, Identity: req.identity, Tags: req.tags,
+		Copies: []core.ObjectCopy{{Backend: req.destBackendName, IntentID: req.intentID}},
 	}); err != nil {
 		return "", err
 	}
@@ -84,8 +84,8 @@ func (o *Manager) finalizeMaterializedCopy(ctx context.Context, req *materialize
 func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyContext, etag string) (string, bool, error) {
 	const operation = s3op.CopyObject
 	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, &core.RecordObjectRequest{
-		Key: req.destKey, Backend: req.destBackendName, Size: req.size, Form: req.srcForm,
-		Identity: req.identity, Tags: req.tags, IntentID: req.intentID,
+		Key: req.destKey, Size: req.size, Form: req.srcForm, Identity: req.identity, Tags: req.tags,
+		Copies: []core.ObjectCopy{{Backend: req.destBackendName, IntentID: req.intentID}},
 	}); err != nil {
 		return "", true, err
 	}

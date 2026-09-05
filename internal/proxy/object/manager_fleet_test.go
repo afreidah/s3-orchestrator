@@ -70,10 +70,11 @@ func stubObjRecord(c *objectsCalls, err error) func(context.Context, *core.Recor
 	return func(_ context.Context, req *core.RecordObjectRequest) ([]core.DeletedCopy, core.QuotaDeltas, error) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
+		backend := req.Copies[0].Backend
 		c.recordObject = append(c.recordObject, objRecordCall{
-			Key: req.Key, Backend: req.Backend, Size: req.Size, Form: req.Form, Tags: req.Tags,
+			Key: req.Key, Backend: backend, Size: req.Size, Form: req.Form, Tags: req.Tags,
 		})
-		return nil, core.QuotaDeltas{req.Backend: req.Size}, err
+		return nil, core.QuotaDeltas{backend: req.Size}, err
 	}
 }
 

@@ -18,6 +18,104 @@ import (
 	"time"
 )
 
+// multiCopyTxStub records what a commit wrote and which intents it cleared,
+// which is what a write placing several copies has to get right. The embedded
+// quotaTxStub keeps the stripe charges and the locked copy set.
+type multiCopyTxStub struct {
+	*quotaTxStub
+
+	inserted []ObjectLocation
+	cleared  []string
+}
+
+// InsertObjectLocation captures each row the commit inserts.
+func (s *multiCopyTxStub) InsertObjectLocation(_ context.Context, loc *ObjectLocation) error {
+	s.inserted = append(s.inserted, *loc)
+	return nil
+}
+
+// DeletePending captures each intent the commit resolves.
+func (s *multiCopyTxStub) DeletePending(_ context.Context, intentID string) error {
+	s.cleared = append(s.cleared, intentID)
+	return nil
+}
+
+// newMultiCopyStub builds a commit stub over the supplied prior copy set.
+func newMultiCopyStub(existing []ExistingCopy) *multiCopyTxStub {
+	return &multiCopyTxStub{quotaTxStub: &quotaTxStub{existingCopies: existing}}
+}
+
+// TestRecordObject_CommitsEveryCopy verifies a write naming several backends
+// inserts a row and charges bytes on each of them, and clears every intent it
+// was admitted on, inside the one transaction.
+func TestRecordObject_CommitsEveryCopy(t *testing.T) {
+	t.Parallel()
+	stub := newMultiCopyStub(nil)
+	_, deltas, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
+		Key: "k", Size: 100,
+		Copies: []ObjectCopy{{Backend: "b1", IntentID: "i-1"}, {Backend: "b2", IntentID: "i-2"}},
+	})
+	if err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if len(stub.inserted) != 2 {
+		t.Fatalf("expected a row per copy, got %d", len(stub.inserted))
+	}
+	for i, want := range []string{"b1", "b2"} {
+		if stub.inserted[i].BackendName != want || stub.inserted[i].SizeBytes != 100 {
+			t.Errorf("row %d = %s/%d, want %s/100", i, stub.inserted[i].BackendName, stub.inserted[i].SizeBytes, want)
+		}
+	}
+	for _, backend := range []string{"b1", "b2"} {
+		if deltas[backend] != 100 {
+			t.Errorf("delta for %s = %d, want 100", backend, deltas[backend])
+		}
+	}
+	if len(stub.ops) != 2 {
+		t.Errorf("expected a stripe charge per copy, got %+v", stub.ops)
+	}
+	if len(stub.cleared) != 2 || stub.cleared[0] != "i-1" || stub.cleared[1] != "i-2" {
+		t.Errorf("expected both intents cleared, got %v", stub.cleared)
+	}
+}
+
+// TestRecordObject_DisplacesOnlyBackendsItLeaves verifies a multi-copy write
+// hands back for cleanup only the prior copies it is not landing on. Reporting
+// by a single backend would send the write's own second copy to be deleted.
+func TestRecordObject_DisplacesOnlyBackendsItLeaves(t *testing.T) {
+	t.Parallel()
+	stub := newMultiCopyStub([]ExistingCopy{
+		{BackendName: "b1", SizeBytes: 10},
+		{BackendName: "b2", SizeBytes: 20},
+		{BackendName: "b3", SizeBytes: 30},
+	})
+	displaced, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
+		Key: "k", Size: 100,
+		Copies: []ObjectCopy{{Backend: "b1"}, {Backend: "b2"}},
+	})
+	if err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if len(displaced) != 1 || displaced[0].BackendName != "b3" {
+		t.Errorf("expected only b3 displaced, got %+v", displaced)
+	}
+}
+
+// TestRecordObject_NoCopies verifies a request naming no copies is refused. It
+// would otherwise clear the key's rows and put nothing back, which is a delete
+// wearing a write's name.
+func TestRecordObject_NoCopies(t *testing.T) {
+	t.Parallel()
+	stub := newMultiCopyStub([]ExistingCopy{{BackendName: "b1", SizeBytes: 10}})
+	_, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{Key: "k", Size: 100})
+	if !errors.Is(err, ErrNoCopiesToRecord) {
+		t.Fatalf("expected ErrNoCopiesToRecord, got %v", err)
+	}
+	if len(stub.inserted) != 0 || len(stub.ops) != 0 {
+		t.Errorf("transaction ran despite the empty copy set: rows=%v ops=%+v", stub.inserted, stub.ops)
+	}
+}
+
 // runDeleteLocation invokes DeleteObjectLocation against the stub, discarding
 // the removed byte count the callers under test do not assert on.
 func runDeleteLocation(stub *excessTxStub, key, backend string) error {
@@ -100,7 +198,7 @@ func TestDeleteObjectsBatch_TagClearError(t *testing.T) {
 func TestRecordObject_ClearsTagsOnWrite(t *testing.T) {
 	t.Parallel()
 	stub := &quotaTxStub{}
-	if _, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{Key: "k", Backend: "b1", Size: 100}); err != nil {
+	if _, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{Key: "k", Copies: []ObjectCopy{{Backend: "b1"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	if len(stub.tagsCleared) != 1 || stub.tagsCleared[0] != "k" {
@@ -115,7 +213,7 @@ func TestRecordObject_TagClearError(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("tag clear failed")
 	stub := &quotaTxStub{tagClearErr: sentinel}
-	if _, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{Key: "k", Backend: "b1", Size: 100}); !errors.Is(err, sentinel) {
+	if _, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{Key: "k", Copies: []ObjectCopy{{Backend: "b1"}}, Size: 100}); !errors.Is(err, sentinel) {
 		t.Errorf("expected the tag clear error, got %v", err)
 	}
 	if len(stub.ops) != 0 {

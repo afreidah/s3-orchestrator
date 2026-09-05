@@ -424,7 +424,7 @@ func TestRecordObjectAndPromoteIntent_UnknownBackend(t *testing.T) {
 	defer sp.End()
 
 	err := coord.RecordObjectAndPromoteIntent(context.Background(), sp, &core.RecordObjectRequest{
-		Key: "k", Backend: "no-such-backend", Size: 1024,
+		Key: "k", Size: 1024, Copies: []core.ObjectCopy{{Backend: "no-such-backend"}},
 	})
 	if err == nil {
 		t.Fatal("expected error for unregistered backend")

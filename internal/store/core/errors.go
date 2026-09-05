@@ -57,6 +57,7 @@ var (
 	ErrCopyHoldsOnlyDEK       = errors.New("copy holds the only usable encryption key for this object")
 	ErrEncryptionFlagMismatch = errors.New("stored bytes disagree with the object's encryption flag")
 	ErrCleanupItemNotFound    = errors.New("cleanup queue row not found")
+	ErrNoCopiesToRecord       = errors.New("record object request names no copies")
 
 	ErrObjectNotFound = &S3Error{
 		StatusCode: http.StatusNotFound,

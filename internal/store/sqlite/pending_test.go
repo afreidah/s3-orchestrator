@@ -306,7 +306,7 @@ func TestPromotePending_Superseded(t *testing.T) {
 	// Now record a successful object_locations row for the same key  -
 	// simulates a retry that committed normally after the original PUT's
 	// metadata commit failed.
-	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/k1", Backend: "backend-a", Size: 200}); err != nil {
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/k1", Size: 200, Copies: []core.ObjectCopy{{Backend: "backend-a"}}}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
@@ -357,7 +357,7 @@ func TestRecordObjectAndClearPending_DeletesIntent(t *testing.T) {
 	}
 
 	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
-		Key: "bucket/k1", Backend: "backend-a", Size: 100, IntentID: "intent-1",
+		Key: "bucket/k1", Size: 100, Copies: []core.ObjectCopy{{Backend: "backend-a", IntentID: "intent-1"}},
 	})
 	if err != nil {
 		t.Fatalf("RecordObjectAndClearPending: %v", err)
@@ -383,7 +383,7 @@ func TestRecordObjectAndClearPending_EmptyIntentBehavesLikeRecordObject(t *testi
 	ctx := context.Background()
 
 	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
-		Key: "bucket/k1", Backend: "backend-a", Size: 100,
+		Key: "bucket/k1", Size: 100, Copies: []core.ObjectCopy{{Backend: "backend-a"}},
 	})
 	if err != nil {
 		t.Fatalf("RecordObjectAndClearPending: %v", err)

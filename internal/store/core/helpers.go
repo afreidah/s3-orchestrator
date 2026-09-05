@@ -12,6 +12,7 @@ package core
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
@@ -134,23 +135,23 @@ func objectFromStoredForm(key, backend string, size int64, form *StoredForm, id 
 // COPY-DISPLACEMENT HELPER
 // -------------------------------------------------------------------------
 
-// displacedFromExisting filters an existing-copies slice down to the
-// copies that need physical orphan cleanup after an overwrite to
-// newBackend. The new PUT overwrites in place on newBackend, so a copy
-// on that backend is replaced atomically; copies on every other backend
-// become orphans.
-func displacedFromExisting(existing []ExistingCopy, newBackend string) []DeletedCopy {
+// displacedFromExisting filters an existing-copies slice down to the copies
+// that need physical orphan cleanup after an overwrite onto newBackends. The
+// new PUT overwrites in place on each backend it lands on, so a copy there is
+// replaced atomically; copies on every other backend become orphans.
+func displacedFromExisting(existing []ExistingCopy, newBackends []string) []DeletedCopy {
 	if len(existing) == 0 {
 		return nil
 	}
 	var displaced []DeletedCopy
 	for _, ec := range existing {
-		if ec.BackendName != newBackend {
-			displaced = append(displaced, DeletedCopy{
-				BackendName: ec.BackendName,
-				SizeBytes:   ec.SizeBytes,
-			})
+		if slices.Contains(newBackends, ec.BackendName) {
+			continue
 		}
+		displaced = append(displaced, DeletedCopy{
+			BackendName: ec.BackendName,
+			SizeBytes:   ec.SizeBytes,
+		})
 	}
 	return displaced
 }
