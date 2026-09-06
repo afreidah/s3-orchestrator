@@ -44,23 +44,17 @@ type Encryptor struct {
 // EncryptResult holds the output of an encryption operation, including the
 // ciphertext stream and metadata to store in the database.
 // BaseNonce is carried out of the header so a later range read can decrypt
-// without fetching the header from the backend first. rawDEK is unexported and
-// reachable only through the RawDEK accessor, so it cannot surface in struct
-// printers, marshalers, or a log line that walks exported fields.
+// without fetching the header from the backend first. The plaintext DEK is not
+// among the fields: a caller that needs one across several calls asks for it
+// through GenerateAndWrapDEK and holds it itself, which keeps the key off a
+// struct that flows through the write path.
 type EncryptResult struct {
 	Body           io.Reader // ciphertext stream: header plus encrypted chunks
 	CiphertextSize int64
 	WrappedDEK     []byte // the encrypted DEK to store on the row
 	KeyID          string // which master key wrapped it
 	BaseNonce      []byte // the 12-byte nonce embedded in the header
-
-	rawDEK []byte
 }
-
-// RawDEK returns the plaintext DEK so the caller can reuse it on retry via
-// EncryptWithDEK, avoiding an extra KeyProvider round-trip. Callers must
-// not persist or log the returned bytes.
-func (r *EncryptResult) RawDEK() []byte { return r.rawDEK }
 
 // -------------------------------------------------------------------------
 // CONSTRUCTOR
@@ -160,7 +154,6 @@ func (e *Encryptor) assembleEncryptResult(body io.Reader, plaintextSize int64, d
 		WrappedDEK:     wrappedDEK,
 		KeyID:          keyID,
 		BaseNonce:      encReader.baseNonce,
-		rawDEK:         dek,
 	}, nil
 }
 
