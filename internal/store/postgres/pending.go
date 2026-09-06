@@ -122,6 +122,7 @@ func pendingInsertParams(p *core.PendingObject) db.InsertPendingObjectIfFitsPara
 		CompressionLevel:         strPtr(p.CompressionLevel),
 		CompressionFormatVersion: int16Ptr(p.CompressionFormatVersion),
 		LogicalSize:              int64Ptr(p.LogicalSize),
+		Role:                     string(p.RoleOrDefault()),
 	}
 }
 
@@ -148,5 +149,6 @@ func pendingFromRow(row *db.PendingObject) core.PendingObject {
 		CompressionLevel:         derefStr(row.CompressionLevel),
 		CompressionFormatVersion: int(derefInt16(row.CompressionFormatVersion)),
 		LogicalSize:              derefInt64(row.LogicalSize),
+		Role:                     core.PendingRole(row.Role),
 	}
 }

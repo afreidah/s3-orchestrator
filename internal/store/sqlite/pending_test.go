@@ -281,12 +281,11 @@ func TestPromotePending_AlreadyResolved(t *testing.T) {
 	}
 }
 
-// TestPromotePending_Superseded verifies that when an object_locations row
-// for the key has a created_at later than the intent, the intent is
-// dropped as stale rather than promoted. This is the timestamp-aware
-// resolution that prevents head-of-line blocking and avoids deleting a
-// retry's correct metadata.
-func TestPromotePending_Superseded(t *testing.T) {
+// TestPromotePending_WriteAlreadyClearedTheIntent verifies that a write which
+// supersedes an intent removes it as part of its own transaction, so the reaper
+// arrives to find nothing left to resolve rather than having to work out that
+// the intent is stale.
+func TestPromotePending_WriteAlreadyClearedTheIntent(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -314,11 +313,11 @@ func TestPromotePending_Superseded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PromotePending: %v", err)
 	}
-	if result != core.PendingPromoteSuperseded {
-		t.Errorf("result = %v, want Superseded", result)
+	if result != core.PendingPromoteAlreadyResolved {
+		t.Errorf("result = %v, want AlreadyResolved", result)
 	}
 	if len(displaced) != 0 {
-		t.Errorf("displaced = %+v, want none for superseded", displaced)
+		t.Errorf("displaced = %+v, want none for an intent already cleared", displaced)
 	}
 	if got := queryPendingCount(t, s); got != 0 {
 		t.Errorf("pending row not removed: count = %d", got)

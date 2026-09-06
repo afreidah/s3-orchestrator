@@ -148,4 +148,5 @@ type PendingObject struct {
 	Etag                     *string
 	ContentType              *string
 	UserMetadata             []byte
+	Role                     string
 }

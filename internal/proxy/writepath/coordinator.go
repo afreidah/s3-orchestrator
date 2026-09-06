@@ -195,6 +195,10 @@ func soleBackend(req *core.RecordObjectRequest) (string, error) {
 // recovery path can only account for one.
 var errSingleCopyOnly = errors.New("write path: helper records a single copy")
 
+// reasonOverwriteDisplaced labels the cleanup of a copy an overwrite replaced,
+// which is what the store reports when it does not say otherwise.
+const reasonOverwriteDisplaced = "overwrite_displaced"
+
 // RecoverFromRecordFailure runs the post-record-failure cleanup
 // sequence shared by RecordObjectOrCleanup and the multipart
 // UploadPart record path. Accounts for both API calls the failure
@@ -310,7 +314,14 @@ func (w *Coordinator) cleanupDisplacedCopies(ctx context.Context, key, newBacken
 				"backend", dc.BackendName, "key", key)
 			continue
 		}
-		w.DeleteOrEnqueue(ctx, dcBackend, dc.BackendName, key, "overwrite_displaced", dc.SizeBytes)
+		// The store labels bytes it cleared for a reason of its own - an intent
+		// this write superseded, rather than a copy it replaced - so an operator
+		// reading the cleanup queue can tell which is which.
+		reason := dc.Reason
+		if reason == "" {
+			reason = reasonOverwriteDisplaced
+		}
+		w.DeleteOrEnqueue(ctx, dcBackend, dc.BackendName, key, reason, dc.SizeBytes)
 	}
 
 	if len(displaced) > 0 {

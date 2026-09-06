@@ -35,6 +35,10 @@ func (*noopTxAdapter) ClaimPending(context.Context, string) (bool, error) { retu
 
 func (*noopTxAdapter) DeletePending(context.Context, string) error { return nil }
 
+func (*noopTxAdapter) ClearPendingForKey(context.Context, string, []string) ([]SupersededIntent, error) {
+	return nil, nil
+}
+
 func (*noopTxAdapter) GetExistingCopiesForUpdate(context.Context, string) ([]ExistingCopy, error) {
 	return nil, nil
 }

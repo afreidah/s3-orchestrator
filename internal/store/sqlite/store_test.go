@@ -87,38 +87,9 @@ func rewindToSchemaVersion(t *testing.T, s *Store, version int) {
 	t.Helper()
 	ctx := context.Background()
 
-	if version < 13 {
-		unstripeQuotaCounter(t, s)
-	}
-
-	if version < 11 {
-		for _, table := range []string{"object_locations", "pending_objects"} {
-			dropColumns(t, s, table, "etag", "content_type", "user_metadata")
-		}
-		dropColumns(t, s, "multipart_parts", "plaintext_etag")
-	}
-
-	if version < 10 {
-		dropColumns(t, s, "multipart_uploads", "tagging")
-	}
-
-	// A table rather than a column, so the rewind drops the whole thing: the
-	// migration under test creates it, and CREATE TABLE IF NOT EXISTS would
-	// otherwise be a no-op against the baseline schema.
-	if version < 9 {
-		if _, err := s.db.ExecContext(ctx, `DROP TABLE IF EXISTS object_tags`); err != nil {
-			t.Fatalf("rewind: drop object_tags: %v", err)
-		}
-	}
-
-	if version < 8 {
-		dropColumns(t, s, "object_locations", "compression_probe_size", "compression_probe_level")
-	}
-
-	if version < 7 {
-		for _, table := range []string{"object_locations", "pending_objects"} {
-			dropColumns(t, s, table, "compression_algorithm", "compression_level",
-				"compression_format_version", "logical_size")
+	for _, step := range schemaRewindSteps(t, s) {
+		if version < step.version {
+			step.undo()
 		}
 	}
 
@@ -126,6 +97,54 @@ func rewindToSchemaVersion(t *testing.T, s *Store, version int) {
 		`DELETE FROM schema_version; INSERT INTO schema_version (version) VALUES (?)`,
 		version); err != nil {
 		t.Fatalf("rewind schema version to %d: %v", version, err)
+	}
+}
+
+// schemaRewindStep undoes what one migration added, so a store can be put back
+// the way an installation predating that version would look.
+type schemaRewindStep struct {
+	version int
+	undo    func()
+}
+
+// schemaRewindSteps lists every migration that left something behind, newest
+// first. Rewinding to a version runs the steps above it.
+func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
+	t.Helper()
+	ctx := context.Background()
+	exec := func(what, query string) {
+		if _, err := s.db.ExecContext(ctx, query); err != nil {
+			t.Fatalf("rewind: %s: %v", what, err)
+		}
+	}
+	return []schemaRewindStep{
+		{14, func() {
+			exec("drop pending key index", `DROP INDEX IF EXISTS idx_pending_objects_key`)
+			dropColumns(t, s, "pending_objects", "role")
+		}},
+		{13, func() { unstripeQuotaCounter(t, s) }},
+		{11, func() {
+			for _, table := range []string{"object_locations", "pending_objects"} {
+				dropColumns(t, s, table, "etag", "content_type", "user_metadata")
+			}
+			dropColumns(t, s, "multipart_parts", "plaintext_etag")
+		}},
+		{10, func() { dropColumns(t, s, "multipart_uploads", "tagging") }},
+		{9, func() {
+			// A table rather than a column, so the rewind drops the whole
+			// thing: the migration under test creates it, and CREATE TABLE IF
+			// NOT EXISTS would otherwise be a no-op against the baseline schema.
+			exec("drop object_tags", `DROP TABLE IF EXISTS object_tags`)
+		}},
+		{8, func() {
+			dropColumns(t, s, "object_locations", "compression_probe_size", "compression_probe_level")
+		}},
+		{7, func() {
+			for _, table := range []string{"object_locations", "pending_objects"} {
+				dropColumns(t, s, table, "compression_algorithm", "compression_level",
+					"compression_format_version", "logical_size")
+			}
+		}},
 	}
 }
 

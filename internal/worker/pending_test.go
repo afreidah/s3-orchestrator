@@ -177,6 +177,54 @@ func TestProcessPendingQueue_HeadOKPromotes(t *testing.T) {
 	}
 }
 
+// TestProcessPendingQueue_CompanionKeptLeavesBytes verifies that an extra-copy
+// intent whose backend already holds a recorded copy is resolved without
+// touching the backend: those bytes are that copy.
+func TestProcessPendingQueue_CompanionKeptLeavesBytes(t *testing.T) {
+	t.Parallel()
+	r, ops, pl, be, ms := setupReaper(t)
+
+	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
+	ms.promoteResult = core.PendingPromoteCompanionKept
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
+	ops.EXPECT().ReleaseAdmission()
+	ops.EXPECT().GetBackend("b1").Return(be, nil)
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	pendSum := r.ProcessPendingQueue(context.Background())
+	if pendSum.Succeeded != 1 || pendSum.Failed != 0 {
+		t.Errorf("resolved=%d failed=%d, want 1/0", pendSum.Succeeded, pendSum.Failed)
+	}
+}
+
+// TestProcessPendingQueue_CompanionDiscardedRemovesBytes verifies that an
+// extra-copy intent with nothing recorded on its backend has its bytes deleted
+// under the reason the store labelled them with, leaving the copy for the
+// replication worker to rebuild.
+func TestProcessPendingQueue_CompanionDiscardedRemovesBytes(t *testing.T) {
+	t.Parallel()
+	r, ops, pl, be, ms := setupReaper(t)
+
+	ms.stalePending = []core.PendingObject{pendingFixture("i1", "bucket/k", "b1")}
+	ms.promoteResult = core.PendingPromoteCompanionDiscarded
+	ms.promoteDisplaced = []core.DeletedCopy{
+		{BackendName: "b1", SizeBytes: 100, Reason: core.CleanupReasonCompanionDiscarded},
+	}
+	ops.EXPECT().AcquireAdmission(gomock.Any()).Return(true)
+	ops.EXPECT().ReleaseAdmission()
+	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, "b1", "bucket/k", core.CleanupReasonCompanionDiscarded, int64(100))
+
+	pendSum := r.ProcessPendingQueue(context.Background())
+	if pendSum.Succeeded != 1 || pendSum.Failed != 0 {
+		t.Errorf("resolved=%d failed=%d, want 1/0", pendSum.Succeeded, pendSum.Failed)
+	}
+}
+
 // TestProcessPendingQueue_PromoteSupersededCounts verifies the new
 // timestamp-aware resolution: PendingPromoteSuperseded counts as resolved
 // (the store deleted the row in-txn) and skips the displaced-cleanup step.

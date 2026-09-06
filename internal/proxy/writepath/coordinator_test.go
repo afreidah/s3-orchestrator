@@ -408,6 +408,60 @@ func TestRecoverFromRecordFailure_GenericError_Enqueues(t *testing.T) {
 	coord.RecoverFromRecordFailure(context.Background(), be, "b1", "real.txt", "record_failure", 256)
 }
 
+// TestRecordObjectAndPromoteIntent_CleansUpWhatTheCommitDisplaced verifies the
+// two kinds of bytes a commit hands back are deleted under their own cleanup
+// reason: a copy the write replaced, and an intent it superseded.
+func TestRecordObjectAndPromoteIntent_CleansUpWhatTheCommitDisplaced(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	old := backendtest.NewMockObjectBackend(ctrl)
+	stale := backendtest.NewMockObjectBackend(ctrl)
+	old.EXPECT().DeleteObject(gomock.Any(), "k").Return(nil)
+	stale.EXPECT().DeleteObject(gomock.Any(), "k").Return(nil)
+
+	store := NewMockCoordinatorStores(ctrl)
+	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).Return([]core.DeletedCopy{
+		{BackendName: "old", SizeBytes: 50},
+		{BackendName: "stale", SizeBytes: 70, Reason: core.CleanupReasonSupersededIntent},
+	}, nil, nil)
+
+	coord := newCoordinatorWith2Backends("old", old, "stale", stale, store)
+
+	tracer := noop.NewTracerProvider().Tracer("test")
+	_, sp := tracer.Start(context.Background(), "test")
+	defer sp.End()
+
+	err := coord.RecordObjectAndPromoteIntent(context.Background(), sp, &core.RecordObjectRequest{
+		Key: "k", Size: 100, Copies: []core.ObjectCopy{{Backend: "new", IntentID: "i-1"}},
+	})
+	if err != nil {
+		t.Fatalf("RecordObjectAndPromoteIntent: %v", err)
+	}
+}
+
+// TestRecordObjectAndPromoteIntent_RejectsMultipleCopies verifies the helper
+// refuses a request placing more than one copy. Its recovery path deletes from
+// a single backend, so it cannot account for the rest.
+func TestRecordObjectAndPromoteIntent_RejectsMultipleCopies(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	store := NewMockCoordinatorStores(ctrl)
+
+	coord := newCoordinatorWithStore(store)
+
+	tracer := noop.NewTracerProvider().Tracer("test")
+	_, sp := tracer.Start(context.Background(), "test")
+	defer sp.End()
+
+	err := coord.RecordObjectAndPromoteIntent(context.Background(), sp, &core.RecordObjectRequest{
+		Key: "k", Size: 100,
+		Copies: []core.ObjectCopy{{Backend: "b1", IntentID: "i-1"}, {Backend: "b2", IntentID: "i-2"}},
+	})
+	if err == nil {
+		t.Fatal("expected a multi-copy request to be refused")
+	}
+}
+
 // TestRecordObjectAndPromoteIntent_UnknownBackend covers the legacy
 // fallback path's "backend not registered" branch: with intentID empty
 // and an unknown backend name, the method returns an error before any

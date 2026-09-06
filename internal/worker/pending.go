@@ -246,6 +246,14 @@ func (r *PendingReaper) handlePromotion(ctx context.Context, p *core.PendingObje
 	case core.PendingPromoteSuperseded:
 		r.onPromoteSuperseded(ctx, p)
 		return ItemSucceeded
+	case core.PendingPromoteCompanionKept:
+		r.onCompanionResolved(ctx, p, "companion_kept", nil)
+		return ItemSucceeded
+	case core.PendingPromoteCompanionDiscarded:
+		// Nothing recorded these bytes and nothing can vouch for them, so they
+		// go and the replication worker rebuilds the copy from one we trust.
+		r.onCompanionResolved(ctx, p, "companion_discarded", displaced)
+		return ItemSucceeded
 	case core.PendingPromoteAmbiguous:
 		r.onPromoteAmbiguous(ctx, p)
 		return ItemFailed
@@ -267,14 +275,38 @@ func (r *PendingReaper) onPromoteCommitted(ctx context.Context, p *core.PendingO
 		slog.String("intent_id", p.IntentID),
 		slog.Int("displaced_copies", len(displaced)),
 	)
+	r.removeDisplaced(ctx, p.ObjectKey, displaced)
+}
+
+// onCompanionResolved records an extra-copy intent the reaper settled without
+// recording a copy, and removes whatever bytes the store said to remove.
+func (r *PendingReaper) onCompanionResolved(ctx context.Context, p *core.PendingObject, outcome string, displaced []core.DeletedCopy) {
+	telemetry.PendingIntentsResolvedTotal.WithLabelValues(outcome).Inc()
+	audit.Log(ctx, "pending_reaper."+outcome,
+		slog.String("key", p.ObjectKey),
+		slog.String("backend", p.BackendName),
+		slog.String("intent_id", p.IntentID),
+	)
+	r.removeDisplaced(ctx, p.ObjectKey, displaced)
+}
+
+// removeDisplaced deletes bytes the resolution left without a row, falling back
+// to the cleanup queue when the backend refuses. A copy whose backend is no
+// longer registered is left alone: the fleet cannot orphan bytes on a backend it
+// does not know about.
+func (r *PendingReaper) removeDisplaced(ctx context.Context, key string, displaced []core.DeletedCopy) {
 	for _, dc := range displaced {
 		dcBackend, err := r.deps.GetBackend(dc.BackendName)
 		if err != nil {
 			r.log.WarnContext(ctx, "displaced copy backend not registered",
-				"backend", dc.BackendName, "key", p.ObjectKey)
+				"backend", dc.BackendName, "key", key)
 			continue
 		}
-		r.placement.DeleteOrEnqueue(ctx, dcBackend, dc.BackendName, p.ObjectKey, "overwrite_displaced", dc.SizeBytes)
+		reason := dc.Reason
+		if reason == "" {
+			reason = "overwrite_displaced"
+		}
+		r.placement.DeleteOrEnqueue(ctx, dcBackend, dc.BackendName, key, reason, dc.SizeBytes)
 	}
 }
 
