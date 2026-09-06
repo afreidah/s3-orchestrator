@@ -130,6 +130,7 @@ type multiCopyTxStub struct {
 
 	inserted []ObjectLocation
 	cleared  []string
+	kept     []string
 }
 
 // InsertObjectLocation captures each row the commit inserts.
@@ -140,8 +141,9 @@ func (s *multiCopyTxStub) InsertObjectLocation(_ context.Context, loc *ObjectLoc
 
 // ClearPendingForKey captures the intents the commit resolves. A write clears
 // the key's intents as a set, its own among them, rather than one at a time.
-func (s *multiCopyTxStub) ClearPendingForKey(_ context.Context, objectKey string, _ []string) ([]SupersededIntent, error) {
+func (s *multiCopyTxStub) ClearPendingForKey(_ context.Context, objectKey string, keep []string) ([]SupersededIntent, error) {
 	s.cleared = append(s.cleared, objectKey)
+	s.kept = append(s.kept, keep...)
 	return nil, nil
 }
 
@@ -203,6 +205,35 @@ func TestRecordObject_DisplacesOnlyBackendsItLeaves(t *testing.T) {
 	}
 	if len(displaced) != 1 || displaced[0].BackendName != "b3" {
 		t.Errorf("expected only b3 displaced, got %+v", displaced)
+	}
+}
+
+// TestRecordObject_SparesTheBackendsItIsStillPlacingOn verifies a commit does
+// not displace a prior copy from a backend the same write is still uploading
+// to. Those bytes sit at the path the new copy is landing on, so deleting them
+// as displaced deletes the copy this write is placing and leaves the row its
+// commit writes describing an object that is gone - which only a read of that
+// one copy would ever notice.
+func TestRecordObject_SparesTheBackendsItIsStillPlacingOn(t *testing.T) {
+	t.Parallel()
+	stub := newMultiCopyStub([]ExistingCopy{
+		{BackendName: "b1", SizeBytes: 10},
+		{BackendName: "b2", SizeBytes: 20},
+		{BackendName: "b3", SizeBytes: 30},
+	})
+	displaced, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
+		Key: "k", Size: 100,
+		Copies:  []ObjectCopy{{Backend: "b1", IntentID: "i-1"}},
+		Placing: []ObjectCopy{{Backend: "b2", IntentID: "i-2"}},
+	})
+	if err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if len(displaced) != 1 || displaced[0].BackendName != "b3" {
+		t.Fatalf("expected only b3 displaced, got %+v", displaced)
+	}
+	if !slices.Contains(stub.kept, "i-2") {
+		t.Errorf("the intent of the copy still uploading was not kept: %v", stub.kept)
 	}
 }
 

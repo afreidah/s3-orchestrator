@@ -422,3 +422,200 @@ func TestIntentSuperseded_ZeroTimestampSkipped(t *testing.T) {
 		t.Error("zero timestamp must be ignored, not treated as newer")
 	}
 }
+
+// -------------------------------------------------------------------------
+// COMPANION COMMIT
+// -------------------------------------------------------------------------
+
+// companionTxStub drives a companion commit: it decides whether the intent is
+// still there, what the backend already holds for the key, and records what the
+// commit wrote or removed.
+type companionTxStub struct {
+	noopTxAdapter
+
+	claimed    bool
+	claimErr   error
+	lockedCopy *ObjectLocation
+
+	keyLockErr error
+	insertErr  error
+	deleteErr  error
+	pullErr    error
+
+	inserted   []ObjectLocation
+	deleted    []string
+	rowsPulled []string
+	stripes    []int64
+}
+
+func (s *companionTxStub) AcquireKeyLock(context.Context, string) error { return s.keyLockErr }
+
+func (s *companionTxStub) ClaimPending(context.Context, string) (bool, error) {
+	return s.claimed, s.claimErr
+}
+
+func (s *companionTxStub) InsertObjectLocation(_ context.Context, loc *ObjectLocation) error {
+	if s.insertErr != nil {
+		return s.insertErr
+	}
+	s.inserted = append(s.inserted, *loc)
+	return nil
+}
+
+func (s *companionTxStub) DeletePending(_ context.Context, intentID string) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	s.deleted = append(s.deleted, intentID)
+	return nil
+}
+
+// LockObjectOnBackend reports whatever copy the test seeded on the backend.
+func (s *companionTxStub) LockObjectOnBackend(context.Context, string, string) (*ObjectLocation, bool, error) {
+	return s.lockedCopy, s.lockedCopy != nil, nil
+}
+
+// DeleteObjectFromBackend records the row the discard removed.
+func (s *companionTxStub) DeleteObjectFromBackend(_ context.Context, _, backend string) error {
+	if s.pullErr != nil {
+		return s.pullErr
+	}
+	s.rowsPulled = append(s.rowsPulled, backend)
+	return nil
+}
+
+func (s *companionTxStub) AdjustQuotaStripe(_ context.Context, _ string, _ int16, delta int64) error {
+	s.stripes = append(s.stripes, delta)
+	return nil
+}
+
+// TestCommitCompanionCopy_AddsTheCopy verifies a copy whose intent survived is
+// recorded as an addition: the row goes in, the backend is charged, and the
+// intent it was admitted on is removed in the same transaction.
+func TestCommitCompanionCopy_AddsTheCopy(t *testing.T) {
+	t.Parallel()
+	stub := &companionTxStub{claimed: true}
+	p := &PendingObject{IntentID: "i-2", ObjectKey: "k", BackendName: "b2", SizeBytes: 100, Role: PendingRoleCompanion}
+
+	result, displaced, deltas, err := CommitCompanionCopy(context.Background(), &stubRunner{tx: stub}, p)
+	if err != nil {
+		t.Fatalf("CommitCompanionCopy: %v", err)
+	}
+	if result != CompanionCopyCommitted {
+		t.Errorf("result = %v, want committed", result)
+	}
+	if len(stub.inserted) != 1 || stub.inserted[0].BackendName != "b2" {
+		t.Fatalf("expected one row on b2, got %+v", stub.inserted)
+	}
+	if deltas["b2"] != 100 {
+		t.Errorf("delta for b2 = %d, want 100", deltas["b2"])
+	}
+	if !slices.Equal(stub.deleted, []string{"i-2"}) {
+		t.Errorf("intents removed = %v, want the committed one", stub.deleted)
+	}
+	if len(displaced) != 0 {
+		t.Errorf("a committed copy displaced %+v, want nothing", displaced)
+	}
+}
+
+// TestCommitCompanionCopy_DiscardsWhenTheIntentIsGone verifies a copy whose
+// intent a newer write cleared is not recorded. Its bytes went down at a path
+// that write may also have written, in an order nothing here can establish, so
+// the copy is handed back for removal instead.
+func TestCommitCompanionCopy_DiscardsWhenTheIntentIsGone(t *testing.T) {
+	t.Parallel()
+	stub := &companionTxStub{claimed: false}
+	p := &PendingObject{IntentID: "i-2", ObjectKey: "k", BackendName: "b2", SizeBytes: 100, Role: PendingRoleCompanion}
+
+	result, displaced, _, err := CommitCompanionCopy(context.Background(), &stubRunner{tx: stub}, p)
+	if err != nil {
+		t.Fatalf("CommitCompanionCopy: %v", err)
+	}
+	if result != CompanionCopyUntrusted {
+		t.Errorf("result = %v, want untrusted", result)
+	}
+	if len(stub.inserted) != 0 {
+		t.Errorf("recorded %+v for a copy it could not vouch for", stub.inserted)
+	}
+	if len(displaced) != 1 || displaced[0].BackendName != "b2" ||
+		displaced[0].Reason != CleanupReasonCompanionUntrusted {
+		t.Fatalf("displaced = %+v, want b2 labelled companion_untrusted", displaced)
+	}
+	if displaced[0].SizeBytes != 100 {
+		t.Errorf("displaced size = %d, want the intent's 100 when no row existed", displaced[0].SizeBytes)
+	}
+}
+
+// TestCommitCompanionCopy_DropsTheRowItCannotVouchFor verifies the discard also
+// removes a recorded copy on that backend. The row describes the same path, so
+// it is no safer than the bytes: replication rebuilds the copy from one the
+// client was told about.
+func TestCommitCompanionCopy_DropsTheRowItCannotVouchFor(t *testing.T) {
+	t.Parallel()
+	stub := &companionTxStub{
+		claimed:    false,
+		lockedCopy: &ObjectLocation{ObjectKey: "k", BackendName: "b2", SizeBytes: 250},
+	}
+	p := &PendingObject{IntentID: "i-2", ObjectKey: "k", BackendName: "b2", SizeBytes: 100, Role: PendingRoleCompanion}
+
+	_, displaced, deltas, err := CommitCompanionCopy(context.Background(), &stubRunner{tx: stub}, p)
+	if err != nil {
+		t.Fatalf("CommitCompanionCopy: %v", err)
+	}
+	if !slices.Equal(stub.rowsPulled, []string{"b2"}) {
+		t.Errorf("rows removed = %v, want b2's", stub.rowsPulled)
+	}
+	if deltas["b2"] != -250 {
+		t.Errorf("delta for b2 = %d, want the row's 250 credited back", deltas["b2"])
+	}
+	if len(displaced) != 1 || displaced[0].SizeBytes != 250 {
+		t.Fatalf("displaced = %+v, want the recorded copy's size", displaced)
+	}
+}
+
+// TestCommitCompanionCopy_ClaimErrorSurfaces verifies a database failure is
+// reported rather than read as a missing intent, since reading it that way
+// would delete a copy over an outage.
+func TestCommitCompanionCopy_ClaimErrorSurfaces(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("db down")
+	stub := &companionTxStub{claimErr: sentinel}
+	p := &PendingObject{IntentID: "i-2", ObjectKey: "k", BackendName: "b2", SizeBytes: 100, Role: PendingRoleCompanion}
+
+	_, displaced, _, err := CommitCompanionCopy(context.Background(), &stubRunner{tx: stub}, p)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want the claim failure", err)
+	}
+	if len(displaced) != 0 {
+		t.Errorf("displaced %+v on a database error, want nothing deleted", displaced)
+	}
+}
+
+// TestCommitCompanionCopy_RollsBackOnAFailedStep verifies the commit is all or
+// nothing: whichever statement fails, the transaction carries the error out
+// rather than leaving a row without its intent cleared, or the reverse.
+func TestCommitCompanionCopy_RollsBackOnAFailedStep(t *testing.T) {
+	t.Parallel()
+	p := &PendingObject{IntentID: "i-2", ObjectKey: "k", BackendName: "b2", SizeBytes: 100, Role: PendingRoleCompanion}
+
+	for name, stub := range map[string]*companionTxStub{
+		"key lock":       {keyLockErr: errors.New("lock timeout")},
+		"insert":         {claimed: true, insertErr: errors.New("insert failed")},
+		"intent removal": {claimed: true, deleteErr: errors.New("delete failed")},
+		"row removal": {
+			lockedCopy: &ObjectLocation{ObjectKey: "k", BackendName: "b2", SizeBytes: 250},
+			pullErr:    errors.New("row delete failed"),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, displaced, _, err := CommitCompanionCopy(context.Background(), &stubRunner{tx: stub}, p)
+			if err == nil {
+				t.Fatalf("expected the %s failure to surface", name)
+			}
+			if len(displaced) != 0 {
+				t.Errorf("displaced %+v on a failed commit, want nothing deleted", displaced)
+			}
+		})
+	}
+}

@@ -199,6 +199,8 @@ var (
 	ErrInvalidRoutingStrategy     = errors.New("routing_strategy must be 'pack' or 'spread'")
 	ErrQuotaMixNotAllowed         = errors.New("cannot mix unlimited (quota_bytes: 0) and quota-limited backends")
 	ErrUnlimitedNeedsReplication  = errors.New("multiple backends with unlimited quota require replication.factor >= 2")
+	ErrParallelCopiesMin          = errors.New("write_path.parallel_copies.count must be at least 1")
+	ErrParallelCopiesOverFactor   = errors.New("write_path.parallel_copies.count exceeds replication.factor")
 )
 
 // Usage flush / adaptive errors.

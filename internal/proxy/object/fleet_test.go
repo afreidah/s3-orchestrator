@@ -73,6 +73,7 @@ type fleetOpts struct {
 	ObjectCache    objcache.ObjectCache // attaches a cache so read-through and invalidation run
 	CacheTTL       time.Duration        // overrides the location-cache window, for the expiry tests
 	Draining       []string             // backends the runtime should report as draining
+	CopiesPerWrite int                  // above 1, a PUT places its copies itself instead of leaving them to the replicator
 
 	QuotaBaselines map[string]core.BackendQuotaUsage // seeds the byte counter; unnamed backends are unlimited
 
@@ -156,6 +157,7 @@ func newFleet(
 		LocationCache:                NewLocationCache(cmp.Or(opts.CacheTTL, fleetCacheTTL)),
 		ObjectCache:                  opts.ObjectCache,
 		ParallelBroadcast:            opts.ParallelBroadcast,
+		CopiesPerWrite:               opts.CopiesPerWrite,
 		DegradedBroadcastParallelism: opts.DegradedBroadcastParallelism,
 		DisableDegradedReads:         opts.DisableDegradedReads,
 		IntegrityCfg:                 integrity,

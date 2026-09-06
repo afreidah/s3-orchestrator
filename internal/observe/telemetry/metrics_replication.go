@@ -32,6 +32,23 @@ var (
 		},
 	)
 
+	// ReplicationWriteCopiesTotal counts the further copies a write placed
+	// itself rather than leaving to the replicator, by what became of each.
+	// Outcome is one of: committed, untrusted (a newer write took the key while
+	// the upload ran), failed (the backend refused it).
+	//
+	// A rising untrusted count is overwrites racing their own extra copies, and
+	// each one costs a rebuild; a rising failed count is the fan-out asking more
+	// of the backends than they will take, and both mean the replicator is
+	// picking up work this was meant to save.
+	ReplicationWriteCopiesTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3o_replication_write_copies_total",
+			Help: "Further copies placed during the write, by outcome",
+		},
+		[]string{"outcome"},
+	)
+
 	// ReplicationErrorsTotal counts replication errors.
 	ReplicationErrorsTotal = promauto.NewCounter(
 		prometheus.CounterOpts{

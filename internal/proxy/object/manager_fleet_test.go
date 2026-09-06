@@ -51,6 +51,7 @@ type objectsCalls struct {
 	mu             sync.Mutex
 	recordObject   []objRecordCall
 	insertPending  []core.PendingObject
+	companionCopy  []core.PendingObject
 	enqueueCleanup []core.CleanupItem
 	full           map[string]bool
 }
@@ -59,7 +60,17 @@ type objRecordCall struct {
 	Key, Backend string
 	Size         int64
 	Form         *core.StoredForm
-	Tags         []core.Tag // the set the write carried, replacing whatever the key held
+	Tags         []core.Tag        // the set the write carried, replacing whatever the key held
+	Placing      []core.ObjectCopy // the write's own uploads still running, which this commit leaves alone
+}
+
+// snapshot copies the slices a test asserts against. The copies a write places
+// itself commit on goroutines that outlive the response, so a test reads these
+// while they are still being appended to.
+func (c *objectsCalls) snapshot() ([]objRecordCall, []core.PendingObject, []core.CleanupItem) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.recordObject), slices.Clone(c.companionCopy), slices.Clone(c.enqueueCleanup)
 }
 
 // -------------------------------------------------------------------------
@@ -73,8 +84,21 @@ func stubObjRecord(c *objectsCalls, err error) func(context.Context, *core.Recor
 		backend := req.Copies[0].Backend
 		c.recordObject = append(c.recordObject, objRecordCall{
 			Key: req.Key, Backend: backend, Size: req.Size, Form: req.Form, Tags: req.Tags,
+			Placing: slices.Clone(req.Placing),
 		})
 		return nil, core.QuotaDeltas{backend: req.Size}, err
+	}
+}
+
+// stubObjCommitCompanion records an extra copy committing after the response
+// and reports it as recorded, which is what the store does while the intent is
+// still there.
+func stubObjCommitCompanion(c *objectsCalls) func(context.Context, *core.PendingObject) (core.CompanionCommitResult, []core.DeletedCopy, core.QuotaDeltas, error) {
+	return func(_ context.Context, p *core.PendingObject) (core.CompanionCommitResult, []core.DeletedCopy, core.QuotaDeltas, error) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.companionCopy = append(c.companionCopy, *p)
+		return core.CompanionCopyCommitted, nil, core.QuotaDeltas{p.BackendName: p.SizeBytes}, nil
 	}
 }
 
@@ -114,6 +138,8 @@ func objectsStubs(store *storetest.MockMetadataStore) *objectsCalls {
 		DoAndReturn(stubObjRecord(c, nil)).AnyTimes()
 	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjInsertPending(c, nil)).AnyTimes()
+	store.EXPECT().CommitCompanionCopy(gomock.Any(), gomock.Any()).
+		DoAndReturn(stubObjCommitCompanion(c)).AnyTimes()
 	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjEnqueue(c)).AnyTimes()
 	return c

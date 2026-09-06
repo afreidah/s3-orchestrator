@@ -72,6 +72,26 @@ type CleanupQueueConfig struct {
 type WritePathConfig struct {
 	PendingPattern PendingPatternConfig `yaml:"pending_pattern"`
 	Multipart      MultipartConfig      `yaml:"multipart"`
+	ParallelCopies ParallelCopiesConfig `yaml:"parallel_copies"`
+}
+
+// ParallelCopiesConfig places an object's copies during the write instead of
+// leaving every one after the first to the replicator, which reads the object
+// back off a backend and pays that backend's egress to make each of them. The
+// bytes are already in hand at PUT time, so an extra copy costs one more upload
+// and no read.
+//
+// Off by default, and the tradeoff is shape rather than total: it lowers the
+// work a copy costs but spends it at write time instead of spreading it over
+// replicator cycles, which can cost PUT throughput on a constrained uplink.
+//
+// Count is how many copies a write places, defaulting to replication.factor and
+// never allowed to exceed it - copies past the factor are deleted by the
+// over-replication cleaner about as fast as writes create them. A factor of 1
+// leaves this inert whatever it is set to.
+type ParallelCopiesConfig struct {
+	Enabled bool `yaml:"enabled"`
+	Count   int  `yaml:"count"`
 }
 
 // MultipartConfig gates the S3 protocol invariants enforced at multipart

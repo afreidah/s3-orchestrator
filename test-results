@@ -1,0 +1,313 @@
+afreidah ~/tools/s3-orchestrator on  GH_ISSUE_1403-parallel-copy-write ❯ make test
+go test -race -cover ./...
+        github.com/afreidah/s3-orchestrator/cmd/s3-orchestrator         coverage: 0.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/backend    (cached)        coverage: 78.9% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/backend/backendtest        (cached)        coverage: 27.3% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/breaker    (cached)        coverage: 95.4% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/cache      (cached)        coverage: 98.4% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/cli/adminclient    (cached)        coverage: 82.1% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/cli/adminctl       (cached)        coverage: 93.7% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/cli/admintarget    (cached)        coverage: 100.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/cli/initcmd        (cached)        coverage: 95.8% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/cli/output (cached)        coverage: 97.4% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/cli/serve  (cached)        coverage: 80.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/cli/synccmd        (cached)        coverage: 81.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/cli/tui    (cached)        coverage: 91.2% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/cli/validatecmd    (cached)        coverage: 100.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/compression        (cached)        coverage: 84.4% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/config     1.036s  coverage: 97.3% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/counter    (cached)        coverage: 78.8% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/debug      (cached)        coverage: 90.9% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/di (cached)        coverage: 85.1% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/encryption (cached)        coverage: 92.1% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/instanceid (cached)        coverage: 75.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/integration/chunkframing   (cached)        coverage: 100.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/internalkey        (cached)        coverage: 100.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/lifecycle  (cached)        coverage: 92.4% of statements
+        github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner               coverage: 0.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/notify     (cached)        coverage: 83.3% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/observe    (cached)        coverage: 100.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/observe/audit      (cached)        coverage: 100.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/observe/event      (cached)        coverage: 100.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/observe/logfmt     (cached)        coverage: 96.4% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/observe/telemetry  (cached)        coverage: 78.4% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/ops        (cached)        coverage: 93.1% of statements
+        github.com/afreidah/s3-orchestrator/internal/ops/opstest                coverage: 0.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/progress   (cached)        coverage: 100.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/proxy/accounting   (cached)        coverage: 100.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/proxy/dashboard    (cached)        coverage: 98.8% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/proxy/drain        (cached)        coverage: 86.7% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/proxy/etag (cached)        coverage: 89.5% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/proxy/expiry       (cached)        coverage: 98.4% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/proxy/infra        (cached)        coverage: 92.2% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/proxy/metrics      (cached)        coverage: 97.2% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/proxy/multipart    (cached)        coverage: 93.9% of statements
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=b1 size=290
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=b1 size=512
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=b1 size=32768
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj backend=b1 size=100
+2026/09/06 11:58:27 INFO audit audit=true event=storage.ListObjects prefix=p/ key_count=3 truncated=true
+2026/09/06 11:58:27 INFO audit audit=true event=storage.ListObjects prefix=p/ key_count=2 truncated=true
+2026/09/06 11:58:27 WARN drain started mid-write; aborting commit on draining backend component=object key=mykey backend=b1
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=mykey failed_backend=b1 error="aborted: drain started mid-write" remaining_backends=1
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=mykey backend=b2 size=5
+2026/09/06 11:58:27 WARN drain started mid-write; aborting commit on draining backend component=object key=mykey backend=b1
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=mykey failed_backend=b1 error="aborted: drain started mid-write" remaining_backends=1
+2026/09/06 11:58:27 WARN drain started mid-write; aborting commit on draining backend component=object key=mykey backend=b2
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=mykey failed_backend=b2 error="aborted: drain started mid-write" remaining_backends=0
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=key failed_backend=b1 error="b1 down" remaining_backends=1
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=b2 size=4
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=b1 size=4
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=tagged backend=b1 size=4
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=plain backend=b1 size=4
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=k backend=cache size=4
+2026/09/06 11:58:27 WARN failed to count object tags, omitting tagging count key=k error="store unavailable"
+2026/09/06 11:58:27 INFO audit audit=true event=storage.HeadObject key=key backend=fast size=4
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=fast size=59
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=b1 size=40
+2026/09/06 11:58:27 INFO audit audit=true event=storage.HeadObject key=key backend=b1 size=5
+2026/09/06 11:58:27 WARN failed to delete object, enqueuing cleanup component=writepath backend=b2 key=overwritten-key reason=overwrite_displaced error="backend down"
+2026/09/06 11:58:27 INFO audit audit=true event=storage.overwrite_displaced key=overwritten-key new_backend=b1 displaced_copies=1
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=overwritten-key backend=b1 size=3
+2026/09/06 11:58:27 INFO audit audit=true event=storage.CopyObject source_key=src dest_key=dst src_backend=b1 dest_backend=b1 size=7
+2026/09/06 11:58:27 ERROR recordObject failed; intent left for reaper component=writepath key=mykey backend=b1 intent_id=0692f22f2c6cf41b6544dfa587c3670c error="db error"
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=small backend=b1 size=512
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=plain backend=b1 size=32768
+2026/09/06 11:58:27 WARN displaced copy backend not found component=writepath backend=gone key=key1
+2026/09/06 11:58:27 INFO audit audit=true event=storage.overwrite_displaced key=key1 new_backend=b1 displaced_copies=1
+2026/09/06 11:58:27 WARN failed to delete object, enqueuing cleanup component=writepath backend=b1 key=mykey reason=delete_failed error="be timeout"
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key1 backend=b1 size=2
+2026/09/06 11:58:27 INFO audit audit=true event=storage.DeleteObject key=mykey copies_deleted=1
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=random backend=b1 size=49152
+2026/09/06 11:58:27 WARN failed to delete object, enqueuing cleanup component=writepath backend=b1 key=mykey reason=delete_failed error=timeout
+2026/09/06 11:58:27 INFO audit audit=true event=storage.DeleteObject key=mykey copies_deleted=1
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=b1 size=290
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=b1 size=49152
+2026/09/06 11:58:27 INFO audit audit=true event=storage.overwrite_displaced key=key1 new_backend=b1 displaced_copies=1
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key1 backend=b1 size=3
+2026/09/06 11:58:27 INFO audit audit=true event=storage.DeleteObject key=del-key copies_deleted=1
+2026/09/06 11:58:27 ERROR recordObject failed; intent left for reaper component=writepath key=key backend=b1 intent_id=0363de371772bd0985a822a4eec8be62 error="commit failed"
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=b2 size=7
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=b2 size=4
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=b3 size=2
+2026/09/06 11:58:27 WARN backend not found for delete component=object backend=gone-backend key=key
+2026/09/06 11:58:27 INFO audit audit=true event=storage.DeleteObject key=key copies_deleted=2
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=cached-key backend=b2 size=6
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=cached-key backend=b2 size=6
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=fast size=9
+2026/09/06 11:58:27 INFO audit audit=true event=storage.DeleteObject key=del-key copies_deleted=1
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=obj backend=b1 size=5
+2026/09/06 11:58:27 WARN range translation failed component=object key=empty backend=b1 range="bytes=-5" error="the requested range is not satisfiable: invalid range: 0--1"
+2026/09/06 11:58:27 WARN GetObject: copy failed, trying next component=readpath key=key failed_backend=b1 error="backend b1: backend skipped: usage limits exceeded"
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=b2 size=7
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=empty backend=b1 size=0
+2026/09/06 11:58:27 INFO audit audit=true event=storage.HeadObject key=empty backend=b1 size=0
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=mykey backend=b1 size=5
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=b2 size=4
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=obj backend=b1 size=11
+2026/09/06 11:58:27 INFO audit audit=true event=storage.ListObjects prefix=pfx/ key_count=3 truncated=true
+2026/09/06 11:58:27 INFO audit audit=true event=storage.CopyObject source_key=src dest_key=dst src_backend=b1 dest_backend=b2 size=5
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=both backend=b1 size=343
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=tight backend=b1 size=381
+2026/09/06 11:58:27 INFO audit audit=true event=storage.ListObjects prefix=photos/ key_count=3 truncated=false
+2026/09/06 11:58:27 INFO audit audit=true event=storage.ListObjects prefix=a/ key_count=2 truncated=false
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=cached-key backend=b2 size=6
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=cached-key backend=b2 size=6
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=key failed_backend=b1 error="b1 down" remaining_backends=1
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=k backend=b1 size=4
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=b2 size=43
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=b1 size=9
+2026/09/06 11:58:27 WARN GetObject: copy failed, trying next component=readpath key=key failed_backend=primary error="backend down"
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=replica size=4
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=enc-key backend=b1 size=4
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=b1 size=5
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=enc-key backend=b1 size=85
+2026/09/06 11:58:27 INFO audit audit=true event=storage.HeadObject key=enc-key backend=b1 size=25
+2026/09/06 11:58:27 WARN ambiguous native-copy destination size mismatch, falling back to materialized copy component=object source_key=src dest_key=dst backend=b1 copy_error="simulated ambiguous failure" expected_size=7 observed_size=17
+2026/09/06 11:58:27 WARN native copy failed, falling back to materialized copy component=object source_key=src dest_key=dst backend=b1 error="simulated ambiguous failure"
+2026/09/06 11:58:27 INFO audit audit=true event=storage.CopyObject source_key=src dest_key=dst src_backend=b1 dest_backend=b1 size=7
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=enc-key failed_backend=b1 error="b1 down" remaining_backends=1
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=b1 size=5
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=enc-key backend=b2 size=86
+2026/09/06 11:58:27 WARN native copy failed, falling back to materialized copy component=object source_key=src dest_key=dst backend=b1 error="simulated network error"
+2026/09/06 11:58:27 INFO audit audit=true event=storage.CopyObject source_key=src dest_key=dst src_backend=b1 dest_backend=b1 size=7
+2026/09/06 11:58:27 WARN native copy failed, falling back to materialized copy component=object source_key=src dest_key=dst backend=b1 error="simulated native copy failure"
+2026/09/06 11:58:27 INFO audit audit=true event=storage.CopyObject source_key=src dest_key=dst src_backend=b1 dest_backend=b1 size=7
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=key failed_backend=b1 error="b1 down" remaining_backends=1
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=key failed_backend=b1 error="b1 timeout" remaining_backends=1
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=key failed_backend=b1 error="b1 down" remaining_backends=2
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=key failed_backend=b1 error="b1 down" remaining_backends=2
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=b2 size=4
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=key failed_backend=b2 error="b2 down" remaining_backends=1
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=key failed_backend=b3 error="b3 down" remaining_backends=0
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=key failed_backend=b2 error="b2 down" remaining_backends=1
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=failover-key failed_backend=b1 error="connection refused" remaining_backends=1
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=b3 size=4
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=failover-key backend=b2 size=5
+2026/09/06 11:58:27 ERROR recordObject failed; intent left for reaper component=writepath key=cleanup-key backend=b1 intent_id=8a57dc9a130760672e16f2f3f49790c3 error="db write failed"
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=key failed_backend=b1 error="be timeout" remaining_backends=0
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=fast size=40
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=b1 size=37
+2026/09/06 11:58:27 INFO audit audit=true event=storage.CopyObject source_key=src dest_key=dst src_backend=b1 dest_backend=b1 size=7
+2026/09/06 11:58:27 ERROR recordObject failed; intent left for reaper component=writepath key=key backend=fast intent_id=03f212fd1da917ef2b96e3ebabbd8fca error="db write failed"
+2026/09/06 11:58:27 WARN a copy of the write failed on its backend component=object key=key backend=b2 intent_id=37aadae2e149492d3f636cb589858789 error="b2 down"
+2026/09/06 11:58:27 WARN a copy of the write failed on its backend component=object key=key backend=b1 intent_id=d023fbe87fc922faa7e08f2d5949aa73 error="b1 down"
+2026/09/06 11:58:27 INFO ambiguous native-copy resolved via HEAD probe, destination already populated component=object source_key=src dest_key=dst backend=b1 copy_error="simulated response timeout" size=7
+2026/09/06 11:58:27 INFO audit audit=true event=storage.CopyObject source_key=src dest_key=dst src_backend=b1 dest_backend=b1 size=7
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=k backend=b1 size=5
+2026/09/06 11:58:27 INFO audit audit=true event=storage.DeleteObject key=k copies_deleted=2
+2026/09/06 11:58:27 ERROR recordObject failed, cleaning up orphan component=writepath key=dst backend=b1 error="commit failed"
+2026/09/06 11:58:27 INFO audit audit=true event=storage.CopyObject source_key=src dest_key=dst src_backend=b1 dest_backend=b1 size=7
+2026/09/06 11:58:27 INFO audit audit=true event=storage.DeleteObjects total_keys=3 deleted=3 errors=0
+2026/09/06 11:58:27 INFO audit audit=true event=storage.DeleteObjects total_keys=0 deleted=0 errors=0
+2026/09/06 11:58:27 INFO audit audit=true event=storage.DeleteObjects total_keys=2 deleted=2 errors=0
+2026/09/06 11:58:27 WARN backend not found for batch delete component=object backend=ghost key=k1
+2026/09/06 11:58:27 INFO audit audit=true event=storage.DeleteObjects total_keys=1 deleted=1 errors=0
+2026/09/06 11:58:27 WARN failed to delete object, enqueuing cleanup component=writepath backend=b1 key=k1 reason=batch_delete_failed error="be down"
+2026/09/06 11:58:27 WARN failed to delete object, enqueuing cleanup component=writepath backend=b1 key=k2 reason=batch_delete_failed error="be down"
+2026/09/06 11:58:27 INFO audit audit=true event=storage.DeleteObjects total_keys=2 deleted=2 errors=0
+2026/09/06 11:58:27 INFO audit audit=true event=storage.DeleteObjects total_keys=3 deleted=3 errors=0
+2026/09/06 11:58:27 INFO audit audit=true event=storage.DeleteObject key=del-key copies_deleted=1
+2026/09/06 11:58:27 INFO audit audit=true event=storage.HeadObject key=key backend=b1 size=4
+2026/09/06 11:58:27 INFO audit audit=true event=storage.HeadObject key=key backend=b1 size=6
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=spread-key backend=b2 size=4
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=pack-key backend=b1 size=4
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=b1 size=9
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=b1 size=5
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=b1 size=5
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=b1 size=5
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=mykey backend=b1 size=5
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=cache size=5
+2026/09/06 11:58:27 INFO audit audit=true event=storage.HeadObject key=key backend=b1 size=4
+2026/09/06 11:58:27 INFO audit audit=true event=storage.HeadObject key=key backend=b1 size=6
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=b1 size=5
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=cache size=5
+2026/09/06 11:58:27 INFO audit audit=true event=storage.HeadObject key=key backend=b1 size=6
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/ranged.txt backend=b1 size=10
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/rotted-full.txt backend=b1 size=41
+2026/09/06 11:58:27 ERROR integrity check failed on read component=object key=bucket/rotted-full.txt backend=b1 expected_hash=9ce39b43c89664f3b740b2e8870fc00ba2d8f965282cd7ceed27e4049147f659 actual_hash=55b300ad736086c0c63754f510e9914853babdd91a5842eb5eca1db9f0370dba
+2026/09/06 11:58:27 ERROR failed to drop location for corrupted copy component=object key=bucket/corrupt.txt backend=b1 error="ledger unavailable"
+2026/09/06 11:58:27 ERROR integrity check failed on read component=object key=bucket/rotted.txt backend=b1 expected_hash=9ce39b43c89664f3b740b2e8870fc00ba2d8f965282cd7ceed27e4049147f659 actual_hash=55b300ad736086c0c63754f510e9914853babdd91a5842eb5eca1db9f0370dba
+2026/09/06 11:58:27 WARN GetObject: copy failed, trying next component=readpath key=key failed_backend=b1 error="context deadline exceeded"
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=b2 size=5
+2026/09/06 11:58:27 INFO audit audit=true event=storage.HeadObject key=key backend=b1 size=6
+2026/09/06 11:58:27 INFO audit audit=true event=storage.HeadObject key=key backend=b1 size=6
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=timeout-key failed_backend=b1 error="context deadline exceeded" remaining_backends=0
+2026/09/06 11:58:27 INFO audit audit=true event=storage.HeadObject key=key backend=b1 size=6
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=b1 size=17
+2026/09/06 11:58:27 INFO audit audit=true event=storage.HeadObject key=key backend=metadata size=9
+2026/09/06 11:58:27 INFO audit audit=true event=storage.HeadObject key=bucket/obj.bin backend=b1 size=32768
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=4096
+2026/09/06 11:58:27 INFO audit audit=true event=storage.CopyObject source_key=compressed-src dest_key=compressed-dst src_backend=b1 dest_backend=b1 size=290
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=fast size=26
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=enc-key failed_backend=b1 error="backend rejected the write" remaining_backends=1
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=b2 size=4
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=key backend=b3 size=41
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=enc-key backend=b2 size=120
+--- FAIL: TestPutObject_ParallelCopies_PlacesEveryCopy (0.00s)
+    put_parallel_test.go:81: copy on b1 committed under role "", want companion
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=4096
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=enc-key failed_backend=b1 error="backend rejected the write" remaining_backends=2
+2026/09/06 11:58:27 WARN PutObject: backend write failed, trying next component=object key=enc-key failed_backend=b2 error="backend rejected the write" remaining_backends=1
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=enc-key backend=b3 size=106
+2026/09/06 11:58:27 INFO audit audit=true event=storage.CopyObject source_key=compressed-src dest_key=compressed-dst src_backend=b1 dest_backend=b1 size=7
+2026/09/06 11:58:27 INFO audit audit=true event=storage.CopyObject source_key=compressed-src dest_key=compressed-dst src_backend=b1 dest_backend=b1 size=7
+2026/09/06 11:58:27 INFO audit audit=true event=storage.CopyObject source_key=compressed-src dest_key=compressed-dst src_backend=b1 dest_backend=b1 size=290
+2026/09/06 11:58:27 INFO audit audit=true event=storage.PutObject key=claim backend=b1 size=5
+2026/09/06 11:58:27 INFO audit audit=true event=storage.CopyObject source_key=compressed-src dest_key=compressed-dst src_backend=b1 dest_backend=b1 size=290
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=key backend=slow size=9
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=1024
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=970
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=970
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=24634
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=24634
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=8855
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=31824
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=50370
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=49169
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=34188
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=43228
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=2365
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=32034
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=9384
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=12937
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=7181
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=23554
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=8035
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=16800
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=11004
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=12617
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=11363
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=49169
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=159
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=22918
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=54322
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=8855
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=13755
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=31824
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=50335
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=50370
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=44987
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=34188
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=5600
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=43228
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=2365
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=32034
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=9384
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=12937
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=7181
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=23554
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=8035
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=16800
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=11004
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=12617
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=11363
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=159
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=22918
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=54322
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=13755
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=50335
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=44987
+2026/09/06 11:58:27 INFO audit audit=true event=storage.GetObject key=bucket/obj.bin backend=b1 size=5600
+2026/09/06 11:58:27 WARN leaving a copy's intent for the reaper component=object key=key backend=slow intent_id=b5e1c09d1311207487dd6cc42df2f309 reason="an earlier copy's commit failed"
+FAIL
+coverage: 93.7% of statements
+FAIL    github.com/afreidah/s3-orchestrator/internal/proxy/object       0.997s
+ok      github.com/afreidah/s3-orchestrator/internal/proxy/observe      (cached)        coverage: 100.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/proxy/proxytest    (cached)        coverage: 86.6% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/proxy/readpath     (cached)        coverage: 35.3% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/proxy/reconcile    (cached)        coverage: 96.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/proxy/usage        (cached)        coverage: 82.1% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/proxy/writepath    1.067s  coverage: 73.6% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/reload     (cached)        coverage: 87.6% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/runtime    (cached)        coverage: 87.0% of statements
+        github.com/afreidah/s3-orchestrator/internal/s3op               coverage: 0.0% of statements
+        github.com/afreidah/s3-orchestrator/internal/store              coverage: 0.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/store/core 1.066s  coverage: 81.5% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/store/postgres     (cached)        coverage: 11.4% of statements
+        github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc                coverage: 0.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/store/sqlite       (cached)        coverage: 85.3% of statements
+        github.com/afreidah/s3-orchestrator/internal/store/storetest            coverage: 0.0% of statements
+        github.com/afreidah/s3-orchestrator/internal/testutil/testx             coverage: 0.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/transport/admin    (cached)        coverage: 92.8% of statements
+?       github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi   [no test files]
+ok      github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream        (cached)        coverage: [no statements]
+        github.com/afreidah/s3-orchestrator/internal/transport/admin/openapi            coverage: 0.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/transport/auth     (cached)        coverage: 94.4% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/transport/cors     (cached)        coverage: 97.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/transport/httpserver       (cached)        coverage: 88.7% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/transport/httputil (cached)        coverage: 94.1% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/transport/s3api    (cached)        coverage: 95.4% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/transport/ui       (cached)        coverage: 95.3% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/util/bufpool       (cached)        coverage: 100.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/util/humanize      (cached)        coverage: 100.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/util/ioutilx       (cached)        coverage: 100.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/util/materialize   (cached)        coverage: 92.3% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/util/must  (cached)        coverage: 100.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/util/syncutil      (cached)        coverage: 100.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/util/workerpool    (cached)        coverage: 100.0% of statements
+ok      github.com/afreidah/s3-orchestrator/internal/worker     (cached)        coverage: 91.9% of statements
+FAIL
+make: *** [Makefile:112: test] Error 1
+afreidah ~/tools/s3-orchestrator on  GH_ISSUE_1403-parallel-copy-write* ❯
+

@@ -147,11 +147,14 @@ type DeletedCopy struct {
 
 // CleanupReasonSupersededIntent labels bytes removed because the write that
 // superseded their intent cleared it. CleanupReasonCompanionDiscarded labels
-// the bytes of an extra-copy intent the reaper could not vouch for. Neither was
-// ever committed, so the backend may well not hold them at all.
+// the bytes of an extra-copy intent the reaper could not vouch for.
+// CleanupReasonCompanionUntrusted labels an extra copy whose upload finished
+// after a newer write had already taken the key. None of the three was ever
+// committed, so the backend may well not hold them at all.
 const (
 	CleanupReasonSupersededIntent   = "superseded_intent"
 	CleanupReasonCompanionDiscarded = "companion_discarded"
+	CleanupReasonCompanionUntrusted = "companion_untrusted"
 )
 
 // -------------------------------------------------------------------------
@@ -238,6 +241,21 @@ const (
 	PendingPromoteSuperseded                                     // a later write for the key committed, so the intent is provably stale
 	PendingPromoteCompanionKept                                  // an extra-copy intent whose backend already holds a recorded copy
 	PendingPromoteCompanionDiscarded                             // an extra-copy intent whose bytes are unaccounted for and now removed
+)
+
+// CompanionCommitResult describes how an upload that outlived its response
+// settled the copy it was placing.
+//
+// Untrusted is not a failure. It says a newer write took the key while this
+// upload was still running, so the bytes it just wrote cannot be told apart
+// from that write's own copy at the same path, and the safe reading is that
+// neither they nor any row claiming a copy there describes the current object.
+type CompanionCommitResult int
+
+// The outcomes of committing an extra copy after the client has been answered.
+const (
+	CompanionCopyCommitted CompanionCommitResult = iota // the intent was still there, so the copy is recorded
+	CompanionCopyUntrusted                              // a newer write cleared the intent; the copy is dropped and replication rebuilds it
 )
 
 // -------------------------------------------------------------------------

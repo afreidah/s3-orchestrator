@@ -101,6 +101,7 @@ type StackOptions struct {
 	DegradedBroadcastParallelism int
 	DisableDegradedReads         bool
 	BackendTimeout               time.Duration
+	CopiesPerWrite               int // above 1, a PUT places its copies itself
 }
 
 // -------------------------------------------------------------------------
@@ -233,6 +234,7 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 		LocationCache:                object.NewLocationCache(opts.CacheTTL),
 		ObjectCache:                  opts.ObjectCache,
 		ParallelBroadcast:            opts.ParallelBroadcast,
+		CopiesPerWrite:               opts.CopiesPerWrite,
 		DegradedBroadcastParallelism: opts.DegradedBroadcastParallelism,
 		DisableDegradedReads:         opts.DisableDegradedReads,
 		IntegrityCfg:                 integrityCfg,

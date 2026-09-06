@@ -26,6 +26,13 @@ import (
 // GetUnderReplicatedObjects finds objects with fewer copies than the target
 // replication factor. Returns all rows for those objects so callers know which
 // backends already have copies.
+//
+// A key's copies are the rows it holds plus the companion intents still
+// uploading one, because a write that places its own copies commits them a
+// moment apart and the intent is the statement that the copy is on its way.
+// Counting only the rows makes every such write look under-replicated for that
+// moment, and a scan landing inside it reads the object back to make a copy the
+// write is already placing.
 func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted,
@@ -34,11 +41,17 @@ func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int
 		        ol.logical_size, ol.created_at
 		 FROM object_locations ol
 		 JOIN (
-		     SELECT object_key
-		     FROM object_locations
-		     WHERE managed
-		     GROUP BY object_key
-		     HAVING COUNT(*) < ?
+		     SELECT ol2.object_key
+		     FROM object_locations ol2
+		     LEFT JOIN (
+		         SELECT object_key, COUNT(*) AS copies
+		         FROM pending_objects
+		         WHERE role = 'companion'
+		         GROUP BY object_key
+		     ) i ON i.object_key = ol2.object_key
+		     WHERE ol2.managed
+		     GROUP BY ol2.object_key, i.copies
+		     HAVING COUNT(*) + COALESCE(i.copies, 0) < ?
 		     LIMIT ?
 		 ) ur ON ol.object_key = ur.object_key
 		 ORDER BY ol.object_key, ol.created_at ASC`,
@@ -55,6 +68,11 @@ func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int
 // GetUnderReplicatedObjectsExcluding finds objects with fewer copies than the
 // target factor, ignoring copies on the excluded backends. Returns all rows
 // for those objects so callers know the full picture.
+//
+// Counts a key's in-flight copies the same way GetUnderReplicatedObjects does.
+// An intent on an excluded backend still counts, because excluding a backend
+// says the worker will not place a copy there, not that a copy already going
+// there is absent.
 func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]core.ObjectLocation, error) {
 	if len(excludedBackends) == 0 {
 		return s.GetUnderReplicatedObjects(ctx, factor, limit)
@@ -75,11 +93,17 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 		       ol.logical_size, ol.created_at
 		FROM object_locations ol
 		JOIN (
-		    SELECT object_key
-		    FROM object_locations
-		    WHERE backend_name NOT IN (SELECT value FROM json_each(?)) AND managed
-		    GROUP BY object_key
-		    HAVING COUNT(*) < ?
+		    SELECT ol2.object_key
+		    FROM object_locations ol2
+		    LEFT JOIN (
+		        SELECT object_key, COUNT(*) AS copies
+		        FROM pending_objects
+		        WHERE role = 'companion'
+		        GROUP BY object_key
+		    ) i ON i.object_key = ol2.object_key
+		    WHERE ol2.backend_name NOT IN (SELECT value FROM json_each(?)) AND ol2.managed
+		    GROUP BY ol2.object_key, i.copies
+		    HAVING COUNT(*) + COALESCE(i.copies, 0) < ?
 		    LIMIT ?
 		) ur ON ol.object_key = ur.object_key
 		ORDER BY ol.object_key, ol.created_at ASC`

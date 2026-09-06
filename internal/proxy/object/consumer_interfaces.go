@@ -99,14 +99,17 @@ type Runtime interface {
 // decisions can mock this alone.
 type WriteRouter interface {
 	ClaimWriteTarget(ctx context.Context, p *core.PendingObject, eligible []string) (string, error)
+	ClaimWriteCopies(ctx context.Context, intents []*core.PendingObject, eligible []string) ([]*core.PendingObject, error)
 	SelectWriteTarget(ctx context.Context, span trace.Span, operation s3op.Operation, p *core.PendingObject) (string, error)
 }
 
 // PendingWriter is the pending-intent subset of *writepath.Coordinator:
-// promote a claimed intent into a permanent object_locations row. Tests that
+// promote a claimed intent into a permanent object_locations row, or commit one
+// of the further copies a write placed once its upload finishes. Tests that
 // exercise only the pending-pattern handoff can mock this alone.
 type PendingWriter interface {
 	RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest) error
+	CommitCompanionCopy(ctx context.Context, p *core.PendingObject) error
 }
 
 // CleanupWriter is the post-write commit + recovery subset of

@@ -113,6 +113,48 @@ func (w *Coordinator) ClaimWriteTarget(ctx context.Context, p *core.PendingObjec
 	return "", core.ErrNoSpaceAvailable
 }
 
+// ClaimWriteCopies claims a backend for each of the supplied intents, which are
+// the copies one write places at the same time. Each intent is claimed by the
+// same conditional insert a single-copy write uses, so every copy's bytes are
+// held against its own backend for as long as its upload runs.
+//
+// Returns the intents that got a backend, in claim order, with BackendName set.
+// A candidate that declines is skipped and a claim short of what was asked for
+// is not an error: fewer copies is a write the replicator finishes later, and
+// the caller decides that placing none at all is what fails the write. For the
+// same reason a database error once a copy has been claimed ends the loop
+// rather than the write.
+func (w *Coordinator) ClaimWriteCopies(ctx context.Context, intents []*core.PendingObject, eligible []string) ([]*core.PendingObject, error) {
+	claimed := make([]*core.PendingObject, 0, len(intents))
+	for _, name := range w.rankForWrite(w.core.Quota(), eligible) {
+		if len(claimed) == len(intents) {
+			break
+		}
+		p := intents[len(claimed)]
+		p.BackendName = name
+		fits, err := w.stores.InsertPendingIfFits(ctx, p)
+		if err != nil {
+			if len(claimed) == 0 {
+				return nil, fmt.Errorf("claim write target: %w", err)
+			}
+			w.log.WarnContext(ctx, "claim failed for a further copy, writing the copies already claimed",
+				"key", p.ObjectKey, "backend", name, logfmt.Err(err))
+			break
+		}
+		if !fits {
+			telemetry.QuotaClaimsDeclinedTotal.WithLabelValues(name).Inc()
+			continue
+		}
+		w.core.Quota().NotePlacement(name, p.SizeBytes)
+		telemetry.PendingIntentsEnqueuedTotal.Inc()
+		claimed = append(claimed, p)
+	}
+	if len(claimed) == 0 {
+		return nil, core.ErrNoSpaceAvailable
+	}
+	return claimed, nil
+}
+
 // rankForWrite orders the candidates the way the configured strategy wants them
 // tried: pack keeps the configured order so writes fill one backend before
 // moving on, spread puts the least utilized first. The slice is copied before
@@ -303,10 +345,65 @@ func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span tra
 	return nil
 }
 
+// CommitCompanionCopy records an extra copy whose upload finished after the
+// client was answered, and cleans up after it when a newer write took the key
+// first. The copy is added to the key rather than replacing what it holds, so
+// the copy that answered the client stays.
+//
+// The bytes of an untrusted copy go through the same orphan cleanup as any
+// other, because deleting them is the point and where the row came from is not
+// something the cleanup queue needs to know.
+func (w *Coordinator) CommitCompanionCopy(ctx context.Context, p *core.PendingObject) error {
+	result, displaced, _, err := w.stores.CommitCompanionCopy(ctx, p)
+	if err != nil {
+		// The intent stays, so the reaper resolves the copy on a later tick -
+		// discarding its bytes, since an extra copy is never promoted.
+		w.log.ErrorContext(ctx, "commit of a further copy failed; intent left for reaper",
+			"key", p.ObjectKey, "backend", p.BackendName, "intent_id", p.IntentID, logfmt.Err(err))
+		w.core.Acct().APICall(s3op.PutObject, p.BackendName)
+		telemetry.ReplicationWriteCopiesTotal.WithLabelValues(WriteCopyFailed).Inc()
+		return err
+	}
+	if result == core.CompanionCopyCommitted {
+		w.core.Acct().Ingress(s3op.PutObject, p.BackendName, p.SizeBytes)
+		telemetry.ReplicationWriteCopiesTotal.WithLabelValues(WriteCopyCommitted).Inc()
+		return nil
+	}
+	w.log.WarnContext(ctx, "a newer write took the key while a further copy was uploading; discarding it",
+		"key", p.ObjectKey, "backend", p.BackendName, "intent_id", p.IntentID)
+	w.core.Acct().APICall(s3op.PutObject, p.BackendName)
+	w.deleteDisplaced(ctx, p.ObjectKey, displaced)
+	telemetry.ReplicationWriteCopiesTotal.WithLabelValues(WriteCopyUntrusted).Inc()
+	return nil
+}
+
+// The outcomes ReplicationWriteCopiesTotal counts, shared with the write path
+// so the label set is written once.
+const (
+	WriteCopyCommitted = "committed"
+	WriteCopyUntrusted = "untrusted"
+	WriteCopyFailed    = "failed"
+)
+
 // cleanupDisplacedCopies removes stale copies on other backends displaced
 // by an overwrite. Shared between RecordObjectOrCleanup and
 // RecordObjectAndPromoteIntent (the original code duplicated this loop).
 func (w *Coordinator) cleanupDisplacedCopies(ctx context.Context, key, newBackend string, displaced []core.DeletedCopy) {
+	w.deleteDisplaced(ctx, key, displaced)
+
+	if len(displaced) > 0 {
+		audit.Log(ctx, "storage.overwrite_displaced",
+			slog.String("key", key),
+			slog.String("new_backend", newBackend),
+			slog.Int("displaced_copies", len(displaced)),
+		)
+	}
+}
+
+// deleteDisplaced removes each copy's bytes from the backend that holds them.
+// Shared with the companion-copy path, which discards a copy without any
+// overwrite having displaced it and so has nothing to audit.
+func (w *Coordinator) deleteDisplaced(ctx context.Context, key string, displaced []core.DeletedCopy) {
 	for _, dc := range displaced {
 		dcBackend, ok := w.core.Backends()[dc.BackendName]
 		if !ok {
@@ -322,14 +419,6 @@ func (w *Coordinator) cleanupDisplacedCopies(ctx context.Context, key, newBacken
 			reason = reasonOverwriteDisplaced
 		}
 		w.DeleteOrEnqueue(ctx, dcBackend, dc.BackendName, key, reason, dc.SizeBytes)
-	}
-
-	if len(displaced) > 0 {
-		audit.Log(ctx, "storage.overwrite_displaced",
-			slog.String("key", key),
-			slog.String("new_backend", newBackend),
-			slog.Int("displaced_copies", len(displaced)),
-		)
 	}
 }
 

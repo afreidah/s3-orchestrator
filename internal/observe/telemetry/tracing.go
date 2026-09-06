@@ -140,6 +140,7 @@ var (
 	AttrCacheHit          = attribute.Key("s3o.cache_hit")
 	AttrParallelBroadcast = attribute.Key("s3o.parallel_broadcast")
 	AttrNativeCopy        = attribute.Key("s3o.native_copy")
+	AttrCopiesClaimed     = attribute.Key("s3o.write_copies_claimed")
 )
 
 // RequestAttributes returns common attributes for HTTP request spans.

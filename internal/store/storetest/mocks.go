@@ -115,6 +115,23 @@ func (mr *MockMetadataStoreMockRecorder) Close() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockMetadataStore)(nil).Close))
 }
 
+// CommitCompanionCopy mocks base method.
+func (m *MockMetadataStore) CommitCompanionCopy(ctx context.Context, p *core.PendingObject) (core.CompanionCommitResult, []core.DeletedCopy, core.QuotaDeltas, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CommitCompanionCopy", ctx, p)
+	ret0, _ := ret[0].(core.CompanionCommitResult)
+	ret1, _ := ret[1].([]core.DeletedCopy)
+	ret2, _ := ret[2].(core.QuotaDeltas)
+	ret3, _ := ret[3].(error)
+	return ret0, ret1, ret2, ret3
+}
+
+// CommitCompanionCopy indicates an expected call of CommitCompanionCopy.
+func (mr *MockMetadataStoreMockRecorder) CommitCompanionCopy(ctx, p any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CommitCompanionCopy", reflect.TypeOf((*MockMetadataStore)(nil).CommitCompanionCopy), ctx, p)
+}
+
 // CompleteCleanupItem mocks base method.
 func (m *MockMetadataStore) CompleteCleanupItem(ctx context.Context, id int64) error {
 	m.ctrl.T.Helper()

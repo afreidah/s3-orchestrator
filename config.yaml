@@ -83,6 +83,13 @@ replication:
   concurrency: 4
   worker_interval: "10s"
 
+# --- Write path (place both copies during the write) ---
+# Leaves the replicator with repair rather than the read-back that making the
+# second copy would cost. The count defaults to replication.factor.
+write_path:
+  parallel_copies:
+    enabled: true
+
 # --- Prometheus metrics ---
 telemetry:
   metrics:
