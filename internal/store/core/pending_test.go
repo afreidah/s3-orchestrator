@@ -11,9 +11,293 @@
 package core
 
 import (
+	"context"
+	"errors"
+	"slices"
 	"testing"
 	"time"
 )
+
+// -------------------------------------------------------------------------
+// PROMOTION STUB
+// -------------------------------------------------------------------------
+
+// promoteTxStub records the order a promotion touches the transaction in, which
+// is what the lock-ordering guarantee is made of, along with the rows it wrote
+// and the intents it removed.
+type promoteTxStub struct {
+	noopTxAdapter
+
+	existingCopies []ExistingCopy
+	claimed        bool
+
+	keyLockErr  error
+	claimErr    error
+	existingErr error
+	deleteErr   error
+
+	ops      []string
+	inserted []ObjectLocation
+	deleted  []string
+	cleared  [][]string
+}
+
+func (s *promoteTxStub) AcquireKeyLock(context.Context, string) error {
+	s.ops = append(s.ops, "key_lock")
+	return s.keyLockErr
+}
+
+func (s *promoteTxStub) ClaimPending(context.Context, string) (bool, error) {
+	s.ops = append(s.ops, "claim")
+	return s.claimed, s.claimErr
+}
+
+func (s *promoteTxStub) GetExistingCopiesForUpdate(context.Context, string) ([]ExistingCopy, error) {
+	s.ops = append(s.ops, "read_copies")
+	return s.existingCopies, s.existingErr
+}
+
+func (s *promoteTxStub) InsertObjectLocation(_ context.Context, loc *ObjectLocation) error {
+	s.ops = append(s.ops, "insert")
+	s.inserted = append(s.inserted, *loc)
+	return nil
+}
+
+func (s *promoteTxStub) DeletePending(_ context.Context, intentID string) error {
+	s.ops = append(s.ops, "delete_pending")
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	s.deleted = append(s.deleted, intentID)
+	return nil
+}
+
+func (s *promoteTxStub) ClearPendingForKey(_ context.Context, _ string, keep []string) ([]SupersededIntent, error) {
+	s.cleared = append(s.cleared, keep)
+	return nil, nil
+}
+
+// companionIntent is the fixture the companion tests resolve.
+func companionIntent() *PendingObject {
+	return &PendingObject{
+		IntentID:    "i-1",
+		ObjectKey:   "k",
+		BackendName: "b2",
+		SizeBytes:   100,
+		Role:        PendingRoleCompanion,
+	}
+}
+
+// -------------------------------------------------------------------------
+// PendingObject role
+// -------------------------------------------------------------------------
+
+// TestPendingRole_DefaultsToPrimary verifies an intent written without a role
+// stores the value the column defaults to, rather than an empty string the
+// CHECK constraint would refuse.
+func TestPendingRole_DefaultsToPrimary(t *testing.T) {
+	t.Parallel()
+	var p PendingObject
+	if got := p.RoleOrDefault(); got != PendingRolePrimary {
+		t.Errorf("RoleOrDefault on an unset role = %q, want %q", got, PendingRolePrimary)
+	}
+	if p.IsCompanion() {
+		t.Error("an unset role must not read as a companion")
+	}
+	p.Role = PendingRoleCompanion
+	if got := p.RoleOrDefault(); got != PendingRoleCompanion {
+		t.Errorf("RoleOrDefault = %q, want %q", got, PendingRoleCompanion)
+	}
+	if !p.IsCompanion() {
+		t.Error("a companion role must read as a companion")
+	}
+}
+
+// -------------------------------------------------------------------------
+// promotePendingTx - lock ordering and companion resolution
+// -------------------------------------------------------------------------
+
+// TestPromotePending_LocksKeyBeforeClaiming verifies the object-key lock is
+// taken before the intent row is claimed. A write takes that lock and then
+// deletes the key's intent rows, so claiming first would have the two
+// transactions each waiting on what the other holds.
+func TestPromotePending_LocksKeyBeforeClaiming(t *testing.T) {
+	t.Parallel()
+	stub := &promoteTxStub{claimed: true}
+	if _, _, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, companionIntent()); err != nil {
+		t.Fatalf("PromotePending: %v", err)
+	}
+	if len(stub.ops) < 2 || stub.ops[0] != "key_lock" || stub.ops[1] != "claim" {
+		t.Errorf("expected the key lock before the claim, got %v", stub.ops)
+	}
+}
+
+// TestPromotePending_CompanionKeptWhenCopyRecorded verifies that an extra-copy
+// intent whose backend already holds a recorded copy leaves the bytes alone:
+// they are that copy, not the intent's.
+func TestPromotePending_CompanionKeptWhenCopyRecorded(t *testing.T) {
+	t.Parallel()
+	stub := &promoteTxStub{
+		claimed:        true,
+		existingCopies: []ExistingCopy{{BackendName: "b1", SizeBytes: 100}, {BackendName: "b2", SizeBytes: 100}},
+	}
+	result, displaced, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, companionIntent())
+	if err != nil {
+		t.Fatalf("PromotePending: %v", err)
+	}
+	if result != PendingPromoteCompanionKept {
+		t.Errorf("result = %v, want CompanionKept", result)
+	}
+	if len(displaced) != 0 {
+		t.Errorf("expected no bytes removed, got %+v", displaced)
+	}
+	if len(stub.inserted) != 0 {
+		t.Errorf("companion promotion must not record a copy, got %+v", stub.inserted)
+	}
+	if len(stub.deleted) != 1 || stub.deleted[0] != "i-1" {
+		t.Errorf("expected the intent cleared, got %v", stub.deleted)
+	}
+}
+
+// TestPromotePending_CompanionDiscardedWhenNoCopy verifies that an extra-copy
+// intent with nothing recorded on its backend hands those bytes back for
+// removal rather than recording a copy nothing can vouch for.
+func TestPromotePending_CompanionDiscardedWhenNoCopy(t *testing.T) {
+	t.Parallel()
+	stub := &promoteTxStub{
+		claimed:        true,
+		existingCopies: []ExistingCopy{{BackendName: "b1", SizeBytes: 100}},
+	}
+	result, displaced, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, companionIntent())
+	if err != nil {
+		t.Fatalf("PromotePending: %v", err)
+	}
+	if result != PendingPromoteCompanionDiscarded {
+		t.Errorf("result = %v, want CompanionDiscarded", result)
+	}
+	if len(displaced) != 1 || displaced[0].BackendName != "b2" || displaced[0].SizeBytes != 100 {
+		t.Fatalf("expected the intent's bytes handed back, got %+v", displaced)
+	}
+	if displaced[0].Reason != CleanupReasonCompanionDiscarded {
+		t.Errorf("reason = %q, want %q", displaced[0].Reason, CleanupReasonCompanionDiscarded)
+	}
+	if len(stub.inserted) != 0 {
+		t.Errorf("companion promotion must not record a copy, got %+v", stub.inserted)
+	}
+}
+
+// TestPromotePending_PrimaryReplacesTheCopySet verifies a primary intent keeps
+// its meaning: promoting it records the object and clears the copies the write
+// it belongs to was replacing.
+func TestPromotePending_PrimaryReplacesTheCopySet(t *testing.T) {
+	t.Parallel()
+	stub := &promoteTxStub{
+		claimed:        true,
+		existingCopies: []ExistingCopy{{BackendName: "b1", SizeBytes: 50}},
+	}
+	intent := companionIntent()
+	intent.Role = PendingRolePrimary
+
+	result, displaced, deltas, err := PromotePending(context.Background(), &stubRunner{tx: stub}, intent)
+	if err != nil {
+		t.Fatalf("PromotePending: %v", err)
+	}
+	if result != PendingPromoteCommitted {
+		t.Fatalf("result = %v, want Committed", result)
+	}
+	if len(stub.inserted) != 1 || stub.inserted[0].BackendName != "b2" {
+		t.Errorf("expected the promoted copy recorded on b2, got %+v", stub.inserted)
+	}
+	if len(displaced) != 1 || displaced[0].BackendName != "b1" {
+		t.Errorf("expected the prior copy displaced, got %+v", displaced)
+	}
+	if deltas["b2"] != 100 || deltas["b1"] != -50 {
+		t.Errorf("deltas = %+v, want b2:+100 b1:-50", deltas)
+	}
+}
+
+// TestPromotePending_PrimarySupersededByNewerCopy verifies the timestamp check
+// still refuses to promote a primary intent an existing newer copy has
+// overtaken, which is the insurance behind writes clearing their own intents.
+func TestPromotePending_PrimarySupersededByNewerCopy(t *testing.T) {
+	t.Parallel()
+	intent := companionIntent()
+	intent.Role = PendingRolePrimary
+	intent.CreatedAt = time.Now().Add(-time.Minute)
+	stub := &promoteTxStub{
+		claimed:        true,
+		existingCopies: []ExistingCopy{{BackendName: "b1", SizeBytes: 50, CreatedAt: time.Now()}},
+	}
+
+	result, displaced, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, intent)
+	if err != nil {
+		t.Fatalf("PromotePending: %v", err)
+	}
+	if result != PendingPromoteSuperseded {
+		t.Errorf("result = %v, want Superseded", result)
+	}
+	if len(stub.inserted) != 0 || len(displaced) != 0 {
+		t.Errorf("a superseded intent must record nothing: inserted=%+v displaced=%+v", stub.inserted, displaced)
+	}
+}
+
+// TestPromotePending_SurfacesTransactionErrors verifies each step's failure
+// aborts the promotion rather than resolving the intent on a guess.
+func TestPromotePending_SurfacesTransactionErrors(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("boom")
+	cases := map[string]*promoteTxStub{
+		"key lock":    {keyLockErr: sentinel},
+		"claim":       {claimErr: sentinel},
+		"read copies": {claimed: true, existingErr: sentinel},
+	}
+	for name, stub := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, _, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, companionIntent())
+			if !errors.Is(err, sentinel) {
+				t.Errorf("expected the %s error, got %v", name, err)
+			}
+			if len(stub.deleted) != 0 {
+				t.Errorf("intent resolved despite the failure: %v", stub.deleted)
+			}
+		})
+	}
+}
+
+// TestPromotePending_CompanionDeleteFailureAborts verifies a companion that
+// cannot clear its own row fails the transaction rather than reporting bytes
+// for deletion while the intent survives to claim them again.
+func TestPromotePending_CompanionDeleteFailureAborts(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("delete failed")
+	stub := &promoteTxStub{claimed: true, deleteErr: sentinel}
+
+	_, displaced, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, companionIntent())
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected the delete error, got %v", err)
+	}
+	if len(displaced) != 0 {
+		t.Errorf("bytes reported for removal despite the failure: %+v", displaced)
+	}
+}
+
+// TestPromotePending_CompanionAlreadyResolved verifies a claim that finds no
+// row is a benign no-op: another instance, or the write itself, settled it.
+func TestPromotePending_CompanionAlreadyResolved(t *testing.T) {
+	t.Parallel()
+	stub := &promoteTxStub{claimed: false}
+	result, _, _, err := PromotePending(context.Background(), &stubRunner{tx: stub}, companionIntent())
+	if err != nil {
+		t.Fatalf("PromotePending: %v", err)
+	}
+	if result != PendingPromoteAlreadyResolved {
+		t.Errorf("result = %v, want AlreadyResolved", result)
+	}
+	if slices.Contains(stub.ops, "delete_pending") {
+		t.Errorf("an unclaimed intent must not be deleted, got %v", stub.ops)
+	}
+}
 
 // -------------------------------------------------------------------------
 // pendingStoredForm

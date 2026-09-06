@@ -132,16 +132,53 @@ type ExistingCopy struct {
 	HasDEK      bool
 }
 
-// DeletedCopy describes a copy displaced by an overwrite or delete. The
-// caller enqueues these for physical orphan cleanup.
+// DeletedCopy describes bytes that no longer belong at a key and now need
+// removing from their backend, either a copy displaced by an overwrite or
+// delete, or the target of an intent that write superseded.
+//
+// Reason is the cleanup-queue label the removal is recorded under if it has to
+// be retried, so an operator reading the queue can tell the two apart. An empty
+// Reason means the caller's own default.
 type DeletedCopy struct {
 	BackendName string
 	SizeBytes   int64
+	Reason      string
 }
+
+// CleanupReasonSupersededIntent labels bytes removed because the write that
+// superseded their intent cleared it. CleanupReasonCompanionDiscarded labels
+// the bytes of an extra-copy intent the reaper could not vouch for. Neither was
+// ever committed, so the backend may well not hold them at all.
+const (
+	CleanupReasonSupersededIntent   = "superseded_intent"
+	CleanupReasonCompanionDiscarded = "companion_discarded"
+)
 
 // -------------------------------------------------------------------------
 // PENDING OBJECTS
 // -------------------------------------------------------------------------
+
+// SupersededIntent is an intent a write cleared because it replaced the object
+// the intent was for. The backend and size are what the removal of its bytes
+// needs; the intent itself is already gone by the time a caller sees this.
+type SupersededIntent struct {
+	IntentID    string
+	BackendName string
+	SizeBytes   int64
+}
+
+// PendingRole says what promoting an intent means. A primary intent is the
+// write itself, so promoting it replaces whatever the key held. A companion
+// intent is one of the further copies a write places at the same time, so it
+// must never displace the copies its siblings committed.
+type PendingRole string
+
+// The two meanings an intent can carry. An empty role reads as primary, which
+// is what every intent written before roles existed meant.
+const (
+	PendingRolePrimary   PendingRole = "primary"
+	PendingRoleCompanion PendingRole = "companion"
+)
 
 // PendingObject is an in-flight PUT intent recorded before the backend
 // upload. The reaper resolves intents that survive a failed metadata
@@ -163,6 +200,23 @@ type PendingObject struct {
 	LogicalSize              int64
 	Identity                 *ObjectIdentity
 	CreatedAt                time.Time
+	Role                     PendingRole
+}
+
+// IsCompanion reports whether promoting this intent adds a copy rather than
+// replacing the key's copy set.
+func (p *PendingObject) IsCompanion() bool {
+	return p.Role == PendingRoleCompanion
+}
+
+// RoleOrDefault names the role to store, so a caller that left it unset writes
+// the same value the column defaults to rather than an empty string the CHECK
+// constraint would reject.
+func (p *PendingObject) RoleOrDefault() PendingRole {
+	if p.Role == "" {
+		return PendingRolePrimary
+	}
+	return p.Role
 }
 
 // PendingPromoteResult describes how PromotePending resolved an intent.
@@ -173,11 +227,17 @@ type PendingPromoteResult int
 // Ambiguous is reserved and never produced: the timestamp comparison resolves
 // every case it was meant for as Superseded instead. It stays declared so the
 // metric label and the constant keep their values across releases.
+//
+// The two companion outcomes never record a copy. Kept means the backend
+// already holds one, so its bytes stay; Discarded means it does not, so they go
+// and replication rebuilds the copy.
 const (
-	PendingPromoteCommitted       PendingPromoteResult = iota // promoted and the intent removed, one transaction
-	PendingPromoteAmbiguous                                   // reserved; see above
-	PendingPromoteAlreadyResolved                             // another reaper got there first, a benign no-op
-	PendingPromoteSuperseded                                  // a later write for the key committed, so the intent is provably stale
+	PendingPromoteCommitted          PendingPromoteResult = iota // promoted and the intent removed, one transaction
+	PendingPromoteAmbiguous                                      // reserved; see above
+	PendingPromoteAlreadyResolved                                // another reaper got there first, a benign no-op
+	PendingPromoteSuperseded                                     // a later write for the key committed, so the intent is provably stale
+	PendingPromoteCompanionKept                                  // an extra-copy intent whose backend already holds a recorded copy
+	PendingPromoteCompanionDiscarded                             // an extra-copy intent whose bytes are unaccounted for and now removed
 )
 
 // -------------------------------------------------------------------------

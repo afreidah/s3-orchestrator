@@ -14,9 +14,113 @@ package core
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 )
+
+// intentClearingTxStub reports a key's pending intents to whatever clears them,
+// so a commit's handling of the ones it supersedes can be asserted on.
+type intentClearingTxStub struct {
+	*quotaTxStub
+
+	pending  []SupersededIntent
+	clearErr error
+	cleared  bool
+}
+
+func (s *intentClearingTxStub) ClearPendingForKey(_ context.Context, _ string, _ []string) ([]SupersededIntent, error) {
+	s.cleared = true
+	return s.pending, s.clearErr
+}
+
+// TestRecordObject_IntentClearFailureAborts verifies a write that cannot clear
+// the key's intents rolls back rather than committing copies alongside intents
+// that would later be resolved against the object it just replaced.
+func TestRecordObject_IntentClearFailureAborts(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("clear failed")
+	stub := &intentClearingTxStub{quotaTxStub: &quotaTxStub{}, clearErr: sentinel}
+	_, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
+		Key: "k", Size: 100, Copies: []ObjectCopy{{Backend: "b1", IntentID: "mine"}},
+	})
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected the clear error, got %v", err)
+	}
+}
+
+// TestDeleteObject_IntentClearFailureAborts verifies the same for a delete: the
+// copies and the intents go together or not at all.
+func TestDeleteObject_IntentClearFailureAborts(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("clear failed")
+	stub := &intentClearingTxStub{
+		quotaTxStub: &quotaTxStub{existingCopies: []ExistingCopy{{BackendName: "b1", SizeBytes: 10}}},
+		clearErr:    sentinel,
+	}
+	_, _, err := DeleteObject(context.Background(), &stubRunner{tx: stub}, "k")
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected the clear error, got %v", err)
+	}
+	if len(stub.ops) != 0 {
+		t.Errorf("quota charged despite the failure: %+v", stub.ops)
+	}
+}
+
+// TestRecordObject_ClearsSupersededIntents verifies a write removes the key's
+// other intents and hands back the bytes of the ones it did not land on, so
+// they are cleaned off their backends instead of waiting for the reaper.
+func TestRecordObject_ClearsSupersededIntents(t *testing.T) {
+	t.Parallel()
+	stub := &intentClearingTxStub{
+		quotaTxStub: &quotaTxStub{},
+		pending: []SupersededIntent{
+			{IntentID: "mine", BackendName: "b1", SizeBytes: 100},
+			{IntentID: "stale", BackendName: "b2", SizeBytes: 70},
+		},
+	}
+	displaced, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
+		Key: "k", Size: 100, Copies: []ObjectCopy{{Backend: "b1", IntentID: "mine"}},
+	})
+	if err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if !stub.cleared {
+		t.Fatal("expected the write to clear the key's intents")
+	}
+	if len(displaced) != 1 {
+		t.Fatalf("expected only the stale intent's bytes, got %+v", displaced)
+	}
+	if displaced[0].BackendName != "b2" || displaced[0].SizeBytes != 70 {
+		t.Errorf("displaced = %+v, want b2/70", displaced[0])
+	}
+	if displaced[0].Reason != CleanupReasonSupersededIntent {
+		t.Errorf("reason = %q, want %q", displaced[0].Reason, CleanupReasonSupersededIntent)
+	}
+}
+
+// TestDeleteObject_ClearsIntents verifies that deleting an object also clears
+// its pending intents and hands their bytes back, since nothing is landing on
+// any backend and every intent for the key is now meaningless.
+func TestDeleteObject_ClearsIntents(t *testing.T) {
+	t.Parallel()
+	stub := &intentClearingTxStub{
+		quotaTxStub: &quotaTxStub{existingCopies: []ExistingCopy{{BackendName: "b1", SizeBytes: 100}}},
+		pending:     []SupersededIntent{{IntentID: "stale", BackendName: "b2", SizeBytes: 70}},
+	}
+	displaced, _, err := DeleteObject(context.Background(), &stubRunner{tx: stub}, "k")
+	if err != nil {
+		t.Fatalf("DeleteObject: %v", err)
+	}
+	if !stub.cleared {
+		t.Fatal("expected the delete to clear the key's intents")
+	}
+	if !slices.ContainsFunc(displaced, func(dc DeletedCopy) bool {
+		return dc.BackendName == "b2" && dc.Reason == CleanupReasonSupersededIntent
+	}) {
+		t.Errorf("expected the stale intent's bytes handed back, got %+v", displaced)
+	}
+}
 
 // multiCopyTxStub records what a commit wrote and which intents it cleared,
 // which is what a write placing several copies has to get right. The embedded
@@ -34,10 +138,11 @@ func (s *multiCopyTxStub) InsertObjectLocation(_ context.Context, loc *ObjectLoc
 	return nil
 }
 
-// DeletePending captures each intent the commit resolves.
-func (s *multiCopyTxStub) DeletePending(_ context.Context, intentID string) error {
-	s.cleared = append(s.cleared, intentID)
-	return nil
+// ClearPendingForKey captures the intents the commit resolves. A write clears
+// the key's intents as a set, its own among them, rather than one at a time.
+func (s *multiCopyTxStub) ClearPendingForKey(_ context.Context, objectKey string, _ []string) ([]SupersededIntent, error) {
+	s.cleared = append(s.cleared, objectKey)
+	return nil, nil
 }
 
 // newMultiCopyStub builds a commit stub over the supplied prior copy set.
@@ -74,8 +179,8 @@ func TestRecordObject_CommitsEveryCopy(t *testing.T) {
 	if len(stub.ops) != 2 {
 		t.Errorf("expected a stripe charge per copy, got %+v", stub.ops)
 	}
-	if len(stub.cleared) != 2 || stub.cleared[0] != "i-1" || stub.cleared[1] != "i-2" {
-		t.Errorf("expected both intents cleared, got %v", stub.cleared)
+	if len(stub.cleared) != 1 || stub.cleared[0] != "k" {
+		t.Errorf("expected the key's intents cleared once, got %v", stub.cleared)
 	}
 }
 

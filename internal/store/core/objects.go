@@ -143,15 +143,11 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 	if err := chargeStripes(ctx, tx, req.Key, deltas); err != nil {
 		return mutationResult{}, err
 	}
-	for _, c := range req.Copies {
-		if c.IntentID == "" {
-			continue
-		}
-		if err := tx.DeletePending(ctx, c.IntentID); err != nil {
-			return mutationResult{}, fmt.Errorf("clear pending intent %s: %w", c.IntentID, err)
-		}
+	superseded, err := clearSupersededIntents(ctx, tx, req.Key, req.Backends())
+	if err != nil {
+		return mutationResult{}, err
 	}
-	return mutationResult{displaced: displaced, deltas: deltas}, nil
+	return mutationResult{displaced: append(displaced, superseded...), deltas: deltas}, nil
 }
 
 // -------------------------------------------------------------------------
@@ -163,39 +159,58 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 // otherwise returns the deleted copies for cleanup.
 func DeleteObject(ctx context.Context, runner Runner, key string) ([]DeletedCopy, QuotaDeltas, error) {
 	res, err := WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (mutationResult, error) {
-		// Ahead of the row read, matching recordObjectTx. A tagging call
-		// touches object_tags without touching object_locations, so the row
-		// locks below do not exclude it; only the key lock does. Taking it in
-		// the same order everywhere is what keeps the two paths from
-		// deadlocking against each other.
-		if err := tx.AcquireKeyLock(ctx, key); err != nil {
-			return mutationResult{}, err
-		}
-		existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
-		if err != nil {
-			return mutationResult{}, err
-		}
-		if len(existing) == 0 {
-			return mutationResult{}, ErrObjectNotFound
-		}
-		if err := tx.DeleteObjectCopies(ctx, key); err != nil {
-			return mutationResult{}, fmt.Errorf("delete object copies: %w", err)
-		}
-		if err := clearTagsForKey(ctx, tx, key); err != nil {
-			return mutationResult{}, err
-		}
-		copies := make([]DeletedCopy, len(existing))
-		deltas := make(QuotaDeltas, len(existing))
-		for i, ec := range existing {
-			copies[i] = DeletedCopy{BackendName: ec.BackendName, SizeBytes: ec.SizeBytes}
-			deltas.Add(ec.BackendName, -ec.SizeBytes)
-		}
-		if err := chargeStripes(ctx, tx, key, deltas); err != nil {
-			return mutationResult{}, err
-		}
-		return mutationResult{displaced: copies, deltas: deltas}, nil
+		return deleteObjectTx(ctx, tx, key)
 	})
 	return res.displaced, res.deltas, err
+}
+
+// deleteObjectTx is the transactional body of DeleteObject: clear the key's
+// copies, its tags and its intents, then debit what those copies held.
+func deleteObjectTx(ctx context.Context, tx TxAdapter, key string) (mutationResult, error) {
+	// Ahead of the row read, matching recordObjectTx. A tagging call
+	// touches object_tags without touching object_locations, so the row
+	// locks below do not exclude it; only the key lock does. Taking it in
+	// the same order everywhere is what keeps the two paths from
+	// deadlocking against each other.
+	if err := tx.AcquireKeyLock(ctx, key); err != nil {
+		return mutationResult{}, err
+	}
+	existing, err := tx.GetExistingCopiesForUpdate(ctx, key)
+	if err != nil {
+		return mutationResult{}, err
+	}
+	if len(existing) == 0 {
+		return mutationResult{}, ErrObjectNotFound
+	}
+	if err := tx.DeleteObjectCopies(ctx, key); err != nil {
+		return mutationResult{}, fmt.Errorf("delete object copies: %w", err)
+	}
+	if err := clearTagsForKey(ctx, tx, key); err != nil {
+		return mutationResult{}, err
+	}
+	// The object is gone, so every intent for it describes bytes nobody
+	// wants and no backend is being written to here.
+	superseded, err := clearSupersededIntents(ctx, tx, key, nil)
+	if err != nil {
+		return mutationResult{}, err
+	}
+	copies, deltas := debitExistingCopies(existing)
+	if err := chargeStripes(ctx, tx, key, deltas); err != nil {
+		return mutationResult{}, err
+	}
+	return mutationResult{displaced: append(copies, superseded...), deltas: deltas}, nil
+}
+
+// debitExistingCopies turns a locked copy set into the cleanup list and the
+// negative byte deltas its removal owes each backend.
+func debitExistingCopies(existing []ExistingCopy) ([]DeletedCopy, QuotaDeltas) {
+	copies := make([]DeletedCopy, len(existing))
+	deltas := make(QuotaDeltas, len(existing))
+	for i, ec := range existing {
+		copies[i] = DeletedCopy{BackendName: ec.BackendName, SizeBytes: ec.SizeBytes}
+		deltas.Add(ec.BackendName, -ec.SizeBytes)
+	}
+	return copies, deltas
 }
 
 // -------------------------------------------------------------------------

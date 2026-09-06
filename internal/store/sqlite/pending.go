@@ -50,8 +50,8 @@ func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) 
 		    encrypted, encryption_key, key_id, plaintext_size, content_hash,
 		    compression_algorithm, compression_level, compression_format_version, logical_size,
 		    etag, content_type, user_metadata,
-		    created_at)
-		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		    created_at, role)
+		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		 FROM backend_quotas q
 		 LEFT JOIN (
 		     SELECT backend_name, SUM(bytes_used) AS bytes_used
@@ -79,7 +79,7 @@ func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) 
 		nullableString(p.CompressionAlgorithm), nullableString(p.CompressionLevel),
 		nullableInt64(int64(p.CompressionFormatVersion)), nullableInt64(p.LogicalSize),
 		identityETag(p.Identity), identityContentType(p.Identity), identityMetadataJSON(p.Identity),
-		now(),
+		now(), string(p.RoleOrDefault()),
 		p.BackendName, p.SizeBytes,
 	)
 	if err != nil {
@@ -111,7 +111,7 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 		        encrypted, encryption_key, key_id, plaintext_size,
 		        content_hash, compression_algorithm, compression_level,
 		        compression_format_version, logical_size, created_at,
-		        etag, content_type, user_metadata
+		        etag, content_type, user_metadata, role
 		   FROM pending_objects
 		  WHERE created_at <= ?
 		  ORDER BY created_at ASC
@@ -137,14 +137,16 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 			etag          sql.NullString
 			contentType   sql.NullString
 			userMetadata  sql.NullString
+			role          string
 		)
 		if err := rows.Scan(&p.IntentID, &p.ObjectKey, &p.BackendName, &p.SizeBytes,
 			&encrypted, &encKey, &keyID, &plaintextSize, &contentHash,
 			&compAlgorithm, &compLevel, &compVersion, &logicalSize, &createdAt,
-			&etag, &contentType, &userMetadata,
+			&etag, &contentType, &userMetadata, &role,
 		); err != nil {
 			return core.PendingObject{}, fmt.Errorf("scan pending row: %w", err)
 		}
+		p.Role = core.PendingRole(role)
 		p.Identity = identityFromColumns(etag, contentType, userMetadata)
 		p.Encrypted = encrypted != 0
 		p.EncryptionKey = encKey

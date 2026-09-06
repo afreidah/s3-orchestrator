@@ -61,6 +61,49 @@ func (a *sqliteTxAdapter) ClaimPending(ctx context.Context, intentID string) (bo
 	return true, nil
 }
 
+// ClearPendingForKey removes the key's intents apart from the ones the caller
+// is committing, reporting each so its bytes can be cleaned off the backend
+// after the transaction commits.
+//
+// Read then delete rather than DELETE ... RETURNING: SQLite serializes writers
+// for the length of the transaction, so nothing can insert an intent for this
+// key between the two statements.
+func (a *sqliteTxAdapter) ClearPendingForKey(ctx context.Context, objectKey string, keep []string) ([]core.SupersededIntent, error) {
+	if keep == nil {
+		keep = []string{}
+	}
+	keepJSON, err := json.Marshal(keep)
+	if err != nil {
+		return nil, fmt.Errorf("marshal kept intents: %w", err)
+	}
+	rows, err := a.tx.QueryContext(ctx,
+		`SELECT intent_id, backend_name, size_bytes
+		   FROM pending_objects
+		  WHERE object_key = ? AND intent_id NOT IN (SELECT value FROM json_each(?))`,
+		objectKey, string(keepJSON))
+	if err != nil {
+		return nil, fmt.Errorf("read superseded intents: %w", err)
+	}
+	cleared, err := collectRows(rows, "superseded intents", func(rows *sql.Rows) (core.SupersededIntent, error) {
+		var si core.SupersededIntent
+		err := rows.Scan(&si.IntentID, &si.BackendName, &si.SizeBytes)
+		return si, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("scan superseded intents: %w", err)
+	}
+	if len(cleared) == 0 {
+		return nil, nil
+	}
+	if _, err := a.tx.ExecContext(ctx,
+		`DELETE FROM pending_objects
+		  WHERE object_key = ? AND intent_id NOT IN (SELECT value FROM json_each(?))`,
+		objectKey, string(keepJSON)); err != nil {
+		return nil, fmt.Errorf("clear pending intents for key: %w", err)
+	}
+	return cleared, nil
+}
+
 // DeletePending removes a pending intent.
 func (a *sqliteTxAdapter) DeletePending(ctx context.Context, intentID string) error {
 	if _, err := a.tx.ExecContext(ctx,

@@ -40,6 +40,81 @@ func withAdapter(t *testing.T, s *Store, fn func(*sqliteTxAdapter)) {
 }
 
 // -------------------------------------------------------------------------
+// ClearPendingForKey
+// -------------------------------------------------------------------------
+
+// TestSqlite_ClearPendingForKey_RemovesAllButTheKept verifies the write path's
+// primitive: every intent for the key goes except the ones the caller names,
+// and what it removed comes back so the caller can clean those bytes up.
+func TestSqlite_ClearPendingForKey_RemovesAllButTheKept(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	seedPendingIntent(t, s, "keep-me", "bucket/k", "backend-a", 10)
+	seedPendingIntent(t, s, "stale-a", "bucket/k", "backend-b", 20)
+	seedPendingIntent(t, s, "other-key", "bucket/other", "backend-a", 30)
+
+	withAdapter(t, s, func(a *sqliteTxAdapter) {
+		cleared, err := a.ClearPendingForKey(ctx, "bucket/k", []string{"keep-me"})
+		if err != nil {
+			t.Fatalf("ClearPendingForKey: %v", err)
+		}
+		if len(cleared) != 1 {
+			t.Fatalf("cleared = %+v, want only the stale intent", cleared)
+		}
+		want := core.SupersededIntent{IntentID: "stale-a", BackendName: "backend-b", SizeBytes: 20}
+		if cleared[0] != want {
+			t.Errorf("cleared[0] = %+v, want %+v", cleared[0], want)
+		}
+		if got := countPendingForKey(t, a, "bucket/k"); got != 1 {
+			t.Errorf("rows left for the key = %d, want 1 (the kept intent)", got)
+		}
+	})
+}
+
+// seedPendingIntent inserts one intent so the clearing tests have rows to act on.
+func seedPendingIntent(t *testing.T, s *Store, intentID, key, backendName string, size int64) {
+	t.Helper()
+	p := core.PendingObject{
+		IntentID: intentID, ObjectKey: key, BackendName: backendName, SizeBytes: size,
+	}
+	if _, err := s.InsertPendingIfFits(context.Background(), &p); err != nil {
+		t.Fatalf("InsertPendingIfFits(%s): %v", intentID, err)
+	}
+}
+
+// countPendingForKey reports how many intents survive for a key inside the
+// adapter's own transaction, which is where the delete has taken effect.
+func countPendingForKey(t *testing.T, a *sqliteTxAdapter, key string) int {
+	t.Helper()
+	var n int
+	if err := a.tx.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM pending_objects WHERE object_key = ?`, key).Scan(&n); err != nil {
+		t.Fatalf("count pending for %s: %v", key, err)
+	}
+	return n
+}
+
+// TestSqlite_ClearPendingForKey_NoIntents verifies a key with nothing pending
+// reports nothing and issues no delete, which is the common case on a write.
+func TestSqlite_ClearPendingForKey_NoIntents(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	withAdapter(t, s, func(a *sqliteTxAdapter) {
+		cleared, err := a.ClearPendingForKey(ctx, "bucket/absent", nil)
+		if err != nil {
+			t.Fatalf("ClearPendingForKey: %v", err)
+		}
+		if len(cleared) != 0 {
+			t.Errorf("cleared = %+v, want none", cleared)
+		}
+	})
+}
+
+// -------------------------------------------------------------------------
 // AcquireKeyLock
 // -------------------------------------------------------------------------
 

@@ -55,9 +55,19 @@ type TxAdapter interface {
 // intent, which is how two reapers racing on one row settle it once. Postgres
 // claims with SELECT FOR UPDATE and SQLite with an existence probe inside the
 // writer-serialized transaction, which are the same guarantee.
+// ClearPendingForKey deletes the key's intents apart from the ones the caller
+// is committing, and reports what it removed so their bytes can be cleaned off
+// the backends afterwards. A write invalidates every earlier intent for its
+// key, and clearing them here is what keeps the reaper from having to work out
+// later whether an intent it found is still meaningful.
+//
+// The deletion is unconditional even for a backend the caller is writing to:
+// leaving the row would let an upload that is still running commit a copy of
+// the object this write just replaced.
 type PendingTxAdapter interface {
 	ClaimPending(ctx context.Context, intentID string) (claimed bool, err error)
 	DeletePending(ctx context.Context, intentID string) error
+	ClearPendingForKey(ctx context.Context, objectKey string, keep []string) ([]SupersededIntent, error)
 }
 
 // -------------------------------------------------------------------------

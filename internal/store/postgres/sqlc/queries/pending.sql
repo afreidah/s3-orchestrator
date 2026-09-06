@@ -25,7 +25,7 @@ INSERT INTO pending_objects (
     intent_id, object_key, backend_name, size_bytes,
     encrypted, encryption_key, key_id, plaintext_size, content_hash,
     compression_algorithm, compression_level, compression_format_version, logical_size,
-    etag, content_type, user_metadata
+    etag, content_type, user_metadata, role
 )
 -- backend_name and size_bytes are cast explicitly because they appear both
 -- here and in the headroom test below. A bare parameter in a SELECT list takes
@@ -35,7 +35,7 @@ INSERT INTO pending_objects (
 SELECT @intent_id, @object_key, @backend_name::text, @size_bytes::bigint,
        @encrypted, @encryption_key, @key_id, @plaintext_size, @content_hash,
        @compression_algorithm, @compression_level, @compression_format_version, @logical_size,
-       @etag, @content_type, @user_metadata
+       @etag, @content_type, @user_metadata, @role
 FROM backend_quotas q
 LEFT JOIN (
     SELECT backend_name, SUM(bytes_used) AS bytes_used
@@ -59,6 +59,20 @@ WHERE q.backend_name = @backend_name::text
           - COALESCE(m.inflight, 0)
           - COALESCE(p.inflight, 0) >= @size_bytes::bigint);
 
+-- name: ClearPendingForKey :many
+-- Removes the key's intents apart from the ones the caller is committing, and
+-- reports what it removed so the caller can clean their bytes off the backends
+-- once its own transaction is durable.
+--
+-- Unconditional even for a backend the caller is writing to: the row left
+-- behind would let an upload still in flight commit a copy of the object this
+-- write just replaced. Whether those bytes are deleted is the caller's decision,
+-- and a different one.
+DELETE FROM pending_objects
+WHERE object_key = @object_key
+  AND intent_id <> ALL(@keep::text[])
+RETURNING intent_id, backend_name, size_bytes;
+
 -- name: DeletePendingObject :exec
 DELETE FROM pending_objects WHERE intent_id = $1;
 
@@ -68,7 +82,7 @@ DELETE FROM pending_objects WHERE intent_id = $1;
 SELECT intent_id, object_key, backend_name, size_bytes,
        encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at,
        compression_algorithm, compression_level, compression_format_version, logical_size,
-       etag, content_type, user_metadata
+       etag, content_type, user_metadata, role
 FROM pending_objects
 WHERE created_at <= @older_than
 ORDER BY created_at ASC
@@ -90,7 +104,7 @@ DELETE FROM pending_objects WHERE backend_name = $1;
 SELECT intent_id, object_key, backend_name, size_bytes,
        encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at,
        compression_algorithm, compression_level, compression_format_version, logical_size,
-       etag, content_type, user_metadata
+       etag, content_type, user_metadata, role
 FROM pending_objects
 WHERE intent_id = $1
 FOR UPDATE;
