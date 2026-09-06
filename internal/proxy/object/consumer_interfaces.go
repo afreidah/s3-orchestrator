@@ -124,6 +124,16 @@ type CleanupWriter interface {
 	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
 }
 
+// DetachedRegistry is what the write path needs from the tracker of copies
+// that outlive their response: a slot to run under, and the depth to log when
+// there is none. Waiting for those copies at shutdown is the runtime's business
+// and deliberately absent here, so the manager cannot be handed the ability to
+// block on its own writes.
+type DetachedRegistry interface {
+	Begin() (release func(), admitted bool)
+	Depth() int
+}
+
 // Coordinator composes the three role interfaces above into the
 // single dependency object.Manager holds. *writepath.Coordinator
 // satisfies all three implicitly, so production wiring stays a single

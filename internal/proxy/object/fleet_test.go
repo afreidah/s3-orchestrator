@@ -74,6 +74,7 @@ type fleetOpts struct {
 	CacheTTL       time.Duration        // overrides the location-cache window, for the expiry tests
 	Draining       []string             // backends the runtime should report as draining
 	CopiesPerWrite int                  // above 1, a PUT places its copies itself instead of leaving them to the replicator
+	MaxDetached    int                  // ceiling on writes whose copies outlive the response; defaults to a number no test reaches
 
 	QuotaBaselines map[string]core.BackendQuotaUsage // seeds the byte counter; unnamed backends are unlimited
 
@@ -97,6 +98,7 @@ type fleet struct {
 	Runtime   *infra.BackendRuntime
 	Coord     *writepath.Coordinator
 	Integrity *syncutil.AtomicConfig[config.IntegrityConfig]
+	Detached  *writepath.DetachedUploads
 }
 
 // SetIntegrityConfig swaps the integrity settings the manager reads on write.
@@ -146,6 +148,9 @@ func newFleet(
 
 	integrity := &syncutil.AtomicConfig[config.IntegrityConfig]{}
 	coord := writepath.New(rt, store)
+	// Generous unless a test is about the ceiling itself, so a fan-out test is
+	// never refused a slot for a reason it did not ask for.
+	detached := writepath.NewDetachedUploads(cmp.Or(opts.MaxDetached, 64))
 	om := New(&Deps{
 		Core:                         rt,
 		BroadcastCore:                rt,
@@ -158,12 +163,13 @@ func newFleet(
 		ObjectCache:                  opts.ObjectCache,
 		ParallelBroadcast:            opts.ParallelBroadcast,
 		CopiesPerWrite:               opts.CopiesPerWrite,
+		Detached:                     detached,
 		DegradedBroadcastParallelism: opts.DegradedBroadcastParallelism,
 		DisableDegradedReads:         opts.DisableDegradedReads,
 		IntegrityCfg:                 integrity,
 		BackendTimeout:               cmp.Or(opts.BackendTimeout, fleetTimeout),
 	})
-	return &fleet{Manager: om, Runtime: rt, Coord: coord, Integrity: integrity}
+	return &fleet{Manager: om, Runtime: rt, Coord: coord, Integrity: integrity, Detached: detached}
 }
 
 // newFleetQuota builds the byte-reservation tracker with baselines already

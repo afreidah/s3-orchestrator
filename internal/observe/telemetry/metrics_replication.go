@@ -49,6 +49,34 @@ var (
 		[]string{"outcome"},
 	)
 
+	// DetachedUploadsDepth tracks the writes whose copies are still uploading
+	// after their client was answered.
+	//
+	// The number a healthy fleet sits at is roughly the write rate times how
+	// long a copy takes, so a handful. A rising depth is the signal a backend
+	// is slow rather than broken: nothing fails, nothing retries, and the work
+	// simply accumulates until the ceiling turns the fan-out off.
+	DetachedUploadsDepth = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "s3o_detached_uploads_depth",
+			Help: "Writes whose further copies are still uploading after the response",
+		},
+	)
+
+	// ReplicationWriteFanoutSkippedTotal counts writes that placed a single
+	// copy because no slot was free, leaving the rest to the replicator.
+	//
+	// Every one of these costs what the fan-out exists to avoid - a read of the
+	// object plus the source backend's egress - so a sustained rate means
+	// either the ceiling is too low for the write rate or a backend is falling
+	// behind. The depth gauge above says which.
+	ReplicationWriteFanoutSkippedTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "s3o_replication_write_fanout_skipped_total",
+			Help: "Writes that fell back to a single copy because no detached-upload slot was free",
+		},
+	)
+
 	// ReplicationErrorsTotal counts replication errors.
 	ReplicationErrorsTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
