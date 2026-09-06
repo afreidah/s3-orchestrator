@@ -29,7 +29,10 @@ cannot be compared against anything. Each table block therefore carries an
 
 ### Scenario inventory
 
-Five scenarios produce the matrix:
+Seven scenarios produce the matrix. Every scenario that writes carries
+`-compressible`, because bodies of random bytes are the one input an encoder
+can never shrink: a suite made entirely of them measures compression as the
+cost of declining and never as the work of encoding.
 
 1. **Sustained PUT** at varying object sizes
    ```bash
@@ -72,7 +75,22 @@ Five scenarios produce the matrix:
    make loadtest-listobjects LOADTEST_SEED=1000000 LOADTEST_OUTPUT_JSON=list-1m.json
    ```
 
-6. **Concurrent multipart**
+6. **Overwrite** — rewrites a bounded key set, so each request after the first
+   pass replaces an object that already exists
+   ```bash
+   ./loadtest/s3-loadtest \
+     -op overwrite -rate 200 -duration 60s \
+     -sizes 1024,65536 -overwrite-keys 200 -compressible 0.8 \
+     -output-json overwrite.json
+   ```
+
+   The only scenario that reaches overwrite displacement and the intent
+   supersession that goes with it. With `write_path.parallel_copies` on it is
+   also the only one where a write arrives for a key whose previous copies are
+   still being placed, which is the race that decides whether a copy is
+   trustworthy. Every other scenario writes unique keys and touches none of it.
+
+7. **Concurrent multipart**
    ```bash
    make loadtest-multipart LOADTEST_MPU_CONCURRENCY=10
    make loadtest-multipart LOADTEST_MPU_CONCURRENCY=50

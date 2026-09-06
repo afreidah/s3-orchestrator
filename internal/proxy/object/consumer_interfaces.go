@@ -109,7 +109,7 @@ type WriteRouter interface {
 // exercise only the pending-pattern handoff can mock this alone.
 type PendingWriter interface {
 	RecordObjectAndPromoteIntent(ctx context.Context, span trace.Span, req *core.RecordObjectRequest) error
-	CommitCompanionCopy(ctx context.Context, p *core.PendingObject) error
+	CommitCompanionCopy(ctx context.Context, p *core.PendingObject) (recorded bool, err error)
 }
 
 // CleanupWriter is the post-write commit + recovery subset of
