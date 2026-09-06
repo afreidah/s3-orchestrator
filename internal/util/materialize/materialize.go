@@ -98,12 +98,10 @@ func New(src io.Reader, size int64, hashers ...hash.Hash) (*Body, error) {
 			w = io.MultiWriter(w, h)
 		}
 	}
-	n, err := bufpool.Copy(w, src)
-	if err != nil {
+	if _, err := bufpool.Copy(w, src); err != nil {
 		b.Cleanup()
 		return nil, err
 	}
-	b.size = n
 	return b, nil
 }
 
@@ -143,11 +141,28 @@ func (b *Body) Cleanup() {
 // Writer returns the io.Writer the caller streams source bytes into. Only
 // meaningful when NewEmpty was used to construct the sink; New owns its own
 // write loop.
+//
+// The tempfile sink counts what it is handed, so a caller that drives its own
+// write loop leaves the body knowing how long it is. Reader needs that length
+// and cannot ask the file for it once several readers are live.
 func (b *Body) Writer() io.Writer {
 	if b.file != nil {
-		return b.file
+		return &countingWriter{dst: b.file, written: &b.size}
 	}
 	return b.buf
+}
+
+// countingWriter forwards to the sink and accumulates the byte count.
+type countingWriter struct {
+	dst     io.Writer
+	written *int64
+}
+
+// Write forwards and adds what was accepted.
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.dst.Write(p)
+	*c.written += int64(n)
+	return n, err
 }
 
 // Size returns the number of bytes written to the sink. For the in-memory
@@ -161,15 +176,17 @@ func (b *Body) Size() int64 {
 }
 
 // Reader returns a fresh io.ReadSeeker positioned at offset 0. Safe to call
-// repeatedly so failover attempts and encryption layers can each consume the
-// body independently. The in-memory variant returns a fresh *bytes.Reader;
-// the tempfile variant rewinds the underlying file before returning.
+// repeatedly, and the readers it returns are independent of each other: a write
+// placing several copies at once has one of them per upload, all reading the
+// one payload concurrently.
+//
+// Independence is why the tempfile variant hands back a section reader rather
+// than the file. A shared *os.File carries a single offset, so two uploads
+// reading it would consume each other's bytes; a section reader addresses the
+// file positionally instead and never touches that offset.
 func (b *Body) Reader() (io.ReadSeeker, error) {
 	if b.file != nil {
-		if _, err := b.file.Seek(0, io.SeekStart); err != nil {
-			return nil, fmt.Errorf("rewind materialize tempfile: %w", err)
-		}
-		return b.file, nil
+		return io.NewSectionReader(b.file, 0, b.size), nil
 	}
 	return bytes.NewReader(b.buf.Bytes()), nil
 }

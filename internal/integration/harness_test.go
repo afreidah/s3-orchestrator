@@ -65,12 +65,13 @@ type harnessBackend struct {
 // harnessSpec declares the world one test needs. The zero value is a two-backend
 // plaintext fleet with no stored-form layers applied.
 type harnessSpec struct {
-	Backends    []harnessBackend
-	Compression *config.CompressionConfig
-	Encrypt     bool
-	Integrity   *config.IntegrityConfig
-	Routing     config.RoutingStrategy
-	Pending     bool
+	Backends       []harnessBackend
+	Compression    *config.CompressionConfig
+	Encrypt        bool
+	Integrity      *config.IntegrityConfig
+	Routing        config.RoutingStrategy
+	Pending        bool
+	CopiesPerWrite int // above 1, a PUT places its own copies instead of leaving them to the replicator
 }
 
 // harness is one isolated orchestrator and everything a test needs to reach
@@ -222,6 +223,7 @@ func (h *harness) buildStack(t *testing.T, spec harnessSpec) {
 	opts := proxytest.StackOptions{
 		CacheTTL:       60 * time.Second,
 		BackendTimeout: 30 * time.Second,
+		CopiesPerWrite: spec.CopiesPerWrite,
 	}
 	if spec.Encrypt {
 		provider, err := encryption.NewConfigKeyProvider(testMasterKey, "test-key")

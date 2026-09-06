@@ -87,6 +87,23 @@ func (mr *MockCoordinatorStoresMockRecorder) CleanupQueueDepth(ctx any) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanupQueueDepth", reflect.TypeOf((*MockCoordinatorStores)(nil).CleanupQueueDepth), ctx)
 }
 
+// CommitCompanionCopy mocks base method.
+func (m *MockCoordinatorStores) CommitCompanionCopy(ctx context.Context, p *core.PendingObject) (core.CompanionCommitResult, []core.DeletedCopy, core.QuotaDeltas, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CommitCompanionCopy", ctx, p)
+	ret0, _ := ret[0].(core.CompanionCommitResult)
+	ret1, _ := ret[1].([]core.DeletedCopy)
+	ret2, _ := ret[2].(core.QuotaDeltas)
+	ret3, _ := ret[3].(error)
+	return ret0, ret1, ret2, ret3
+}
+
+// CommitCompanionCopy indicates an expected call of CommitCompanionCopy.
+func (mr *MockCoordinatorStoresMockRecorder) CommitCompanionCopy(ctx, p any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CommitCompanionCopy", reflect.TypeOf((*MockCoordinatorStores)(nil).CommitCompanionCopy), ctx, p)
+}
+
 // CompleteCleanupItem mocks base method.
 func (m *MockCoordinatorStores) CompleteCleanupItem(ctx context.Context, id int64) error {
 	m.ctrl.T.Helper()

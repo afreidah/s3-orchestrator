@@ -429,6 +429,29 @@ Replication is **asynchronous** — writes go to a single backend and the replic
 
 **Health-aware replication:** When backend circuit breakers are enabled, the replicator monitors backend health. If a backend's circuit breaker has been open longer than `unhealthy_threshold`, copies on that backend are treated as unavailable and replacement copies are created on healthy backends. This prevents sustained outages from silently reducing redundancy. The threshold prevents churn during brief transient failures. Set to `0` to disable health-aware replication (copies on down backends are still counted).
 
+### write_path.parallel_copies
+
+Places an object's copies during the write instead of leaving every copy after the first to the replicator.
+
+```yaml
+write_path:
+  parallel_copies:
+    enabled: false               # place further copies during the write (default: false)
+    count: 2                     # copies per write (default: replication.factor)
+```
+
+The replicator makes a copy by reading the object back off a backend that holds it and writing it elsewhere, which costs a full GET plus that backend's egress. A write already has the bytes, so placing the copy itself costs one more upload and no read at all. `count` may never exceed `replication.factor` — copies past the factor are removed by the over-replication cleaner about as fast as writes could create them — and a factor of `1` leaves the setting inert.
+
+The tradeoff is shape rather than total. Total work goes down, but the extra copy's bytes are sent at write time instead of spread across replicator cycles, so a deployment whose uplink is the bottleneck can see PUT throughput fall even as its backend bill does. Measure before leaving it on.
+
+**What a write does.** It claims the top `count` eligible backends, each with its own pending intent, and uploads to all of them at once from one materialized body. The client is answered as soon as the first copy is committed, because waiting for the slowest backend would put it on the critical path of every write. Copies still uploading at that point carry on and commit themselves as they finish.
+
+Partial success is not failure, exactly as it is today with one copy: a backend that declines the claim means fewer copies, an upload that fails leaves its intent for the reaper, and the write fails only when no copy lands. Whatever the write does not place is a shortfall the replicator fills on its next pass.
+
+**Overwrites racing their own copies.** An upload that outlives the response can also outlive a later overwrite of the same key. A copy that finishes after a newer write has taken the key cannot be told apart from that write's own copy at the same path, so it is discarded and the copy rebuilt by replication from one the client was told about. `s3o_replication_write_copies_total{outcome="untrusted"}` counts these; a sustained rate means clients are overwriting keys faster than copies finish, and each one costs a rebuild.
+
+**Single-object PUT only.** Multipart uploads stay on write-one-then-replicate.
+
 ### Cleanup Queue
 
 The cleanup queue is always active. Tunables:

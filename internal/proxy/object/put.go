@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"sync/atomic"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/compression"
@@ -95,6 +96,10 @@ func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string,
 		}
 	}
 
+	if o.copiesPerWrite > 1 {
+		return o.putCopiesInParallel(ctx, span, req, plan, eligible, start)
+	}
+
 	var failedBackends []string
 	var lastErr error
 
@@ -141,6 +146,10 @@ func rejectPutForUsage(span trace.Span, operation s3op.Operation) error {
 // form describes the stored bytes to the database. It is nil for an object
 // stored verbatim by a deployment with integrity hashing off, where there is
 // nothing about them a row needs to carry.
+//
+// readers counts who still needs the payload. A write placing several copies
+// answers the client on the first one and returns while the rest are still
+// uploading, so the request is not what the body's lifetime can be tied to.
 type putPlan struct {
 	body        *materialize.Body
 	logicalSize int64
@@ -150,19 +159,34 @@ type putPlan struct {
 	etagDigest  string
 	compressed  bool
 	form        *core.StoredForm
+	readers     atomic.Int32
 }
 
 // swapBody installs the body a stage produced and releases the one it consumed.
 // Nothing reads an earlier stage's bytes once the next stage has materialized
 // its own, and holding them would double what a large write occupies.
+//
+// Preparation is single-threaded and finishes before any upload starts, so the
+// bodies swapped through here are never ones a reader is holding.
 func (p *putPlan) swapBody(next *materialize.Body) {
 	p.body.Cleanup()
 	p.body = next
 }
 
-// cleanup releases the payload. Always safe to call.
+// hold registers a reader of the payload, matched by a later cleanup. Taken
+// before the reader starts, so the request cannot release the body between the
+// decision to read it and the read.
+func (p *putPlan) hold() {
+	p.readers.Add(1)
+}
+
+// cleanup releases the payload once nobody is left reading it. The request
+// itself counts as a reader, so a write with no copies still in flight frees
+// the body as it returns. Always safe to call.
 func (p *putPlan) cleanup() {
-	p.body.Cleanup()
+	if p.readers.Add(-1) < 0 {
+		p.body.Cleanup()
+	}
 }
 
 // -------------------------------------------------------------------------

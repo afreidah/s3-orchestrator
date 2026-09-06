@@ -75,8 +75,8 @@ job "s3-orchestrator" {
       }
 
       env {
-        GOMEMLIMIT  = "2048MiB"
-        GOMAXPROCS  = "4"
+        GOMEMLIMIT = "2048MiB"
+        GOMAXPROCS = "4"
       }
 
       template {
@@ -141,8 +141,15 @@ job "s3-orchestrator" {
 
           replication:
             factor: 2
-            worker_interval: "10s"
-            batch_size: 500
+            worker_interval: "30s"
+            batch_size: 200
+
+          # Both copies are placed by the write itself, so the replicator is
+          # left with repair rather than the read-back that making the second
+          # copy would cost. The count defaults to replication.factor.
+          write_path:
+            parallel_copies:
+              enabled: true
 
           rebalance:
             enabled: true
@@ -167,8 +174,8 @@ job "s3-orchestrator" {
           integrity:
             enabled: true
             verify_on_read: true
-            scrubber_interval: "1h"
-            scrubber_batch_size: 50
+            scrubber_interval: "20m"
+            scrubber_batch_size: 200
 
           # --- Object data cache (disabled by default) ---
           # In-memory LRU cache for frequently read objects. Reduces backend

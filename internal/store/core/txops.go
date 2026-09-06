@@ -112,6 +112,12 @@ func (o TxOps) PromotePending(ctx context.Context, p *PendingObject) (PendingPro
 	return PromotePending(ctx, o.runner, p)
 }
 
+// CommitCompanionCopy adds an extra copy whose upload finished after the client
+// was answered, or reports that a newer write took the key first.
+func (o TxOps) CommitCompanionCopy(ctx context.Context, p *PendingObject) (CompanionCommitResult, []DeletedCopy, QuotaDeltas, error) {
+	return CommitCompanionCopy(ctx, o.runner, p)
+}
+
 // MarkObjectCompressed records the stored form of a recompressed copy and
 // moves the backend's quota by the size difference.
 func (o TxOps) MarkObjectCompressed(ctx context.Context, u *CompressedUpdate, previousSize int64) error {

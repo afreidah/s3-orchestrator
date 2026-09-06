@@ -3705,3 +3705,101 @@ func TestBackendHTTP_RejectsNegativeValues(t *testing.T) {
 		})
 	}
 }
+
+// -------------------------------------------------------------------------
+// WRITE-PATH PARALLEL COPIES
+// -------------------------------------------------------------------------
+
+// TestParallelCopies_DefaultsToTheReplicationFactor verifies an operator who
+// turns the fan-out on without naming a count gets one copy per replica, which
+// is the only count that leaves the object at factor.
+func TestParallelCopies_DefaultsToTheReplicationFactor(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfigTwoBackends()
+	cfg.Replication.Factor = 2
+	cfg.WritePath.ParallelCopies.Enabled = true
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("SetDefaultsAndValidate: %v", err)
+	}
+	if got := cfg.WritePath.ParallelCopies.Count; got != 2 {
+		t.Errorf("count = %d, want the replication factor", got)
+	}
+	if got := cfg.CopiesPerWrite(); got != 2 {
+		t.Errorf("CopiesPerWrite = %d, want 2", got)
+	}
+}
+
+// TestParallelCopies_OffMeansOneCopy verifies a deployment that never asked for
+// the fan-out places one copy, whatever count is left lying in the file.
+func TestParallelCopies_OffMeansOneCopy(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfigTwoBackends()
+	cfg.Replication.Factor = 2
+	cfg.WritePath.ParallelCopies.Count = 2
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("SetDefaultsAndValidate: %v", err)
+	}
+	if got := cfg.CopiesPerWrite(); got != 1 {
+		t.Errorf("CopiesPerWrite = %d with the gate off, want 1", got)
+	}
+}
+
+// TestParallelCopies_InertWithoutReplication verifies a single-copy deployment
+// is unaffected even with the gate on: there is no second copy to place, and
+// the over-replication cleaner would remove one that appeared.
+func TestParallelCopies_InertWithoutReplication(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	cfg.Replication.Factor = 1
+	cfg.WritePath.ParallelCopies.Enabled = true
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("SetDefaultsAndValidate: %v", err)
+	}
+	if got := cfg.CopiesPerWrite(); got != 1 {
+		t.Errorf("CopiesPerWrite = %d at factor 1, want 1", got)
+	}
+}
+
+// TestParallelCopies_RejectsACountOverTheFactor verifies a count past the
+// factor is refused at boot rather than producing copies the over-replication
+// cleaner deletes as fast as writes create them.
+func TestParallelCopies_RejectsACountOverTheFactor(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfigTwoBackends()
+	cfg.Replication.Factor = 2
+	cfg.WritePath.ParallelCopies = ParallelCopiesConfig{Enabled: true, Count: 3}
+
+	if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrParallelCopiesOverFactor) {
+		t.Errorf("err = %v, want ErrParallelCopiesOverFactor", err)
+	}
+}
+
+// TestParallelCopies_RejectsACountBelowOne verifies a count that places no
+// copies is refused, since a write has to land somewhere.
+func TestParallelCopies_RejectsACountBelowOne(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfigTwoBackends()
+	cfg.Replication.Factor = 2
+	cfg.WritePath.ParallelCopies = ParallelCopiesConfig{Enabled: true, Count: -1}
+
+	if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrParallelCopiesMin) {
+		t.Errorf("err = %v, want ErrParallelCopiesMin", err)
+	}
+}
+
+// TestParallelCopies_CapsAtTheFactor verifies CopiesPerWrite never reports more
+// than the factor even if a count slipped past validation, since it is the one
+// place the write path asks how many copies to place.
+func TestParallelCopies_CapsAtTheFactor(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfigTwoBackends()
+	cfg.Replication.Factor = 2
+	cfg.WritePath.ParallelCopies = ParallelCopiesConfig{Enabled: true, Count: 5}
+
+	if got := cfg.CopiesPerWrite(); got != 2 {
+		t.Errorf("CopiesPerWrite = %d, want the factor", got)
+	}
+}

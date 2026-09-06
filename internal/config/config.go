@@ -109,7 +109,46 @@ func (c *Config) SetDefaultsAndValidate() error {
 	c.applyDefaultsOnlyTypes()
 	errs = append(errs, c.validateRoutingStrategy()...)
 	errs = append(errs, c.validateQuotaReplicationCombo()...)
+	errs = append(errs, c.validateParallelCopies()...)
 	return errors.Join(errs...)
+}
+
+// CopiesPerWrite reports how many copies a single-object PUT places itself,
+// which is 1 unless an operator turned the fan-out on. A replication factor of
+// 1 answers 1 whatever the count says: there is no second copy to place, and
+// the over-replication cleaner would remove one that appeared.
+//
+// The write path takes this rather than the config section, so what "off" means
+// is settled in one place instead of at every consumer.
+func (c *Config) CopiesPerWrite() int {
+	pc := c.WritePath.ParallelCopies
+	if !pc.Enabled || c.Replication.Factor <= 1 {
+		return 1
+	}
+	return min(pc.Count, c.Replication.Factor)
+}
+
+// validateParallelCopies settles how many copies a write places itself. The
+// count defaults to the replication factor and may never exceed it, since the
+// over-replication cleaner deletes anything past the factor about as fast as
+// writes could create it.
+//
+// Runs after the replication section, which is where the factor's own default
+// is applied.
+func (c *Config) validateParallelCopies() []error {
+	pc := &c.WritePath.ParallelCopies
+	pc.Count = cmp.Or(pc.Count, c.Replication.Factor)
+	if !pc.Enabled {
+		return nil
+	}
+	var errs []error
+	if pc.Count < 1 {
+		errs = append(errs, ErrParallelCopiesMin)
+	}
+	if pc.Count > c.Replication.Factor {
+		errs = append(errs, ErrParallelCopiesOverFactor)
+	}
+	return errs
 }
 
 // validatePerTypeSections delegates to each sub-type's

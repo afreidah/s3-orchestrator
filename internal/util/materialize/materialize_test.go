@@ -18,6 +18,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -86,10 +87,59 @@ func TestTempfileBranch(t *testing.T) {
 	if !bytes.Equal(got, payload) {
 		t.Errorf("got %q, want %q", got, payload)
 	}
-	// The body must be the same *os.File so PutObject sees a seekable reader
-	// rather than a bytes.Reader copy.
-	if _, ok := body.(*os.File); !ok {
-		t.Errorf("tempfile branch returned %T, want *os.File", body)
+	// Seekable is the property the upload paths need - the AWS SDK's signing
+	// pass rewinds the body - and it is a property of the interface rather than
+	// of which concrete type backs it.
+	if _, err := body.Seek(0, io.SeekStart); err != nil {
+		t.Errorf("tempfile branch returned a body that will not rewind: %v", err)
+	}
+}
+
+// TestTempfileReadersAreIndependent covers the property a write placing several
+// copies at once depends on: each upload reads the one spilled payload through
+// a reader of its own, so none of them consumes another's bytes.
+func TestTempfileReadersAreIndependent(t *testing.T) {
+	t.Parallel()
+	mb, err := NewEmpty(int64(MemThreshold) + 1)
+	if err != nil {
+		t.Fatalf("NewEmpty: %v", err)
+	}
+	t.Cleanup(mb.Cleanup)
+
+	payload := bytes.Repeat([]byte("parallel-copies"), 4096)
+	if _, err := mb.Writer().Write(payload); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got := mb.Size(); got != int64(len(payload)) {
+		t.Fatalf("Size = %d, want %d", got, len(payload))
+	}
+
+	// Four, so nothing here holds for a reason peculiar to a pair.
+	const copies = 4
+	var wg sync.WaitGroup
+	read := make([][]byte, copies)
+	errs := make([]error, copies)
+	for i := range copies {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, err := mb.Reader()
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			read[i], errs[i] = io.ReadAll(r)
+		}()
+	}
+	wg.Wait()
+
+	for i := range copies {
+		if errs[i] != nil {
+			t.Fatalf("copy %d: %v", i, errs[i])
+		}
+		if !bytes.Equal(read[i], payload) {
+			t.Errorf("copy %d read %d bytes, want %d", i, len(read[i]), len(payload))
+		}
 	}
 }
 

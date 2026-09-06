@@ -181,6 +181,7 @@ type PendingStore interface {
 	DeletePending(ctx context.Context, intentID string) error
 	GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]PendingObject, error)
 	PromotePending(ctx context.Context, p *PendingObject) (PendingPromoteResult, []DeletedCopy, QuotaDeltas, error)
+	CommitCompanionCopy(ctx context.Context, p *PendingObject) (CompanionCommitResult, []DeletedCopy, QuotaDeltas, error)
 	PendingDepth(ctx context.Context) (int64, error)
 	DeletePendingByBackend(ctx context.Context, backendName string) error
 }

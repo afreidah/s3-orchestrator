@@ -69,6 +69,7 @@ type Manager struct {
 	cache             *LocationCache
 	objectCache       objcache.ObjectCache // nil when object data caching is disabled
 	parallelBroadcast bool
+	copiesPerWrite    int // 1 leaves every copy after the first to the replicator
 	integrityCfg      *syncutil.AtomicConfig[config.IntegrityConfig]
 	failover          *readpath.Failover // per-key read failover + degraded-mode broadcast orchestrator
 	log               *slog.Logger
@@ -94,6 +95,7 @@ type Deps struct {
 	LocationCache     *LocationCache
 	ObjectCache       objcache.ObjectCache
 	ParallelBroadcast bool
+	CopiesPerWrite    int // how many copies a PUT places itself; 0 and 1 both mean one
 
 	DegradedBroadcastParallelism int  // caps concurrent probes; 0 is uncapped
 	DisableDegradedReads         bool // fail fast instead of broadcasting
@@ -126,6 +128,7 @@ func New(d *Deps) *Manager {
 		cache:             d.LocationCache,
 		objectCache:       d.ObjectCache,
 		parallelBroadcast: d.ParallelBroadcast,
+		copiesPerWrite:    max(d.CopiesPerWrite, 1),
 		integrityCfg:      d.IntegrityCfg,
 		failover: readpath.New(&readpath.FailoverDeps{
 			Core:                         d.BroadcastCore,

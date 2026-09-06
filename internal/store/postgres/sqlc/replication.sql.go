@@ -101,12 +101,19 @@ func (q *Queries) GetOverReplicatedObjects(ctx context.Context, arg GetOverRepli
 
 const getUnderReplicatedObjects = `-- name: GetUnderReplicatedObjects :many
 
-WITH under_replicated AS (
-    SELECT object_key
-    FROM object_locations
-    WHERE managed
+WITH inflight AS (
+    SELECT object_key, COUNT(*) AS copies
+    FROM pending_objects
+    WHERE role = 'companion'
     GROUP BY object_key
-    HAVING COUNT(*) < $1::bigint
+),
+under_replicated AS (
+    SELECT ol.object_key
+    FROM object_locations ol
+    LEFT JOIN inflight i ON i.object_key = ol.object_key
+    WHERE ol.managed
+    GROUP BY ol.object_key, i.copies
+    HAVING COUNT(*) + COALESCE(i.copies, 0) < $1::bigint
     LIMIT $2
 )
 SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
@@ -147,6 +154,12 @@ type GetUnderReplicatedObjectsRow struct {
 // excess-copy removal. The "excluding" variant of the under-replicated
 // scan lets workers skip backends that are draining or circuit-broken.
 // -----------------------------------------------------------------------------
+// A key's copies are the rows it holds plus the companion intents still
+// uploading one, because a write that places its own copies commits them a
+// moment apart and the intent is the statement that the copy is on its way.
+// Counting only the rows makes every such write look under-replicated for that
+// moment, and a scan landing inside it reads the object back to make a copy the
+// write is already placing.
 func (q *Queries) GetUnderReplicatedObjects(ctx context.Context, arg GetUnderReplicatedObjectsParams) ([]GetUnderReplicatedObjectsRow, error) {
 	rows, err := q.db.Query(ctx, getUnderReplicatedObjects, arg.Factor, arg.MaxKeys)
 	if err != nil {
@@ -182,12 +195,19 @@ func (q *Queries) GetUnderReplicatedObjects(ctx context.Context, arg GetUnderRep
 }
 
 const getUnderReplicatedObjectsExcluding = `-- name: GetUnderReplicatedObjectsExcluding :many
-WITH under_replicated AS (
-    SELECT object_key
-    FROM object_locations
-    WHERE backend_name != ALL($1::text[]) AND managed
+WITH inflight AS (
+    SELECT object_key, COUNT(*) AS copies
+    FROM pending_objects
+    WHERE role = 'companion'
     GROUP BY object_key
-    HAVING COUNT(*) < $2::bigint
+),
+under_replicated AS (
+    SELECT ol.object_key
+    FROM object_locations ol
+    LEFT JOIN inflight i ON i.object_key = ol.object_key
+    WHERE ol.backend_name != ALL($1::text[]) AND ol.managed
+    GROUP BY ol.object_key, i.copies
+    HAVING COUNT(*) + COALESCE(i.copies, 0) < $2::bigint
     LIMIT $3
 )
 SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
@@ -218,6 +238,10 @@ type GetUnderReplicatedObjectsExcludingRow struct {
 	CreatedAt                pgtype.Timestamptz
 }
 
+// Counts a key's in-flight copies the same way GetUnderReplicatedObjects does.
+// An intent on an excluded backend still counts, because excluding a backend
+// says the worker will not place a copy there, not that a copy already going
+// there is absent.
 func (q *Queries) GetUnderReplicatedObjectsExcluding(ctx context.Context, arg GetUnderReplicatedObjectsExcludingParams) ([]GetUnderReplicatedObjectsExcludingRow, error) {
 	rows, err := q.db.Query(ctx, getUnderReplicatedObjectsExcluding, arg.Excluded, arg.Factor, arg.MaxKeys)
 	if err != nil {

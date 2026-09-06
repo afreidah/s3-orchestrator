@@ -40,6 +40,7 @@ func Permissive(m *MockMetadataStore) {
 	r.ClaimPendingCleanups(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.CleanupDLQDepth(a).Return(int64(0), nil).AnyTimes()
 	r.CleanupQueueDepth(a).Return(int64(0), nil).AnyTimes()
+	r.CommitCompanionCopy(a, a).Return(core.CompanionCopyCommitted, nil, nil, nil).AnyTimes()
 	r.CompleteCleanupItem(a, a).Return(nil).AnyTimes()
 	r.CompleteNotification(a, a).Return(nil).AnyTimes()
 	r.CountActiveMultipartUploads(a, a).Return(int64(0), nil).AnyTimes()
