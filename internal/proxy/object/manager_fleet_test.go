@@ -1466,11 +1466,10 @@ func copyObjectStore(t *testing.T, locs []core.ObjectLocation, locsErr error) (*
 }
 
 // TestPutObject_IntegrityEnabled_PersistsContentHash drives the
-// integrity-enabled branches: bufferPutBody allocates a SHA-256 hasher
-// (the if icfg.Enabled branch) and buildPutPayload populates
-// StoredForm with the resulting ContentHash on the unencrypted
-// path (the form = &core.StoredForm{ContentHash: contentHash}
-// branch). Both lines were uncovered before.
+// integrity-enabled branches: bufferPutBody allocates a SHA-256 hasher and
+// describeStoredBytes builds a form to carry the resulting ContentHash on the
+// unencrypted path, which is the only thing there is to say about bytes stored
+// verbatim.
 func TestPutObject_IntegrityEnabled_PersistsContentHash(t *testing.T) {
 	t.Parallel()
 	be := backendtest.NewInMemory()
@@ -1486,11 +1485,16 @@ func TestPutObject_IntegrityEnabled_PersistsContentHash(t *testing.T) {
 	if len(c.recordObject) != 1 {
 		t.Fatalf("expected 1 RecordObject call, got %d", len(c.recordObject))
 	}
-	// The recordObject capture does not include the form value but
-	// reaching this point already proves bufferPutBody allocated the
-	// hasher and buildPutPayload took the unencrypted+ContentHash
-	// branch (the only path that returns form=&StoredForm{...} with
-	// no encryptor configured).
+	form := c.recordObject[0].Form
+	if form == nil {
+		t.Fatal("integrity is on, so the row needs a form to carry the hash")
+	}
+	if form.ContentHash == "" {
+		t.Error("form.ContentHash is empty")
+	}
+	if form.Encrypted {
+		t.Error("form.Encrypted = true with no encryptor configured")
+	}
 }
 
 // TestCopyObject_HeadSourceForCopy_SkipsUnknownBackend exercises the

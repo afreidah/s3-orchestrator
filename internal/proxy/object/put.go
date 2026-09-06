@@ -3,10 +3,10 @@
 //
 // Author: Alex Freidah
 //
-// PutObject orchestration: body materialization, write failover across
-// eligible backends, per-attempt payload construction (encryption + integrity
-// hash), pending-intent recovery, and drain-race close. Successful PUT
-// finalization (accounting + observability + cache invalidation) lives in
+// PutObject orchestration: body materialization through compression and
+// encryption into the exact bytes an upload sends, write failover across
+// eligible backends, pending-intent recovery, and drain-race close. Successful
+// PUT finalization (accounting + observability + cache invalidation) lives in
 // mutation_finalize.go.
 // -------------------------------------------------------------------------------
 
@@ -83,27 +83,23 @@ func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string,
 		}
 	}
 
-	plan, err := o.preparePutBody(span, req.Body, size)
+	plan, err := o.preparePutBody(ctx, span, req.Body, size)
 	if err != nil {
 		return "", err
 	}
 	defer plan.cleanup()
 
 	if compress {
-		if eligible = o.core.EligibleForWrite(putObjectOp, 0, o.physicalSize(plan.storedSize)); len(eligible) == 0 {
+		if eligible = o.core.EligibleForWrite(putObjectOp, 0, plan.uploadSize); len(eligible) == 0 {
 			return "", rejectPutForUsage(span, operation)
 		}
 	}
 
-	// DEK caching: encryptForPut wraps a fresh DEK on first call and
-	// reuses it on retries with a new base nonce, sparing the KeyProvider
-	// during failover storms.
-	var dekState putEncryptState
 	var failedBackends []string
 	var lastErr error
 
 	for len(eligible) > 0 {
-		res := o.attemptPutOnBackend(ctx, span, operation, req, plan, &dekState, eligible)
+		res := o.attemptPutOnBackend(ctx, span, operation, req, plan, eligible)
 		if res.fatalErr != nil {
 			return "", res.fatalErr
 		}
@@ -131,21 +127,42 @@ func rejectPutForUsage(span trace.Span, operation s3op.Operation) error {
 	return core.ErrInsufficientStorage
 }
 
-// putPlan is one PUT's payload and the two sizes that describe it. logicalSize
-// is what the client wrote and what the object is known by; storedSize is what
-// actually lands on a backend, and drives placement, quota and accounting. They
-// differ only when the body was compressed.
+// putPlan is one PUT's payload, the sizes that describe it, and the stored form
+// a row records it under. body holds the bytes an upload sends, already encoded
+// and encrypted, so every upload of this object replays one payload rather than
+// building its own.
 //
-// cleanup releases the materialized plaintext and, when compression ran, the
-// encoded copy alongside it. Always safe to call.
+// logicalSize is what the client wrote and what the object is known by;
+// storedSize is the plaintext those bytes encode, which is what the encryption
+// envelope is measured against; uploadSize is what lands on a backend, and
+// drives placement, quota and accounting. They differ only when the body was
+// compressed or encrypted.
+//
+// form describes the stored bytes to the database. It is nil for an object
+// stored verbatim by a deployment with integrity hashing off, where there is
+// nothing about them a row needs to carry.
 type putPlan struct {
 	body        *materialize.Body
 	logicalSize int64
 	storedSize  int64
+	uploadSize  int64
 	contentHash string
 	etagDigest  string
 	compressed  bool
-	cleanup     func()
+	form        *core.StoredForm
+}
+
+// swapBody installs the body a stage produced and releases the one it consumed.
+// Nothing reads an earlier stage's bytes once the next stage has materialized
+// its own, and holding them would double what a large write occupies.
+func (p *putPlan) swapBody(next *materialize.Body) {
+	p.body.Cleanup()
+	p.body = next
+}
+
+// cleanup releases the payload. Always safe to call.
+func (p *putPlan) cleanup() {
+	p.body.Cleanup()
 }
 
 // -------------------------------------------------------------------------
@@ -159,27 +176,29 @@ func (o *Manager) compressOnWrite(size int64) bool {
 	return o.codec != nil && o.compression.Enabled && size >= o.compression.MinSize
 }
 
-// physicalSize reports how many bytes a body of storedSize will occupy on a
-// backend once every stored-form layer has been applied.
+// physicalSize reports how many bytes a body of this size will occupy on a
+// backend once the stored form has been applied. It is what a write is admitted
+// against before its body is buffered.
 //
-// Encryption is the only layer that can be answered here, and it always can:
-// the envelope is a header plus a tag per chunk, so its size is a function of
-// the plaintext size and is known before a byte is written. Compression is
-// already folded into storedSize by the time this is asked, because an encoder
-// only reports its output size once it has run - which is why a compressed
-// write is admitted after encoding rather than before.
-func (o *Manager) physicalSize(storedSize int64) int64 {
+// Encryption is the only layer answerable that early, and it always is: the
+// envelope is a header plus a tag per chunk, so its size is a function of the
+// plaintext size and is known before a byte is written. Compression is not,
+// because an encoder only reports its output size once it has run - which is
+// why a compressed write is admitted after its body is prepared, against the
+// upload size the plan ended up with.
+func (o *Manager) physicalSize(size int64) int64 {
 	if o.encryptor == nil {
-		return storedSize
+		return size
 	}
-	return o.encryptor.CiphertextSize(storedSize)
+	return o.encryptor.CiphertextSize(size)
 }
 
-// preparePutBody materializes the request body and, when compression applies,
-// encodes it into a second materialized body. Both are held until the upload
-// settles: the encoded bytes have to replay on every failover attempt, and the
-// plaintext is what they were encoded from.
-func (o *Manager) preparePutBody(span trace.Span, src io.Reader, size int64) (*putPlan, error) {
+// preparePutBody materializes the request body into the exact bytes an upload
+// sends: buffered, then encoded when compression pays, then encrypted when the
+// deployment encrypts. Each stage materializes a body of its own and releases
+// the one it consumed, so what the plan carries is one payload and the stored
+// form describing it.
+func (o *Manager) preparePutBody(ctx context.Context, span trace.Span, src io.Reader, size int64) (*putPlan, error) {
 	mbody, etagDigest, contentHash, err := o.bufferPutBody(span, src, size)
 	if err != nil {
 		return nil, err
@@ -188,39 +207,90 @@ func (o *Manager) preparePutBody(span trace.Span, src io.Reader, size int64) (*p
 		body:        mbody,
 		logicalSize: size,
 		storedSize:  size,
+		uploadSize:  size,
 		contentHash: contentHash,
 		etagDigest:  etagDigest,
-		cleanup:     mbody.Cleanup,
 	}
-	if !o.compressOnWrite(size) {
-		if o.codec != nil && o.compression.Enabled {
-			telemetry.CompressionSkippedTotal.WithLabelValues(telemetry.CompressionSkipMinSize).Inc()
-		}
-		return plan, nil
-	}
-
-	cbody, storedSize, err := o.compressPutBody(mbody, size)
-	if err != nil {
-		mbody.Cleanup()
-		telemetry.CompressionErrorsTotal.WithLabelValues(telemetry.CompressionOpEncode).Inc()
+	if err := o.compressPutPlan(plan); err != nil {
+		plan.cleanup()
 		observe.RecordSpanError(span, err)
 		return nil, err
 	}
-	// Encoding an object that did not shrink buys nothing and costs a decode on
-	// every later read of it, so the encoded copy is dropped and the plan keeps
-	// describing the plaintext it was made from.
-	if !compression.WorthStoring(size, storedSize, o.compression.MinRatio) {
+	if err := o.encryptPutPlan(ctx, plan); err != nil {
+		plan.cleanup()
+		observe.RecordSpanError(span, err)
+		return nil, err
+	}
+	o.describeStoredBytes(plan)
+	return plan, nil
+}
+
+// compressPutPlan encodes the plan's payload when compression applies to a
+// write of this size, and leaves it alone otherwise. An object that did not
+// shrink keeps its plaintext: encoding it buys nothing and costs a decode on
+// every later read of it.
+func (o *Manager) compressPutPlan(plan *putPlan) error {
+	if !o.compressOnWrite(plan.logicalSize) {
+		if o.codec != nil && o.compression.Enabled {
+			telemetry.CompressionSkippedTotal.WithLabelValues(telemetry.CompressionSkipMinSize).Inc()
+		}
+		return nil
+	}
+	cbody, storedSize, err := o.compressPutBody(plan.body, plan.logicalSize)
+	if err != nil {
+		telemetry.CompressionErrorsTotal.WithLabelValues(telemetry.CompressionOpEncode).Inc()
+		return err
+	}
+	if !compression.WorthStoring(plan.logicalSize, storedSize, o.compression.MinRatio) {
 		cbody.Cleanup()
 		telemetry.CompressionSkippedTotal.WithLabelValues(telemetry.CompressionSkipMinRatio).Inc()
-		return plan, nil
+		return nil
 	}
-	telemetry.RecordCompressed(size, storedSize)
-	plan.body, plan.storedSize, plan.compressed = cbody, storedSize, true
-	plan.cleanup = func() {
-		cbody.Cleanup()
-		mbody.Cleanup()
+	telemetry.RecordCompressed(plan.logicalSize, storedSize)
+	plan.swapBody(cbody)
+	plan.storedSize, plan.uploadSize, plan.compressed = storedSize, storedSize, true
+	return nil
+}
+
+// encryptPutPlan encrypts the plan's payload once, ahead of the failover loop,
+// so every upload the write makes sends one identical ciphertext. Encrypting
+// per upload would draw a fresh base nonce each time and leave the copies of a
+// key differing byte for byte, which nothing downstream can see: the rows stay
+// self-describing and each copy reads and scrubs on its own.
+//
+// Compression, when it ran, is already baked into the body. That ordering is
+// the convention encryption established - compress, then encrypt - and it makes
+// the encoded stream the encryptor's plaintext domain.
+func (o *Manager) encryptPutPlan(ctx context.Context, plan *putPlan) error {
+	if o.encryptor == nil {
+		return nil
 	}
-	return plan, nil
+	stored, err := plan.body.Reader()
+	if err != nil {
+		return err
+	}
+	ciphertext, uploadSize, form, err := materializeEncrypted(ctx, o.encryptor, stored, plan.storedSize)
+	if err != nil {
+		return err
+	}
+	plan.swapBody(ciphertext)
+	plan.uploadSize, plan.form = uploadSize, form
+	return nil
+}
+
+// describeStoredBytes finishes the stored form the encrypt stage started, with
+// the integrity hash over what the client sent and how the bytes were encoded.
+// A verbatim object written by a deployment with integrity hashing off has
+// nothing to describe and keeps a nil form.
+func (o *Manager) describeStoredBytes(plan *putPlan) {
+	if plan.form == nil {
+		if plan.contentHash == "" && !plan.compressed {
+			return
+		}
+		plan.form = &core.StoredForm{}
+	}
+	plan.form.ContentHash = plan.contentHash
+	o.applyCompressionMeta(plan.form, plan)
 }
 
 // compressPutBody encodes the materialized plaintext into a second materialized
@@ -249,10 +319,9 @@ func (o *Manager) compressPutBody(src *materialize.Body, size int64) (*materiali
 // the failover loop. A non-nil fatalErr terminates the call. A non-nil
 // putErr signals a backend-side failure that should drop the chosen
 // backend and retry on the remainder.
-// uploadSize is what the attempt actually sent, which is what the backend is
-// charged. It is the plan's stored size grown by the encryption envelope when
-// one was applied, and is carried back rather than recomputed so accounting
-// reports the figure the upload used.
+// uploadSize is what the attempt sent, which is what the backend is charged. It
+// is carried back rather than read off the plan again so accounting reports the
+// figure the upload used.
 type putAttemptResult struct {
 	backend    string
 	etag       string
@@ -263,18 +332,17 @@ type putAttemptResult struct {
 
 // bufferPutBody materializes the request body into a seekable form
 // (memory for small payloads, tempfile above materialize.MemThreshold)
-// so failover retries can replay the plaintext without holding the
-// full body on the heap. Both digests are computed during that single
-// buffering pass via io.MultiWriter so the body is not re-scanned
-// afterwards.
+// so the stages that follow can read it without holding the full body
+// on the heap. Both digests are computed during that single buffering
+// pass via io.MultiWriter so the body is not re-scanned afterwards -
+// which is also why the later stages can release the plaintext.
 //
 // The ETag's MD5 is unconditional: it is what the client is told the object
 // is, so it cannot be gated on an operator's integrity setting the way the
 // verification SHA-256 is.
 //
-// Returns the materialized body, the ETag digest, the content hash (empty
-// when integrity verification is disabled), and a cleanup the caller must
-// invoke once the upload settles (safe to defer in every code path).
+// Returns the materialized body, the ETag digest, and the content hash (empty
+// when integrity verification is disabled).
 func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*materialize.Body, string, string, error) {
 	var hasher hash.Hash
 	icfg := o.integrityCfg.Load()
@@ -290,20 +358,20 @@ func (o *Manager) bufferPutBody(span trace.Span, body io.Reader, size int64) (*m
 	return mb, etag.Hex(etagHasher), sha256Hex(hasher), nil
 }
 
-// attemptPutOnBackend performs one backend PUT attempt: select a
-// destination, prepare the payload (encrypt/hash), insert a pending
-// intent, upload, then promote the intent on success.
-func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, operation s3op.Operation, req *PutObjectRequest, plan *putPlan, dekState *putEncryptState, eligible []string) putAttemptResult {
+// attemptPutOnBackend performs one backend PUT attempt: replay the prepared
+// payload, claim a destination with a pending intent, upload, then promote the
+// intent on success.
+func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, operation s3op.Operation, req *PutObjectRequest, plan *putPlan, eligible []string) putAttemptResult {
 	key := req.Key
-	// Placement decides on the bytes that will occupy the backend, which is
-	// neither the size the client announced nor the size the plan holds: a
-	// compressed write shrank before this point and an encrypted one grows
-	// after it.
-	uploadBody, uploadSize, form, err := o.buildPutPayload(ctx, plan, dekState)
+	// The payload was built once, ahead of the loop; an attempt replays it. The
+	// materialized body rewinds on every Reader() call, so a retry sends the
+	// same bytes the last attempt sent rather than rebuilding them.
+	uploadBody, err := plan.body.Reader()
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return putAttemptResult{fatalErr: err}
 	}
+	uploadSize, form := plan.uploadSize, plan.form
 
 	// Claiming and choosing are one step. The intent row is both the recovery
 	// breadcrumb a failed commit is resolved from and the bytes admission
@@ -392,42 +460,6 @@ func putIdentity(digest string, req *PutObjectRequest) *core.ObjectIdentity {
 // draining backend from the eligible set and retries elsewhere
 // instead of treating the abort as a generic backend failure.
 var errDrainRaceAborted = errors.New("aborted: drain started mid-write")
-
-// buildPutPayload prepares the upload body and StoredForm for a
-// single attempt. The materialized body's Reader() rewinds on every
-// call so encryption and unencrypted paths both replay from offset 0
-// across failover retries. Encryption layering, when enabled, runs
-// through encryptForPut so the wrapped DEK is reused across retries.
-// Compression, when it ran, is already baked into the body: it encodes once
-// ahead of the failover loop, so an attempt replays encoded bytes and only the
-// encryption layer is rebuilt per attempt. That ordering is the convention
-// encryption established - compress, then encrypt - and it makes the encoded
-// stream the encryptor's plaintext domain.
-func (o *Manager) buildPutPayload(
-	ctx context.Context,
-	plan *putPlan,
-	dekState *putEncryptState,
-) (io.Reader, int64, *core.StoredForm, error) {
-	stored, err := plan.body.Reader()
-	if err != nil {
-		return nil, 0, nil, err
-	}
-	if o.encryptor != nil {
-		uploadBody, uploadSize, form, err := encryptForPut(ctx, o.encryptor, stored, plan.storedSize, dekState)
-		if err != nil {
-			return nil, 0, nil, err
-		}
-		form.ContentHash = plan.contentHash
-		o.applyCompressionMeta(form, plan)
-		return uploadBody, uploadSize, form, nil
-	}
-	var form *core.StoredForm
-	if plan.contentHash != "" || plan.compressed {
-		form = &core.StoredForm{ContentHash: plan.contentHash}
-		o.applyCompressionMeta(form, plan)
-	}
-	return stored, plan.storedSize, form, nil
-}
 
 // applyCompressionMeta records how the stored bytes were encoded. LogicalSize
 // is the only place the client-visible size survives, since the row's

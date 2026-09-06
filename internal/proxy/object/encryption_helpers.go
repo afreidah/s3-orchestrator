@@ -22,7 +22,15 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
+	"github.com/afreidah/s3-orchestrator/internal/util/materialize"
 )
+
+// -------------------------------------------------------------------------
+// CONSTANTS
+// -------------------------------------------------------------------------
+
+// encryptOp labels the encrypt side of the encryption metrics.
+const encryptOp = "encrypt"
 
 // -------------------------------------------------------------------------
 // TYPES
@@ -55,55 +63,38 @@ func withStreamMetric(r io.Reader, op string) io.Reader {
 	return &streamMetricReader{Reader: r, op: op}
 }
 
-// putEncryptState carries the cached DEK across PutObject failover attempts
-// so retries reuse the wrapped DEK instead of paying another KeyProvider
-// round-trip. The zero value means "no DEK cached yet  -  wrap on first call".
-type putEncryptState struct {
-	dek, wrappedDEK []byte
-	keyID           string
-}
-
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// encryptForPut prepares an upload body for PutObject. The first call wraps
-// a fresh DEK via the KeyProvider and stores it in state; subsequent calls
-// reuse the cached DEK with a new base nonce, so retry storms do not
-// hammer the KeyProvider. Returns the ciphertext stream, its size, and the
-// stored form of those bytes. The caller layers integrity fields
-// (e.g. ContentHash) onto the returned StoredForm.
+// materializeEncrypted encrypts plaintext into a materialized body of its own
+// and reports its size and the envelope that describes those bytes. The caller
+// layers integrity fields (e.g. ContentHash) onto the returned StoredForm.
 //
-// plaintext must be a reader positioned at offset 0; callers replaying
-// across failover attempts pass a fresh reader (or a rewound seeker) per
-// call so the Encryptor sees the full payload each time.
-func encryptForPut(
+// The ciphertext is materialized rather than streamed so one encrypt pass
+// serves however many uploads a write makes of it: a second pass would draw a
+// fresh base nonce, and copies of a key that differ byte for byte break the
+// assumption replication reads them under, that the bytes on one backend are
+// the bytes the source row describes.
+//
+// plaintext must be a reader positioned at offset 0.
+func materializeEncrypted(
 	ctx context.Context,
 	enc *encryption.Encryptor,
 	plaintext io.Reader,
 	plaintextSize int64,
-	state *putEncryptState,
-) (io.Reader, int64, *core.StoredForm, error) {
-	var (
-		result *encryption.EncryptResult
-		err    error
-	)
-	if state.dek == nil {
-		result, err = enc.Encrypt(ctx, plaintext, plaintextSize)
-		if err == nil {
-			state.dek = result.RawDEK()
-			state.wrappedDEK = result.WrappedDEK
-			state.keyID = result.KeyID
-		}
-	} else {
-		result, err = enc.EncryptWithDEK(plaintext, plaintextSize, state.dek, state.wrappedDEK, state.keyID)
-	}
+) (*materialize.Body, int64, *core.StoredForm, error) {
+	result, err := enc.Encrypt(ctx, plaintext, plaintextSize)
 	if err != nil {
-		telemetry.EncryptionErrorsTotal.WithLabelValues("encrypt", "encrypt_failed").Inc()
+		telemetry.EncryptionErrorsTotal.WithLabelValues(encryptOp, "encrypt_failed").Inc()
 		return nil, 0, nil, fmt.Errorf("encrypt: %w", err)
 	}
-	telemetry.EncryptionOpsTotal.WithLabelValues("encrypt").Inc()
-	return withStreamMetric(result.Body, "encrypt"), result.CiphertextSize, &core.StoredForm{
+	telemetry.EncryptionOpsTotal.WithLabelValues(encryptOp).Inc()
+	body, err := materialize.New(withStreamMetric(result.Body, encryptOp), result.CiphertextSize)
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("buffer ciphertext: %w", err)
+	}
+	return body, result.CiphertextSize, &core.StoredForm{
 		Encrypted:     true,
 		EncryptionKey: encryption.PackKeyData(result.BaseNonce, result.WrappedDEK),
 		KeyID:         result.KeyID,

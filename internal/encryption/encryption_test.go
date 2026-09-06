@@ -866,23 +866,25 @@ func TestEncryptWithDEK_RoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// First encrypt  -  normal path (wraps DEK via provider)
-	first, err := enc.Encrypt(ctx, bytes.NewReader(original), int64(len(original)))
+	dek, wrappedDEK, keyID, err := enc.GenerateAndWrapDEK(ctx)
 	if err != nil {
-		t.Fatalf("Encrypt: %v", err)
+		t.Fatalf("GenerateAndWrapDEK: %v", err)
+	}
+
+	// First encrypt  -  the part that pays for the wrap
+	first, err := enc.EncryptWithDEK(bytes.NewReader(original), int64(len(original)), dek, wrappedDEK, keyID)
+	if err != nil {
+		t.Fatalf("EncryptWithDEK first: %v", err)
 	}
 	ct1, err := io.ReadAll(first.Body)
 	if err != nil {
 		t.Fatalf("ReadAll first: %v", err)
 	}
-	if first.RawDEK() == nil {
-		t.Fatal("RawDEK should be set after Encrypt")
-	}
 
-	// Second encrypt  -  reuse DEK (simulates failover retry)
-	second, err := enc.EncryptWithDEK(bytes.NewReader(original), int64(len(original)), first.RawDEK(), first.WrappedDEK, first.KeyID)
+	// Second encrypt  -  a later part under the same upload-level DEK
+	second, err := enc.EncryptWithDEK(bytes.NewReader(original), int64(len(original)), dek, wrappedDEK, keyID)
 	if err != nil {
-		t.Fatalf("EncryptWithDEK: %v", err)
+		t.Fatalf("EncryptWithDEK second: %v", err)
 	}
 	ct2, err := io.ReadAll(second.Body)
 	if err != nil {
@@ -918,7 +920,12 @@ func TestEncryptWithDEK_DifferentNonce(t *testing.T) {
 	ctx := context.Background()
 	data := []byte("test data for nonce check")
 
-	first, err := enc.Encrypt(ctx, bytes.NewReader(data), int64(len(data)))
+	dek, wrappedDEK, keyID, err := enc.GenerateAndWrapDEK(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := enc.EncryptWithDEK(bytes.NewReader(data), int64(len(data)), dek, wrappedDEK, keyID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -927,7 +934,7 @@ func TestEncryptWithDEK_DifferentNonce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	second, err := enc.EncryptWithDEK(bytes.NewReader(data), int64(len(data)), first.RawDEK(), first.WrappedDEK, first.KeyID)
+	second, err := enc.EncryptWithDEK(bytes.NewReader(data), int64(len(data)), dek, wrappedDEK, keyID)
 	if err != nil {
 		t.Fatal(err)
 	}

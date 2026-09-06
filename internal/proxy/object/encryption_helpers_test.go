@@ -277,119 +277,110 @@ func TestDecryptResponse_DecryptError(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// encryptForPut
+// materializeEncrypted
 // -------------------------------------------------------------------------
 
-// TestEncryptForPut_FirstCallPopulatesStateAndMeta verifies the encrypt for put first call populates state and meta contract.
-// Asserts that encryptForPut:.
-func TestEncryptForPut_FirstCallPopulatesStateAndMeta(t *testing.T) {
+// TestMaterializeEncrypted_PopulatesFormAndSize verifies the envelope the
+// encrypt pass reports describes the ciphertext it materialized, and that the
+// DEK it wrapped cost one KeyProvider round-trip.
+func TestMaterializeEncrypted_PopulatesFormAndSize(t *testing.T) {
 	t.Parallel()
-	enc, _ := newCountingEncryptor(t)
+	enc, cp := newCountingEncryptor(t)
 	plain := []byte("first call payload")
-	var state putEncryptState
 
-	body, ctSize, meta, err := encryptForPut(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)), &state)
+	body, ctSize, form, err := materializeEncrypted(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)))
 	if err != nil {
-		t.Fatalf("encryptForPut: %v", err)
+		t.Fatalf("materializeEncrypted: %v", err)
 	}
-	if state.dek == nil || state.wrappedDEK == nil || state.keyID == "" {
-		t.Errorf("state not populated: dek=%v wrappedDEK=%v keyID=%q", state.dek, state.wrappedDEK, state.keyID)
+	defer body.Cleanup()
+
+	if !form.Encrypted {
+		t.Error("form.Encrypted = false, want true")
 	}
-	if !meta.Encrypted {
-		t.Error("meta.Encrypted = false, want true")
+	if form.PlaintextSize != int64(len(plain)) {
+		t.Errorf("form.PlaintextSize = %d, want %d", form.PlaintextSize, len(plain))
 	}
-	if meta.PlaintextSize != int64(len(plain)) {
-		t.Errorf("meta.PlaintextSize = %d, want %d", meta.PlaintextSize, len(plain))
+	if form.KeyID == "" {
+		t.Error("form.KeyID is empty")
 	}
-	if meta.KeyID == "" {
-		t.Error("meta.KeyID is empty")
-	}
-	if meta.ContentHash != "" {
-		t.Errorf("meta.ContentHash = %q, want empty (caller layers integrity)", meta.ContentHash)
+	if form.ContentHash != "" {
+		t.Errorf("form.ContentHash = %q, want empty (caller layers integrity)", form.ContentHash)
 	}
 	if ctSize <= int64(len(plain)) {
 		t.Errorf("ciphertext size %d should exceed plaintext %d", ctSize, len(plain))
 	}
-	if _, err := io.ReadAll(body); err != nil {
-		t.Fatalf("read body: %v", err)
+	if got := body.Size(); got != ctSize {
+		t.Errorf("materialized %d bytes, form reports %d", got, ctSize)
+	}
+	if got := cp.wraps.Load(); got != 1 {
+		t.Errorf("WrapDEK called %d times, want 1", got)
 	}
 }
 
-// TestEncryptForPut_RetryReusesCachedDEK verifies the encrypt for put retry reuses cached dek contract.
-// Asserts that call :.
-func TestEncryptForPut_RetryReusesCachedDEK(t *testing.T) {
+// TestMaterializeEncrypted_EveryReaderYieldsIdenticalBytes is the invariant the
+// encrypt-once pass exists for: however many copies a write places, each reads
+// the one ciphertext and sends the same bytes under the same base nonce. A
+// per-copy encrypt would differ on every byte and nothing downstream would
+// notice, since replication copies bytes verbatim and describes the target from
+// the source row.
+func TestMaterializeEncrypted_EveryReaderYieldsIdenticalBytes(t *testing.T) {
 	t.Parallel()
 	enc, cp := newCountingEncryptor(t)
-	plain := []byte("retry payload  -  wraps once across N calls")
-	var state putEncryptState
+	plain := []byte("payload placed on more backends than two")
 
-	const calls = 3
-	for i := range calls {
-		body, _, _, err := encryptForPut(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)), &state)
+	body, _, _, err := materializeEncrypted(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)))
+	if err != nil {
+		t.Fatalf("materializeEncrypted: %v", err)
+	}
+	defer body.Cleanup()
+
+	// Four, so nothing here holds for a reason peculiar to a pair.
+	const copies = 4
+	var first []byte
+	for i := range copies {
+		r, err := body.Reader()
 		if err != nil {
-			t.Fatalf("call %d: %v", i, err)
+			t.Fatalf("copy %d reader: %v", i, err)
 		}
-		if _, err := io.ReadAll(body); err != nil {
-			t.Fatalf("call %d read: %v", i, err)
+		got, err := io.ReadAll(r)
+		if err != nil {
+			t.Fatalf("copy %d read: %v", i, err)
+		}
+		if i == 0 {
+			first = got
+			continue
+		}
+		if !bytes.Equal(got, first) {
+			t.Errorf("copy %d differs from copy 0", i)
 		}
 	}
 	if got := cp.wraps.Load(); got != 1 {
-		t.Errorf("WrapDEK called %d times across %d encryptForPut calls, want 1", got, calls)
+		t.Errorf("WrapDEK called %d times across %d copies, want 1", got, copies)
 	}
 }
 
-// TestEncryptForPut_RetryUsesFreshNonce verifies the encrypt for put retry uses fresh nonce contract.
-// Asserts that first call:.
-func TestEncryptForPut_RetryUsesFreshNonce(t *testing.T) {
+// TestMaterializeEncrypted_RoundTripDecrypts verifies the materialized
+// ciphertext decrypts back to the plaintext under the form's own key data.
+func TestMaterializeEncrypted_RoundTripDecrypts(t *testing.T) {
 	t.Parallel()
 	enc, _ := newCountingEncryptor(t)
-	plain := []byte("nonce uniqueness check")
-	var state putEncryptState
+	plain := []byte("round-trip payload via materializeEncrypted")
 
-	_, _, meta1, err := encryptForPut(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)), &state)
+	body, _, form, err := materializeEncrypted(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)))
 	if err != nil {
-		t.Fatalf("first call: %v", err)
+		t.Fatalf("materializeEncrypted: %v", err)
 	}
-	_, _, meta2, err := encryptForPut(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)), &state)
-	if err != nil {
-		t.Fatalf("second call: %v", err)
-	}
+	defer body.Cleanup()
 
-	nonce1, _, err := encryption.UnpackKeyData(meta1.EncryptionKey)
+	r, err := body.Reader()
 	if err != nil {
-		t.Fatalf("unpack first: %v", err)
+		t.Fatalf("reader: %v", err)
 	}
-	nonce2, _, err := encryption.UnpackKeyData(meta2.EncryptionKey)
-	if err != nil {
-		t.Fatalf("unpack second: %v", err)
-	}
-	if bytes.Equal(nonce1, nonce2) {
-		t.Errorf("base nonces must differ across retries (cached DEK + same nonce = AES-GCM key reuse)")
-	}
-}
-
-// TestEncryptForPut_RoundTripDecrypts verifies the encrypt for put round trip decrypts contract.
-// Asserts that encryptForPut:.
-func TestEncryptForPut_RoundTripDecrypts(t *testing.T) {
-	t.Parallel()
-	enc, _ := newCountingEncryptor(t)
-	plain := []byte("round-trip payload via encryptForPut")
-	var state putEncryptState
-
-	body, _, meta, err := encryptForPut(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)), &state)
-	if err != nil {
-		t.Fatalf("encryptForPut: %v", err)
-	}
-	ciphertext, err := io.ReadAll(body)
-	if err != nil {
-		t.Fatalf("read ciphertext: %v", err)
-	}
-
-	_, wrappedDEK, err := encryption.UnpackKeyData(meta.EncryptionKey)
+	_, wrappedDEK, err := encryption.UnpackKeyData(form.EncryptionKey)
 	if err != nil {
 		t.Fatalf("unpack key data: %v", err)
 	}
-	plainReader, err := enc.Decrypt(context.Background(), bytes.NewReader(ciphertext), wrappedDEK, meta.KeyID)
+	plainReader, err := enc.Decrypt(context.Background(), r, wrappedDEK, form.KeyID)
 	if err != nil {
 		t.Fatalf("decrypt: %v", err)
 	}
@@ -402,25 +393,23 @@ func TestEncryptForPut_RoundTripDecrypts(t *testing.T) {
 	}
 }
 
-// TestEncryptForPut_WrapErrorLeavesStateEmpty verifies the encrypt for put wrap error leaves state empty contract.
-// Asserts that error chain does not contain provider error:.
-func TestEncryptForPut_WrapErrorLeavesStateEmpty(t *testing.T) {
+// TestMaterializeEncrypted_WrapErrorPropagates verifies a KeyProvider failure
+// surfaces with the provider error still in the chain, so the write reports why
+// it could not encrypt rather than a bare "encrypt failed".
+func TestMaterializeEncrypted_WrapErrorPropagates(t *testing.T) {
 	t.Parallel()
 	enc, cp := newCountingEncryptor(t)
 	cp.wrapErr = errors.New("simulated KeyProvider failure")
 
-	var state putEncryptState
 	plain := []byte("doomed payload")
-	_, _, _, err := encryptForPut(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)), &state)
+	body, _, _, err := materializeEncrypted(context.Background(), enc, bytes.NewReader(plain), int64(len(plain)))
 	if err == nil {
+		body.Cleanup()
 		t.Fatal("expected error from failing KeyProvider")
 	}
 	if !errors.Is(err, cp.wrapErr) {
 		// fmt.Errorf("encrypt: %w", err) wraps the underlying provider error.
 		t.Errorf("error chain does not contain provider error: %v", err)
-	}
-	if state.dek != nil || state.wrappedDEK != nil || state.keyID != "" {
-		t.Errorf("state must remain empty so a retry attempts to wrap again: %+v", state)
 	}
 }
 
