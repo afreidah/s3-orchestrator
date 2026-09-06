@@ -138,6 +138,7 @@ func (c *Config) CopiesPerWrite() int {
 func (c *Config) validateParallelCopies() []error {
 	pc := &c.WritePath.ParallelCopies
 	pc.Count = cmp.Or(pc.Count, c.Replication.Factor)
+	pc.MaxInFlight = cmp.Or(pc.MaxInFlight, c.writeAdmissionCapacity())
 	if !pc.Enabled {
 		return nil
 	}
@@ -148,7 +149,21 @@ func (c *Config) validateParallelCopies() []error {
 	if pc.Count > c.Replication.Factor {
 		errs = append(errs, ErrParallelCopiesOverFactor)
 	}
+	if pc.MaxInFlight < 1 {
+		errs = append(errs, ErrParallelCopiesInFlightMin)
+	}
 	return errs
+}
+
+// writeAdmissionCapacity is how many writes this instance admits at once, which
+// is what the in-flight ceiling defaults to: a tail is the residue of a write,
+// so an instance carrying more of them than it would admit writes is one whose
+// backends have stopped keeping up.
+//
+// The write-specific limit if there is one, the shared request limit otherwise,
+// and a floor for a deployment that caps neither.
+func (c *Config) writeAdmissionCapacity() int {
+	return cmp.Or(c.Server.MaxConcurrentWrites, c.Server.MaxConcurrentRequests, DefaultDetachedUploadCeiling)
 }
 
 // validatePerTypeSections delegates to each sub-type's

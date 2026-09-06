@@ -17,6 +17,7 @@ package object
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe"
@@ -32,6 +33,12 @@ import (
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
+
+// errFanoutUnavailable reports that the fleet is already carrying as many
+// unfinished tails as it will, so this write places one copy instead. Handled
+// by PutObject, which falls through to the sequential path; it never reaches a
+// client, because nothing about it makes the write fail.
+var errFanoutUnavailable = errors.New("no detached-upload slot available")
 
 // uploadOutcome is one copy's upload reporting back: the intent it was claimed
 // under, and whether the bytes reached the backend.
@@ -61,6 +68,7 @@ type copyFanout struct {
 	req     *PutObjectRequest
 	plan    *putPlan
 	claimed []*core.PendingObject
+	release func() // the tail's slot in the detached registry
 	uploads chan uploadOutcome
 	settled chan writeOutcome
 }
@@ -81,8 +89,23 @@ type copyFanout struct {
 func (o *Manager) putCopiesInParallel(ctx context.Context, span trace.Span, req *PutObjectRequest, plan *putPlan, eligible []string, start time.Time) (string, error) {
 	const operation = s3op.PutObject
 
+	// The slot is taken before anything is claimed, so a write that cannot have
+	// one has not yet done anything it would need to undo. Refused means the
+	// fleet is already carrying as many unfinished tails as it will: this write
+	// places one copy and the replicator makes the rest, which costs the read
+	// back that the fan-out exists to avoid and is why the ceiling is set where
+	// a healthy fleet never reaches it.
+	release, admitted := o.detached.Begin()
+	if !admitted {
+		telemetry.ReplicationWriteFanoutSkippedTotal.Inc()
+		o.log.WarnContext(ctx, "no slot for the copies this write would place; leaving them to the replicator",
+			"key", req.Key, "in_flight", o.detached.Depth())
+		return "", errFanoutUnavailable
+	}
+
 	claimed, err := o.coord.ClaimWriteCopies(ctx, o.copyIntents(req, plan), eligible)
 	if err != nil {
+		release()
 		return "", o.core.ClassifyWriteError(span, operation.String(), err)
 	}
 	span.SetAttributes(telemetry.AttrCopiesClaimed.Int(len(claimed)))
@@ -92,6 +115,7 @@ func (o *Manager) putCopiesInParallel(ctx context.Context, span trace.Span, req 
 		req:     req,
 		plan:    plan,
 		claimed: claimed,
+		release: release,
 		uploads: make(chan uploadOutcome, len(claimed)),
 		settled: make(chan writeOutcome, 1),
 	}
@@ -181,6 +205,10 @@ func (o *Manager) uploadCopy(ctx context.Context, req *PutObjectRequest, plan *p
 // anchors. Their intents stay, and the reaper resolves them the way it resolves
 // any companion whose write did not finish.
 func (f *copyFanout) commitAsTheyLand(ctx context.Context, span trace.Span) {
+	// Released once every copy has settled, which is the moment this write is
+	// no longer something a shutdown has to wait for.
+	defer f.release()
+
 	live := f.liveIntents()
 	committed, abandoned := false, false
 	var lastErr error

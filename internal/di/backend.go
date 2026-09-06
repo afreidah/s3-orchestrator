@@ -294,6 +294,17 @@ func ProvideWriteCoordinator(i do.Injector) (*writepath.Coordinator, error) {
 	return writepath.New(rt, stores), nil
 }
 
+// ProvideDetachedUploads builds the registry of writes whose copies outlive
+// their response. Registered whether or not the fan-out is on, because the
+// runtime drains it during shutdown and an empty registry drains instantly.
+func ProvideDetachedUploads(i do.Injector) (*writepath.DetachedUploads, error) {
+	cfg, err := do.Invoke[*config.Config](i)
+	if err != nil {
+		return nil, err
+	}
+	return writepath.NewDetachedUploads(cfg.WritePath.ParallelCopies.MaxInFlight), nil
+}
+
 // writePathDeps is the collaborator set the object and multipart managers
 // share: both write through the same coordinator, over the same runtime and
 // store, under the same integrity config, with encryption optional.
@@ -433,6 +444,10 @@ func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
+	detached, err := do.Invoke[*writepath.DetachedUploads](i)
+	if err != nil {
+		return nil, err
+	}
 	cb := &d.cfg.CircuitBreaker
 	objectManager := object.New(&object.Deps{
 		Core:                         d.rt,
@@ -446,6 +461,7 @@ func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
 		ObjectCache:                  resolveOptionalCache(i),
 		ParallelBroadcast:            cb.ParallelBroadcast,
 		CopiesPerWrite:               d.cfg.CopiesPerWrite(),
+		Detached:                     detached,
 		DegradedBroadcastParallelism: cb.DegradedBroadcastParallelism,
 		DisableDegradedReads:         cb.DegradedReadsEnabled != nil && !*cb.DegradedReadsEnabled,
 		IntegrityCfg:                 d.integrityCfg,

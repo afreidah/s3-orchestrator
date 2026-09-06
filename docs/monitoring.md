@@ -262,6 +262,8 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_replication_pending` | Gauge | — | Objects below replication factor |
 | `s3o_replication_copies_created_total` | Counter | — | Replica copies created |
 | `s3o_replication_write_copies_total` | Counter | `outcome` | Further copies placed during the write (`committed`, `untrusted`, `failed`) |
+| `s3o_detached_uploads_depth` | Gauge | — | Writes whose further copies are still uploading after the response |
+| `s3o_replication_write_fanout_skipped_total` | Counter | — | Writes that fell back to a single copy because no detached-upload slot was free |
 | `s3o_replication_errors_total` | Counter | — | Replication errors |
 | `s3o_replication_duration_seconds` | Histogram | — | Replication cycle time |
 | `s3o_replication_runs_total` | Counter | status | Replication worker executions, by cycle outcome (see below) |

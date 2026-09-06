@@ -38,10 +38,11 @@ import (
 // dekCacheTTL and cleanupConcurrency are the fixture's stand-ins for values an
 // operator configures. Neither is what any test is asserting on.
 const (
-	dekCacheTTL        = time.Hour
-	cleanupConcurrency = 10
-	claimGracePeriod   = 5 * time.Minute
-	testInstanceID     = "test-instance"
+	dekCacheTTL           = time.Hour
+	cleanupConcurrency    = 10
+	claimGracePeriod      = 5 * time.Minute
+	testInstanceID        = "test-instance"
+	detachedUploadCeiling = 64
 )
 
 // -------------------------------------------------------------------------
@@ -235,6 +236,7 @@ func Build(store storetest.MetadataStore, opts *StackOptions) *Stack {
 		ObjectCache:                  opts.ObjectCache,
 		ParallelBroadcast:            opts.ParallelBroadcast,
 		CopiesPerWrite:               opts.CopiesPerWrite,
+		Detached:                     writepath.NewDetachedUploads(detachedUploadCeiling),
 		DegradedBroadcastParallelism: opts.DegradedBroadcastParallelism,
 		DisableDegradedReads:         opts.DisableDegradedReads,
 		IntegrityCfg:                 integrityCfg,

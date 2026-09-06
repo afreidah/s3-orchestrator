@@ -96,8 +96,14 @@ func (o *Manager) PutObject(ctx context.Context, req *PutObjectRequest) (string,
 		}
 	}
 
+	// A fan-out that cannot be tracked is not attempted: the write falls through
+	// to the loop below and places the one copy every write placed before the
+	// feature existed, leaving the rest to the replicator.
 	if o.copiesPerWrite > 1 {
-		return o.putCopiesInParallel(ctx, span, req, plan, eligible, start)
+		etag, err := o.putCopiesInParallel(ctx, span, req, plan, eligible, start)
+		if !errors.Is(err, errFanoutUnavailable) {
+			return etag, err
+		}
 	}
 
 	var failedBackends []string

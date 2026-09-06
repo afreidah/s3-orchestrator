@@ -438,6 +438,7 @@ write_path:
   parallel_copies:
     enabled: false               # place further copies during the write (default: false)
     count: 2                     # copies per write (default: replication.factor)
+    max_in_flight: 256           # writes whose copies may outlive their response (default: server.max_concurrent_writes)
 ```
 
 The replicator makes a copy by reading the object back off a backend that holds it and writing it elsewhere, which costs a full GET plus that backend's egress. A write already has the bytes, so placing the copy itself costs one more upload and no read at all. `count` may never exceed `replication.factor` — copies past the factor are removed by the over-replication cleaner about as fast as writes could create them — and a factor of `1` leaves the setting inert.
@@ -447,6 +448,12 @@ The tradeoff is shape rather than total. Total work goes down, but the extra cop
 **What a write does.** It claims the top `count` eligible backends, each with its own pending intent, and uploads to all of them at once from one materialized body. The client is answered as soon as the first copy is committed, because waiting for the slowest backend would put it on the critical path of every write. Copies still uploading at that point carry on and commit themselves as they finish.
 
 Partial success is not failure, exactly as it is today with one copy: a backend that declines the claim means fewer copies, an upload that fails leaves its intent for the reaper, and the write fails only when no copy lands. Whatever the write does not place is a shortfall the replicator fills on its next pass.
+
+**The ceiling, and what happens at it.** The copies still uploading when the client is answered belong to no request, so they are tracked in a registry `max_in_flight` bounds. It is a ceiling for a backend that has gone slow rather than a queue: a write that finds it full places one copy and leaves the rest to the replicator, which costs exactly the read-back this feature exists to avoid. The default follows `server.max_concurrent_writes` (or `max_concurrent_requests`, or 512 if neither is set), which a fleet keeping up never approaches — the steady state is roughly your write rate times how long one copy takes, so a handful.
+
+Two metrics make it visible. `s3o_detached_uploads_depth` is the copies still uploading right now, and a rising floor there is a backend falling behind without failing. `s3o_replication_write_fanout_skipped_total` counts the writes that hit the ceiling and fell back, so a non-zero rate means either the ceiling is too low for your write rate or one backend needs attention.
+
+**Shutdown.** A graceful shutdown waits for those copies after it has drained HTTP, for up to 30 seconds, before continuing teardown. Anything still running at that point is left exactly as a kill would leave it: the intents stay and the pending reaper resolves them on a later tick, so the drain shortens the common case rather than being what makes the write path safe.
 
 **Overwrites racing their own copies.** An upload that outlives the response can also outlive a later overwrite of the same key. A copy that finishes after a newer write has taken the key cannot be told apart from that write's own copy at the same path, so it is discarded and the copy rebuilt by replication from one the client was told about. `s3o_replication_write_copies_total{outcome="untrusted"}` counts these; a sustained rate means clients are overwriting keys faster than copies finish, and each one costs a rebuild.
 

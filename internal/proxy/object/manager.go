@@ -70,6 +70,7 @@ type Manager struct {
 	objectCache       objcache.ObjectCache // nil when object data caching is disabled
 	parallelBroadcast bool
 	copiesPerWrite    int // 1 leaves every copy after the first to the replicator
+	detached          DetachedRegistry
 	integrityCfg      *syncutil.AtomicConfig[config.IntegrityConfig]
 	failover          *readpath.Failover // per-key read failover + degraded-mode broadcast orchestrator
 	log               *slog.Logger
@@ -95,7 +96,8 @@ type Deps struct {
 	LocationCache     *LocationCache
 	ObjectCache       objcache.ObjectCache
 	ParallelBroadcast bool
-	CopiesPerWrite    int // how many copies a PUT places itself; 0 and 1 both mean one
+	CopiesPerWrite    int              // how many copies a PUT places itself; 0 and 1 both mean one
+	Detached          DetachedRegistry // required once CopiesPerWrite is above 1
 
 	DegradedBroadcastParallelism int  // caps concurrent probes; 0 is uncapped
 	DisableDegradedReads         bool // fail fast instead of broadcasting
@@ -118,6 +120,11 @@ func New(d *Deps) *Manager {
 	must.NotNil("d.Stores", d.Stores)
 	must.NotNil("d.LocationCache", d.LocationCache)
 	must.NotNil("d.IntegrityCfg", d.IntegrityCfg)
+	// Only the fan-out reaches for it, so a deployment that never fans out is
+	// not made to wire one.
+	if d.CopiesPerWrite > 1 {
+		must.NotNil("d.Detached", d.Detached)
+	}
 	return &Manager{
 		core:              d.Core,
 		coord:             d.Coord,
@@ -129,6 +136,7 @@ func New(d *Deps) *Manager {
 		objectCache:       d.ObjectCache,
 		parallelBroadcast: d.ParallelBroadcast,
 		copiesPerWrite:    max(d.CopiesPerWrite, 1),
+		detached:          d.Detached,
 		integrityCfg:      d.IntegrityCfg,
 		failover: readpath.New(&readpath.FailoverDeps{
 			Core:                         d.BroadcastCore,

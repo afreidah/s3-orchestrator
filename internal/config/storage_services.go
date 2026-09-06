@@ -89,10 +89,24 @@ type WritePathConfig struct {
 // never allowed to exceed it - copies past the factor are deleted by the
 // over-replication cleaner about as fast as writes create them. A factor of 1
 // leaves this inert whatever it is set to.
+//
+// MaxInFlight caps the writes whose copies are still uploading after their
+// client was answered. It is a ceiling for a backend that has gone slow rather
+// than a queue: a write that finds it full places one copy and leaves the rest
+// to the replicator, which costs the read-back this feature exists to avoid, so
+// it defaults to server.max_concurrent_writes - the admission capacity the
+// operator already sized - and a healthy fleet never approaches it.
 type ParallelCopiesConfig struct {
-	Enabled bool `yaml:"enabled"`
-	Count   int  `yaml:"count"`
+	Enabled     bool `yaml:"enabled"`
+	Count       int  `yaml:"count"`
+	MaxInFlight int  `yaml:"max_in_flight"`
 }
+
+// DefaultDetachedUploadCeiling is the in-flight ceiling for a deployment that
+// caps neither concurrent writes nor concurrent requests, so there is no
+// admission capacity to derive one from. High enough that a fleet keeping up
+// never reaches it, low enough to bound what one slow backend can accumulate.
+const DefaultDetachedUploadCeiling = 512
 
 // MultipartConfig gates the S3 protocol invariants enforced at multipart
 // completion. Part-number range, ordering, duplicate and ETag checks are

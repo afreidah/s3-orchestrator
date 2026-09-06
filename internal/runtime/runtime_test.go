@@ -28,7 +28,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samber/do/v2"
+
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/reload"
 )
 
@@ -340,4 +343,88 @@ func TestToAdminReloadStatus_ZeroGenerationSurvives(t *testing.T) {
 	if !strings.Contains(string(body), `"generation":0`) {
 		t.Errorf("body = %s, want an explicit generation:0", body)
 	}
+}
+
+// TestShutdown_WaitsForCopiesStillUploading asserts the teardown waits for the
+// work a fan-out write leaves behind. Those copies belong to no request, so the
+// HTTP drain above them returns without them, and a shutdown that did not wait
+// would kill them mid-upload and leave their intents for the reaper to resolve
+// minutes later.
+func TestShutdown_WaitsForCopiesStillUploading(t *testing.T) {
+	port := freePort(t)
+	cfg := loadCfg(t, configWithPort(port))
+
+	var stdout bytes.Buffer
+	rt, err := New(Options{
+		ConfigPath: writeYAML(t, configWithPort(port)),
+		Mode:       "all",
+		Stdout:     &stdout,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- rt.Run(ctx) }()
+	waitReady(t, port, cancel)
+
+	// Stand in for a write whose second copy is still uploading: hold a slot,
+	// then hand it back once shutdown is already waiting on it.
+	detached, err := do.Invoke[*writepath.DetachedUploads](rt.inj)
+	if err != nil {
+		cancel(errors.New("resolve failed"))
+		t.Fatalf("resolve detached uploads: %v", err)
+	}
+	release, ok := detached.Begin()
+	if !ok {
+		cancel(errors.New("no slot"))
+		t.Fatal("could not take a slot on an idle instance")
+	}
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		release()
+	}()
+
+	cancel(errors.New("test-shutdown-cause"))
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run returned error: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not exit within 10 seconds")
+	}
+
+	if !strings.Contains(stdout.String(), "waiting for copies still uploading after their response") {
+		t.Errorf("shutdown did not wait for the copy still uploading, logs:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "shutdown deadline reached with copies still uploading") {
+		t.Error("shutdown reported a timeout for a copy that finished well inside it")
+	}
+	if got := detached.Depth(); got != 0 {
+		t.Errorf("depth = %d after shutdown, want 0", got)
+	}
+}
+
+// waitReady blocks until the instance reports ready, cancelling and failing the
+// test if it never does.
+func waitReady(t *testing.T, port int, cancel context.CancelCauseFunc) {
+	t.Helper()
+	addr := fmt.Sprintf("http://127.0.0.1:%d/health/ready", port)
+	var lastErr error
+	for range 50 {
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, addr, nil)
+		resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+		lastErr = err
+		time.Sleep(50 * time.Millisecond)
+	}
+	cancel(errors.New("never ready"))
+	t.Fatalf("server never became ready: %v", lastErr)
 }

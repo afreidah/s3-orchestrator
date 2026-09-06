@@ -32,6 +32,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/reload"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
@@ -282,6 +283,7 @@ func (r *Runtime) shutdown() {
 	defer cancel()
 
 	r.http.Shutdown(shutdownCtx)
+	r.drainDetachedUploads(ctx)
 
 	if rl, _ := do.Invoke[*s3api.RateLimiter](r.inj); rl != nil {
 		rl.Close()
@@ -312,6 +314,36 @@ func (r *Runtime) shutdown() {
 
 	if err := r.obs.ShutdownTracer(shutdownCtx); err != nil {
 		r.log.ErrorContext(ctx, "tracer shutdown error", "error", err)
+	}
+}
+
+// drainDetachedUploads waits for the copies a fan-out write left running after
+// answering its client. They belong to no request, so the HTTP drain above
+// returns without them; this is the other half of that wait.
+//
+// Placed after the HTTP drain and before the background services stop, because
+// each of those copies still has a row to commit and bytes to account for, and
+// the final usage flush further down is what carries them. Whatever is still
+// running when the deadline expires is left exactly as a kill would leave it:
+// the intents stay, and the reaper resolves them on a later tick.
+func (r *Runtime) drainDetachedUploads(ctx context.Context) {
+	detached, err := do.Invoke[*writepath.DetachedUploads](r.inj)
+	if err != nil || detached == nil {
+		return
+	}
+	depth := detached.Depth()
+	if depth == 0 {
+		return
+	}
+	r.log.InfoContext(ctx, "waiting for copies still uploading after their response",
+		"in_flight", depth, "timeout", writepath.DetachedDrainTimeout)
+
+	drainCtx, cancel := context.WithTimeout(ctx, writepath.DetachedDrainTimeout)
+	defer cancel()
+
+	if remaining := detached.Wait(drainCtx); remaining > 0 {
+		r.log.WarnContext(ctx, "shutdown deadline reached with copies still uploading; leaving them to the reaper",
+			"in_flight", remaining)
 	}
 }
 

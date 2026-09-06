@@ -89,6 +89,7 @@ replication:
 write_path:
   parallel_copies:
     enabled: true
+    max_in_flight: 256
 
 # --- Prometheus metrics ---
 telemetry:

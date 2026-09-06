@@ -17,13 +17,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/backend/backendtest"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/testutil/testx"
@@ -259,6 +262,87 @@ func TestPutObject_ParallelCopies_FailsWhenNoCopyLands(t *testing.T) {
 	if len(recorded) != 0 || len(companions) != 0 {
 		t.Errorf("recorded %d objects and %d further copies for a write that landed nothing", len(recorded), len(companions))
 	}
+}
+
+// TestPutObject_ParallelCopies_FallsBackWhenNoSlotIsFree asserts a write that
+// cannot be tracked places one copy instead of fanning out untracked. The copy
+// it skips is not lost - the replicator makes it - so the cost is the read-back
+// this feature exists to avoid, which is why the ceiling is set where a fleet
+// keeping up never reaches it.
+func TestPutObject_ParallelCopies_FallsBackWhenNoSlotIsFree(t *testing.T) {
+	t.Parallel()
+	b1, b2 := backendtest.NewInMemory(), backendtest.NewInMemory()
+
+	store, c := eligibleStore(t)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{
+		Order:          []string{"b1", "b2"},
+		CopiesPerWrite: 2,
+		MaxDetached:    1,
+	})
+
+	// Hold the only slot, so the write below finds the registry full.
+	held, ok := mgr.Detached.Begin()
+	if !ok {
+		t.Fatal("could not take the only slot")
+	}
+	defer held()
+
+	before := testutil.ToFloat64(telemetry.ReplicationWriteFanoutSkippedTotal)
+
+	payload := []byte("no slot, so one copy and the replicator does the rest")
+	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{
+		Key: "key", Body: bytes.NewReader(payload), Size: int64(len(payload)), ContentType: "text/plain",
+	}); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	recorded, companions, _ := c.snapshot()
+	if len(recorded) != 1 {
+		t.Fatalf("recorded %d objects, want the 1 the fallback places", len(recorded))
+	}
+	if len(companions) != 0 {
+		t.Errorf("placed %d further copies with no slot to track them", len(companions))
+	}
+	if got := testutil.ToFloat64(telemetry.ReplicationWriteFanoutSkippedTotal) - before; got != 1 {
+		t.Errorf("skip counter moved by %v, want 1: the operator's only signal for this", got)
+	}
+	if !b1.Has("key") {
+		t.Error("the copy the fallback placed is missing")
+	}
+}
+
+// TestPutObject_ParallelCopies_ReleasesItsSlot asserts a write hands its slot
+// back once its copies settle. A slot left behind would lower the ceiling for
+// every write after it until the process restarted.
+func TestPutObject_ParallelCopies_ReleasesItsSlot(t *testing.T) {
+	t.Parallel()
+	b1, b2 := backendtest.NewInMemory(), backendtest.NewInMemory()
+
+	store, c := eligibleStore(t)
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{
+		Order:          []string{"b1", "b2"},
+		CopiesPerWrite: 2,
+		MaxDetached:    1,
+	})
+
+	payload := []byte("the slot comes back")
+	for i := range 3 {
+		if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{
+			Key: fmt.Sprintf("key-%d", i), Body: bytes.NewReader(payload),
+			Size: int64(len(payload)), ContentType: "text/plain",
+		}); err != nil {
+			t.Fatalf("PutObject %d: %v", i, err)
+		}
+		// Each write has to finish before the next can be admitted, since the
+		// fixture leaves exactly one slot.
+		testx.Eventually(t, settleWindow, func() bool { return mgr.Detached.Depth() == 0 },
+			"write %d never released its slot", i)
+	}
+
+	testx.Eventually(t, settleWindow, func() bool {
+		_, companions, _ := c.snapshot()
+		return len(companions) == 3
+	}, "the second copy of every write should have committed")
 }
 
 // TestPutObject_ParallelCopies_CommitFailureAbandonsTheRest asserts a failed

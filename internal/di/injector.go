@@ -98,6 +98,7 @@ func registerBackendStack(inj do.Injector) {
 	do.Provide(inj, ProvideBackendRuntime)
 	do.Provide(inj, ProvideIntegrityConfig)
 	do.Provide(inj, ProvideWriteCoordinator)
+	do.Provide(inj, ProvideDetachedUploads)
 	do.Provide(inj, ProvideMultipartManager)
 	do.Provide(inj, ProvideObjectManager)
 	do.Provide(inj, ProvideDashboardAggregator)
