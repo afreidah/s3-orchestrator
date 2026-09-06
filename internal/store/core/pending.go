@@ -122,6 +122,88 @@ func resolveCompanion(ctx context.Context, tx TxAdapter, p *PendingObject, exist
 	}, nil
 }
 
+// -------------------------------------------------------------------------
+// COMPANION COMMIT
+// -------------------------------------------------------------------------
+
+// companionOutcome carries the resolution of an extra copy out of the
+// transactional body, shaped like promoteOutcome so both resolution paths hand
+// their caller the same three things.
+type companionOutcome struct {
+	result    CompanionCommitResult
+	displaced []DeletedCopy
+	deltas    QuotaDeltas
+}
+
+// commitCompanionTx is the transactional body of CommitCompanionCopy: lock the
+// key, claim the intent, and either add the copy or discard it.
+//
+// The intent is the whole test. A write clears every intent for its key except
+// the ones it is itself still uploading, so finding this one still there says
+// that nothing newer has taken the key and the bytes at that path are this
+// write's own.
+func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (companionOutcome, error) {
+	if err := tx.AcquireKeyLock(ctx, p.ObjectKey); err != nil {
+		return companionOutcome{}, err
+	}
+	claimed, err := tx.ClaimPending(ctx, p.IntentID)
+	if err != nil {
+		return companionOutcome{}, err
+	}
+	if !claimed {
+		return discardUntrustedCopy(ctx, tx, p)
+	}
+	loc := objectFromStoredForm(p.ObjectKey, p.BackendName, p.SizeBytes, pendingStoredForm(p), p.Identity)
+	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
+		return companionOutcome{}, fmt.Errorf("insert companion location: %w", err)
+	}
+	deltas := QuotaDeltas{p.BackendName: p.SizeBytes}
+	if err := chargeStripes(ctx, tx, p.ObjectKey, deltas); err != nil {
+		return companionOutcome{}, err
+	}
+	if err := tx.DeletePending(ctx, p.IntentID); err != nil {
+		return companionOutcome{}, fmt.Errorf("delete companion pending row: %w", err)
+	}
+	return companionOutcome{result: CompanionCopyCommitted, deltas: deltas}, nil
+}
+
+// discardUntrustedCopy resolves an upload whose write has been overtaken.
+//
+// Its bytes went down at a path a newer write may also have written, in an
+// order nothing here can establish, so the object sitting there is either
+// version and reads served from it would be silently wrong. A row already
+// claiming a copy on that backend describes the same path and is no safer, so
+// it goes too: replication rebuilds the copy from one the client was told
+// about, which costs a rebuild in the case where these bytes never landed on
+// top of anything.
+func discardUntrustedCopy(ctx context.Context, tx TxAdapter, p *PendingObject) (companionOutcome, error) {
+	orphaned := p.SizeBytes
+	deltas := QuotaDeltas{}
+	loc, ok, err := tx.LockObjectOnBackend(ctx, p.ObjectKey, p.BackendName)
+	if err != nil {
+		return companionOutcome{}, err
+	}
+	if ok {
+		if err := tx.DeleteObjectFromBackend(ctx, p.ObjectKey, p.BackendName); err != nil {
+			return companionOutcome{}, fmt.Errorf("delete untrusted copy: %w", err)
+		}
+		orphaned = loc.SizeBytes
+		deltas.Add(p.BackendName, -loc.SizeBytes)
+		if err := chargeStripes(ctx, tx, p.ObjectKey, deltas); err != nil {
+			return companionOutcome{}, err
+		}
+	}
+	return companionOutcome{
+		result: CompanionCopyUntrusted,
+		displaced: []DeletedCopy{{
+			BackendName: p.BackendName,
+			SizeBytes:   orphaned,
+			Reason:      CleanupReasonCompanionUntrusted,
+		}},
+		deltas: deltas,
+	}, nil
+}
+
 // clearSupersededIntents removes every intent for the key and reports the ones
 // whose bytes now need deleting off their backend.
 //
@@ -134,8 +216,13 @@ func resolveCompanion(ctx context.Context, tx TxAdapter, p *PendingObject, exist
 // of them is dropped without touching the backend, because the object sitting
 // at that path is this write's copy - the same reason an overwrite does not
 // treat the backend it landed on as displaced.
-func clearSupersededIntents(ctx context.Context, tx TxAdapter, key string, landedOn []string) ([]DeletedCopy, error) {
-	cleared, err := tx.ClearPendingForKey(ctx, key, nil)
+//
+// keep names the intents of this same write still uploading. They are the one
+// kind a commit leaves behind, because the write they belong to is the write
+// doing the clearing; the row is what their commit later reads as proof that
+// nothing newer has touched the key.
+func clearSupersededIntents(ctx context.Context, tx TxAdapter, key string, landedOn, keep []string) ([]DeletedCopy, error) {
+	cleared, err := tx.ClearPendingForKey(ctx, key, keep)
 	if err != nil {
 		return nil, fmt.Errorf("clear superseded intents: %w", err)
 	}

@@ -44,6 +44,16 @@ type ObjectCopy struct {
 // through replication and moves; a tag set carried there would be re-inserted
 // on every copy that lands. Tags describe the object, and there is one set of
 // them however many copies exist.
+//
+// Placing names the copies of this same write whose uploads are still running.
+// They are the only intents a commit leaves alone - every other intent for the
+// key describes an object this write has replaced, and leaving a stranger's
+// would let it commit a copy of what was just replaced.
+//
+// Their backends are also held back from physical cleanup. A prior copy on a
+// backend this write is still uploading to sits at the path those bytes are
+// landing on, so deleting it as displaced deletes this write's own copy and
+// leaves a row describing bytes that are gone.
 type RecordObjectRequest struct {
 	Key      string
 	Size     int64
@@ -51,15 +61,31 @@ type RecordObjectRequest struct {
 	Identity *ObjectIdentity
 	Tags     []Tag
 	Copies   []ObjectCopy
+	Placing  []ObjectCopy
 }
 
-// Backends lists the backends the request places a copy on, in order.
-func (r *RecordObjectRequest) Backends() []string {
-	names := make([]string, len(r.Copies))
+// occupiedBackends lists every backend this write puts bytes on, whether the
+// copy is being committed now or is still uploading. It is what displacement
+// and intent clearing measure "somewhere else" against.
+func (r *RecordObjectRequest) occupiedBackends() []string {
+	names := make([]string, 0, len(r.Copies)+len(r.Placing))
 	for i := range r.Copies {
-		names[i] = r.Copies[i].Backend
+		names = append(names, r.Copies[i].Backend)
+	}
+	for i := range r.Placing {
+		names = append(names, r.Placing[i].Backend)
 	}
 	return names
+}
+
+// keepIntents names the intents the commit must not clear: the ones belonging
+// to this write's own uploads still in flight.
+func (r *RecordObjectRequest) keepIntents() []string {
+	ids := make([]string, 0, len(r.Placing))
+	for i := range r.Placing {
+		ids = append(ids, r.Placing[i].IntentID)
+	}
+	return ids
 }
 
 // mutationResult is what a mutation's transactional body hands back: the copies
@@ -118,7 +144,7 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 		return mutationResult{}, err
 	}
 	deltas := make(QuotaDeltas, len(existing)+len(req.Copies))
-	displaced, err := clearExistingCopies(ctx, tx, req.Key, req.Backends(), existing, deltas)
+	displaced, err := clearExistingCopies(ctx, tx, req.Key, req.occupiedBackends(), existing, deltas)
 	if err != nil {
 		return mutationResult{}, err
 	}
@@ -143,7 +169,7 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 	if err := chargeStripes(ctx, tx, req.Key, deltas); err != nil {
 		return mutationResult{}, err
 	}
-	superseded, err := clearSupersededIntents(ctx, tx, req.Key, req.Backends())
+	superseded, err := clearSupersededIntents(ctx, tx, req.Key, req.occupiedBackends(), req.keepIntents())
 	if err != nil {
 		return mutationResult{}, err
 	}
@@ -189,8 +215,10 @@ func deleteObjectTx(ctx context.Context, tx TxAdapter, key string) (mutationResu
 		return mutationResult{}, err
 	}
 	// The object is gone, so every intent for it describes bytes nobody
-	// wants and no backend is being written to here.
-	superseded, err := clearSupersededIntents(ctx, tx, key, nil)
+	// wants and no backend is being written to here. A delete keeps none of
+	// them: an upload still running is placing a copy of an object that no
+	// longer exists.
+	superseded, err := clearSupersededIntents(ctx, tx, key, nil, nil)
 	if err != nil {
 		return mutationResult{}, err
 	}

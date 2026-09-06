@@ -261,6 +261,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_rebalance_pending` | Gauge | — | Objects planned for rebalance |
 | `s3o_replication_pending` | Gauge | — | Objects below replication factor |
 | `s3o_replication_copies_created_total` | Counter | — | Replica copies created |
+| `s3o_replication_write_copies_total` | Counter | `outcome` | Further copies placed during the write (`committed`, `untrusted`, `failed`) |
 | `s3o_replication_errors_total` | Counter | — | Replication errors |
 | `s3o_replication_duration_seconds` | Histogram | — | Replication cycle time |
 | `s3o_replication_runs_total` | Counter | status | Replication worker executions, by cycle outcome (see below) |

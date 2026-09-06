@@ -189,6 +189,17 @@ backends:
 #   batch_size: 50
 #   unhealthy_threshold: 10m     # Grace period before replacing copies on circuit-broken backends
 
+# --- Write path ---
+# Placing an object's copies during the write costs one upload each and no
+# read; leaving them to the replicator costs a read of the object plus the
+# source backend's egress for every copy. The saving lands at write time
+# instead of spread across replicator cycles, which can cost PUT throughput
+# on a constrained uplink, so it is off unless asked for.
+# write_path:
+#   parallel_copies:
+#     enabled: false             # Place further copies during the write
+#     count: 2                   # Copies per write (default: replication.factor, never above it)
+
 # --- Cleanup queue (orphaned object retry) ---
 # cleanup_queue:
 #   concurrency: 10              # Parallel deletion workers (default: 10)

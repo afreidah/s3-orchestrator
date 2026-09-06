@@ -445,6 +445,7 @@ func ProvideObjectManager(i do.Injector) (*object.Manager, error) {
 		LocationCache:                object.NewLocationCache(cb.CacheTTL),
 		ObjectCache:                  resolveOptionalCache(i),
 		ParallelBroadcast:            cb.ParallelBroadcast,
+		CopiesPerWrite:               d.cfg.CopiesPerWrite(),
 		DegradedBroadcastParallelism: cb.DegradedBroadcastParallelism,
 		DisableDegradedReads:         cb.DegradedReadsEnabled != nil && !*cb.DegradedReadsEnabled,
 		IntegrityCfg:                 d.integrityCfg,
