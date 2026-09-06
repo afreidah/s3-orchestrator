@@ -3803,3 +3803,90 @@ func TestParallelCopies_CapsAtTheFactor(t *testing.T) {
 		t.Errorf("CopiesPerWrite = %d, want the factor", got)
 	}
 }
+
+// TestParallelCopies_InFlightCeilingFollowsWriteAdmission verifies the ceiling
+// on tracked tails defaults to the write admission limit. A tail is the residue
+// of a write, so an instance carrying more of them than it would admit writes
+// is one whose backends have stopped keeping up.
+func TestParallelCopies_InFlightCeilingFollowsWriteAdmission(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfigTwoBackends()
+	cfg.Replication.Factor = 2
+	cfg.Server.MaxConcurrentWrites = 250
+	cfg.WritePath.ParallelCopies.Enabled = true
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("SetDefaultsAndValidate: %v", err)
+	}
+	if got := cfg.WritePath.ParallelCopies.MaxInFlight; got != 250 {
+		t.Errorf("max_in_flight = %d, want the write admission limit", got)
+	}
+}
+
+// TestParallelCopies_InFlightCeilingFallsBackToTheRequestLimit verifies a
+// deployment that caps requests as a whole rather than writes specifically
+// still derives a ceiling from what it configured.
+func TestParallelCopies_InFlightCeilingFallsBackToTheRequestLimit(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfigTwoBackends()
+	cfg.Replication.Factor = 2
+	cfg.Server.MaxConcurrentRequests = 300
+	cfg.WritePath.ParallelCopies.Enabled = true
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("SetDefaultsAndValidate: %v", err)
+	}
+	if got := cfg.WritePath.ParallelCopies.MaxInFlight; got != 300 {
+		t.Errorf("max_in_flight = %d, want the request admission limit", got)
+	}
+}
+
+// TestParallelCopies_InFlightCeilingHasAFloor verifies a deployment with no
+// write-side admission limit still gets a ceiling. Capping reads alone leaves
+// both write limits at zero, and deriving from that would refuse to boot over a
+// knob the operator never set.
+func TestParallelCopies_InFlightCeilingHasAFloor(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfigTwoBackends()
+	cfg.Replication.Factor = 2
+	cfg.Server.MaxConcurrentReads = 500
+	cfg.WritePath.ParallelCopies.Enabled = true
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("SetDefaultsAndValidate: %v", err)
+	}
+	if got := cfg.WritePath.ParallelCopies.MaxInFlight; got != DefaultDetachedUploadCeiling {
+		t.Errorf("max_in_flight = %d, want the default ceiling", got)
+	}
+}
+
+// TestParallelCopies_InFlightCeilingFollowsTheImpliedRequestLimit verifies a
+// deployment that caps nothing inherits the ceiling from the request limit the
+// server section defaults to, rather than from the floor.
+func TestParallelCopies_InFlightCeilingFollowsTheImpliedRequestLimit(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfigTwoBackends()
+	cfg.Replication.Factor = 2
+	cfg.WritePath.ParallelCopies.Enabled = true
+
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("SetDefaultsAndValidate: %v", err)
+	}
+	if got, want := cfg.WritePath.ParallelCopies.MaxInFlight, cfg.Server.MaxConcurrentRequests; got != want {
+		t.Errorf("max_in_flight = %d, want the defaulted request limit of %d", got, want)
+	}
+}
+
+// TestParallelCopies_RejectsAnInFlightCeilingBelowOne verifies a ceiling that
+// admits nothing is refused at boot rather than silently turning the fan-out
+// off on a deployment that asked for it.
+func TestParallelCopies_RejectsAnInFlightCeilingBelowOne(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfigTwoBackends()
+	cfg.Replication.Factor = 2
+	cfg.WritePath.ParallelCopies = ParallelCopiesConfig{Enabled: true, MaxInFlight: -1}
+
+	if err := cfg.SetDefaultsAndValidate(); !errors.Is(err, ErrParallelCopiesInFlightMin) {
+		t.Errorf("err = %v, want ErrParallelCopiesInFlightMin", err)
+	}
+}

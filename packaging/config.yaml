@@ -199,6 +199,11 @@ backends:
 #   parallel_copies:
 #     enabled: false             # Place further copies during the write
 #     count: 2                   # Copies per write (default: replication.factor, never above it)
+#     max_in_flight: 256         # Writes whose copies may outlive their response
+#                                # (default: server.max_concurrent_writes). A write that
+#                                # finds it full places one copy and leaves the rest to the
+#                                # replicator; watch s3o_detached_uploads_depth and
+#                                # s3o_replication_write_fanout_skipped_total.
 
 # --- Cleanup queue (orphaned object retry) ---
 # cleanup_queue:

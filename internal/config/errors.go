@@ -200,6 +200,7 @@ var (
 	ErrQuotaMixNotAllowed         = errors.New("cannot mix unlimited (quota_bytes: 0) and quota-limited backends")
 	ErrUnlimitedNeedsReplication  = errors.New("multiple backends with unlimited quota require replication.factor >= 2")
 	ErrParallelCopiesMin          = errors.New("write_path.parallel_copies.count must be at least 1")
+	ErrParallelCopiesInFlightMin  = errors.New("write_path.parallel_copies.max_in_flight must be at least 1")
 	ErrParallelCopiesOverFactor   = errors.New("write_path.parallel_copies.count exceeds replication.factor")
 )
 

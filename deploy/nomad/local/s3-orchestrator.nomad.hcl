@@ -141,15 +141,25 @@ job "s3-orchestrator" {
 
           replication:
             factor: 2
-            worker_interval: "30s"
-            batch_size: 200
+            worker_interval: "20s"
+            batch_size: 400
 
           # Both copies are placed by the write itself, so the replicator is
           # left with repair rather than the read-back that making the second
           # copy would cost. The count defaults to replication.factor.
+          #
+          # max_in_flight caps the writes whose second copy is still uploading
+          # after the client was answered, and defaults to
+          # server.max_concurrent_writes. Set here well above the handful a
+          # keeping-up fleet carries, so tripping it means a backend has gone
+          # slow: watch s3o_detached_uploads_depth for that, and
+          # s3o_replication_write_fanout_skipped_total for the writes that
+          # then fell back to one copy. Drop it to single digits to watch the
+          # fallback fire on purpose.
           write_path:
             parallel_copies:
               enabled: true
+              max_in_flight: 256
 
           rebalance:
             enabled: true
