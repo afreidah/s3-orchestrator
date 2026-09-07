@@ -211,7 +211,14 @@ func (f *copyFanout) commitAsTheyLand(ctx context.Context, span trace.Span) {
 
 	live := f.liveIntents()
 	committed, abandoned := false, false
+	placed := 0
 	var lastErr error
+
+	// Recorded once the write has settled, because the count is the whole
+	// point: a distribution sitting at the factor says writes are reaching it
+	// on their own, and one drifting toward 1 says the replicator is quietly
+	// picking the difference back up.
+	defer func() { telemetry.ReplicationWriteCopiesCommitted.Observe(float64(placed)) }()
 
 	for range f.claimed {
 		out := <-f.uploads
@@ -223,11 +230,16 @@ func (f *copyFanout) commitAsTheyLand(ctx context.Context, span trace.Span) {
 		case abandoned:
 			f.leaveForReaper(ctx, out.intent, "an earlier copy's commit failed")
 		case committed:
-			_ = f.mgr.coord.CommitCompanionCopy(ctx, out.intent)
+			if recorded, _ := f.mgr.coord.CommitCompanionCopy(ctx, out.intent); recorded {
+				placed++
+			}
 		default:
 			err := f.commitFirstCopy(ctx, span, out.intent, live)
 			committed, abandoned = err == nil, err != nil
 			lastErr = err
+			if err == nil {
+				placed++
+			}
 		}
 	}
 	// Nothing committed and nothing abandoned means every upload failed, and

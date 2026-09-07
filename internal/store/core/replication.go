@@ -93,6 +93,13 @@ func RemoveExcessCopy(ctx context.Context, runner Runner, key, backendName strin
 		// disagrees means some row lost its metadata; removing the row that
 		// still has the key destroys the only way to read the bytes, while
 		// removing the one without it is both safe and self-correcting.
+		//
+		// They share it from either direction: a replica is made by copying
+		// bytes verbatim and inheriting the source row's stored form, and a
+		// write placing its own copies encrypts once and hands every upload a
+		// reader over that one ciphertext. Neither path can produce a set whose
+		// members legitimately differ, which is what makes disagreement a lost
+		// row rather than a state to preserve.
 		if isLastDecryptableCopy(existing, backendName) {
 			return removedCopy{}, ErrCopyHoldsOnlyDEK
 		}

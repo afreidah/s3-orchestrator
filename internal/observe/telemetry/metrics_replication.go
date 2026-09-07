@@ -63,6 +63,25 @@ var (
 		},
 	)
 
+	// ReplicationWriteCopiesCommitted is how many copies each fan-out write
+	// ended up committing, counting the one that answered the client.
+	//
+	// The number that says whether the feature is working. A distribution
+	// sitting at the replication factor means writes are reaching it on their
+	// own; one drifting toward 1 means they are degrading to a single copy and
+	// the replicator is quietly picking the difference back up, which the
+	// per-copy counters show the reason for.
+	//
+	// Bucketed to small integers because that is what it is: copies, capped by
+	// the factor, which cannot exceed the backend count.
+	ReplicationWriteCopiesCommitted = promauto.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "s3o_replication_write_copies_committed",
+			Help:    "Copies committed per fan-out write, including the one that answered the client",
+			Buckets: prometheus.LinearBuckets(1, 1, 6),
+		},
+	)
+
 	// ReplicationWriteFanoutSkippedTotal counts writes that placed a single
 	// copy because no slot was free, leaving the rest to the replicator.
 	//

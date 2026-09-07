@@ -9,6 +9,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -298,4 +300,65 @@ func TestNeedsSeeding(t *testing.T) {
 			t.Errorf("needsSeeding(%q) = %v, want %v", tc.op, got, tc.want)
 		}
 	}
+}
+
+// TestNewBody_RandomByDefault verifies the default payload stays random, since
+// that is what measures the write path without an encoder shortening it.
+func TestNewBody_RandomByDefault(t *testing.T) {
+	body, err := newBody(4096, 0)
+	if err != nil {
+		t.Fatalf("newBody: %v", err)
+	}
+	if len(body) != 4096 {
+		t.Fatalf("body is %d bytes, want 4096", len(body))
+	}
+	if compressedFraction(t, body) < 0.9 {
+		t.Error("the default body compressed, so it was not random")
+	}
+}
+
+// TestNewBody_CompressibleShrinks verifies a body asked to be compressible
+// actually encodes smaller. Without it the suite measures compression only as
+// the cost of declining, never as the work of encoding.
+func TestNewBody_CompressibleShrinks(t *testing.T) {
+	body, err := newBody(64<<10, 0.8)
+	if err != nil {
+		t.Fatalf("newBody: %v", err)
+	}
+	if len(body) != 64<<10 {
+		t.Fatalf("body is %d bytes, want %d", len(body), 64<<10)
+	}
+	if got := compressedFraction(t, body); got > 0.5 {
+		t.Errorf("body encoded to %.2f of its size at compressible=0.8, want well under half", got)
+	}
+}
+
+// TestNewBody_FullyCompressible verifies the ceiling is handled: a fraction of
+// 1 fills the whole body rather than running past the end of it.
+func TestNewBody_FullyCompressible(t *testing.T) {
+	body, err := newBody(8192, 1)
+	if err != nil {
+		t.Fatalf("newBody: %v", err)
+	}
+	if len(body) != 8192 {
+		t.Fatalf("body is %d bytes, want 8192", len(body))
+	}
+	if got := compressedFraction(t, body); got > 0.2 {
+		t.Errorf("a fully repetitive body encoded to %.2f of its size", got)
+	}
+}
+
+// compressedFraction reports what share of its size a body keeps once gzipped,
+// which stands in for what the orchestrator's encoder would make of it.
+func compressedFraction(t *testing.T, body []byte) float64 {
+	t.Helper()
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	if _, err := w.Write(body); err != nil {
+		t.Fatalf("compress: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close compressor: %v", err)
+	}
+	return float64(buf.Len()) / float64(len(body))
 }

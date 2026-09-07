@@ -153,7 +153,7 @@ go build -o s3-loadtest .
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-op` | `put` | `put`, `get`, `mixed` (50/50 PUT/GET), or `listobjects` |
+| `-op` | `put` | `put`, `overwrite`, `get`, `mixed` (50/50 PUT/GET), or `listobjects` |
 | `-rate` | `100` | Requests per second |
 | `-duration` | `30s` | Test duration |
 | `-size` | `1024` | Object size in bytes |
@@ -165,6 +165,8 @@ go build -o s3-loadtest .
 | `-bucket` | `photos` | Target bucket |
 | `-region` | `us-east-1` | AWS region for SigV4 |
 | `-sizes` | (unset) | Comma-separated object sizes for sweep mode; overrides `-size` |
+| `-compressible` | `0` | Fraction of each body that is repetitive (0..1). 0 is random bytes, which no encoder can shrink |
+| `-overwrite-keys` | `1000` | Key-set size for `-op overwrite`; a key is rewritten every N requests |
 | `-output-json` | (unset) | Path to write structured per-size results matrix |
 | `-list-prefix` | `loadtest/` | Prefix for the listobjects scenario |
 | `-list-max-keys` | `1000` | `max-keys` query parameter for the listobjects scenario |

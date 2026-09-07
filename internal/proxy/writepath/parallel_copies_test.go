@@ -207,8 +207,12 @@ func TestCommitCompanionCopy_RecordsTheCopy(t *testing.T) {
 		Quota:    counter.NewQuotaTracker([]string{"b2"}),
 	}), store)
 
-	if err := coord.CommitCompanionCopy(context.Background(), companionIntent("b2")); err != nil {
+	recorded, err := coord.CommitCompanionCopy(context.Background(), companionIntent("b2"))
+	if err != nil {
 		t.Fatalf("CommitCompanionCopy: %v", err)
+	}
+	if !recorded {
+		t.Error("a committed copy was not reported as recorded")
 	}
 	if got := usage.Backend().Load("b2", counter.FieldIngressBytes); got != 4096 {
 		t.Errorf("b2 ingress = %d, want the 4096 the copy landed", got)
@@ -234,8 +238,12 @@ func TestCommitCompanionCopy_DiscardsAnUntrustedCopy(t *testing.T) {
 	}
 	coord := newCoordinatorWithBackend("b2", be, store)
 
-	if err := coord.CommitCompanionCopy(context.Background(), companionIntent("b2")); err != nil {
+	recorded, err := coord.CommitCompanionCopy(context.Background(), companionIntent("b2"))
+	if err != nil {
 		t.Fatalf("CommitCompanionCopy: %v", err)
+	}
+	if recorded {
+		t.Error("a discarded copy was reported as recorded, which would count it toward the factor")
 	}
 	if be.Has("k") {
 		t.Error("the untrusted copy's bytes are still on the backend")
@@ -258,7 +266,7 @@ func TestCommitCompanionCopy_StoreErrorLeavesTheIntent(t *testing.T) {
 	}
 	coord := newCoordinatorWithBackend("b2", be, store)
 
-	if err := coord.CommitCompanionCopy(context.Background(), companionIntent("b2")); err == nil {
+	if _, err := coord.CommitCompanionCopy(context.Background(), companionIntent("b2")); err == nil {
 		t.Fatal("expected the commit failure to surface")
 	}
 	if !be.Has("k") {

@@ -80,6 +80,8 @@ The `routing_strategy` config selects how a write picks its target backend:
 
 The strategy only decides the order candidates are tried. Whether a backend has room is settled by the statement that claims the space: the write's pending intent is inserted only if the backend's live rows still have headroom, so a candidate that has filled up since it was ranked declines and the next one is tried. A write that no candidate accepts fails with 507. Because the test reads rows rather than an in-memory figure, every instance in a fleet is judged against the same totals.
 
+A write places one copy by default and the replicator brings the object up to `replication.factor` afterwards. With `write_path.parallel_copies` on it claims the top N candidates instead, one intent each, and uploads to all of them at once from the payload it already materialized — answering the client on the first copy committed and letting the rest finish behind the response. That removes the read the replicator would otherwise make of every further copy, and moves those bytes to write time. See [configuration](configuration.md#write_pathparallel_copies).
+
 Quota is charged in the same transaction as the object location record, so the counter cannot drift from the ledger. Set `quota_bytes: 0` (or omit it) to disable quota enforcement on a backend — useful when you want unified access or replication without cost control. Backends with a `max_object_size` limit automatically skip objects that exceed the limit during routing, rebalancing, and replication, preventing repeated 413 errors from providers with per-object size restrictions.
 
 See [docs/backends.md](backends.md) for full routing semantics.

@@ -73,20 +73,22 @@ const inlineTaggingHeader = "loadtest=1&retain=30d"
 // scenarioConfig captures the immutable inputs to a single scenario run.
 // Extracted so the sweep loop can re-run with only the body size varying.
 type scenarioConfig struct {
-	endpoint    string
-	bucket      string
-	region      string
-	op          string
-	rate        int
-	duration    time.Duration
-	workers     uint64
-	seedCount   int
-	cold        bool
-	listPrefix  string
-	listMaxKeys int
-	signer      *v4.Signer
-	creds       aws.Credentials
-	runID       string
+	endpoint      string
+	bucket        string
+	region        string
+	op            string
+	rate          int
+	duration      time.Duration
+	workers       uint64
+	seedCount     int
+	cold          bool
+	listPrefix    string
+	listMaxKeys   int
+	compressible  float64
+	overwriteKeys uint64
+	signer        *v4.Signer
+	creds         aws.Credentials
+	runID         string
 }
 
 // runResult is the per-size summary for a single scenario run, structured
@@ -152,6 +154,32 @@ func validateRampFlags(rampTo, rate, rampStep int, multiSize bool) error {
 	return nil
 }
 
+// scenarioFlags is the subset of the command line whose validity depends on
+// which operation was asked for, bundled so the checks live together rather
+// than as another arm of main's flag handling.
+type scenarioFlags struct {
+	op               string
+	overwriteKeys    uint64
+	cacheFlushBefore bool
+	adminToken       string
+	cold             bool
+}
+
+// validateScenarioFlags rejects combinations an operation cannot honour, so a
+// run fails at the flag rather than partway through a scenario.
+func validateScenarioFlags(f scenarioFlags) error {
+	if f.op == "overwrite" && f.overwriteKeys == 0 {
+		return errors.New("-overwrite-keys must be positive: a rewrite scenario needs a key set to rewrite")
+	}
+	if f.cacheFlushBefore && f.adminToken == "" {
+		return errors.New("-cache-flush-before requires -admin-token (or S3O_ADMIN_TOKEN env var)")
+	}
+	if f.cold && f.op != "get" {
+		return errors.New("-cold only applies to -op get")
+	}
+	return nil
+}
+
 // -------------------------------------------------------------------------
 // ENTRY POINT
 // -------------------------------------------------------------------------
@@ -181,6 +209,8 @@ func main() {
 		cacheFlushBefore = flag.Bool("cache-flush-before", false, "POST /admin/api/cache/flush before each scenario step (requires -admin-token)")
 		adminToken       = flag.String("admin-token", "", "Admin token for cache-flush calls (also read from S3O_ADMIN_TOKEN env var)")
 		cold             = flag.Bool("cold", false, "Cold-cache read mode for -op get: read each seeded object exactly once so every GET is a first touch; the run lasts one pass over the working set, not -duration")
+		compressible     = flag.Float64("compressible", 0, "Fraction of each body that is repetitive (0..1). 0 is incompressible random bytes; 0.8 encodes to roughly a fifth. Applies to every scenario that writes")
+		overwriteKeys    = flag.Uint64("overwrite-keys", 1000, "Size of the key set -op overwrite rewrites, so a key is written every -overwrite-keys requests")
 	)
 	flag.Parse()
 	if *adminToken == "" {
@@ -197,12 +227,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	if *cacheFlushBefore && *adminToken == "" {
-		fmt.Fprintln(os.Stderr, "error: -cache-flush-before requires -admin-token (or S3O_ADMIN_TOKEN env var)")
-		os.Exit(1)
-	}
-	if *cold && *op != "get" {
-		fmt.Fprintln(os.Stderr, "error: -cold only applies to -op get")
+	if err := validateScenarioFlags(scenarioFlags{
+		op:               *op,
+		overwriteKeys:    *overwriteKeys,
+		cacheFlushBefore: *cacheFlushBefore,
+		adminToken:       *adminToken,
+		cold:             *cold,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -213,20 +245,22 @@ func main() {
 	}
 
 	cfg := scenarioConfig{
-		endpoint:    *endpoint,
-		bucket:      *bucket,
-		region:      *region,
-		op:          *op,
-		rate:        *rateFlag,
-		duration:    *dur,
-		workers:     *workers,
-		seedCount:   *seedN,
-		cold:        *cold,
-		listPrefix:  *listPrefix,
-		listMaxKeys: *listMaxKeys,
-		signer:      signer,
-		creds:       creds,
-		runID:       time.Now().UTC().Format("20060102T150405Z"),
+		endpoint:      *endpoint,
+		bucket:        *bucket,
+		region:        *region,
+		op:            *op,
+		rate:          *rateFlag,
+		duration:      *dur,
+		workers:       *workers,
+		seedCount:     *seedN,
+		cold:          *cold,
+		listPrefix:    *listPrefix,
+		listMaxKeys:   *listMaxKeys,
+		compressible:  *compressible,
+		overwriteKeys: *overwriteKeys,
+		signer:        signer,
+		creds:         creds,
+		runID:         time.Now().UTC().Format("20060102T150405Z"),
 	}
 
 	results := sweepResults{
@@ -424,15 +458,42 @@ func newHardwareInfo() hardwareInfo {
 	}
 }
 
+// newBody builds one scenario's payload at the requested compressibility.
+//
+// Random bytes are the honest default for measuring the write path, but they
+// are also the one input an encoder can never shrink, so a run made entirely of
+// them measures compression as the cost of declining and never as the work of
+// encoding. compressible is the fraction of the body filled with a repeating
+// dictionary instead: at 0.8 an encoder has four repetitive bytes for every
+// random one and stores roughly a fifth of what it was given.
+//
+// The repetitive part is a fixed phrase rather than a run of one byte, so the
+// encoder does real matching rather than collapsing a single run.
+func newBody(size int, compressible float64) ([]byte, error) {
+	body := make([]byte, size)
+	if _, err := rand.Read(body); err != nil {
+		return nil, fmt.Errorf("generate body: %w", err)
+	}
+	if compressible <= 0 {
+		return body, nil
+	}
+	repeated := int(float64(size) * min(compressible, 1))
+	phrase := []byte("the quick brown fox jumps over the lazy dog, and does so repeatedly. ")
+	for i := 0; i < repeated; i += len(phrase) {
+		copy(body[i:min(i+len(phrase), repeated)], phrase)
+	}
+	return body, nil
+}
+
 // runScenario executes one full scenario at a single object size: seeds
 // (if needed), attacks, collects vegeta metrics, and returns a runResult.
 // The metrics live entirely on the stack so concurrent runs would be
 // safe, though main runs them sequentially. cfg is passed by pointer to
 // avoid copying the embedded signer/creds on each call.
 func runScenario(cfg *scenarioConfig, size int) (runResult, error) {
-	body := make([]byte, size)
-	if _, err := rand.Read(body); err != nil {
-		return runResult{}, fmt.Errorf("generate body: %w", err)
+	body, err := newBody(size, cfg.compressible)
+	if err != nil {
+		return runResult{}, err
 	}
 
 	var keys []string
@@ -605,6 +666,16 @@ func newTargeter(cfg *scenarioConfig, body []byte, keys []string) vegeta.Targete
 		case "put":
 			tgt.Method = http.MethodPut
 			tgt.URL = fmt.Sprintf("%s/%s/loadtest/%s/obj-%06d", cfg.endpoint, cfg.bucket, cfg.runID, n)
+			tgt.Body = body
+		case "overwrite":
+			// Rewrites a bounded key set, so every request after the first pass
+			// replaces an object that already exists. A run of unique keys never
+			// touches overwrite displacement, the intent supersession that goes
+			// with it, or the copies a write is still placing when the next
+			// write for that key arrives.
+			tgt.Method = http.MethodPut
+			tgt.URL = fmt.Sprintf("%s/%s/loadtest/%s/obj-%06d",
+				cfg.endpoint, cfg.bucket, cfg.runID, n%cfg.overwriteKeys)
 			tgt.Body = body
 		case "get":
 			tgt.Method = http.MethodGet

@@ -30,6 +30,7 @@ case "$PROFILE" in
     RAMP_FROM=100; RAMP_TO=500; RAMP_STEP=100
     MPU_CONCURRENCY=5; MPU_PART_COUNT=3; MPU_PART_SIZE=5242880
     MAX_ERROR_RATE=0.01
+    COMPRESSIBLE=0.8; OVERWRITE_KEYS=200
     ;;
   baseline)
     DURATION=60s; RATE=500; SEED=1000; COLD_SEED=3000
@@ -37,6 +38,7 @@ case "$PROFILE" in
     RAMP_FROM=200; RAMP_TO=2000; RAMP_STEP=200
     MPU_CONCURRENCY=10; MPU_PART_COUNT=5; MPU_PART_SIZE=5242880
     MAX_ERROR_RATE=0.01
+    COMPRESSIBLE=0.8; OVERWRITE_KEYS=1000
     ;;
   saturation)
     DURATION=30s; RATE=200; SEED=1000; COLD_SEED=3000
@@ -44,6 +46,7 @@ case "$PROFILE" in
     RAMP_FROM=200; RAMP_TO=5000; RAMP_STEP=200
     MPU_CONCURRENCY=20; MPU_PART_COUNT=5; MPU_PART_SIZE=5242880
     MAX_ERROR_RATE=0.01
+    COMPRESSIBLE=0.8; OVERWRITE_KEYS=1000
     ;;
   *)
     echo "unknown profile: $PROFILE (expected smoke|baseline|saturation)" >&2
@@ -88,6 +91,7 @@ run_scenario "put-sweep" "$BINARY" \
   -endpoint "$ENDPOINT" -bucket "$BUCKET" \
   -op put -rate "$RATE" -duration "$DURATION" \
   -sizes "$SIZES" -max-error-rate "$MAX_ERROR_RATE" \
+  -compressible "$COMPRESSIBLE" \
   -output-json "$RESULTS_DIR/put-sweep.json"
 
 run_scenario "get-warm" "$BINARY" \
@@ -114,8 +118,19 @@ fi
 run_scenario "mixed-ramp" "$BINARY" \
   -endpoint "$ENDPOINT" -bucket "$BUCKET" \
   -op mixed -rate "$RAMP_FROM" -ramp-to "$RAMP_TO" -ramp-step "$RAMP_STEP" \
-  -duration "$DURATION" -seed "$SEED" \
+  -duration "$DURATION" -seed "$SEED" -compressible "$COMPRESSIBLE" \
   -output-json "$RESULTS_DIR/mixed-ramp.json"
+
+# Rewrites a bounded key set, so the run exercises overwrite displacement, the
+# intent supersession it triggers, and - with write fan-out on - a new write
+# arriving for a key whose previous copies are still being placed. Every other
+# scenario writes unique keys and never reaches any of it.
+run_scenario "overwrite" "$BINARY" \
+  -endpoint "$ENDPOINT" -bucket "$BUCKET" \
+  -op overwrite -rate "$RATE" -duration "$DURATION" \
+  -sizes "$SIZES" -overwrite-keys "$OVERWRITE_KEYS" \
+  -compressible "$COMPRESSIBLE" -max-error-rate "$MAX_ERROR_RATE" \
+  -output-json "$RESULTS_DIR/overwrite.json"
 
 run_scenario "list" "$BINARY" \
   -endpoint "$ENDPOINT" -bucket "$BUCKET" \
@@ -157,7 +172,7 @@ echo "============================================================"
 echo "Summary [$PROFILE profile, $RESULTS_DIR]"
 echo "============================================================"
 fail=0
-for s in put-sweep get-warm get-cold mixed-ramp list multipart; do
+for s in put-sweep get-warm get-cold mixed-ramp overwrite list multipart; do
   v="${STATUS[$s]:-MISSING}"
   printf "  %-12s %s\n" "$s" "$v"
   [[ "$v" == FAIL ]] && fail=1

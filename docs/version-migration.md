@@ -62,7 +62,26 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.129.x (current)
+### v0.131.x (current)
+
+**A write can place its own copies ([#1406](https://github.com/afreidah/s3-orchestrator/issues/1406), v0.130.0)**
+
+A copy after the first has always been the replicator's: it reads the object back off a backend that holds it and writes it elsewhere, which costs a full GET plus that backend's egress for every copy it makes. The bytes are in hand at PUT time, so a write can place the copy itself for one more upload and no read at all.
+
+Off unless asked for, under `write_path.parallel_copies`. Turned on, a write claims the top N eligible backends with an intent each, uploads to all of them at once from one materialized payload, and answers the client as soon as the first copy commits. The rest finish behind the response and commit themselves. `count` defaults to `replication.factor` and may not exceed it; a factor of 1 leaves the setting inert.
+
+The trade is shape rather than total. Total work drops, but the further copies' bytes are sent at write time instead of spread across replicator cycles, so a deployment whose uplink is the bottleneck can see PUT throughput fall even as its backend bill does. Measure before leaving it on.
+
+**Operator action items after upgrade:**
+
+- **Nothing changes unless you opt in.** A config that does not set `write_path.parallel_copies.enabled: true` writes exactly as before.
+- **Turning it on changes what your backends see.** Concurrent PUT traffic at write time rises by roughly the copy count; replicator reads and their egress fall by about as much. Watch `s3o_replication_copies_created_total` drop and per-backend PUT concurrency rise.
+- **`max_in_flight` bounds the copies still uploading after their response**, defaulting to `server.max_concurrent_writes`. A write that finds it full places one copy and leaves the rest to the replicator, so a non-zero `s3o_replication_write_fanout_skipped_total` means either the ceiling is low for your write rate or a backend is falling behind - `s3o_detached_uploads_depth` says which.
+- **Graceful shutdown may take up to 30 seconds longer**, waiting for copies still uploading after their response. Anything unfinished at that point is left to the pending reaper, exactly as a kill would leave it.
+- **Multipart uploads are unaffected** and stay on write-one-then-replicate.
+- **One migration applies automatically** (Postgres `00026`, SQLite `0014`), adding `pending_objects.role`. Existing intents read as `primary`, which is what every intent written before this meant.
+
+### v0.129.x
 
 **Quota admission moved into the database ([#1388](https://github.com/afreidah/s3-orchestrator/issues/1388), v0.129.0)**
 

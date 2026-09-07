@@ -350,10 +350,14 @@ func (w *Coordinator) RecordObjectAndPromoteIntent(ctx context.Context, span tra
 // first. The copy is added to the key rather than replacing what it holds, so
 // the copy that answered the client stays.
 //
+// Reports whether the copy became one. A discarded copy is not a failure - a
+// newer write took the key, which is the system working - but it is one fewer
+// copy than the write set out to place, and the caller counts what it placed.
+//
 // The bytes of an untrusted copy go through the same orphan cleanup as any
 // other, because deleting them is the point and where the row came from is not
 // something the cleanup queue needs to know.
-func (w *Coordinator) CommitCompanionCopy(ctx context.Context, p *core.PendingObject) error {
+func (w *Coordinator) CommitCompanionCopy(ctx context.Context, p *core.PendingObject) (recorded bool, err error) {
 	result, displaced, _, err := w.stores.CommitCompanionCopy(ctx, p)
 	if err != nil {
 		// The intent stays, so the reaper resolves the copy on a later tick -
@@ -362,19 +366,19 @@ func (w *Coordinator) CommitCompanionCopy(ctx context.Context, p *core.PendingOb
 			"key", p.ObjectKey, "backend", p.BackendName, "intent_id", p.IntentID, logfmt.Err(err))
 		w.core.Acct().APICall(s3op.PutObject, p.BackendName)
 		telemetry.ReplicationWriteCopiesTotal.WithLabelValues(WriteCopyFailed).Inc()
-		return err
+		return false, err
 	}
 	if result == core.CompanionCopyCommitted {
 		w.core.Acct().Ingress(s3op.PutObject, p.BackendName, p.SizeBytes)
 		telemetry.ReplicationWriteCopiesTotal.WithLabelValues(WriteCopyCommitted).Inc()
-		return nil
+		return true, nil
 	}
 	w.log.WarnContext(ctx, "a newer write took the key while a further copy was uploading; discarding it",
 		"key", p.ObjectKey, "backend", p.BackendName, "intent_id", p.IntentID)
 	w.core.Acct().APICall(s3op.PutObject, p.BackendName)
 	w.deleteDisplaced(ctx, p.ObjectKey, displaced)
 	telemetry.ReplicationWriteCopiesTotal.WithLabelValues(WriteCopyUntrusted).Inc()
-	return nil
+	return false, nil
 }
 
 // The outcomes ReplicationWriteCopiesTotal counts, shared with the write path
