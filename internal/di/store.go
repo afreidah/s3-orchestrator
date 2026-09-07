@@ -65,6 +65,7 @@ type metadataStore interface {
 	core.CompressionAdmin
 	core.NotificationOutbox
 	core.TagStore
+	core.ProvisioningStore
 }
 
 // -------------------------------------------------------------------------

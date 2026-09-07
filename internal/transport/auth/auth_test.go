@@ -150,7 +150,7 @@ func BenchmarkSigV4KnownVsUnknown(b *testing.B) {
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
 			for b.Loop() {
-				_, _, _ = br.AuthenticateAndResolveBucket(tc.req)
+				_, _, _ = br.Authenticate(tc.req)
 			}
 		})
 	}
@@ -347,20 +347,20 @@ func TestBucketRegistry_TokenAuthIteratesAllTokens(t *testing.T) {
 		r, _ := http.NewRequestWithContext(context.Background(), "GET", "/"+tt.wantBucket+"/key", nil)
 		r.Header.Set("X-Proxy-Token", tt.token)
 
-		bucket, _, err := br.AuthenticateAndResolveBucket(r)
+		u, _, err := br.Authenticate(r)
 		if err != nil {
 			t.Errorf("token %q should succeed: %v", tt.token, err)
 			continue
 		}
-		if bucket != tt.wantBucket {
-			t.Errorf("token %q: bucket = %q, want %q", tt.token, bucket, tt.wantBucket)
+		if !u.CanReach(tt.wantBucket) {
+			t.Errorf("token %q reached %v, want %q", tt.token, u.Buckets(), tt.wantBucket)
 		}
 	}
 
 	// Wrong token should fail
 	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket-a/key", nil)
 	r.Header.Set("X-Proxy-Token", "wrong")
-	_, _, err := br.AuthenticateAndResolveBucket(r)
+	_, _, err := br.Authenticate(r)
 	if err == nil {
 		t.Error("wrong token should be denied")
 	}
@@ -368,7 +368,7 @@ func TestBucketRegistry_TokenAuthIteratesAllTokens(t *testing.T) {
 	// Token with same length as a valid token but different content should fail
 	r2, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket-a/key", nil)
 	r2.Header.Set("X-Proxy-Token", "SHORT") // same length as "short"
-	_, _, err = br.AuthenticateAndResolveBucket(r2)
+	_, _, err = br.Authenticate(r2)
 	if err == nil {
 		t.Error("wrong token (same length) should be denied")
 	}
@@ -422,22 +422,22 @@ func TestBucketRegistry_SigV4ResolvesCorrectBucket(t *testing.T) {
 
 	// Request signed with app1 credentials should resolve to app1-files
 	r := signRequest(t, "GET", "/app1-files/test.txt", "APP1_KEY", "APP1_SECRET")
-	bucket, _, err := br.AuthenticateAndResolveBucket(r)
+	u, _, err := br.Authenticate(r)
 	if err != nil {
 		t.Fatalf("auth should succeed: %v", err)
 	}
-	if bucket != "app1-files" {
-		t.Errorf("bucket = %q, want %q", bucket, "app1-files")
+	if !u.CanReach("app1-files") {
+		t.Errorf("reached %v, want %q", u.Buckets(), "app1-files")
 	}
 
 	// Request signed with app2 credentials should resolve to app2-files
 	r2 := signRequest(t, "GET", "/app2-files/test.txt", "APP2_KEY", "APP2_SECRET")
-	bucket2, _, err := br.AuthenticateAndResolveBucket(r2)
+	u2, _, err := br.Authenticate(r2)
 	if err != nil {
 		t.Fatalf("auth should succeed: %v", err)
 	}
-	if bucket2 != "app2-files" {
-		t.Errorf("bucket = %q, want %q", bucket2, "app2-files")
+	if !u2.CanReach("app2-files") {
+		t.Errorf("reached %v, want %q", u2.Buckets(), "app2-files")
 	}
 }
 
@@ -456,12 +456,12 @@ func TestBucketRegistry_TokenResolvesCorrectBucket(t *testing.T) {
 	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/legacy-bucket/key", nil)
 	r.Header.Set("X-Proxy-Token", "my-secret-token")
 
-	bucket, _, err := br.AuthenticateAndResolveBucket(r)
+	u, _, err := br.Authenticate(r)
 	if err != nil {
 		t.Fatalf("token auth should succeed: %v", err)
 	}
-	if bucket != "legacy-bucket" {
-		t.Errorf("bucket = %q, want %q", bucket, "legacy-bucket")
+	if !u.CanReach("legacy-bucket") {
+		t.Errorf("reached %v, want %q", u.Buckets(), "legacy-bucket")
 	}
 }
 
@@ -477,7 +477,7 @@ func TestBucketRegistry_UnknownAccessKeyDenied(t *testing.T) {
 	br := mustBucketRegistry(t, buckets)
 
 	r := signRequest(t, "GET", "/mybucket/key", "UNKNOWN_KEY", "secret")
-	_, _, err := br.AuthenticateAndResolveBucket(r)
+	_, _, err := br.Authenticate(r)
 	if err == nil {
 		t.Error("unknown access key should be denied")
 	}
@@ -497,7 +497,7 @@ func TestBucketRegistry_InvalidTokenDenied(t *testing.T) {
 	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/mybucket/key", nil)
 	r.Header.Set("X-Proxy-Token", "wrong-token")
 
-	_, _, err := br.AuthenticateAndResolveBucket(r)
+	_, _, err := br.Authenticate(r)
 	if err == nil {
 		t.Error("invalid token should be denied")
 	}
@@ -515,7 +515,7 @@ func TestBucketRegistry_NoCredentialsDenied(t *testing.T) {
 	br := mustBucketRegistry(t, buckets)
 
 	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/mybucket/key", nil)
-	_, _, err := br.AuthenticateAndResolveBucket(r)
+	_, _, err := br.Authenticate(r)
 	if err == nil {
 		t.Error("request with no credentials should be denied")
 	}
@@ -536,19 +536,19 @@ func TestBucketRegistry_MultipleCredsOnSameBucket(t *testing.T) {
 
 	// Both keys should resolve to the same bucket
 	r1 := signRequest(t, "GET", "/shared-files/test.txt", "WRITER_KEY", "WRITER_SECRET")
-	bucket1, _, err := br.AuthenticateAndResolveBucket(r1)
+	u1, _, err := br.Authenticate(r1)
 	if err != nil {
 		t.Fatalf("writer auth should succeed: %v", err)
 	}
 
 	r2 := signRequest(t, "GET", "/shared-files/test.txt", "READER_KEY", "READER_SECRET")
-	bucket2, _, err := br.AuthenticateAndResolveBucket(r2)
+	u2, _, err := br.Authenticate(r2)
 	if err != nil {
 		t.Fatalf("reader auth should succeed: %v", err)
 	}
 
-	if bucket1 != "shared-files" || bucket2 != "shared-files" {
-		t.Errorf("both creds should resolve to shared-files, got %q and %q", bucket1, bucket2)
+	if !u1.CanReach("shared-files") || !u2.CanReach("shared-files") {
+		t.Errorf("both creds should reach shared-files, got %v and %v", u1.Buckets(), u2.Buckets())
 	}
 }
 
@@ -565,7 +565,7 @@ func TestBucketRegistry_WrongSecretDenied(t *testing.T) {
 
 	// Sign with wrong secret  -  access key is known but signature won't match
 	r := signRequest(t, "GET", "/mybucket/key", "KEY", "wrong-secret")
-	_, _, err := br.AuthenticateAndResolveBucket(r)
+	_, _, err := br.Authenticate(r)
 	if err == nil {
 		t.Error("wrong secret should be denied")
 	}
@@ -652,21 +652,21 @@ func TestBucketRegistry_PresignedResolvesCorrectBucket(t *testing.T) {
 
 	br := mustBucketRegistry(t, buckets)
 	r := presignRequest(t, "GET", "/app1-files/test.txt", "APP1_KEY", "APP1_SECRET", 300)
-	bucket, _, err := br.AuthenticateAndResolveBucket(r)
+	u, _, err := br.Authenticate(r)
 	if err != nil {
 		t.Fatalf("presigned auth should succeed: %v", err)
 	}
-	if bucket != "app1-files" {
-		t.Errorf("bucket = %q, want %q", bucket, "app1-files")
+	if !u.CanReach("app1-files") {
+		t.Errorf("reached %v, want %q", u.Buckets(), "app1-files")
 	}
 
 	r2 := presignRequest(t, "GET", "/app2-files/other.txt", "APP2_KEY", "APP2_SECRET", 300)
-	bucket2, _, err := br.AuthenticateAndResolveBucket(r2)
+	u2, _, err := br.Authenticate(r2)
 	if err != nil {
 		t.Fatalf("presigned auth should succeed: %v", err)
 	}
-	if bucket2 != "app2-files" {
-		t.Errorf("bucket = %q, want %q", bucket2, "app2-files")
+	if !u2.CanReach("app2-files") {
+		t.Errorf("reached %v, want %q", u2.Buckets(), "app2-files")
 	}
 }
 
@@ -718,7 +718,7 @@ func TestPresigned_ExcessiveExpiry(t *testing.T) {
 		}},
 	}
 	br := mustBucketRegistry(t, buckets)
-	_, _, err := br.AuthenticateAndResolveBucket(r)
+	_, _, err := br.Authenticate(r)
 	if err == nil {
 		t.Error("presigned URL with > 7 day expiry should be rejected")
 	}
@@ -764,7 +764,7 @@ func TestPresigned_TamperedSignature(t *testing.T) {
 		}},
 	}
 	br := mustBucketRegistry(t, buckets)
-	_, _, err := br.AuthenticateAndResolveBucket(r)
+	_, _, err := br.Authenticate(r)
 	if err == nil {
 		t.Error("tampered presigned signature should be rejected")
 	}
@@ -782,7 +782,7 @@ func TestPresigned_UnknownAccessKeyDenied(t *testing.T) {
 		}},
 	}
 	br := mustBucketRegistry(t, buckets)
-	_, _, err := br.AuthenticateAndResolveBucket(r)
+	_, _, err := br.Authenticate(r)
 	if err == nil {
 		t.Error("unknown access key in presigned URL should be denied")
 	}
@@ -801,7 +801,7 @@ func TestPresigned_WrongSecretDenied(t *testing.T) {
 		}},
 	}
 	br := mustBucketRegistry(t, buckets)
-	_, _, err := br.AuthenticateAndResolveBucket(r)
+	_, _, err := br.Authenticate(r)
 	if err == nil {
 		t.Error("presigned URL signed with wrong secret should be denied")
 	}
@@ -861,22 +861,22 @@ func TestPresigned_HeaderAndPresignedCoexist(t *testing.T) {
 
 	// Header-based auth
 	rHeader := signRequest(t, "GET", "/bucket-a/file.txt", "KEY_A", "SECRET_A")
-	bucket, _, err := br.AuthenticateAndResolveBucket(rHeader)
+	u, _, err := br.Authenticate(rHeader)
 	if err != nil {
 		t.Fatalf("header auth should succeed: %v", err)
 	}
-	if bucket != "bucket-a" {
-		t.Errorf("header auth bucket = %q, want %q", bucket, "bucket-a")
+	if !u.CanReach("bucket-a") {
+		t.Errorf("header auth reached %v, want %q", u.Buckets(), "bucket-a")
 	}
 
 	// Presigned URL auth
 	rPresigned := presignRequest(t, "GET", "/bucket-b/file.txt", "KEY_B", "SECRET_B", 300)
-	bucket, _, err = br.AuthenticateAndResolveBucket(rPresigned)
+	u, _, err = br.Authenticate(rPresigned)
 	if err != nil {
 		t.Fatalf("presigned auth should succeed: %v", err)
 	}
-	if bucket != "bucket-b" {
-		t.Errorf("presigned auth bucket = %q, want %q", bucket, "bucket-b")
+	if !u.CanReach("bucket-b") {
+		t.Errorf("presigned auth reached %v, want %q", u.Buckets(), "bucket-b")
 	}
 }
 
@@ -1006,7 +1006,14 @@ func TestStripWhitespace(t *testing.T) {
 // the test if that config turns out to be ambiguous.
 func mustBucketRegistry(tb testing.TB, buckets []config.BucketConfig) *BucketRegistry {
 	tb.Helper()
-	br, err := NewBucketRegistry(buckets)
+	return mustBucketRegistryWithStore(tb, buckets, nil)
+}
+
+// mustBucketRegistryWithStore builds a registry from both sources, for the tests
+// that exercise the merge rather than the config path alone.
+func mustBucketRegistryWithStore(tb testing.TB, buckets []config.BucketConfig, stored []StoredCredential) *BucketRegistry {
+	tb.Helper()
+	br, err := NewBucketRegistry(buckets, stored)
 	if err != nil {
 		tb.Fatalf("NewBucketRegistry: %v", err)
 	}
@@ -1022,7 +1029,7 @@ func TestNewBucketRegistry_RejectsDuplicateToken(t *testing.T) {
 	_, err := NewBucketRegistry([]config.BucketConfig{
 		{Name: "backups", Credentials: []config.CredentialConfig{{Token: "SAME"}}},
 		{Name: "traces", Credentials: []config.CredentialConfig{{Token: "SAME"}}},
-	})
+	}, nil)
 	if !errors.Is(err, ErrDuplicateCredential) {
 		t.Fatalf("expected ErrDuplicateCredential, got %v", err)
 	}
@@ -1041,7 +1048,7 @@ func TestNewBucketRegistry_RejectsDuplicateAccessKey(t *testing.T) {
 	_, err := NewBucketRegistry([]config.BucketConfig{
 		{Name: "b1", Credentials: []config.CredentialConfig{{AccessKeyID: "AK", SecretAccessKey: "s1"}}},
 		{Name: "b2", Credentials: []config.CredentialConfig{{AccessKeyID: "AK", SecretAccessKey: "s2"}}},
-	})
+	}, nil)
 	if !errors.Is(err, ErrDuplicateCredential) {
 		t.Fatalf("expected ErrDuplicateCredential, got %v", err)
 	}
@@ -1057,14 +1064,14 @@ func TestNewBucketRegistry_AllowsOneBucketManyCredentials(t *testing.T) {
 			{Token: "two"},
 			{AccessKeyID: "AK", SecretAccessKey: "s1"},
 		}},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("NewBucketRegistry: %v", err)
 	}
 	for _, tok := range []string{"one", "two"} {
-		bucket, aErr := br.authenticateProxyToken(tok)
-		if aErr != nil || bucket != "b1" {
-			t.Errorf("token %q resolved to %q (%v), want b1", tok, bucket, aErr)
+		u, aErr := br.authenticateProxyToken(tok)
+		if aErr != nil || !u.CanReach("b1") {
+			t.Errorf("token %q reached %v (%v), want b1", tok, u.Buckets(), aErr)
 		}
 	}
 }
@@ -1077,14 +1084,14 @@ func TestNewBucketRegistry_TokenResolvesToItsOwnBucket(t *testing.T) {
 	br, err := NewBucketRegistry([]config.BucketConfig{
 		{Name: "backups", Credentials: []config.CredentialConfig{{Token: "backups-token"}}},
 		{Name: "traces", Credentials: []config.CredentialConfig{{Token: "traces-token"}}},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("NewBucketRegistry: %v", err)
 	}
 	for tok, want := range map[string]string{"backups-token": "backups", "traces-token": "traces"} {
-		got, aErr := br.authenticateProxyToken(tok)
-		if aErr != nil || got != want {
-			t.Errorf("token %q resolved to %q (%v), want %q", tok, got, aErr, want)
+		u, aErr := br.authenticateProxyToken(tok)
+		if aErr != nil || !u.CanReach(want) {
+			t.Errorf("token %q reached %v (%v), want %q", tok, u.Buckets(), aErr, want)
 		}
 	}
 }

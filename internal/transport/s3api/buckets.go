@@ -75,23 +75,29 @@ type xmlVersioningConfiguration struct {
 // HANDLERS
 // -------------------------------------------------------------------------
 
-// handleListBuckets returns the single bucket that the authenticated
-// credential has access to. Satisfies GET / (ListBuckets).
-func (s *Server) handleListBuckets(w http.ResponseWriter, bucket string) (int, error) {
+// handleListBuckets enumerates every bucket the authenticated user reaches.
+// Satisfies GET / (ListBuckets).
+//
+// CreationDate is the instance's start time for every entry. A virtual bucket
+// has no creation moment of its own that a client could act on, and S3 requires
+// the field, so one stable timestamp is answered rather than a fabricated one
+// per bucket.
+func (s *Server) handleListBuckets(w http.ResponseWriter, buckets []string) (int, error) {
+	entries := make([]xmlBucket, 0, len(buckets))
+	for _, name := range buckets {
+		entries = append(entries, xmlBucket{
+			Name:         name,
+			CreationDate: s.startedAt.UTC().Format(time.RFC3339),
+		})
+	}
+
 	result := xmlListBucketsResult{
 		Xmlns: s3XMLNS,
 		Owner: xmlOwner{
 			ID:          "s3-orchestrator",
 			DisplayName: "s3-orchestrator",
 		},
-		Buckets: xmlBuckets{
-			Bucket: []xmlBucket{
-				{
-					Name:         bucket,
-					CreationDate: s.startedAt.UTC().Format(time.RFC3339),
-				},
-			},
-		},
+		Buckets: xmlBuckets{Bucket: entries},
 	}
 
 	if err := writeXML(w, http.StatusOK, result); err != nil {

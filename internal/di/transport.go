@@ -55,13 +55,14 @@ import (
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// ProvideBucketAuth creates the credential-to-bucket registry.
+// ProvideBucketAuth creates the credential-to-user registry from the config file
+// and the store together.
 func ProvideBucketAuth(i do.Injector) (*auth.BucketRegistry, error) {
 	cfg, err := do.Invoke[*config.Config](i)
 	if err != nil {
 		return nil, err
 	}
-	return auth.NewBucketRegistry(cfg.Buckets)
+	return AssembleBucketRegistry(context.Background(), i, cfg)
 }
 
 // ProvideS3Server creates the S3-compatible HTTP handler.

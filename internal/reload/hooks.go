@@ -28,7 +28,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
-	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -100,15 +99,18 @@ func (*bucketAuthHook) Name() string { return "bucket_credentials" }
 // Check builds the replacement registry and throws it away. Doing it here
 // means an ambiguous credential aborts the whole reload before any hook has
 // applied anything, so the running server keeps the registry it already had.
-func (*bucketAuthHook) Check(_, newCfg *config.Config) error {
+func (h *bucketAuthHook) Check(_, newCfg *config.Config) error {
 	if newCfg == nil {
 		return nil
 	}
-	_, err := auth.NewBucketRegistry(newCfg.Buckets)
+	_, err := di.AssembleBucketRegistry(context.Background(), h.inj, newCfg)
 	return err
 }
 
-func (h *bucketAuthHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
+// Apply rebuilds from the config file merged with the store, which is what a
+// boot does. Rebuilding from the file alone would drop every bucket and
+// credential created through the API on each reload.
+func (h *bucketAuthHook) Apply(ctx context.Context, _, newCfg *config.Config) (HookStatus, error) {
 	res := di.Optional[*s3api.Server](h.inj)
 	if res.Failed() {
 		return HookFailed, resolutionError("S3 server", res.Err)
@@ -116,7 +118,7 @@ func (h *bucketAuthHook) Apply(_ context.Context, _, newCfg *config.Config) (Hoo
 	if res.Value == nil {
 		return HookSkipped, nil
 	}
-	registry, err := auth.NewBucketRegistry(newCfg.Buckets)
+	registry, err := di.AssembleBucketRegistry(ctx, h.inj, newCfg)
 	if err != nil {
 		return HookFailed, err
 	}

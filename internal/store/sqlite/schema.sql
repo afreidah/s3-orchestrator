@@ -237,7 +237,11 @@ CREATE TABLE IF NOT EXISTS pending_objects (
     etag           TEXT,
     content_type   TEXT,
     user_metadata  TEXT,
-    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    -- A primary intent's promotion clears the key's other copies; a companion's
+    -- adds to them. Postgres carries a CHECK constraint on the allowed values;
+    -- SQLite cannot add one to an existing table, so the store enforces it.
+    role           TEXT NOT NULL DEFAULT 'primary'
 );
 
 CREATE INDEX IF NOT EXISTS idx_pending_objects_created
@@ -245,6 +249,9 @@ CREATE INDEX IF NOT EXISTS idx_pending_objects_created
 
 CREATE INDEX IF NOT EXISTS idx_pending_objects_backend
     ON pending_objects(backend_name);
+
+CREATE INDEX IF NOT EXISTS idx_pending_objects_key
+    ON pending_objects(object_key);
 
 -- S3 object tags, keyed by object rather than by copy so replicas of a key
 -- cannot disagree about the set. Rows rather than a JSON column because
@@ -262,5 +269,44 @@ CREATE TABLE IF NOT EXISTS object_tags (
 CREATE INDEX IF NOT EXISTS idx_object_tags_lookup
     ON object_tags(tag_key, tag_value);
 
+-- A database-backed set of buckets and the users that reach them, merged with
+-- what the config file declares when the bucket registry is assembled.
+-- Resolution runs the chain: an access key names a credential, a credential
+-- belongs to a user, and a user holds a grant per bucket it may reach. A grant
+-- carries no permission column, and its absence means full access.
+-- See migrations/0015_bucket_provisioning.sql for the full design notes.
+CREATE TABLE IF NOT EXISTS buckets (
+    name                  TEXT PRIMARY KEY,
+    max_multipart_uploads INTEGER NOT NULL DEFAULT 0,
+    cors                  TEXT,
+    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS credentials (
+    access_key_id TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    secret        TEXT NOT NULL,
+    label         TEXT,
+    disabled      INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    last_used_at  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_credentials_user
+    ON credentials(user_id);
+
+CREATE TABLE IF NOT EXISTS grants (
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    bucket_name TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (user_id, bucket_name)
+);
+
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (13);
+INSERT INTO schema_version (version) VALUES (15);

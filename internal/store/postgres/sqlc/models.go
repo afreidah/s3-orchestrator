@@ -38,6 +38,13 @@ type BackendUsage struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type Bucket struct {
+	Name                string
+	MaxMultipartUploads int32
+	Cors                []byte
+	CreatedAt           pgtype.Timestamptz
+}
+
 type CleanupDlq struct {
 	ID              int64
 	OriginalID      int64
@@ -63,6 +70,22 @@ type CleanupQueue struct {
 	SizeBytes   int64
 	ClaimedAt   pgtype.Timestamptz
 	ClaimedBy   *string
+}
+
+type Credential struct {
+	AccessKeyID string
+	UserID      string
+	Secret      string
+	Label       *string
+	Disabled    bool
+	CreatedAt   pgtype.Timestamptz
+	LastUsedAt  pgtype.Timestamptz
+}
+
+type Grant struct {
+	UserID     string
+	BucketName string
+	CreatedAt  pgtype.Timestamptz
 }
 
 type MultipartPart struct {
@@ -149,4 +172,10 @@ type PendingObject struct {
 	ContentType              *string
 	UserMetadata             []byte
 	Role                     string
+}
+
+type User struct {
+	ID        string
+	Name      string
+	CreatedAt pgtype.Timestamptz
 }
