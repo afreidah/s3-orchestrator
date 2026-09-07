@@ -1,0 +1,25 @@
+# -------------------------------------------------------------------------------
+# Wrangler Configuration - Cloudflare Bandwidth Alliance Edge Proxy
+#
+# Author: Alex Freidah
+#
+# One worker instance fronts one backend, so a pool spanning several alliance
+# providers deploys this script once per provider under distinct names and
+# routes. The vars below describe the origin; the four credential values are
+# secrets and are never committed.
+#
+# Set them with:
+#   wrangler secret put ORIGIN_ACCESS_KEY_ID
+#   wrangler secret put ORIGIN_SECRET_ACCESS_KEY
+#   wrangler secret put PROXY_ACCESS_KEY_ID
+#   wrangler secret put PROXY_SECRET_ACCESS_KEY
+# -------------------------------------------------------------------------------
+
+name = "s3-orchestrator-b2-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-09-07"
+
+[vars]
+ORIGIN_HOST = "s3.us-west-004.backblazeb2.com"
+ORIGIN_REGION = "us-west-004"
+MAX_CLOCK_SKEW_SECONDS = "300"
