@@ -111,7 +111,7 @@ func BenchmarkAuthenticateAndResolveBucket(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		_, _, _ = br.AuthenticateAndResolveBucket(r)
+		_, _, _ = br.Authenticate(r)
 	}
 }
 
@@ -226,7 +226,7 @@ func BenchmarkVerifyPresignedSigV4(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		_, _, _ = br.AuthenticateAndResolveBucket(r)
+		_, _, _ = br.Authenticate(r)
 	}
 }
 
@@ -261,7 +261,7 @@ func BenchmarkTokenAuth(b *testing.B) {
 
 			b.ResetTimer()
 			for b.Loop() {
-				_, _, _ = br.AuthenticateAndResolveBucket(r)
+				_, _, _ = br.Authenticate(r)
 			}
 		})
 	}

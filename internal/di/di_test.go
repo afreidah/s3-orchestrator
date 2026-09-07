@@ -122,6 +122,12 @@ func TestProvideBucketAuth(t *testing.T) {
 	do.ProvideValue(inj, &config.Config{
 		Buckets: []config.BucketConfig{{Name: "test"}},
 	})
+
+	// The registry is assembled from config merged with the store, so the
+	// provider reads the provisioning tables. An empty answer is the state a
+	// deployment that has provisioned nothing is in.
+	do.ProvideValue[core.ProvisioningStore](inj, emptyProvisioningStore(t))
+
 	reg, err := ProvideBucketAuth(inj)
 	if err != nil {
 		t.Fatalf("ProvideBucketAuth: %v", err)

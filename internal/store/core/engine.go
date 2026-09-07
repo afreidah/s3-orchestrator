@@ -34,6 +34,7 @@ type engineRoles interface {
 	CompressionAdmin
 	NotificationOutbox
 	TagStore
+	ProvisioningStore
 }
 
 // AssertEngine fails to compile unless T implements every store role, naming

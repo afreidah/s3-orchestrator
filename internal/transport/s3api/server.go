@@ -150,7 +150,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	telemetry.InflightRequests.WithLabelValues(method).Inc()
 	defer telemetry.InflightRequests.WithLabelValues(method).Dec()
 
-	authorizedBucket, streamMat, err := s.GetBucketAuth().AuthenticateAndResolveBucket(r)
+	user, streamMat, err := s.GetBucketAuth().Authenticate(r)
 	if err != nil {
 		s.rejectAuth(ctx, w, r, method, start, err)
 		return
@@ -160,7 +160,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Path == "/" && method == http.MethodGet {
-		s.serveListBuckets(ctx, w, r, method, requestID, start, authorizedBucket)
+		s.serveListBuckets(ctx, w, r, method, requestID, start, user)
 		return
 	}
 
@@ -169,8 +169,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.rejectInvalidPath(ctx, w, r, method, start)
 		return
 	}
-	if bucket != authorizedBucket {
-		s.rejectBucketMismatch(ctx, w, r, method, start, authorizedBucket, bucket)
+	if !user.CanReach(bucket) {
+		s.rejectBucketDenied(ctx, w, r, method, start, user, bucket)
 		return
 	}
 
@@ -261,16 +261,16 @@ func (s *Server) rejectAuth(ctx context.Context, w http.ResponseWriter, r *http.
 	writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access denied")
 }
 
-// serveListBuckets handles the special-case GET / route that serves the
-// authorized bucket as a single-entry ListBuckets response.
-func (s *Server) serveListBuckets(ctx context.Context, w http.ResponseWriter, r *http.Request, method, requestID string, start time.Time, authorizedBucket string) {
+// serveListBuckets handles the special-case GET / route, which enumerates every
+// bucket the caller's identity reaches.
+func (s *Server) serveListBuckets(ctx context.Context, w http.ResponseWriter, r *http.Request, method, requestID string, start time.Time, user *auth.User) {
 	ctx, span := telemetry.StartServerSpan(ctx, "HTTP GET",
 		append(telemetry.RequestAttributes(method, "/", "", "", r.RemoteAddr),
 			telemetry.AttrRequestID.String(requestID))...,
 	)
 	defer span.End()
 
-	status, err := s.handleListBuckets(w, authorizedBucket)
+	status, err := s.handleListBuckets(w, user.Buckets())
 	s.recordRequest(method, status, start, 0, 0)
 	if err != nil {
 		observe.RecordSpanError(span, err)
@@ -300,22 +300,22 @@ func (s *Server) rejectInvalidPath(ctx context.Context, w http.ResponseWriter, r
 	writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "Invalid path format")
 }
 
-// rejectBucketMismatch writes a 403 AccessDenied when the path bucket
-// does not match the bucket the credentials authorize.
-func (s *Server) rejectBucketMismatch(ctx context.Context, w http.ResponseWriter, r *http.Request, method string, start time.Time, authorizedBucket, bucket string) {
+// rejectBucketDenied writes a 403 AccessDenied when the authenticated user holds
+// no grant on the bucket the path names.
+func (s *Server) rejectBucketDenied(ctx context.Context, w http.ResponseWriter, r *http.Request, method string, start time.Time, user *auth.User, bucket string) {
 	s.recordRequest(method, http.StatusForbidden, start, 0, 0)
-	s.logger().WarnContext(ctx, "bucket mismatch",
+	s.logger().WarnContext(ctx, "bucket not granted",
 		"method", method,
 		"path", r.URL.Path,
 		"client_addr", r.RemoteAddr,
-		"authorized", authorizedBucket,
+		"user", user.ID,
 		"requested", bucket,
 	)
-	audit.Log(ctx, "s3.BucketMismatch",
+	audit.Log(ctx, "s3.BucketDenied",
 		slog.String("method", method),
 		slog.String("path", r.URL.Path),
 		slog.String("client_addr", r.RemoteAddr),
-		slog.String("authorized_bucket", authorizedBucket),
+		slog.String("user", user.ID),
 		slog.String("requested_bucket", bucket),
 		slog.Int("status", http.StatusForbidden),
 		slog.Duration("duration", time.Since(start)),
