@@ -17,7 +17,7 @@ Your applications connect to the orchestrator using standard S3 credentials and 
 
 - Accounts on two or more S3-compatible providers
 - S3 Orchestrator installed and running
-- Familiarity with the [configuration format](../../docs/user-guide.md)
+- Familiarity with the [configuration format](../../docs/user-guide/)
 
 ## Step 1: Configure Multiple Backends
 
@@ -63,7 +63,17 @@ replication:
   factor: 2
 ```
 
-With three backends and a replication factor of 2, each object is written to one backend on upload and then asynchronously copied to one additional backend. A factor of 3 would place a copy on every backend.
+With three backends and a replication factor of 2, each object is by default written to one backend on upload and then asynchronously copied to one additional backend. A factor of 3 would place a copy on every backend.
+
+To have the write place both copies itself instead of waiting for the replicator, add:
+
+```yaml
+write_path:
+  parallel_copies:
+    enabled: true
+```
+
+The write then uploads to two backends at once and answers you on the first that commits, which matters most in a multi-cloud setup: the replicator's alternative is to read the object back out of one provider and write it to another, and you pay egress on the read.
 
 {{% notice tip %}}
 A replication factor of 2 protects against a single provider outage. A factor of 3 protects against two simultaneous provider failures. Choose based on how critical your data is.
@@ -140,7 +150,7 @@ Use the web dashboard to see replication status at a glance, or query Prometheus
 - **Health-aware copies**: `s3o_replication_health_copies_total` - non-zero means the replicator is creating replacement copies for down backends
 
 {{% notice warning %}}
-Replication is asynchronous. There is a brief window after a write where the object exists on only one backend. For most workloads this window is seconds. If you need stronger guarantees, increase the replication factor so copies are distributed faster.
+Replication is asynchronous by default. There is a brief window after a write where the object exists on only one backend - for most workloads, seconds. Turning on `write_path.parallel_copies` narrows that window to the length of one upload, since the write places the copies itself; it does not eliminate it, because the client is answered on the first copy rather than the last.
 {{% /notice %}}
 
 ## Important Notes

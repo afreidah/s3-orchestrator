@@ -13,9 +13,9 @@
   <strong><a href="https://s3-orchestrator.munchbox.cc">Project Website</a></strong> · <strong><a href="https://s3-orchestrator.munchbox.cc/docs/">Documentation</a></strong> · <strong><a href="https://s3-orchestrator.munchbox.cc/guides/maximizing-free-tiers/">Maximizing Free-Tier Storage</a></strong>
 </p>
 
-Put one S3-compatible endpoint in front of multiple S3 backends. The orchestrator tracks where every object lives in PostgreSQL (or embedded SQLite), enforces per-backend byte quotas, replicates objects across clouds on a configurable factor, and gives operators real primitives — drain, rebalance, integrity scrub, online failover — instead of pushing that work onto every client.
+Most applications talk to one S3 backend, which ties them to that provider's uptime, pricing, and limits. s3-orchestrator puts a single S3 endpoint in front of any number of S3-compatible backends — OCI Object Storage, Backblaze B2, AWS S3, MinIO, Wasabi, Cloudflare R2, anything that speaks S3 — and presents them as one or more virtual buckets. It tracks where every object lives in its own database, which is what lets it enforce per-backend byte quotas, keep N copies across providers, fail reads over when one goes dark, and take a backend out of the fleet without downtime.
 
-Add as many S3-compatible backends as you want — OCI Object Storage, Backblaze B2, AWS S3, MinIO, Wasabi, anything that speaks S3 — and the orchestrator presents them as one or more virtual buckets. Cap each backend at the byte limit you choose to stack free-tier allocations into one larger logical bucket without surprise bills. Set a replication factor and every object lands on N providers automatically.
+Clients see one endpoint and one namespace. The backends never learn the orchestrator exists — they see ordinary S3 calls, so any provider the AWS SDK can talk to works.
 
 ## Who this is for
 
@@ -26,11 +26,17 @@ Add as many S3-compatible backends as you want — OCI Object Storage, Backblaze
 | **Small teams and startups** | Multi-cloud redundancy and encryption without the cost or complexity of enterprise storage platforms. |
 | **Anyone wanting provider independence** | Applications talk S3 to one endpoint — swap, add, or remove backends without touching a line of code. |
 
-## What's in the box
+## What it does
 
-- **A metadata layer that knows.** Every object's backend placement, replica set, quota delta, and orphan bytes live in a real database. Failover reads, degraded-mode broadcast on DB outage, drain, rebalance, and integrity scrub all key off it — none require backend-side coordination.
-- **Per-backend quotas + multi-cloud replication, configured side-by-side.** Stack a 10 GB OCI free tier, a 5 GB B2 free tier, and a 20 GB AWS cap into one 35 GB logical bucket. Replicate every object across two of them. Both are operator-configurable and hot-reloadable.
-- **Operations-grade plumbing.** Circuit breakers (per-backend + per-DB), bounded degraded-read broadcast with parallelism caps, online drain with progress reporting, online rebalance, PUT-before-COMMIT pending intents, durable cleanup queue with DLQ, envelope encryption (AES-256-GCM, Vault Transit), integrity scrub + content-hash backfill, Prometheus + OpenTelemetry, admin API, web UI, read-only terminal object browser (`tui`).
+- **Stacks providers into one namespace.** Cap each backend at a byte limit and writes overflow to the next when it fills, so a 20 GB allocation here and a 10 GB one there become one 30 GB bucket without surprise bills. Monthly API-request, egress and ingress caps work the same way.
+- **Keeps the copies it promised.** Set a replication factor and every object lands on that many distinct backends — placed by the write itself, or by a background replicator. Reads fail over to a surviving copy, a scrubber checks stored bytes against recorded hashes, and an over-replication worker trims the set when a recovered backend brings its copies back.
+- **Runs at the size you need.** Standalone on embedded SQLite with no external dependencies, single-node on PostgreSQL, or many instances with Redis-backed shared counters so quotas hold globally without the nodes coordinating directly.
+- **Gives operators primitives instead of scripts.** Online drain, rebalance, import of a bucket you already have, integrity scrub, a cleanup queue with a dead-letter table, hot-reloadable config, an admin API, a web dashboard, and a terminal object browser.
+- **Optional at-rest layers.** Envelope encryption (AES-256-GCM, with the master key inline, in a file, or in Vault Transit) and chunked zstd compression, both transparent to clients. With both on, compression runs first, because ciphertext does not compress.
+
+## Moving providers without downtime
+
+Point the orchestrator at the bucket you already have and import its objects into the metadata layer — nothing moves. Add the new provider and raise the replication factor, and the workers copy everything across while traffic keeps flowing. Once the copies are in place, drain the old backend and delete it from the config. No step takes the application down.
 
 ## What else is out there
 

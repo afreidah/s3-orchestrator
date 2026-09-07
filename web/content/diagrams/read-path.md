@@ -205,7 +205,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     FDECRANGE: {
       title: 'DecryptRange: Ciphertext Chunks',
       badge: 'process', badgeText: 'range decryption',
-      body: '<p><code>encryptor.DecryptStored()</code> with the translated range unwraps the frame bytes the fetcher asked for.</p><p>Whole ciphertext chunks are fetched because each carries its own GCM auth tag, so the bytes crossing the backend link exceed the frame requested, and that is what the egress charge counts.</p><p class="ac-metric">Metric: s3o_encryption_ops_total{operation="decrypt_range"}</p>'
+      body: '<p><code>encryptor.DecryptStored()</code> with the translated range unwraps the frame bytes the fetcher asked for.</p><p>Whole ciphertext chunks are fetched because each carries its own GCM auth tag, so the bytes crossing the backend link exceed the frame requested, and that is what the egress charge counts.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{operation="decrypt_range"}</p>'
     },
     DECODE: {
       title: 'Decode Frames: zstd',
@@ -230,7 +230,7 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     S3: {
       title: 'S3 Backend GetObject',
       badge: 'storage', badgeText: 'S3 API call',
-      body: '<p>AWS SDK v2 <code>s3.GetObject()</code> call to the backend endpoint. Returns <code>GetObjectResult</code> with Body (io.ReadCloser), Size, ContentType, ETag, LastModified, and Metadata.</p><p>For range requests, the backend returns HTTP 206 Partial Content with only the requested byte range.</p><p class="ac-metric">Metrics: s3o_backend_requests_total, s3o_backend_latency_seconds</p>'
+      body: '<p>AWS SDK v2 <code>s3.GetObject()</code> call to the backend endpoint. Returns <code>GetObjectResult</code> with Body (io.ReadCloser), Size, ContentType, ETag, LastModified, and Metadata.</p><p>For range requests, the backend returns HTTP 206 Partial Content with only the requested byte range.</p><p class="ac-metric">Metrics: s3o_backend_requests_total, s3o_backend_duration_seconds</p>'
     },
     FETCHFAIL: {
       title: 'Fetch Failed?',
@@ -255,12 +255,12 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     DECRANGE: {
       title: 'DecryptRange: Chunk Slice',
       badge: 'process', badgeText: 'range decryption',
-      body: '<p>Envelope decryption for range requests:</p><p>1. <code>UnpackKeyData(loc.EncryptionKey)</code> &mdash; extract <code>baseNonce</code> and <code>wrappedDEK</code><br>2. <code>encryptor.DecryptRange(ctx, body, wrappedDEK, keyID, rangeResult, baseNonce)</code></p><p>Decrypts only the fetched ciphertext chunks, then slices to the exact requested plaintext bytes. Sets <code>Content-Range</code> header using the original plaintext offsets.</p><p>Response size is set to the plaintext range length. The body is wrapped with <code>wrapReader()</code> so Close reaches the original HTTP body.</p><p class="ac-metric">Metric: s3o_encryption_ops_total{operation="decrypt_range"}</p>'
+      body: '<p>Envelope decryption for range requests:</p><p>1. <code>UnpackKeyData(loc.EncryptionKey)</code> &mdash; extract <code>baseNonce</code> and <code>wrappedDEK</code><br>2. <code>encryptor.DecryptRange(ctx, body, wrappedDEK, keyID, rangeResult, baseNonce)</code></p><p>Decrypts only the fetched ciphertext chunks, then slices to the exact requested plaintext bytes. Sets <code>Content-Range</code> header using the original plaintext offsets.</p><p>Response size is set to the plaintext range length. The body is wrapped with <code>wrapReader()</code> so Close reaches the original HTTP body.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{operation="decrypt_range"}</p>'
     },
     DECFULL: {
       title: 'Decrypt: Full Stream',
       badge: 'process', badgeText: 'full decryption',
-      body: '<p>Envelope decryption for full reads:</p><p>1. <code>UnpackKeyData(loc.EncryptionKey)</code> &mdash; extract <code>baseNonce</code> and <code>wrappedDEK</code><br>2. <code>encryptor.Decrypt(ctx, body, wrappedDEK, keyID)</code></p><p>Streams AES-256-GCM decryption chunk by chunk. Each chunk\'s authentication tag is verified independently. Response size is set to <code>loc.PlaintextSize</code> from the DB record.</p><p class="ac-metric">Metric: s3o_encryption_ops_total{operation="decrypt"}</p>'
+      body: '<p>Envelope decryption for full reads:</p><p>1. <code>UnpackKeyData(loc.EncryptionKey)</code> &mdash; extract <code>baseNonce</code> and <code>wrappedDEK</code><br>2. <code>encryptor.Decrypt(ctx, body, wrappedDEK, keyID)</code></p><p>Streams AES-256-GCM decryption chunk by chunk. Each chunk\'s authentication tag is verified independently. Response size is set to <code>loc.PlaintextSize</code> from the DB record.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{operation="decrypt"}</p>'
     },
     INTEG: {
       title: 'Integrity Verify?',

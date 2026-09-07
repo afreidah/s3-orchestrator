@@ -229,7 +229,7 @@ Each frame fetch is charged its own API call and egress, on the bytes that actua
     DECRYPTF: {
       title: 'Decrypt Ciphertext Chunks',
       badge: 'process', badgeText: 'range decryption',
-      body: '<p>Whole ciphertext chunks are fetched because each carries its own GCM auth tag, so the bytes crossing the backend link exceed the frame requested - and that is what the egress charge counts.</p><p class="ac-metric">Metric: s3o_encryption_ops_total{operation="decrypt_range"}</p>'
+      body: '<p>Whole ciphertext chunks are fetched because each carries its own GCM auth tag, so the bytes crossing the backend link exceed the frame requested - and that is what the egress charge counts.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{operation="decrypt_range"}</p>'
     },
     DECODEF: {
       title: 'Decode Frames',

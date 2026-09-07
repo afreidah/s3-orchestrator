@@ -20,7 +20,7 @@ If the local MinIO goes down, reads automatically fail over to the cloud replica
 - A running MinIO instance accessible via S3 API
 - One cloud S3-compatible storage account (OCI, B2, R2, AWS, Wasabi, etc.)
 - S3 Orchestrator installed and running
-- Familiarity with the [configuration format](../../docs/user-guide.md)
+- Familiarity with the [configuration format](../../docs/user-guide/)
 
 ## Step 1: Configure MinIO as the Primary Backend
 
@@ -129,9 +129,9 @@ No changes are needed on the MinIO side. It does not need to know about the orch
 
 Track replication progress through the web dashboard or Prometheus metrics:
 
-- **Replication queue depth**: `s3o_replication_queue_depth` - objects waiting to be replicated
-- **Replication operations**: `s3o_replication_operations_total` - completed copies
-- **Per-backend storage**: `s3o_backend_used_bytes` - confirms objects are landing on R2
+- **Replication queue depth**: `s3o_replication_pending` - objects waiting to be replicated
+- **Replication operations**: `s3o_replication_copies_created_total` - completed copies
+- **Per-backend storage**: `s3o_quota_bytes_used` - confirms objects are landing on R2
 
 {{% notice warning %}}
 Replication copies count against the cloud backend's quota and usage limits. If you set a 10 GB quota on R2, that 10 GB is shared between direct writes and replicated objects. Size your quota to accommodate the full contents of your MinIO instance.
@@ -139,7 +139,7 @@ Replication copies count against the cloud backend's quota and usage limits. If 
 
 ## Important Notes
 
-- Replication is asynchronous - there is a brief window after a write where the object exists only on MinIO before the copy completes
+- Replication is asynchronous by default - there is a brief window after a write where the object exists only on MinIO before the copy completes. Setting `write_path.parallel_copies.enabled: true` has the write upload to both backends at once instead, narrowing that window to the length of one upload and sparing MinIO the read-back the replicator would otherwise make
 - The replicator is idempotent - restarting the orchestrator does not duplicate objects
 - To replicate to multiple cloud providers for extra safety, add more backends and increase the replication factor
 - If you have existing objects in MinIO, the orchestrator can discover and replicate them via the admin sync operation
