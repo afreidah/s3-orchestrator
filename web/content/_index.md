@@ -30,17 +30,7 @@ Most applications talk directly to one S3 backend, which makes them entirely dep
 Instead of trusting the underlying providers, s3-orchestrator operates as an active, self-healing metadata and orchestration layer inside your own infrastructure. Clients see one endpoint and one namespace; the proxy decides where bytes live, keeps the copies it promised, and keeps working when a provider does not.
 
 <div style="max-width: 620px; margin: 0 auto;">
-{{< mermaid >}}
-flowchart LR
-    C([S3 Clients]):::client --> O[s3-orchestrator<br/>routing - quotas<br/>replication - encryption]:::orch
-    O --> B1[(Provider A)]:::backend
-    O --> B2[(Provider B)]:::backend
-    O --> B3[(MinIO on-prem)]:::backend
-
-    classDef client fill:#6b4c2a,stroke:#d4a05a,color:#fff,font-weight:bold
-    classDef orch fill:#7a5a30,stroke:#e8c070,color:#fff,font-weight:bold
-    classDef backend fill:#3a2e20,stroke:#c4a35a,color:#e8dfd0
-{{< /mermaid >}}
+<img src="/images/01-unified-storage.svg" width="1200" height="520" alt="S3 clients reach one endpoint on the orchestrator, which fans writes out to Provider A, Provider B, and an on-prem MinIO." style="width: 100%; height: auto;">
 </div>
 
 <hr style="margin-top: 3rem;">
@@ -50,15 +40,7 @@ flowchart LR
 It fits your infrastructure, not the other way around. Run it standalone on an embedded SQLite database with local in-memory caching for zero-dependency management, move to PostgreSQL for a robust relational metadata layer, or scale horizontally to many instances. In the horizontal tier, shared usage counters in Redis close the cross-instance blind spot between database flushes, so quotas hold globally without the nodes coordinating directly.
 
 <div style="max-width: 780px; margin: 0 auto;">
-{{< mermaid >}}
-flowchart LR
-    A["<b>Standalone</b><br/>SQLite + in-memory cache<br/>zero external dependencies"]:::tier
-    B["<b>Single node</b><br/>PostgreSQL metadata<br/>relational, backed up, queryable"]:::tier
-    C["<b>Horizontal</b><br/>PostgreSQL + Redis counters<br/>N instances, no direct coordination"]:::tier
-    A --> B --> C
-
-    classDef tier fill:#3a2e20,stroke:#c4a35a,color:#e8dfd0
-{{< /mermaid >}}
+<img src="/images/02-adaptive-architecture.svg" width="1200" height="500" alt="Three deployment tiers: standalone on SQLite, a single node on PostgreSQL, and horizontal scaling with PostgreSQL plus Redis counters." style="width: 100%; height: auto;">
 </div>
 
 <hr style="margin-top: 3rem;">
@@ -68,17 +50,7 @@ flowchart LR
 Changing providers stops being a cutover. Put the proxy in front of your application, point it at the bucket you already have, and import the existing objects into its metadata layer. Add the new provider and raise the replication factor, and the background workers copy everything across while traffic keeps flowing. When the copies are in place, the online drain primitive empties the old bucket so you can delete it from the config - with no application downtime at any step.
 
 <div style="max-width: 760px; margin: 0 auto;">
-{{< mermaid >}}
-flowchart TD
-    S1["<b>1.</b> Point the proxy at your existing bucket<br/>import syncs the objects into its metadata"]:::step
-    S2["<b>2.</b> Add the new provider, raise the replication factor<br/>workers copy everything across in the background"]:::step
-    S3["<b>3.</b> Online drain empties the old bucket"]:::step
-    S4["<b>4.</b> Remove it from the config"]:::done
-    S1 --> S2 --> S3 --> S4
-
-    classDef step fill:#3a2e20,stroke:#c4a35a,color:#e8dfd0
-    classDef done fill:#7a5a30,stroke:#e8c070,color:#fff,font-weight:bold
-{{< /mermaid >}}
+<img src="/images/03-zero-downtime-migration.svg" width="1200" height="520" alt="Migration in three steps: point the proxy at the existing bucket, raise the replication factor so workers copy across, then drain the old bucket online." style="width: 100%; height: auto;">
 </div>
 
 <hr style="margin-top: 3rem;">
@@ -90,20 +62,7 @@ Built with production plumbing - per-backend and per-database circuit breakers, 
 Given a spare backend to rebuild onto, the replicator restores the target replication factor while the dead one is still down. When it returns, its copies come back with it and the set is briefly larger than you asked for, so an over-replication worker trims it back to the configured factor.
 
 <div style="max-width: 700px; margin: 0 auto;">
-{{< mermaid >}}
-flowchart LR
-    C([S3 Client]):::client --> O[s3-orchestrator<br/>replication factor: 2]:::orch
-    O -->|write| B1[(Backend A)]:::down
-    O -.->|replicate| B2[(Backend B)]:::backend
-    B1 -.->|read fails| O
-    O -->|failover read| B2
-    O -.->|rebuild 2nd copy| B3[(Backend C)]:::backend
-
-    classDef client fill:#6b4c2a,stroke:#d4a05a,color:#fff,font-weight:bold
-    classDef orch fill:#7a5a30,stroke:#e8c070,color:#fff,font-weight:bold
-    classDef backend fill:#3a2e20,stroke:#c4a35a,color:#e8dfd0
-    classDef down fill:#3a2e20,stroke:#8b3a3a,color:#d4a0a0
-{{< /mermaid >}}
+<img src="/images/04-provider-failover.svg" width="1200" height="560" alt="With replication factor 2 and one backend down, the orchestrator serves the surviving copy and replicates back when the backend returns." style="width: 100%; height: auto;">
 </div>
 
 <hr style="margin-top: 3rem;">

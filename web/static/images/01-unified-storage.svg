@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+  <title id="title">One S3 endpoint, many storage backends</title>
+  <desc id="desc">S3 clients connect to s3-orchestrator, which handles routing, quotas, replication, and encryption across Provider A, Provider B, and on-premises MinIO.</desc>
+  <defs>
+    <style>
+      .t{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}.label{font-size:22px;font-weight:700;fill:#f8fafc}.small{font-size:16px;font-weight:600;fill:#e8dfd0}.micro{font-size:14px;font-weight:600;fill:#c4a35a;letter-spacing:.08em}.line{fill:none;stroke:#c4a35a;stroke-width:3;stroke-linecap:round}.card{fill:#3a2e20;stroke:#c4a35a;stroke-width:2}.core{fill:#7a5a30;stroke:#e8c070;stroke-width:3}
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0l10 5-10 5z" fill="#c4a35a"/></marker>
+  </defs>
+  <g class="t">
+    <path class="line" marker-end="url(#arrow)" d="M260 260H430"/>
+    <path class="line" marker-end="url(#arrow)" d="M770 260H850V105H920"/>
+    <path class="line" marker-end="url(#arrow)" d="M770 260H920"/>
+    <path class="line" marker-end="url(#arrow)" d="M770 260H850V415H920"/>
+    <rect x="40" y="175" width="220" height="170" rx="28" class="card"/>
+    <g transform="translate(90 215)" fill="none" stroke="#e8c070" stroke-width="3"><rect width="56" height="42" rx="7"/><path d="M10 14h36M10 28h22"/><rect x="72" y="12" width="56" height="42" rx="7"/><path d="M82 26h36M82 40h22"/></g>
+    <text x="150" y="302" text-anchor="middle" class="label">S3 clients</text>
+    <text x="150" y="327" text-anchor="middle" class="small">one endpoint</text>
+    <rect x="430" y="105" width="340" height="310" rx="38" class="core"/>
+    <g transform="translate(550 142)" fill="none" stroke="#f8fafc" stroke-width="4"><path d="M10 62h80M20 62V20h60v42M32 20V6h36v14M35 39h30"/><circle cx="10" cy="62" r="5" fill="#f8fafc"/><circle cx="90" cy="62" r="5" fill="#f8fafc"/></g>
+    <text x="600" y="255" text-anchor="middle" class="label" style="font-size:27px">s3-orchestrator</text>
+    <text x="600" y="293" text-anchor="middle" class="micro" fill="#f8fafc">CONTROL PLANE</text>
+    <g class="small" text-anchor="middle"><text x="520" y="346">routing</text><text x="680" y="346">quotas</text><text x="520" y="382">replication</text><text x="680" y="382">encryption</text></g>
+    <g>
+      <rect x="920" y="45" width="240" height="120" rx="24" class="card"/><rect x="920" y="200" width="240" height="120" rx="24" class="card"/><rect x="920" y="355" width="240" height="120" rx="24" class="card"/>
+      <g fill="none" stroke="#e8c070" stroke-width="3"><ellipse cx="966" cy="87" rx="23" ry="9"/><path d="M943 87v30c0 5 10 9 23 9s23-4 23-9V87M943 102c0 5 10 9 23 9s23-4 23-9"/><ellipse cx="966" cy="242" rx="23" ry="9"/><path d="M943 242v30c0 5 10 9 23 9s23-4 23-9v-30M943 257c0 5 10 9 23 9s23-4 23-9"/><ellipse cx="966" cy="397" rx="23" ry="9"/><path d="M943 397v30c0 5 10 9 23 9s23-4 23-9v-30M943 412c0 5 10 9 23 9s23-4 23-9"/></g>
+      <text x="1020" y="96" class="label">Provider A</text><text x="1020" y="251" class="label">Provider B</text><text x="1020" y="406" class="label">MinIO</text><text x="1020" y="431" class="small">on-prem</text>
+    </g>
+  </g>
+</svg>
