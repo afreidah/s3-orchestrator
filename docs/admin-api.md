@@ -110,6 +110,52 @@ curl -X DELETE -H "X-Admin-Token: $TOKEN" \
 
 The confirmation token is signed and scoped to the backend it was issued for; it cannot be reused for a different one.
 
+## Provisioning buckets and credentials
+
+A deployment declares virtual buckets and the credentials that reach them in two
+places: the config file, and the store. `GET /admin/api/provisioning` returns
+both at once - every bucket, every user with the buckets it reaches, and every
+credential - each entry carrying a `source` of `config` or `store`.
+
+`source` is what tells you whether an entry can be changed. Config-declared
+entries are visible and read-only: the API answers `403` to any attempt to
+modify one, because an operator reading the config file has to be able to trust
+what it says. Change those by editing the file and sending `SIGHUP`.
+
+Onboarding a client is three calls: create a user, mint a keypair for it, grant
+it a bucket.
+
+```bash
+# 1. Create the identity. The response carries the generated user_id.
+curl -X POST -H "X-Admin-Token: $TOKEN" \
+  -d '{"name":"nightly-backup"}' \
+  http://localhost:9000/admin/api/provisioning/users
+
+# 2. Mint a keypair for it. This response is the only place the secret appears.
+curl -X POST -H "X-Admin-Token: $TOKEN" \
+  -d '{"user_id":"user-abc123","label":"backup job"}' \
+  http://localhost:9000/admin/api/provisioning/credentials
+
+# 3. Grant it a bucket, from either source.
+curl -X POST -H "X-Admin-Token: $TOKEN" \
+  -d '{"user_id":"user-abc123","bucket":"backups"}' \
+  http://localhost:9000/admin/api/provisioning/grants
+```
+
+The secret is returned once, by the request that minted it, and is never read
+back into any listing. A caller that loses it mints a replacement and revokes
+the old one; several keypairs may name one user, which is what lets one be
+rotated while the rest keep working.
+
+Every change takes effect on the next request. The registry the request path
+authenticates against is rebuilt before the call returns, so a credential
+created here works immediately and one revoked here stops working immediately.
+
+Removal is refused while something still depends on what is being removed: a
+bucket that holds objects or is granted to a user, and a user that holds
+credentials or grants, all answer `409` naming what is in the way. Emptying a
+bucket and revoking a credential stay deliberate acts.
+
 ## Objects the orchestrator does not own
 
 A backend's bucket can hold objects the orchestrator never wrote: data that predates it, or files placed there by something else. Reconcile records them at the key the backend holds them under and marks them **unmanaged**.

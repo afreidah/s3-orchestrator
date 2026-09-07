@@ -85,6 +85,16 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 	return core.BuildListPage(objects, maxKeys), nil
 }
 
+// CountObjectsByPrefix returns how many distinct keys live under a prefix,
+// which is what answers whether a bucket still holds anything.
+func (s *Store) CountObjectsByPrefix(ctx context.Context, prefix string) (int64, error) {
+	n, err := s.queries.CountObjectsByPrefix(ctx, likeEscaper.Replace(prefix))
+	if err != nil {
+		return 0, fmt.Errorf("failed to count objects by prefix: %w", err)
+	}
+	return n, nil
+}
+
 // listedIdentity builds the identity a listing row carries. A listing selects
 // the ETag and nothing else of the identity, which is all a Contents entry
 // reports; NULL means the object has not learned one yet and the entry carries

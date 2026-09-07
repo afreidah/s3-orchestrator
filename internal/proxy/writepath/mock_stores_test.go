@@ -118,6 +118,21 @@ func (mr *MockCoordinatorStoresMockRecorder) CompleteCleanupItem(ctx, id any) *g
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompleteCleanupItem", reflect.TypeOf((*MockCoordinatorStores)(nil).CompleteCleanupItem), ctx, id)
 }
 
+// CountObjectsByPrefix mocks base method.
+func (m *MockCoordinatorStores) CountObjectsByPrefix(ctx context.Context, prefix string) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountObjectsByPrefix", ctx, prefix)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountObjectsByPrefix indicates an expected call of CountObjectsByPrefix.
+func (mr *MockCoordinatorStoresMockRecorder) CountObjectsByPrefix(ctx, prefix any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountObjectsByPrefix", reflect.TypeOf((*MockCoordinatorStores)(nil).CountObjectsByPrefix), ctx, prefix)
+}
+
 // DecrementOrphanBytes mocks base method.
 func (m *MockCoordinatorStores) DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error {
 	m.ctrl.T.Helper()

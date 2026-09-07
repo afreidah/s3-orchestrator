@@ -97,6 +97,15 @@ WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
 ORDER BY object_key COLLATE "C", created_at ASC
 LIMIT @max_keys;
 
+-- name: CountObjectsByPrefix :one
+-- Distinct keys, not copies: an object replicated three times is one object to
+-- an operator asking whether a bucket is empty. The prefix is escaped the same
+-- way ListObjectsByPrefix escapes it, so a bucket whose name contains a LIKE
+-- metacharacter counts its own keys rather than a wider set.
+SELECT count(DISTINCT object_key)
+FROM object_locations
+WHERE object_key LIKE @prefix::text || '%' ESCAPE '\';
+
 -- name: GetAllObjectLocations :many
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at, last_scrubbed_at
 FROM object_locations

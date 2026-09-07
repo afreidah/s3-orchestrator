@@ -64,6 +64,30 @@ type CompressionStore interface {
 	core.CompressionAdmin
 }
 
+// ProvisioningStore is the bucket and credential surface the provisioning
+// operations read and write.
+type ProvisioningStore interface {
+	core.ProvisioningStore
+}
+
+// NamespaceCounter answers how many objects live under a prefix, which is what
+// tells a bucket deletion whether the namespace it is about to drop still
+// addresses anything.
+type NamespaceCounter interface {
+	CountObjectsByPrefix(ctx context.Context, prefix string) (int64, error)
+}
+
+// RegistryPublisher rebuilds the credential registry the request path
+// authenticates against and installs it, so a provisioning change takes effect
+// on the next request rather than the next restart.
+//
+// The composition root satisfies it with a closure: this layer must not know
+// that a registry is assembled from a store and a config file, nor that a
+// transport holds the pointer being swapped.
+type RegistryPublisher interface {
+	Republish(ctx context.Context) error
+}
+
 // CompressionCodec is the encode and decode surface the bulk passes use. Both
 // halves are needed: one pass encodes, the other decodes, and neither is a
 // single-action role.

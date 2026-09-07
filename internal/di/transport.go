@@ -165,6 +165,8 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 		Rebalancer:   rebalancer,
 		Scrubber:     scrubber,
 		Expiry:       expirer,
+		Provisioning: stores,
+		Registry:     NewRegistryPublisher(i),
 		Cfg:          cfg,
 	}), nil
 }
@@ -300,6 +302,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		Expiry:       d.ops.Lifecycle,
 		Encryption:   d.ops.Encryption,
 		Compression:  d.ops.Compression,
+		Provision:    d.ops.Provision,
 		Drain:        d.drain,
 		Lifecycle:    d.stores,
 		DBHealthy:    d.cb.IsHealthy,

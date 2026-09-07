@@ -205,6 +205,21 @@ func (mr *MockMetadataStoreMockRecorder) CountObjectTags(ctx, key any) *gomock.C
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountObjectTags", reflect.TypeOf((*MockMetadataStore)(nil).CountObjectTags), ctx, key)
 }
 
+// CountObjectsByPrefix mocks base method.
+func (m *MockMetadataStore) CountObjectsByPrefix(ctx context.Context, prefix string) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountObjectsByPrefix", ctx, prefix)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountObjectsByPrefix indicates an expected call of CountObjectsByPrefix.
+func (mr *MockMetadataStoreMockRecorder) CountObjectsByPrefix(ctx, prefix any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountObjectsByPrefix", reflect.TypeOf((*MockMetadataStore)(nil).CountObjectsByPrefix), ctx, prefix)
+}
+
 // CountOverReplicatedObjects mocks base method.
 func (m *MockMetadataStore) CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error) {
 	m.ctrl.T.Helper()

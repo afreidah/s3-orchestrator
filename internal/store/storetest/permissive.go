@@ -97,6 +97,7 @@ func Permissive(m *MockMetadataStore) {
 	r.ListExpiredObjects(a, a).Return(nil, nil).AnyTimes()
 	r.ListMultipartUploads(a, a, a).Return(nil, nil).AnyTimes()
 	r.ListObjects(a, a, a, a).Return(nil, nil).AnyTimes()
+	r.CountObjectsByPrefix(a, a).Return(int64(0), nil).AnyTimes()
 	r.ListObjectsDelimited(a, a, a, a, a).Return(&core.ListDelimitedResult{}, nil).AnyTimes()
 	r.ListObjectsByBackend(a, a, a).Return(nil, nil).AnyTimes()
 	r.ListObjectsByBackendKeyAsc(a, a, a, a).Return(nil, nil).AnyTimes()

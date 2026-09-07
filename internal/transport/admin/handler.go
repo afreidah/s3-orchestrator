@@ -52,6 +52,7 @@ type Handler struct {
 	expiry       *ops.Lifecycle
 	encryption   *ops.Encryption
 	compression  *ops.Compression
+	provision    *ops.Provisioning
 	drain        *drain.Manager
 	lifecycle    core.BackendLifecycleStore
 	reconciler   Reconciler
@@ -81,6 +82,7 @@ type Deps struct {
 	Expiry       *ops.Lifecycle
 	Encryption   *ops.Encryption
 	Compression  *ops.Compression
+	Provision    *ops.Provisioning
 	Drain        *drain.Manager
 	Lifecycle    core.BackendLifecycleStore
 	DBHealthy    func() bool                    // typically *breaker.CircuitBreaker.IsHealthy
@@ -109,6 +111,7 @@ func New(d *Deps) *Handler {
 	must.NotNil("d.Rebalance", d.Rebalance)
 	must.NotNil("d.Encryption", d.Encryption)
 	must.NotNil("d.Compression", d.Compression)
+	must.NotNil("d.Provision", d.Provision)
 	must.NotNil("d.Drain", d.Drain)
 	must.NotNil("d.Lifecycle", d.Lifecycle)
 	must.NotNil("d.Cleanup", d.Cleanup)
@@ -124,6 +127,7 @@ func New(d *Deps) *Handler {
 		expiry:       d.Expiry,
 		encryption:   d.Encryption,
 		compression:  d.Compression,
+		provision:    d.Provision,
 		drain:        d.Drain,
 		lifecycle:    d.Lifecycle,
 		reconciler:   d.Reconciler,
