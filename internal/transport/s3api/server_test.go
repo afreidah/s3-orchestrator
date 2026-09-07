@@ -22,6 +22,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
@@ -236,7 +237,8 @@ func newOpsServer(t *testing.T) (*httptest.Server, *MockObjectOps, *MockMultipar
 // the test if that config turns out to be ambiguous.
 func mustBucketRegistry(tb testing.TB, buckets []config.BucketConfig) *auth.BucketRegistry {
 	tb.Helper()
-	br, err := auth.NewBucketRegistry(buckets, nil)
+	v := provisioning.Merge(buckets, &provisioning.Snapshot{})
+	br, err := auth.NewBucketRegistry(&v)
 	if err != nil {
 		tb.Fatalf("NewBucketRegistry: %v", err)
 	}

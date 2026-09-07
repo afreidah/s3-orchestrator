@@ -29,7 +29,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 )
 
 // sigV4MaxSkew is the maximum allowed clock skew for SigV4 request timestamps.
@@ -63,118 +63,138 @@ type entry struct {
 
 // BucketRegistry resolves client credentials to the identity behind them.
 type BucketRegistry struct {
-	byAccessKey    map[string]entry // access_key_id -> identity and its secret
-	byToken        map[string]entry // token -> identity
-	multipartLimit map[string]int   // bucket name -> max active multipart uploads (0 = unlimited)
-	notices        []Notice         // what assembly found and served through anyway
+	byAccessKey    map[string]entry      // access_key_id -> identity and its secret
+	byToken        map[string]entry      // token -> identity
+	multipartLimit map[string]int        // bucket name -> max active multipart uploads (0 = unlimited)
+	notices        []provisioning.Notice // what registration found and served through anyway
 }
 
-// NewBucketRegistry builds a credential-to-identity lookup from the two sources
-// a deployment declares them in: the buckets in the config file, and the
-// identities the store holds.
+// NewBucketRegistry builds a credential-to-identity lookup from the merged view
+// of what a deployment declares. Both sources arrive in one shape, so the
+// request path has no second case to handle.
 //
-// A config credential becomes an identity reaching the one bucket that declared
-// it, so both sources resolve through the same chain and the request path has no
-// second case to handle.
-//
-// Config wins a collision. A stored credential whose access key or token a
-// config bucket also declares is shadowed rather than rejected, because a
-// deployment reaches that state by editing a file rather than by doing anything
-// wrong, and refusing to start would take the fleet down over it. Two config
-// buckets claiming one credential is still an error: nothing decides between
-// them, and config validation rejects it first, so this is the backstop that
-// keeps a gap there from becoming a cross-bucket grant.
-func NewBucketRegistry(buckets []config.BucketConfig, stored []StoredCredential) (*BucketRegistry, error) {
+// Config wins a collision. A stored credential whose access key a config bucket
+// also declares is shadowed rather than rejected, because a deployment reaches
+// that state by editing a file rather than by doing anything wrong, and refusing
+// to start would take the fleet down over it. Two config credentials claiming
+// one access key is still an error: nothing decides between them, and config
+// validation rejects it first, so this is the backstop that keeps a gap there
+// from becoming a cross-bucket grant.
+func NewBucketRegistry(v *provisioning.View) (*BucketRegistry, error) {
 	br := &BucketRegistry{
 		byAccessKey:    make(map[string]entry),
 		byToken:        make(map[string]entry),
 		multipartLimit: make(map[string]int),
+		notices:        slices.Clone(v.Notices),
 	}
 
-	for _, bkt := range buckets {
-		if bkt.MaxMultipartUploads > 0 {
-			br.multipartLimit[bkt.Name] = bkt.MaxMultipartUploads
-		}
-		for i := range bkt.Credentials {
-			if err := br.addConfigCredential(bkt.Name, i, &bkt.Credentials[i]); err != nil {
-				return nil, err
-			}
+	for i := range v.Buckets {
+		if b := &v.Buckets[i]; b.MaxMultipartUploads > 0 {
+			br.multipartLimit[b.Name] = b.MaxMultipartUploads
 		}
 	}
 
-	for i := range stored {
-		br.addStoredCredential(&stored[i])
+	users := make(map[string]*User, len(v.Users))
+	for i := range v.Users {
+		u := &v.Users[i]
+		users[u.ID] = &User{
+			ID:         u.ID,
+			Name:       u.Name,
+			FromConfig: u.Source == provisioning.SourceConfig,
+			buckets:    bucketSet(u.Buckets),
+		}
 	}
 
+	// Config credentials claim their keys first, so a stored one colliding with
+	// a config one is the case that gets shadowed rather than the reverse.
+	if err := br.register(v.Credentials, users, provisioning.SourceConfig); err != nil {
+		return nil, err
+	}
+	if err := br.register(v.Credentials, users, provisioning.SourceStore); err != nil {
+		return nil, err
+	}
 	return br, nil
+}
+
+// bucketSet indexes the buckets a user reaches for the request-time membership
+// check.
+func bucketSet(names []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		set[n] = struct{}{}
+	}
+	return set
 }
 
 // Notices reports what assembly found and served through anyway, for the caller
 // that logs them at startup and after each reload.
-func (br *BucketRegistry) Notices() []Notice {
+func (br *BucketRegistry) Notices() []provisioning.Notice {
 	return br.notices
 }
 
-// addConfigCredential registers one config-declared credential as a user
-// reaching the bucket that declared it, refusing any a different bucket already
-// claims.
-//
-// The user's id is derived from the access key so it survives a restart: an
-// audit record naming it means the same thing tomorrow. A credential carrying
-// both a keypair and a token is one user registered twice, so either proof of it
-// attributes to the same actor.
-func (br *BucketRegistry) addConfigCredential(bucketName string, idx int, cred *config.CredentialConfig) error {
-	u := &User{
-		ID:         configUserID(bucketName, idx, cred.AccessKeyID),
-		Name:       bucketName,
-		FromConfig: true,
-	}
-	u.grant(bucketName)
-
-	if cred.AccessKeyID != "" && cred.SecretAccessKey != "" {
-		if prior, ok := br.byAccessKey[cred.AccessKeyID]; ok {
-			return fmt.Errorf("%w: access key %q claimed by buckets %q and %q",
-				ErrDuplicateCredential, cred.AccessKeyID, prior.user.Name, bucketName)
+// register adds every credential from one source, in the order that makes config
+// authoritative.
+func (br *BucketRegistry) register(creds []provisioning.Credential, users map[string]*User, src provisioning.Source) error {
+	for i := range creds {
+		c := &creds[i]
+		if c.Source != src {
+			continue
 		}
-		br.byAccessKey[cred.AccessKeyID] = entry{secret: cred.SecretAccessKey, user: u}
-	}
-	if cred.Token != "" {
-		// The token is itself the secret, so only the buckets are named.
-		if prior, ok := br.byToken[cred.Token]; ok {
-			return fmt.Errorf("%w: one proxy token claimed by buckets %q and %q",
-				ErrDuplicateCredential, prior.user.Name, bucketName)
+		u, ok := users[c.UserID]
+		if !ok {
+			continue
 		}
-		br.byToken[cred.Token] = entry{secret: cred.Token, user: u}
+		if err := br.addKeypair(c, u); err != nil {
+			return err
+		}
+		if err := br.addToken(c, u); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// configUserID names a config-declared user. The access key is the stable choice
-// where there is one; a token-only credential has no public identifier, so it
-// falls back to its position, which is stable as long as the bucket's credential
-// list is.
-func configUserID(bucketName string, idx int, accessKeyID string) string {
-	if accessKeyID != "" {
-		return "config:" + accessKeyID
+// addKeypair registers a credential's access key, shadowing a stored one that
+// collides with config and refusing a collision between two config credentials.
+func (br *BucketRegistry) addKeypair(c *provisioning.Credential, u *User) error {
+	if c.AccessKeyID == "" || c.Secret == "" {
+		return nil
 	}
-	return fmt.Sprintf("config:%s:%d", bucketName, idx)
+	if prior, ok := br.byAccessKey[c.AccessKeyID]; ok {
+		if c.Source == provisioning.SourceStore {
+			br.notices = append(br.notices, provisioning.Notice{
+				Kind: provisioning.NoticeCredentialShadowed,
+				Detail: fmt.Sprintf("stored access key %q is shadowed by a config credential",
+					c.AccessKeyID),
+			})
+			return nil
+		}
+		return fmt.Errorf("%w: access key %q claimed by %q and %q",
+			ErrDuplicateCredential, c.AccessKeyID, prior.user.Name, u.Name)
+	}
+	br.byAccessKey[c.AccessKeyID] = entry{secret: c.Secret, user: u}
+	return nil
 }
 
-// addStoredCredential registers one stored keypair, leaving any access key the
-// config file already claims alone.
-func (br *BucketRegistry) addStoredCredential(c *StoredCredential) {
-	if c.User == nil || c.AccessKeyID == "" || c.Secret == "" {
-		return
+// addToken registers a credential's legacy proxy token. The token is itself the
+// secret, so a collision names only the users, never the value.
+func (br *BucketRegistry) addToken(c *provisioning.Credential, u *User) error {
+	if c.Token == "" {
+		return nil
 	}
-	if _, ok := br.byAccessKey[c.AccessKeyID]; ok {
-		br.notices = append(br.notices, Notice{
-			Kind: NoticeCredentialShadowed,
-			Detail: fmt.Sprintf("stored access key %q is shadowed by a config credential",
-				c.AccessKeyID),
-		})
-		return
+	if prior, ok := br.byToken[c.Token]; ok {
+		if c.Source == provisioning.SourceStore {
+			br.notices = append(br.notices, provisioning.Notice{
+				Kind:   provisioning.NoticeCredentialShadowed,
+				Detail: "a stored proxy token is shadowed by a config credential",
+			})
+			return nil
+		}
+		return fmt.Errorf("%w: one proxy token claimed by %q and %q",
+			ErrDuplicateCredential, prior.user.Name, u.Name)
 	}
-	br.byAccessKey[c.AccessKeyID] = entry{secret: c.Secret, user: c.User}
+	br.byToken[c.Token] = entry{secret: c.Token, user: u}
+	return nil
 }
 
 // MaxMultipartUploads returns the configured limit for active multipart
