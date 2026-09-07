@@ -166,7 +166,7 @@ Object tagging is handled the same way, in the metadata layer rather than pushed
       <strong>Cross-Backend Replication</strong>
       <p>Multi-cloud redundancy with zero client-side changes.</p>
     </div>
-    <div class="feature-detail">Set a replication factor and a background worker ensures every object exists on that many backends. Objects are written to one backend on PUT; the replicator asynchronously copies them to reach the target factor, and an over-replication worker removes copies beyond it.</div>
+    <div class="feature-detail">Set a replication factor and every object ends up on that many backends. By default a write lands on one and a background replicator copies it to the rest; turn on parallel copies and the write places them itself, uploading to several backends at once and answering the client on the first that commits - which removes the read-back the replicator would otherwise pay egress for. An over-replication worker removes copies beyond the factor.</div>
   </div>
   <div class="feature-item">
     <i class="fas fa-lock feature-icon" style="color: #c4b5fd;"></i>

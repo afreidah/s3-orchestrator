@@ -28,8 +28,8 @@ Browsing is read-only: the listing, inspector, and every status pane issue `GET`
 
 ## Prerequisites
 
-- A running orchestrator instance with the admin API enabled (`ui.admin_token`, or `ui.admin_key` as a fallback - see the [configuration walkthrough](../../docs/configuration.md)).
-- The admin token, resolved the same way as the [`admin` subcommand](../../docs/cli.md): flag, then environment, then config file.
+- A running orchestrator instance with the admin API enabled (`ui.admin_token`, or `ui.admin_key` as a fallback - see the [configuration walkthrough](../../docs/configuration/)).
+- The admin token, resolved the same way as the [`admin` subcommand](../../docs/cli/): flag, then environment, then config file.
 
 ## Step 1: Point the TUI at your instance
 
@@ -167,4 +167,4 @@ Accepting an action switches to a scrolling output pane immediately, so a pass t
 
 ## Where it fits
 
-The TUI is the interactive equivalent of `s3-orchestrator admin object-locations -key <key>`. Reach for it when you want to browse rather than look up a single key - for example to confirm replica placement before or after a [drain](../../docs/operations.md), or to spot-check that a newly enabled [replication factor](../replication-guide/) has caught up across backends.
+The TUI is the interactive equivalent of `s3-orchestrator admin object-locations -key <key>`. Reach for it when you want to browse rather than look up a single key - for example to confirm replica placement before or after a [drain](../../docs/operations/), or to spot-check that a newly enabled [replication factor](../replication-guide/) has caught up across backends.
