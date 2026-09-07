@@ -35,6 +35,7 @@ jobs:
       go: ${{ steps.filter.outputs.go }}
       web: ${{ steps.filter.outputs.web }}
       packaging: ${{ steps.filter.outputs.packaging }}
+      worker: ${{ steps.filter.outputs.worker }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
@@ -59,6 +60,8 @@ jobs:
               - 'nfpm.yaml'
               - 'packaging/**'
               - '.goreleaser.yaml'
+            worker:
+              - 'deploy/cloudflare-worker/**'
 
   # ---------------------------------------------------------------------------
   # GO CHECKS
@@ -260,6 +263,38 @@ jobs:
           make openapi-breaking \
             OASDIFF_BASE=origin/${{ github.base_ref }} \
             OASDIFF_FORMAT=githubactions
+
+  # ---------------------------------------------------------------------------
+  # EDGE PROXY WORKER
+  # ---------------------------------------------------------------------------
+  worker:
+    needs: [changes]
+    if: needs.changes.outputs.worker == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: deploy/cloudflare-worker
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: deploy/cloudflare-worker/package-lock.json
+
+      # --ignore-scripts keeps a dependency's install hooks from executing on a
+      # runner that holds repository credentials. None of the worker's dev
+      # dependencies need one.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test with coverage thresholds
+        run: npm run coverage
 
   # ---------------------------------------------------------------------------
   # SONARQUBE ANALYSIS
