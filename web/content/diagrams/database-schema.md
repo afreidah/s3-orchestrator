@@ -77,6 +77,9 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        BIGINT logical_size',
     '        BIGINT compression_probe_size',
     '        TEXT compression_probe_level',
+    '        TEXT etag',
+    '        TEXT content_type',
+    '        JSONB user_metadata',
     '        BOOLEAN managed',
     '        TIMESTAMPTZ last_scrubbed_at',
     '        TIMESTAMPTZ created_at',
@@ -170,6 +173,10 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        TEXT compression_level',
     '        SMALLINT compression_format_version',
     '        BIGINT logical_size',
+    '        TEXT etag',
+    '        TEXT content_type',
+    '        JSONB user_metadata',
+    '        TEXT role',
     '        TIMESTAMPTZ created_at',
     '    }',
     '',
@@ -235,6 +242,21 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<p>Used by: <a href="../write-path/">write path</a> (admission and charging), <a href="../usage-quotas/">quota reporting</a>, <a href="../background-services/">reconcile</a>.</p>' +
         '<p class="ac-metric">Key queries: AdjustQuotaStripe, ListBackendQuotaUsage, GetAllQuotaStats, SetBackendBytesUsed</p>'
     },
+    backend_request_usage: {
+      title: 'backend_request_usage',
+      badge: 'core', badgeText: 'core table',
+      body: '<p>Monthly call counts per named request budget. <code>backend_usage.api_requests</code> counts every call a backend served, which is the right figure to report and the wrong one to admit against: providers meter operation classes separately, so charging a delete against an upload budget locks a backend out of writes while its read allowance sits unused.</p>' +
+        '<p>Pools are additive - an operation charges every pool that contains it - so these rows do not sum to <code>api_requests</code> and are not a decomposition of it. Bytes stay in <code>backend_usage</code>, because providers do not class bytes.</p>' +
+        '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
+        '<tr><td class="pk">backend_name</td><td>TEXT</td><td>PRIMARY KEY (composite), FK to backend_quotas</td></tr>' +
+        '<tr><td class="pk">period</td><td>TEXT</td><td>PRIMARY KEY (composite); the billing month the count belongs to</td></tr>' +
+        '<tr><td class="pk">pool</td><td>TEXT</td><td>PRIMARY KEY (composite); the budget name from config, so the count is keyed rather than columnar and a new pool needs no migration</td></tr>' +
+        '<tr><td>requests</td><td>BIGINT</td><td>Calls charged to this pool in the period</td></tr>' +
+        '<tr><td>updated_at</td><td>TIMESTAMPTZ</td><td>Last flush that touched the row</td></tr></table>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on (backend_name, period, pool) for the per-pool flush &bull; idx_backend_request_usage_period (period) for the admission baseline, which loads a whole period at once</p>' +
+        '<p>Used by: <a href="../admission-control/">admission</a> (per-pool headroom), <a href="../usage-quotas/">usage reporting</a>, and the usage flush that writes the in-memory counters down.</p>' +
+        '<p class="ac-metric">Metrics: s3o_usage_pool_requests{backend,pool}, s3o_usage_pool_limit{backend,pool}</p>'
+    },
     object_locations: {
       title: 'object_locations',
       badge: 'core', badgeText: 'core table',
@@ -256,8 +278,11 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>compression_probe_level</td><td>TEXT</td><td>Level that probe was measured at, so a measurement taken under different settings is not reused as though it were current (nullable)</td></tr>' +
         '<tr><td>managed</td><td>BOOLEAN</td><td>False for objects reconcile found outside every virtual bucket prefix &mdash; they count toward quota but replication, rebalance, integrity and drain ignore them (default true)</td></tr>' +
         '<tr><td>last_scrubbed_at</td><td>TIMESTAMPTZ</td><td>When the scrubber last verified this copy. NULL means never verified; the scrub queue falls back to created_at so a fresh write sorts behind older unverified data (nullable)</td></tr>' +
-        '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Insert timestamp</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_backend (backend_name) &bull; idx_object_locations_key_pattern (object_key text_pattern_ops) &bull; idx_object_locations_created (created_at) &bull; idx_object_locations_key_created (object_key, created_at) &bull; idx_object_locations_backend_key_collate_c (backend_name, object_key COLLATE "C") &bull; idx_object_locations_key_collate_c (object_key COLLATE "C") &bull; idx_object_locations_managed (backend_name) WHERE managed &bull; idx_object_locations_scrub_queue (COALESCE(last_scrubbed_at, created_at), object_key) WHERE content_hash IS NOT NULL AND managed</p>' +
+        '<tr><td>etag</td><td>TEXT</td><td>MD5 of the bytes the client sent. What a HEAD reports stops depending on which copy answers: with compression or encryption on, the backend\'s own ETag describes the stored bytes rather than the object that was written (nullable)</td></tr>' +
+        '<tr><td>content_type</td><td>TEXT</td><td>Content type the write carried, served from the row rather than from whichever backend replies (nullable)</td></tr>' +
+        '<tr><td>user_metadata</td><td>JSONB</td><td>The x-amz-meta-* set. An empty object means the object has none; NULL means nobody has looked yet, which is what a row predating identity capture holds (nullable)</td></tr>' +
+        '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>The object\'s write time, not the copy\'s: every copy of a key carries the same value and a replica inherits it, so an unmodified object reports one Last-Modified whichever copy serves it. Unsuitable as a per-copy age, which last_scrubbed_at tracks instead</td></tr></table>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_backend (backend_name) &bull; idx_object_locations_key_pattern (object_key text_pattern_ops) &bull; idx_object_locations_created (created_at) &bull; idx_object_locations_key_created (object_key, created_at) &bull; idx_object_locations_backend_key_collate_c (backend_name, object_key COLLATE "C") &bull; idx_object_locations_key_collate_c (object_key COLLATE "C") &bull; idx_object_locations_key_collate_c_covering (object_key COLLATE "C", created_at) INCLUDE the listing projection &bull; idx_object_locations_managed (backend_name) WHERE managed &bull; idx_object_locations_scrub_queue (COALESCE(last_scrubbed_at, created_at), object_key) WHERE content_hash IS NOT NULL AND managed</p>' +
         '<p>Used by: <a href="../write-path/">write path</a> (RecordObject), <a href="../read-path/">read path</a> (GetAllObjectLocations), <a href="../background-services/">replicator</a> (GetUnderReplicatedObjects), directory tree listing, <a href="../encryption/">key rotation</a>, <a href="../compression/">compression</a> (stored-form columns).</p>' +
         '<p class="ac-metric">Key queries: InsertObjectLocation, ListObjectsByPrefix, GetDirectoryStats, GetUnderReplicatedObjects, BackendObjectStats</p>'
     },
@@ -372,6 +397,8 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
       title: 'pending_objects',
       badge: 'cleanup', badgeText: 'in-flight intents',
       body: '<p>In-flight PUT intents for the write-path PUT-before-COMMIT pattern. A row is inserted by <code>InsertPendingIntent</code> immediately before the backend PUT and deleted by <code>RecordObjectAndPromoteIntent</code> on a successful metadata commit. If the orchestrator dies between the backend PUT and the commit, the row survives and the <code>PendingReaper</code> worker resolves it on the next tick by HEADing the backend.</p>' +
+        '<p>The row is also what admission counts: a backend\'s headroom is its committed rows minus the intents it is holding, so bytes in flight occupy the backend for every instance rather than only the one writing them. That is why the pattern cannot be turned off.</p>' +
+        '<p>A write placing several copies at once inserts one intent per copy, and clears every intent for its key on commit apart from the ones its own uploads are still running under. Those surviving rows are what each late copy reads as proof that nothing newer has taken the key. See the <a href="../write-path/">write path</a>.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">intent_id</td><td>TEXT</td><td>PRIMARY KEY (UUID v4 minted by the coordinator)</td></tr>' +
         '<tr><td>object_key</td><td>TEXT</td><td>S3 key the PUT targets</td></tr>' +
@@ -386,10 +413,14 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<tr><td>compression_level</td><td>TEXT</td><td>Level the object was written at. Diagnostic only, since decoding does not need it, but a rewrite pass does (nullable)</td></tr>' +
         '<tr><td>compression_format_version</td><td>SMALLINT</td><td>On-disk layout version, so a later change is detectable rather than silently misread (nullable)</td></tr>' +
         '<tr><td>logical_size</td><td>BIGINT</td><td>Size of the object the client wrote. Distinct from plaintext_size: with both features on the stored bytes are ciphertext of compressed data, so plaintext_size is the pre-encryption (compressed) size and this is the original (nullable)</td></tr>' +
+        '<tr><td>etag</td><td>TEXT</td><td>MD5 of the bytes the client sent, so a reaper-promoted object answers a HEAD without asking a backend (nullable)</td></tr>' +
+        '<tr><td>content_type</td><td>TEXT</td><td>Content type the write carried, promoted with the object (nullable)</td></tr>' +
+        '<tr><td>user_metadata</td><td>JSONB</td><td>x-amz-meta-* the write carried. An empty object means the write had none; NULL means the intent predates identity capture (nullable)</td></tr>' +
+        '<tr><td>role</td><td>TEXT</td><td>What promoting this intent means: <code>primary</code> replaces whatever the key held, <code>companion</code> adds a copy alongside its siblings. CHECK-constrained to the two, defaulting to primary, which is what every intent written before write fan-out meant. A companion is never promoted - the reaper cannot tell its bytes from an older object at the same path, so it drops the row and removes them, and replication rebuilds the copy from one the client was told about</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Intent creation time; reaper only considers rows older than <code>write_path.pending_pattern.min_age</code> (default 5m)</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK on intent_id &bull; idx_pending_objects_created (created_at) for the reaper\'s age-cursored scan &bull; idx_pending_objects_backend (backend_name)</p>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on intent_id &bull; idx_pending_objects_created (created_at) for the reaper\'s age-cursored scan &bull; idx_pending_objects_backend (backend_name) &bull; idx_pending_objects_key (object_key) for the by-key clear every commit runs</p>' +
         '<p>Used by: <code>writepath.Coordinator.InsertPendingIntent</code> (inserts on PUT entry) &bull; <code>RecordObjectAndPromoteIntent</code> (delete on successful commit) &bull; <code>RecoverFromRecordFailure</code> (delete on drain race / commit failure) &bull; <a href="../background-services/">PendingReaper</a> (HEAD-probes the backend and promotes / drops stale intents). The reaper claims rows individually with <code>SELECT ... FOR UPDATE SKIP LOCKED</code>; no advisory lock is required because two reapers ticking concurrently always pick disjoint sets.</p>' +
-        '<p class="ac-metric">Metrics: s3o_pending_intents_enqueued_total, s3o_pending_intents_resolved_total{status=committed|promoted|dropped|ambiguous|already_resolved}, s3o_pending_intents_depth &bull; Audit events: pending_reaper.promoted, pending_reaper.dropped, pending_reaper.superseded</p>'
+        '<p class="ac-metric">Metrics: s3o_pending_intents_enqueued_total, s3o_pending_intents_resolved_total{status=committed|promoted|dropped|ambiguous|already_resolved}, s3o_pending_intents_depth, s3o_detached_uploads_depth &bull; Audit events: pending_reaper.promoted, pending_reaper.dropped, pending_reaper.superseded</p>'
     },
     notification_outbox: {
       title: 'notification_outbox',
@@ -455,7 +486,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
       // Mermaid ER diagram entity IDs follow the pattern: entity-TABLE_NAME-N
       // or just the table name directly. Try to extract the table name.
       var tableName = null;
-      var tableNames = ['backend_quotas', 'object_locations', 'object_tags', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'cleanup_queue', 'cleanup_dlq', 'pending_objects', 'notification_outbox'];
+      var tableNames = ['backend_quotas', 'backend_quota_stripes', 'object_locations', 'object_tags', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'backend_request_usage', 'cleanup_queue', 'cleanup_dlq', 'pending_objects', 'notification_outbox'];
       for (var i = 0; i < tableNames.length; i++) {
         if (gId.indexOf(tableNames[i]) !== -1) {
           tableName = tableNames[i];
@@ -493,6 +524,8 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | Table | Purpose | Primary Key |
 |-------|---------|-------------|
 | **backend_quotas** | Backend registry with storage quota tracking | `backend_name` |
+| **backend_quota_stripes** | A backend's stored byte total, split across rows so concurrent writes take different row locks | `(backend_name, stripe_id)` |
+| **backend_request_usage** | Monthly call counts per named request budget, which is what admission charges against | `(backend_name, period, pool)` |
 | **object_locations** | Maps objects to backends (supports replication) | `(object_key, backend_name)` |
 | **object_tags** | Key/value labels on an object, shared by every replica | `(object_key, tag_key)` |
 | **multipart_uploads** | In-progress multipart upload state | `upload_id` |
@@ -527,3 +560,9 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | `00018_compression_probe` | Add `compression_probe_size` and `compression_probe_level` to `object_locations`. Record what the encoder produced for a copy it declined to store compressed, so a later pass reaches the same verdict without downloading and encoding it again. The measurement is stored rather than a declined flag, because `min_ratio` is applied at query time: loosening it returns those copies to the pass with no read at all, where a flag would have to be found and cleared |
 | `00019_object_tags` | Add `object_tags` (`object_key`, `tag_key`, `tag_value`) with `idx_object_tags_lookup (tag_key, tag_value)`. Keyed by object key alone, because tags describe the object and per-replica rows would let copies of one key disagree. No foreign key: nothing is keyed on object key alone, so `ON DELETE CASCADE` cannot express it and core clears the rows instead |
 | `00020_multipart_tagging` | Add `tagging` to `multipart_uploads`, holding a query-string-encoded tag set from `CreateMultipartUpload` until completion. One column rather than a child table, since these are only ever read whole for one upload and never filtered by tag. Nullable, and NULL means the upload carried no tags, which is what every pre-existing row is |
+| `00021_object_identity` | Add `etag`, `content_type` and `user_metadata` to `object_locations` and `pending_objects`, plus `plaintext_etag` to `multipart_parts`. What a HEAD reports stops depending on which copy answers: with compression or encryption on, the backend's own ETag describes the stored bytes rather than the object the client wrote |
+| `00022_object_write_time` | Backfill `created_at` to the object's write time across every copy of a key, taking the earliest. It reaches clients as `Last-Modified`, so a replica stamped when it was made had an unmodified object reporting a different time depending on which copy served it |
+| `00023_listing_covering_index` | Add a covering index on `(object_key COLLATE "C", created_at)` for the listing's DISTINCT ON. Carrying `created_at` as a key column rather than INCLUDE payload is what removes the per-group sort, since INCLUDE columns satisfy a projection but not an ORDER BY. Measured on 360k rows: 3017 buffers and an incremental sort, down to an index-only scan |
+| `00024_request_pool_usage` | Add `backend_request_usage`, counting calls per named request budget. `backend_usage.api_requests` counts every call, which reports correctly but admits wrongly: providers meter operation classes separately, and charging a delete against an upload budget locks a backend out while its read allowance sits unused. Pools are additive, so these rows do not sum to `api_requests` |
+| `00025_striped_quota_counters` | Add `backend_quota_stripes` and move `bytes_used` onto it. One row per backend meant every write charging a backend took the same row lock and serialized behind the others; a writer now picks its stripe from the object key, so charge and credit for one key meet on one row while different keys never wait. Stripes are signed rather than clamped, because the backfill puts pre-existing bytes on stripe zero and deleting one of those objects credits whichever stripe its key hashes to |
+| `00026_pending_intent_role` | Add `role` to `pending_objects` (`primary` or `companion`, defaulting to primary) and `idx_pending_objects_key`. An intent had meant one thing - this write replaces what the key held - and a write placing copies on several backends at once needs the other, since promoting one of its intents must not delete the copies its siblings committed. The index is for the by-key clear every commit now runs |
