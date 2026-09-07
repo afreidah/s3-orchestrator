@@ -456,10 +456,25 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     if (tooltip.style.display === 'block' && !pinned) positionTooltip();
   });
   function positionTooltip() {
-    var pad = 12, x = mouseX + pad, y = mouseY + pad;
-    if (x + tooltip.offsetWidth > window.innerWidth - pad) x = mouseX - tooltip.offsetWidth - pad;
-    if (y + tooltip.offsetHeight > window.innerHeight - pad) y = mouseY - tooltip.offsetHeight - pad;
-    tooltip.style.left = x + 'px'; tooltip.style.top = y + 'px';
+    var pad = 12;
+    var w = tooltip.offsetWidth, h = tooltip.offsetHeight;
+    var vw = window.innerWidth, vh = window.innerHeight;
+
+    var x = mouseX + pad;
+    if (x + w > vw - pad) x = mouseX - w - pad;
+    x = Math.max(pad, Math.min(x, vw - w - pad));
+
+    // Prefer below the cursor, and flip above only when above genuinely has
+    // more room. Clamping afterwards is what keeps a tall panel on screen: an
+    // unclamped flip puts its top edge above the viewport, and a panel taller
+    // than the viewport pins to the top and scrolls instead.
+    var below = vh - mouseY - pad * 2;
+    var above = mouseY - pad * 2;
+    var y = (h <= below || below >= above) ? mouseY + pad : mouseY - h - pad;
+    y = Math.max(pad, Math.min(y, vh - h - pad));
+
+    tooltip.style.left = x + 'px';
+    tooltip.style.top = y + 'px';
   }
   function showInfo(id) {
     var info = nodeInfo[id];
