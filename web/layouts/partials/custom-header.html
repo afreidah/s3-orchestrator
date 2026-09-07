@@ -28,3 +28,14 @@
 }}
 <script type="application/ld+json">{{ $ld | jsonify | safeJS }}</script>
 {{- end }}
+{{- /*
+  Diagram styling, loaded only under diagrams/. Every page there renders into
+  the same container id, so one stylesheet covers all of them and none of the
+  weight lands on pages that carry no diagram.
+*/ -}}
+{{- if hasPrefix .RelPermalink "/diagrams/" }}
+{{- with resources.Get "css/diagrams.css" }}
+{{- $css := . | minify | fingerprint }}
+<link rel="stylesheet" href="{{ $css.RelPermalink }}" integrity="{{ $css.Data.Integrity }}">
+{{- end }}
+{{- end }}
