@@ -53,3 +53,23 @@
     }
   })();
 </script>
+
+{{- /*
+  Emits the Cloudflare Web Analytics beacon.
+
+  The zone carries a Web Analytics site record with auto_install set, which asks
+  the edge to add this tag on its own. The edge serves the page without it, so
+  the tag is emitted here; absent the beacon every Core Web Vital reports no
+  data no matter how the site record reads.
+
+  The token names the site rather than authenticating anything and ships in the
+  page source on every request, so it belongs in hugo.toml rather than a secret
+  store. A Terraform cloudflare_web_analytics_site resource owns the record the
+  token comes from.
+
+  Production builds only, so a local hugo server does not report page views into
+  the same dataset.
+*/ -}}
+{{- if and hugo.IsProduction site.Params.webAnalyticsToken }}
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "{{ site.Params.webAnalyticsToken }}"}'></script>
+{{- end }}
