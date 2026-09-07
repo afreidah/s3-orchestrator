@@ -309,6 +309,32 @@ type CompressionAdmin interface {
 	RecordCompressionProbe(ctx context.Context, probe *CompressionProbe) error
 }
 
+// ProvisioningStore defines the store half of the bucket registry: the buckets,
+// users and grants that exist as rows rather than as config entries.
+//
+// The listings are what registry assembly reads, at startup and on every reload,
+// to merge with what the config file declares. The rest is how a bucket, a user,
+// one of its keypairs or one of its grants comes into being and stops being,
+// each addressable on its own so revoking a credential leaves its siblings and
+// dropping one grant leaves the others.
+//
+// Deleting a user that still holds credentials or grants is refused by the
+// schema, so a caller removes those first.
+type ProvisioningStore interface {
+	ListBuckets(ctx context.Context) ([]Bucket, error)
+	ListUsers(ctx context.Context) ([]User, error)
+	ListCredentials(ctx context.Context) ([]Credential, error)
+	ListGrants(ctx context.Context) ([]Grant, error)
+	CreateBucket(ctx context.Context, b *Bucket) error
+	CreateUser(ctx context.Context, u *User) error
+	CreateCredential(ctx context.Context, c *Credential) error
+	CreateGrant(ctx context.Context, g *Grant) error
+	DeleteBucket(ctx context.Context, name string) error
+	DeleteUser(ctx context.Context, id string) error
+	DeleteCredential(ctx context.Context, accessKeyID string) error
+	DeleteGrant(ctx context.Context, userID, bucketName string) error
+}
+
 // NotificationOutbox defines the durable notification outbox operations
 // the notifier worker uses to deliver webhook events with retry/backoff
 // semantics. Leader election around the drain loop comes from a separate

@@ -86,6 +86,7 @@ func registerInfrastructure(inj do.Injector) {
 	do.MustAs[metadataStore, core.LifecycleAdmin](inj)
 	do.MustAs[metadataStore, core.EncryptionAdmin](inj)
 	do.MustAs[metadataStore, core.NotificationOutbox](inj)
+	do.MustAs[metadataStore, core.ProvisioningStore](inj)
 	do.MustAs[metadataStore, metrics.Deps](inj)
 }
 

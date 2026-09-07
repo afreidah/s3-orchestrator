@@ -250,6 +250,48 @@ func (mr *MockMetadataStoreMockRecorder) CountUnencryptedLocations(ctx any) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountUnencryptedLocations", reflect.TypeOf((*MockMetadataStore)(nil).CountUnencryptedLocations), ctx)
 }
 
+// CreateBucket mocks base method.
+func (m *MockMetadataStore) CreateBucket(ctx context.Context, b *core.Bucket) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateBucket", ctx, b)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateBucket indicates an expected call of CreateBucket.
+func (mr *MockMetadataStoreMockRecorder) CreateBucket(ctx, b any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateBucket", reflect.TypeOf((*MockMetadataStore)(nil).CreateBucket), ctx, b)
+}
+
+// CreateCredential mocks base method.
+func (m *MockMetadataStore) CreateCredential(ctx context.Context, c *core.Credential) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateCredential", ctx, c)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateCredential indicates an expected call of CreateCredential.
+func (mr *MockMetadataStoreMockRecorder) CreateCredential(ctx, c any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateCredential", reflect.TypeOf((*MockMetadataStore)(nil).CreateCredential), ctx, c)
+}
+
+// CreateGrant mocks base method.
+func (m *MockMetadataStore) CreateGrant(ctx context.Context, g *core.Grant) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateGrant", ctx, g)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateGrant indicates an expected call of CreateGrant.
+func (mr *MockMetadataStoreMockRecorder) CreateGrant(ctx, g any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateGrant", reflect.TypeOf((*MockMetadataStore)(nil).CreateGrant), ctx, g)
+}
+
 // CreateMultipartUpload mocks base method.
 func (m *MockMetadataStore) CreateMultipartUpload(ctx context.Context, params *core.CreateMultipartUploadParams) error {
 	m.ctrl.T.Helper()
@@ -262,6 +304,20 @@ func (m *MockMetadataStore) CreateMultipartUpload(ctx context.Context, params *c
 func (mr *MockMetadataStoreMockRecorder) CreateMultipartUpload(ctx, params any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateMultipartUpload", reflect.TypeOf((*MockMetadataStore)(nil).CreateMultipartUpload), ctx, params)
+}
+
+// CreateUser mocks base method.
+func (m *MockMetadataStore) CreateUser(ctx context.Context, u *core.User) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateUser", ctx, u)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateUser indicates an expected call of CreateUser.
+func (mr *MockMetadataStoreMockRecorder) CreateUser(ctx, u any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateUser", reflect.TypeOf((*MockMetadataStore)(nil).CreateUser), ctx, u)
 }
 
 // DecrementOrphanBytes mocks base method.
@@ -290,6 +346,48 @@ func (m *MockMetadataStore) DeleteBackendData(ctx context.Context, backendName s
 func (mr *MockMetadataStoreMockRecorder) DeleteBackendData(ctx, backendName any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteBackendData", reflect.TypeOf((*MockMetadataStore)(nil).DeleteBackendData), ctx, backendName)
+}
+
+// DeleteBucket mocks base method.
+func (m *MockMetadataStore) DeleteBucket(ctx context.Context, name string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteBucket", ctx, name)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteBucket indicates an expected call of DeleteBucket.
+func (mr *MockMetadataStoreMockRecorder) DeleteBucket(ctx, name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteBucket", reflect.TypeOf((*MockMetadataStore)(nil).DeleteBucket), ctx, name)
+}
+
+// DeleteCredential mocks base method.
+func (m *MockMetadataStore) DeleteCredential(ctx context.Context, accessKeyID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteCredential", ctx, accessKeyID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteCredential indicates an expected call of DeleteCredential.
+func (mr *MockMetadataStoreMockRecorder) DeleteCredential(ctx, accessKeyID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteCredential", reflect.TypeOf((*MockMetadataStore)(nil).DeleteCredential), ctx, accessKeyID)
+}
+
+// DeleteGrant mocks base method.
+func (m *MockMetadataStore) DeleteGrant(ctx context.Context, userID, bucketName string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteGrant", ctx, userID, bucketName)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteGrant indicates an expected call of DeleteGrant.
+func (mr *MockMetadataStoreMockRecorder) DeleteGrant(ctx, userID, bucketName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteGrant", reflect.TypeOf((*MockMetadataStore)(nil).DeleteGrant), ctx, userID, bucketName)
 }
 
 // DeleteMultipartUpload mocks base method.
@@ -393,6 +491,20 @@ func (m *MockMetadataStore) DeletePendingByBackend(ctx context.Context, backendN
 func (mr *MockMetadataStoreMockRecorder) DeletePendingByBackend(ctx, backendName any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeletePendingByBackend", reflect.TypeOf((*MockMetadataStore)(nil).DeletePendingByBackend), ctx, backendName)
+}
+
+// DeleteUser mocks base method.
+func (m *MockMetadataStore) DeleteUser(ctx context.Context, id string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteUser", ctx, id)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteUser indicates an expected call of DeleteUser.
+func (mr *MockMetadataStoreMockRecorder) DeleteUser(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteUser", reflect.TypeOf((*MockMetadataStore)(nil).DeleteUser), ctx, id)
 }
 
 // EnqueueCleanup mocks base method.
@@ -855,6 +967,21 @@ func (mr *MockMetadataStoreMockRecorder) ListBackendQuotaUsage(ctx any) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBackendQuotaUsage", reflect.TypeOf((*MockMetadataStore)(nil).ListBackendQuotaUsage), ctx)
 }
 
+// ListBuckets mocks base method.
+func (m *MockMetadataStore) ListBuckets(ctx context.Context) ([]core.Bucket, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListBuckets", ctx)
+	ret0, _ := ret[0].([]core.Bucket)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListBuckets indicates an expected call of ListBuckets.
+func (mr *MockMetadataStoreMockRecorder) ListBuckets(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListBuckets", reflect.TypeOf((*MockMetadataStore)(nil).ListBuckets), ctx)
+}
+
 // ListCleanupDLQ mocks base method.
 func (m *MockMetadataStore) ListCleanupDLQ(ctx context.Context, backend string, limit int) ([]core.CleanupDLQItem, error) {
 	m.ctrl.T.Helper()
@@ -883,6 +1010,21 @@ func (m *MockMetadataStore) ListCompressedLocations(ctx context.Context, limit i
 func (mr *MockMetadataStoreMockRecorder) ListCompressedLocations(ctx, limit, after any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCompressedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListCompressedLocations), ctx, limit, after)
+}
+
+// ListCredentials mocks base method.
+func (m *MockMetadataStore) ListCredentials(ctx context.Context) ([]core.Credential, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListCredentials", ctx)
+	ret0, _ := ret[0].([]core.Credential)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListCredentials indicates an expected call of ListCredentials.
+func (mr *MockMetadataStoreMockRecorder) ListCredentials(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCredentials", reflect.TypeOf((*MockMetadataStore)(nil).ListCredentials), ctx)
 }
 
 // ListDirectoryChildren mocks base method.
@@ -928,6 +1070,21 @@ func (m *MockMetadataStore) ListExpiredObjects(ctx context.Context, q core.Expir
 func (mr *MockMetadataStoreMockRecorder) ListExpiredObjects(ctx, q any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListExpiredObjects", reflect.TypeOf((*MockMetadataStore)(nil).ListExpiredObjects), ctx, q)
+}
+
+// ListGrants mocks base method.
+func (m *MockMetadataStore) ListGrants(ctx context.Context) ([]core.Grant, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListGrants", ctx)
+	ret0, _ := ret[0].([]core.Grant)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListGrants indicates an expected call of ListGrants.
+func (mr *MockMetadataStoreMockRecorder) ListGrants(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListGrants", reflect.TypeOf((*MockMetadataStore)(nil).ListGrants), ctx)
 }
 
 // ListMultipartUploads mocks base method.
@@ -1033,6 +1190,21 @@ func (m *MockMetadataStore) ListUnencryptedLocations(ctx context.Context, limit 
 func (mr *MockMetadataStoreMockRecorder) ListUnencryptedLocations(ctx, limit, after any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUnencryptedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListUnencryptedLocations), ctx, limit, after)
+}
+
+// ListUsers mocks base method.
+func (m *MockMetadataStore) ListUsers(ctx context.Context) ([]core.User, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListUsers", ctx)
+	ret0, _ := ret[0].([]core.User)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListUsers indicates an expected call of ListUsers.
+func (mr *MockMetadataStoreMockRecorder) ListUsers(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUsers", reflect.TypeOf((*MockMetadataStore)(nil).ListUsers), ctx)
 }
 
 // MarkObjectCompressed mocks base method.
