@@ -94,6 +94,23 @@ func (q *Queries) CompressionStats(ctx context.Context) ([]CompressionStatsRow, 
 	return items, nil
 }
 
+const countObjectsByPrefix = `-- name: CountObjectsByPrefix :one
+SELECT count(DISTINCT object_key)
+FROM object_locations
+WHERE object_key LIKE $1::text || '%' ESCAPE '\'
+`
+
+// Distinct keys, not copies: an object replicated three times is one object to
+// an operator asking whether a bucket is empty. The prefix is escaped the same
+// way ListObjectsByPrefix escapes it, so a bucket whose name contains a LIKE
+// metacharacter counts its own keys rather than a wider set.
+func (q *Queries) CountObjectsByPrefix(ctx context.Context, prefix string) (int64, error) {
+	row := q.db.QueryRow(ctx, countObjectsByPrefix, prefix)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countScrubCandidatesOnBackends = `-- name: CountScrubCandidatesOnBackends :one
 SELECT count(*)
 FROM object_locations

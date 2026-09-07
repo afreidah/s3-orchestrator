@@ -16,6 +16,8 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -147,12 +149,15 @@ func TestNewBucketRegistry_KeypairAndTokenShareOneUser(t *testing.T) {
 func TestNewBucketRegistry_StoredCredentialAuthenticates(t *testing.T) {
 	t.Parallel()
 
-	stored := []StoredCredential{{
-		AccessKeyID: "STORED",
-		Secret:      "s1",
-		User:        NewUser("u1", "ci", []string{"photos", "backups"}),
-	}}
-	br := mustBucketRegistryWithStore(t, nil, stored)
+	br := mustBucketRegistryWithStore(t, nil, &provisioning.Snapshot{
+		Buckets:     []core.Bucket{{Name: "photos"}, {Name: "backups"}},
+		Users:       []core.User{{ID: "u1", Name: "ci"}},
+		Credentials: []core.Credential{{AccessKeyID: "STORED", UserID: "u1", Secret: "s1"}},
+		Grants: []core.Grant{
+			{UserID: "u1", BucketName: "photos"},
+			{UserID: "u1", BucketName: "backups"},
+		},
+	})
 
 	e, ok := br.byAccessKey["STORED"]
 	if !ok {
@@ -184,11 +189,12 @@ func TestNewBucketRegistry_ConfigShadowsStoredCredential(t *testing.T) {
 				{AccessKeyID: "AK", SecretAccessKey: "config-secret"},
 			}},
 		},
-		[]StoredCredential{{
-			AccessKeyID: "AK",
-			Secret:      "stored-secret",
-			User:        NewUser("u1", "ci", []string{"backups"}),
-		}},
+		&provisioning.Snapshot{
+			Buckets:     []core.Bucket{{Name: "backups"}},
+			Users:       []core.User{{ID: "u1", Name: "ci"}},
+			Credentials: []core.Credential{{AccessKeyID: "AK", UserID: "u1", Secret: "stored-secret"}},
+			Grants:      []core.Grant{{UserID: "u1", BucketName: "backups"}},
+		},
 	)
 
 	e := br.byAccessKey["AK"]
@@ -201,8 +207,8 @@ func TestNewBucketRegistry_ConfigShadowsStoredCredential(t *testing.T) {
 	if n := len(br.Notices()); n != 1 {
 		t.Fatalf("notices = %d, want 1", n)
 	}
-	if br.Notices()[0].Kind != NoticeCredentialShadowed {
-		t.Errorf("notice kind = %q, want %q", br.Notices()[0].Kind, NoticeCredentialShadowed)
+	if br.Notices()[0].Kind != provisioning.NoticeCredentialShadowed {
+		t.Errorf("notice kind = %q, want %q", br.Notices()[0].Kind, provisioning.NoticeCredentialShadowed)
 	}
 }
 
@@ -211,10 +217,13 @@ func TestNewBucketRegistry_ConfigShadowsStoredCredential(t *testing.T) {
 func TestNewBucketRegistry_IncompleteStoredCredentialIgnored(t *testing.T) {
 	t.Parallel()
 
-	br := mustBucketRegistryWithStore(t, nil, []StoredCredential{
-		{AccessKeyID: "", Secret: "s", User: NewUser("u1", "a", nil)},
-		{AccessKeyID: "NO_SECRET", Secret: "", User: NewUser("u2", "b", nil)},
-		{AccessKeyID: "NO_USER", Secret: "s", User: nil},
+	br := mustBucketRegistryWithStore(t, nil, &provisioning.Snapshot{
+		Users: []core.User{{ID: "u1", Name: "a"}, {ID: "u2", Name: "b"}},
+		Credentials: []core.Credential{
+			{AccessKeyID: "", UserID: "u1", Secret: "s"},
+			{AccessKeyID: "NO_SECRET", UserID: "u2", Secret: ""},
+			{AccessKeyID: "NO_USER", UserID: "gone", Secret: "s"},
+		},
 	})
 
 	if n := len(br.byAccessKey); n != 0 {
@@ -228,11 +237,12 @@ func TestNewBucketRegistry_IncompleteStoredCredentialIgnored(t *testing.T) {
 func TestAuthenticate_StoredCredentialSignsRequests(t *testing.T) {
 	t.Parallel()
 
-	br := mustBucketRegistryWithStore(t, nil, []StoredCredential{{
-		AccessKeyID: "STORED",
-		Secret:      "stored-secret",
-		User:        NewUser("u1", "ci", []string{"photos"}),
-	}})
+	br := mustBucketRegistryWithStore(t, nil, &provisioning.Snapshot{
+		Buckets:     []core.Bucket{{Name: "photos"}},
+		Users:       []core.User{{ID: "u1", Name: "ci"}},
+		Credentials: []core.Credential{{AccessKeyID: "STORED", UserID: "u1", Secret: "stored-secret"}},
+		Grants:      []core.Grant{{UserID: "u1", BucketName: "photos"}},
+	})
 
 	r := signRequest(t, http.MethodGet, "/photos/test.txt", "STORED", "stored-secret")
 	u, _, err := br.Authenticate(r)

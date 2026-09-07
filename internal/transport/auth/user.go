@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// Auth - Users and Assembly Notices
+// Auth - The Identity Behind a Credential
 //
 // Author: Alex Freidah
 //
@@ -13,10 +13,6 @@
 package auth
 
 import "slices"
-
-// -------------------------------------------------------------------------
-// TYPES
-// -------------------------------------------------------------------------
 
 // User is the identity behind a credential.
 //
@@ -47,15 +43,6 @@ func NewUser(id, name string, buckets []string) *User {
 	return u
 }
 
-// StoredCredential is one keypair the store holds, alongside the user it proves.
-// Several may name the same user, which is what lets a credential be replaced
-// while its siblings keep working.
-type StoredCredential struct {
-	AccessKeyID string
-	Secret      string
-	User        *User
-}
-
 // CanReach reports whether this user holds a grant on the named bucket. A nil
 // user reaches nothing, so a caller that failed to authenticate is refused
 // rather than panicking on the check.
@@ -79,36 +66,4 @@ func (u *User) Buckets() []string {
 	}
 	slices.Sort(out)
 	return out
-}
-
-// grant adds a bucket to what this user reaches.
-func (u *User) grant(bucket string) {
-	if u.buckets == nil {
-		u.buckets = make(map[string]struct{}, 1)
-	}
-	u.buckets[bucket] = struct{}{}
-}
-
-// -------------------------------------------------------------------------
-// NOTICES
-// -------------------------------------------------------------------------
-
-// NoticeCredentialShadowed and NoticeDanglingGrant are the kinds of thing
-// assembly reports without refusing to serve.
-const (
-	NoticeCredentialShadowed = "credential_shadowed" //nolint:gosec // G101: a notice kind, not a credential
-	NoticeDanglingGrant      = "dangling_grant"
-)
-
-// Notice is something assembly found that an operator should see and that does
-// not stop the instance serving.
-//
-// A stored credential shadowed by a config one and a grant naming a bucket
-// neither source declares are both states a running fleet can reach without
-// anyone editing anything - a bucket leaves the config file, or a credential is
-// added to it that the store already held - so they are reported rather than
-// treated as a failure to start.
-type Notice struct {
-	Kind   string
-	Detail string
 }

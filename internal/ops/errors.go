@@ -57,3 +57,19 @@ var (
 	ErrInvalidKey     = errors.New("key must start with a configured bucket name")
 	ErrNotFound       = errors.New("object not found")
 )
+
+// Rejections a provisioning operation raises. ErrConfigDeclared covers every
+// entry the config file declares: those are visible through the API and never
+// editable through it, so an operator reading that file can trust what it says.
+var (
+	ErrNameRequired       = errors.New("name is required")
+	ErrUserRequired       = errors.New("user is required")
+	ErrConfigDeclared     = errors.New("declared in the config file and not editable through the API")
+	ErrBucketExists       = errors.New("bucket already exists")
+	ErrBucketNotFound     = errors.New("bucket not found")
+	ErrBucketNotEmpty     = errors.New("bucket still holds objects")
+	ErrBucketGranted      = errors.New("bucket is still granted to a user")
+	ErrUserNotFound       = errors.New("user not found")
+	ErrUserInUse          = errors.New("user still holds credentials or grants")
+	ErrCredentialNotFound = errors.New("credential not found")
+)

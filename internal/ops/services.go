@@ -40,6 +40,8 @@ type Deps struct {
 	Rebalancer   RebalancerOps
 	Expiry       LifecycleOps
 	Scrubber     ScrubberOps
+	Provisioning ProvisioningStore
+	Registry     RegistryPublisher
 	Cfg          *config.Config
 }
 
@@ -54,6 +56,7 @@ type Services struct {
 	Lifecycle   *Lifecycle
 	Encryption  *Encryption
 	Compression *Compression
+	Provision   *Provisioning
 }
 
 // -------------------------------------------------------------------------
@@ -99,6 +102,12 @@ func New(d *Deps) *Services {
 			Store:     d.CompStore,
 			Runtime:   d.Runtime,
 			Usage:     d.Usage,
+		}),
+		Provision: NewProvisioning(ProvisioningDeps{
+			Store:    d.Provisioning,
+			Objects:  d.Store,
+			Registry: d.Registry,
+			Config:   cfg,
 		}),
 	}
 }

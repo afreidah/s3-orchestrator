@@ -36,6 +36,12 @@ const (
 	pathObjects         = "/admin/api/objects"
 	pathObject          = pathObjects + "/" + objectKeyPattern
 	pathObjectTags      = pathObjects + "/tags/" + objectKeyPattern
+
+	pathProvisioning = "/admin/api/provisioning"
+	pathProvBuckets  = pathProvisioning + "/buckets"
+	pathProvUsers    = pathProvisioning + "/users"
+	pathProvCreds    = pathProvisioning + "/credentials"
+	pathProvGrants   = pathProvisioning + "/grants"
 )
 
 // param is one query or path parameter a handler reads. Declaring them on the
@@ -53,6 +59,7 @@ type param struct {
 // the same parameter cannot be described two ways on two routes.
 const (
 	paramName       = "name"
+	paramID         = "id"
 	paramBackend    = "backend"
 	paramBatchSize  = "batch_size"
 	paramMax        = "max"
@@ -60,6 +67,8 @@ const (
 	paramPrefix     = "prefix"
 	descBackendName = "Backend name"
 	descObjectKey   = "Object key, including its bucket prefix"
+	descBucketName  = "Virtual bucket name"
+	descUserID      = "User ID"
 
 	descBulkRewriteMax = "Cap the objects rewritten by this request; 0 converts the whole fleet"
 )
@@ -434,6 +443,68 @@ func (h *Handler) routes() []route {
 			Method: http.MethodPost, Pattern: "/admin/api/trace/snapshot", Handler: h.handleTraceSnapshot,
 			Summary:      "Download a flight-recorder trace snapshot",
 			ResponseType: mediaOctetStream,
+		},
+		{
+			Method: http.MethodGet, Pattern: pathProvisioning, Handler: h.handleProvisioning,
+			Summary:  "Buckets, users and credentials from both the config file and the store",
+			Response: adminapi.ProvisioningResponse{},
+		},
+		{
+			Method: http.MethodPost, Pattern: pathProvBuckets, Handler: h.handleCreateBucket,
+			Summary:  "Declare a virtual bucket",
+			Request:  adminapi.CreateBucketRequest{},
+			Response: adminapi.ProvisioningOperationResponse{},
+		},
+		{
+			Method: http.MethodDelete, Pattern: pathProvBuckets + "/{name}", Handler: h.handleDeleteBucket,
+			Summary:  "Remove a virtual bucket that holds no objects and no grants",
+			Response: adminapi.ProvisioningOperationResponse{},
+			Params: []param{
+				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBucketName},
+			},
+		},
+		{
+			Method: http.MethodPost, Pattern: pathProvUsers, Handler: h.handleCreateUser,
+			Summary:  "Declare an identity credentials can be issued against",
+			Request:  adminapi.CreateUserRequest{},
+			Response: adminapi.ProvisioningOperationResponse{},
+		},
+		{
+			Method: http.MethodDelete, Pattern: pathProvUsers + "/{id}", Handler: h.handleDeleteUser,
+			Summary:  "Remove an identity that holds no credentials and no grants",
+			Response: adminapi.ProvisioningOperationResponse{},
+			Params: []param{
+				{Name: paramID, In: inPath, Required: true, Type: typeString, Description: descUserID},
+			},
+		},
+		{
+			Method: http.MethodPost, Pattern: pathProvCreds, Handler: h.handleCreateCredential,
+			Summary:  "Mint a keypair for a user and return it once",
+			Request:  adminapi.CreateCredentialRequest{},
+			Response: adminapi.CreateCredentialResponse{},
+		},
+		{
+			Method: http.MethodDelete, Pattern: pathProvCreds + "/{id}", Handler: h.handleDeleteCredential,
+			Summary:  "Revoke one keypair, leaving its siblings working",
+			Response: adminapi.ProvisioningOperationResponse{},
+			Params: []param{
+				{Name: paramID, In: inPath, Required: true, Type: typeString, Description: "Access key ID to revoke"},
+			},
+		},
+		{
+			Method: http.MethodPost, Pattern: pathProvGrants, Handler: h.handleCreateGrant,
+			Summary:  "Let a user reach a bucket",
+			Request:  adminapi.CreateGrantRequest{},
+			Response: adminapi.ProvisioningOperationResponse{},
+		},
+		{
+			Method: http.MethodDelete, Pattern: pathProvGrants + "/{id}/{name}", Handler: h.handleDeleteGrant,
+			Summary:  "Withdraw one user's access to one bucket",
+			Response: adminapi.ProvisioningOperationResponse{},
+			Params: []param{
+				{Name: paramID, In: inPath, Required: true, Type: typeString, Description: descUserID},
+				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBucketName},
+			},
 		},
 	}
 }

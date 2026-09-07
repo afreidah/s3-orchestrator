@@ -43,6 +43,7 @@ import (
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
@@ -362,7 +363,8 @@ func TestMain(m *testing.M) {
 		Objects:   stack.Objects,
 		Multipart: stack.Multipart,
 	}
-	bucketAuth, err := auth.NewBucketRegistry(cfg.Buckets, nil)
+	view := provisioning.Merge(cfg.Buckets, &provisioning.Snapshot{})
+	bucketAuth, err := auth.NewBucketRegistry(&view)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build bucket registry: %v\n", err)
 		os.Exit(1)
@@ -1235,7 +1237,8 @@ func newTestS3Backend(t *testing.T, name string) *s3be.S3Backend {
 // the test if that config turns out to be ambiguous.
 func mustBucketRegistry(tb testing.TB, buckets []config.BucketConfig) *auth.BucketRegistry {
 	tb.Helper()
-	br, err := auth.NewBucketRegistry(buckets, nil)
+	v := provisioning.Merge(buckets, &provisioning.Snapshot{})
+	br, err := auth.NewBucketRegistry(&v)
 	if err != nil {
 		tb.Fatalf("NewBucketRegistry: %v", err)
 	}

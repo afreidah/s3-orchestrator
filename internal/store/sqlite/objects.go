@@ -147,6 +147,20 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 	return core.BuildListPage(objects, maxKeys), nil
 }
 
+// CountObjectsByPrefix returns how many distinct keys live under a prefix,
+// which is what answers whether a bucket still holds anything.
+func (s *Store) CountObjectsByPrefix(ctx context.Context, prefix string) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT object_key)
+		FROM object_locations
+		WHERE object_key LIKE ? || '%' ESCAPE '\'`, likeEscaper.Replace(prefix)).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count objects by prefix: %w", err)
+	}
+	return n, nil
+}
+
 // ListObjectsDelimited groups a delimiter listing inside SQLite with a recursive
 // CTE whose recursive term carries a scalar-subquery seek: each step jumps to
 // the next key past the current group instead of scanning through it. Collation

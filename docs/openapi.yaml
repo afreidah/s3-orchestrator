@@ -690,6 +690,181 @@ paths:
                                 $ref: '#/components/schemas/Event'
                 "401":
                     description: Missing or invalid admin token
+    /admin/api/provisioning:
+        get:
+            summary: Buckets, users and credentials from both the config file and the store
+            operationId: getProvisioning
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ProvisioningResponse'
+                "401":
+                    description: Missing or invalid admin token
+    /admin/api/provisioning/buckets:
+        post:
+            summary: Declare a virtual bucket
+            operationId: postProvisioningBuckets
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CreateBucketRequest'
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ProvisioningOperationResponse'
+                "401":
+                    description: Missing or invalid admin token
+    /admin/api/provisioning/buckets/{name}:
+        delete:
+            summary: Remove a virtual bucket that holds no objects and no grants
+            operationId: deleteProvisioningBucketsName
+            parameters:
+                - name: name
+                  in: path
+                  description: Virtual bucket name
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ProvisioningOperationResponse'
+                "401":
+                    description: Missing or invalid admin token
+    /admin/api/provisioning/credentials:
+        post:
+            summary: Mint a keypair for a user and return it once
+            operationId: postProvisioningCredentials
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CreateCredentialRequest'
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/CreateCredentialResponse'
+                "401":
+                    description: Missing or invalid admin token
+    /admin/api/provisioning/credentials/{id}:
+        delete:
+            summary: Revoke one keypair, leaving its siblings working
+            operationId: deleteProvisioningCredentialsId
+            parameters:
+                - name: id
+                  in: path
+                  description: Access key ID to revoke
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ProvisioningOperationResponse'
+                "401":
+                    description: Missing or invalid admin token
+    /admin/api/provisioning/grants:
+        post:
+            summary: Let a user reach a bucket
+            operationId: postProvisioningGrants
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CreateGrantRequest'
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ProvisioningOperationResponse'
+                "401":
+                    description: Missing or invalid admin token
+    /admin/api/provisioning/grants/{id}/{name}:
+        delete:
+            summary: Withdraw one user's access to one bucket
+            operationId: deleteProvisioningGrantsIdName
+            parameters:
+                - name: id
+                  in: path
+                  description: User ID
+                  required: true
+                  schema:
+                    type: string
+                - name: name
+                  in: path
+                  description: Virtual bucket name
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ProvisioningOperationResponse'
+                "401":
+                    description: Missing or invalid admin token
+    /admin/api/provisioning/users:
+        post:
+            summary: Declare an identity credentials can be issued against
+            operationId: postProvisioningUsers
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CreateUserRequest'
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ProvisioningOperationResponse'
+                "401":
+                    description: Missing or invalid admin token
+    /admin/api/provisioning/users/{id}:
+        delete:
+            summary: Remove an identity that holds no credentials and no grants
+            operationId: deleteProvisioningUsersId
+            parameters:
+                - name: id
+                  in: path
+                  description: User ID
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ProvisioningOperationResponse'
+                "401":
+                    description: Missing or invalid admin token
     /admin/api/rebalance:
         post:
             summary: Run one rebalance cycle
@@ -952,6 +1127,49 @@ components:
                 - processed
                 - done
             type: object
+        Bucket:
+            properties:
+                cors:
+                    items:
+                        $ref: '#/components/schemas/CORSRule'
+                    type: array
+                max_multipart_uploads:
+                    format: int64
+                    type: integer
+                name:
+                    type: string
+                source:
+                    type: string
+            required:
+                - name
+                - max_multipart_uploads
+                - source
+            type: object
+        CORSRule:
+            properties:
+                allowed_headers:
+                    items:
+                        type: string
+                    type: array
+                allowed_methods:
+                    items:
+                        type: string
+                    type: array
+                allowed_origins:
+                    items:
+                        type: string
+                    type: array
+                expose_headers:
+                    items:
+                        type: string
+                    type: array
+                max_age:
+                    format: int64
+                    type: integer
+            required:
+                - allowed_origins
+                - allowed_methods
+            type: object
         CacheInvalidateKeyResponse:
             properties:
                 key:
@@ -1130,6 +1348,76 @@ components:
             required:
                 - backend
                 - outcome
+            type: object
+        CreateBucketRequest:
+            properties:
+                cors:
+                    items:
+                        $ref: '#/components/schemas/CORSRule'
+                    type: array
+                max_multipart_uploads:
+                    format: int64
+                    type: integer
+                name:
+                    type: string
+            required:
+                - name
+            type: object
+        CreateCredentialRequest:
+            properties:
+                label:
+                    type: string
+                user_id:
+                    type: string
+            required:
+                - user_id
+            type: object
+        CreateCredentialResponse:
+            properties:
+                access_key_id:
+                    type: string
+                label:
+                    type: string
+                secret_access_key:
+                    type: string
+                user_id:
+                    type: string
+            required:
+                - access_key_id
+                - secret_access_key
+                - user_id
+            type: object
+        CreateGrantRequest:
+            properties:
+                bucket:
+                    type: string
+                user_id:
+                    type: string
+            required:
+                - user_id
+                - bucket
+            type: object
+        CreateUserRequest:
+            properties:
+                name:
+                    type: string
+            required:
+                - name
+            type: object
+        Credential:
+            properties:
+                access_key_id:
+                    type: string
+                label:
+                    type: string
+                source:
+                    type: string
+                user_id:
+                    type: string
+            required:
+                - access_key_id
+                - user_id
+                - source
             type: object
         DecompressExistingResponse:
             properties:
@@ -1317,6 +1605,16 @@ components:
             required:
                 - entries
             type: object
+        Notice:
+            properties:
+                detail:
+                    type: string
+                kind:
+                    type: string
+            required:
+                - kind
+                - detail
+            type: object
         ObjectDeleteResponse:
             properties:
                 deleted:
@@ -1474,6 +1772,42 @@ components:
                 - status
                 - factor
                 - pending
+            type: object
+        ProvisioningOperationResponse:
+            properties:
+                bucket:
+                    type: string
+                status:
+                    type: string
+                user_id:
+                    type: string
+                user_name:
+                    type: string
+            required:
+                - status
+            type: object
+        ProvisioningResponse:
+            properties:
+                buckets:
+                    items:
+                        $ref: '#/components/schemas/Bucket'
+                    type: array
+                credentials:
+                    items:
+                        $ref: '#/components/schemas/Credential'
+                    type: array
+                notices:
+                    items:
+                        $ref: '#/components/schemas/Notice'
+                    type: array
+                users:
+                    items:
+                        $ref: '#/components/schemas/User'
+                    type: array
+            required:
+                - buckets
+                - users
+                - credentials
             type: object
         RebalanceResponse:
             properties:
@@ -1715,6 +2049,24 @@ components:
             required:
                 - status
                 - adjustments
+            type: object
+        User:
+            properties:
+                buckets:
+                    items:
+                        type: string
+                    type: array
+                id:
+                    type: string
+                name:
+                    type: string
+                source:
+                    type: string
+            required:
+                - id
+                - name
+                - buckets
+                - source
             type: object
         WorkerHealth:
             properties:

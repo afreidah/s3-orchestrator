@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 )
 
 // TestParseSigV4Fields verifies the parse sig v4 fields contract.
@@ -1006,18 +1007,26 @@ func TestStripWhitespace(t *testing.T) {
 // the test if that config turns out to be ambiguous.
 func mustBucketRegistry(tb testing.TB, buckets []config.BucketConfig) *BucketRegistry {
 	tb.Helper()
-	return mustBucketRegistryWithStore(tb, buckets, nil)
+	return mustBucketRegistryWithStore(tb, buckets, &provisioning.Snapshot{})
 }
 
 // mustBucketRegistryWithStore builds a registry from both sources, for the tests
 // that exercise the merge rather than the config path alone.
-func mustBucketRegistryWithStore(tb testing.TB, buckets []config.BucketConfig, stored []StoredCredential) *BucketRegistry {
+func mustBucketRegistryWithStore(tb testing.TB, buckets []config.BucketConfig, s *provisioning.Snapshot) *BucketRegistry {
 	tb.Helper()
-	br, err := NewBucketRegistry(buckets, stored)
+	v := provisioning.Merge(buckets, s)
+	br, err := NewBucketRegistry(&v)
 	if err != nil {
 		tb.Fatalf("NewBucketRegistry: %v", err)
 	}
 	return br
+}
+
+// configRegistry builds a registry from config alone, returning the error for
+// the tests that assert construction refuses something.
+func configRegistry(buckets []config.BucketConfig) (*BucketRegistry, error) {
+	v := provisioning.Merge(buckets, &provisioning.Snapshot{})
+	return NewBucketRegistry(&v)
 }
 
 // TestNewBucketRegistry_RejectsDuplicateToken verifies registry construction
@@ -1026,10 +1035,10 @@ func mustBucketRegistryWithStore(tb testing.TB, buckets []config.BucketConfig, s
 // bucket's credential access to another's namespace.
 func TestNewBucketRegistry_RejectsDuplicateToken(t *testing.T) {
 	t.Parallel()
-	_, err := NewBucketRegistry([]config.BucketConfig{
+	_, err := configRegistry([]config.BucketConfig{
 		{Name: "backups", Credentials: []config.CredentialConfig{{Token: "SAME"}}},
 		{Name: "traces", Credentials: []config.CredentialConfig{{Token: "SAME"}}},
-	}, nil)
+	})
 	if !errors.Is(err, ErrDuplicateCredential) {
 		t.Fatalf("expected ErrDuplicateCredential, got %v", err)
 	}
@@ -1045,10 +1054,10 @@ func TestNewBucketRegistry_RejectsDuplicateToken(t *testing.T) {
 // covers SigV4 credentials, whose map overwrites identically.
 func TestNewBucketRegistry_RejectsDuplicateAccessKey(t *testing.T) {
 	t.Parallel()
-	_, err := NewBucketRegistry([]config.BucketConfig{
+	_, err := configRegistry([]config.BucketConfig{
 		{Name: "b1", Credentials: []config.CredentialConfig{{AccessKeyID: "AK", SecretAccessKey: "s1"}}},
 		{Name: "b2", Credentials: []config.CredentialConfig{{AccessKeyID: "AK", SecretAccessKey: "s2"}}},
-	}, nil)
+	})
 	if !errors.Is(err, ErrDuplicateCredential) {
 		t.Fatalf("expected ErrDuplicateCredential, got %v", err)
 	}
@@ -1058,13 +1067,13 @@ func TestNewBucketRegistry_RejectsDuplicateAccessKey(t *testing.T) {
 // credentials pointing at the same bucket are not treated as a conflict.
 func TestNewBucketRegistry_AllowsOneBucketManyCredentials(t *testing.T) {
 	t.Parallel()
-	br, err := NewBucketRegistry([]config.BucketConfig{
+	br, err := configRegistry([]config.BucketConfig{
 		{Name: "b1", Credentials: []config.CredentialConfig{
 			{Token: "one"},
 			{Token: "two"},
 			{AccessKeyID: "AK", SecretAccessKey: "s1"},
 		}},
-	}, nil)
+	})
 	if err != nil {
 		t.Fatalf("NewBucketRegistry: %v", err)
 	}
@@ -1081,10 +1090,10 @@ func TestNewBucketRegistry_AllowsOneBucketManyCredentials(t *testing.T) {
 // regardless of the order the buckets appear in.
 func TestNewBucketRegistry_TokenResolvesToItsOwnBucket(t *testing.T) {
 	t.Parallel()
-	br, err := NewBucketRegistry([]config.BucketConfig{
+	br, err := configRegistry([]config.BucketConfig{
 		{Name: "backups", Credentials: []config.CredentialConfig{{Token: "backups-token"}}},
 		{Name: "traces", Credentials: []config.CredentialConfig{{Token: "traces-token"}}},
-	}, nil)
+	})
 	if err != nil {
 		t.Fatalf("NewBucketRegistry: %v", err)
 	}
