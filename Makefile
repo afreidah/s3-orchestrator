@@ -636,6 +636,35 @@ web-push: web-submodules builder ## Build and push multi-arch website image to r
 	  --output type=image,push=true \
 	  .
 
+##@ Edge Proxy
+
+# -------------------------------------------------------------------------
+# EDGE PROXY WORKER
+# -------------------------------------------------------------------------
+
+# The Cloudflare worker is the one TypeScript component in a Go repository. It
+# carries its own npm toolchain under deploy/cloudflare-worker rather than
+# adding a Node dependency to any Go target, so a contributor who never touches
+# the worker never installs it.
+WORKER_DIR := deploy/cloudflare-worker
+
+worker-install: ## Install the edge proxy worker's npm dependencies
+	cd $(WORKER_DIR) && npm ci --ignore-scripts
+
+worker-typecheck: ## Typecheck the edge proxy worker
+	cd $(WORKER_DIR) && npm run typecheck
+
+worker-test: ## Run the edge proxy worker test suite
+	cd $(WORKER_DIR) && npm test
+
+worker-coverage: ## Run the edge proxy worker suite with coverage thresholds enforced
+	cd $(WORKER_DIR) && npm run coverage
+
+worker-check: worker-typecheck worker-coverage ## Run every edge proxy worker check
+
+worker-deploy: ## Publish the edge proxy worker (requires wrangler login and secrets)
+	cd $(WORKER_DIR) && npx wrangler deploy
+
 ##@ Cleanup
 
 # -------------------------------------------------------------------------
@@ -667,5 +696,5 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push clean
+.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push worker-install worker-typecheck worker-test worker-coverage worker-check worker-deploy clean
 .DEFAULT_GOAL := help
