@@ -217,7 +217,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     ENCRYPT: {
       title: 'Generate DEK, Wrap + Encrypt',
       badge: 'process', badgeText: 'encryption',
-      body: '<p>Envelope encryption pipeline:</p><p>1. Generate random 32-byte DEK (Data Encryption Key)<br>2. Wrap DEK with master key via <code>provider.WrapDEK(ctx, dek)</code> (Vault Transit or KMS)<br>3. Tee plaintext through MD5 hash (for ETag)<br>4. Stream encrypt with AES-256-GCM in chunks (default 64 KiB)</p><p>Produces <code>EncryptionMeta</code>: packed <code>baseNonce || wrappedDEK</code>, <code>keyID</code>, and <code>plaintextSize</code> stored in DB alongside the object record.</p><p class="ac-metric">Metric: s3o_encryption_ops_total{operation="encrypt"}</p>'
+      body: '<p>Envelope encryption pipeline:</p><p>1. Generate random 32-byte DEK (Data Encryption Key)<br>2. Wrap DEK with master key via <code>provider.WrapDEK(ctx, dek)</code> (Vault Transit or KMS)<br>3. Tee plaintext through MD5 hash (for ETag)<br>4. Stream encrypt with AES-256-GCM in chunks (default 64 KiB)</p><p>Produces <code>EncryptionMeta</code>: packed <code>baseNonce || wrappedDEK</code>, <code>keyID</code>, and <code>plaintextSize</code> stored in DB alongside the object record.</p><p class="ac-metric">Metric: s3o_encryption_operations_total{operation="encrypt"}</p>'
     },
     UPLOAD: {
       title: 'Upload to Backend',
@@ -234,7 +234,7 @@ Detailed flow of a PutObject request through backend selection, encryption, fail
     S3: {
       title: 'S3 Backend PutObject',
       badge: 'storage', badgeText: 'S3 API call',
-      body: '<p>AWS SDK v2 <code>s3.PutObject()</code> call to the backend endpoint. Builds <code>PutObjectInput</code> with bucket, key, body, content-length, content-type, and user metadata.</p><p>Supports <code>unsignedPayload</code> mode for backends that accept unsigned streaming uploads (avoids buffering for SigV4 signing). Returns ETag on success.</p><p class="ac-metric">Metrics: s3o_backend_requests_total, s3o_backend_latency_seconds</p>'
+      body: '<p>AWS SDK v2 <code>s3.PutObject()</code> call to the backend endpoint. Builds <code>PutObjectInput</code> with bucket, key, body, content-length, content-type, and user metadata.</p><p>Supports <code>unsignedPayload</code> mode for backends that accept unsigned streaming uploads (avoids buffering for SigV4 signing). Returns ETag on success.</p><p class="ac-metric">Metrics: s3o_backend_requests_total, s3o_backend_duration_seconds</p>'
     },
     FAIL: {
       title: 'Upload Failed?',

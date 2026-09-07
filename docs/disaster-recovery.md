@@ -52,15 +52,20 @@ Writes are intentionally rejected during database outages rather than queued loc
 
 ### Replication and the data loss window
 
-Object replication is asynchronous. When a client writes an object, it is stored on a single backend and a 200 response is returned immediately. The background replication worker creates additional copies at the configured `replication.worker_interval` (default: 5 minutes).
+Object replication is asynchronous by default. When a client writes an object, it is stored on a single backend and a 200 response is returned immediately. The background replication worker creates additional copies at the configured `replication.worker_interval` (default: 5 minutes).
 
 If the primary backend fails before replication completes, unreplicated objects written in the last worker interval are at risk. To minimize this window:
 
+- Turn on [`write_path.parallel_copies`](configuration.md#write_pathparallel_copies) so the write places its own copies instead of leaving them to the replicator. This shrinks the window from a worker interval to the time one upload takes, and it is the largest single reduction available
 - Set `replication.worker_interval` to a lower value (e.g., `30s`) at the cost of more backend API calls
 - Use backends with built-in durability guarantees (e.g., S3 Standard stores objects across 3+ availability zones)
 - Monitor `s3o_replication_pending` — a sustained non-zero value indicates the replicator cannot keep up
 
-Synchronous replication (write to N backends before returning 200) is not currently supported.
+**With `parallel_copies` on**, the window is not closed, only narrowed, and it is worth being precise about what remains. The client is answered on the first copy committed, so a second copy uploading at that moment is not yet durable: an instance lost in that window leaves the object on one backend, exactly as the default does, and the replicator repairs it. What changes is duration — the exposure lasts as long as one upload rather than as long as a replicator interval. Two counters say how often it happens: `s3o_replication_write_fanout_skipped_total` counts writes that placed a single copy because the in-flight ceiling was full, and `s3o_replication_write_copies_committed` is the distribution of copies per write, which sits at your replication factor when every write is placing them all.
+
+A graceful shutdown waits up to 30 seconds for copies still uploading, so a planned restart does not itself create this exposure. A kill does; those copies are resolved by the pending reaper on a later tick.
+
+Fully synchronous replication (holding the 200 until every copy lands) is not supported, and is deliberate: it would put the slowest backend on the critical path of every write.
 
 ## Restoring PostgreSQL from Backup
 

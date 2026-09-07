@@ -15,6 +15,16 @@ Replication keeps multiple copies of each object across different backends. When
 
 The tradeoff is straightforward: higher replication factors increase durability and read availability at the cost of additional storage consumption, API requests, and egress bandwidth on each provider.
 
+### Two ways a copy gets made
+
+There are two, and which one you use changes the cost accounting throughout this guide.
+
+**The replicator makes it**, which is the default and what most of this page describes. A write lands on one backend, and a background worker later notices the object is short of its factor, reads it back off the backend that holds it, and writes it elsewhere. Every copy therefore costs a GET plus the source backend's egress on top of the PUT.
+
+**The write makes it**, if you set `write_path.parallel_copies.enabled: true`. The write claims several backends up front, uploads to all of them at once from the body it already has in hand, and answers the client as soon as the first copy commits. The remaining copies finish behind the response. No read, no egress on a source backend, and the replicator is left with repair rather than routine copy-making.
+
+The second is off by default because the trade is shape rather than total: the work drops, but those bytes go out at write time instead of spread across replicator cycles, so a deployment whose uplink is the bottleneck can see PUT throughput fall even as its provider bill does. The [Side-Effects and Costs](#side-effects-and-costs) section below quantifies what you stop paying.
+
 ## Configuration Reference
 
 Replication is controlled by the `replication` block in your configuration file. A replication factor of 1 (the default) means replication is disabled — each object exists on exactly one backend.
@@ -37,6 +47,24 @@ replication:
 | `unhealthy_threshold` | `10m` | How long a backend's circuit breaker must be open before the replicator treats it as truly unavailable and creates replacement copies elsewhere. |
 
 All defaults except `factor` are applied automatically when `factor` is set above 1. You only need to specify the fields you want to override.
+
+To have writes place their own copies, add the `write_path` block:
+
+```yaml
+write_path:
+  parallel_copies:
+    enabled: true
+    count: 2
+    max_in_flight: 256
+```
+
+| Field | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Whether a write places its own copies instead of leaving them to the replicator. |
+| `count` | `replication.factor` | Copies a write places. May not exceed the factor - the over-replication cleaner would delete anything past it about as fast as writes created it. A factor of 1 leaves the setting inert. |
+| `max_in_flight` | `server.max_concurrent_writes` | Ceiling on writes whose copies are still uploading after their client was answered. A write that finds it full places a single copy and leaves the rest to the replicator. |
+
+Single-object PUTs only. Multipart uploads always write one copy and let the replicator make the rest.
 
 ## How the Replicator Works
 
@@ -84,9 +112,13 @@ Replication is not free. Each replica copy incurs real resource usage on your ba
 
 Every replication copy requires **one GET** on the source backend and **one PUT** on the target. If you have 10,000 objects and a replication factor of 2, the replicator will make 10,000 GETs and 10,000 PUTs to create the second copy. These count against each provider's API request limits.
 
+With `write_path.parallel_copies` on, the GET disappears: the write already has the bytes, so the same 10,000 objects cost 10,000 extra PUTs and no reads at all. The PUTs are unavoidable either way - a copy has to be written - so the read is the entire saving, and it is the half that carries egress.
+
 ### Bandwidth
 
 The source backend incurs **egress** for each object read, and the target incurs **ingress** for each object written. For providers with egress-based billing (AWS, GCP), this can add up quickly with large datasets.
+
+This is where write-placed copies pay for themselves: no object is read to make a copy, so no source backend is charged egress for one. What remains is the ingress on each target, which both approaches pay identically. The tradeoff is that the ingress arrives during the write rather than during a later replicator cycle, so peak write-time bandwidth rises even though the total falls.
 
 ### Storage
 
@@ -103,6 +135,8 @@ If a replication copy succeeds on the backend but the database record fails to c
 ## Mitigations
 
 Several features work together to keep replication healthy:
+
+- **Place copies during the write** (`write_path.parallel_copies`) to remove the read half of every copy, which is the mitigation with the largest effect on both API counts and egress. It also sidesteps the uneven distribution below, since a write's copies are claimed together from the ranked candidates rather than by a separate first-fit pass.
 
 - **Use `spread` routing** to distribute primary writes across backends evenly, preventing the first-fit replica selection from compounding on already-full backends.
 
@@ -180,6 +214,17 @@ Both the rebalancer and replicator use separate advisory locks (1001 and 1002), 
 | `s3o_replication_runs_total` | Counter | Total scan runs, labeled by `status` (`success` or `error`). Alert on repeated errors. |
 | `s3o_replication_health_copies_total` | Counter | Copies created specifically to replace backends that exceeded the unhealthy threshold. |
 
+### Write-placed copy metrics
+
+Only meaningful with `write_path.parallel_copies` on. All four sit idle otherwise.
+
+| Metric | Type | Description |
+|---|---|---|
+| `s3o_replication_write_copies_committed` | Histogram | Copies committed per write, counting the one that answered the client. This is the metric that says whether the feature is working: sitting at `replication.factor` means writes reach it unaided, drifting toward 1 means they are degrading to a single copy and the replicator is picking the difference back up. |
+| `s3o_replication_write_copies_total` | Counter | Further copies by outcome. `committed` landed and was recorded; `untrusted` means a newer write took the key while the copy was still uploading, so it was discarded and replication rebuilds it; `failed` means the backend refused it. |
+| `s3o_detached_uploads_depth` | Gauge | Writes whose copies are still uploading after their client was answered. A healthy fleet sits at a handful; a rising floor is a backend going slow without failing. |
+| `s3o_replication_write_fanout_skipped_total` | Counter | Writes that placed a single copy because `max_in_flight` was full. Each one costs the read-back the feature exists to avoid, so a sustained rate means either the ceiling is too low for your write rate or a backend is falling behind. |
+
 ### Over-replication metrics
 
 | Metric | Type | Description |
@@ -206,4 +251,9 @@ Both the rebalancer and replicator use separate advisory locks (1001 and 1002), 
 - **`s3o_replication_errors_total` increasing steadily** — the replicator is failing to copy objects. Check logs for backend connectivity issues or permission errors.
 - **`s3o_replication_runs_total{status="error"}` increasing** — entire scan cycles are failing. This usually indicates a database connectivity issue or advisory lock contention.
 - **`s3o_over_replication_pending > 0` for extended periods** — excess copies are not being cleaned up. Check that the cleanup worker is running and backends are reachable for deletions.
-- **Backend utilization skew** — compare `s3o_backend_used_bytes` across backends. Large disparities may indicate the first-fit selection is concentrating replicas unevenly.
+- **Backend utilization skew** — compare `s3o_quota_bytes_used` across backends. Large disparities may indicate the first-fit selection is concentrating replicas unevenly.
+
+With write-placed copies on, two more:
+
+- **`s3o_replication_write_copies_committed` drifting below `replication.factor`** — writes are no longer placing all their copies, and the replicator is absorbing the difference along with the read-back you turned the feature on to avoid. The two counters below say why.
+- **`s3o_replication_write_fanout_skipped_total` or `..._copies_total{outcome="untrusted"}` rising** — the first means `max_in_flight` is full, so check `s3o_detached_uploads_depth` for a backend going slow; the second means clients are overwriting keys faster than copies finish, and each one costs a rebuild.

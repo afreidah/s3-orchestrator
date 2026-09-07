@@ -161,6 +161,22 @@ backend_circuit_breaker:
   failure_threshold: 3
   open_timeout: 15s
 
+replication:
+  factor: 2
+
+# The write places both copies itself, so the replicator never reads an object
+# back to make one - no GET and no source egress per replica.
+write_path:
+  parallel_copies:
+    enabled: true
+
+# Compressed bytes are what count against quota_bytes and both byte limits.
+compression:
+  enabled: true
+  level: "default"
+  min_size: 4096
+  min_ratio: 0.95
+
 encryption:
   enabled: true
   vault:
@@ -238,6 +254,8 @@ Check each provider's free-tier limits. The allowances below were checked in Sep
 | [g3](https://g3.munchbox.cc) (Gmail + Drive) | 15 GB per Google account | Drive API per-minute quotas only | No monthly cap |
 
 Together those come to 96 GB of combined storage behind a single S3 endpoint.
+
+That is the raw figure, and it is only what you can store if every object exists once. **Replication divides it.** At a factor of 2 the same 96 GB holds 48 GB of distinct objects, since every one is written twice; at 3 it holds 32 GB. Decide the factor before sizing the pool, because it is the difference between a 96 GB answer and a 32 GB one. Compression pushes back the other way — see Step 4 — but by an amount that depends entirely on what you store, so plan on the raw division and treat compression as headroom you earn rather than capacity you can count on.
 
 Three things in that table decide how the backend is configured:
 
@@ -438,6 +456,45 @@ When a backend hits a usage limit, reads fail over to replicas on other backends
 Set limits slightly below the actual free-tier cap to give yourself a safety margin. The orchestrator's adaptive flushing shortens the tracking interval as limits approach, but a small buffer avoids edge cases.
 {{% /notice %}}
 
+## Step 4: Spend Less of Every Allowance
+
+Quotas and usage limits stop you exceeding an allowance. Two further settings reduce what you consume of it in the first place, and on free tiers both are worth more than they are on paid storage.
+
+### Compression: fewer bytes stored and moved
+
+```yaml
+compression:
+  enabled: true
+  level: "default"
+  min_size: 4096
+  min_ratio: 0.95
+```
+
+Objects are stored as chunked zstd, so a backend holds the compressed size and that is what counts against `quota_bytes`. The same reduction applies to every byte crossing the wire, so `ingress_byte_limit` on the write and `egress_byte_limit` on every later read shrink with it. Three allowances for one setting.
+
+How much depends entirely on your data: text, JSON, logs and most documents compress several times over, while media files and anything already compressed do not move at all. Objects below `min_size` are stored verbatim because a seek table costs more than a small object saves, and anything that fails to shrink past `min_ratio` is stored verbatim too — so incompressible data costs you the attempt and nothing else. Range reads stay proportional to the bytes requested rather than the object size, because each chunk is an independently decodable frame.
+
+### Write-placed copies: no read to make a replica
+
+```yaml
+replication:
+  factor: 2
+
+write_path:
+  parallel_copies:
+    enabled: true
+```
+
+With replication on, a second copy has to come from somewhere. By default the replicator makes it by reading the object back off the backend that holds it and writing it to another — which charges the source a **GET and its egress**, then the target a PUT. On a free tier that is exactly the wrong shape: reads are what the small Class A/Class B allowances and the egress caps meter.
+
+`parallel_copies` has the write upload to both backends itself, from bytes it already has in hand. The PUT on the target is unavoidable either way, but the GET and the source egress disappear entirely. For a factor of 2 that removes one read per object from your API budget, and the bytes of every replica from an egress allowance — on IBM's 5 GB/month egress or GCS's 5,000 Class A calls, that is the difference between a working backend and one that goes read-only halfway through the month.
+
+The cost is that both copies are uploaded during the write rather than spread over replicator cycles, so peak write bandwidth roughly doubles. For free-tier setups, where the constraint is a monthly allowance rather than throughput, that is usually the right trade.
+
+{{% notice tip %}}
+Both settings compound: compression shrinks the object, and the write then places the compressed copies without reading anything back. Together they cut what replication costs you on every metered dimension a provider bills.
+{{% /notice %}}
+
 ## Step 5: Create a Virtual Bucket and Client Credentials
 
 Your applications do not connect with the provider credentials above. Instead, you create a **virtual bucket** with its own set of credentials. These are standard S3 access key / secret key pairs that the orchestrator uses to authenticate your clients via AWS SigV4 signing.
@@ -518,18 +575,21 @@ Alternatively, `pack` fills one backend before moving to the next, which can be 
 
 Use the web dashboard or Prometheus metrics to track how close each backend is to its limits:
 
-- **Storage quota**: `s3o_backend_used_bytes` vs `s3o_backend_quota_bytes`
-- **API requests**: `s3o_backend_api_requests_total`
-- **Egress/Ingress**: `s3o_backend_egress_bytes_total` / `s3o_backend_ingress_bytes_total`
+- **Storage quota**: `s3o_quota_bytes_used{backend}` against `s3o_quota_bytes_limit{backend}`, with `s3o_quota_bytes_available{backend}` as the headroom directly
+- **API requests**: `s3o_usage_api_requests{backend}` for the month's total, and `s3o_usage_pool_requests{backend,pool}` against `s3o_usage_pool_limit{backend,pool}` for each request class you declared with `request_limits`
+- **Egress / ingress**: `s3o_usage_egress_bytes{backend}` and `s3o_usage_ingress_bytes{backend}`
+- **Hitting a cap**: `s3o_usage_limit_rejections_total{operation,direction}` counts operations turned away because a backend was out of allowance, and `s3o_quota_claims_declined_total{backend}` counts writes a backend refused for want of space
 
 The dashboard shows per-backend quota bars and monthly usage charts so you can see at a glance how much headroom remains.
+
+The per-class metrics are the ones to watch on providers that meter by class. A backend can be nowhere near its overall request count while its Class A allowance is exhausted — which on GCS, at 5,000 uploads a month against 50,000 reads, is the failure mode you will meet first.
 
 ## Adding More Providers
 
 To expand your pool, add another backend with its own quota and usage limits. No existing configuration needs to change. The orchestrator picks up new backends on configuration reload.
 
 {{% notice tip %}}
-Enable [replication](../../docs/user-guide.md) with a factor of 2 or more so that objects are copied across providers. This gives you redundancy and allows reads to fail over when one backend's usage limits are reached.
+Enable [replication](../../docs/replication/) with a factor of 2 or more so that objects are copied across providers. This gives you redundancy and allows reads to fail over when one backend's usage limits are reached. Remember that it also halves your usable capacity - see the note under Step 1.
 {{% /notice %}}
 
 ## Reduce API Calls with the Object Data Cache
