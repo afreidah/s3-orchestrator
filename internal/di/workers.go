@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/instanceid"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
@@ -223,9 +224,9 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 	if err != nil {
 		return nil, err
 	}
-	bktNames := make([]string, len(c.Cfg.Buckets))
-	for idx, b := range c.Cfg.Buckets {
-		bktNames[idx] = b.Name
+	declared, err := do.Invoke[*provisioning.Declared](i)
+	if err != nil {
+		return nil, err
 	}
 	rec, err := do.Invoke[*reconcile.Manager](i)
 	if err != nil {
@@ -236,10 +237,10 @@ func ProvideReconciler(i do.Injector) (*worker.Reconciler, error) {
 		return nil, err
 	}
 	return worker.NewReconciler(&worker.ReconcilerDeps{
-		Syncer:      rec,
-		Fleet:       c.Runtime,
-		Usage:       usageSvc,
-		BucketNames: bktNames,
+		Syncer:  rec,
+		Fleet:   c.Runtime,
+		Usage:   usageSvc,
+		Buckets: declared,
 	}), nil
 }
 

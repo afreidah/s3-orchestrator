@@ -98,6 +98,7 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 		OverRep:      workers.OverReplicationCleaner,
 		Rebalancer:   workers.Rebalancer,
 		Scrubber:     workers.Scrubber,
+		Declared:     declaredFrom(&config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}}),
 		Cfg:          &config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}},
 	})
 }
@@ -181,7 +182,7 @@ func TestHandleAPIDownload_StreamsObject(t *testing.T) {
 		objects: ops.NewObjects(ops.ObjectsDeps{
 			Objects: api,
 			Store:   storetest.NewMockObjectStore(gomock.NewController(t)),
-			Config:  ops.NewConfigStore(&config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}}),
+			Buckets: declaredFrom(&config.Config{Buckets: []config.BucketConfig{{Name: "test-bucket"}}}),
 		}),
 	}
 

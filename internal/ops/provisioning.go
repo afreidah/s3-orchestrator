@@ -20,10 +20,12 @@ import (
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
@@ -116,6 +118,12 @@ func (p *Provisioning) CreateBucket(ctx context.Context, b *core.Bucket) error {
 	}
 	if _, ok := findBucket(view.Buckets, b.Name); ok {
 		return fmt.Errorf("%w: %q", ErrBucketExists, b.Name)
+	}
+	// Rejected here rather than at assembly: a rule the matcher cannot read
+	// would otherwise store cleanly and then fail every registry rebuild,
+	// including the one a reload runs, taking the fleet's reloads down.
+	if errs := config.ValidateCORS(b.CORS); len(errs) > 0 {
+		return fmt.Errorf("%w: %w", ErrInvalidCORS, errors.Join(errs...))
 	}
 	if err := p.store.CreateBucket(ctx, b); err != nil {
 		return err

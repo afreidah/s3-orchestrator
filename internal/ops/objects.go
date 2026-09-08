@@ -16,7 +16,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"strings"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -59,7 +58,7 @@ type DeletePrefixResult struct {
 type ObjectsDeps struct {
 	Objects ObjectAPI
 	Store   ObjectStore
-	Config  *ConfigStore
+	Buckets BucketMatcher
 }
 
 // Objects serves the object read and write operations shared by the admin API
@@ -68,19 +67,19 @@ type Objects struct {
 	log     *slog.Logger
 	objects ObjectAPI
 	store   ObjectStore
-	cfg     *ConfigStore
+	buckets BucketMatcher
 }
 
 // NewObjects is the explicit-deps constructor.
 func NewObjects(d ObjectsDeps) *Objects {
 	must.NotNil("d.Objects", d.Objects)
 	must.NotNil("d.Store", d.Store)
-	must.NotNil("d.Config", d.Config)
+	must.NotNil("d.Buckets", d.Buckets)
 	return &Objects{
 		log:     slog.Default().With(logfmt.Component("ops")),
 		objects: d.Objects,
 		store:   d.Store,
-		cfg:     d.Config,
+		buckets: d.Buckets,
 	}
 }
 
@@ -278,20 +277,19 @@ func (o *Objects) deletePage(ctx context.Context, keys []string, observer progre
 	}
 }
 
-// validateKey rejects a key that is empty or outside every configured virtual
+// validateKey rejects a key that is empty or outside every declared virtual
 // bucket, before any backend is contacted.
+//
+// Declared covers both sources, so a bucket created through the provisioning
+// API is addressable here as soon as it is reachable over S3. Reading only the
+// config file would let an operator write an object through the data path and
+// then be told by every admin endpoint that its key names no bucket.
 func (o *Objects) validateKey(key string) error {
 	if key == "" {
 		return ErrKeyRequired
 	}
-	cfg := o.cfg.Load()
-	if cfg == nil {
+	if !o.buckets.HasPrefix(key) {
 		return ErrInvalidKey
 	}
-	for i := range cfg.Buckets {
-		if strings.HasPrefix(key, cfg.Buckets[i].Name+"/") {
-			return nil
-		}
-	}
-	return ErrInvalidKey
+	return nil
 }

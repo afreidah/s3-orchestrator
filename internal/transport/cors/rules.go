@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 )
 
 // -------------------------------------------------------------------------
@@ -66,10 +67,15 @@ type pattern struct {
 // request and nothing at all otherwise.
 //
 // Returns an error for a pattern the matcher cannot read. Config validation
-// rejects the same shapes with an operator-facing message; this is the
-// backstop that keeps a gap there from compiling into a rule that silently
-// matches more origins than the operator wrote.
-func NewRegistry(buckets []config.BucketConfig) (*Registry, error) {
+// rejects the same shapes with an operator-facing message, and so does the
+// provisioning API before it stores a bucket; this is the backstop that keeps a
+// gap in either from compiling into a rule that silently matches more origins
+// than the operator wrote.
+//
+// Takes the merged bucket set rather than the config file's, so a bucket
+// created through the provisioning API carries its rules into the browser
+// policy instead of having them silently dropped.
+func NewRegistry(buckets []provisioning.Bucket) (*Registry, error) {
 	reg := &Registry{byBucket: make(map[string][]rule)}
 	for i := range buckets {
 		bkt := &buckets[i]

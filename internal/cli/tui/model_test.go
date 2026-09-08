@@ -81,6 +81,10 @@ func (errLister) GetCacheStats(_ context.Context) (*adminapi.CacheStatsResponse,
 	return nil, errors.New("nope")
 }
 
+func (errLister) GetProvisioning(_ context.Context) (*adminapi.ProvisioningResponse, error) {
+	return nil, errors.New("nope")
+}
+
 func (errLister) RequeueCleanupDLQ(_ context.Context, _ string) (*adminapi.CleanupDLQRequeueResponse, error) {
 	return nil, errors.New("nope")
 }

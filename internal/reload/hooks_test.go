@@ -39,6 +39,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
@@ -669,6 +670,7 @@ func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 		OverRep:      workers.OverReplicationCleaner,
 		Rebalancer:   workers.Rebalancer,
 		Scrubber:     workers.Scrubber,
+		Declared:     provisioning.NewDeclared(),
 		Cfg:          &config.Config{},
 	})
 	return &ui.Deps{
@@ -678,6 +680,7 @@ func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 		Rebalance:   svc.Rebalance,
 		Encryption:  svc.Encryption,
 		Compression: svc.Compression,
+		Buckets:     provisioning.NewDeclared(),
 		Cfg:         &config.Config{},
 	}
 }
@@ -708,6 +711,7 @@ func emptyProvisioningStore(t *testing.T, inj do.Injector) {
 	s.EXPECT().ListCredentials(a).Return(nil, nil).AnyTimes()
 	s.EXPECT().ListGrants(a).Return(nil, nil).AnyTimes()
 	do.ProvideValue[core.ProvisioningStore](inj, s)
+	do.ProvideValue(inj, provisioning.NewDeclared())
 }
 
 // TestBucketAuthHook_CheckRejectsAmbiguousCredential proves an ambiguous

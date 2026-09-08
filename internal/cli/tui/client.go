@@ -134,6 +134,12 @@ func (c *apiClient) GetCacheStats(ctx context.Context) (*adminapi.CacheStatsResp
 	return c.c.Get[adminapi.CacheStatsResponse](ctx, "/admin/api/cache", nil)
 }
 
+// GetProvisioning fetches the virtual buckets, identities and credentials a
+// deployment declares, from the config file and the store together.
+func (c *apiClient) GetProvisioning(ctx context.Context) (*adminapi.ProvisioningResponse, error) {
+	return c.c.Get[adminapi.ProvisioningResponse](ctx, "/admin/api/provisioning", nil)
+}
+
 // RequeueCleanupDLQ moves dead-lettered rows back into the cleanup queue,
 // scoped to one backend when backend is non-empty.
 func (c *apiClient) RequeueCleanupDLQ(ctx context.Context, backend string) (*adminapi.CleanupDLQRequeueResponse, error) {

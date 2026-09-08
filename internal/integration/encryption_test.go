@@ -126,6 +126,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		Rebalancer:   workers.Rebalancer,
 		Scrubber:     workers.Scrubber,
 		Provisioning: testStore,
+		Declared:     declaredForConfig([]config.BucketConfig{{Name: virtualBucket}}),
 		Cfg:          &config.Config{Buckets: []config.BucketConfig{{Name: virtualBucket}}},
 	})
 	adminHandler := admin.New(&admin.Deps{

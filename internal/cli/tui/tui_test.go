@@ -43,6 +43,8 @@ type fakeLister struct {
 	cleanupQ  *adminapi.CleanupQueueResponse
 	cleanupD  *adminapi.CleanupDLQResponse
 	cacheStat *adminapi.CacheStatsResponse
+	provision *adminapi.ProvisioningResponse
+	provErr   error
 	requeued  *adminapi.CleanupDLQRequeueResponse
 	tags      map[string][]adminapi.ObjectTag // per-key tag sets
 	tagsErr   error                           // when set, GetObjectTags fails
@@ -158,6 +160,16 @@ func (f *fakeLister) GetCacheStats(_ context.Context) (*adminapi.CacheStatsRespo
 		return f.cacheStat, nil
 	}
 	return &adminapi.CacheStatsResponse{}, nil
+}
+
+func (f *fakeLister) GetProvisioning(_ context.Context) (*adminapi.ProvisioningResponse, error) {
+	if f.provErr != nil {
+		return nil, f.provErr
+	}
+	if f.provision != nil {
+		return f.provision, nil
+	}
+	return &adminapi.ProvisioningResponse{}, nil
 }
 
 func (f *fakeLister) RequeueCleanupDLQ(_ context.Context, backend string) (*adminapi.CleanupDLQRequeueResponse, error) {

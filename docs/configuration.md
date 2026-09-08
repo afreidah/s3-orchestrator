@@ -110,6 +110,16 @@ Multiple credentials on the same bucket let different services share a namespace
 
 SigV4 credentials also support presigned URLs automatically. Clients can generate time-limited presigned URLs using any AWS SDK presign client — no additional configuration is needed on the orchestrator side.
 
+#### Config versus the provisioning API
+
+Buckets and credentials can also be created through the admin API and the `bucket`, `user`, `credential` and `grant` CLI commands, which store them in the database instead of this file. Both sets are live at once: the registry the request path authenticates against is assembled from the two together at startup and on every reload.
+
+Config wins. A bucket name or an access key declared here takes precedence over a stored one, and the API refuses to modify or delete anything this file declares, answering `403`. What you read here is what the deployment does, so a bucket removed from this file is removed from service even if a row of the same name exists.
+
+The reverse is not true: nothing here removes a stored bucket, and a `SIGHUP` reload preserves everything created through the API. A stored bucket whose name this file also declares is dropped from the merge and reported as a notice on `GET /admin/api/provisioning` and in the server log.
+
+The two differ in what they can express. A credential declared here reaches exactly the bucket that declared it. A stored credential belongs to a user, and that user holds a grant per bucket it reaches, so one keypair can reach several buckets and a bucket can be granted to several users. A config credential is merged in as a user reaching one bucket, so the request path resolves both the same way.
+
 #### Browser access (CORS)
 
 A browser will not send a cross-origin request until a preflight `OPTIONS` succeeds, and it sends that preflight without credentials. A bucket a web application uploads to directly — the usual presigned-URL flow, where the browser PUTs to the orchestrator instead of streaming through your API — needs a `cors` block naming the origins allowed to reach it.

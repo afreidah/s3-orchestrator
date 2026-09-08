@@ -49,9 +49,7 @@ func newObjectsHandlerWithAPI(t *testing.T) (*opstest.MockObjectAPI, http.Handle
 		objects: ops.NewObjects(ops.ObjectsDeps{
 			Objects: api,
 			Store:   storetest.NewMockObjectStore(gomock.NewController(t)),
-			Config: ops.NewConfigStore(&config.Config{
-				Buckets: []config.BucketConfig{{Name: "bucket"}},
-			}),
+			Buckets: declaredBuckets("bucket"),
 		}),
 		token:    "test-token",
 		logLevel: &lv,

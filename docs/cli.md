@@ -272,6 +272,14 @@ s3-orchestrator admin reload-status
 # Download the flight-recorder trace ring buffer to a file for `go tool trace`
 # (requires debug.flight_recorder.enabled; -o sets the output path)
 s3-orchestrator admin trace-snapshot -o trace.bin
+
+# Declare virtual buckets and the credentials that reach them without editing
+# the config file. Each of these takes a verb; run one without a verb to list
+# what it accepts.
+s3-orchestrator admin bucket list
+s3-orchestrator admin user create -name nightly-backup
+s3-orchestrator admin credential issue -user user-abc123
+s3-orchestrator admin grant add -user user-abc123 -bucket backups
 ```
 
 The admin API requires `ui.admin_token` (or `ui.admin_key` as fallback) to be set in the configuration. All requests are authenticated via the `X-Admin-Token` header.
@@ -290,9 +298,36 @@ Tags are given as repeatable `key=value` pairs rather than a JSON document, so a
 
 `-tag` replaces the whole set, matching `PutObjectTagging`, so adding one tag to an object that has three means passing all four. `-clear` and `-tag` are refused together: they describe different outcomes for the same call. See [Object Tagging](tagging.md) for the limits and the storage model.
 
+#### bucket, user, credential and grant
+
+These four commands provision what the config file otherwise declares, storing it in the database instead. Each takes a verb after the command word:
+
+| Command | Verbs |
+|---|---|
+| `bucket` | `list`, `create -name <name> [-max-multipart N]`, `delete -name <name>` |
+| `user` | `list`, `create -name <name>`, `delete -id <id>` |
+| `credential` | `list`, `issue -user <id> [-label <text>]`, `revoke -access-key <id>` |
+| `grant` | `add -user <id> -bucket <name>`, `remove -user <id> -bucket <name>` |
+
+Onboarding a client is three calls. The user comes first, because a keypair belongs to an identity rather than to a bucket:
+
+```bash
+s3-orchestrator admin user create -name nightly-backup
+s3-orchestrator admin credential issue -user user-abc123 -label "backup job"
+s3-orchestrator admin grant add -user user-abc123 -bucket backups
+```
+
+`credential issue` prints the secret once, on stdout and nowhere else, so it can be captured into a secret store without passing through a log line. Nothing reads it back afterwards: a caller that loses it issues a replacement and revokes the old one. Several keypairs may name one user, which is what lets one be rotated while the rest keep working.
+
+Every listing carries a source column. An entry marked `config` comes from the config file, and the server refuses to change it — those are edited in the file and applied with `SIGHUP`. See [config versus the provisioning API](configuration.md#config-versus-the-provisioning-api) for the precedence rule.
+
+Removal is refused while something still depends on it. A bucket that holds objects or is granted to a user, and a user that holds credentials or grants, all fail with the reason, so emptying a bucket and revoking a credential stay deliberate acts.
+
+Every change takes effect on the next request rather than the next restart: the registry the request path authenticates against is rebuilt before the command returns.
+
 ### tui
 
-Full-screen terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status; **Replication** shows a self-refreshing view of replication health; **Workers** shows each background service's last-tick health; **Cleanup** shows the cleanup queue and its dead-letter table; **Cache** shows the object data cache's utilization and hit rate; **Logs** shows recent structured log entries; **Ops** runs admin write actions. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the server address and admin token with the same precedence as `admin` (**flag &rarr; environment &rarr; config file**), loading `config.yaml` only when a value is still missing:
+Full-screen terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status; **Buckets** lists the virtual buckets both the config file and the store declare, marking which are read-only and which identities reach each one; **Replication** shows a self-refreshing view of replication health; **Workers** shows each background service's last-tick health; **Cleanup** shows the cleanup queue and its dead-letter table; **Cache** shows the object data cache's utilization and hit rate; **Logs** shows recent structured log entries; **Ops** runs admin write actions. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the server address and admin token with the same precedence as `admin` (**flag &rarr; environment &rarr; config file**), loading `config.yaml` only when a value is still missing:
 
 ```bash
 export S3O_ADMIN_ADDR="https://s3.example.com"
@@ -317,6 +352,7 @@ s3-orchestrator tui
 | `tab` | Move focus between the sidebar and the content area |
 | `f` | Jump to the Files section |
 | `b` | Jump to the Backends section |
+| `v` | Jump to the Buckets section |
 | `p` | Jump to the Replication section |
 | `w` | Jump to the Workers section |
 | `u` | Jump to the Cleanup section |

@@ -1,0 +1,718 @@
+go test -race -v -tags integration -count=1 ./internal/integration/ ./internal/store/postgres/
+2026/09/07 21:05:53 github.com/testcontainers/testcontainers-go - Connected to docker: 
+  Server Version: 29.7.2
+  API Version: 1.55
+  Operating System: Debian GNU/Linux 13 (trixie)
+  Total Memory: 30851 MB
+  Testcontainers for Go Version: v0.44.0
+  Resolved Docker Host: unix:///var/run/docker.sock
+  Resolved Docker Socket Path: /var/run/docker.sock
+  Test SessionID: a211dc7b09e6781829d9c3ce1b2d61c495077e4133a0467fd84d40aeb284ed20
+  Test ProcessID: 3091736a-197a-4680-ab70-068fcb2793f0
+2026/09/07 21:05:53 🐳 Creating container for image postgres:16
+2026/09/07 21:05:53 🐳 Creating container for image testcontainers/ryuk:0.14.0
+2026/09/07 21:05:53 ⏳ Waiting for Reaper "120182e1" to be ready
+2026/09/07 21:05:53 🔥 Reaper obtained from Docker for this test session 120182e1
+2026/09/07 21:05:53 ✅ Container created: 5f37419e5107
+2026/09/07 21:05:53 🐳 Starting container: 5f37419e5107
+2026/09/07 21:05:53 ✅ Container started: 5f37419e5107
+2026/09/07 21:05:53 ⏳ Waiting for container id 5f37419e5107 image: postgres:16. Waiting for: all of: [log message "database system is ready to accept connections" (occurrence: 2)]
+2026/09/07 21:05:55 🔔 Container is ready: 5f37419e5107
+2026/09/07 21:05:55 🐳 Creating container for image minio/minio:latest
+2026/09/07 21:05:56 ✅ Container created: 882c26f31dfe
+2026/09/07 21:05:56 🐳 Starting container: 882c26f31dfe
+2026/09/07 21:05:56 ✅ Container started: 882c26f31dfe
+2026/09/07 21:05:56 ⏳ Waiting for container id 882c26f31dfe image: minio/minio:latest. Waiting for: all of: [HTTP GET request on port 9000 path "/minio/health/live"]
+2026/09/07 21:05:56 🔔 Container is ready: 882c26f31dfe
+2026/09/07 21:05:56 🐳 Creating container for image minio/minio:latest
+2026/09/07 21:05:56 ✅ Container created: 742c15212bb5
+2026/09/07 21:05:56 🐳 Starting container: 742c15212bb5
+2026/09/07 21:05:56 ✅ Container started: 742c15212bb5
+2026/09/07 21:05:56 ⏳ Waiting for container id 742c15212bb5 image: minio/minio:latest. Waiting for: all of: [HTTP GET request on port 9000 path "/minio/health/live"]
+2026/09/07 21:05:57 🔔 Container is ready: 742c15212bb5
+2026/09/07 21:05:57 🐳 Creating container for image minio/minio:latest
+2026/09/07 21:05:57 ✅ Container created: 570fa349b0dd
+2026/09/07 21:05:57 🐳 Starting container: 570fa349b0dd
+2026/09/07 21:05:57 ✅ Container started: 570fa349b0dd
+2026/09/07 21:05:57 ⏳ Waiting for container id 570fa349b0dd image: minio/minio:latest. Waiting for: all of: [HTTP GET request on port 9000 path "/minio/health/live"]
+2026/09/07 21:05:58 🔔 Container is ready: 570fa349b0dd
+2026/09/07 21:05:58 🐳 Creating container for image redis:7-alpine
+2026/09/07 21:05:58 ✅ Container created: 762d848f0894
+2026/09/07 21:05:58 🐳 Starting container: 762d848f0894
+2026/09/07 21:05:58 ✅ Container started: 762d848f0894
+2026/09/07 21:05:58 ⏳ Waiting for container id 762d848f0894 image: redis:7-alpine. Waiting for: all of: [port 6379/tcp to be listening, log message "* Ready to accept connections"]
+2026/09/07 21:05:58 🔔 Container is ready: 762d848f0894
+=== RUN   TestCache_HitOnSecondRead
+--- PASS: TestCache_HitOnSecondRead (0.04s)
+=== RUN   TestCache_InvalidateOnPut
+--- PASS: TestCache_InvalidateOnPut (0.03s)
+=== RUN   TestCache_InvalidateOnDelete
+--- PASS: TestCache_InvalidateOnDelete (0.02s)
+=== RUN   TestCache_OversizedObjectNotCached
+--- PASS: TestCache_OversizedObjectNotCached (0.01s)
+=== RUN   TestCache_MultipleObjects
+--- PASS: TestCache_MultipleObjects (0.35s)
+=== RUN   TestInt_CleanupQueue_ConcurrentWorkersProcessExactlyOnce
+--- PASS: TestInt_CleanupQueue_ConcurrentWorkersProcessExactlyOnce (0.02s)
+=== RUN   TestCompression_RoundTripAcrossSizeBoundaries
+=== RUN   TestCompression_RoundTripAcrossSizeBoundaries/empty
+=== RUN   TestCompression_RoundTripAcrossSizeBoundaries/single_byte
+=== RUN   TestCompression_RoundTripAcrossSizeBoundaries/sub-chunk
+=== RUN   TestCompression_RoundTripAcrossSizeBoundaries/exactly_one_chunk
+=== RUN   TestCompression_RoundTripAcrossSizeBoundaries/one_byte_over_a_chunk
+=== RUN   TestCompression_RoundTripAcrossSizeBoundaries/one_byte_under_a_chunk
+=== RUN   TestCompression_RoundTripAcrossSizeBoundaries/exactly_two_chunks
+=== RUN   TestCompression_RoundTripAcrossSizeBoundaries/multi-chunk_with_a_partial_tail
+--- PASS: TestCompression_RoundTripAcrossSizeBoundaries (0.45s)
+    --- PASS: TestCompression_RoundTripAcrossSizeBoundaries/empty (0.02s)
+    --- PASS: TestCompression_RoundTripAcrossSizeBoundaries/single_byte (0.02s)
+    --- PASS: TestCompression_RoundTripAcrossSizeBoundaries/sub-chunk (0.01s)
+    --- PASS: TestCompression_RoundTripAcrossSizeBoundaries/exactly_one_chunk (0.01s)
+    --- PASS: TestCompression_RoundTripAcrossSizeBoundaries/one_byte_over_a_chunk (0.01s)
+    --- PASS: TestCompression_RoundTripAcrossSizeBoundaries/one_byte_under_a_chunk (0.01s)
+    --- PASS: TestCompression_RoundTripAcrossSizeBoundaries/exactly_two_chunks (0.01s)
+    --- PASS: TestCompression_RoundTripAcrossSizeBoundaries/multi-chunk_with_a_partial_tail (0.01s)
+=== RUN   TestCompression_RangeReadsAcrossFrameBoundaries
+=== RUN   TestCompression_RangeReadsAcrossFrameBoundaries/first_byte
+=== RUN   TestCompression_RangeReadsAcrossFrameBoundaries/head_of_the_first_frame
+=== RUN   TestCompression_RangeReadsAcrossFrameBoundaries/inside_the_first_frame
+=== RUN   TestCompression_RangeReadsAcrossFrameBoundaries/up_to_the_first_frame_boundary
+=== RUN   TestCompression_RangeReadsAcrossFrameBoundaries/across_one_frame_boundary
+=== RUN   TestCompression_RangeReadsAcrossFrameBoundaries/exactly_the_second_frame
+=== RUN   TestCompression_RangeReadsAcrossFrameBoundaries/spanning_three_frames
+=== RUN   TestCompression_RangeReadsAcrossFrameBoundaries/tail_to_the_end
+=== RUN   TestCompression_RangeReadsAcrossFrameBoundaries/last_byte
+--- PASS: TestCompression_RangeReadsAcrossFrameBoundaries (0.37s)
+    --- PASS: TestCompression_RangeReadsAcrossFrameBoundaries/first_byte (0.01s)
+    --- PASS: TestCompression_RangeReadsAcrossFrameBoundaries/head_of_the_first_frame (0.00s)
+    --- PASS: TestCompression_RangeReadsAcrossFrameBoundaries/inside_the_first_frame (0.00s)
+    --- PASS: TestCompression_RangeReadsAcrossFrameBoundaries/up_to_the_first_frame_boundary (0.00s)
+    --- PASS: TestCompression_RangeReadsAcrossFrameBoundaries/across_one_frame_boundary (0.00s)
+    --- PASS: TestCompression_RangeReadsAcrossFrameBoundaries/exactly_the_second_frame (0.00s)
+    --- PASS: TestCompression_RangeReadsAcrossFrameBoundaries/spanning_three_frames (0.01s)
+    --- PASS: TestCompression_RangeReadsAcrossFrameBoundaries/tail_to_the_end (0.00s)
+    --- PASS: TestCompression_RangeReadsAcrossFrameBoundaries/last_byte (0.00s)
+=== RUN   TestCompression_EncryptedRangeReadsServeCorrectBytes
+=== RUN   TestCompression_EncryptedRangeReadsServeCorrectBytes/first_byte
+=== RUN   TestCompression_EncryptedRangeReadsServeCorrectBytes/head_of_the_first_frame
+=== RUN   TestCompression_EncryptedRangeReadsServeCorrectBytes/inside_the_first_frame
+=== RUN   TestCompression_EncryptedRangeReadsServeCorrectBytes/up_to_the_first_frame_boundary
+=== RUN   TestCompression_EncryptedRangeReadsServeCorrectBytes/across_one_frame_boundary
+=== RUN   TestCompression_EncryptedRangeReadsServeCorrectBytes/exactly_the_second_frame
+=== RUN   TestCompression_EncryptedRangeReadsServeCorrectBytes/spanning_three_frames
+=== RUN   TestCompression_EncryptedRangeReadsServeCorrectBytes/tail_to_the_end
+=== RUN   TestCompression_EncryptedRangeReadsServeCorrectBytes/last_byte
+--- PASS: TestCompression_EncryptedRangeReadsServeCorrectBytes (0.40s)
+    --- PASS: TestCompression_EncryptedRangeReadsServeCorrectBytes/first_byte (0.00s)
+    --- PASS: TestCompression_EncryptedRangeReadsServeCorrectBytes/head_of_the_first_frame (0.00s)
+    --- PASS: TestCompression_EncryptedRangeReadsServeCorrectBytes/inside_the_first_frame (0.00s)
+    --- PASS: TestCompression_EncryptedRangeReadsServeCorrectBytes/up_to_the_first_frame_boundary (-0.00s)
+    --- PASS: TestCompression_EncryptedRangeReadsServeCorrectBytes/across_one_frame_boundary (0.01s)
+    --- PASS: TestCompression_EncryptedRangeReadsServeCorrectBytes/exactly_the_second_frame (0.00s)
+    --- PASS: TestCompression_EncryptedRangeReadsServeCorrectBytes/spanning_three_frames (0.00s)
+    --- PASS: TestCompression_EncryptedRangeReadsServeCorrectBytes/tail_to_the_end (0.01s)
+    --- PASS: TestCompression_EncryptedRangeReadsServeCorrectBytes/last_byte (0.00s)
+=== RUN   TestCompression_ScrubberDetectsCorruptedCompressedCopy
+--- PASS: TestCompression_ScrubberDetectsCorruptedCompressedCopy (0.36s)
+=== RUN   TestCompression_RebalanceMovesCompressedObjectsIntact
+--- PASS: TestCompression_RebalanceMovesCompressedObjectsIntact (0.39s)
+=== RUN   TestCompression_DrainMovesCompressedObjectsIntact
+--- PASS: TestCompression_DrainMovesCompressedObjectsIntact (0.44s)
+=== RUN   TestCompressionUsage_PutChargesStoredSizeNotLogical
+--- PASS: TestCompressionUsage_PutChargesStoredSizeNotLogical (0.03s)
+=== RUN   TestCompressionUsage_PutChargesStoredSizeToQuota
+--- PASS: TestCompressionUsage_PutChargesStoredSizeToQuota (0.02s)
+=== RUN   TestCompressionUsage_GetChargesStoredSize
+--- PASS: TestCompressionUsage_GetChargesStoredSize (0.01s)
+=== RUN   TestCompressionUsage_RangeFetchesOnlyCoveredFrames
+--- PASS: TestCompressionUsage_RangeFetchesOnlyCoveredFrames (0.04s)
+=== RUN   TestPgListDirectoryChildren_FileRowReplicated
+--- PASS: TestPgListDirectoryChildren_FileRowReplicated (0.01s)
+=== RUN   TestPgListDirectoryChildren_FileRowSingle
+--- PASS: TestPgListDirectoryChildren_FileRowSingle (0.00s)
+=== RUN   TestPgListDirectoryChildren_DirRollupPhysicalBytes
+--- PASS: TestPgListDirectoryChildren_DirRollupPhysicalBytes (0.00s)
+=== RUN   TestPgListDirectoryChildren_UnderscorePrefix
+--- PASS: TestPgListDirectoryChildren_UnderscorePrefix (0.00s)
+=== RUN   TestE2E_FullLifecycle
+--- PASS: TestE2E_FullLifecycle (0.02s)
+=== RUN   TestE2E_MultipartLifecycle
+--- PASS: TestE2E_MultipartLifecycle (0.03s)
+=== RUN   TestE2E_ErrorResponses_GetNonexistent
+--- PASS: TestE2E_ErrorResponses_GetNonexistent (0.00s)
+=== RUN   TestE2E_ErrorResponses_HeadNonexistent
+--- PASS: TestE2E_ErrorResponses_HeadNonexistent (0.00s)
+=== RUN   TestE2E_ErrorResponses_DeleteNonexistent_Idempotent
+--- PASS: TestE2E_ErrorResponses_DeleteNonexistent_Idempotent (0.00s)
+=== RUN   TestEmptyObject_PutGetDelete
+--- PASS: TestEmptyObject_PutGetDelete (0.01s)
+=== RUN   TestConcurrentPutSameKey
+--- PASS: TestConcurrentPutSameKey (0.11s)
+=== RUN   TestConcurrentPutAndDelete
+--- PASS: TestConcurrentPutAndDelete (0.04s)
+=== RUN   TestLargeMultipartUpload
+--- PASS: TestLargeMultipartUpload (0.05s)
+=== RUN   TestPresignedHeadObject
+--- PASS: TestPresignedHeadObject (0.01s)
+=== RUN   TestPresignedDeleteObject
+--- PASS: TestPresignedDeleteObject (0.01s)
+=== RUN   TestSpecialCharacterKeys
+--- PASS: TestSpecialCharacterKeys (0.04s)
+=== RUN   TestLargeObject_RandomContent
+--- PASS: TestLargeObject_RandomContent (0.01s)
+=== RUN   TestConditionalGet_IfNoneMatch
+--- PASS: TestConditionalGet_IfNoneMatch (0.01s)
+=== RUN   TestConditionalPut_IfNoneMatchStar
+--- PASS: TestConditionalPut_IfNoneMatchStar (0.02s)
+=== RUN   TestConditionalGet_IfMatch_Mismatch
+--- PASS: TestConditionalGet_IfMatch_Mismatch (0.01s)
+=== RUN   TestUserMetadata_RoundTrip
+--- PASS: TestUserMetadata_RoundTrip (0.01s)
+=== RUN   TestOverwrite_QuotaAccounting
+--- PASS: TestOverwrite_QuotaAccounting (0.01s)
+=== RUN   TestDelete_Idempotent
+--- PASS: TestDelete_Idempotent (0.00s)
+=== RUN   TestEncryptDecryptExisting_RoundTrip
+--- FAIL: TestEncryptDecryptExisting_RoundTrip (0.00s)
+panic: required dependency "d.Buckets" is nil [recovered, repanicked]
+
+goroutine 2137 [running]:
+testing.tRunner.func1.2({0x43d9528, 0xc000139680})
+	/home/afreidah/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.0.linux-amd64/src/testing/testing.go:2123 +0x419
+testing.tRunner.func1()
+	/home/afreidah/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.0.linux-amd64/src/testing/testing.go:2126 +0x65f
+panic({0x43d9528?, 0xc000139680?})
+	/home/afreidah/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.0.linux-amd64/src/runtime/panic.go:859 +0x125
+github.com/afreidah/s3-orchestrator/internal/util/must.NotNil({0x2dc68ff, 0x9}, {0x0, 0x0})
+	/home/afreidah/tools/s3-orchestrator/internal/util/must/must.go:46 +0x26c
+github.com/afreidah/s3-orchestrator/internal/ops.NewObjects({{0x46060d0, 0xc00132ca90}, {0x46085d8, 0xc000644080}, {0x0, 0x0}})
+	/home/afreidah/tools/s3-orchestrator/internal/ops/objects.go:77 +0x145
+github.com/afreidah/s3-orchestrator/internal/ops.New(0xc001293c00)
+	/home/afreidah/tools/s3-orchestrator/internal/ops/services.go:72 +0x265
+github.com/afreidah/s3-orchestrator/internal/integration.setupEncryptionEnv(0xc000dfe908)
+	/home/afreidah/tools/s3-orchestrator/internal/integration/encryption_test.go:116 +0x1218
+github.com/afreidah/s3-orchestrator/internal/integration.TestEncryptDecryptExisting_RoundTrip(0xc000dfe908)
+	/home/afreidah/tools/s3-orchestrator/internal/integration/encryption_test.go:233 +0x3c
+testing.tRunner(0xc000dfe908, 0x4612970)
+	/home/afreidah/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.0.linux-amd64/src/testing/testing.go:2193 +0x21d
+created by testing.(*T).Run in goroutine 1
+	/home/afreidah/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.0.linux-amd64/src/testing/testing.go:2258 +0xb13
+FAIL	github.com/afreidah/s3-orchestrator/internal/integration	9.312s
+=== RUN   TestPgAdapterErr_AcquireKeyLock
+2026/09/07 21:05:53 github.com/testcontainers/testcontainers-go - Connected to docker: 
+  Server Version: 29.7.2
+  API Version: 1.55
+  Operating System: Debian GNU/Linux 13 (trixie)
+  Total Memory: 30851 MB
+  Testcontainers for Go Version: v0.44.0
+  Resolved Docker Host: unix:///var/run/docker.sock
+  Resolved Docker Socket Path: /var/run/docker.sock
+  Test SessionID: a211dc7b09e6781829d9c3ce1b2d61c495077e4133a0467fd84d40aeb284ed20
+  Test ProcessID: 65d08055-c3be-488d-9852-13a2846a1409
+2026/09/07 21:05:53 🐳 Creating container for image postgres:16
+2026/09/07 21:05:53 🐳 Creating container for image testcontainers/ryuk:0.14.0
+2026/09/07 21:05:53 ✅ Container created: 120182e1b5ff
+2026/09/07 21:05:53 🐳 Starting container: 120182e1b5ff
+2026/09/07 21:05:53 ✅ Container started: 120182e1b5ff
+2026/09/07 21:05:53 ⏳ Waiting for container id 120182e1b5ff image: testcontainers/ryuk:0.14.0. Waiting for: all of: [log message "Started", port 8080/tcp to be listening]
+2026/09/07 21:05:53 Shell not found in container
+2026/09/07 21:05:53 🔔 Container is ready: 120182e1b5ff
+2026/09/07 21:05:53 ✅ Container created: c5ee886c7b10
+2026/09/07 21:05:53 🐳 Starting container: c5ee886c7b10
+2026/09/07 21:05:53 ✅ Container started: c5ee886c7b10
+2026/09/07 21:05:53 ⏳ Waiting for container id c5ee886c7b10 image: postgres:16. Waiting for: all of: [log message "database system is ready to accept connections" (occurrence: 2)]
+2026/09/07 21:05:55 🔔 Container is ready: c5ee886c7b10
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=1 duration=9.726775ms
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=2 duration=522.379µs
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=3 duration=1.000214ms
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=4 duration=777.391µs
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=5 duration=386.742µs
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=6 duration=871.269µs
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=7 duration=1.664421ms
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=8 duration=2.480787ms
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=9 duration=2.063828ms
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=10 duration=593.934µs
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=11 duration=1.651266ms
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=12 duration=525.475µs
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=13 duration=474.378µs
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=14 duration=740.792µs
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=15 duration=-4.408281ms
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=16 duration=6.137074ms
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=17 duration=743.958µs
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=18 duration=506.229µs
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=19 duration=-3.413713ms
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=20 duration=0s
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=21 duration=0s
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=22 duration=0s
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=23 duration=0s
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=24 duration=0s
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=25 duration=11.352031ms
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=26 duration=928.898µs
+2026/09/07 21:05:55 INFO migration applied component=postgres_store version=27 duration=4.001315ms
+--- PASS: TestPgAdapterErr_AcquireKeyLock (2.55s)
+=== RUN   TestPgAdapterErr_ClaimPending
+--- PASS: TestPgAdapterErr_ClaimPending (0.00s)
+=== RUN   TestPgAdapterErr_DeletePending
+--- PASS: TestPgAdapterErr_DeletePending (0.00s)
+=== RUN   TestPgAdapterErr_GetExistingCopiesForUpdate
+--- PASS: TestPgAdapterErr_GetExistingCopiesForUpdate (0.00s)
+=== RUN   TestPgAdapterErr_InsertObjectLocation
+--- PASS: TestPgAdapterErr_InsertObjectLocation (0.00s)
+=== RUN   TestPgAdapterErr_DeleteObjectCopies
+--- PASS: TestPgAdapterErr_DeleteObjectCopies (0.00s)
+=== RUN   TestPgAdapterErr_CheckObjectExistsOnBackend
+--- PASS: TestPgAdapterErr_CheckObjectExistsOnBackend (0.00s)
+=== RUN   TestPgAdapterErr_LockObjectOnBackend
+--- PASS: TestPgAdapterErr_LockObjectOnBackend (0.00s)
+=== RUN   TestPgAdapterErr_DeleteObjectFromBackend
+--- PASS: TestPgAdapterErr_DeleteObjectFromBackend (0.00s)
+=== RUN   TestPgAdapterErr_InsertObjectLocationIfNotExists
+--- PASS: TestPgAdapterErr_InsertObjectLocationIfNotExists (0.00s)
+=== RUN   TestPgAdapterErr_InsertReplicaConditional
+--- PASS: TestPgAdapterErr_InsertReplicaConditional (0.00s)
+=== RUN   TestPgAdapterErr_SumAndDeleteCleanupQueueRows
+--- PASS: TestPgAdapterErr_SumAndDeleteCleanupQueueRows (0.00s)
+=== RUN   TestPgAdapterErr_AdjustQuotaStripe
+--- PASS: TestPgAdapterErr_AdjustQuotaStripe (0.00s)
+=== RUN   TestPgAdapterErr_DecrementOrphanBytes
+--- PASS: TestPgAdapterErr_DecrementOrphanBytes (0.00s)
+=== RUN   TestPgAdapterErr_AllBackendBytesUsed
+--- PASS: TestPgAdapterErr_AllBackendBytesUsed (0.00s)
+=== RUN   TestPgAdapterErr_SumObjectSizesByBackend
+--- PASS: TestPgAdapterErr_SumObjectSizesByBackend (0.00s)
+=== RUN   TestPgAdapterErr_SetBackendBytesUsed
+--- PASS: TestPgAdapterErr_SetBackendBytesUsed (0.00s)
+=== RUN   TestPgAdapter_AcquireKeyLock_Succeeds
+--- PASS: TestPgAdapter_AcquireKeyLock_Succeeds (0.00s)
+=== RUN   TestPgAdapter_ClaimPending_TrueWhenInserted
+--- PASS: TestPgAdapter_ClaimPending_TrueWhenInserted (0.00s)
+=== RUN   TestPgAdapter_ClaimPending_FalseWhenMissing
+--- PASS: TestPgAdapter_ClaimPending_FalseWhenMissing (0.00s)
+=== RUN   TestPgAdapter_InsertPending_PreservesAllFields
+--- PASS: TestPgAdapter_InsertPending_PreservesAllFields (0.00s)
+=== RUN   TestPgInsertPending_NullableFieldsOmitted
+--- PASS: TestPgInsertPending_NullableFieldsOmitted (0.00s)
+=== RUN   TestPgAdapter_DeletePending_RemovesRow
+--- PASS: TestPgAdapter_DeletePending_RemovesRow (0.00s)
+=== RUN   TestPgAdapter_GetExistingCopiesForUpdate_ReturnsAllCopies
+--- PASS: TestPgAdapter_GetExistingCopiesForUpdate_ReturnsAllCopies (0.00s)
+=== RUN   TestPgAdapter_GetExistingCopiesForUpdate_EmptyForUnknownKey
+--- PASS: TestPgAdapter_GetExistingCopiesForUpdate_EmptyForUnknownKey (0.00s)
+=== RUN   TestPgAdapter_InsertObjectLocation_PreservesEncryptionFields
+--- PASS: TestPgAdapter_InsertObjectLocation_PreservesEncryptionFields (0.00s)
+=== RUN   TestPgAdapter_DeleteObjectCopies_RemovesAllRows
+--- PASS: TestPgAdapter_DeleteObjectCopies_RemovesAllRows (0.00s)
+=== RUN   TestPgAdapter_CheckObjectExistsOnBackend
+--- PASS: TestPgAdapter_CheckObjectExistsOnBackend (0.00s)
+=== RUN   TestPgAdapter_LockObjectOnBackend_ReturnsRow
+--- PASS: TestPgAdapter_LockObjectOnBackend_ReturnsRow (0.00s)
+=== RUN   TestPgAdapter_LockObjectOnBackend_FalseWhenMissing
+--- PASS: TestPgAdapter_LockObjectOnBackend_FalseWhenMissing (0.00s)
+=== RUN   TestPgAdapter_DeleteObjectFromBackend_RemovesOneRow
+--- PASS: TestPgAdapter_DeleteObjectFromBackend_RemovesOneRow (0.00s)
+=== RUN   TestPgAdapter_InsertObjectLocationIfNotExists_BothBranches
+--- PASS: TestPgAdapter_InsertObjectLocationIfNotExists_BothBranches (0.00s)
+=== RUN   TestPgAdapter_InsertReplicaConditional_InsertsWhenSourceExists
+--- PASS: TestPgAdapter_InsertReplicaConditional_InsertsWhenSourceExists (0.00s)
+=== RUN   TestPgAdapter_InsertReplicaConditional_SkipsWhenSourceMissing
+--- PASS: TestPgAdapter_InsertReplicaConditional_SkipsWhenSourceMissing (0.00s)
+=== RUN   TestPgAdapter_SumAndDeleteCleanupQueueRows_DeletesAndReturnsTotals
+--- PASS: TestPgAdapter_SumAndDeleteCleanupQueueRows_DeletesAndReturnsTotals (0.00s)
+=== RUN   TestPgAdapter_SumAndDeleteCleanupQueueRows_NoRowsReturnsZero
+--- PASS: TestPgAdapter_SumAndDeleteCleanupQueueRows_NoRowsReturnsZero (0.00s)
+=== RUN   TestPgAdapter_AdjustQuotaStripe_MaterializesAndAccumulates
+--- PASS: TestPgAdapter_AdjustQuotaStripe_MaterializesAndAccumulates (0.00s)
+=== RUN   TestPgAdapter_AdjustQuotaStripe_NegativeStripeIsHeldUnclamped
+--- PASS: TestPgAdapter_AdjustQuotaStripe_NegativeStripeIsHeldUnclamped (0.00s)
+=== RUN   TestPgAdapter_DecrementOrphanBytes_NoErrorOnZero
+--- PASS: TestPgAdapter_DecrementOrphanBytes_NoErrorOnZero (0.00s)
+=== RUN   TestPgAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState
+--- PASS: TestPgAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState (0.00s)
+=== RUN   TestPgAdapter_GetExistingCopiesForUpdate_ReportsUnencryptedCopy
+--- PASS: TestPgAdapter_GetExistingCopiesForUpdate_ReportsUnencryptedCopy (0.00s)
+=== RUN   TestPgAdapter_ImportObject_PreservesEncryptionMetadata
+--- PASS: TestPgAdapter_ImportObject_PreservesEncryptionMetadata (0.00s)
+=== RUN   TestPgAdapter_ImportObject_KeylessEncryptedRow
+--- PASS: TestPgAdapter_ImportObject_KeylessEncryptedRow (0.00s)
+=== RUN   TestPgAdapter_ImportObject_PlaintextStaysPlaintext
+--- PASS: TestPgAdapter_ImportObject_PlaintextStaysPlaintext (0.00s)
+=== RUN   TestStrPtr_NilWhenEmpty
+=== PAUSE TestStrPtr_NilWhenEmpty
+=== RUN   TestStrPtr_PointerWhenNonEmpty
+=== PAUSE TestStrPtr_PointerWhenNonEmpty
+=== RUN   TestInt64Ptr_NilWhenZero
+=== PAUSE TestInt64Ptr_NilWhenZero
+=== RUN   TestInt64Ptr_PointerWhenNonZero
+=== PAUSE TestInt64Ptr_PointerWhenNonZero
+=== RUN   TestDerefStr
+=== PAUSE TestDerefStr
+=== RUN   TestDerefInt64
+=== PAUSE TestDerefInt64
+=== RUN   TestPendingInsertParams_OmitsZeroOptionals
+=== PAUSE TestPendingInsertParams_OmitsZeroOptionals
+=== RUN   TestPendingInsertParams_SetsOptionalsWhenPresent
+=== PAUSE TestPendingInsertParams_SetsOptionalsWhenPresent
+=== RUN   TestPendingFromRow_NullableFieldsZeroedWhenNull
+=== PAUSE TestPendingFromRow_NullableFieldsZeroedWhenNull
+=== RUN   TestPendingFromRow_NullableFieldsDereferencedWhenSet
+=== PAUSE TestPendingFromRow_NullableFieldsDereferencedWhenSet
+=== RUN   TestExistingCopiesFromRows_EmptyInput
+=== PAUSE TestExistingCopiesFromRows_EmptyInput
+=== RUN   TestExistingCopiesFromRows_PreservesFields
+=== PAUSE TestExistingCopiesFromRows_PreservesFields
+=== RUN   TestObjectInsertParams_NilEnc
+=== PAUSE TestObjectInsertParams_NilEnc
+=== RUN   TestObjectInsertParams_EncryptedFields
+=== PAUSE TestObjectInsertParams_EncryptedFields
+=== RUN   TestObjectInsertParams_HashOnlyWithoutEncryption
+=== PAUSE TestObjectInsertParams_HashOnlyWithoutEncryption
+=== RUN   TestPgTxAdapter_SatisfiesCoreInterfaces
+=== PAUSE TestPgTxAdapter_SatisfiesCoreInterfaces
+=== RUN   TestWrapDBTX_NilCBReturnsInner
+=== PAUSE TestWrapDBTX_NilCBReturnsInner
+=== RUN   TestCBDBTX_ExecForwardsClosed
+=== PAUSE TestCBDBTX_ExecForwardsClosed
+=== RUN   TestCBDBTX_ExecReturnsSentinelWhenOpen
+=== PAUSE TestCBDBTX_ExecReturnsSentinelWhenOpen
+=== RUN   TestCBDBTX_QueryReturnsSentinelWhenOpen
+=== PAUSE TestCBDBTX_QueryReturnsSentinelWhenOpen
+=== RUN   TestCBDBTX_QueryRowReturnsErrRowWhenOpen
+=== PAUSE TestCBDBTX_QueryRowReturnsErrRowWhenOpen
+=== RUN   TestCBDBTX_AppErrorPassesThrough
+=== PAUSE TestCBDBTX_AppErrorPassesThrough
+=== RUN   TestStoreInt_ClaimPendingCleanups_ConcurrentDisjoint
+--- PASS: TestStoreInt_ClaimPendingCleanups_ConcurrentDisjoint (0.01s)
+=== RUN   TestStoreInt_ClaimPendingCleanups_ReclaimAfterGrace
+--- PASS: TestStoreInt_ClaimPendingCleanups_ReclaimAfterGrace (0.00s)
+=== RUN   TestStoreInt_CompleteCleanupItem_AtomicDecrement
+--- PASS: TestStoreInt_CompleteCleanupItem_AtomicDecrement (0.00s)
+=== RUN   TestStoreInt_CompleteCleanupItem_ClampsAtZero
+--- PASS: TestStoreInt_CompleteCleanupItem_ClampsAtZero (0.00s)
+=== RUN   TestStoreInt_RetryCleanupItem_ClearsClaim
+--- PASS: TestStoreInt_RetryCleanupItem_ClearsClaim (0.00s)
+=== RUN   TestStoreInt_ListCleanupDLQ_ScopeAndFields
+--- PASS: TestStoreInt_ListCleanupDLQ_ScopeAndFields (0.00s)
+=== RUN   TestStoreInt_RequeueCleanupDLQ_MovesRowsBack
+--- PASS: TestStoreInt_RequeueCleanupDLQ_MovesRowsBack (0.00s)
+=== RUN   TestDurationToInterval
+=== PAUSE TestDurationToInterval
+=== RUN   TestPgInsertPaths_PreserveRepresentation
+=== RUN   TestPgInsertPaths_PreserveRepresentation/RecordObject
+=== RUN   TestPgInsertPaths_PreserveRepresentation/RecordObjectAndClearPending
+=== RUN   TestPgInsertPaths_PreserveRepresentation/ImportObject
+--- PASS: TestPgInsertPaths_PreserveRepresentation (0.01s)
+    --- PASS: TestPgInsertPaths_PreserveRepresentation/RecordObject (0.00s)
+    --- PASS: TestPgInsertPaths_PreserveRepresentation/RecordObjectAndClearPending (0.00s)
+    --- PASS: TestPgInsertPaths_PreserveRepresentation/ImportObject (0.00s)
+=== RUN   TestPgPendingPromote_PreservesRepresentation
+--- PASS: TestPgPendingPromote_PreservesRepresentation (0.00s)
+=== RUN   TestPgRecordReplica_PreservesRepresentation
+=== RUN   TestPgRecordReplica_PreservesRepresentation/backend-a
+=== RUN   TestPgRecordReplica_PreservesRepresentation/backend-b
+--- PASS: TestPgRecordReplica_PreservesRepresentation (0.00s)
+    --- PASS: TestPgRecordReplica_PreservesRepresentation/backend-a (0.00s)
+    --- PASS: TestPgRecordReplica_PreservesRepresentation/backend-b (0.00s)
+=== RUN   TestPgLegacyRow_ReadsAsUncompressed
+--- PASS: TestPgLegacyRow_ReadsAsUncompressed (0.00s)
+=== RUN   TestStoreInt_CompressionListings_AreComplements
+--- PASS: TestStoreInt_CompressionListings_AreComplements (0.00s)
+=== RUN   TestStoreInt_CompressionListings_PageByCursor
+--- PASS: TestStoreInt_CompressionListings_PageByCursor (0.00s)
+=== RUN   TestStoreInt_MarkObjectCompressed_MovesQuotaAndEnvelope
+--- PASS: TestStoreInt_MarkObjectCompressed_MovesQuotaAndEnvelope (0.00s)
+=== RUN   TestStoreInt_MarkObjectCompressed_ClearsEncoding
+--- PASS: TestStoreInt_MarkObjectCompressed_ClearsEncoding (0.00s)
+=== RUN   TestStoreInt_CompressionStats_PerBackendTotals
+--- PASS: TestStoreInt_CompressionStats_PerBackendTotals (0.00s)
+=== RUN   TestStoreInt_MarkObjectEncrypted_AdjustsBytesUsed
+--- PASS: TestStoreInt_MarkObjectEncrypted_AdjustsBytesUsed (0.00s)
+=== RUN   TestStoreInt_MarkObjectDecrypted_AdjustsBytesUsed
+--- PASS: TestStoreInt_MarkObjectDecrypted_AdjustsBytesUsed (0.00s)
+=== RUN   TestStoreInt_MarkObjectEncrypted_ZeroDeltaNoOp
+--- PASS: TestStoreInt_MarkObjectEncrypted_ZeroDeltaNoOp (0.00s)
+=== RUN   TestStoreInt_MarkObjectEncrypted_BatchSumsCorrectly
+--- PASS: TestStoreInt_MarkObjectEncrypted_BatchSumsCorrectly (0.01s)
+=== RUN   TestLifecycleInt_TagFilterEndToEnd
+=== RUN   TestLifecycleInt_TagFilterEndToEnd/one_tag_expires_only_what_carries_it
+2026/09/07 21:05:55 INFO audit audit=true event=lifecycle.delete key=TestLifecycleInt_TagFilterEndToEnd/staging-infra prefix=TestLifecycleInt_TagFilterEndToEnd/ expiration_days=-1
+2026/09/07 21:05:55 INFO audit audit=true event=lifecycle.delete key=TestLifecycleInt_TagFilterEndToEnd/staging-only prefix=TestLifecycleInt_TagFilterEndToEnd/ expiration_days=-1
+=== RUN   TestLifecycleInt_TagFilterEndToEnd/two_tags_expire_only_their_intersection
+2026/09/07 21:05:55 INFO audit audit=true event=lifecycle.delete key=TestLifecycleInt_TagFilterEndToEnd/staging-infra prefix=TestLifecycleInt_TagFilterEndToEnd/ expiration_days=-1
+=== RUN   TestLifecycleInt_TagFilterEndToEnd/a_rule_matching_nothing_deletes_nothing
+=== RUN   TestLifecycleInt_TagFilterEndToEnd/a_tags-only_rule_reaches_across_prefixes
+2026/09/07 21:05:55 INFO audit audit=true event=lifecycle.delete key=TestLifecycleInt_TagFilterEndToEnd/staging-infra prefix="" expiration_days=-1
+--- PASS: TestLifecycleInt_TagFilterEndToEnd (0.01s)
+    --- PASS: TestLifecycleInt_TagFilterEndToEnd/one_tag_expires_only_what_carries_it (0.00s)
+    --- PASS: TestLifecycleInt_TagFilterEndToEnd/two_tags_expire_only_their_intersection (0.00s)
+    --- PASS: TestLifecycleInt_TagFilterEndToEnd/a_rule_matching_nothing_deletes_nothing (0.00s)
+    --- PASS: TestLifecycleInt_TagFilterEndToEnd/a_tags-only_rule_reaches_across_prefixes (0.00s)
+=== RUN   TestLifecycleInt_UnexpiredObjectsSurvive
+--- PASS: TestLifecycleInt_UnexpiredObjectsSurvive (0.00s)
+=== RUN   TestLifecycleInt_RulesAreIndependent
+2026/09/07 21:05:55 INFO audit audit=true event=lifecycle.delete key=TestLifecycleInt_RulesAreIndependent/by-prefix prefix=TestLifecycleInt_RulesAreIndependent/by-prefix expiration_days=-1
+2026/09/07 21:05:55 INFO audit audit=true event=lifecycle.delete key=TestLifecycleInt_RulesAreIndependent/by-tag prefix="" expiration_days=-1
+--- PASS: TestLifecycleInt_RulesAreIndependent (0.00s)
+=== RUN   TestListObjectsByPrefix_PlansIndexOnlyWithoutSort
+--- PASS: TestListObjectsByPrefix_PlansIndexOnlyWithoutSort (5.09s)
+=== RUN   TestStoreInt_ListObjects_ByteOrder
+    listobjects_collation_integration_test.go:131: database datcollate = "en_US.utf8"
+--- PASS: TestStoreInt_ListObjects_ByteOrder (0.01s)
+=== RUN   TestStoreInt_ListObjects_PaginationCoversEveryKeyOnce
+--- PASS: TestStoreInt_ListObjects_PaginationCoversEveryKeyOnce (0.01s)
+=== RUN   TestStoreInt_ListObjects_AgreesWithDelimitedOrder
+--- PASS: TestStoreInt_ListObjects_AgreesWithDelimitedOrder (0.01s)
+=== RUN   TestStoreInt_CountObjectsByPrefix_CountsKeysNotCopies
+--- PASS: TestStoreInt_CountObjectsByPrefix_CountsKeysNotCopies (0.00s)
+=== RUN   TestStoreInt_CountObjectsByPrefix_EmptyIsZero
+--- PASS: TestStoreInt_CountObjectsByPrefix_EmptyIsZero (0.00s)
+=== RUN   TestStoreInt_CountObjectsByPrefix_EscapesMetacharacters
+--- PASS: TestStoreInt_CountObjectsByPrefix_EscapesMetacharacters (0.00s)
+=== RUN   TestStoreInt_ListObjectsDelimited_GroupsAndLeaves
+--- PASS: TestStoreInt_ListObjectsDelimited_GroupsAndLeaves (0.01s)
+=== RUN   TestStoreInt_ListObjectsDelimited_PaginationNoDuplicate
+--- PASS: TestStoreInt_ListObjectsDelimited_PaginationNoDuplicate (0.01s)
+=== RUN   TestPendingInsertParams_NullableFieldsOmittedWhenZero
+=== PAUSE TestPendingInsertParams_NullableFieldsOmittedWhenZero
+=== RUN   TestPendingInsertParams_NullableFieldsSetWhenPresent
+=== PAUSE TestPendingInsertParams_NullableFieldsSetWhenPresent
+=== RUN   TestProvisioningInt_BucketRoundTrip
+--- PASS: TestProvisioningInt_BucketRoundTrip (0.00s)
+=== RUN   TestProvisioningInt_BucketWithoutCORS
+--- PASS: TestProvisioningInt_BucketWithoutCORS (0.00s)
+=== RUN   TestProvisioningInt_CredentialRoundTrip
+--- PASS: TestProvisioningInt_CredentialRoundTrip (0.00s)
+=== RUN   TestProvisioningInt_CredentialWithoutLabel
+--- PASS: TestProvisioningInt_CredentialWithoutLabel (0.00s)
+=== RUN   TestProvisioningInt_GrantRoundTrip
+--- PASS: TestProvisioningInt_GrantRoundTrip (0.00s)
+=== RUN   TestProvisioningInt_DeleteUserRefusedWhileCredentialsExist
+--- PASS: TestProvisioningInt_DeleteUserRefusedWhileCredentialsExist (0.00s)
+=== RUN   TestProvisioningInt_DeleteUserRefusedWhileGrantsExist
+--- PASS: TestProvisioningInt_DeleteUserRefusedWhileGrantsExist (0.00s)
+=== RUN   TestProvisioningInt_DeleteGrantLeavesSiblings
+--- PASS: TestProvisioningInt_DeleteGrantLeavesSiblings (0.00s)
+=== RUN   TestProvisioningInt_DeleteCredentialLeavesSiblings
+--- PASS: TestProvisioningInt_DeleteCredentialLeavesSiblings (0.00s)
+=== RUN   TestStoreInt_ListObjectsByBackendKeyAsc_ByteOrder
+    reconcile_collation_integration_test.go:85: database datcollate = "en_US.utf8"
+--- PASS: TestStoreInt_ListObjectsByBackendKeyAsc_ByteOrder (0.01s)
+=== RUN   TestStoreInt_ReconcileConverges_AdversarialKeys
+--- PASS: TestStoreInt_ReconcileConverges_AdversarialKeys (0.01s)
+=== RUN   TestToFatObjectLocations_AllFieldsPopulated
+=== PAUSE TestToFatObjectLocations_AllFieldsPopulated
+=== RUN   TestToFatObjectLocations_NilNullableFields
+=== PAUSE TestToFatObjectLocations_NilNullableFields
+=== RUN   TestToFatObjectLocations_PartialNilFields
+=== PAUSE TestToFatObjectLocations_PartialNilFields
+=== RUN   TestToFatObjectLocations_EveryRowType
+=== PAUSE TestToFatObjectLocations_EveryRowType
+=== RUN   TestToSlimObjectLocations_EveryRowType
+=== PAUSE TestToSlimObjectLocations_EveryRowType
+=== RUN   TestToSlimObjectLocations_PreservesOrder
+=== PAUSE TestToSlimObjectLocations_PreservesOrder
+=== RUN   TestStoreInt_WithAdvisoryLock_AcquiresAndRunsFn
+--- PASS: TestStoreInt_WithAdvisoryLock_AcquiresAndRunsFn (0.00s)
+=== RUN   TestStoreInt_WithAdvisoryLock_PropagatesFnError
+--- PASS: TestStoreInt_WithAdvisoryLock_PropagatesFnError (0.00s)
+=== RUN   TestStoreInt_WithAdvisoryLock_ConcurrentExclusivity
+--- PASS: TestStoreInt_WithAdvisoryLock_ConcurrentExclusivity (0.00s)
+=== RUN   TestStoreInt_WithAdvisoryLock_ReleasedOnPanic
+--- PASS: TestStoreInt_WithAdvisoryLock_ReleasedOnPanic (0.00s)
+=== RUN   TestStoreInt_GetObjectsWithoutHash
+--- PASS: TestStoreInt_GetObjectsWithoutHash (0.00s)
+=== RUN   TestStoreInt_GetLeastRecentlyScrubbedObjects
+--- PASS: TestStoreInt_GetLeastRecentlyScrubbedObjects (0.00s)
+=== RUN   TestStoreInt_NotificationsOutbox
+--- PASS: TestStoreInt_NotificationsOutbox (0.00s)
+=== RUN   TestStoreInt_UsageFlushAndRead
+--- PASS: TestStoreInt_UsageFlushAndRead (0.00s)
+=== RUN   TestStoreInt_PoolUsageFlushAndRead
+--- PASS: TestStoreInt_PoolUsageFlushAndRead (0.00s)
+=== RUN   TestStoreInt_PoolUsageIsScopedToPeriod
+--- PASS: TestStoreInt_PoolUsageIsScopedToPeriod (0.00s)
+=== RUN   TestStoreInt_GetMultipartUpload
+--- PASS: TestStoreInt_GetMultipartUpload (0.00s)
+=== RUN   TestStoreInt_RecordPartAndGetParts
+--- PASS: TestStoreInt_RecordPartAndGetParts (0.00s)
+=== RUN   TestStoreInt_CountActiveMultipartUploads
+--- PASS: TestStoreInt_CountActiveMultipartUploads (0.00s)
+=== RUN   TestStoreInt_ListMultipartUploads
+--- PASS: TestStoreInt_ListMultipartUploads (0.00s)
+=== RUN   TestStoreInt_GetMultipartUploadsByBackend
+--- PASS: TestStoreInt_GetMultipartUploadsByBackend (0.00s)
+=== RUN   TestStoreInt_GetStaleMultipartUploads
+--- PASS: TestStoreInt_GetStaleMultipartUploads (0.00s)
+=== RUN   TestStoreInt_RecordPart_RejectsInvalidPartNumber
+--- PASS: TestStoreInt_RecordPart_RejectsInvalidPartNumber (0.00s)
+=== RUN   TestStoreInt_RecordPart_PreservesEncryptionFields
+--- PASS: TestStoreInt_RecordPart_PreservesEncryptionFields (0.00s)
+=== RUN   TestStoreInt_ListBackendQuotaUsage
+--- PASS: TestStoreInt_ListBackendQuotaUsage (0.00s)
+=== RUN   TestStoreInt_GetQuotaStats
+--- PASS: TestStoreInt_GetQuotaStats (0.00s)
+=== RUN   TestStoreInt_GetObjectCounts_GetActiveMultipartCounts
+--- PASS: TestStoreInt_GetObjectCounts_GetActiveMultipartCounts (0.00s)
+=== RUN   TestStoreInt_GetUnverifiedObjectCounts
+--- PASS: TestStoreInt_GetUnverifiedObjectCounts (0.00s)
+=== RUN   TestStoreInt_ReplicationQueries
+--- PASS: TestStoreInt_ReplicationQueries (0.00s)
+=== RUN   TestStoreInt_EncryptionAdminLifecycle
+--- PASS: TestStoreInt_EncryptionAdminLifecycle (0.00s)
+=== RUN   TestStoreInt_CleanupQueueLifecycle
+--- PASS: TestStoreInt_CleanupQueueLifecycle (0.00s)
+=== RUN   TestStoreInt_ListExpiredObjects
+--- PASS: TestStoreInt_ListExpiredObjects (0.00s)
+=== RUN   TestStoreInt_ImportSuppressedByPendingCleanup
+--- PASS: TestStoreInt_ImportSuppressedByPendingCleanup (0.00s)
+=== RUN   TestStoreInt_ListExpiredObjectsTagFilter
+=== RUN   TestStoreInt_ListExpiredObjectsTagFilter/no_filter_selects_every_object_once
+=== RUN   TestStoreInt_ListExpiredObjectsTagFilter/one_tag
+=== RUN   TestStoreInt_ListExpiredObjectsTagFilter/two_tags_select_the_intersection
+=== RUN   TestStoreInt_ListExpiredObjectsTagFilter/a_tag_the_objects_carry_with_a_different_value_matches_nothing
+=== RUN   TestStoreInt_ListExpiredObjectsTagFilter/keys_and_values_are_not_matched_independently
+=== RUN   TestStoreInt_ListExpiredObjectsTagFilter/cutoff_still_applies_alongside_the_tags
+--- PASS: TestStoreInt_ListExpiredObjectsTagFilter (0.01s)
+    --- PASS: TestStoreInt_ListExpiredObjectsTagFilter/no_filter_selects_every_object_once (0.00s)
+    --- PASS: TestStoreInt_ListExpiredObjectsTagFilter/one_tag (0.00s)
+    --- PASS: TestStoreInt_ListExpiredObjectsTagFilter/two_tags_select_the_intersection (0.00s)
+    --- PASS: TestStoreInt_ListExpiredObjectsTagFilter/a_tag_the_objects_carry_with_a_different_value_matches_nothing (0.00s)
+    --- PASS: TestStoreInt_ListExpiredObjectsTagFilter/keys_and_values_are_not_matched_independently (0.00s)
+    --- PASS: TestStoreInt_ListExpiredObjectsTagFilter/cutoff_still_applies_alongside_the_tags (0.00s)
+=== RUN   TestStoreInt_ListObjectsByBackendKeyAsc
+--- PASS: TestStoreInt_ListObjectsByBackendKeyAsc (0.00s)
+=== RUN   TestStoreInt_GetObjectBackendsForKeys_EmptyInput
+--- PASS: TestStoreInt_GetObjectBackendsForKeys_EmptyInput (0.00s)
+=== RUN   TestStoreInt_GetObjectBackendsForKeys_GroupsByKey
+--- PASS: TestStoreInt_GetObjectBackendsForKeys_GroupsByKey (0.01s)
+=== RUN   TestStoreInt_DeleteObjectsBatch_EmptyInput
+--- PASS: TestStoreInt_DeleteObjectsBatch_EmptyInput (0.00s)
+=== RUN   TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas
+--- PASS: TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas (0.01s)
+=== RUN   TestStoreInt_VerifySchemaVersion
+--- PASS: TestStoreInt_VerifySchemaVersion (0.00s)
+=== RUN   TestStoreInt_VerifySchemaVersion_OlderThanExpected
+--- PASS: TestStoreInt_VerifySchemaVersion_OlderThanExpected (0.00s)
+=== RUN   TestStoreInt_VerifySchemaVersion_NewerThanExpected
+--- PASS: TestStoreInt_VerifySchemaVersion_NewerThanExpected (0.00s)
+=== RUN   TestStoreInt_ScrubQueue_FreshWritesDoNotJumpTheQueue
+--- PASS: TestStoreInt_ScrubQueue_FreshWritesDoNotJumpTheQueue (0.01s)
+=== RUN   TestStoreInt_ScrubQueue_IndexMatchesQuery
+--- PASS: TestStoreInt_ScrubQueue_IndexMatchesQuery (0.00s)
+=== RUN   TestStoreInt_ScrubQueue_BackendFilter
+--- PASS: TestStoreInt_ScrubQueue_BackendFilter (0.01s)
+=== RUN   TestStoreInt_CountUnencryptedLocations
+--- PASS: TestStoreInt_CountUnencryptedLocations (0.23s)
+=== RUN   TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp
+--- PASS: TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp (0.00s)
+=== RUN   TestStoreInt_IntegrityCoverage_CountsNeverVerifiedCopies
+--- PASS: TestStoreInt_IntegrityCoverage_CountsNeverVerifiedCopies (0.00s)
+=== RUN   TestNewStore_PingFailureSurfacesHostAndRemediation
+=== PAUSE TestNewStore_PingFailureSurfacesHostAndRemediation
+=== RUN   TestStoreInt_CountObjectTags_MatchesTheSetSize
+--- PASS: TestStoreInt_CountObjectTags_MatchesTheSetSize (0.00s)
+=== RUN   TestStoreInt_CountObjectTags_UntaggedAndUnknown
+--- PASS: TestStoreInt_CountObjectTags_UntaggedAndUnknown (0.00s)
+=== RUN   TestStoreInt_ObjectTags_ReplaceAndRead
+--- PASS: TestStoreInt_ObjectTags_ReplaceAndRead (0.00s)
+=== RUN   TestStoreInt_ObjectTags_DuplicateKeyInsertFails
+--- PASS: TestStoreInt_ObjectTags_DuplicateKeyInsertFails (0.00s)
+=== RUN   TestStoreInt_ObjectTags_BatchClearEmptyList
+--- PASS: TestStoreInt_ObjectTags_BatchClearEmptyList (0.00s)
+=== RUN   TestStoreInt_ObjectTags_LookupIndexAnswersReverseQuery
+--- PASS: TestStoreInt_ObjectTags_LookupIndexAnswersReverseQuery (0.00s)
+=== RUN   TestStoreInt_ObjectTags_ReplaceIsNotAMerge
+--- PASS: TestStoreInt_ObjectTags_ReplaceIsNotAMerge (0.00s)
+=== RUN   TestStoreInt_ObjectTags_UntaggedReadsEmpty
+--- PASS: TestStoreInt_ObjectTags_UntaggedReadsEmpty (0.00s)
+=== RUN   TestStoreInt_ObjectTags_DeleteRemovesSet
+--- PASS: TestStoreInt_ObjectTags_DeleteRemovesSet (0.00s)
+=== RUN   TestStoreInt_ObjectTags_OverwriteClearsSet
+--- PASS: TestStoreInt_ObjectTags_OverwriteClearsSet (0.00s)
+=== RUN   TestStoreInt_ObjectTags_DeleteObjectCascades
+--- PASS: TestStoreInt_ObjectTags_DeleteObjectCascades (0.00s)
+=== RUN   TestStoreInt_ObjectTags_BatchDeleteCascades
+--- PASS: TestStoreInt_ObjectTags_BatchDeleteCascades (0.00s)
+=== RUN   TestStoreInt_ObjectTags_ReplicaRemovalKeepsTags
+--- PASS: TestStoreInt_ObjectTags_ReplicaRemovalKeepsTags (0.00s)
+=== RUN   TestStoreInt_ReconcileUsage_CorrectsDrift
+--- PASS: TestStoreInt_ReconcileUsage_CorrectsDrift (0.00s)
+=== CONT  TestInt64Ptr_NilWhenZero
+=== CONT  TestPgTxAdapter_SatisfiesCoreInterfaces
+--- PASS: TestInt64Ptr_NilWhenZero (0.00s)
+=== CONT  TestObjectInsertParams_EncryptedFields
+=== CONT  TestDerefInt64
+=== CONT  TestToFatObjectLocations_AllFieldsPopulated
+=== CONT  TestPendingInsertParams_OmitsZeroOptionals
+=== CONT  TestPendingFromRow_NullableFieldsDereferencedWhenSet
+=== CONT  TestStrPtr_PointerWhenNonEmpty
+=== CONT  TestToFatObjectLocations_EveryRowType
+=== CONT  TestWrapDBTX_NilCBReturnsInner
+=== CONT  TestObjectInsertParams_NilEnc
+=== CONT  TestExistingCopiesFromRows_EmptyInput
+=== CONT  TestCBDBTX_QueryRowReturnsErrRowWhenOpen
+=== CONT  TestObjectInsertParams_HashOnlyWithoutEncryption
+=== CONT  TestCBDBTX_ExecForwardsClosed
+=== CONT  TestPendingInsertParams_SetsOptionalsWhenPresent
+=== CONT  TestNewStore_PingFailureSurfacesHostAndRemediation
+=== CONT  TestCBDBTX_ExecReturnsSentinelWhenOpen
+=== CONT  TestCBDBTX_AppErrorPassesThrough
+2026/09/07 21:06:01 WARN opened: failure threshold reached component=circuit_breaker breaker_name=test name=test from=closed to=open failures=1 threshold=1
+=== CONT  TestToFatObjectLocations_NilNullableFields
+2026/09/07 21:06:01 WARN opened: failure threshold reached component=circuit_breaker breaker_name=test name=test from=closed to=open failures=1 threshold=1
+=== CONT  TestToSlimObjectLocations_PreservesOrder
+=== CONT  TestPendingInsertParams_NullableFieldsSetWhenPresent
+=== CONT  TestToFatObjectLocations_PartialNilFields
+=== CONT  TestExistingCopiesFromRows_PreservesFields
+=== CONT  TestToSlimObjectLocations_EveryRowType
+=== CONT  TestPendingInsertParams_NullableFieldsOmittedWhenZero
+=== CONT  TestPendingFromRow_NullableFieldsZeroedWhenNull
+=== CONT  TestCBDBTX_QueryReturnsSentinelWhenOpen
+2026/09/07 21:06:01 WARN opened: failure threshold reached component=circuit_breaker breaker_name=test name=test from=closed to=open failures=1 threshold=1
+--- PASS: TestObjectInsertParams_EncryptedFields (0.00s)
+--- PASS: TestPgTxAdapter_SatisfiesCoreInterfaces (0.00s)
+=== CONT  TestInt64Ptr_PointerWhenNonZero
+--- PASS: TestDerefInt64 (0.00s)
+--- PASS: TestInt64Ptr_PointerWhenNonZero (0.00s)
+=== CONT  TestDerefStr
+--- PASS: TestDerefStr (0.00s)
+--- PASS: TestPendingInsertParams_OmitsZeroOptionals (0.00s)
+--- PASS: TestPendingFromRow_NullableFieldsDereferencedWhenSet (0.00s)
+=== CONT  TestStrPtr_NilWhenEmpty
+--- PASS: TestStrPtr_NilWhenEmpty (0.00s)
+=== CONT  TestDurationToInterval
+--- PASS: TestStrPtr_PointerWhenNonEmpty (0.00s)
+--- PASS: TestToFatObjectLocations_EveryRowType (0.00s)
+--- PASS: TestWrapDBTX_NilCBReturnsInner (0.00s)
+--- PASS: TestObjectInsertParams_NilEnc (0.00s)
+=== RUN   TestDurationToInterval/one_minute
+--- PASS: TestExistingCopiesFromRows_EmptyInput (0.00s)
+--- PASS: TestObjectInsertParams_HashOnlyWithoutEncryption (0.00s)
+--- PASS: TestPendingInsertParams_SetsOptionalsWhenPresent (0.00s)
+--- PASS: TestCBDBTX_ExecForwardsClosed (0.00s)
+--- PASS: TestCBDBTX_QueryRowReturnsErrRowWhenOpen (0.00s)
+--- PASS: TestCBDBTX_AppErrorPassesThrough (0.00s)
+--- PASS: TestToFatObjectLocations_NilNullableFields (0.00s)
+--- PASS: TestCBDBTX_ExecReturnsSentinelWhenOpen (0.00s)
+--- PASS: TestToFatObjectLocations_PartialNilFields (0.00s)
+=== RUN   TestDurationToInterval/one_hour
+--- PASS: TestToSlimObjectLocations_PreservesOrder (0.00s)
+--- PASS: TestPendingInsertParams_NullableFieldsOmittedWhenZero (0.00s)
+--- PASS: TestPendingInsertParams_NullableFieldsSetWhenPresent (0.00s)
+=== RUN   TestDurationToInterval/24_hours
+--- PASS: TestToSlimObjectLocations_EveryRowType (0.00s)
+--- PASS: TestPendingFromRow_NullableFieldsZeroedWhenNull (0.00s)
+--- PASS: TestExistingCopiesFromRows_PreservesFields (0.00s)
+--- PASS: TestCBDBTX_QueryReturnsSentinelWhenOpen (0.00s)
+=== RUN   TestDurationToInterval/zero
+--- PASS: TestToFatObjectLocations_AllFieldsPopulated (0.00s)
+=== RUN   TestDurationToInterval/sub-millisecond
+--- PASS: TestDurationToInterval (0.00s)
+    --- PASS: TestDurationToInterval/one_minute (0.00s)
+    --- PASS: TestDurationToInterval/one_hour (0.00s)
+    --- PASS: TestDurationToInterval/24_hours (0.00s)
+    --- PASS: TestDurationToInterval/zero (0.00s)
+    --- PASS: TestDurationToInterval/sub-millisecond (0.00s)
+--- PASS: TestNewStore_PingFailureSurfacesHostAndRemediation (2.00s)
+PASS
+ok  	github.com/afreidah/s3-orchestrator/internal/store/postgres	11.294s
+FAIL

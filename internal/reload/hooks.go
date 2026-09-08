@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/di"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/infra"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
@@ -137,18 +138,25 @@ type corsHook struct {
 
 func (*corsHook) Name() string { return "bucket_cors" }
 
-// Check compiles the replacement rule set and discards it, so a rule the
-// matcher cannot read aborts the reload before any hook has applied
-// anything and the running server keeps the rules it already had.
+// Check compiles the incoming file's rules and discards them, so a rule the
+// matcher cannot read aborts the reload before any hook has applied anything
+// and the running server keeps the rules it already had.
+//
+// Only the file's rules are checked. The store's were compiled once when the
+// provisioning API accepted them, and the merged set this hook applies from is
+// not assembled until bucketAuthHook runs, which is after every Check.
 func (*corsHook) Check(_, newCfg *config.Config) error {
 	if newCfg == nil {
 		return nil
 	}
-	_, err := cors.NewRegistry(newCfg.Buckets)
+	_, err := cors.NewRegistry(provisioning.Merge(newCfg.Buckets, &provisioning.Snapshot{}).Buckets)
 	return err
 }
 
-func (h *corsHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatus, error) {
+// Apply compiles from the merged set bucketAuthHook has just republished, so a
+// bucket created through the provisioning API keeps its rules across a reload
+// instead of having them dropped back to whatever the file declares.
+func (h *corsHook) Apply(_ context.Context, _, _ *config.Config) (HookStatus, error) {
 	res := di.Optional[*cors.Policy](h.inj)
 	if res.Failed() {
 		return HookFailed, resolutionError("CORS policy", res.Err)
@@ -156,7 +164,11 @@ func (h *corsHook) Apply(_ context.Context, _, newCfg *config.Config) (HookStatu
 	if res.Value == nil {
 		return HookSkipped, nil
 	}
-	rules, err := cors.NewRegistry(newCfg.Buckets)
+	declared := di.Optional[*provisioning.Declared](h.inj)
+	if declared.Failed() {
+		return HookFailed, resolutionError("declared buckets", declared.Err)
+	}
+	rules, err := cors.NewRegistry(declared.Value.Buckets())
 	if err != nil {
 		return HookFailed, err
 	}

@@ -70,6 +70,17 @@ type ProvisioningStore interface {
 	core.ProvisioningStore
 }
 
+// BucketMatcher reports whether an object key names a bucket the deployment
+// declares, counting both the config file and the store.
+// *provisioning.Declared satisfies it.
+//
+// Read rather than captured, so a bucket created through the provisioning API
+// becomes addressable through the object operations at the same moment it
+// becomes reachable over S3.
+type BucketMatcher interface {
+	HasPrefix(key string) bool
+}
+
 // NamespaceCounter answers how many objects live under a prefix, which is what
 // tells a bucket deletion whether the namespace it is about to drop still
 // addresses anything.

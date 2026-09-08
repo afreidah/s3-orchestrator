@@ -101,7 +101,7 @@ func objectsOver(t *testing.T, store ops.ObjectStore) *ops.Objects {
 	return ops.NewObjects(ops.ObjectsDeps{
 		Objects: opstest.NewMockObjectAPI(gomock.NewController(t)),
 		Store:   store,
-		Config:  ops.NewConfigStore(&config.Config{}),
+		Buckets: declaredBuckets(),
 	})
 }
 
@@ -120,6 +120,7 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 		OverRep:      workers.OverReplicationCleaner,
 		Rebalancer:   workers.Rebalancer,
 		Scrubber:     workers.Scrubber,
+		Declared:     declaredBuckets(),
 		Cfg:          &config.Config{},
 	})
 }

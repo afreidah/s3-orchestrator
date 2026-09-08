@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
@@ -80,18 +81,25 @@ func ProvideS3Server(i do.Injector) (*s3api.Server, error) {
 	return srv, nil
 }
 
-// ProvideCORS creates the browser CORS policy with the rules the config
-// declares, already compiled.
+// ProvideCORS creates the browser CORS policy with the rules every declared
+// bucket carries, already compiled.
 //
 // Registered whether or not any bucket carries rules: the middleware is a
 // pass-through for an empty rule set, and installing it unconditionally is
 // what lets a reload add the first rule without a restart.
+//
+// The registry is resolved first for its ordering: assembling it is what
+// publishes the declared set, and compiling from an unpublished one would drop
+// every stored bucket's rules until the next reload.
 func ProvideCORS(i do.Injector) (*cors.Policy, error) {
-	cfg, err := do.Invoke[*config.Config](i)
+	if _, err := do.Invoke[*auth.BucketRegistry](i); err != nil {
+		return nil, err
+	}
+	declared, err := do.Invoke[*provisioning.Declared](i)
 	if err != nil {
 		return nil, err
 	}
-	rules, err := cors.NewRegistry(cfg.Buckets)
+	rules, err := cors.NewRegistry(declared.Buckets())
 	if err != nil {
 		return nil, err
 	}
@@ -134,6 +142,7 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 	rebalancer := r.Resolve[*worker.Rebalancer]()
 	scrubber := r.Resolve[*worker.Scrubber]()
 	expirer := r.Resolve[*expiry.Manager]()
+	declared := r.Resolve[*provisioning.Declared]()
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -167,6 +176,7 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 		Expiry:       expirer,
 		Provisioning: stores,
 		Registry:     NewRegistryPublisher(i),
+		Declared:     declared,
 		Cfg:          cfg,
 	}), nil
 }
@@ -181,11 +191,13 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 	aggregator := r.Resolve[*dashboard.Aggregator]()
 	reconciler := r.Resolve[*reconcile.Manager]()
 	opsSvc := r.Resolve[*ops.Services]()
+	declared := r.Resolve[*provisioning.Declared]()
 	if r.err != nil {
 		return nil, r.err
 	}
 
 	return ui.New(&ui.Deps{
+		Buckets:       declared,
 		Dashboard:     aggregator,
 		Sync:          reconciler,
 		Objects:       opsSvc.Objects,
