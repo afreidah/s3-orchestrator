@@ -27,6 +27,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
   .ac-badge-multipart { background: #8957e522; color: #bc8cff; border: 1px solid #bc8cff55; }
   .ac-badge-usage { background: #9e6a0322; color: #d29922; border: 1px solid #d2992255; }
   .ac-badge-cleanup { background: #da363322; color: #f85149; border: 1px solid #f8514955; }
+  .ac-badge-provisioning { background: #2a9d7322; color: #4aaa8a; border: 1px solid #4aaa8a55; }
   #ac-tooltip p { font-size: 0.75rem; line-height: 1.4; color: #c9d1d9; margin-bottom: 0.35rem; }
   #ac-tooltip code { background: #21262d; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; color: #4aaa8a; }
   #ac-tooltip .ac-metric { color: #a7d5c1; font-style: italic; font-size: 0.7rem; }
@@ -191,6 +192,35 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '        TEXT last_error',
     '    }',
     '',
+    '    buckets {',
+    '        TEXT name PK',
+    '        INTEGER max_multipart_uploads',
+    '        JSONB cors',
+    '        TIMESTAMPTZ created_at',
+    '    }',
+    '',
+    '    users {',
+    '        TEXT id PK',
+    '        TEXT name',
+    '        TIMESTAMPTZ created_at',
+    '    }',
+    '',
+    '    credentials {',
+    '        TEXT access_key_id PK',
+    '        TEXT user_id FK',
+    '        TEXT secret',
+    '        TEXT label',
+    '        BOOLEAN disabled',
+    '        TIMESTAMPTZ created_at',
+    '        TIMESTAMPTZ last_used_at',
+    '    }',
+    '',
+    '    grants {',
+    '        TEXT user_id "PK, FK"',
+    '        TEXT bucket_name PK',
+    '        TIMESTAMPTZ created_at',
+    '    }',
+    '',
     '    backend_quotas ||--o{ backend_quota_stripes : "striped byte total"',
     '    backend_quotas ||--o{ object_locations : "tracks objects"',
     '    backend_quotas ||--o{ multipart_uploads : "tracks uploads"',
@@ -201,7 +231,9 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
     '    backend_quotas ||--o{ pending_objects : "in-flight intents"',
     '    cleanup_queue ||--o| cleanup_dlq : "graduates on retry exhaustion"',
     '    multipart_uploads ||--o{ multipart_parts : "upload parts"',
-    '    object_locations ||--o{ object_tags : "tag set, by object_key only"'
+    '    object_locations ||--o{ object_tags : "tag set, by object_key only"',
+    '    users ||--o{ credentials : "keypairs proving one identity"',
+    '    users ||--o{ grants : "buckets this identity reaches"'
   ].join('\n');
 
   mermaid.initialize({
@@ -438,6 +470,55 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
         '<p class="ac-idx"><b>Indexes:</b> PK on id &bull; idx_notification_outbox_pending (next_retry) WHERE attempts &lt; 10 (partial index)</p>' +
         '<p>Used by: <a href="../../guides/event-notifications/">event notifications</a> &mdash; emit() inserts rows, drainOnce() processes and delivers them via HTTP POST with optional HMAC signing.</p>' +
         '<p class="ac-metric">Metrics: notification_sent_total, notification_failed_total, notification_dropped_total, notification_queue_depth</p>'
+    },
+    buckets: {
+      title: 'buckets',
+      badge: 'provisioning', badgeText: 'provisioning',
+      body: '<p>Virtual buckets declared through the provisioning API rather than the config file. Both sources are live at once and merged into one view on every registry assembly; a name the config file also declares wins, and the stored row is dropped from the merge and reported as a notice.</p>' +
+        '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
+        '<tr><td class="pk">name</td><td>TEXT</td><td>PRIMARY KEY; the namespace an object key is prefixed with</td></tr>' +
+        '<tr><td>max_multipart_uploads</td><td>INTEGER</td><td>Cap on concurrent multipart uploads; 0 is unlimited, mirroring the config field</td></tr>' +
+        '<tr><td>cors</td><td>JSONB</td><td>Browser CORS rule set, validated when the API stores it so an unreadable rule cannot break a later registry rebuild</td></tr>' +
+        '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Declaration time</td></tr></table>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on name</p>' +
+        '<p>Used by: <a href="../../godoc/provisioning/">provisioning.LoadMerged</a> (read on every assembly) &bull; <code>ops.Provisioning</code> create and delete. A delete is refused while any object is stored under the name or any grant still names it, so dropping a namespace cannot strand bytes that nothing can reach.</p>'
+    },
+    users: {
+      title: 'users',
+      badge: 'provisioning', badgeText: 'provisioning',
+      body: '<p>The identity a credential proves. Credentials belong to a user rather than to a bucket, so one identity can hold several keypairs and reach several buckets, and rotating a key does not break the audit trail.</p>' +
+        '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
+        '<tr><td class="pk">id</td><td>TEXT</td><td>PRIMARY KEY; server-generated so it survives a rename and is what an audit record names</td></tr>' +
+        '<tr><td>name</td><td>TEXT</td><td>UNIQUE; the operator-facing label</td></tr>' +
+        '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Declaration time</td></tr></table>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on id &bull; UNIQUE on name</p>' +
+        '<p>Used by: <code>ops.Provisioning</code> create and delete. A delete is refused while the user still holds credentials or grants; the foreign keys below refuse it too, and the operation checks first so the caller is told which of the two is in the way rather than seeing a constraint violation.</p>'
+    },
+    credentials: {
+      title: 'credentials',
+      badge: 'provisioning', badgeText: 'provisioning',
+      body: '<p>One keypair proving one user. Several rows may name the same user, which is what lets a key be replaced while its siblings keep working. The secret is stored in plaintext because SigV4 never sends it - the client derives a signing key from it and the orchestrator has to repeat that derivation - so a one-way hash is not an option.</p>' +
+        '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
+        '<tr><td class="pk">access_key_id</td><td>TEXT</td><td>PRIMARY KEY; the public half, sent on every request</td></tr>' +
+        '<tr><td class="fk">user_id</td><td>TEXT</td><td>REFERENCES users(id) ON DELETE RESTRICT</td></tr>' +
+        '<tr><td>secret</td><td>TEXT</td><td>The signing secret. Returned once at creation and never read back into any listing</td></tr>' +
+        '<tr><td>label</td><td>TEXT</td><td>Free text recording what holds the keypair</td></tr>' +
+        '<tr><td>disabled</td><td>BOOLEAN</td><td>A disabled row never reaches the registry, so it authenticates nothing while the record of what it did survives</td></tr>' +
+        '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Issue time</td></tr>' +
+        '<tr><td>last_used_at</td><td>TIMESTAMPTZ</td><td>NULL for a keypair that has never authenticated</td></tr></table>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on access_key_id &bull; FK on user_id</p>' +
+        '<p>Used by: <a href="../../godoc/auth/">auth.BucketRegistry</a> (read into the request-time lookup on every assembly) &bull; <code>ops.Provisioning</code> issue and revoke. A revoke rebuilds and swaps the registry before it returns, so the keypair stops authenticating on the next request rather than the next restart.</p>'
+    },
+    grants: {
+      title: 'grants',
+      badge: 'provisioning', badgeText: 'provisioning',
+      body: '<p>Pairs a user with a bucket it may reach. This is what authorises a request: the credential proves the user, and the user is asked whether it holds a grant on the bucket in the URL path. A user holding none authenticates and reaches nothing.</p>' +
+        '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
+        '<tr><td class="pk fk">user_id</td><td>TEXT</td><td>PRIMARY KEY part; REFERENCES users(id) ON DELETE RESTRICT</td></tr>' +
+        '<tr><td class="pk">bucket_name</td><td>TEXT</td><td>PRIMARY KEY part. Deliberately no foreign key: a config-declared bucket has no row here to reference</td></tr>' +
+        '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Grant time</td></tr></table>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK on (user_id, bucket_name)</p>' +
+        '<p>Used by: <a href="../../godoc/provisioning/">provisioning.Merge</a> (joins each user onto the buckets it reaches). A grant naming a bucket neither source declares is reported as a notice and skipped rather than failing startup, since a bucket can leave the config file while the grant stays behind.</p>'
     }
   };
 
@@ -501,7 +582,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
       // Mermaid ER diagram entity IDs follow the pattern: entity-TABLE_NAME-N
       // or just the table name directly. Try to extract the table name.
       var tableName = null;
-      var tableNames = ['backend_quotas', 'backend_quota_stripes', 'object_locations', 'object_tags', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'backend_request_usage', 'cleanup_queue', 'cleanup_dlq', 'pending_objects', 'notification_outbox'];
+      var tableNames = ['backend_quotas', 'backend_quota_stripes', 'object_locations', 'object_tags', 'multipart_uploads', 'multipart_parts', 'backend_usage', 'backend_request_usage', 'cleanup_queue', 'cleanup_dlq', 'pending_objects', 'notification_outbox', 'buckets', 'users', 'credentials', 'grants'];
       for (var i = 0; i < tableNames.length; i++) {
         if (gId.indexOf(tableNames[i]) !== -1) {
           tableName = tableNames[i];
@@ -550,6 +631,10 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | **cleanup_dlq** | Dead-letter for cleanup_queue rows that exhausted retries | `id` (auto-increment) |
 | **pending_objects** | In-flight PUT intents (PUT-before-COMMIT write-path crash recovery) | `intent_id` (UUID) |
 | **notification_outbox** | Durable webhook event delivery queue | `id` (auto-increment) |
+| **buckets** | Virtual buckets declared through the provisioning API rather than the config file | `name` |
+| **users** | The identity a credential proves, which grants are held by | `id` |
+| **credentials** | One keypair proving one user; several may name the same user | `access_key_id` |
+| **grants** | Pairs a user with a bucket it may reach | `(user_id, bucket_name)` |
 
 ### Schema Migrations
 
@@ -581,3 +666,4 @@ Entity-relationship diagram of the PostgreSQL metadata store. **Hover over any t
 | `00024_request_pool_usage` | Add `backend_request_usage`, counting calls per named request budget. `backend_usage.api_requests` counts every call, which reports correctly but admits wrongly: providers meter operation classes separately, and charging a delete against an upload budget locks a backend out while its read allowance sits unused. Pools are additive, so these rows do not sum to `api_requests` |
 | `00025_striped_quota_counters` | Add `backend_quota_stripes` and move `bytes_used` onto it. One row per backend meant every write charging a backend took the same row lock and serialized behind the others; a writer now picks its stripe from the object key, so charge and credit for one key meet on one row while different keys never wait. Stripes are signed rather than clamped, because the backfill puts pre-existing bytes on stripe zero and deleting one of those objects credits whichever stripe its key hashes to |
 | `00026_pending_intent_role` | Add `role` to `pending_objects` (`primary` or `companion`, defaulting to primary) and `idx_pending_objects_key`. An intent had meant one thing - this write replaces what the key held - and a write placing copies on several backends at once needs the other, since promoting one of its intents must not delete the copies its siblings committed. The index is for the by-key clear every commit now runs |
+| `00027_bucket_provisioning` | Add `buckets`, `users`, `credentials` and `grants`, so a virtual bucket and the credentials reaching it can be declared without a config edit and a reload. A credential resolves to a user holding grants rather than carrying a bucket column, because scoped access adds grant types and more than one grant per user; putting the bucket on the credential would have to be unwound to get there. `grants.bucket_name` deliberately carries no foreign key: a config-declared bucket has no row to reference |
