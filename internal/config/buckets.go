@@ -188,6 +188,19 @@ func validateCORSRule(bucketPrefix string, idx int, rule *CORSRule) []error {
 	return errs
 }
 
+// ValidateCORS checks a bucket's rule set outside a config file, for the
+// provisioning API, which accepts the same shapes over the wire and has to
+// refuse a rule the matcher cannot read before it reaches the store. Messages
+// are prefixed as the bucket's own rules rather than by config path, since the
+// caller has no file to point at.
+func ValidateCORS(rules []CORSRule) []error {
+	var errs []error
+	for i := range rules {
+		errs = append(errs, validateCORSRule("bucket", i, &rules[i])...)
+	}
+	return errs
+}
+
 // validateCredential checks a single credential entry within a bucket.
 func validateCredential(bucketPrefix string, idx int, cred *CredentialConfig, seen *seenCredentials) []error {
 	prefix := fmt.Sprintf("%s.credentials[%d]", bucketPrefix, idx)

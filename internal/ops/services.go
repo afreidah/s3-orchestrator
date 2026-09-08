@@ -42,6 +42,7 @@ type Deps struct {
 	Scrubber     ScrubberOps
 	Provisioning ProvisioningStore
 	Registry     RegistryPublisher
+	Declared     BucketMatcher
 	Cfg          *config.Config
 }
 
@@ -71,7 +72,7 @@ func New(d *Deps) *Services {
 		Objects: NewObjects(ObjectsDeps{
 			Objects: d.Objects,
 			Store:   d.Store,
-			Config:  cfg,
+			Buckets: d.Declared,
 		}),
 		Integrity: NewIntegrity(IntegrityDeps{
 			Scrubber:     d.Scrubber,

@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 )
 
 // -------------------------------------------------------------------------
@@ -26,7 +27,7 @@ import (
 // compile error so cases stay free of error plumbing.
 func registryWith(t *testing.T, rules ...config.CORSRule) *Registry {
 	t.Helper()
-	reg, err := NewRegistry([]config.BucketConfig{{Name: "photos", CORS: rules}})
+	reg, err := NewRegistry([]provisioning.Bucket{{Name: "photos", CORS: rules}})
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
@@ -94,7 +95,7 @@ func TestCompilePattern_RejectsSecondWildcard(t *testing.T) {
 // misses immediately.
 func TestNewRegistry_SkipsBucketsWithoutRules(t *testing.T) {
 	t.Parallel()
-	reg, err := NewRegistry([]config.BucketConfig{
+	reg, err := NewRegistry([]provisioning.Bucket{
 		{Name: "plain"},
 		{Name: "photos", CORS: []config.CORSRule{{
 			AllowedOrigins: []string{"https://app.example.com"},
@@ -117,7 +118,7 @@ func TestNewRegistry_SkipsBucketsWithoutRules(t *testing.T) {
 // operator with no other context.
 func TestNewRegistry_NamesTheOffendingRule(t *testing.T) {
 	t.Parallel()
-	_, err := NewRegistry([]config.BucketConfig{{Name: "photos", CORS: []config.CORSRule{
+	_, err := NewRegistry([]provisioning.Bucket{{Name: "photos", CORS: []config.CORSRule{
 		{AllowedOrigins: []string{"https://ok.example.com"}, AllowedMethods: []string{"GET"}},
 		{AllowedOrigins: []string{"https://*.*.example.com"}, AllowedMethods: []string{"GET"}},
 	}}})

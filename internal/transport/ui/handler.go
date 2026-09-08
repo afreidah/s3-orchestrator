@@ -31,7 +31,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -82,6 +81,14 @@ type DashboardOps interface {
 	GetDirectoryChildren(ctx context.Context, prefix, startAfter string, maxKeys int) (*core.DirectoryListResult, error)
 }
 
+// DeclaredBuckets is the virtual bucket set the UI resolves a browsed key
+// against, covering both the config file and the store.
+// *provisioning.Declared satisfies it.
+type DeclaredBuckets interface {
+	HasPrefix(key string) bool
+	Names() []string
+}
+
 // Deps holds the dependencies New requires.
 type Deps struct {
 	Dashboard     DashboardOps
@@ -94,6 +101,7 @@ type Deps struct {
 	Encryption    *ops.Encryption
 	Compression   *ops.Compression
 	DBHealthy     func() bool
+	Buckets       DeclaredBuckets
 	Cfg           *config.Config
 	LogBuffer     *telemetry.LogBuffer
 	LoginThrottle *httputil.LoginThrottle
@@ -112,6 +120,7 @@ type Handler struct {
 	encryption     *ops.Encryption
 	compression    *ops.Compression
 	dbHealthy      func() bool
+	buckets        DeclaredBuckets
 	cfg            syncutil.AtomicConfig[config.Config]
 	templates      *template.Template
 	logBuffer      *telemetry.LogBuffer
@@ -140,6 +149,7 @@ func New(d *Deps) *Handler {
 	must.NotNil("d.Rebalance", d.Rebalance)
 	must.NotNil("d.Encryption", d.Encryption)
 	must.NotNil("d.Compression", d.Compression)
+	must.NotNil("d.Buckets", d.Buckets)
 	must.NotNil("d.Cfg", d.Cfg)
 	h := &Handler{
 		log:            slog.Default().With(logfmt.Component("ui")),
@@ -153,6 +163,7 @@ func New(d *Deps) *Handler {
 		encryption:     d.Encryption,
 		compression:    d.Compression,
 		dbHealthy:      d.DBHealthy,
+		buckets:        d.Buckets,
 		templates:      loadTemplates(),
 		logBuffer:      d.LogBuffer,
 		loginThrottle:  d.LoginThrottle,
@@ -192,15 +203,11 @@ func (h *Handler) clientIP(r *http.Request) string {
 	return httputil.ExtractClientIP(r, h.trustedProxies)
 }
 
-// validBucketPrefix checks whether the key starts with a configured virtual bucket name.
+// validBucketPrefix checks whether the key starts with a declared virtual
+// bucket name, counting both the config file and the store so a bucket created
+// through the provisioning API is browsable here.
 func (h *Handler) validBucketPrefix(key string) bool {
-	cfg := h.cfg.Load()
-	for _, b := range cfg.Buckets {
-		if strings.HasPrefix(key, b.Name+"/") {
-			return true
-		}
-	}
-	return false
+	return h.buckets.HasPrefix(key)
 }
 
 // validBackend checks whether the backend name exists in config.

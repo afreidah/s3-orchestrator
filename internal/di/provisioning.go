@@ -44,6 +44,11 @@ func AssembleBucketRegistry(ctx context.Context, i do.Injector, cfg *config.Conf
 		return nil, err
 	}
 
+	declared, err := do.Invoke[*provisioning.Declared](i)
+	if err != nil {
+		return nil, err
+	}
+
 	view, err := provisioning.LoadMerged(ctx, store, cfg.Buckets)
 	if err != nil {
 		return nil, err
@@ -53,6 +58,12 @@ func AssembleBucketRegistry(ctx context.Context, i do.Injector, cfg *config.Conf
 	if err != nil {
 		return nil, err
 	}
+
+	// Published before the registry is returned, so nothing can observe a
+	// bucket as reachable over S3 while the admin endpoints, the CORS policy
+	// and the reconciler still believe it does not exist.
+	declared.Set(view.Buckets)
+
 	logAssemblyNotices(ctx, registry.Notices())
 	return registry, nil
 }
