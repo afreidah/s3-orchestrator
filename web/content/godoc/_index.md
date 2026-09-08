@@ -107,6 +107,13 @@ weight: 40
       <p>SigV4 request signing, presigned URLs, and credential validation.</p>
     </div>
   </a>
+  <a class="landing-card" href="provisioning/">
+    <i class="fas fa-id-card landing-card-icon" style="color: #86efac;"></i>
+    <div>
+      <strong>provisioning</strong>
+      <p>Merges the buckets and credentials the config file and the store each declare into one view.</p>
+    </div>
+  </a>
   <a class="landing-card" href="httputil/">
     <i class="fas fa-shield-alt landing-card-icon" style="color: #f9a8d4;"></i>
     <div>

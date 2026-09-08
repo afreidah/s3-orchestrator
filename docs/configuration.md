@@ -82,9 +82,9 @@ buckets:
 
   - name: "app2-files"
     credentials:
-      - access_key_id: "AKID_APP2_WRITER"
+      - access_key_id: "AKID_APP2_INGEST"
         secret_access_key: "secret2"
-      - access_key_id: "AKID_APP2_READER"
+      - access_key_id: "AKID_APP2_ANALYTICS"
         secret_access_key: "secret3"
 ```
 
@@ -106,7 +106,9 @@ openssl rand -base64 30
 - Each credential needs either `access_key_id` + `secret_access_key` (SigV4) or `token` (legacy).
 - Each CORS rule needs at least one origin and one method, methods must be ones the S3 surface implements, an origin may carry at most one `*`, and `max_age` must not be negative.
 
-Multiple credentials on the same bucket let different services share a namespace with independent keys. This is useful when you want a writer service and a reader service accessing the same files.
+Multiple credentials on the same bucket let different services share a namespace with independent keys. Every credential reaching a bucket has identical access to it - there is no read-only credential, and both keys above can list, upload, overwrite and delete everything under `app2-files`. The names say which service holds each key, not what it may do with it.
+
+What separate keys buy is independent rotation and revocation, and an audit trail that attributes an action to the service that took it. Scoping access below the whole bucket is tracked in [#356](https://github.com/afreidah/s3-orchestrator/issues/356). See [Authentication](authentication.md#several-credentials-on-one-bucket).
 
 SigV4 credentials also support presigned URLs automatically. Clients can generate time-limited presigned URLs using any AWS SDK presign client — no additional configuration is needed on the orchestrator side.
 
