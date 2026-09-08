@@ -388,7 +388,7 @@ Spans are emitted for every HTTP request, manager operation, and backend S3 call
 
 All logs are JSON to stdout. Key fields: `msg`, `level`, `error`, `backend`, `operation`.
 
-**Audit logs** are a subset of structured logs with `"audit": true`. Every S3 API request and significant internal operation emits an audit entry with a `request_id` for correlation. Filter audit entries in your log pipeline with a JSON query on the `audit` field.
+**Audit logs** are a subset of structured logs with `"audit": true`. Every S3 API request and significant internal operation emits an audit entry with a `request_id` for correlation, and every entry from an authenticated request also carries `user`, the identity behind the credential that proved it. Filter audit entries in your log pipeline with a JSON query on the `audit` field.
 
 Key audit events:
 

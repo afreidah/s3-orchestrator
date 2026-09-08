@@ -1004,6 +1004,13 @@ same `request_id`:
 - Storage layer (`storage.PutObject`, `storage.GetObject`, etc.) -
   key, backend, size.
 
+Both also carry `user`, the identity the request authenticated as.
+`audit.Log` reads it and the request id from context, so no call site
+passes either and the storage-layer entry carries the same pair as the
+HTTP-layer one without being handed an identity. An entry with no
+`user` authenticated no caller: a rejected request, or a background
+worker acting on its own.
+
 **Internal operations** generate their own correlation IDs:
 
 ```go

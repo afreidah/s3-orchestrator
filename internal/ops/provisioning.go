@@ -170,7 +170,7 @@ func (p *Provisioning) refuseIfBucketInUse(ctx context.Context, name string, vie
 		return err
 	}
 	if n > 0 {
-		return fmt.Errorf("%w: bucket %q holds %d objects", ErrBucketNotEmpty, name, n)
+		return fmt.Errorf("%w: bucket %q holds %s", ErrBucketNotEmpty, name, plural(n, "object"))
 	}
 	for i := range view.Users {
 		u := &view.Users[i]
@@ -224,10 +224,10 @@ func (p *Provisioning) DeleteUser(ctx context.Context, id string) error {
 		return fmt.Errorf("%w: user %q", ErrConfigDeclared, id)
 	}
 	if len(u.Buckets) > 0 {
-		return fmt.Errorf("%w: user %q holds %d grants", ErrUserInUse, id, len(u.Buckets))
+		return fmt.Errorf("%w: user %q holds %s", ErrUserInUse, id, plural(int64(len(u.Buckets)), "grant"))
 	}
 	if n := countCredentials(view.Credentials, id); n > 0 {
-		return fmt.Errorf("%w: user %q holds %d credentials", ErrUserInUse, id, n)
+		return fmt.Errorf("%w: user %q holds %s", ErrUserInUse, id, plural(int64(n), "credential"))
 	}
 	if err := p.store.DeleteUser(ctx, id); err != nil {
 		return err
@@ -367,6 +367,16 @@ func (p *Provisioning) republish(ctx context.Context) error {
 		return fmt.Errorf("provisioning change was stored but the registry was not rebuilt: %w", err)
 	}
 	return nil
+}
+
+// plural renders a count and its noun, so a refusal naming one thing does not
+// read as though it named several. Every message it serves is the reason an
+// operator was just told no, which is a poor place to be sloppy.
+func plural(n int64, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // findBucket returns the merged bucket with a name.

@@ -284,6 +284,22 @@ The orchestrator emits structured audit log entries with `"audit":true` for secu
 - Storage-level operations (backend reads, writes, deletes)
 - Background operations (rebalance, replication, cleanup)
 
+### Attributing an action to a caller
+
+Every entry from an authenticated request carries `user`, naming the identity behind the credential that proved it. This is what answers "which service deleted this object" when several share a bucket with independent keys, an arrangement [Authentication](authentication.md#several-credentials-on-one-bucket) recommends.
+
+The identity is recorded rather than the access key deliberately: a keypair rotates under one identity, so recording the key would break the trail at every rotation and leave two halves nothing joins. Secrets never appear in a log line at all.
+
+An entry with no `user` authenticated no caller. A request rejected before authentication succeeds is one; a background worker acting on its own schedule is the other.
+
+```
+# Everything one identity did
+jq 'select(.audit == true and .user == "user-abc123")'
+
+# Who deleted objects from a bucket
+jq 'select(.audit == true and .event == "s3.DeleteObject" and .bucket == "app2-files") | {time, user, key}'
+```
+
 ### Request ID Correlation
 
 Each request gets a unique ID that flows through all log entries:
