@@ -204,11 +204,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		observe.MarkSpanError(span, msg)
 	}
 
+	// Named before dispatch rather than reported after it. An authorization
+	// check has nowhere to sit if the operation is only known once the
+	// handler has already written the response.
+	act := Classify(r, key)
+
 	var res routed
 	if key == "" {
-		res, err = s.routeBucketRequest(ctx, w, r, method, bucket)
+		res, err = s.routeBucketRequest(ctx, w, r, act, bucket)
 	} else {
-		res, err = s.routeObjectRequest(ctx, w, r, method, bucket, key, internalKey)
+		res, err = s.routeObjectRequest(ctx, w, r, act, bucket, key, internalKey)
 	}
 	if !res.supported {
 		if key == "" {
@@ -346,49 +351,48 @@ type routed struct {
 // routeBucketRequest dispatches bucket-level operations (no object key)
 // to their handlers. supported=false means none of the supported method/
 // query combinations matched; the caller emits a 405.
-func (s *Server) routeBucketRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, method, bucket string) (routed, error) {
-	query := r.URL.Query()
-
-	// Refuse before dispatch, for the reason the object path does: S3 selects
+func (s *Server) routeBucketRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, act Action, bucket string) (routed, error) {
+	switch act {
+	// Refused before dispatch, for the reason the object path does: S3 selects
 	// the operation from the query string, so an unrecognised key names a
 	// bucket subresource this server does not implement. Falling through
 	// answers a ListBucketResult, which a client that asked for versions, a
 	// policy or a lifecycle configuration parses as "there are none".
-	if sub, unsupported := unsupportedQuery(query, supportedBucketQueryKeys, supportedBucketQueryPrefixes); unsupported {
+	case ActionUnsupportedSubresource:
+		sub, _ := unsupportedQuery(r.URL.Query(), supportedBucketQueryKeys, supportedBucketQueryPrefixes)
 		msg := fmt.Sprintf("bucket subresource %q is not supported", sub)
 		writeS3Error(w, http.StatusNotImplemented, "NotImplemented", msg)
-		return routed{operation: "UnsupportedSubresource", status: http.StatusNotImplemented, supported: true}, nil
-	}
-
-	_, hasDelete := query["delete"]
-	_, hasLocation := query["location"]
-	_, hasUploads := query["uploads"]
-	_, hasVersioning := query["versioning"]
-
-	switch {
-	case method == http.MethodHead:
-		s, e := s.handleHeadBucket(w)
-		return routed{operation: "HeadBucket", status: s, supported: true}, e
-	case method == http.MethodGet && hasVersioning:
+		return done(act, http.StatusNotImplemented), nil
+	case ActionHeadBucket:
+		st, e := s.handleHeadBucket(w)
+		return done(act, st), e
+	case ActionGetBucketVersioning:
 		st, e := s.handleGetBucketVersioning(w)
-		return routed{operation: "GetBucketVersioning", status: st, supported: true}, e
-	case method == http.MethodGet && hasUploads:
+		return done(act, st), e
+	case ActionListMultipartUpload:
 		st, e := s.handleListMultipartUploads(ctx, w, r, bucket)
-		return routed{operation: "ListMultipartUploads", status: st, supported: true}, e
-	case method == http.MethodGet && hasLocation:
+		return done(act, st), e
+	case ActionGetBucketLocation:
 		st, e := s.handleGetBucketLocation(w)
-		return routed{operation: "GetBucketLocation", status: st, supported: true}, e
-	case method == http.MethodGet && query.Get("list-type") == "2":
+		return done(act, st), e
+	case ActionListObjectsV2:
 		st, e := s.handleListObjectsV2(ctx, w, r, bucket)
-		return routed{operation: "ListObjectsV2", status: st, supported: true}, e
-	case method == http.MethodGet:
+		return done(act, st), e
+	case ActionListObjectsV1:
 		st, e := s.handleListObjectsV1(ctx, w, r, bucket)
-		return routed{operation: "ListObjectsV1", status: st, supported: true}, e
-	case method == http.MethodPost && hasDelete:
+		return done(act, st), e
+	case ActionDeleteObjects:
 		st, e := s.handleDeleteObjects(ctx, w, r, bucket)
-		return routed{operation: "DeleteObjects", status: st, supported: true}, e
+		return done(act, st), e
 	}
 	return routed{}, nil
+}
+
+// done builds the result for a dispatched action. The operation name is the
+// action itself rather than a literal repeated at every return, so the two
+// cannot drift.
+func done(act Action, status int) routed {
+	return routed{operation: string(act), status: status, supported: true}
 }
 
 // objectRouteKey carries the path-derived identifiers a per-object
@@ -404,107 +408,115 @@ type objectRouteKey struct {
 // routeObjectRequest dispatches object-level operations to their
 // handlers, splitting on multipart-upload state. supported=false means
 // the method/query combination is not supported and the caller emits 405.
-func (s *Server) routeObjectRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, method, bucket, key, internalKey string) (routed, error) {
-	query := r.URL.Query()
-
-	// Refuse before dispatch. S3 selects the operation from the query string,
+func (s *Server) routeObjectRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, act Action, bucket, key, internalKey string) (routed, error) {
+	// Refused before dispatch. S3 selects the operation from the query string,
 	// so an unrecognised key names an operation this server does not
 	// implement; falling through would run PutObject or DeleteObject against
 	// the key instead, overwriting or removing the object the caller was
 	// asking about.
-	if sub, unsupported := unsupportedQuery(query, supportedObjectQueryKeys, supportedObjectQueryPrefixes); unsupported {
+	if act == ActionUnsupportedSubresource {
+		sub, _ := unsupportedQuery(r.URL.Query(), supportedObjectQueryKeys, supportedObjectQueryPrefixes)
 		msg := fmt.Sprintf("object subresource %q is not supported", sub)
 		writeS3Error(w, http.StatusNotImplemented, "NotImplemented", msg)
-		return routed{operation: "UnsupportedSubresource", status: http.StatusNotImplemented, supported: true}, nil
+		return done(act, http.StatusNotImplemented), nil
 	}
 
-	// Checked ahead of the multipart split because a tagging request carries
-	// neither uploads nor uploadId, so it would otherwise fall through to
-	// PutObject, GetObject or DeleteObject against the key it names.
-	if _, hasTagging := query["tagging"]; hasTagging {
-		return s.routeTaggingRequest(ctx, w, r, method, internalKey)
-	}
-
-	_, hasUploads := query["uploads"]
-	uploadID := query.Get("uploadId")
-	rk := &objectRouteKey{method: method, bucket: bucket, key: key, internalKey: internalKey, uploadID: uploadID}
-
-	switch {
-	case hasUploads && method == http.MethodPost:
+	if act == ActionCreateMultipartUpload {
 		st, e := s.handleCreateMultipartUpload(ctx, w, r, bucket, key, internalKey)
-		return routed{operation: "CreateMultipartUpload", status: st, supported: true}, e
-	case uploadID != "":
-		return s.routeMultipartRequest(ctx, w, r, rk)
-	default:
-		return s.routePlainObjectRequest(ctx, w, r, method, bucket, internalKey)
+		return done(act, st), e
 	}
+
+	rk := &objectRouteKey{
+		method:      r.Method,
+		bucket:      bucket,
+		key:         key,
+		internalKey: internalKey,
+		uploadID:    r.URL.Query().Get("uploadId"),
+	}
+	if res, ok, err := s.routeTaggingRequest(ctx, w, r, act, internalKey); ok {
+		return res, err
+	}
+	if res, ok, err := s.routeMultipartRequest(ctx, w, r, act, rk); ok {
+		return res, err
+	}
+	return s.routePlainObjectRequest(ctx, w, r, act, bucket, internalKey)
 }
 
 // routeMultipartRequest dispatches per-uploadID multipart operations. PUT
 // splits between UploadPart and UploadPartCopy on the X-Amz-Copy-Source
 // header, the same split routePlainObjectRequest makes: an UploadPartCopy
 // carries no body, so handing it to UploadPart stores an empty part.
-func (s *Server) routeMultipartRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, rk *objectRouteKey) (routed, error) {
-	switch rk.method {
-	case http.MethodPut:
-		if copySource := r.Header.Get(headerCopySource); copySource != "" {
-			st, e := s.handleUploadPartCopy(ctx, w, r, rk, copySource)
-			return routed{operation: "UploadPartCopy", status: st, supported: true}, e
-		}
+// ok reports false when the action belongs to another dispatcher, so the
+// caller tries the next one.
+func (s *Server) routeMultipartRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, act Action, rk *objectRouteKey) (res routed, ok bool, err error) {
+	switch act {
+	case ActionUploadPartCopy:
+		st, e := s.handleUploadPartCopy(ctx, w, r, rk, r.Header.Get(headerCopySource))
+		return done(act, st), true, e
+	case ActionUploadPart:
 		st, e := s.handleUploadPart(ctx, w, r, rk.bucket, rk.key)
-		return routed{operation: "UploadPart", status: st, requestSize: r.ContentLength, supported: true}, e
-	case http.MethodPost:
+		out := done(act, st)
+		out.requestSize = r.ContentLength
+		return out, true, e
+	case ActionCompleteMultipartUpload:
 		st, e := s.handleCompleteMultipartUpload(ctx, w, r, rk.bucket, rk.key)
-		return routed{operation: "CompleteMultipartUpload", status: st, supported: true}, e
-	case http.MethodDelete:
+		return done(act, st), true, e
+	case ActionAbortMultipartUpload:
 		st, e := s.handleAbortMultipartUpload(ctx, w, rk.bucket, rk.key, rk.uploadID)
-		return routed{operation: "AbortMultipartUpload", status: st, supported: true}, e
-	case http.MethodGet:
+		return done(act, st), true, e
+	case ActionListParts:
 		st, e := s.handleListParts(ctx, w, r, rk.bucket, rk.key, rk.internalKey)
-		return routed{operation: "ListParts", status: st, supported: true}, e
+		return done(act, st), true, e
 	}
-	return routed{}, nil
+	return routed{}, false, nil
 }
 
 // routeTaggingRequest dispatches the three ?tagging subresource operations.
 // supported=false for any other method, which the caller renders as 405 rather
 // than letting it reach the object itself.
-func (s *Server) routeTaggingRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, method, internalKey string) (routed, error) {
-	switch method {
-	case http.MethodGet:
+// ok reports false when the action is not a tagging one, so the caller tries
+// the next dispatcher.
+func (s *Server) routeTaggingRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, act Action, internalKey string) (res routed, ok bool, err error) {
+	switch act {
+	case ActionGetObjectTagging:
 		st, e := s.handleGetObjectTagging(ctx, w, internalKey)
-		return routed{operation: "GetObjectTagging", status: st, supported: true}, e
-	case http.MethodPut:
+		return done(act, st), true, e
+	case ActionPutObjectTagging:
 		st, e := s.handlePutObjectTagging(ctx, w, r, internalKey)
-		return routed{operation: "PutObjectTagging", status: st, requestSize: r.ContentLength, supported: true}, e
-	case http.MethodDelete:
+		out := done(act, st)
+		out.requestSize = r.ContentLength
+		return out, true, e
+	case ActionDeleteObjectTagging:
 		st, e := s.handleDeleteObjectTagging(ctx, w, internalKey)
-		return routed{operation: "DeleteObjectTagging", status: st, supported: true}, e
+		return done(act, st), true, e
 	}
-	return routed{}, nil
+	return routed{}, false, nil
 }
 
 // routePlainObjectRequest dispatches non-multipart object operations.
 // PUT splits between PutObject and CopyObject based on the
 // X-Amz-Copy-Source header.
-func (s *Server) routePlainObjectRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, method, bucket, internalKey string) (routed, error) {
-	switch method {
-	case http.MethodPut:
-		if copySource := r.Header.Get(headerCopySource); copySource != "" {
-			st, e := s.handleCopyObject(ctx, w, r, bucket, internalKey, copySource)
-			return routed{operation: "CopyObject", status: st, supported: true}, e
-		}
+func (s *Server) routePlainObjectRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, act Action, bucket, internalKey string) (routed, error) {
+	switch act {
+	case ActionCopyObject:
+		st, e := s.handleCopyObject(ctx, w, r, bucket, internalKey, r.Header.Get(headerCopySource))
+		return done(act, st), e
+	case ActionPutObject:
 		st, e := s.handlePut(ctx, w, r, internalKey)
-		return routed{operation: "PutObject", status: st, requestSize: r.ContentLength, supported: true}, e
-	case http.MethodGet:
+		out := done(act, st)
+		out.requestSize = r.ContentLength
+		return out, e
+	case ActionGetObject:
 		st, sz, e := s.handleGet(ctx, w, r, internalKey)
-		return routed{operation: "GetObject", status: st, responseSize: sz, supported: true}, e
-	case http.MethodHead:
+		out := done(act, st)
+		out.responseSize = sz
+		return out, e
+	case ActionHeadObject:
 		st, e := s.handleHead(ctx, w, r, internalKey)
-		return routed{operation: "HeadObject", status: st, supported: true}, e
-	case http.MethodDelete:
+		return done(act, st), e
+	case ActionDeleteObject:
 		st, e := s.handleDelete(ctx, w, r, internalKey)
-		return routed{operation: "DeleteObject", status: st, supported: true}, e
+		return done(act, st), e
 	}
 	return routed{}, nil
 }
