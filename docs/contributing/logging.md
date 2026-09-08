@@ -137,6 +137,7 @@ list are allowed but should be added here when they recur.
 |---|---|---|
 | `component` | string | Long-lived service identifier (constant per logger). |
 | `request_id` | string | Inbound HTTP request id from `X-Request-Id` or generated. |
+| `user` | string | Identity the request authenticated as. Never an access key or a secret: a keypair rotates under one identity, so recording the key would break the trail at every rotation. Added to audit entries from context, so call sites do not pass it. |
 | `backend` | string | Backend name (destination, single backend). |
 | `src_backend` | string | Source backend (rebalance, replicate, drain). |
 | `dst_backend` | string | Destination backend (same operations). |
@@ -225,6 +226,14 @@ carry `request_id` and use dotted event names (`s3.PutObject`,
 `storage.DeleteObject`, `cleanup_queue.processed`). The conventions
 documented here apply to **operational** logs, not audit entries — see
 `README.md` § Audit Logging for the audit contract.
+
+An entry produced by an authenticated S3 request also carries `user`,
+naming the identity behind the credential that proved it. Both the
+request id and the identity are read from context by `audit.Log`, so no
+call site passes either, and the storage-layer entry written several
+packages below the transport carries the same pair as the HTTP-layer
+one. An entry with no `user` is an operation that authenticated no
+caller: a rejected request, or a background worker acting on its own.
 
 ---
 
