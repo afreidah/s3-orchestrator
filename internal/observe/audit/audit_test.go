@@ -183,3 +183,76 @@ func TestLog_WithoutRequestID(t *testing.T) {
 		t.Errorf("expected no request_id field, but got %v", entry["request_id"])
 	}
 }
+
+// -------------------------------------------------------------------------
+// USER
+// -------------------------------------------------------------------------
+
+// TestUserContextRoundTrip verifies identity storage and retrieval, and that a
+// context carrying no identity reports none rather than a zero value that would
+// read as a real user in a log line.
+func TestUserContextRoundTrip(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	if got := User(ctx); got != "" {
+		t.Fatalf("bare context reported user %q, want none", got)
+	}
+
+	ctx = WithUser(ctx, "user-abc123")
+	if got := User(ctx); got != "user-abc123" {
+		t.Fatalf("User() = %q, want user-abc123", got)
+	}
+}
+
+// TestUser_WrongTypeInContext verifies a value stored under the key by anything
+// other than WithUser is ignored rather than panicking the request that logs.
+func TestUser_WrongTypeInContext(t *testing.T) {
+	t.Parallel()
+	ctx := context.WithValue(context.Background(), userKey, 42)
+	if got := User(ctx); got != "" {
+		t.Fatalf("User() = %q, want none for a non-string value", got)
+	}
+}
+
+// TestLog_CarriesUser is the property the identity exists for: an entry names
+// the caller behind it without the call site passing one, which is what lets
+// the storage-layer entry several packages deeper carry it too.
+func TestLog_CarriesUser(t *testing.T) {
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+
+	ctx := WithUser(WithRequestID(context.Background(), "req-abc"), "user-abc123")
+	Log(ctx, "s3.PutObject", slog.String("key", "photos/cat.jpg"))
+
+	var entry map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+		t.Fatalf("parse log output: %v\nraw: %s", err, buf.String())
+	}
+	if entry["user"] != "user-abc123" {
+		t.Errorf("user = %v, want user-abc123", entry["user"])
+	}
+	if entry["request_id"] != "req-abc" {
+		t.Errorf("request_id = %v, want the id to survive alongside the user", entry["request_id"])
+	}
+}
+
+// TestLog_WithoutUser verifies an unauthenticated operation carries no user
+// attr at all rather than an empty one, so a rejected request cannot be read as
+// having been taken by someone.
+func TestLog_WithoutUser(t *testing.T) {
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+
+	Log(context.Background(), "s3.AuthFailure")
+
+	var entry map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+		t.Fatalf("parse log output: %v\nraw: %s", err, buf.String())
+	}
+	if _, ok := entry["user"]; ok {
+		t.Errorf("entry carries user=%v for an unauthenticated operation", entry["user"])
+	}
+}

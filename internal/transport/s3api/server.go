@@ -155,6 +155,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.rejectAuth(ctx, w, r, method, start, err)
 		return
 	}
+	// Set before any work happens, so every audit entry this request produces
+	// names the identity behind it - including the storage-layer one written
+	// several packages deeper, which is handed a context and nothing else.
+	ctx = audit.WithUser(ctx, user.ID)
 	if streamMat != nil {
 		applyStreamingBody(r, streamMat)
 	}
@@ -315,7 +319,6 @@ func (s *Server) rejectBucketDenied(ctx context.Context, w http.ResponseWriter, 
 		slog.String("method", method),
 		slog.String("path", r.URL.Path),
 		slog.String("client_addr", r.RemoteAddr),
-		slog.String("user", user.ID),
 		slog.String("requested_bucket", bucket),
 		slog.Int("status", http.StatusForbidden),
 		slog.Duration("duration", time.Since(start)),

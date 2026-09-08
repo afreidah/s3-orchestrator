@@ -15,6 +15,7 @@ package ops
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"go.uber.org/mock/gomock"
@@ -660,5 +661,50 @@ func TestProvisioning_NoPublisherIsTolerated(t *testing.T) {
 	svc := NewProvisioning(ProvisioningDeps{Store: store, Config: NewConfigStore(&config.Config{})})
 	if err := svc.CreateBucket(context.Background(), &core.Bucket{Name: "photos"}); err != nil {
 		t.Fatalf("CreateBucket: %v", err)
+	}
+}
+
+// -------------------------------------------------------------------------
+// MESSAGES
+// -------------------------------------------------------------------------
+
+// TestPlural verifies a refusal naming one thing does not read as though it
+// named several. This is the text an operator sees at the moment they are told
+// no, so it is worth getting right.
+func TestPlural(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		n    int64
+		noun string
+		want string
+	}{
+		{0, "object", "0 objects"},
+		{1, "object", "1 object"},
+		{2, "object", "2 objects"},
+		{1, "grant", "1 grant"},
+		{3, "credential", "3 credentials"},
+	} {
+		if got := plural(tc.n, tc.noun); got != tc.want {
+			t.Errorf("plural(%d, %q) = %q, want %q", tc.n, tc.noun, got, tc.want)
+		}
+	}
+}
+
+// TestProvisioning_RefusalsReadNaturally drives the three refusals that carry a
+// count and checks the one-of-each case, which is the wording the old messages
+// got wrong.
+func TestProvisioning_RefusalsReadNaturally(t *testing.T) {
+	t.Parallel()
+
+	f := newProvFixture(t, nil, &provStore{buckets: []core.Bucket{{Name: "photos"}}})
+	f.objects.EXPECT().CountObjectsByPrefix(gomock.Any(), "photos/").Return(int64(1), nil)
+
+	err := f.svc.DeleteBucket(context.Background(), "photos")
+	if err == nil || !strings.Contains(err.Error(), "holds 1 object") {
+		t.Fatalf("err = %v, want it to name one object in the singular", err)
+	}
+	if strings.Contains(err.Error(), "1 objects") {
+		t.Errorf("err = %v, still pluralises a count of one", err)
 	}
 }
