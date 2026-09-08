@@ -53,6 +53,7 @@ type adminClient interface {
 	GetCleanupQueue(ctx context.Context) (*adminapi.CleanupQueueResponse, error)
 	GetCleanupDLQ(ctx context.Context) (*adminapi.CleanupDLQResponse, error)
 	GetCacheStats(ctx context.Context) (*adminapi.CacheStatsResponse, error)
+	GetProvisioning(ctx context.Context) (*adminapi.ProvisioningResponse, error)
 	RequeueCleanupDLQ(ctx context.Context, backend string) (*adminapi.CleanupDLQRequeueResponse, error)
 	RunOp(ctx context.Context, act *opsAction, req opsRequest) (adminclient.EventStream, error)
 	ListObjectsFlat(ctx context.Context, prefix, continuation string) (*adminapi.ObjectListResponse, error)
@@ -75,6 +76,7 @@ type model struct {
 	mode        viewMode        // Files sub-state: the listing (browse) or the inspector
 	insp        inspector       // inspector pane state, populated when mode is modeInspect
 	backends    backendsView    // backends pane state, populated when section is sectionBackends
+	buckets     bucketsView     // buckets pane state, populated when section is sectionBuckets
 	logs        logsView        // logs pane state, populated when section is sectionLogs
 	replication replicationView // replication pane state, populated when section is sectionReplication
 	workers     workersView     // workers pane state, populated when section is sectionWorkers
@@ -110,6 +112,7 @@ func initialModel(client adminClient) *model {
 	fi.Placeholder = "type to filter"
 	m := &model{client: client, loading: true, spinner: spinner.New(), table: newTable(), filter: fi}
 	m.backends = backendsView{table: newTable()}
+	m.buckets = bucketsView{table: newTable()}
 	m.workers = workersView{table: newTable()}
 	m.cleanup = cleanupView{queue: newTable(), dlq: newTable()}
 	// Seed the browser and backends columns up front. The initial loads can be
@@ -117,6 +120,7 @@ func initialModel(client adminClient) *model {
 	// table panics in the table's row renderer.
 	m.resizeTable()
 	m.resizeBackends()
+	m.resizeBuckets()
 	m.resizeWorkers()
 	m.resizeCleanup()
 	return m
@@ -261,6 +265,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case cacheErrMsg:
 		m.applyCacheErr(msg.err)
 		return m, nil
+	case bucketsLoadedMsg:
+		m.applyBuckets(msg.resp)
+		return m, nil
+	case bucketsErrMsg:
+		m.applyBucketsErr(msg.err)
+		return m, nil
 	case opsStreamMsg:
 		return m.applyOpsStream(msg)
 	case opsEventMsg:
@@ -277,6 +287,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resizeTable()
 		m.resizeInspector()
 		m.resizeBackends()
+		m.resizeBuckets()
 		m.resizeWorkers()
 		m.resizeCleanup()
 		m.resizeLogs()
@@ -309,6 +320,7 @@ func (m *model) handleGlobalKey(key tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	sections := map[string]section{
 		"f": sectionFiles,
 		"b": sectionBackends,
+		"v": sectionBuckets,
 		"p": sectionReplication,
 		"w": sectionWorkers,
 		"u": sectionCleanup,
@@ -357,6 +369,9 @@ func (m *model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.section == sectionBackends {
 		return m.handleBackendsKey(key)
+	}
+	if m.section == sectionBuckets {
+		return m.handleBucketsKey(key)
 	}
 	if m.section == sectionWorkers {
 		return m.handleWorkersKey(key)
@@ -529,6 +544,9 @@ func (m *model) contentView() string {
 	}
 	if m.section == sectionBackends {
 		return m.backendsPaneView()
+	}
+	if m.section == sectionBuckets {
+		return m.bucketsPaneView()
 	}
 	if m.section == sectionWorkers {
 		return m.workersPaneView()

@@ -1244,3 +1244,12 @@ func mustBucketRegistry(tb testing.TB, buckets []config.BucketConfig) *auth.Buck
 	}
 	return br
 }
+
+// declaredForConfig builds the live bucket set a hand-wired harness hands the
+// operations layer, applying the same config-to-declared translation registry
+// assembly performs before publishing it.
+func declaredForConfig(buckets []config.BucketConfig) *provisioning.Declared {
+	d := provisioning.NewDeclared()
+	d.Set(provisioning.Merge(buckets, &provisioning.Snapshot{}).Buckets)
+	return d
+}

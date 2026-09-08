@@ -140,13 +140,7 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := h.cfg.Load()
-	bucketNames := make([]string, len(cfg.Buckets))
-	for i, b := range cfg.Buckets {
-		bucketNames[i] = b.Name
-	}
-
-	imported, skipped, err := h.syncOps.SyncBackend(r.Context(), req.Backend, req.Bucket, bucketNames)
+	imported, skipped, err := h.syncOps.SyncBackend(r.Context(), req.Backend, req.Bucket, h.buckets.Names())
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "sync failed", "backend", req.Backend, "bucket", req.Bucket, "error", err)
 		httputil.WriteJSONError(w, http.StatusInternalServerError, "sync failed")

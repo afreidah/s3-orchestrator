@@ -19,6 +19,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
@@ -56,6 +57,7 @@ func TestAssembleBucketRegistry_MergesBothSources(t *testing.T) {
 
 	inj := do.New()
 	do.ProvideValue[core.ProvisioningStore](inj, store)
+	do.ProvideValue(inj, provisioning.NewDeclared())
 
 	reg, err := AssembleBucketRegistry(context.Background(), inj,
 		&config.Config{Buckets: []config.BucketConfig{{Name: "from-config"}}})
@@ -85,6 +87,7 @@ func TestAssembleBucketRegistry_ReportsNotices(t *testing.T) {
 
 	inj := do.New()
 	do.ProvideValue[core.ProvisioningStore](inj, store)
+	do.ProvideValue(inj, provisioning.NewDeclared())
 
 	// photos collides with the config bucket and the grant names nothing, so
 	// assembly serves through both and reports each.
@@ -120,6 +123,7 @@ func TestAssembleBucketRegistry_ReadFailurePropagates(t *testing.T) {
 
 	inj := do.New()
 	do.ProvideValue[core.ProvisioningStore](inj, store)
+	do.ProvideValue(inj, provisioning.NewDeclared())
 
 	if _, err := AssembleBucketRegistry(context.Background(), inj, &config.Config{}); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want a wrap of boom", err)
@@ -147,6 +151,7 @@ func TestRegistryPublisher_SwapsTheRunningRegistry(t *testing.T) {
 
 	inj := do.New()
 	do.ProvideValue[core.ProvisioningStore](inj, store)
+	do.ProvideValue(inj, provisioning.NewDeclared())
 	do.ProvideValue(inj, &config.Config{Buckets: []config.BucketConfig{{Name: "photos"}}})
 
 	srv := &s3api.Server{}
@@ -200,6 +205,7 @@ func TestAssembleBucketRegistry_RejectsAmbiguousConfig(t *testing.T) {
 
 	inj := do.New()
 	do.ProvideValue[core.ProvisioningStore](inj, emptyProvisioningStore(t))
+	do.ProvideValue(inj, provisioning.NewDeclared())
 
 	_, err := AssembleBucketRegistry(context.Background(), inj, &config.Config{
 		Buckets: []config.BucketConfig{

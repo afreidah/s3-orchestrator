@@ -20,6 +20,7 @@ import (
 
 	"go.uber.org/mock/gomock"
 
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 )
 
@@ -30,7 +31,7 @@ func TestReconciler_NoBuckets(t *testing.T) {
 	syncer := NewMockBackendSyncer(ctrl)
 	fleet := NewMockFleetOps(ctrl)
 	usageRec := NewMockUsageReconciler(ctrl)
-	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, BucketNames: nil})
+	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets()})
 	r.Run(context.Background()) // should not panic
 }
 
@@ -48,7 +49,7 @@ func TestReconciler_SyncsAllBackends(t *testing.T) {
 	fleet.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
-	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, BucketNames: []string{"unified"}})
+	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets("unified")})
 	r.Run(context.Background())
 }
 
@@ -66,7 +67,7 @@ func TestReconciler_ContinuesOnBackendError(t *testing.T) {
 	fleet.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
-	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, BucketNames: []string{"unified"}})
+	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets("unified")})
 	r.Run(context.Background()) // should not panic
 }
 
@@ -85,7 +86,7 @@ func TestReconciler_ReconcilesUsageEachPass(t *testing.T) {
 	// Zero imports: UpdateQuotaMetrics is skipped, but ReconcileUsage still runs.
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(map[string]int64{"b1": -100}, nil).Times(1)
 
-	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, BucketNames: []string{"unified"}})
+	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets("unified")})
 	r.Run(context.Background())
 }
 
@@ -102,7 +103,7 @@ func TestReconciler_ReconcileUsageError(t *testing.T) {
 	syncer.EXPECT().SyncBackend(gomock.Any(), "b1", "unified", []string{"unified"}).Return(0, 0, nil)
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, errors.New("db down")).Times(1)
 
-	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, BucketNames: []string{"unified"}})
+	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets("unified")})
 	r.Run(context.Background()) // must not panic
 }
 
@@ -123,7 +124,7 @@ func TestReconcile_AllBackends(t *testing.T) {
 	fleet.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
-	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, BucketNames: []string{"unified"}})
+	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets("unified")})
 	result, err := r.Reconcile(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -153,7 +154,7 @@ func TestReconcile_SingleBackend(t *testing.T) {
 	fleet.EXPECT().UpdateQuotaMetrics(gomock.Any()).Return(nil)
 	usageRec.EXPECT().ReconcileUsage(gomock.Any()).Return(nil, nil).AnyTimes()
 
-	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, BucketNames: []string{"unified"}})
+	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets("unified")})
 	result, err := r.Reconcile(context.Background(), "b1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -174,9 +175,21 @@ func TestReconcile_NoBuckets(t *testing.T) {
 	fleet := NewMockFleetOps(ctrl)
 	usageRec := NewMockUsageReconciler(ctrl)
 
-	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, BucketNames: nil})
+	r := NewReconciler(&ReconcilerDeps{Syncer: syncer, Fleet: fleet, Usage: usageRec, Buckets: declaredBuckets()})
 	_, err := r.Reconcile(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for no buckets")
 	}
+}
+
+// declaredBuckets builds the live bucket set a reconcile pass reads, holding
+// the named buckets.
+func declaredBuckets(names ...string) *provisioning.Declared {
+	buckets := make([]provisioning.Bucket, 0, len(names))
+	for _, n := range names {
+		buckets = append(buckets, provisioning.Bucket{Name: n, Source: provisioning.SourceStore})
+	}
+	d := provisioning.NewDeclared()
+	d.Set(buckets)
+	return d
 }

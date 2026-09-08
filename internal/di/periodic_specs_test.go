@@ -29,6 +29,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -50,6 +51,7 @@ func allLockedTickerServices(t *testing.T) []*tickrunner.Service {
 		worker.NewReplicatorService(f.stack.Runtime, f.replicator, locker),
 		worker.NewReconcileService(worker.NewReconciler(&worker.ReconcilerDeps{
 			Syncer: f.reconciler, Fleet: f.stack.Runtime, Usage: f.stack.Usage,
+			Buckets: provisioning.NewDeclared(),
 		}), locker, time.Hour),
 		worker.NewScrubberService(f.scrubber, locker),
 	}

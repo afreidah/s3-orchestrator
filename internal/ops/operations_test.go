@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/object"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -197,6 +198,7 @@ func testServices(t *testing.T, backends map[string]s3be.ObjectBackend, enc *enc
 		OverRep:      workers.OverReplicationCleaner,
 		Rebalancer:   workers.Rebalancer,
 		Scrubber:     workers.Scrubber,
+		Declared:     declaredBuckets(testBucket),
 		Cfg:          &config.Config{Buckets: []config.BucketConfig{{Name: testBucket}}},
 	})
 }
@@ -232,7 +234,7 @@ func newObjects(t *testing.T) (*Objects, *opstest.MockObjectAPI) {
 	return NewObjects(ObjectsDeps{
 		Objects: api,
 		Store:   storetest.NewMockMetadataStore(gomock.NewController(t)),
-		Config:  NewConfigStore(&config.Config{Buckets: []config.BucketConfig{{Name: testBucket}}}),
+		Buckets: declaredBuckets(testBucket),
 	}), api
 }
 
@@ -920,7 +922,7 @@ func TestObjectsList_GroupsOnADelimiter(t *testing.T) {
 	objects := NewObjects(ObjectsDeps{
 		Objects: opstest.NewMockObjectAPI(gomock.NewController(t)),
 		Store:   store,
-		Config:  NewConfigStore(&config.Config{}),
+		Buckets: declaredBuckets(),
 	})
 
 	page, err := objects.List(context.Background(), "", "/", "", 0)
@@ -948,7 +950,7 @@ func TestObjectsList_FlatWithoutADelimiter(t *testing.T) {
 	objects := NewObjects(ObjectsDeps{
 		Objects: opstest.NewMockObjectAPI(gomock.NewController(t)),
 		Store:   store,
-		Config:  NewConfigStore(&config.Config{}),
+		Buckets: declaredBuckets(),
 	})
 
 	page, err := objects.List(context.Background(), testBucket+"/dir/", "", "", 0)
@@ -973,7 +975,7 @@ func TestObjectsLocations_ReportsEveryCopy(t *testing.T) {
 	objects := NewObjects(ObjectsDeps{
 		Objects: opstest.NewMockObjectAPI(gomock.NewController(t)),
 		Store:   store,
-		Config:  NewConfigStore(&config.Config{}),
+		Buckets: declaredBuckets(),
 	})
 
 	locs, err := objects.Locations(context.Background(), testBucket+"/file.txt")
@@ -1143,21 +1145,29 @@ func TestRotateKey_CountsFailuresPerLocation(t *testing.T) {
 	}
 }
 
-// TestConfigStore_UpdateReachesOperations asserts a reload changes what a
-// later run reads, which is why the operations hold the store rather than a
-// snapshot.
-func TestConfigStore_UpdateReachesOperations(t *testing.T) {
+// TestDeclaredBuckets_UpdateReachesOperations asserts republishing the declared
+// set changes what a later run accepts, which is why the object operations hold
+// the live set rather than a snapshot. A bucket created through the
+// provisioning API becomes addressable here without a restart.
+func TestDeclaredBuckets_UpdateReachesOperations(t *testing.T) {
 	t.Parallel()
-	svc := testServices(t, map[string]s3be.ObjectBackend{}, nil, nil)
+	declared := declaredBuckets()
+	api := opstest.NewMockObjectAPI(gomock.NewController(t))
+	api.EXPECT().DeleteObject(gomock.Any(), "later/file.txt").Return(nil).AnyTimes()
+	objects := NewObjects(ObjectsDeps{
+		Objects: api,
+		Store:   storetest.NewMockObjectStore(gomock.NewController(t)),
+		Buckets: declared,
+	})
 
-	if err := svc.Objects.Delete(context.Background(), "later/file.txt"); !errors.Is(err, ErrInvalidKey) {
-		t.Fatalf("err = %v, want ErrInvalidKey before the reload", err)
+	if err := objects.Delete(context.Background(), "later/file.txt"); !errors.Is(err, ErrInvalidKey) {
+		t.Fatalf("err = %v, want ErrInvalidKey before the bucket exists", err)
 	}
 
-	svc.UpdateConfig(&config.Config{Buckets: []config.BucketConfig{{Name: "later"}}})
+	declared.Set([]provisioning.Bucket{{Name: "later", Source: provisioning.SourceStore}})
 
-	if err := svc.Objects.Delete(context.Background(), "later/file.txt"); errors.Is(err, ErrInvalidKey) {
-		t.Error("key still rejected after the bucket was added by a reload")
+	if err := objects.Delete(context.Background(), "later/file.txt"); errors.Is(err, ErrInvalidKey) {
+		t.Error("key still rejected after the bucket was declared")
 	}
 }
 
@@ -1231,7 +1241,7 @@ func TestObjects_RejectsEveryKeyWithoutConfig(t *testing.T) {
 	objects := NewObjects(ObjectsDeps{
 		Objects: opstest.NewMockObjectAPI(gomock.NewController(t)),
 		Store:   storetest.NewMockObjectStore(gomock.NewController(t)),
-		Config:  &ConfigStore{},
+		Buckets: declaredBuckets(),
 	})
 
 	if err := objects.Delete(context.Background(), testBucket+"/file.txt"); !errors.Is(err, ErrInvalidKey) {

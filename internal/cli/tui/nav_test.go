@@ -251,6 +251,7 @@ func TestHandleKey_LetterJumpsAreUnique(t *testing.T) {
 	jumps := map[string]section{
 		"f": sectionFiles,
 		"b": sectionBackends,
+		"v": sectionBuckets,
 		"p": sectionReplication,
 		"w": sectionWorkers,
 		"u": sectionCleanup,

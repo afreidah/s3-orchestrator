@@ -18,7 +18,6 @@ import (
 
 	"go.uber.org/mock/gomock"
 
-	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -36,9 +35,7 @@ func newTagObjects(t *testing.T) (*Objects, *opstest.MockObjectAPI) {
 	return NewObjects(ObjectsDeps{
 		Objects: api,
 		Store:   storetest.NewMockObjectStore(gomock.NewController(t)),
-		Config: NewConfigStore(&config.Config{
-			Buckets: []config.BucketConfig{{Name: "bucket"}},
-		}),
+		Buckets: declaredBuckets("bucket"),
 	}), api
 }
 

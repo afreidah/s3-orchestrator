@@ -27,6 +27,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle/tickrunner"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/expiry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
@@ -190,6 +191,7 @@ func TestServiceWorkClosures_RunOnceCovers(t *testing.T) {
 		worker.NewReplicatorService(f.stack.Runtime, f.replicator, locker),
 		worker.NewReconcileService(worker.NewReconciler(&worker.ReconcilerDeps{
 			Syncer: f.reconciler, Fleet: f.stack.Runtime, Usage: f.stack.Usage,
+			Buckets: provisioning.NewDeclared(),
 		}), locker, time.Hour),
 		worker.NewScrubberService(f.scrubber, locker),
 	}
@@ -242,6 +244,7 @@ func TestServiceConstructors_AllReturnNonNil(t *testing.T) {
 		{"Replicator", worker.NewReplicatorService(f.stack.Runtime, f.replicator, locker)},
 		{"Reconcile", worker.NewReconcileService(worker.NewReconciler(&worker.ReconcilerDeps{
 			Syncer: f.reconciler, Fleet: f.stack.Runtime, Usage: f.stack.Usage,
+			Buckets: provisioning.NewDeclared(),
 		}), locker, time.Hour)},
 		{"Scrubber", worker.NewScrubberService(f.scrubber, locker)},
 		{"Watchdog", breaker.NewWatchdog(breaker.NewRegistry(breaker.NewCircuitBreaker(breaker.Config{Name: "t", Threshold: 3, Timeout: time.Second, IsError: func(error) bool { return false }, Sentinel: core.ErrDBUnavailable})))},
@@ -438,6 +441,7 @@ func TestServiceClosures_ExerciseWorkAndShouldRun(t *testing.T) {
 	asTicker(t, worker.NewReplicatorService(rt, f.replicator, locker)).Tick(ctx)
 	asTicker(t, worker.NewReconcileService(worker.NewReconciler(&worker.ReconcilerDeps{
 		Syncer: f.reconciler, Fleet: rt, Usage: f.stack.Usage,
+		Buckets: provisioning.NewDeclared(),
 	}), locker, 100*time.Millisecond)).Tick(ctx)
 	asTicker(t, worker.NewScrubberService(f.scrubber, locker)).Tick(ctx)
 }

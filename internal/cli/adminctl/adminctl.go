@@ -87,6 +87,12 @@ Commands:
   cache-invalidate    Drop a single key from the in-memory object data cache (requires -key)
   cache-invalidate-prefix  Drop every cached key under a prefix (requires -prefix)
 
+Provisioning commands (each takes a verb; run one with no verb to list them):
+  bucket              list, create or delete a virtual bucket
+  user                list, create or delete an identity credentials belong to
+  credential          list, issue or revoke a keypair
+  grant               add or remove a user's access to a bucket
+
 Flags:
 `)
 		fs.PrintDefaults()
@@ -163,6 +169,10 @@ var handlers = map[string]handler{
 	"cache-stats":             cmdCacheStats,
 	"cache-invalidate":        cmdCacheInvalidate,
 	"cache-invalidate-prefix": cmdCacheInvalidatePrefix,
+	"bucket":                  cmdBucket,
+	"user":                    cmdUser,
+	"credential":              cmdCredential,
+	"grant":                   cmdGrant,
 }
 
 // Command executes an admin CLI command in text output mode, returning the

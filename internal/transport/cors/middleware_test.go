@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 )
 
 // -------------------------------------------------------------------------
@@ -29,8 +30,8 @@ import (
 
 // testBuckets is the rule set every case here matches against: one bucket
 // allowing an app origin, and a second whose rules admit any origin.
-func testBuckets() []config.BucketConfig {
-	return []config.BucketConfig{
+func testBuckets() []provisioning.Bucket {
+	return []provisioning.Bucket{
 		{Name: "photos", CORS: []config.CORSRule{{
 			AllowedOrigins: []string{"https://app.example.com"},
 			AllowedMethods: []string{"GET", "PUT"},
@@ -347,7 +348,7 @@ func TestPolicy_SetRulesReplacesTheSet(t *testing.T) {
 		t.Fatalf("status = %d before the swap, want %d", rec.Code, http.StatusForbidden)
 	}
 
-	reg, err := NewRegistry([]config.BucketConfig{{Name: "photos", CORS: []config.CORSRule{{
+	reg, err := NewRegistry([]provisioning.Bucket{{Name: "photos", CORS: []config.CORSRule{{
 		AllowedOrigins: []string{"https://new.example.com"},
 		AllowedMethods: []string{"GET"},
 	}}}})

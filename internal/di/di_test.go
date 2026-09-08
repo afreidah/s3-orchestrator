@@ -15,6 +15,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -28,12 +30,14 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/notify"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/usage"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
@@ -127,6 +131,7 @@ func TestProvideBucketAuth(t *testing.T) {
 	// provider reads the provisioning tables. An empty answer is the state a
 	// deployment that has provisioned nothing is in.
 	do.ProvideValue[core.ProvisioningStore](inj, emptyProvisioningStore(t))
+	do.ProvideValue(inj, provisioning.NewDeclared())
 
 	reg, err := ProvideBucketAuth(inj)
 	if err != nil {
@@ -905,5 +910,68 @@ func TestProvideCodec_DefaultsWhenBlockOmitted(t *testing.T) {
 	defer c.Close()
 	if c.ChunkSize() != config.DefaultCompressionChunkSize {
 		t.Errorf("ChunkSize = %d, want the %d default", c.ChunkSize(), config.DefaultCompressionChunkSize)
+	}
+}
+
+// TestProvideCORS_CompilesStoredBucketRules pins the ordering ProvideCORS
+// depends on: assembling the credential registry is what publishes the declared
+// bucket set, so the policy has to be built after it. Compiling from an
+// unpublished set would accept a stored bucket's rules through the provisioning
+// API and silently drop them, leaving the browser refused until a restart.
+func TestProvideCORS_CompilesStoredBucketRules(t *testing.T) {
+	t.Parallel()
+	cfg := happyPathConfig(t.TempDir())
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("config validation: %v", err)
+	}
+	inj := NewInjector(InjectorDeps{Config: cfg, Mode: "all", LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
+	t.Cleanup(func() { _ = inj.Shutdown() })
+
+	store, err := do.Invoke[core.ProvisioningStore](inj)
+	if err != nil {
+		t.Fatalf("ProvisioningStore: %v", err)
+	}
+	err = store.CreateBucket(context.Background(), &core.Bucket{
+		Name: "browser-bucket",
+		CORS: []config.CORSRule{{
+			AllowedOrigins: []string{"https://app.example.com"},
+			AllowedMethods: []string{"GET"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateBucket: %v", err)
+	}
+
+	policy, err := do.Invoke[*cors.Policy](inj)
+	if err != nil {
+		t.Fatalf("ProvideCORS: %v", err)
+	}
+
+	r := httptest.NewRequestWithContext(context.Background(),
+		http.MethodOptions, "/browser-bucket/photo.jpg", nil)
+	r.Header.Set("Origin", "https://app.example.com")
+	r.Header.Set("Access-Control-Request-Method", "GET")
+
+	rec := httptest.NewRecorder()
+	policy.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(rec, r)
+
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://app.example.com" {
+		t.Errorf("Allow-Origin = %q, want the stored bucket's rules to be compiled in", got)
+	}
+}
+
+// TestProvideCORS_ResolvesFromTheFullGraph covers the provider through the
+// wiring the HTTP server reaches it by, which nothing else exercised.
+func TestProvideCORS_ResolvesFromTheFullGraph(t *testing.T) {
+	t.Parallel()
+	cfg := happyPathConfig(t.TempDir())
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Fatalf("config validation: %v", err)
+	}
+	inj := NewInjector(InjectorDeps{Config: cfg, Mode: "all", LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
+	t.Cleanup(func() { _ = inj.Shutdown() })
+
+	if _, err := do.Invoke[*cors.Policy](inj); err != nil {
+		t.Fatalf("CORSPolicy: %v", err)
 	}
 }

@@ -59,23 +59,34 @@ type UsageReconciler interface {
 	ReconcileUsage(ctx context.Context) (map[string]int64, error)
 }
 
+// BucketNamer lists the virtual buckets a deployment declares, from the config
+// file and the store together. *provisioning.Declared satisfies it.
+//
+// Read per pass rather than captured at construction, so a bucket created
+// through the provisioning API is scanned on the next reconcile rather than
+// having its objects classified as unmanaged until a restart.
+type BucketNamer interface {
+	Names() []string
+}
+
 // Reconciler scans backends for untracked objects and imports them into the
 // metadata database.
 type Reconciler struct {
-	log         *slog.Logger
-	syncer      BackendSyncer
-	fleet       FleetOps
-	usage       UsageReconciler
-	bucketNames []string
+	log     *slog.Logger
+	syncer  BackendSyncer
+	fleet   FleetOps
+	usage   UsageReconciler
+	buckets BucketNamer
 }
 
 // ReconcilerDeps groups what a pass draws on: the diff engine, the fleet it
-// walks, and the counters it corrects once the diff has landed.
+// walks, the buckets it recognises, and the counters it corrects once the diff
+// has landed.
 type ReconcilerDeps struct {
-	Syncer      BackendSyncer
-	Fleet       FleetOps
-	Usage       UsageReconciler
-	BucketNames []string
+	Syncer  BackendSyncer
+	Fleet   FleetOps
+	Usage   UsageReconciler
+	Buckets BucketNamer
 }
 
 // NewReconciler creates a reconciler that uses the syncer's SyncBackend to
@@ -85,12 +96,13 @@ func NewReconciler(d *ReconcilerDeps) *Reconciler {
 	must.NotNil("d.Syncer", d.Syncer)
 	must.NotNil("d.Fleet", d.Fleet)
 	must.NotNil("d.Usage", d.Usage)
+	must.NotNil("d.Buckets", d.Buckets)
 	return &Reconciler{
-		log:         slog.Default().With(logfmt.Component("reconciler")),
-		syncer:      d.Syncer,
-		fleet:       d.Fleet,
-		usage:       d.Usage,
-		bucketNames: d.BucketNames,
+		log:     slog.Default().With(logfmt.Component("reconciler")),
+		syncer:  d.Syncer,
+		fleet:   d.Fleet,
+		usage:   d.Usage,
+		buckets: d.Buckets,
 	}
 }
 
@@ -111,17 +123,18 @@ func (r *Reconciler) Run(ctx context.Context) {
 func (r *Reconciler) run(ctx context.Context) {
 	start := time.Now()
 
-	if len(r.bucketNames) == 0 {
-		r.log.ErrorContext(ctx, "no buckets configured, skipping")
+	bucketNames := r.buckets.Names()
+	if len(bucketNames) == 0 {
+		r.log.ErrorContext(ctx, "no buckets declared, skipping")
 		return
 	}
 
 	var totalImported, totalSkipped int
 
 	for _, backendName := range r.fleet.BackendOrder() {
-		bucket := r.bucketNames[0]
+		bucket := bucketNames[0]
 
-		imported, skipped, err := r.syncer.SyncBackend(ctx, backendName, bucket, r.bucketNames)
+		imported, skipped, err := r.syncer.SyncBackend(ctx, backendName, bucket, bucketNames)
 		if err != nil {
 			r.log.ErrorContext(ctx, "backend scan failed",
 				"backend", backendName, "error", err)
@@ -188,8 +201,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, backendName string) (*Reconc
 func (r *Reconciler) ReconcileStreaming(ctx context.Context, backendName string, observer progress.Observer) (*ReconcileResult, error) {
 	ctx = audit.WithRequestID(ctx, audit.NewID())
 
-	if len(r.bucketNames) == 0 {
-		return nil, fmt.Errorf("no buckets configured")
+	bucketNames := r.buckets.Names()
+	if len(bucketNames) == 0 {
+		return nil, fmt.Errorf("no buckets declared")
 	}
 
 	var backends []string
@@ -202,7 +216,7 @@ func (r *Reconciler) ReconcileStreaming(ctx context.Context, backendName string,
 	total := &ReconcileResult{}
 	for _, name := range backends {
 		progress.Track(observer, name, func() string {
-			result, err := r.syncer.ReconcileBackend(ctx, name, r.bucketNames)
+			result, err := r.syncer.ReconcileBackend(ctx, name, bucketNames)
 			// A failed pass still reports what it managed before erroring, so
 			// partial progress is not lost from the tally.
 			if result != nil {
