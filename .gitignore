@@ -5,6 +5,8 @@ deploy/nomad/local/config.yaml
 cover.out
 coverage.out
 integration-coverage.out
+int-results
+integration-results
 dist/
 *.deb
 packaging/changelog.gz
