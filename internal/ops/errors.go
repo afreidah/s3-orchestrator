@@ -73,4 +73,5 @@ var (
 	ErrUserInUse          = errors.New("user still holds credentials or grants")
 	ErrCredentialNotFound = errors.New("credential not found")
 	ErrInvalidCORS        = errors.New("bucket cors rules are not valid")
+	ErrNoPermissions      = errors.New("a grant must carry at least one permission")
 )

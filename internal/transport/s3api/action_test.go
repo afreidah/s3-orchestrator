@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // classify builds a request and names the action it asks for. An empty key
@@ -280,6 +282,100 @@ func TestClassify_EveryActionIsReachable(t *testing.T) {
 	} {
 		if !reached[act] {
 			t.Errorf("no request classifies to %q", act)
+		}
+	}
+}
+
+// -------------------------------------------------------------------------
+// REQUIRED PERMISSIONS
+// -------------------------------------------------------------------------
+
+// TestRequiredPermissions covers what each action asks a grant to carry,
+// including the three judgement calls the mapping makes.
+func TestRequiredPermissions(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		act  Action
+		want core.PermissionSet
+	}{
+		{ActionHeadBucket, core.PermListBuckets},
+		{ActionGetBucketLocation, core.PermListBuckets},
+		{ActionListObjectsV2, core.PermList},
+		{ActionListParts, core.PermList},
+		{ActionGetObject, core.PermRead},
+		{ActionHeadObject, core.PermRead},
+		{ActionPutObject, core.PermWrite},
+		{ActionDeleteObject, core.PermDelete},
+		{ActionDeleteObjects, core.PermDelete},
+		{ActionGetObjectTagging, core.PermTags},
+		{ActionPutObjectTagging, core.PermTags},
+
+		// An abandoned upload is the client cleaning up after itself. A
+		// writer that cannot abort leaks parts it has no other way to remove.
+		{ActionAbortMultipartUpload, core.PermWrite},
+
+		// A copy reads the source it names as well as writing its destination.
+		{ActionCopyObject, core.PermRead | core.PermWrite},
+		{ActionUploadPartCopy, core.PermRead | core.PermWrite},
+
+		// Refused before reaching an object, so gating them would answer 403
+		// where the server means 501 or 405.
+		{ActionUnsupportedSubresource, 0},
+		{ActionUnknown, 0},
+	} {
+		t.Run(string(tc.act), func(t *testing.T) {
+			t.Parallel()
+			if got := RequiredPermissions(tc.act); got != tc.want {
+				t.Errorf("RequiredPermissions(%q) = %q, want %q", tc.act, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRequiredPermissions_EveryActionIsMapped pins that no operation reaches a
+// handler without a permission decision. An action absent from the map is
+// authorized by any grant, which is the failure mode that would not announce
+// itself.
+func TestRequiredPermissions_EveryActionIsMapped(t *testing.T) {
+	t.Parallel()
+
+	for _, act := range []Action{
+		ActionHeadBucket, ActionGetBucketVersioning, ActionGetBucketLocation,
+		ActionListMultipartUpload, ActionListObjectsV1, ActionListObjectsV2,
+		ActionDeleteObjects, ActionGetObject, ActionHeadObject, ActionPutObject,
+		ActionCopyObject, ActionDeleteObject, ActionCreateMultipartUpload,
+		ActionUploadPart, ActionUploadPartCopy, ActionCompleteMultipartUpload,
+		ActionAbortMultipartUpload, ActionListParts, ActionGetObjectTagging,
+		ActionPutObjectTagging, ActionDeleteObjectTagging,
+	} {
+		if RequiredPermissions(act) == 0 {
+			t.Errorf("%q requires no permission, so any grant authorizes it", act)
+		}
+	}
+}
+
+// TestRequiredPermissions_ReadOnlyGrantRefusesEveryWrite walks the whole action
+// set against a read-only grant, which is the arrangement the feature exists
+// for. Anything needing write or delete has to be refused.
+func TestRequiredPermissions_ReadOnlyGrantRefusesEveryWrite(t *testing.T) {
+	t.Parallel()
+
+	readOnly := core.PermListBuckets | core.PermList | core.PermRead | core.PermTags
+	mutating := map[Action]bool{
+		ActionPutObject: true, ActionCopyObject: true, ActionDeleteObject: true,
+		ActionDeleteObjects: true, ActionCreateMultipartUpload: true,
+		ActionUploadPart: true, ActionUploadPartCopy: true,
+		ActionCompleteMultipartUpload: true, ActionAbortMultipartUpload: true,
+	}
+
+	for act := range requiredPermissions {
+		allowed := readOnly.Has(RequiredPermissions(act))
+		if mutating[act] && allowed {
+			t.Errorf("%q is allowed by a read-only grant", act)
+		}
+		if !mutating[act] && !allowed {
+			t.Errorf("%q is refused by a read-only grant", act)
 		}
 	}
 }

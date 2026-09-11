@@ -61,13 +61,14 @@ type Credential struct {
 	LastUsedAt  *time.Time
 }
 
-// Grant is a user's access to one bucket. It carries no permission, and the
-// absence of one means full access to the bucket it names.
+// Grant is a user's access to one bucket, and the permissions that access
+// carries.
 //
 // BucketName may name a bucket the config file declares rather than one the
 // store holds, which is why it is not a foreign key.
 type Grant struct {
-	UserID     string
-	BucketName string
-	CreatedAt  time.Time
+	UserID      string
+	BucketName  string
+	Permissions PermissionSet
+	CreatedAt   time.Time
 }
