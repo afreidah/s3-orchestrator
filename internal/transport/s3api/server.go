@@ -173,8 +173,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.rejectInvalidPath(ctx, w, r, method, start)
 		return
 	}
-	if !user.CanReach(bucket) {
-		s.rejectBucketDenied(ctx, w, r, method, start, user, bucket)
+	// Named before dispatch rather than reported after it. An authorization
+	// check has nowhere to sit if the operation is only known once the handler
+	// has already written the response.
+	act := Classify(r, key)
+	if !s.authorize(ctx, w, r, &authRequest{
+		method: method, start: start, user: user, bucket: bucket, act: act,
+	}) {
 		return
 	}
 
@@ -203,11 +208,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusMethodNotAllowed, "MethodNotAllowed", msg)
 		observe.MarkSpanError(span, msg)
 	}
-
-	// Named before dispatch rather than reported after it. An authorization
-	// check has nowhere to sit if the operation is only known once the
-	// handler has already written the response.
-	act := Classify(r, key)
 
 	var res routed
 	if key == "" {
@@ -267,7 +267,7 @@ func (s *Server) rejectAuth(ctx context.Context, w http.ResponseWriter, r *http.
 		slog.Int("status", http.StatusForbidden),
 		slog.Duration("duration", time.Since(start)),
 	)
-	writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access denied")
+	writeAccessDenied(w)
 }
 
 // serveListBuckets handles the special-case GET / route, which enumerates every
@@ -328,7 +328,72 @@ func (s *Server) rejectBucketDenied(ctx context.Context, w http.ResponseWriter, 
 		slog.Int("status", http.StatusForbidden),
 		slog.Duration("duration", time.Since(start)),
 	)
-	writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access denied")
+	writeAccessDenied(w)
+}
+
+// authRequest carries what an authorization decision reads about a request.
+// Bundled because the two refusals below need the same set and passing them
+// positionally at three call sites is where they get transposed.
+type authRequest struct {
+	method string
+	start  time.Time
+	user   *auth.User
+	bucket string
+	act    Action
+}
+
+// authorize refuses a caller that does not reach the bucket, and one whose
+// grant does not carry what the operation needs. Reports whether the request
+// may proceed; the refusal is already written when it may not.
+//
+// Both checks live here so the request path has one authorization step rather
+// than two spread either side of the span. They stay separate refusals: a
+// bucket the caller was never granted and an operation its grant does not allow
+// are different states an operator fixes differently.
+func (s *Server) authorize(ctx context.Context, w http.ResponseWriter, r *http.Request, a *authRequest) bool {
+	if !a.user.CanReach(a.bucket) {
+		s.rejectBucketDenied(ctx, w, r, a.method, a.start, a.user, a.bucket)
+		return false
+	}
+	if want := RequiredPermissions(a.act); !a.user.Can(a.bucket, want) {
+		s.rejectActionDenied(ctx, w, r, a, want)
+		return false
+	}
+	return true
+}
+
+// rejectActionDenied writes a 403 for a caller that reaches the bucket but
+// whose grant does not carry what the operation needs.
+//
+// Recorded as its own audit event rather than folded into the bucket refusal,
+// because the two describe different states an operator acts on differently:
+// one is a client pointed at a bucket it was never granted, the other a client
+// granted the bucket and asking for more than its grant allows. The entry names
+// what was needed and what was held so the fix is readable without a second
+// lookup.
+func (s *Server) rejectActionDenied(ctx context.Context, w http.ResponseWriter, r *http.Request, a *authRequest, want core.PermissionSet) {
+	held, _ := a.user.Permissions(a.bucket)
+	s.recordRequest(a.method, http.StatusForbidden, a.start, 0, 0)
+	s.logger().WarnContext(ctx, "operation not permitted by grant",
+		"method", a.method,
+		"path", r.URL.Path,
+		"client_addr", r.RemoteAddr,
+		"user", a.user.ID,
+		"bucket", a.bucket,
+		"operation", string(a.act),
+	)
+	audit.Log(ctx, "s3.ActionDenied",
+		slog.String("method", a.method),
+		slog.String("path", r.URL.Path),
+		slog.String("client_addr", r.RemoteAddr),
+		slog.String("bucket", a.bucket),
+		slog.String("operation", string(a.act)),
+		slog.String("required", want.String()),
+		slog.String("held", held.String()),
+		slog.Int("status", http.StatusForbidden),
+		slog.Duration("duration", time.Since(a.start)),
+	)
+	writeAccessDenied(w)
 }
 
 // routed is what a dispatcher reports about the request it handled: the
