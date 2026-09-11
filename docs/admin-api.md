@@ -21,6 +21,21 @@ The token is the `ui.admin_token` value from the configuration file, falling bac
 
 Requests without a valid token get `401` with a JSON body. Request bodies are capped at 1 MB.
 
+## Authorization
+
+The endpoints under `/admin/api/objects` read and write object data, reaching the same service the S3 API does. They are authorized against the permissions the caller's grant carries, not against the token alone: browsing needs `list`, downloading needs `read`, uploading needs `write`, removing a key or a prefix needs `delete`, and the tag endpoints need `tags`. A caller whose grant does not carry what the operation needs gets `403`.
+
+A provisioned credential reaches those endpoints with exactly the grants it holds. Pass its token in the same `X-Admin-Token` header:
+
+```bash
+curl -H "X-Admin-Token: $CREDENTIAL_TOKEN" \
+  http://localhost:9000/admin/api/objects/photos/holiday.jpg
+```
+
+Two limits follow from grants being per bucket. A prefix naming no single bucket -- the empty prefix, or a partial name like `pho` -- cannot be authorized against one grant and is refused. And a provisioned credential reaches only the object endpoints: the control plane carries no permissions a bucket grant can express, so a fleet operation like draining a backend is refused with `403`.
+
+The configured `ui.admin_token` still reaches every endpoint, which is what an existing deployment relies on. That is deprecated: using it to reach object data logs a warning naming the endpoint, and a future release removes it in favour of one credential type across both surfaces. Issue a provisioned credential for anything touching object data.
+
 ## Streaming progress
 
 Twelve endpoints run long enough that a single response is unhelpful: `rebalance`, `replicate`, `over-replication`, `scrub`, `backfill-checksums`, `reconcile`, `lifecycle`, `compress-existing`, `decompress-existing`, `encrypt-existing`, `decrypt-existing`, and a backend purge. They return their JSON result by default, but stream newline-delimited progress when the caller asks for it:

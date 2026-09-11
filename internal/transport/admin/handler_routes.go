@@ -15,12 +15,11 @@
 package admin
 
 import (
-	"crypto/subtle"
 	"net/http"
 
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
-	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
 // -------------------------------------------------------------------------
@@ -96,6 +95,13 @@ const mediaOctetStream = "application/octet-stream"
 // confirmation preview and the executed acknowledgement share one route. The
 // two media-type overrides are empty for JSON, and set where a route carries
 // raw bytes instead - an object upload in, a trace snapshot out.
+//
+// Perm and Resource are what authorize a data-plane route: the permissions the
+// caller's grant has to carry, and the parameter naming the object key the
+// bucket is read from. Both are zero on a control-plane route, which the admin
+// token alone authorizes. Declaring them here rather than checking inside each
+// handler is what makes a route that forgets them a visible gap in this table
+// instead of an absent call buried in a handler body.
 type route struct {
 	Method       string
 	Pattern      string
@@ -108,6 +114,8 @@ type route struct {
 	Params       []param
 	ResponseType string
 	RequestType  string
+	Perm         core.PermissionSet
+	Resource     string
 }
 
 // -------------------------------------------------------------------------
@@ -149,6 +157,7 @@ func (h *Handler) routes() []route {
 			Params: []param{
 				{Name: paramKey, In: inQuery, Required: true, Type: typeString, Description: "Object key to resolve"},
 			},
+			Perm: core.PermRead, Resource: paramKey,
 		},
 		{
 			Method: http.MethodGet, Pattern: pathObjects, Handler: h.handleListObjects,
@@ -159,6 +168,7 @@ func (h *Handler) routes() []route {
 				{Name: "delimiter", In: inQuery, Type: typeString, Description: "Grouping delimiter; omitted defaults to /, empty lists every key flat"},
 				{Name: "continuation", In: inQuery, Type: typeString, Description: "Continuation token from a previous page"},
 			},
+			Perm: core.PermList, Resource: paramPrefix,
 		},
 		{
 			Method: http.MethodGet, Pattern: pathObject, Handler: h.handleGetObject,
@@ -167,6 +177,7 @@ func (h *Handler) routes() []route {
 			Params: []param{
 				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
 			},
+			Perm: core.PermRead, Resource: paramKey,
 		},
 		{
 			Method: http.MethodPut, Pattern: pathObject, Handler: h.handlePutObject,
@@ -176,6 +187,7 @@ func (h *Handler) routes() []route {
 			Params: []param{
 				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
 			},
+			Perm: core.PermWrite, Resource: paramKey,
 		},
 		{
 			Method: http.MethodGet, Pattern: pathObjectTags, Handler: h.handleGetObjectTags,
@@ -184,6 +196,7 @@ func (h *Handler) routes() []route {
 			Params: []param{
 				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
 			},
+			Perm: core.PermTags, Resource: paramKey,
 		},
 		{
 			Method: http.MethodPut, Pattern: pathObjectTags, Handler: h.handlePutObjectTags,
@@ -193,6 +206,7 @@ func (h *Handler) routes() []route {
 			Params: []param{
 				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
 			},
+			Perm: core.PermTags, Resource: paramKey,
 		},
 		{
 			Method: http.MethodDelete, Pattern: pathObjectTags, Handler: h.handleDeleteObjectTags,
@@ -201,6 +215,7 @@ func (h *Handler) routes() []route {
 			Params: []param{
 				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
 			},
+			Perm: core.PermTags, Resource: paramKey,
 		},
 		{
 			Method: http.MethodDelete, Pattern: pathObject, Handler: h.handleDeleteObject,
@@ -209,6 +224,7 @@ func (h *Handler) routes() []route {
 			Params: []param{
 				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
 			},
+			Perm: core.PermDelete, Resource: paramKey,
 		},
 		{
 			Method: http.MethodDelete, Pattern: pathObjects, Handler: h.handleDeletePrefix,
@@ -217,6 +233,7 @@ func (h *Handler) routes() []route {
 			Params: []param{
 				{Name: paramPrefix, In: inQuery, Required: true, Type: typeString, Description: "Prefix whose objects are removed"},
 			},
+			Perm: core.PermDelete, Resource: paramPrefix,
 		},
 		{
 			Method: http.MethodGet, Pattern: "/admin/api/cleanup-queue", Handler: h.handleCleanupQueue,
@@ -509,23 +526,12 @@ func (h *Handler) routes() []route {
 	}
 }
 
-// Register mounts the admin API routes on the given mux.
+// Register mounts the admin API routes on the given mux. Every entry is wrapped
+// by the guard, so authentication and the route's declared permission are not
+// something a handler can be written without.
 func (h *Handler) Register(mux *http.ServeMux) {
 	rts := h.routes()
 	for i := range rts {
-		mux.HandleFunc(rts[i].Method+" "+rts[i].Pattern, h.requireToken(rts[i].Handler))
-	}
-}
-
-// requireToken wraps a handler and enforces X-Admin-Token authentication.
-func (h *Handler) requireToken(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		token := r.Header.Get("X-Admin-Token")
-		if subtle.ConstantTimeCompare([]byte(token), []byte(h.token)) != 1 {
-			h.log.WarnContext(r.Context(), "unauthorized request", "path", r.URL.Path, "client_addr", r.RemoteAddr)
-			httputil.WriteJSONError(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-		next(w, r)
+		mux.HandleFunc(rts[i].Method+" "+rts[i].Pattern, h.guard(&rts[i]))
 	}
 }

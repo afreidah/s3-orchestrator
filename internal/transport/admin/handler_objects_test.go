@@ -35,6 +35,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 )
 
 // -------------------------------------------------------------------------
@@ -52,6 +53,7 @@ func newObjectsHandler(t *testing.T, mock core.ObjectStore) *Handler {
 		dbHealthy: cb.IsHealthy,
 		objects:   objectsOver(t, mock),
 		token:     "test-token",
+		registry:  func() *auth.BucketRegistry { return nil },
 		logLevel:  &lv,
 	}
 }
