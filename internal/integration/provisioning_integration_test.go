@@ -144,6 +144,7 @@ func provAdminMux(t *testing.T, opsSvc *ops.Services, st *proxytest.Stack) http.
 		DBHealthy:   testDatabaseCB.IsHealthy,
 		Cleanup:     testStore,
 		Token:       adminToken,
+		Registry:    func() *auth.BucketRegistry { return nil },
 		LogLevel:    &lv,
 	})
 	mux := http.NewServeMux()

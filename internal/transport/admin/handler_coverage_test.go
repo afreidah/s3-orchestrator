@@ -34,6 +34,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -47,6 +48,7 @@ func newCoverageHandler(t *testing.T) *Handler {
 	return &Handler{
 		log:       slog.Default().With(logfmt.Component("admin")),
 		token:     "test-token",
+		registry:  func() *auth.BucketRegistry { return nil },
 		logLevel:  &lv,
 		dbHealthy: func() bool { return true },
 	}

@@ -36,6 +36,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/postgres"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
@@ -143,6 +144,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		DBHealthy:   testDatabaseCB.IsHealthy,
 		Cleanup:     testStore,
 		Token:       adminToken,
+		Registry:    func() *auth.BucketRegistry { return nil },
 		LogLevel:    &lv,
 	})
 	adminMux := http.NewServeMux()

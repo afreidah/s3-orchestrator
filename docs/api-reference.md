@@ -284,7 +284,8 @@ The admin API has moved to its own page: **[Admin API](../admin-api/)**.
 
 Its endpoint reference is generated from the server's route table, so it cannot
 drift from the code. That page also covers the parts a schema does not carry:
-token authentication, the newline-delimited streaming mode, and the two-phase
+token authentication, which permissions the object endpoints require and when
+they answer `403`, the newline-delimited streaming mode, and the two-phase
 confirmation a destructive backend purge requires.
 
 

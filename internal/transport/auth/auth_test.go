@@ -1078,7 +1078,7 @@ func TestNewBucketRegistry_AllowsOneBucketManyCredentials(t *testing.T) {
 		t.Fatalf("NewBucketRegistry: %v", err)
 	}
 	for _, tok := range []string{"one", "two"} {
-		u, aErr := br.authenticateProxyToken(tok)
+		u, aErr := br.AuthenticateToken(tok)
 		if aErr != nil || !u.CanReach("b1") {
 			t.Errorf("token %q reached %v (%v), want b1", tok, u.Buckets(), aErr)
 		}
@@ -1098,7 +1098,7 @@ func TestNewBucketRegistry_TokenResolvesToItsOwnBucket(t *testing.T) {
 		t.Fatalf("NewBucketRegistry: %v", err)
 	}
 	for tok, want := range map[string]string{"backups-token": "backups", "traces-token": "traces"} {
-		u, aErr := br.authenticateProxyToken(tok)
+		u, aErr := br.AuthenticateToken(tok)
 		if aErr != nil || !u.CanReach(want) {
 			t.Errorf("token %q reached %v (%v), want %q", tok, u.Buckets(), aErr, want)
 		}

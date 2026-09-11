@@ -25,6 +25,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/cache"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 )
 
 // TestRouteGuards covers what the admin routes answer before any handler
@@ -508,6 +509,7 @@ func newTestHandler(t *testing.T) *Handler {
 	h := &Handler{
 		log:      slog.Default().With(logfmt.Component("admin")),
 		token:    "test-token",
+		registry: func() *auth.BucketRegistry { return nil },
 		logLevel: &lv,
 	}
 	// Operations over stubs that do nothing, so a test only installs the one

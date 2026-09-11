@@ -36,6 +36,14 @@ A deployment declares credentials in two places, and both are live at once.
 
 Config wins a collision, and the API refuses to modify anything the config file declares. See [config versus the provisioning API](configuration.md#config-versus-the-provisioning-api) for the precedence rule, and [the CLI reference](cli.md#bucket-user-credential-and-grant) for the commands.
 
+## The admin surface
+
+The admin API is authenticated by its own `X-Admin-Token` header rather than by SigV4, but the endpoints under `/admin/api/objects` reach the same object service the S3 API does. Those are authorized against the same grants and the same permissions: a credential's token passed in that header reaches object data with exactly what its grant carries, and nothing more.
+
+The rest of the admin API is the control plane - backend drain, key rotation, provisioning, worker triggers. Those carry no permission a bucket grant can express, so they remain the configured admin token's to authorize, and a provisioned credential is refused on them.
+
+The configured token also still reaches object data, which is how a deployment predating this behaviour keeps working. That path is deprecated and logs a warning; see [the admin API's authorization section](admin-api.md#authorization).
+
 ## Bucket configuration
 
 
