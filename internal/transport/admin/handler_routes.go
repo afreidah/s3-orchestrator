@@ -3,13 +3,16 @@
 //
 // Author: Alex Freidah
 //
-// One table describes the whole admin surface: method, pattern, handler, and
-// the types the route exchanges. Register builds the mux from it, so a route
-// cannot be served without declaring its shape, and the generated API
-// description reads the same source the server routes with. requireToken is
-// applied by the registration loop rather than per entry, so an endpoint
-// cannot ship unauthenticated by forgetting the wrapper; per-endpoint
-// authorization (if any) lives inside the handler.
+// One table describes the whole admin surface: method, pattern, handler, the
+// types the route exchanges, and what authorizes it. Register builds the mux
+// from it, so a route cannot be served without declaring its shape, and the
+// generated API description reads the same source the server routes with.
+//
+// The guard is applied by the registration loop rather than per entry, so an
+// endpoint cannot ship unauthenticated by forgetting the wrapper. What it
+// enforces is declared here too: a data-plane route names the permissions its
+// caller needs, which is why a route that forgets them is a visible gap in this
+// table rather than an absent check inside a handler.
 // -------------------------------------------------------------------------------
 
 package admin
@@ -70,6 +73,7 @@ const (
 	descUserID      = "User ID"
 
 	descBulkRewriteMax = "Cap the objects rewritten by this request; 0 converts the whole fleet"
+	descBackendScope   = "Restrict the pass to one backend"
 )
 
 // Parameter locations and types, mirrored by the generator.
@@ -362,6 +366,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Encrypt every plaintext object in place",
 			Response: adminapi.EncryptExistingResponse{},
 			Params: []param{
+				{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope},
 				{Name: paramMax, In: inQuery, Type: typeInteger, Description: descBulkRewriteMax},
 			},
 			Stream: adminstream.Event{},
@@ -371,6 +376,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Rewrite every encrypted object back to plaintext",
 			Response: adminapi.DecryptExistingResponse{},
 			Params: []param{
+				{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope},
 				{Name: paramMax, In: inQuery, Type: typeInteger, Description: descBulkRewriteMax},
 			},
 			Stream: adminstream.Event{},
@@ -380,6 +386,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Store every uncompressed object as chunked zstd",
 			Response: adminapi.CompressExistingResponse{},
 			Params: []param{
+				{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope},
 				{Name: paramMax, In: inQuery, Type: typeInteger, Description: descBulkRewriteMax},
 			},
 			Stream: adminstream.Event{},
@@ -389,6 +396,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Rewrite every compressed object back to its stored bytes",
 			Response: adminapi.DecompressExistingResponse{},
 			Params: []param{
+				{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope},
 				{Name: paramMax, In: inQuery, Type: typeInteger, Description: descBulkRewriteMax},
 			},
 			Stream: adminstream.Event{},
@@ -398,6 +406,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Verify stored content hashes against backend data",
 			Response: adminapi.ScrubResponse{},
 			Params: []param{
+				{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope},
 				{Name: paramBatchSize, In: inQuery, Type: typeInteger, Description: "Objects verified in this pass"},
 			},
 			Stream: adminstream.Event{},
@@ -415,6 +424,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Compute content hashes for objects missing one",
 			Response: adminapi.BackfillChecksumsResponse{},
 			Params: []param{
+				{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope},
 				{Name: paramBatchSize, In: inQuery, Type: typeInteger, Description: "Objects hashed per pass"},
 				{Name: paramMax, In: inQuery, Type: typeInteger, Description: "Cap the objects processed by this request; 0 drains the backlog"},
 				{Name: "delay_ms", In: inQuery, Type: typeInteger, Description: "Pause between passes to rate-limit backend reads"},
@@ -426,7 +436,7 @@ func (h *Handler) routes() []route {
 			Summary:  "Reconcile backend storage against the object ledger",
 			Response: adminapi.ReconcileResponse{},
 			Params: []param{
-				{Name: paramBackend, In: inQuery, Type: typeString, Description: "Restrict the pass to one backend"},
+				{Name: paramBackend, In: inQuery, Type: typeString, Description: descBackendScope},
 			},
 			Stream: adminstream.Event{},
 		},

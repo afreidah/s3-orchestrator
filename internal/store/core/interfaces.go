@@ -196,7 +196,7 @@ type PendingStore interface {
 type IntegrityStore interface {
 	GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string) ([]ObjectLocation, error)
 	CountScrubCandidatesOnBackends(ctx context.Context, backends []string) (int64, error)
-	GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]ObjectLocation, error)
+	GetObjectsWithoutHash(ctx context.Context, limit, offset int, backend string) ([]ObjectLocation, error)
 	UpdateContentHash(ctx context.Context, key, backendName, hash string) error
 	MarkObjectScrubbed(ctx context.Context, key, backendName string) error
 	IntegrityCoverage(ctx context.Context, reachable []string) (CoverageStat, error)
@@ -278,10 +278,10 @@ type LifecycleAdmin interface {
 type EncryptionAdmin interface {
 	ListEncryptedLocations(ctx context.Context, keyID string, limit, offset int) ([]EncryptedLocation, error)
 	UpdateEncryptionKey(ctx context.Context, objectKey, backendName string, newEncryptionKey []byte, newKeyID string) error
-	ListUnencryptedLocations(ctx context.Context, limit int, after Cursor) ([]UnencryptedLocation, error)
+	ListUnencryptedLocations(ctx context.Context, limit int, after Cursor, backend string) ([]UnencryptedLocation, error)
 	CountUnencryptedLocations(ctx context.Context) (int64, error)
 	MarkObjectEncrypted(ctx context.Context, u *EncryptedUpdate) error
-	ListAllEncryptedLocations(ctx context.Context, limit int, after Cursor) ([]DecryptableLocation, error)
+	ListAllEncryptedLocations(ctx context.Context, limit int, after Cursor, backend string) ([]DecryptableLocation, error)
 	MarkObjectDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error
 }
 
@@ -304,8 +304,8 @@ type EncryptionAdmin interface {
 // the ratio stays declined until a setting changes. Selecting on them is what
 // keeps a second pass from paying to rediscover what the first one learned.
 type CompressionAdmin interface {
-	ListUncompressedLocations(ctx context.Context, limit int, after Cursor, t CompressionThresholds) ([]RewritableLocation, error)
-	ListCompressedLocations(ctx context.Context, limit int, after Cursor) ([]RewritableLocation, error)
+	ListUncompressedLocations(ctx context.Context, limit int, after Cursor, t CompressionThresholds, backend string) ([]RewritableLocation, error)
+	ListCompressedLocations(ctx context.Context, limit int, after Cursor, backend string) ([]RewritableLocation, error)
 	MarkObjectCompressed(ctx context.Context, u *CompressedUpdate, previousSize int64) error
 	RecordCompressionProbe(ctx context.Context, probe *CompressionProbe) error
 }

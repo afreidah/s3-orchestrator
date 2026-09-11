@@ -304,6 +304,10 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	runtime, err := do.Invoke[*infra.BackendRuntime](i)
+	if err != nil {
+		return nil, err
+	}
 	deps := &admin.Deps{
 		BackendOps:   d.usageSvc,
 		Dashboard:    aggregator,
@@ -325,6 +329,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		Reconciler:   recRes.Value,
 		Token:        adminToken,
 		Registry:     adminBucketRegistry(i),
+		BackendNames: runtime.BackendOrder,
 		LogLevel:     d.logLevel,
 	}
 	// Set the log buffer only when a real one resolves; assigning a nil

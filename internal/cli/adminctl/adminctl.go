@@ -35,7 +35,9 @@ const (
 	flagBatchSize = "batch-size"
 	fmtBatchSize  = "?batch_size=%d"
 	flagMax       = "max"
-	fmtMax        = "?max=%d"
+	flagBackend   = "backend"
+	queryBackend  = "backend"
+	usageBackend  = "Restrict the pass to one backend (default: every backend)"
 	fmtError      = "error: %v\n"
 
 	errBackendNameRequired = "error: backend name is required"
@@ -69,16 +71,16 @@ Commands:
   drain-status        Check drain progress (requires backend name arg)
   drain-cancel        Cancel an active drain (requires backend name arg)
   remove-backend      Remove a backend and its data (requires backend name arg, --purge to delete S3 objects)
-  scrub               Trigger an on-demand integrity scrub cycle (-batch-size to override, -key to verify one object now)
-  backfill-checksums  Compute and store content hashes for unhashed objects (use -max and -delay-ms to bound and pace each run)
+  scrub               Trigger an on-demand integrity scrub cycle (-batch-size to override, -key to verify one object now, -backend to scope)
+  backfill-checksums  Compute and store content hashes for unhashed objects (use -max and -delay-ms to bound and pace each run, -backend to scope)
   reconcile           Reconcile DB against backend (use -backend to scope to one backend)
   lifecycle           Run one lifecycle expiration sweep now instead of waiting for the hourly tick
   usage-reconcile     Recompute bytes_used from the object ledger to correct quota drift
-  encrypt-existing    Encrypt all unencrypted objects in place, or -max=N of them (requires encryption enabled)
-  decrypt-existing    Decrypt all encrypted objects back to plaintext, or -max=N of them (requires encryption enabled)
+  encrypt-existing    Encrypt all unencrypted objects in place, or -max=N of them, -backend to scope (requires encryption enabled)
+  decrypt-existing    Decrypt all encrypted objects back to plaintext, or -max=N of them, -backend to scope (requires encryption enabled)
   rotate-encryption-key  Re-wrap all DEKs sealed with -old-key-id under the current primary key
-  compress-existing   Store every uncompressed object as chunked zstd, or -max=N of them (requires a compression codec)
-  decompress-existing Rewrite every compressed object back to the bytes the client wrote, or -max=N of them
+  compress-existing   Store every uncompressed object as chunked zstd, or -max=N of them, -backend to scope (requires a compression codec)
+  decompress-existing Rewrite every compressed object back to the bytes the client wrote, or -max=N of them, -backend to scope
   workers             Show background worker last-tick health
   reload-status       Show the outcome of the last SIGHUP config reload
   trace-snapshot      Download the flight-recorder trace ring buffer to a file (use -o)

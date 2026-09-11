@@ -89,7 +89,7 @@ func TestScrub_MatchingHash(t *testing.T) {
 		Size: 11,
 	}, func() {}, nil)
 
-	scrubSum := s.Scrub(context.Background(), 10, nil)
+	scrubSum := s.Scrub(context.Background(), 10, "", nil)
 	checked, failed := scrubSum.Attempted, scrubSum.Failed
 	if checked != 1 {
 		t.Errorf("expected 1 checked, got %d", checked)
@@ -120,7 +120,7 @@ func TestScrub_HashMismatch(t *testing.T) {
 	event.SetEmitter(func(ev event.Event) { emitted = append(emitted, ev) })
 	t.Cleanup(func() { event.SetEmitter(nil) })
 
-	scrubSum := s.Scrub(context.Background(), 10, nil)
+	scrubSum := s.Scrub(context.Background(), 10, "", nil)
 	checked, failed := scrubSum.Attempted, scrubSum.Failed
 	if checked != 1 {
 		t.Errorf("expected 1 checked, got %d", checked)
@@ -156,7 +156,7 @@ func TestScrub_BackendError(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(nil, nil, errors.New("backend down"))
 
-	scrubSum := s.Scrub(context.Background(), 10, nil)
+	scrubSum := s.Scrub(context.Background(), 10, "", nil)
 	checked, failed := scrubSum.Attempted, scrubSum.Failed
 	if checked != 0 {
 		t.Errorf("expected 0 checked, got %d", checked)
@@ -173,7 +173,7 @@ func TestScrub_EmptyBatch(t *testing.T) {
 	s, _, _, _, ms := setupScrubber(t)
 	ms.randomHashedObjects = nil
 
-	scrubSum := s.Scrub(context.Background(), 10, nil)
+	scrubSum := s.Scrub(context.Background(), 10, "", nil)
 	checked, failed := scrubSum.Attempted, scrubSum.Failed
 	if checked != 0 || failed != 0 {
 		t.Errorf("expected 0/0, got %d/%d", checked, failed)
@@ -198,7 +198,7 @@ func TestBackfill_ComputesAndStoresHash(t *testing.T) {
 		Size: int64(len(body)),
 	}, func() {}, nil)
 
-	backfillSum, nextOffset := s.Backfill(context.Background(), 10, 0, nil)
+	backfillSum, nextOffset := s.Backfill(context.Background(), 10, 0, "", nil)
 	processed := backfillSum.Succeeded
 	if processed != 1 {
 		t.Errorf("expected 1 processed, got %d", processed)
@@ -230,7 +230,7 @@ func TestBackfill_Pagination(t *testing.T) {
 		Size: 3,
 	}, func() {}, nil).Times(5)
 
-	backfillSum, nextOffset := s.Backfill(context.Background(), 5, 0, nil)
+	backfillSum, nextOffset := s.Backfill(context.Background(), 5, 0, "", nil)
 	processed := backfillSum.Succeeded
 	if processed != 5 {
 		t.Errorf("expected 5 processed, got %d", processed)
@@ -258,7 +258,7 @@ func TestBackfill_UnencryptedObject(t *testing.T) {
 		Size: int64(len(body)),
 	}, func() {}, nil)
 
-	backfillSum, _ := s.Backfill(context.Background(), 10, 0, nil)
+	backfillSum, _ := s.Backfill(context.Background(), 10, 0, "", nil)
 	processed := backfillSum.Succeeded
 	if processed != 1 {
 		t.Errorf("expected 1 processed, got %d", processed)
@@ -281,7 +281,7 @@ func TestBackfill_BackendError(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(nil, nil, errors.New("timeout"))
 
-	backfillSum, _ := s.Backfill(context.Background(), 10, 0, nil)
+	backfillSum, _ := s.Backfill(context.Background(), 10, 0, "", nil)
 	processed := backfillSum.Succeeded
 	if processed != 0 {
 		t.Errorf("expected 0 processed, got %d", processed)
@@ -295,7 +295,7 @@ func TestBackfill_EmptyBatch(t *testing.T) {
 	s, _, _, _, ms := setupScrubber(t)
 	ms.objectsWithoutHash = nil
 
-	backfillSum, nextOffset := s.Backfill(context.Background(), 10, 0, nil)
+	backfillSum, nextOffset := s.Backfill(context.Background(), 10, 0, "", nil)
 	processed := backfillSum.Succeeded
 	if processed != 0 || nextOffset != 0 {
 		t.Errorf("expected 0/0, got %d/%d", processed, nextOffset)
@@ -332,7 +332,7 @@ func TestScrub_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	scrubSum := s.Scrub(ctx, 10, nil)
+	scrubSum := s.Scrub(ctx, 10, "", nil)
 	checked, failed := scrubSum.Attempted, scrubSum.Failed
 	if checked != 0 {
 		t.Errorf("expected 0 checked with cancelled context, got %d", checked)
@@ -362,7 +362,7 @@ func TestScrub_RefusesEnvelopeOnPlainRow(t *testing.T) {
 		Size: int64(len(ciphertext)),
 	}, func() {}, nil)
 
-	scrubSum := s.Scrub(context.Background(), 10, nil)
+	scrubSum := s.Scrub(context.Background(), 10, "", nil)
 	if scrubSum.Attempted != 0 {
 		t.Errorf("a divergent copy must not count as checked, got %d", scrubSum.Attempted)
 	}
@@ -389,7 +389,7 @@ func TestBackfill_RefusesEnvelopeOnPlainRow(t *testing.T) {
 		Size: int64(len(ciphertext)),
 	}, func() {}, nil)
 
-	sum, _ := s.Backfill(context.Background(), 10, 0, nil)
+	sum, _ := s.Backfill(context.Background(), 10, 0, "", nil)
 	if sum.Failed != 1 {
 		t.Errorf("expected 1 failed, got %d", sum.Failed)
 	}
@@ -410,7 +410,7 @@ func TestScrub_RefusesContradictoryRow(t *testing.T) {
 	}
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	scrubSum := s.Scrub(context.Background(), 10, nil)
+	scrubSum := s.Scrub(context.Background(), 10, "", nil)
 	if scrubSum.Attempted != 0 {
 		t.Errorf("a contradictory row must not count as checked, got %d", scrubSum.Attempted)
 	}
@@ -435,7 +435,7 @@ func TestScrub_DiscardedCopyDropsItsLocation(t *testing.T) {
 		Size: 11,
 	}, func() {}, nil)
 
-	if sum := s.Scrub(context.Background(), 10, nil); sum.Failed != 1 {
+	if sum := s.Scrub(context.Background(), 10, "", nil); sum.Failed != 1 {
 		t.Fatalf("expected 1 mismatch, got %+v", sum)
 	}
 	if len(ms.deletedLocations) != 1 || ms.deletedLocations[0] != "bucket/key1@b1" {
@@ -458,7 +458,7 @@ func TestScrub_StampsEveryAttempt(t *testing.T) {
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/unreadable", "").
 		Return(nil, func() {}, errors.New("backend down"))
 
-	s.Scrub(context.Background(), 10, nil)
+	s.Scrub(context.Background(), 10, "", nil)
 
 	if len(ms.scrubbed) != 1 || ms.scrubbed[0] != "bucket/unreadable@b1" {
 		t.Errorf("an unreadable copy must still be stamped, got %v", ms.scrubbed)
@@ -477,7 +477,7 @@ func TestScrub_ReportsCoverage(t *testing.T) {
 	ms.neverVerified = 42
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 
-	s.Scrub(context.Background(), 10, nil)
+	s.Scrub(context.Background(), 10, "", nil)
 
 	if got := promtest.ToFloat64(telemetry.IntegrityNeverVerifiedCopies); got != 42 {
 		t.Errorf("never-verified gauge = %v, want 42", got)
@@ -510,7 +510,7 @@ func TestScrub_SurvivesBookkeepingFailures(t *testing.T) {
 		Size: 11,
 	}, func() {}, nil)
 
-	if sum := s.Scrub(context.Background(), 10, nil); sum.Failed != 1 {
+	if sum := s.Scrub(context.Background(), 10, "", nil); sum.Failed != 1 {
 		t.Errorf("the mismatch must still be reported, got %+v", sum)
 	}
 }
@@ -547,7 +547,7 @@ func TestScrub_UnreadableCopyIsCountedAndLabelled(t *testing.T) {
 		}
 	}
 
-	sum := s.Scrub(context.Background(), 10, observer)
+	sum := s.Scrub(context.Background(), 10, "", observer)
 
 	if sum.Skipped != 1 {
 		t.Errorf("unreadable copy: Skipped = %d, want 1 (%+v)", sum.Skipped, sum)
@@ -585,7 +585,7 @@ func TestScrub_MismatchStaysDistinctFromUnreadable(t *testing.T) {
 	placement.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), "b1", "bucket/rotted", gomock.Any(), gomock.Any()).AnyTimes()
 
 	var statuses []string
-	sum := s.Scrub(context.Background(), 10, func(step progress.Step) {
+	sum := s.Scrub(context.Background(), 10, "", func(step progress.Step) {
 		if step.Phase == progress.PhaseEnd {
 			statuses = append(statuses, step.Status)
 		}
@@ -690,7 +690,7 @@ func TestScrub_DeclinesBackendsOverTheirUsageLimit(t *testing.T) {
 	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms})
 	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
 
-	sum := s.Scrub(context.Background(), 10, nil)
+	sum := s.Scrub(context.Background(), 10, "", nil)
 
 	if got := ms.scrubSelectedBackends; len(got) != 1 || got[0] != "b1" {
 		t.Errorf("selected backends = %v, want only the affordable one [b1]", got)
@@ -710,7 +710,7 @@ func TestScrub_SelectsEverythingWhenNothingIsOverBudget(t *testing.T) {
 	t.Parallel()
 	s, _, _, _, ms := setupScrubber(t)
 
-	sum := s.Scrub(context.Background(), 10, nil)
+	sum := s.Scrub(context.Background(), 10, "", nil)
 
 	if got := ms.scrubSelectedBackends; len(got) != 1 || got[0] != "b1" {
 		t.Errorf("selected backends = %v, want the full fleet [b1]", got)
@@ -746,7 +746,7 @@ func TestScrub_DeferredCopiesReportSeparately(t *testing.T) {
 	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms})
 	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
 
-	sum := s.Scrub(context.Background(), 10, nil)
+	sum := s.Scrub(context.Background(), 10, "", nil)
 	if sum.Deferred != 40 {
 		t.Fatalf("Deferred = %d, want 40", sum.Deferred)
 	}
@@ -781,7 +781,7 @@ func TestScrub_SurvivesADeferredCountFailure(t *testing.T) {
 	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms})
 	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
 
-	sum := s.Scrub(context.Background(), 10, nil)
+	sum := s.Scrub(context.Background(), 10, "", nil)
 
 	if sum.Deferred != 0 {
 		t.Errorf("Deferred = %d, want 0 when the count could not be read", sum.Deferred)
@@ -968,11 +968,44 @@ func TestScrub_DeclinesCopyWithoutEgressHeadroom(t *testing.T) {
 	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: pl, Store: ms})
 	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100})
 
-	sum := s.Scrub(context.Background(), 10, nil)
+	sum := s.Scrub(context.Background(), 10, "", nil)
 	if sum.Failed != 0 {
 		t.Errorf("failed = %d, want 0; a copy left unread is not a corrupt copy", sum.Failed)
 	}
 	if len(ms.scrubbed) > 0 {
 		t.Errorf("marked %v scrubbed; a copy that was never read was not verified", ms.scrubbed)
+	}
+}
+
+// TestRestrictToBackend_NarrowsTheAffordableSet covers the scrub pass being
+// asked for one backend: a named one the budget allows becomes the whole set,
+// an unnamed request is left alone, and one the budget already declined stays
+// out rather than being scrubbed anyway.
+func TestRestrictToBackend_NarrowsTheAffordableSet(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		affordable []string
+		backend    string
+		want       []string
+	}{
+		{"no backend named", []string{"a", "b"}, "", []string{"a", "b"}},
+		{"named and affordable", []string{"a", "b"}, "a", []string{"a"}},
+		{"named but declined by the budget", []string{"a"}, "b", nil},
+		{"named with nothing affordable", nil, "a", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := restrictToBackend(tc.affordable, tc.backend)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("got %v, want %v", got, tc.want)
+				}
+			}
+		})
 	}
 }

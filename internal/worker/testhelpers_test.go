@@ -259,7 +259,7 @@ func (m *mockMetadataStore) IntegrityCoverage(_ context.Context, reachable []str
 
 // GetObjectsWithoutHash is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
-func (m *mockMetadataStore) GetObjectsWithoutHash(_ context.Context, limit, _ int) ([]core.ObjectLocation, error) {
+func (m *mockMetadataStore) GetObjectsWithoutHash(_ context.Context, limit, _ int, _ string) ([]core.ObjectLocation, error) {
 	if limit > len(m.objectsWithoutHash) {
 		return m.objectsWithoutHash, nil
 	}

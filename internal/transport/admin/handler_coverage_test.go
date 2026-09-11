@@ -502,8 +502,8 @@ func emptyEncryptionStore(t *testing.T) *opstest.MockEncryptionStore {
 	t.Helper()
 	m := opstest.NewMockEncryptionStore(gomock.NewController(t))
 	m.EXPECT().ListEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
-	m.EXPECT().ListAllEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
-	m.EXPECT().ListUnencryptedLocations(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	m.EXPECT().ListAllEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	m.EXPECT().ListUnencryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	return m
 }
 
@@ -613,8 +613,8 @@ func failingEncryptionStore(t *testing.T, err error) *opstest.MockEncryptionStor
 	t.Helper()
 	m := opstest.NewMockEncryptionStore(gomock.NewController(t))
 	m.EXPECT().ListEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, err).AnyTimes()
-	m.EXPECT().ListAllEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, err).AnyTimes()
-	m.EXPECT().ListUnencryptedLocations(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, err).AnyTimes()
+	m.EXPECT().ListAllEncryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, err).AnyTimes()
+	m.EXPECT().ListUnencryptedLocations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, err).AnyTimes()
 	return m
 }
 

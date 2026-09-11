@@ -206,22 +206,6 @@ func TestNewOneShotResults_Describe(t *testing.T) {
 			want: "counters flushed to the database",
 		},
 		{
-			name: "encrypt existing",
-			res: encryptExistingResult{adminapi.EncryptExistingResponse{
-				Status: "complete", Total: 3,
-				Encrypted: 3,
-			}},
-			want: "encrypted 3 objects",
-		},
-		{
-			name: "decrypt existing",
-			res: decryptExistingResult{adminapi.DecryptExistingResponse{
-				Status: "complete", Total: 2, Failed: 1,
-				Decrypted: 1,
-			}},
-			want: "decrypted 1 object, 1 failed",
-		},
-		{
 			name: "rotate key",
 			res: rotateKeyResult{adminapi.RotateEncryptionKeyResponse{
 				Status: "complete", Total: 5,
@@ -248,7 +232,7 @@ func TestNewOneShotResults_Describe(t *testing.T) {
 // rather than reporting zero work as success.
 func TestNewOneShotResults_ReportSkips(t *testing.T) {
 	t.Parallel()
-	res := encryptExistingResult{adminapi.EncryptExistingResponse{
+	res := usageReconcileResult{adminapi.UsageReconcileResponse{
 		Status: statusSkipped,
 	}}
 	if got := res.skipReason(); got != statusSkipped {

@@ -137,33 +137,9 @@ func (r usageFlushResult) skipReason() string { return skippedBecause(r.Status) 
 
 func (r usageFlushResult) describe() string { return "counters flushed to the database" }
 
-// encryptExistingResult reports a pass that rewrote plaintext copies as
-// ciphertext.
-type encryptExistingResult struct {
-	adminapi.EncryptExistingResponse
-}
-
-func (r encryptExistingResult) skipReason() string { return skippedBecause(r.Status) }
-
-func (r encryptExistingResult) describe() string {
-	return rewriteSummary("encrypted", r.Encrypted, r.Failed, r.Total)
-}
-
-// decryptExistingResult reports a pass that rewrote encrypted copies as
-// plaintext.
-type decryptExistingResult struct {
-	adminapi.DecryptExistingResponse
-}
-
-func (r decryptExistingResult) skipReason() string { return skippedBecause(r.Status) }
-
-func (r decryptExistingResult) describe() string {
-	return rewriteSummary("decrypted", r.Decrypted, r.Failed, r.Total)
-}
-
-// The compression passes have no one-shot result type here: both stream their
-// progress, so the TUI renders the step events and the terminal summary the
-// server sends rather than decoding a final JSON body.
+// The encryption and compression passes have no one-shot result type here: all
+// four stream their progress, so the TUI renders the step events and the
+// terminal summary the server sends rather than decoding a final JSON body.
 
 // rotateKeyResult reports a pass that re-wrapped object keys under the current
 // primary key.

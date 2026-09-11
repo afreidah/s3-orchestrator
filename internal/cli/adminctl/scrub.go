@@ -12,9 +12,9 @@ package adminctl
 
 import (
 	"flag"
-	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 )
 
 // cmdScrub implements `s3-orchestrator admin scrub [-batch-size=N] [-key=KEY]`.
@@ -28,6 +28,7 @@ func cmdScrub(args []string, c *client) int {
 	fs.SetOutput(c.stderr)
 	batchSize := fs.Int(flagBatchSize, 0, "Number of objects to verify (0 = use server default)")
 	key := fs.String("key", "", "Verify every copy of this object now instead of running a pass")
+	backend := fs.String(flagBackend, "", usageBackend)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -36,9 +37,12 @@ func cmdScrub(args []string, c *client) int {
 		return c.post("/admin/api/object-scrub?key="+url.QueryEscape(*key), "", nil)
 	}
 
-	path := "/admin/api/scrub"
+	q := url.Values{}
 	if *batchSize > 0 {
-		path += fmt.Sprintf(fmtBatchSize, *batchSize)
+		q.Set("batch_size", strconv.Itoa(*batchSize))
 	}
-	return c.stream(http.MethodPost, path, "")
+	if *backend != "" {
+		q.Set(queryBackend, *backend)
+	}
+	return c.stream(http.MethodPost, withQuery("/admin/api/scrub", q), "")
 }

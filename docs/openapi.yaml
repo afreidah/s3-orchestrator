@@ -107,6 +107,12 @@ paths:
             summary: Compute content hashes for objects missing one
             operationId: postBackfillChecksums
             parameters:
+                - name: backend
+                  in: query
+                  description: Restrict the pass to one backend
+                  required: false
+                  schema:
+                    type: string
                 - name: batch_size
                   in: query
                   description: Objects hashed per pass
@@ -268,6 +274,12 @@ paths:
             summary: Store every uncompressed object as chunked zstd
             operationId: postCompressExisting
             parameters:
+                - name: backend
+                  in: query
+                  description: Restrict the pass to one backend
+                  required: false
+                  schema:
+                    type: string
                 - name: max
                   in: query
                   description: Cap the objects rewritten by this request; 0 converts the whole fleet
@@ -292,6 +304,12 @@ paths:
             summary: Rewrite every compressed object back to its stored bytes
             operationId: postDecompressExisting
             parameters:
+                - name: backend
+                  in: query
+                  description: Restrict the pass to one backend
+                  required: false
+                  schema:
+                    type: string
                 - name: max
                   in: query
                   description: Cap the objects rewritten by this request; 0 converts the whole fleet
@@ -316,6 +334,12 @@ paths:
             summary: Rewrite every encrypted object back to plaintext
             operationId: postDecryptExisting
             parameters:
+                - name: backend
+                  in: query
+                  description: Restrict the pass to one backend
+                  required: false
+                  schema:
+                    type: string
                 - name: max
                   in: query
                   description: Cap the objects rewritten by this request; 0 converts the whole fleet
@@ -340,6 +364,12 @@ paths:
             summary: Encrypt every plaintext object in place
             operationId: postEncryptExisting
             parameters:
+                - name: backend
+                  in: query
+                  description: Restrict the pass to one backend
+                  required: false
+                  schema:
+                    type: string
                 - name: max
                   in: query
                   description: Cap the objects rewritten by this request; 0 converts the whole fleet
@@ -973,6 +1003,12 @@ paths:
             summary: Verify stored content hashes against backend data
             operationId: postScrub
             parameters:
+                - name: backend
+                  in: query
+                  description: Restrict the pass to one backend
+                  required: false
+                  schema:
+                    type: string
                 - name: batch_size
                   in: query
                   description: Objects verified in this pass

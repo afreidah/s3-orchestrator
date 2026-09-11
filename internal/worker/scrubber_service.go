@@ -55,7 +55,7 @@ func scrubCycle(ctx context.Context, scrubber *Scrubber, log *slog.Logger) error
 	if icfg == nil {
 		return nil
 	}
-	sum := scrubber.Scrub(ctx, icfg.ScrubberBatchSize, nil)
+	sum := scrubber.Scrub(ctx, icfg.ScrubberBatchSize, "", nil)
 	// Skipped is excluded from Attempted, so every counter has to be checked:
 	// a cycle whose every copy was unreadable would otherwise satisfy no arm
 	// and log nothing at all - the quietest possible report of the loudest
