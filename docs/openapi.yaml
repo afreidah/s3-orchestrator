@@ -1391,6 +1391,10 @@ components:
             properties:
                 bucket:
                     type: string
+                permissions:
+                    items:
+                        type: string
+                    type: array
                 user_id:
                     type: string
             required:
@@ -1532,6 +1536,18 @@ components:
                     type: integer
             required:
                 - event
+            type: object
+        Grant:
+            properties:
+                bucket:
+                    type: string
+                permissions:
+                    items:
+                        type: string
+                    type: array
+            required:
+                - bucket
+                - permissions
             type: object
         IntegrityStatus:
             properties:
@@ -2056,6 +2072,10 @@ components:
                     items:
                         type: string
                     type: array
+                grants:
+                    items:
+                        $ref: '#/components/schemas/Grant'
+                    type: array
                 id:
                     type: string
                 name:
@@ -2066,6 +2086,7 @@ components:
                 - id
                 - name
                 - buckets
+                - grants
                 - source
             type: object
         WorkerHealth:

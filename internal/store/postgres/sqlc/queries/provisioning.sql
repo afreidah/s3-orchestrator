@@ -32,7 +32,7 @@ FROM credentials
 ORDER BY access_key_id;
 
 -- name: ListGrants :many
-SELECT user_id, bucket_name, created_at
+SELECT user_id, bucket_name, permissions, created_at
 FROM grants
 ORDER BY user_id, bucket_name;
 
@@ -49,8 +49,10 @@ INSERT INTO credentials (access_key_id, user_id, secret, label, disabled)
 VALUES (@access_key_id, @user_id, @secret, @label, @disabled);
 
 -- name: CreateGrant :exec
-INSERT INTO grants (user_id, bucket_name)
-VALUES (@user_id, @bucket_name);
+-- permissions is the comma-separated set the grant carries; empty means all of
+-- them, which is what every grant written before permissions existed holds.
+INSERT INTO grants (user_id, bucket_name, permissions)
+VALUES (@user_id, @bucket_name, @permissions);
 
 -- name: DeleteBucket :exec
 -- Objects stored under the bucket are untouched, so a caller that means to

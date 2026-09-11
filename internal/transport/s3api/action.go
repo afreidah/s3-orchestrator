@@ -17,6 +17,8 @@ package s3api
 import (
 	"net/http"
 	"net/url"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // -------------------------------------------------------------------------
@@ -67,6 +69,59 @@ const (
 	ActionUnsupportedSubresource Action = "UnsupportedSubresource"
 	ActionUnknown                Action = ""
 )
+
+// -------------------------------------------------------------------------
+// AUTHORIZATION
+// -------------------------------------------------------------------------
+
+// requiredPermissions maps each action onto the permissions a caller's grant
+// has to carry for it. An action absent from the map needs none.
+//
+// Three of these are judgement calls worth stating rather than leaving to be
+// found. AbortMultipartUpload is a write, not a delete: a client that may write
+// but not delete still has to be able to abandon its own failed upload, or it
+// leaks parts it cannot clean up. CopyObject and UploadPartCopy need read as
+// well as write, because they read the source they name; copies are same-bucket
+// today, so both land on the one grant. Tag operations need only Tags in either
+// direction, matching how object metadata is granted as one intent.
+var requiredPermissions = map[Action]core.PermissionSet{
+	ActionHeadBucket:          core.PermListBuckets,
+	ActionGetBucketLocation:   core.PermListBuckets,
+	ActionGetBucketVersioning: core.PermListBuckets,
+
+	ActionListObjectsV1:       core.PermList,
+	ActionListObjectsV2:       core.PermList,
+	ActionListMultipartUpload: core.PermList,
+	ActionListParts:           core.PermList,
+
+	ActionGetObject:  core.PermRead,
+	ActionHeadObject: core.PermRead,
+
+	ActionPutObject:               core.PermWrite,
+	ActionCreateMultipartUpload:   core.PermWrite,
+	ActionUploadPart:              core.PermWrite,
+	ActionCompleteMultipartUpload: core.PermWrite,
+	ActionAbortMultipartUpload:    core.PermWrite,
+	ActionCopyObject:              core.PermWrite | core.PermRead,
+	ActionUploadPartCopy:          core.PermWrite | core.PermRead,
+
+	ActionDeleteObject:  core.PermDelete,
+	ActionDeleteObjects: core.PermDelete,
+
+	ActionGetObjectTagging:    core.PermTags,
+	ActionPutObjectTagging:    core.PermTags,
+	ActionDeleteObjectTagging: core.PermTags,
+}
+
+// RequiredPermissions reports what a grant must carry for an action.
+//
+// An unsupported subresource and an unknown action need nothing: both are
+// refused before they reach an object, and gating them would make the refusal
+// depend on rights the caller will never exercise - answering 403 where the
+// server means 501 or 405.
+func RequiredPermissions(act Action) core.PermissionSet {
+	return requiredPermissions[act]
+}
 
 // -------------------------------------------------------------------------
 // CLASSIFICATION
