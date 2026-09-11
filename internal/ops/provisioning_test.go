@@ -532,7 +532,7 @@ func TestProvisioning_CreateGrant(t *testing.T) {
 			f.store.EXPECT().CreateGrant(gomock.Any(), gomock.Any()).Return(nil)
 			f.expectRepublish()
 
-			if err := f.svc.CreateGrant(context.Background(), "u1", "photos"); err != nil {
+			if err := f.svc.CreateGrant(context.Background(), "u1", "photos", core.PermAll); err != nil {
 				t.Fatalf("CreateGrant: %v", err)
 			}
 		})
@@ -556,7 +556,7 @@ func TestProvisioning_CreateGrantRejectsUnknown(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := newProvFixture(t, nil, &tc.rows)
-			if err := f.svc.CreateGrant(context.Background(), "u1", "photos"); !errors.Is(err, tc.want) {
+			if err := f.svc.CreateGrant(context.Background(), "u1", "photos", core.PermAll); !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
 			}
 		})
@@ -706,5 +706,80 @@ func TestProvisioning_RefusalsReadNaturally(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "1 objects") {
 		t.Errorf("err = %v, still pluralises a count of one", err)
+	}
+}
+
+// -------------------------------------------------------------------------
+// GRANT PERMISSIONS
+// -------------------------------------------------------------------------
+
+// TestProvisioning_CreateGrantStoresPermissions verifies the set the caller
+// asked for is what lands, rather than being widened to full access.
+func TestProvisioning_CreateGrantStoresPermissions(t *testing.T) {
+	t.Parallel()
+
+	f := newProvFixture(t, []config.BucketConfig{{Name: "photos"}},
+		&provStore{users: []core.User{{ID: "u1", Name: "ci"}}})
+
+	var stored core.Grant
+	f.store.EXPECT().CreateGrant(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, g *core.Grant) error {
+			stored = *g
+			return nil
+		})
+	f.expectRepublish()
+
+	readOnly := core.PermListBuckets | core.PermList | core.PermRead
+	if err := f.svc.CreateGrant(context.Background(), "u1", "photos", readOnly); err != nil {
+		t.Fatalf("CreateGrant: %v", err)
+	}
+	if stored.Permissions != readOnly {
+		t.Errorf("stored permissions = %q, want %q", stored.Permissions, readOnly)
+	}
+	if stored.Permissions.Has(core.PermDelete) {
+		t.Error("a read-only grant was stored carrying delete")
+	}
+}
+
+// TestProvisioning_CreateGrantRejectsEmptyPermissions verifies a grant carrying
+// nothing is refused. It would reach the bucket and be denied every operation,
+// which is a grant that does nothing but look like one.
+func TestProvisioning_CreateGrantRejectsEmptyPermissions(t *testing.T) {
+	t.Parallel()
+
+	f := newProvFixture(t, []config.BucketConfig{{Name: "photos"}},
+		&provStore{users: []core.User{{ID: "u1", Name: "ci"}}})
+
+	err := f.svc.CreateGrant(context.Background(), "u1", "photos", 0)
+	if !errors.Is(err, ErrNoPermissions) {
+		t.Fatalf("err = %v, want ErrNoPermissions", err)
+	}
+}
+
+// TestProvisioning_ViewCarriesGrantPermissions verifies what a grant carries
+// survives the merge into the view the registry is built from.
+func TestProvisioning_ViewCarriesGrantPermissions(t *testing.T) {
+	t.Parallel()
+
+	f := newProvFixture(t, nil, &provStore{
+		buckets: []core.Bucket{{Name: "photos"}},
+		users:   []core.User{{ID: "u1", Name: "ci"}},
+		grants: []core.Grant{{
+			UserID:      "u1",
+			BucketName:  "photos",
+			Permissions: core.PermRead | core.PermList,
+		}},
+	})
+
+	v, err := f.svc.View(context.Background())
+	if err != nil {
+		t.Fatalf("View: %v", err)
+	}
+	u, ok := findUser(v.Users, "u1")
+	if !ok {
+		t.Fatal("u1 missing from the merged users")
+	}
+	if got := u.Grants["photos"]; got != core.PermRead|core.PermList {
+		t.Errorf("merged permissions = %q, want read,list", got)
 	}
 }

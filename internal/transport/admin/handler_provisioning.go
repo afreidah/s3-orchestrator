@@ -17,6 +17,7 @@ package admin
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
@@ -158,7 +159,12 @@ func (h *Handler) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 	if !httputil.DecodeJSONBody(w, r, &req, provisioningBodyLimit) {
 		return
 	}
-	if err := h.provision.CreateGrant(r.Context(), req.UserID, req.Bucket); err != nil {
+	perms, err := core.ParsePermissions(strings.Join(req.Permissions, ","))
+	if err != nil {
+		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.provision.CreateGrant(r.Context(), req.UserID, req.Bucket, perms); err != nil {
 		h.provisioningError(w, r, "create grant failed", err)
 		return
 	}
@@ -188,7 +194,10 @@ func (h *Handler) handleDeleteGrant(w http.ResponseWriter, r *http.Request) {
 // reported with its own reason; anything else is a fault and says nothing.
 func (h *Handler) provisioningError(w http.ResponseWriter, r *http.Request, msg string, err error) {
 	switch {
-	case errors.Is(err, ops.ErrNameRequired), errors.Is(err, ops.ErrUserRequired):
+	case errors.Is(err, ops.ErrNameRequired),
+		errors.Is(err, ops.ErrUserRequired),
+		errors.Is(err, ops.ErrNoPermissions),
+		errors.Is(err, ops.ErrInvalidCORS):
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ops.ErrBucketNotFound),
 		errors.Is(err, ops.ErrUserNotFound),
@@ -229,6 +238,7 @@ func provisioningResponse(v *provisioning.View) adminapi.ProvisioningResponse {
 			ID:      u.ID,
 			Name:    u.Name,
 			Buckets: u.Buckets,
+			Grants:  wireGrants(u.Buckets, u.Grants),
 			Source:  string(u.Source),
 		})
 	}
@@ -246,6 +256,19 @@ func provisioningResponse(v *provisioning.View) adminapi.ProvisioningResponse {
 	}
 	for _, n := range v.Notices {
 		out.Notices = append(out.Notices, adminapi.Notice{Kind: n.Kind, Detail: n.Detail})
+	}
+	return out
+}
+
+// wireGrants renders a user's grants, ordered by the bucket list so a listing
+// is stable between reads rather than following map iteration.
+func wireGrants(buckets []string, grants map[string]core.PermissionSet) []adminapi.Grant {
+	out := make([]adminapi.Grant, 0, len(buckets))
+	for _, name := range buckets {
+		out = append(out, adminapi.Grant{
+			Bucket:      name,
+			Permissions: grants[name].Names(),
+		})
 	}
 	return out
 }

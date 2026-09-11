@@ -305,7 +305,7 @@ func (p *Provisioning) DeleteCredential(ctx context.Context, accessKeyID string)
 // CreateGrant lets a user reach a bucket. The bucket may come from either
 // source: granting a stored user access to a config-declared bucket is the
 // normal way a deployment onboards a client onto a bucket it already runs.
-func (p *Provisioning) CreateGrant(ctx context.Context, userID, bucketName string) error {
+func (p *Provisioning) CreateGrant(ctx context.Context, userID, bucketName string, perms core.PermissionSet) error {
 	view, err := p.View(ctx)
 	if err != nil {
 		return err
@@ -320,11 +320,19 @@ func (p *Provisioning) CreateGrant(ctx context.Context, userID, bucketName strin
 	if _, ok := findBucket(view.Buckets, bucketName); !ok {
 		return fmt.Errorf("%w: %q", ErrBucketNotFound, bucketName)
 	}
-	if err := p.store.CreateGrant(ctx, &core.Grant{UserID: userID, BucketName: bucketName}); err != nil {
+	// A grant carrying nothing reaches the bucket and is refused on every
+	// operation, which is a grant that does nothing but look like one.
+	if perms == 0 {
+		return ErrNoPermissions
+	}
+	grant := core.Grant{UserID: userID, BucketName: bucketName, Permissions: perms}
+	if err := p.store.CreateGrant(ctx, &grant); err != nil {
 		return err
 	}
 	audit.Log(ctx, "provisioning.GrantCreated",
-		slog.String("user", userID), slog.String("bucket", bucketName))
+		slog.String("user", userID),
+		slog.String("bucket", bucketName),
+		slog.String("permissions", perms.String()))
 	return p.republish(ctx)
 }
 

@@ -64,7 +64,7 @@ func countNotices(notices []Notice, kind string) int {
 }
 
 // reaches reports whether a user's bucket list contains a name.
-func reaches(u User, bucket string) bool {
+func reaches(u *User, bucket string) bool {
 	for _, b := range u.Buckets {
 		if b == bucket {
 			return true
@@ -172,10 +172,10 @@ func TestMerge_ConfigCredentialBecomesAUser(t *testing.T) {
 	if !ok {
 		t.Fatalf("credential names user %q, which the view does not carry", cred.UserID)
 	}
-	if !reaches(u, "photos") {
+	if !reaches(&u, "photos") {
 		t.Errorf("user reaches %v, want photos", u.Buckets)
 	}
-	if reaches(u, "backups") {
+	if reaches(&u, "backups") {
 		t.Error("a config credential reaches another bucket's namespace")
 	}
 }
@@ -248,7 +248,7 @@ func TestMerge_GrantsJoinOntoUser(t *testing.T) {
 		t.Fatal("u1 missing from the merged users")
 	}
 	for _, want := range []string{"store-bucket", "config-bucket"} {
-		if !reaches(u, want) {
+		if !reaches(&u, want) {
 			t.Errorf("user reaches %v, want it to include %q", u.Buckets, want)
 		}
 	}
@@ -297,7 +297,7 @@ func TestMerge_DanglingGrantReported(t *testing.T) {
 		t.Fatal("AK1 missing: a dangling grant must not drop the credential")
 	}
 	u, _ := findUser(v.Users, "u1")
-	if reaches(u, "gone") {
+	if reaches(&u, "gone") {
 		t.Error("user reaches a bucket nothing declares")
 	}
 }

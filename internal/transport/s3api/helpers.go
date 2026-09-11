@@ -201,15 +201,15 @@ func parsePath(path string) (bucket string, key string, ok bool) {
 	return parts[0], parts[1], true
 }
 
-// parseQueryInt parses an integer query parameter, clamping it to [1, max].
+// parseQueryInt parses an integer query parameter, clamping it to [1, maxVal].
 // Returns defaultVal when the parameter is absent or invalid.
-func parseQueryInt(r *http.Request, param string, defaultVal, max int) int {
+func parseQueryInt(r *http.Request, param string, defaultVal, maxVal int) int {
 	s := r.URL.Query().Get(param)
 	if s == "" {
 		return defaultVal
 	}
 	v, err := strconv.Atoi(s)
-	if err != nil || v < 1 || v > max {
+	if err != nil || v < 1 || v > maxVal {
 		return defaultVal
 	}
 	return v
@@ -310,6 +310,15 @@ func writeS3Error(w http.ResponseWriter, code int, errCode, message string) {
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(code)
 	_, _ = io.WriteString(w, body) //nolint:gosec // G705: output is XML-escaped via xmlEscape before writing
+}
+
+// s3CodeAccessDenied is the S3 error code a refused request carries.
+const s3CodeAccessDenied = "AccessDenied"
+
+// writeAccessDenied writes the 403 an authorization refusal ends with. The
+// refusals differ in what they log, not in what the client is told.
+func writeAccessDenied(w http.ResponseWriter) {
+	writeS3Error(w, http.StatusForbidden, s3CodeAccessDenied, "Access denied")
 }
 
 // WriteS3Error is the exported form of writeS3Error so other transport

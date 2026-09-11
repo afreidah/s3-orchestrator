@@ -28,7 +28,7 @@ import (
 func TestUser_CanReach(t *testing.T) {
 	t.Parallel()
 
-	u := NewUser("u1", "ci", []string{"photos", "backups"})
+	u := NewUser("u1", "ci", grantsOn("photos", "backups"))
 	for _, want := range []string{"photos", "backups"} {
 		if !u.CanReach(want) {
 			t.Errorf("CanReach(%q) = false, want true", want)
@@ -59,7 +59,7 @@ func TestUser_NilReachesNothing(t *testing.T) {
 func TestUser_BucketsSorted(t *testing.T) {
 	t.Parallel()
 
-	got := NewUser("u1", "ci", []string{"zeta", "alpha", "mid"}).Buckets()
+	got := NewUser("u1", "ci", grantsOn("zeta", "alpha", "mid")).Buckets()
 	want := []string{"alpha", "mid", "zeta"}
 	if len(got) != len(want) {
 		t.Fatalf("Buckets() = %v, want %v", got, want)
@@ -251,5 +251,101 @@ func TestAuthenticate_StoredCredentialSignsRequests(t *testing.T) {
 	}
 	if !u.CanReach("photos") {
 		t.Errorf("reaches %v, want photos", u.Buckets())
+	}
+}
+
+// -------------------------------------------------------------------------
+// PERMISSIONS
+// -------------------------------------------------------------------------
+
+// grantsOn builds a grant set carrying every permission on each named bucket,
+// which is what a grant recording none holds.
+func grantsOn(buckets ...string) map[string]core.PermissionSet {
+	out := make(map[string]core.PermissionSet, len(buckets))
+	for _, b := range buckets {
+		out[b] = core.PermAll
+	}
+	return out
+}
+
+// TestUser_Can verifies a grant authorizes exactly what it carries, and that a
+// bucket the user does not reach at all authorizes nothing.
+func TestUser_Can(t *testing.T) {
+	t.Parallel()
+
+	u := NewUser("u1", "ci", map[string]core.PermissionSet{
+		"readonly": core.PermListBuckets | core.PermList | core.PermRead,
+		"full":     core.PermAll,
+	})
+
+	for _, tc := range []struct {
+		name   string
+		bucket string
+		want   core.PermissionSet
+		ok     bool
+	}{
+		{"read on a read-only grant", "readonly", core.PermRead, true},
+		{"list on a read-only grant", "readonly", core.PermList, true},
+		{"write on a read-only grant", "readonly", core.PermWrite, false},
+		{"delete on a read-only grant", "readonly", core.PermDelete, false},
+		{"write on a full grant", "full", core.PermWrite, true},
+		{"read and write together", "full", core.PermRead | core.PermWrite, true},
+		{"read and write on read-only", "readonly", core.PermRead | core.PermWrite, false},
+		{"anything on an ungranted bucket", "other", core.PermRead, false},
+		{"nothing required still needs the grant", "other", 0, false},
+		{"nothing required on a held grant", "readonly", 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := u.Can(tc.bucket, tc.want); got != tc.ok {
+				t.Errorf("Can(%q, %v) = %t, want %t", tc.bucket, tc.want, got, tc.ok)
+			}
+		})
+	}
+}
+
+// TestUser_CanNil verifies a caller that failed to authenticate is refused
+// rather than panicking on the check.
+func TestUser_CanNil(t *testing.T) {
+	t.Parallel()
+
+	var u *User
+	if u.Can("photos", core.PermRead) {
+		t.Error("a nil user was authorized")
+	}
+	if _, ok := u.Permissions("photos"); ok {
+		t.Error("a nil user reported holding a grant")
+	}
+}
+
+// TestUser_CanReachIsNotCan pins the split the two refusals rest on: a grant
+// that carries nothing the operation needs still reaches the bucket, and the
+// caller is told it may not act rather than that the bucket does not exist.
+func TestUser_CanReachIsNotCan(t *testing.T) {
+	t.Parallel()
+
+	u := NewUser("u1", "ci", map[string]core.PermissionSet{"photos": core.PermRead})
+	if !u.CanReach("photos") {
+		t.Error("a read-only grant does not reach its bucket")
+	}
+	if u.Can("photos", core.PermDelete) {
+		t.Error("a read-only grant authorized a delete")
+	}
+}
+
+// TestUser_BucketsNeedsListBuckets verifies a bucket the caller may not see
+// listed is left out of ListBuckets, and one it may is included whatever else
+// the grant withholds.
+func TestUser_BucketsNeedsListBuckets(t *testing.T) {
+	t.Parallel()
+
+	u := NewUser("u1", "ci", map[string]core.PermissionSet{
+		"listed":   core.PermListBuckets | core.PermWrite,
+		"unlisted": core.PermWrite,
+	})
+
+	got := u.Buckets()
+	if len(got) != 1 || got[0] != "listed" {
+		t.Errorf("Buckets() = %v, want only the bucket carrying list-buckets", got)
 	}
 }

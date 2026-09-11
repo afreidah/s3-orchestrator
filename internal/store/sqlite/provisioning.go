@@ -75,7 +75,7 @@ func (s *Store) ListCredentials(ctx context.Context) ([]core.Credential, error) 
 // ListGrants returns every stored grant, ordered by user then bucket.
 func (s *Store) ListGrants(ctx context.Context) ([]core.Grant, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT user_id, bucket_name, created_at
+		`SELECT user_id, bucket_name, permissions, created_at
 		 FROM grants
 		 ORDER BY user_id, bucket_name`,
 	)
@@ -140,8 +140,8 @@ func (s *Store) CreateCredential(ctx context.Context, c *core.Credential) error 
 // CreateGrant gives a user access to one bucket.
 func (s *Store) CreateGrant(ctx context.Context, g *core.Grant) error {
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO grants (user_id, bucket_name, created_at) VALUES (?, ?, ?)`,
-		g.UserID, g.BucketName, now(),
+		`INSERT INTO grants (user_id, bucket_name, permissions, created_at) VALUES (?, ?, ?, ?)`,
+		g.UserID, g.BucketName, g.Permissions.String(), now(),
 	); err != nil {
 		return fmt.Errorf("create grant %s -> %s: %w", g.UserID, g.BucketName, err)
 	}
@@ -256,12 +256,19 @@ func scanCredential(rows *sql.Rows) (core.Credential, error) {
 func scanGrant(rows *sql.Rows) (core.Grant, error) {
 	var (
 		g       core.Grant
+		perms   string
 		created string
 	)
-	if err := rows.Scan(&g.UserID, &g.BucketName, &created); err != nil {
+	if err := rows.Scan(&g.UserID, &g.BucketName, &perms, &created); err != nil {
 		return core.Grant{}, fmt.Errorf("scan grant: %w", err)
 	}
 	var err error
+	// A value nothing recognises fails the read rather than resolving to some
+	// set. Falling back to full access would grant what nobody wrote down, and
+	// to none would refuse a caller the operator authorized.
+	if g.Permissions, err = core.ParsePermissions(perms); err != nil {
+		return core.Grant{}, fmt.Errorf("grant %s -> %s: %w", g.UserID, g.BucketName, err)
+	}
 	if g.CreatedAt, err = parseTime(created); err != nil {
 		return core.Grant{}, fmt.Errorf("parse grant created_at: %w", err)
 	}

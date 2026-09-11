@@ -157,12 +157,20 @@ func multipartCap(n int) string {
 	return strconv.Itoa(n)
 }
 
-// usersReaching names the identities holding a grant on a bucket, so an
-// operator can see at a glance which buckets nothing can reach yet.
+// usersReaching names the identities holding a grant on a bucket and what each
+// grant carries, so an operator sees at a glance which buckets nothing can
+// reach yet and which are reached read-only.
+//
+// Falls back to the name alone when the server sent no grants, so the pane
+// still renders against an older instance.
 func usersReaching(users []adminapi.User, bucket string) []string {
 	var out []string
 	for i := range users {
 		u := &users[i]
+		if perms, ok := grantOn(u, bucket); ok {
+			out = append(out, u.Name+perms)
+			continue
+		}
 		for _, b := range u.Buckets {
 			if b == bucket {
 				out = append(out, u.Name)
@@ -171,6 +179,16 @@ func usersReaching(users []adminapi.User, bucket string) []string {
 		}
 	}
 	return out
+}
+
+// grantOn reports the rendered permissions a user's grant on a bucket carries.
+func grantOn(u *adminapi.User, bucket string) (string, bool) {
+	for _, g := range u.Grants {
+		if g.Bucket == bucket {
+			return "(" + strings.Join(g.Permissions, ",") + ")", true
+		}
+	}
+	return "", false
 }
 
 // bucketsPaneView composes the pane's full-screen layout.

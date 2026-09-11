@@ -43,6 +43,7 @@ const (
 	flagBucket = "bucket"
 
 	usageBucketName = "Bucket name (required)"
+	usageUserID     = "User ID (required)"
 
 	errNameRequired   = "error: -name is required"
 	errUserRequired   = "error: -user is required"
@@ -165,7 +166,7 @@ func userCreate(args []string, c *client) int {
 func userDelete(args []string, c *client) int {
 	fs := flag.NewFlagSet("user delete", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
-	id := fs.String("id", "", "User ID (required)")
+	id := fs.String("id", "", usageUserID)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -230,18 +231,49 @@ func credentialRevoke(args []string, c *client) int {
 // GRANTS
 // -------------------------------------------------------------------------
 
-// grantAdd lets a user reach a bucket.
+// grantAdd lets a user reach a bucket, with the permissions that reach carries.
 func grantAdd(args []string, c *client) int {
-	user, bucket, code := parseGrantFlags("grant add", args, c)
-	if code != 0 {
-		return code
+	fs := flag.NewFlagSet("grant add", flag.ContinueOnError)
+	fs.SetOutput(c.stderr)
+	user := fs.String(flagUser, "", usageUserID)
+	bucket := fs.String(flagBucket, "", usageBucketName)
+	perms := fs.String("permissions", "all",
+		"Comma-separated permissions: list-buckets, list, read, write, delete, tags, or all")
+	if err := fs.Parse(args); err != nil {
+		return 1
 	}
-	body, err := json.Marshal(adminapi.CreateGrantRequest{UserID: user, Bucket: bucket})
+	if *user == "" {
+		fmt.Fprintln(c.stderr, errUserRequired)
+		return 1
+	}
+	if *bucket == "" {
+		fmt.Fprintln(c.stderr, errBucketRequired)
+		return 1
+	}
+
+	body, err := json.Marshal(adminapi.CreateGrantRequest{
+		UserID:      *user,
+		Bucket:      *bucket,
+		Permissions: splitPermissions(*perms),
+	})
 	if err != nil {
 		fmt.Fprintf(c.stderr, "error: encode request: %v\n", err)
 		return 1
 	}
 	return c.post(pathProvGrants, string(body), nil)
+}
+
+// splitPermissions turns the flag value into the list the request carries. The
+// server owns which names are valid, so this only splits and trims: rejecting
+// here as well would put the same list in two places to drift apart.
+func splitPermissions(s string) []string {
+	var out []string
+	for _, field := range strings.Split(s, ",") {
+		if name := strings.TrimSpace(field); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // grantRemove withdraws one user's access to one bucket.
@@ -258,7 +290,7 @@ func grantRemove(args []string, c *client) int {
 func parseGrantFlags(name string, args []string, c *client) (user, bucket string, code int) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
-	userFlag := fs.String(flagUser, "", "User ID (required)")
+	userFlag := fs.String(flagUser, "", usageUserID)
 	bucketFlag := fs.String(flagBucket, "", usageBucketName)
 	if err := fs.Parse(args); err != nil {
 		return "", "", 1
@@ -302,9 +334,9 @@ func renderUsers(w io.Writer, body []byte) error {
 	}
 	rows := make([][]string, len(p.Users))
 	for i, u := range p.Users {
-		rows[i] = []string{u.ID, u.Name, strings.Join(u.Buckets, ","), u.Source}
+		rows[i] = []string{u.ID, u.Name, renderGrants(&u), u.Source}
 	}
-	if err := output.Table(w, []string{"User ID", "Name", "Buckets", colSource}, rows); err != nil {
+	if err := output.Table(w, []string{"User ID", "Name", "Grants", colSource}, rows); err != nil {
 		return err
 	}
 	return writeConfigNote(w, p.Notices)
@@ -338,6 +370,23 @@ func renderNewCredential(w io.Writer, body []byte) error {
 			"The secret is not stored anywhere it can be read back. Capture it now.\n",
 		c.AccessKeyID, c.SecretAccessKey, c.UserID)
 	return err
+}
+
+// renderGrants renders what a user reaches and what each reach carries, as
+// "bucket(read,write)". A user holding nothing renders empty, which is what an
+// identity created but not yet granted anything is.
+//
+// Falls back to the bucket list when the server sent no grants, so a listing
+// read from an older instance still says which buckets are reached.
+func renderGrants(u *adminapi.User) string {
+	if len(u.Grants) == 0 {
+		return strings.Join(u.Buckets, " ")
+	}
+	out := make([]string, 0, len(u.Grants))
+	for _, g := range u.Grants {
+		out = append(out, g.Bucket+"("+strings.Join(g.Permissions, ",")+")")
+	}
+	return strings.Join(out, " ")
 }
 
 // decodeProvisioning parses the shared listing response.

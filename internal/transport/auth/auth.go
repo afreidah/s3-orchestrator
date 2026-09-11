@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -101,7 +102,7 @@ func NewBucketRegistry(v *provisioning.View) (*BucketRegistry, error) {
 			ID:         u.ID,
 			Name:       u.Name,
 			FromConfig: u.Source == provisioning.SourceConfig,
-			buckets:    bucketSet(u.Buckets),
+			grants:     maps.Clone(u.Grants),
 		}
 	}
 
@@ -114,16 +115,6 @@ func NewBucketRegistry(v *provisioning.View) (*BucketRegistry, error) {
 		return nil, err
 	}
 	return br, nil
-}
-
-// bucketSet indexes the buckets a user reaches for the request-time membership
-// check.
-func bucketSet(names []string) map[string]struct{} {
-	set := make(map[string]struct{}, len(names))
-	for _, n := range names {
-		set[n] = struct{}{}
-	}
-	return set
 }
 
 // Notices reports what assembly found and served through anyway, for the caller

@@ -66,7 +66,15 @@ func (s *Store) ListGrants(ctx context.Context) ([]core.Grant, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list grants: %w", err)
 	}
-	return mapSlice(rows, grantFromRow), nil
+	out := make([]core.Grant, 0, len(rows))
+	for i := range rows {
+		g, err := grantFromRow(&rows[i])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, nil
 }
 
 // -------------------------------------------------------------------------
@@ -120,8 +128,9 @@ func (s *Store) CreateCredential(ctx context.Context, c *core.Credential) error 
 // CreateGrant gives a user access to one bucket.
 func (s *Store) CreateGrant(ctx context.Context, g *core.Grant) error {
 	if err := s.queries.CreateGrant(ctx, db.CreateGrantParams{
-		UserID:     g.UserID,
-		BucketName: g.BucketName,
+		UserID:      g.UserID,
+		BucketName:  g.BucketName,
+		Permissions: g.Permissions.String(),
 	}); err != nil {
 		return fmt.Errorf("create grant %s -> %s: %w", g.UserID, g.BucketName, err)
 	}
@@ -211,13 +220,24 @@ func credentialFromRow(r *db.Credential) core.Credential {
 	}
 }
 
-// grantFromRow converts a sqlc grants row into the canonical type.
-func grantFromRow(r *db.Grant) core.Grant {
-	return core.Grant{
-		UserID:     r.UserID,
-		BucketName: r.BucketName,
-		CreatedAt:  r.CreatedAt.Time,
+// grantFromRow converts a sqlc grants row into the canonical type, compiling
+// the stored permission list into the bit set the request path tests against.
+//
+// A value nothing recognises fails the read rather than resolving to some set.
+// Assembly stops, which is the safe direction: falling back to full access
+// would grant what nobody wrote down, and to none would refuse a caller the
+// operator authorized.
+func grantFromRow(r *db.ListGrantsRow) (core.Grant, error) {
+	perms, err := core.ParsePermissions(r.Permissions)
+	if err != nil {
+		return core.Grant{}, fmt.Errorf("grant %s -> %s: %w", r.UserID, r.BucketName, err)
 	}
+	return core.Grant{
+		UserID:      r.UserID,
+		BucketName:  r.BucketName,
+		Permissions: perms,
+		CreatedAt:   r.CreatedAt.Time,
+	}, nil
 }
 
 // -------------------------------------------------------------------------

@@ -304,9 +304,10 @@ CREATE INDEX IF NOT EXISTS idx_credentials_user
 CREATE TABLE IF NOT EXISTS grants (
     user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     bucket_name TEXT NOT NULL,
+    permissions TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (user_id, bucket_name)
 );
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (15);
+INSERT INTO schema_version (version) VALUES (16);

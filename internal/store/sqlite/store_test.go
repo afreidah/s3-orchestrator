@@ -118,6 +118,7 @@ func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
 		}
 	}
 	return []schemaRewindStep{
+		{16, func() { dropColumns(t, s, "grants", "permissions") }},
 		{14, func() {
 			exec("drop pending key index", `DROP INDEX IF EXISTS idx_pending_objects_key`)
 			dropColumns(t, s, "pending_objects", "role")

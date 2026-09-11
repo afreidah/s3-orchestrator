@@ -39,11 +39,22 @@ type CORSRule struct {
 }
 
 // User is one identity as the API reports it, with the buckets it reaches.
+//
+// Buckets and Grants describe the same set. Buckets stays a plain name list so
+// a caller that only asks which buckets an identity reaches does not have to
+// walk an object; Grants adds what each of those reaches carries.
 type User struct {
 	ID      string   `json:"id"`
 	Name    string   `json:"name"`
 	Buckets []string `json:"buckets"`
+	Grants  []Grant  `json:"grants"`
 	Source  string   `json:"source"`
+}
+
+// Grant is one bucket a user reaches and the permissions that reach carries.
+type Grant struct {
+	Bucket      string   `json:"bucket"`
+	Permissions []string `json:"permissions"`
 }
 
 // Credential is one keypair as the API reports it. The secret is deliberately
@@ -106,10 +117,12 @@ type CreateCredentialResponse struct {
 	Label           string `json:"label,omitempty"`
 }
 
-// CreateGrantRequest lets one user reach one bucket.
+// CreateGrantRequest lets one user reach one bucket, with the permissions that
+// reach carries. An empty Permissions means all of them.
 type CreateGrantRequest struct {
-	UserID string `json:"user_id"`
-	Bucket string `json:"bucket"`
+	UserID      string   `json:"user_id"`
+	Bucket      string   `json:"bucket"`
+	Permissions []string `json:"permissions,omitempty"`
 }
 
 // ProvisioningOperationResponse acknowledges a mutation, naming what it

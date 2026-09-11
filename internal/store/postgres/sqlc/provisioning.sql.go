@@ -7,6 +7,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createBucket = `-- name: CreateBucket :exec
@@ -50,17 +52,20 @@ func (q *Queries) CreateCredential(ctx context.Context, arg CreateCredentialPara
 }
 
 const createGrant = `-- name: CreateGrant :exec
-INSERT INTO grants (user_id, bucket_name)
-VALUES ($1, $2)
+INSERT INTO grants (user_id, bucket_name, permissions)
+VALUES ($1, $2, $3)
 `
 
 type CreateGrantParams struct {
-	UserID     string
-	BucketName string
+	UserID      string
+	BucketName  string
+	Permissions string
 }
 
+// permissions is the comma-separated set the grant carries; empty means all of
+// them, which is what every grant written before permissions existed holds.
 func (q *Queries) CreateGrant(ctx context.Context, arg CreateGrantParams) error {
-	_, err := q.db.Exec(ctx, createGrant, arg.UserID, arg.BucketName)
+	_, err := q.db.Exec(ctx, createGrant, arg.UserID, arg.BucketName, arg.Permissions)
 	return err
 }
 
@@ -209,21 +214,33 @@ func (q *Queries) ListCredentials(ctx context.Context) ([]Credential, error) {
 }
 
 const listGrants = `-- name: ListGrants :many
-SELECT user_id, bucket_name, created_at
+SELECT user_id, bucket_name, permissions, created_at
 FROM grants
 ORDER BY user_id, bucket_name
 `
 
-func (q *Queries) ListGrants(ctx context.Context) ([]Grant, error) {
+type ListGrantsRow struct {
+	UserID      string
+	BucketName  string
+	Permissions string
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ListGrants(ctx context.Context) ([]ListGrantsRow, error) {
 	rows, err := q.db.Query(ctx, listGrants)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Grant{}
+	items := []ListGrantsRow{}
 	for rows.Next() {
-		var i Grant
-		if err := rows.Scan(&i.UserID, &i.BucketName, &i.CreatedAt); err != nil {
+		var i ListGrantsRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.BucketName,
+			&i.Permissions,
+			&i.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
