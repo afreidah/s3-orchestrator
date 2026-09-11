@@ -212,7 +212,7 @@ func (br *BucketRegistry) Authenticate(r *http.Request) (*User, *StreamingMateri
 		return p, nil, err
 	}
 	if proxyToken := r.Header.Get("X-Proxy-Token"); proxyToken != "" {
-		p, err := br.authenticateProxyToken(proxyToken)
+		p, err := br.AuthenticateToken(proxyToken)
 		return p, nil, err
 	}
 	return nil, nil, fmt.Errorf("missing authentication credentials")
@@ -247,11 +247,15 @@ func (br *BucketRegistry) authenticateSigV4(r *http.Request, authHeader string) 
 	return e.user, mat, nil
 }
 
-// authenticateProxyToken matches an X-Proxy-Token header against the
-// registry in constant time. Iterates every entry to avoid leaking which
-// token matched; ConstantTimeCompare requires equal-length inputs, so
-// mismatched lengths short-circuit without revealing the match position.
-func (br *BucketRegistry) authenticateProxyToken(proxyToken string) (*User, error) {
+// AuthenticateToken resolves a token-shaped credential to the identity behind
+// it, in constant time. Iterates every entry to avoid leaking which token
+// matched; ConstantTimeCompare requires equal-length inputs, so mismatched
+// lengths short-circuit without revealing the match position.
+//
+// Exported because the admin surface authenticates the same credentials the S3
+// path does. A second lookup against the same table would be a second place for
+// the constant-time handling to be got wrong.
+func (br *BucketRegistry) AuthenticateToken(proxyToken string) (*User, error) {
 	var matched *User
 	found := 0
 	for token, e := range br.byToken {

@@ -28,6 +28,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/drain"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 )
@@ -64,6 +65,7 @@ type Handler struct {
 	objectCache  cache.ObjectCache
 	flightRec    io.WriterTo // nil when debug.flight_recorder.enabled is false
 	token        string
+	registry     func() *auth.BucketRegistry
 	logLevel     *slog.LevelVar
 	reloadStatus func() *adminapi.ReloadStatusResponse // nil before the first reload
 }
@@ -94,6 +96,7 @@ type Deps struct {
 	FlightRec    io.WriterTo       // nil when debug.flight_recorder.enabled is false
 	Reconciler   Reconciler
 	Token        string
+	Registry     func() *auth.BucketRegistry // the live registry, re-read so a reload is not missed
 	LogLevel     *slog.LevelVar
 }
 
@@ -116,6 +119,7 @@ func New(d *Deps) *Handler {
 	must.NotNil("d.Lifecycle", d.Lifecycle)
 	must.NotNil("d.Cleanup", d.Cleanup)
 	must.NotNil("d.LogLevel", d.LogLevel)
+	must.NotNil("d.Registry", d.Registry)
 	return &Handler{
 		log:          slog.Default().With(logfmt.Component("admin")),
 		backendOps:   d.BackendOps,
@@ -139,6 +143,7 @@ func New(d *Deps) *Handler {
 		objectCache:  d.ObjectCache,
 		flightRec:    d.FlightRec,
 		token:        d.Token,
+		registry:     d.Registry,
 		logLevel:     d.LogLevel,
 	}
 }

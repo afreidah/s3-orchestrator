@@ -324,6 +324,7 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		FlightRec:    frRes.Value.Recorder(),
 		Reconciler:   recRes.Value,
 		Token:        adminToken,
+		Registry:     adminBucketRegistry(i),
 		LogLevel:     d.logLevel,
 	}
 	// Set the log buffer only when a real one resolves; assigning a nil
@@ -337,6 +338,25 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		deps.ReplMetrics = mc
 	}
 	return admin.New(deps), nil
+}
+
+// adminBucketRegistry reads the registry the S3 server currently holds, so the
+// admin surface authorizes provisioned credentials against the same view the
+// data path does.
+//
+// Resolved on each call rather than captured, because a reload swaps a new
+// registry onto the server and a captured pointer would authorize against the
+// credentials the process booted with. Nil when no S3 server is registered,
+// which is a worker-only deployment: the admin token still authenticates, and a
+// provisioned credential has nothing to resolve against and is refused.
+func adminBucketRegistry(i do.Injector) func() *auth.BucketRegistry {
+	return func() *auth.BucketRegistry {
+		res := Optional[*s3api.Server](i)
+		if res.Failed() || res.Value == nil {
+			return nil
+		}
+		return res.Value.GetBucketAuth()
+	}
 }
 
 // ProvideNotifier creates the webhook notification system.
