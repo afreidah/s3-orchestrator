@@ -301,7 +301,7 @@ func resolveCopySource(w http.ResponseWriter, bucket, copySource string) (string
 		return "", http.StatusBadRequest, fmt.Errorf("invalid copy source: %s", copySource), false
 	}
 	if sourceBucket != bucket {
-		writeS3Error(w, http.StatusForbidden, "AccessDenied", "Cross-bucket copy is not allowed")
+		writeS3Error(w, http.StatusForbidden, s3CodeAccessDenied, "Cross-bucket copy is not allowed")
 		return "", http.StatusForbidden, fmt.Errorf("cross-bucket copy denied: %s != %s", sourceBucket, bucket), false
 	}
 	return internalkey.Make(bucket, sourceKey), 0, nil, true

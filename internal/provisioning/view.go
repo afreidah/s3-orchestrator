@@ -62,6 +62,7 @@ type User struct {
 	ID      string
 	Name    string
 	Buckets []string
+	Grants  map[string]core.PermissionSet
 	Source  Source
 }
 
@@ -151,10 +152,14 @@ func mergeConfigUsers(v *View, cfgBuckets []config.BucketConfig) {
 		for j := range bkt.Credentials {
 			cred := &bkt.Credentials[j]
 			id := ConfigUserID(bkt.Name, j, cred.AccessKeyID)
+			// Full access, matching what a config credential has always
+			// carried. The config file has no syntax for narrowing it, and
+			// inventing one here would split the same idea across two places.
 			v.Users = append(v.Users, User{
 				ID:      id,
 				Name:    bkt.Name,
 				Buckets: []string{bkt.Name},
+				Grants:  map[string]core.PermissionSet{bkt.Name: core.PermAll},
 				Source:  SourceConfig,
 			})
 			out := Credential{UserID: id, Token: cred.Token, Source: SourceConfig}
@@ -181,12 +186,12 @@ func mergeStoredUsers(v *View, s *Snapshot, declared map[string]struct{}) {
 	for i := range s.Users {
 		u := &s.Users[i]
 		known[u.ID] = struct{}{}
-		buckets := reach[u.ID]
-		slices.Sort(buckets)
+		grants := reach[u.ID]
 		v.Users = append(v.Users, User{
 			ID:      u.ID,
 			Name:    u.Name,
-			Buckets: buckets,
+			Buckets: sortedKeys(grants),
+			Grants:  grants,
 			Source:  SourceStore,
 		})
 	}
@@ -209,14 +214,19 @@ func mergeStoredUsers(v *View, s *Snapshot, declared map[string]struct{}) {
 	}
 }
 
-// grantsByUser indexes each user's granted buckets, reporting any grant naming a
-// bucket neither source declares.
+// grantsByUser indexes each user's granted buckets and the permissions each
+// grant carries, reporting any grant naming a bucket neither source declares.
 //
 // A grant can outlive the bucket it names - a bucket leaves the config file
 // while the grant stays behind - so a dangling one is reported and skipped
 // rather than treated as a failure to start.
-func grantsByUser(grants []core.Grant, declared map[string]struct{}) (map[string][]string, []Notice) {
-	reach := make(map[string][]string)
+//
+// Two grants naming one bucket union rather than the later replacing the
+// earlier. The schema keys on (user, bucket) so this cannot arise today, but
+// resolving a duplicate by dropping permissions an operator wrote is the wrong
+// direction to fail if it ever can.
+func grantsByUser(grants []core.Grant, declared map[string]struct{}) (map[string]map[string]core.PermissionSet, []Notice) {
+	reach := make(map[string]map[string]core.PermissionSet)
 	var notices []Notice
 	for i := range grants {
 		g := &grants[i]
@@ -228,9 +238,23 @@ func grantsByUser(grants []core.Grant, declared map[string]struct{}) (map[string
 			})
 			continue
 		}
-		reach[g.UserID] = append(reach[g.UserID], g.BucketName)
+		if reach[g.UserID] == nil {
+			reach[g.UserID] = make(map[string]core.PermissionSet)
+		}
+		reach[g.UserID][g.BucketName] |= g.Permissions
 	}
 	return reach, notices
+}
+
+// sortedKeys lists the buckets a grant map names, in order, which is what a
+// ListBuckets response enumerates and what an operator's listing renders.
+func sortedKeys(grants map[string]core.PermissionSet) []string {
+	out := make([]string, 0, len(grants))
+	for name := range grants {
+		out = append(out, name)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // ConfigUserID names the user a config-declared credential resolves to. The
