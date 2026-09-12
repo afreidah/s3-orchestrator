@@ -103,7 +103,7 @@ type oneRowStore struct {
 // The size floor is applied here because that is where the real store applies
 // it: a copy under it is not a candidate rather than a candidate the pass
 // declines, so it never reaches the pass at all.
-func (s *oneRowStore) ListUncompressedLocations(_ context.Context, _ int, _ core.Cursor, t core.CompressionThresholds) ([]core.RewritableLocation, error) {
+func (s *oneRowStore) ListUncompressedLocations(_ context.Context, _ int, _ core.Cursor, t core.CompressionThresholds, _ string) ([]core.RewritableLocation, error) {
 	rows := s.serveOnce()
 	if len(rows) == 1 && rows[0].LogicalSize == 0 && rows[0].SizeBytes < t.MinSize {
 		return nil, nil
@@ -119,7 +119,7 @@ func (s *oneRowStore) RecordCompressionProbe(_ context.Context, probe *core.Comp
 }
 
 // ListCompressedLocations serves the same row for the reverse direction.
-func (s *oneRowStore) ListCompressedLocations(_ context.Context, _ int, _ core.Cursor) ([]core.RewritableLocation, error) {
+func (s *oneRowStore) ListCompressedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.RewritableLocation, error) {
 	return s.serveOnce(), nil
 }
 
@@ -142,7 +142,7 @@ type pagedStore struct {
 
 // ListUncompressedLocations returns the rows after the cursor, capped at limit,
 // and records what the driver asked for.
-func (s *pagedStore) ListUncompressedLocations(_ context.Context, limit int, after core.Cursor, _ core.CompressionThresholds) ([]core.RewritableLocation, error) {
+func (s *pagedStore) ListUncompressedLocations(_ context.Context, limit int, after core.Cursor, _ core.CompressionThresholds, _ string) ([]core.RewritableLocation, error) {
 	s.pageSizes = append(s.pageSizes, limit)
 	out := make([]core.RewritableLocation, 0, limit)
 	for i := range s.rows {
@@ -158,7 +158,7 @@ func (s *pagedStore) ListUncompressedLocations(_ context.Context, limit int, aft
 }
 
 // ListCompressedLocations serves nothing: these tests drive the forward pass.
-func (s *pagedStore) ListCompressedLocations(context.Context, int, core.Cursor) ([]core.RewritableLocation, error) {
+func (s *pagedStore) ListCompressedLocations(context.Context, int, core.Cursor, string) ([]core.RewritableLocation, error) {
 	return nil, nil
 }
 
@@ -241,7 +241,7 @@ func TestCompressExisting_RewritesAndRecords(t *testing.T) {
 	}}
 	svc, be := newCompression(t, store, compressionOn(), payload)
 
-	res, err := svc.CompressExisting(context.Background(), nil, 0)
+	res, err := svc.CompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestCompressExisting_SkipsIncompressible(t *testing.T) {
 	cfg := compressionOn()
 	svc, be := newCompression(t, store, cfg, payload)
 
-	res, err := svc.CompressExisting(context.Background(), nil, 0)
+	res, err := svc.CompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestCompressExisting_ExcludesBelowMinSize(t *testing.T) {
 	cfg.MinSize = 4096
 	svc, be := newCompression(t, store, cfg, payload)
 
-	res, err := svc.CompressExisting(context.Background(), nil, 0)
+	res, err := svc.CompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestCompressExisting_StopsAtMax(t *testing.T) {
 	store := &pagedStore{rows: pagedRows(10, int64(len(payload)))}
 	svc, be := newCompression(t, store, compressionOn(), payload)
 
-	res, err := svc.CompressExisting(context.Background(), nil, 3)
+	res, err := svc.CompressExisting(context.Background(), nil, 3, "")
 	if err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestCompressExisting_MaxNarrowsThePage(t *testing.T) {
 	store := &pagedStore{rows: pagedRows(10, int64(len(payload)))}
 	svc, _ := newCompression(t, store, compressionOn(), payload)
 
-	if _, err := svc.CompressExisting(context.Background(), nil, 3); err != nil {
+	if _, err := svc.CompressExisting(context.Background(), nil, 3, ""); err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
 	if len(store.pageSizes) == 0 || store.pageSizes[0] != 3 {
@@ -383,7 +383,7 @@ func TestCompressExisting_ResumesWhereTheLastRunStopped(t *testing.T) {
 	svc, _ := newCompression(t, store, compressionOn(), payload)
 
 	for range 2 {
-		if _, err := svc.CompressExisting(context.Background(), nil, 2); err != nil {
+		if _, err := svc.CompressExisting(context.Background(), nil, 2, ""); err != nil {
 			t.Fatalf("CompressExisting: %v", err)
 		}
 	}
@@ -404,7 +404,7 @@ func TestCompressExisting_MaxZeroConvertsEverything(t *testing.T) {
 	store := &pagedStore{rows: pagedRows(7, int64(len(payload)))}
 	svc, _ := newCompression(t, store, compressionOn(), payload)
 
-	res, err := svc.CompressExisting(context.Background(), nil, 0)
+	res, err := svc.CompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
@@ -426,7 +426,7 @@ func TestCompressExisting_CancelStopsWithoutFailingThePage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	res, err := svc.CompressExisting(ctx, nil, 0)
+	res, err := svc.CompressExisting(ctx, nil, 0, "")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("CompressExisting error = %v, want context.Canceled", err)
 	}
@@ -448,7 +448,7 @@ func TestCompressExisting_RecordsRatioDecline(t *testing.T) {
 	cfg := compressionOn()
 	svc, _ := newCompression(t, store, cfg, payload)
 
-	res, err := svc.CompressExisting(context.Background(), nil, 0)
+	res, err := svc.CompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
@@ -485,7 +485,7 @@ func TestCompressExisting_RatioDeclineSurvivesProbeFailure(t *testing.T) {
 	}
 	svc, be := newCompression(t, store, compressionOn(), payload)
 
-	res, err := svc.CompressExisting(context.Background(), nil, 0)
+	res, err := svc.CompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestDecompressExisting_RestoresStoredBytes(t *testing.T) {
 	}}
 	svc, be := newCompression(t, store, compressionOn(), encoded.Bytes())
 
-	res, err := svc.DecompressExisting(context.Background(), nil, 0)
+	res, err := svc.DecompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
 		t.Fatalf("DecompressExisting: %v", err)
 	}
@@ -548,10 +548,10 @@ func TestCompressExisting_WithoutCodec(t *testing.T) {
 		Usage:   opstest.NewMockUsageGate(ctrl),
 	})
 
-	if _, err := svc.CompressExisting(context.Background(), nil, 0); !errors.Is(err, ErrCompressionUnavailable) {
+	if _, err := svc.CompressExisting(context.Background(), nil, 0, ""); !errors.Is(err, ErrCompressionUnavailable) {
 		t.Errorf("err = %v, want ErrCompressionUnavailable", err)
 	}
-	if _, err := svc.DecompressExisting(context.Background(), nil, 0); !errors.Is(err, ErrCompressionUnavailable) {
+	if _, err := svc.DecompressExisting(context.Background(), nil, 0, ""); !errors.Is(err, ErrCompressionUnavailable) {
 		t.Errorf("err = %v, want ErrCompressionUnavailable", err)
 	}
 }
@@ -640,7 +640,7 @@ func TestCompressExisting_EncryptedObject(t *testing.T) {
 		Usage:     usageGate,
 	})
 
-	got, err := svc.CompressExisting(context.Background(), nil, 0)
+	got, err := svc.CompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
@@ -702,7 +702,7 @@ func TestCompressExisting_EncryptedWithoutEncryptor(t *testing.T) {
 	}}
 	svc, be := newCompression(t, store, compressionOn(), compressibleBytes(4096))
 
-	res, err := svc.CompressExisting(context.Background(), nil, 0)
+	res, err := svc.CompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
@@ -724,7 +724,7 @@ func TestDecompressExisting_UndecodableBytes(t *testing.T) {
 	}}
 	svc, _ := newCompression(t, store, compressionOn(), []byte("not a zstd stream at all"))
 
-	res, err := svc.DecompressExisting(context.Background(), nil, 0)
+	res, err := svc.DecompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
 		t.Fatalf("DecompressExisting: %v", err)
 	}
@@ -741,12 +741,12 @@ func TestDecompressExisting_UndecodableBytes(t *testing.T) {
 type failingListStore struct{ err error }
 
 // ListUncompressedLocations fails.
-func (f failingListStore) ListUncompressedLocations(context.Context, int, core.Cursor, core.CompressionThresholds) ([]core.RewritableLocation, error) {
+func (f failingListStore) ListUncompressedLocations(context.Context, int, core.Cursor, core.CompressionThresholds, string) ([]core.RewritableLocation, error) {
 	return nil, f.err
 }
 
 // ListCompressedLocations fails.
-func (f failingListStore) ListCompressedLocations(context.Context, int, core.Cursor) ([]core.RewritableLocation, error) {
+func (f failingListStore) ListCompressedLocations(context.Context, int, core.Cursor, string) ([]core.RewritableLocation, error) {
 	return nil, f.err
 }
 
@@ -768,7 +768,7 @@ func TestCompressExisting_ListingFailureStopsPass(t *testing.T) {
 	wantErr := errors.New("database is down")
 	svc, _ := newCompression(t, failingListStore{err: wantErr}, compressionOn(), nil)
 
-	res, err := svc.CompressExisting(context.Background(), nil, 0)
+	res, err := svc.CompressExisting(context.Background(), nil, 0, "")
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want the listing error", err)
 	}
@@ -776,7 +776,7 @@ func TestCompressExisting_ListingFailureStopsPass(t *testing.T) {
 		t.Errorf("Total = %d, want 0; nothing was listed to process", res.Total)
 	}
 
-	if _, err := svc.DecompressExisting(context.Background(), nil, 0); !errors.Is(err, wantErr) {
+	if _, err := svc.DecompressExisting(context.Background(), nil, 0, ""); !errors.Is(err, wantErr) {
 		t.Errorf("decompress err = %v, want the listing error", err)
 	}
 }
@@ -815,7 +815,7 @@ func TestCompressExisting_EncodeFailureCountsAgainstObject(t *testing.T) {
 		Usage:   usageGate,
 	})
 
-	res, err := svc.CompressExisting(context.Background(), nil, 0)
+	res, err := svc.CompressExisting(context.Background(), nil, 0, "")
 	if err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
@@ -851,7 +851,7 @@ func TestCompressExisting_ReportsProgress(t *testing.T) {
 	var steps []progress.Step
 	obs := func(s progress.Step) { steps = append(steps, s) }
 
-	if _, err := svc.CompressExisting(context.Background(), obs, 0); err != nil {
+	if _, err := svc.CompressExisting(context.Background(), obs, 0, ""); err != nil {
 		t.Fatalf("CompressExisting: %v", err)
 	}
 

@@ -99,7 +99,7 @@ func (c *Compression) rewriteEnv() bulkRewriteEnv {
 // capped run needs nothing carried between invocations to continue: a rewritten
 // copy leaves the listing, and one declined on ratio is recorded so it leaves too,
 // so running it again converts the next batch rather than re-examining the last.
-func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observer, maxRewrites int) (BulkRewriteResult, error) {
+func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observer, maxRewrites int, backend string) (BulkRewriteResult, error) {
 	if c.codec == nil || c.store == nil {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
@@ -116,7 +116,7 @@ func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observe
 				MinSize:  c.cfg.MinSize,
 				MinRatio: c.cfg.MinRatio,
 				Level:    c.cfg.Level,
-			})
+			}, backend)
 		}),
 		rewrite:     c.compressOne,
 		maxRewrites: maxRewrites,
@@ -129,7 +129,7 @@ func (c *Compression) CompressExisting(ctx context.Context, obs progress.Observe
 // maxRewrites caps how many copies are rewritten, or zero for the whole fleet.
 // This direction declines nothing, so every copy a capped run touches leaves the
 // listing and the next run continues straight on from there.
-func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Observer, maxRewrites int) (BulkRewriteResult, error) {
+func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Observer, maxRewrites int, backend string) (BulkRewriteResult, error) {
 	if c.codec == nil || c.store == nil {
 		return BulkRewriteResult{}, ErrCompressionUnavailable
 	}
@@ -137,7 +137,9 @@ func (c *Compression) DecompressExisting(ctx context.Context, obs progress.Obser
 		opName:      "decompress-existing",
 		resultLabel: "decompressed",
 		counter:     telemetry.DecompressExistingObjectsTotal,
-		listFn:      rewriteListFn(c.store.ListCompressedLocations),
+		listFn: rewriteListFn(func(ctx context.Context, batchSize int, after core.Cursor) ([]core.RewritableLocation, error) {
+			return c.store.ListCompressedLocations(ctx, batchSize, after, backend)
+		}),
 		rewrite:     c.decompressOne,
 		maxRewrites: maxRewrites,
 	}.run(ctx, c.rewriteEnv(), obs)

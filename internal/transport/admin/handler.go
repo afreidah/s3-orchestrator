@@ -66,6 +66,7 @@ type Handler struct {
 	flightRec    io.WriterTo // nil when debug.flight_recorder.enabled is false
 	token        string
 	registry     func() *auth.BucketRegistry
+	backendNames func() []string
 	logLevel     *slog.LevelVar
 	reloadStatus func() *adminapi.ReloadStatusResponse // nil before the first reload
 }
@@ -97,6 +98,7 @@ type Deps struct {
 	Reconciler   Reconciler
 	Token        string
 	Registry     func() *auth.BucketRegistry // the live registry, re-read so a reload is not missed
+	BackendNames func() []string             // typically *infra.BackendRuntime.BackendOrder
 	LogLevel     *slog.LevelVar
 }
 
@@ -120,6 +122,7 @@ func New(d *Deps) *Handler {
 	must.NotNil("d.Cleanup", d.Cleanup)
 	must.NotNil("d.LogLevel", d.LogLevel)
 	must.NotNil("d.Registry", d.Registry)
+	must.NotNil("d.BackendNames", d.BackendNames)
 	return &Handler{
 		log:          slog.Default().With(logfmt.Component("admin")),
 		backendOps:   d.BackendOps,
@@ -144,6 +147,7 @@ func New(d *Deps) *Handler {
 		flightRec:    d.FlightRec,
 		token:        d.Token,
 		registry:     d.Registry,
+		backendNames: d.BackendNames,
 		logLevel:     d.LogLevel,
 	}
 }

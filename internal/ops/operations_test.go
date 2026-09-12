@@ -108,7 +108,7 @@ func (emptyEncAdmin) UpdateEncryptionKey(_ context.Context, _, _ string, _ []byt
 func (emptyEncAdmin) CountUnencryptedLocations(_ context.Context) (int64, error) { return 0, nil }
 
 // ListUnencryptedLocations lists no plaintext locations.
-func (emptyEncAdmin) ListUnencryptedLocations(_ context.Context, _ int, _ core.Cursor) ([]core.UnencryptedLocation, error) {
+func (emptyEncAdmin) ListUnencryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.UnencryptedLocation, error) {
 	return nil, nil
 }
 
@@ -118,7 +118,7 @@ func (emptyEncAdmin) MarkObjectEncrypted(_ context.Context, _ *core.EncryptedUpd
 }
 
 // ListAllEncryptedLocations lists no encrypted locations.
-func (emptyEncAdmin) ListAllEncryptedLocations(_ context.Context, _ int, _ core.Cursor) ([]core.DecryptableLocation, error) {
+func (emptyEncAdmin) ListAllEncryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.DecryptableLocation, error) {
 	return nil, nil
 }
 
@@ -136,7 +136,7 @@ type rowEncAdmin struct {
 }
 
 // ListUnencryptedLocations serves the single row once.
-func (r *rowEncAdmin) ListUnencryptedLocations(_ context.Context, _ int, _ core.Cursor) ([]core.UnencryptedLocation, error) {
+func (r *rowEncAdmin) ListUnencryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.UnencryptedLocation, error) {
 	if r.served.Swap(true) {
 		return nil, nil
 	}
@@ -381,7 +381,7 @@ func TestScrub_SkippedWhenIntegrityDisabled(t *testing.T) {
 	t.Parallel()
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, nil, nil)
 
-	res, err := svc.Integrity.Scrub(context.Background(), 0, nil)
+	res, err := svc.Integrity.Scrub(context.Background(), 0, "", nil)
 	assertSkipped(t, err)
 	if res.Checked != 0 || res.Failed != 0 {
 		t.Errorf("Checked=%d Failed=%d, want both 0", res.Checked, res.Failed)
@@ -395,7 +395,7 @@ func TestScrub_EmptyStore(t *testing.T) {
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, nil, nil)
 	enableIntegrity(t, svc)
 
-	res, err := svc.Integrity.Scrub(context.Background(), 0, nil)
+	res, err := svc.Integrity.Scrub(context.Background(), 0, "", nil)
 	if err != nil {
 		t.Fatalf("Scrub: %v", err)
 	}
@@ -432,7 +432,7 @@ func TestBackfillChecksums_SkippedWhenIntegrityDisabled(t *testing.T) {
 	t.Parallel()
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, nil, nil)
 
-	res, err := svc.Integrity.BackfillChecksums(context.Background(), 0, 0, 0, nil)
+	res, err := svc.Integrity.BackfillChecksums(context.Background(), 0, 0, 0, "", nil)
 	assertSkipped(t, err)
 	if res.Processed != 0 {
 		t.Errorf("Processed = %d, want 0", res.Processed)
@@ -446,7 +446,7 @@ func TestBackfillChecksums_EmptyStore(t *testing.T) {
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, nil, nil)
 	enableIntegrity(t, svc)
 
-	res, err := svc.Integrity.BackfillChecksums(context.Background(), 0, 0, 0, nil)
+	res, err := svc.Integrity.BackfillChecksums(context.Background(), 0, 0, 0, "", nil)
 	if err != nil {
 		t.Fatalf("BackfillChecksums: %v", err)
 	}
@@ -464,7 +464,7 @@ func TestEncryptExisting_SkippedWithoutEncryptor(t *testing.T) {
 	t.Parallel()
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, nil, nil)
 
-	res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0)
+	res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0, "")
 	assertSkipped(t, err)
 	if res.Succeeded != 0 || res.Failed != 0 || res.Total != 0 {
 		t.Errorf("counts = (%d, %d, %d), want all 0", res.Succeeded, res.Failed, res.Total)
@@ -477,7 +477,7 @@ func TestEncryptExisting_EmptyStore(t *testing.T) {
 	t.Parallel()
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, testEncryptor(t), emptyEncAdmin{})
 
-	res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0)
+	res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0, "")
 	if err != nil {
 		t.Fatalf("EncryptExisting: %v", err)
 	}
@@ -498,7 +498,7 @@ func TestEncryptExisting_OneRow(t *testing.T) {
 	}}
 	svc := testServices(t, map[string]s3be.ObjectBackend{"backend-a": fake}, testEncryptor(t), encStore)
 
-	res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0)
+	res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0, "")
 	if err != nil {
 		t.Fatalf("EncryptExisting: %v", err)
 	}
@@ -539,7 +539,7 @@ type decryptRowStore struct {
 }
 
 // ListAllEncryptedLocations serves the single row once.
-func (d *decryptRowStore) ListAllEncryptedLocations(_ context.Context, _ int, _ core.Cursor) ([]core.DecryptableLocation, error) {
+func (d *decryptRowStore) ListAllEncryptedLocations(_ context.Context, _ int, _ core.Cursor, _ string) ([]core.DecryptableLocation, error) {
 	if d.served.Swap(true) {
 		return nil, nil
 	}
@@ -587,7 +587,7 @@ func TestDecryptExisting_OneRow(t *testing.T) {
 	}}
 	svc := testServices(t, map[string]s3be.ObjectBackend{"backend-a": fake}, enc, store)
 
-	res, err := svc.Encryption.DecryptExisting(context.Background(), nil, 0)
+	res, err := svc.Encryption.DecryptExisting(context.Background(), nil, 0, "")
 	if err != nil {
 		t.Fatalf("DecryptExisting: %v", err)
 	}
@@ -674,7 +674,7 @@ func TestEncryptExisting_FailureModesAreCountedPerObject(t *testing.T) {
 			}
 			svc := testServices(t, map[string]s3be.ObjectBackend{"backend-a": be}, testEncryptor(t), store)
 
-			res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0)
+			res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0, "")
 			if err != nil {
 				t.Fatalf("EncryptExisting: %v", err)
 			}
@@ -805,15 +805,15 @@ func TestVerifyKey_NoCopiesIsNotFound(t *testing.T) {
 func TestBackfillChecksums_StopsAtObjectCap(t *testing.T) {
 	t.Parallel()
 	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
-	scrubber.EXPECT().Backfill(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, batchSize, offset int, observer progress.Observer) (worker.WorkSummary, int) {
+	scrubber.EXPECT().Backfill(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, batchSize, offset int, _ string, observer progress.Observer) (worker.WorkSummary, int) {
 			for i := range batchSize {
 				progress.Track(observer, fmt.Sprintf("key-%d-%d", offset, i), func() string { return progress.StatusOK })
 			}
 			return worker.WorkSummary{Attempted: batchSize, Succeeded: batchSize}, offset + batchSize
 		}).AnyTimes()
 
-	res, err := integrityOver(t, scrubber).BackfillChecksums(context.Background(), 10, 25, 0, nil)
+	res, err := integrityOver(t, scrubber).BackfillChecksums(context.Background(), 10, 25, 0, "", nil)
 	if err != nil {
 		t.Fatalf("BackfillChecksums: %v", err)
 	}
@@ -836,7 +836,7 @@ func TestEncryptExisting_CountsUnreachableBackend(t *testing.T) {
 	}}
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, testEncryptor(t), encStore)
 
-	res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0)
+	res, err := svc.Encryption.EncryptExisting(context.Background(), nil, 0, "")
 	if err != nil {
 		t.Fatalf("EncryptExisting: %v", err)
 	}
@@ -1108,7 +1108,7 @@ func TestDecryptExisting_EmptyStore(t *testing.T) {
 	t.Parallel()
 	svc := testServices(t, map[string]s3be.ObjectBackend{}, testEncryptor(t), emptyEncAdmin{})
 
-	res, err := svc.Encryption.DecryptExisting(context.Background(), nil, 0)
+	res, err := svc.Encryption.DecryptExisting(context.Background(), nil, 0, "")
 	if err != nil {
 		t.Fatalf("DecryptExisting: %v", err)
 	}
@@ -1318,14 +1318,14 @@ func TestBackfillChecksums_StopsOnCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
-	scrubber.EXPECT().Backfill(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, batchSize, offset int, observer progress.Observer) (worker.WorkSummary, int) {
+	scrubber.EXPECT().Backfill(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, batchSize, offset int, _ string, observer progress.Observer) (worker.WorkSummary, int) {
 			progress.Track(observer, "key", func() string { return progress.StatusOK })
 			cancel()
 			return worker.WorkSummary{Attempted: 1, Succeeded: 1}, offset + batchSize
 		}).Times(1)
 
-	res, err := integrityOver(t, scrubber).BackfillChecksums(ctx, 10, 0, time.Millisecond, nil)
+	res, err := integrityOver(t, scrubber).BackfillChecksums(ctx, 10, 0, time.Millisecond, "", nil)
 	if err != nil {
 		t.Fatalf("BackfillChecksums: %v", err)
 	}
@@ -1341,8 +1341,8 @@ func TestBackfillChecksums_PausesBetweenPasses(t *testing.T) {
 	var calls atomic.Int64
 
 	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
-	scrubber.EXPECT().Backfill(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, batchSize, offset int, observer progress.Observer) (worker.WorkSummary, int) {
+	scrubber.EXPECT().Backfill(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, batchSize, offset int, _ string, observer progress.Observer) (worker.WorkSummary, int) {
 			progress.Track(observer, "key", func() string { return progress.StatusOK })
 			if calls.Add(1) == 1 {
 				return worker.WorkSummary{Attempted: 1, Succeeded: 1}, offset + batchSize
@@ -1351,7 +1351,7 @@ func TestBackfillChecksums_PausesBetweenPasses(t *testing.T) {
 		}).Times(2)
 
 	start := time.Now()
-	res, err := integrityOver(t, scrubber).BackfillChecksums(context.Background(), 10, 0, 20*time.Millisecond, nil)
+	res, err := integrityOver(t, scrubber).BackfillChecksums(context.Background(), 10, 0, 20*time.Millisecond, "", nil)
 	if err != nil {
 		t.Fatalf("BackfillChecksums: %v", err)
 	}

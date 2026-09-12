@@ -187,9 +187,9 @@ type OverReplicationOps interface {
 
 // ScrubberOps is the slice of *worker.Scrubber the integrity operations use.
 type ScrubberOps interface {
-	Scrub(ctx context.Context, batchSize int, observer progress.Observer) worker.WorkSummary
+	Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) worker.WorkSummary
 	ScrubKey(ctx context.Context, key string) ([]worker.CopyVerification, error)
-	Backfill(ctx context.Context, batchSize, offset int, observer progress.Observer) (worker.WorkSummary, int)
+	Backfill(ctx context.Context, batchSize, offset int, backend string, observer progress.Observer) (worker.WorkSummary, int)
 }
 
 // -------------------------------------------------------------------------

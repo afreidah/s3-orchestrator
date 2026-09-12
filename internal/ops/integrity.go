@@ -81,9 +81,10 @@ func NewIntegrity(d IntegrityDeps) *Integrity {
 // -------------------------------------------------------------------------
 
 // Scrub runs one verification pass and returns the per-pass counts. batchSize
-// <= 0 uses the configured ScrubberBatchSize. observer, when non-nil, receives
-// a start and end step per copy verified.
-func (i *Integrity) Scrub(ctx context.Context, batchSize int, observer progress.Observer) (ScrubResult, error) {
+// <= 0 uses the configured ScrubberBatchSize. An empty backend verifies copies
+// on every backend the read budget allows. observer, when non-nil, receives a
+// start and end step per copy verified.
+func (i *Integrity) Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) (ScrubResult, error) {
 	icfg := i.integrityCfg.Load()
 	if icfg == nil || !icfg.Enabled {
 		return ScrubResult{}, ErrIntegrityDisabled
@@ -92,7 +93,7 @@ func (i *Integrity) Scrub(ctx context.Context, batchSize int, observer progress.
 		batchSize = icfg.ScrubberBatchSize
 	}
 
-	sum := i.scrubber.Scrub(ctx, batchSize, observer)
+	sum := i.scrubber.Scrub(ctx, batchSize, backend, observer)
 	return ScrubResult{
 		Checked:    sum.Attempted,
 		Failed:     sum.Failed,
@@ -126,9 +127,10 @@ func (i *Integrity) VerifyKey(ctx context.Context, key string) ([]worker.CopyVer
 // BackfillChecksums computes and stores content hashes for objects that do not
 // have one, batchSize objects per pass, pausing for pause between passes to
 // rate-limit backend reads. maxObjects <= 0 drains the whole backlog;
-// batchSize <= 0 uses the default pass size. observer, when non-nil, receives a
-// start and end step per object hashed.
-func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects int, pause time.Duration, observer progress.Observer) (BackfillResult, error) {
+// batchSize <= 0 uses the default pass size. An empty backend hashes copies on
+// every backend. observer, when non-nil, receives a start and end step per
+// object hashed.
+func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects int, pause time.Duration, backend string, observer progress.Observer) (BackfillResult, error) {
 	icfg := i.integrityCfg.Load()
 	if icfg == nil || !icfg.Enabled {
 		return BackfillResult{}, ErrIntegrityDisabled
@@ -138,10 +140,10 @@ func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects
 	}
 
 	i.log.InfoContext(ctx, "backfill-checksums started",
-		"batch_size", batchSize, "max_objects", maxObjects, "pause", pause)
+		"batch_size", batchSize, "max_objects", maxObjects, "pause", pause, "backend", backend)
 
 	var total int
-	done := i.drainBackfill(ctx, batchSize, maxObjects, pause, backfillCounter(observer, &total), &total)
+	done := i.drainBackfill(ctx, batchSize, maxObjects, pause, backend, backfillCounter(observer, &total), &total)
 	return BackfillResult{Processed: total, Done: done}, nil
 }
 
@@ -152,9 +154,9 @@ func (i *Integrity) BackfillChecksums(ctx context.Context, batchSize, maxObjects
 // drainBackfill runs backfill passes until the backlog drains, the max-objects
 // cap is hit, or the context is cancelled. Returns true only when the backlog
 // was fully drained.
-func (i *Integrity) drainBackfill(ctx context.Context, batchSize, maxObjects int, pause time.Duration, observer progress.Observer, total *int) bool {
+func (i *Integrity) drainBackfill(ctx context.Context, batchSize, maxObjects int, pause time.Duration, backend string, observer progress.Observer, total *int) bool {
 	for offset := 0; ; {
-		_, nextOffset := i.scrubber.Backfill(ctx, batchSize, offset, observer)
+		_, nextOffset := i.scrubber.Backfill(ctx, batchSize, offset, backend, observer)
 		if nextOffset == 0 {
 			return true
 		}

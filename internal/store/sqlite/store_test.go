@@ -1535,7 +1535,7 @@ func TestIntegrity_HashOperations(t *testing.T) {
 	mustRecordObject(t, s, "bucket/b", "backend-a", 200)
 
 	// Both should be without hash
-	unhashed, err := s.GetObjectsWithoutHash(ctx, 10, 0)
+	unhashed, err := s.GetObjectsWithoutHash(ctx, 10, 0, "")
 	if err != nil {
 		t.Fatalf("GetObjectsWithoutHash: %v", err)
 	}
@@ -1549,7 +1549,7 @@ func TestIntegrity_HashOperations(t *testing.T) {
 	}
 
 	// Now only 1 without hash
-	unhashed, _ = s.GetObjectsWithoutHash(ctx, 10, 0)
+	unhashed, _ = s.GetObjectsWithoutHash(ctx, 10, 0, "")
 	if len(unhashed) != 1 {
 		t.Errorf("expected 1 unhashed, got %d", len(unhashed))
 	}
@@ -1863,7 +1863,7 @@ func TestEncryptionAdmin_MarkAndList(t *testing.T) {
 	mustRecordObject(t, s, "bucket/plain", "backend-a", 1024)
 
 	// List unencrypted
-	unenc, err := s.ListUnencryptedLocations(ctx, 10, core.Cursor{})
+	unenc, err := s.ListUnencryptedLocations(ctx, 10, core.Cursor{}, "")
 	if err != nil {
 		t.Fatalf("ListUnencryptedLocations: %v", err)
 	}
@@ -2781,7 +2781,7 @@ func TestListAllEncryptedLocations(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	locs, err := s.ListAllEncryptedLocations(ctx, 10, core.Cursor{})
+	locs, err := s.ListAllEncryptedLocations(ctx, 10, core.Cursor{}, "")
 	if err != nil {
 		t.Fatalf("ListAllEncryptedLocations: %v", err)
 	}
@@ -2985,7 +2985,7 @@ func TestImportObject_UnmanagedCountsForQuotaButNotForWork(t *testing.T) {
 	}
 	assertNoStray(t, "replication", under)
 
-	unhashed, err := s.GetObjectsWithoutHash(ctx, 10, 0)
+	unhashed, err := s.GetObjectsWithoutHash(ctx, 10, 0, "")
 	if err != nil {
 		t.Fatalf("GetObjectsWithoutHash: %v", err)
 	}
@@ -3597,7 +3597,7 @@ func TestCountUnencryptedLocations(t *testing.T) {
 
 	// The count and the list agree, so the dashboard figure and the work
 	// encrypt-existing performs cannot drift apart.
-	listed, err := s.ListUnencryptedLocations(ctx, 100, core.Cursor{})
+	listed, err := s.ListUnencryptedLocations(ctx, 100, core.Cursor{}, "")
 	if err != nil {
 		t.Fatalf("ListUnencryptedLocations: %v", err)
 	}

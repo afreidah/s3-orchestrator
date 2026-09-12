@@ -36,13 +36,17 @@ import (
 // the stream content type; otherwise returns a single JSON result.
 func (h *Handler) handleScrub(w http.ResponseWriter, r *http.Request) {
 	batchSize := httputil.QueryPositiveInt(r.URL.Query().Get("batch_size"))
-
-	if acceptsStream(r) {
-		h.streamScrub(w, r, batchSize)
+	backend, ok := h.backendParam(w, r)
+	if !ok {
 		return
 	}
 
-	res, err := h.integrity.Scrub(r.Context(), batchSize, nil)
+	if acceptsStream(r) {
+		h.streamScrub(w, r, batchSize, backend)
+		return
+	}
+
+	res, err := h.integrity.Scrub(r.Context(), batchSize, backend, nil)
 	if reason, skipped := skipReason(err); skipped {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.ScrubResponse{
 			Status: statusSkipped, Reason: reason,
@@ -127,9 +131,9 @@ func wireCopyResult(c worker.CopyVerification) adminapi.CopyScrubResult {
 
 // streamScrub runs a scrub as an NDJSON step stream, one "verifying <key>" line
 // per object plus a terminal summary of checked/failed counts.
-func (h *Handler) streamScrub(w http.ResponseWriter, r *http.Request, batchSize int) {
+func (h *Handler) streamScrub(w http.ResponseWriter, r *http.Request, batchSize int, backend string) {
 	h.streamSteps(w, "scrub", "verifying", true, func(obs progress.Observer) (stepResult, error) {
-		res, err := h.integrity.Scrub(r.Context(), batchSize, obs)
+		res, err := h.integrity.Scrub(r.Context(), batchSize, backend, obs)
 		if reason, skipped := skipReason(err); skipped {
 			return stepResult{Skipped: reason}, nil
 		}
@@ -164,13 +168,17 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 	batchSize := httputil.QueryPositiveInt(q.Get("batch_size"))
 	maxObjects := httputil.QueryPositiveInt(q.Get("max"))
 	pause := time.Duration(httputil.QueryPositiveInt(q.Get("delay_ms"))) * time.Millisecond
-
-	if acceptsStream(r) {
-		h.streamBackfillChecksums(w, r, batchSize, maxObjects, pause)
+	backend, ok := h.backendParam(w, r)
+	if !ok {
 		return
 	}
 
-	res, err := h.integrity.BackfillChecksums(r.Context(), batchSize, maxObjects, pause, nil)
+	if acceptsStream(r) {
+		h.streamBackfillChecksums(w, r, batchSize, maxObjects, pause, backend)
+		return
+	}
+
+	res, err := h.integrity.BackfillChecksums(r.Context(), batchSize, maxObjects, pause, backend, nil)
 	if reason, skipped := skipReason(err); skipped {
 		httputil.WriteJSON(w, http.StatusOK, adminapi.BackfillChecksumsResponse{
 			Status: statusSkipped, Reason: reason,
@@ -191,9 +199,9 @@ func (h *Handler) handleBackfillChecksums(w http.ResponseWriter, r *http.Request
 
 // streamBackfillChecksums runs a backfill as an NDJSON step stream, one
 // "hashing <key>" line per object plus a terminal result.
-func (h *Handler) streamBackfillChecksums(w http.ResponseWriter, r *http.Request, batchSize, maxObjects int, pause time.Duration) {
+func (h *Handler) streamBackfillChecksums(w http.ResponseWriter, r *http.Request, batchSize, maxObjects int, pause time.Duration, backend string) {
 	h.streamSteps(w, "backfill-checksums", "hashing", true, func(obs progress.Observer) (stepResult, error) {
-		res, err := h.integrity.BackfillChecksums(r.Context(), batchSize, maxObjects, pause, obs)
+		res, err := h.integrity.BackfillChecksums(r.Context(), batchSize, maxObjects, pause, backend, obs)
 		if reason, skipped := skipReason(err); skipped {
 			return stepResult{Skipped: reason}, nil
 		}

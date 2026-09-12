@@ -685,18 +685,18 @@ func (mr *MockMetadataStoreMockRecorder) GetObjectTags(ctx, key any) *gomock.Cal
 }
 
 // GetObjectsWithoutHash mocks base method.
-func (m *MockMetadataStore) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]core.ObjectLocation, error) {
+func (m *MockMetadataStore) GetObjectsWithoutHash(ctx context.Context, limit, offset int, backend string) ([]core.ObjectLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetObjectsWithoutHash", ctx, limit, offset)
+	ret := m.ctrl.Call(m, "GetObjectsWithoutHash", ctx, limit, offset, backend)
 	ret0, _ := ret[0].([]core.ObjectLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetObjectsWithoutHash indicates an expected call of GetObjectsWithoutHash.
-func (mr *MockMetadataStoreMockRecorder) GetObjectsWithoutHash(ctx, limit, offset any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) GetObjectsWithoutHash(ctx, limit, offset, backend any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObjectsWithoutHash", reflect.TypeOf((*MockMetadataStore)(nil).GetObjectsWithoutHash), ctx, limit, offset)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObjectsWithoutHash", reflect.TypeOf((*MockMetadataStore)(nil).GetObjectsWithoutHash), ctx, limit, offset, backend)
 }
 
 // GetOverReplicatedObjects mocks base method.
@@ -953,18 +953,18 @@ func (mr *MockMetadataStoreMockRecorder) IntegrityCoverage(ctx, reachable any) *
 }
 
 // ListAllEncryptedLocations mocks base method.
-func (m *MockMetadataStore) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.DecryptableLocation, error) {
+func (m *MockMetadataStore) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.DecryptableLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListAllEncryptedLocations", ctx, limit, after)
+	ret := m.ctrl.Call(m, "ListAllEncryptedLocations", ctx, limit, after, backend)
 	ret0, _ := ret[0].([]core.DecryptableLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListAllEncryptedLocations indicates an expected call of ListAllEncryptedLocations.
-func (mr *MockMetadataStoreMockRecorder) ListAllEncryptedLocations(ctx, limit, after any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) ListAllEncryptedLocations(ctx, limit, after, backend any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListAllEncryptedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListAllEncryptedLocations), ctx, limit, after)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListAllEncryptedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListAllEncryptedLocations), ctx, limit, after, backend)
 }
 
 // ListBackendQuotaUsage mocks base method.
@@ -1013,18 +1013,18 @@ func (mr *MockMetadataStoreMockRecorder) ListCleanupDLQ(ctx, backend, limit any)
 }
 
 // ListCompressedLocations mocks base method.
-func (m *MockMetadataStore) ListCompressedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.RewritableLocation, error) {
+func (m *MockMetadataStore) ListCompressedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.RewritableLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListCompressedLocations", ctx, limit, after)
+	ret := m.ctrl.Call(m, "ListCompressedLocations", ctx, limit, after, backend)
 	ret0, _ := ret[0].([]core.RewritableLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListCompressedLocations indicates an expected call of ListCompressedLocations.
-func (mr *MockMetadataStoreMockRecorder) ListCompressedLocations(ctx, limit, after any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) ListCompressedLocations(ctx, limit, after, backend any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCompressedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListCompressedLocations), ctx, limit, after)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCompressedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListCompressedLocations), ctx, limit, after, backend)
 }
 
 // ListCredentials mocks base method.
@@ -1178,33 +1178,33 @@ func (mr *MockMetadataStoreMockRecorder) ListObjectsDelimited(ctx, prefix, delim
 }
 
 // ListUncompressedLocations mocks base method.
-func (m *MockMetadataStore) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor, t core.CompressionThresholds) ([]core.RewritableLocation, error) {
+func (m *MockMetadataStore) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor, t core.CompressionThresholds, backend string) ([]core.RewritableLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListUncompressedLocations", ctx, limit, after, t)
+	ret := m.ctrl.Call(m, "ListUncompressedLocations", ctx, limit, after, t, backend)
 	ret0, _ := ret[0].([]core.RewritableLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListUncompressedLocations indicates an expected call of ListUncompressedLocations.
-func (mr *MockMetadataStoreMockRecorder) ListUncompressedLocations(ctx, limit, after, t any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) ListUncompressedLocations(ctx, limit, after, t, backend any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUncompressedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListUncompressedLocations), ctx, limit, after, t)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUncompressedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListUncompressedLocations), ctx, limit, after, t, backend)
 }
 
 // ListUnencryptedLocations mocks base method.
-func (m *MockMetadataStore) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.UnencryptedLocation, error) {
+func (m *MockMetadataStore) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.UnencryptedLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListUnencryptedLocations", ctx, limit, after)
+	ret := m.ctrl.Call(m, "ListUnencryptedLocations", ctx, limit, after, backend)
 	ret0, _ := ret[0].([]core.UnencryptedLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListUnencryptedLocations indicates an expected call of ListUnencryptedLocations.
-func (mr *MockMetadataStoreMockRecorder) ListUnencryptedLocations(ctx, limit, after any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) ListUnencryptedLocations(ctx, limit, after, backend any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUnencryptedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListUnencryptedLocations), ctx, limit, after)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUnencryptedLocations", reflect.TypeOf((*MockMetadataStore)(nil).ListUnencryptedLocations), ctx, limit, after, backend)
 }
 
 // ListUsers mocks base method.

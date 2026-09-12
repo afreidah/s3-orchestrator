@@ -48,6 +48,21 @@ curl -H "X-Admin-Token: $TOKEN" \
 
 Each line is one self-contained JSON object with an `event` field: `start` when the operation begins, `step_start` and `step_end` per item, and a final `result` carrying the outcome. The `s3-orchestrator admin` subcommand renders these as live progress.
 
+## Restricting a pass to one backend
+
+Six of the maintenance passes -- `scrub`, `backfill-checksums`, `encrypt-existing`, `decrypt-existing`, `compress-existing` and `decompress-existing` -- accept a `backend` parameter naming the one backend whose copies they read:
+
+```bash
+curl -H "X-Admin-Token: $TOKEN" \
+  -X POST "http://localhost:9000/admin/api/compress-existing?backend=wasabi-eu"
+```
+
+Omitting it runs the pass against every backend, which is what these did before the parameter existed. `reconcile` and the cleanup DLQ endpoints already took the same parameter and are unchanged.
+
+Three reasons to reach for it. A re-encode or re-encrypt pass rewrites every object the deployment holds, and scoping it is how an operator tries one provider before committing the fleet. The `delay_ms` pacing on `backfill-checksums` applies to the whole pass rather than the backend it is reading from, so a run sized for the most expensive provider throttles the rest. And a backend restored from a failure needs only its own copies hashed or re-encrypted.
+
+The filter is applied when candidates are selected, not after, so `max` is spent on copies the pass will act on rather than on rows it would discard. A name this instance does not serve is refused with `400`: a filter matching nothing is indistinguishable from a fleet with no work left, so a typo would otherwise report a clean pass over a backend that was never read.
+
 ## Verifying one object
 
 `POST /admin/api/object-scrub?key=...` reads every recorded copy of one key and compares it against the stored content hash, without waiting for the scrub queue to reach it. The response reports one verdict per copy -- `verified`, `mismatch`, `unreadable`, or `not_hashed` -- so a replicated object with one good copy and one bad one names the backend at fault.

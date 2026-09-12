@@ -87,7 +87,7 @@ func NewEncryption(d EncryptionDeps) *Encryption {
 // capped run needs nothing carried between invocations to continue: an encrypted
 // copy leaves the listing that selected it, so running it again converts the
 // next batch rather than re-examining the last.
-func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer, maxRewrites int) (BulkRewriteResult, error) {
+func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer, maxRewrites int, backend string) (BulkRewriteResult, error) {
 	if e.encryptor == nil || e.store == nil {
 		return BulkRewriteResult{}, ErrEncryptionDisabled
 	}
@@ -97,7 +97,7 @@ func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer,
 		counter:     telemetry.EncryptExistingObjectsTotal,
 		maxRewrites: maxRewrites,
 		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]*encryptRow, error) {
-			rows, err := e.store.ListUnencryptedLocations(ctx, batchSize, after)
+			rows, err := e.store.ListUnencryptedLocations(ctx, batchSize, after, backend)
 			if err != nil {
 				return nil, err
 			}
@@ -138,7 +138,7 @@ func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer,
 // maxRewrites caps how many copies are rewritten, or zero for the whole fleet.
 // This direction declines nothing, so every copy a capped run touches leaves the
 // listing and the next run continues straight on from there.
-func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer, maxRewrites int) (BulkRewriteResult, error) {
+func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer, maxRewrites int, backend string) (BulkRewriteResult, error) {
 	if e.encryptor == nil || e.store == nil {
 		return BulkRewriteResult{}, ErrEncryptionDisabled
 	}
@@ -148,7 +148,7 @@ func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer,
 		counter:     telemetry.DecryptExistingObjectsTotal,
 		maxRewrites: maxRewrites,
 		listFn: func(ctx context.Context, batchSize int, after core.Cursor) ([]*decryptRow, error) {
-			rows, err := e.store.ListAllEncryptedLocations(ctx, batchSize, after)
+			rows, err := e.store.ListAllEncryptedLocations(ctx, batchSize, after, backend)
 			if err != nil {
 				return nil, err
 			}

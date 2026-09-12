@@ -218,9 +218,14 @@ GROUP BY backend_name;
 -- Paged by cursor rather than offset. Encrypting a copy takes it out of this
 -- predicate, so the set shrinks as encrypt-existing walks it and an offset
 -- would step over the rows that moved up.
+--
+-- An empty backend_filter selects every backend, which is what a pass over the
+-- whole fleet asks for. Filtering here rather than after the page is read is
+-- what keeps the row_limit spent on candidates the pass will act on.
 SELECT object_key, backend_name, size_bytes
 FROM object_locations
 WHERE encrypted = FALSE
+  AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
   AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
 ORDER BY object_key, backend_name
 LIMIT sqlc.arg(row_limit);
@@ -240,6 +245,7 @@ WHERE object_key = $1 AND backend_name = $2;
 SELECT object_key, backend_name, size_bytes, encryption_key, key_id, plaintext_size
 FROM object_locations
 WHERE encrypted = TRUE
+  AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
   AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
 ORDER BY object_key, backend_name
 LIMIT sqlc.arg(row_limit);
@@ -274,6 +280,7 @@ SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
        compression_format_version, logical_size
 FROM object_locations
 WHERE compression_algorithm IS NULL
+  AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
   AND (CASE WHEN encrypted THEN plaintext_size ELSE size_bytes END) >= sqlc.arg(min_size)::bigint
   AND (compression_probe_size IS NULL
        OR compression_probe_level IS DISTINCT FROM sqlc.arg(probe_level)::text
@@ -294,6 +301,7 @@ SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
        compression_format_version, logical_size
 FROM object_locations
 WHERE compression_algorithm IS NOT NULL
+  AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
   AND (object_key, backend_name) > (sqlc.arg(after_key)::text, sqlc.arg(after_backend)::text)
 ORDER BY object_key, backend_name
 LIMIT sqlc.arg(row_limit);
@@ -408,8 +416,9 @@ WHERE content_hash IS NOT NULL AND managed;
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at
 FROM object_locations
 WHERE content_hash IS NULL AND managed
+  AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
 ORDER BY created_at ASC
-LIMIT $1 OFFSET $2;
+LIMIT sqlc.arg(row_limit) OFFSET sqlc.arg(row_offset);
 
 -- name: UpdateContentHash :exec
 -- Record the hash the backfill pass computed and stamp the copy as verified in

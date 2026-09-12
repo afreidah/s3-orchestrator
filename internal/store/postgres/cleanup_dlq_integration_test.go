@@ -14,6 +14,7 @@ package postgres
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -119,12 +120,21 @@ func TestStoreInt_ListCleanupDLQ_ScopeAndFields(t *testing.T) {
 // moves a backend's dead-lettered rows back into cleanup_queue atomically:
 // the DLQ depth drops by the returned count and the rows reappear pending with
 // fresh attempts.
+// The rows this test looks for are named and then found by name. Counting a
+// backend's rows in a windowed read cannot work here: the queue is shared with
+// every other test in the package, GetPendingCleanups takes a limit, and rows
+// left by earlier tests sort ahead of these ones, so a run late enough in the
+// package would look past them and read zero.
 func TestStoreInt_RequeueCleanupDLQ_MovesRowsBack(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 
-	for range 3 {
-		if err := s.EnqueueCleanup(ctx, "backend-a", uniqueKey(t, "requeue"), "delete_failed", 256); err != nil {
+	// uniqueKey is derived from the test name, so every row here carries the
+	// same key and the count has to be kept separately from the name.
+	const rows = 3
+	key := uniqueKey(t, "requeue")
+	for range rows {
+		if err := s.EnqueueCleanup(ctx, "backend-a", key, "delete_failed", 256); err != nil {
 			t.Fatalf("EnqueueCleanup: %v", err)
 		}
 	}
@@ -145,21 +155,24 @@ func TestStoreInt_RequeueCleanupDLQ_MovesRowsBack(t *testing.T) {
 	if before-after != n {
 		t.Errorf("dlq depth delta = %d, want %d", before-after, n)
 	}
-	// Requeued rows are immediately eligible with fresh attempts.
-	pending, err := s.GetPendingCleanups(ctx, 100)
+	// Requeued rows are immediately eligible with fresh attempts. The limit is
+	// the whole queue rather than a page, so a row this test enqueued cannot be
+	// missed by sorting behind rows it did not.
+	pending, err := s.GetPendingCleanups(ctx, math.MaxInt32)
 	if err != nil {
 		t.Fatalf("GetPendingCleanups: %v", err)
 	}
-	var backendA int
+	found := 0
 	for i := range pending {
-		if pending[i].BackendName == "backend-a" {
-			backendA++
-			if pending[i].Attempts != 0 {
-				t.Errorf("requeued row attempts = %d, want 0", pending[i].Attempts)
-			}
+		if pending[i].ObjectKey != key {
+			continue
+		}
+		found++
+		if pending[i].Attempts != 0 {
+			t.Errorf("requeued row attempts = %d, want 0", pending[i].Attempts)
 		}
 	}
-	if int64(backendA) < n {
-		t.Errorf("requeued rows visible in queue = %d, want >= %d", backendA, n)
+	if found != rows {
+		t.Errorf("requeued rows visible in queue = %d, want %d", found, rows)
 	}
 }

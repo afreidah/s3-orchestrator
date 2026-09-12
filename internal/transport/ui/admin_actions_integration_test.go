@@ -64,7 +64,7 @@ func newOpsForTest(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.Worke
 	mock.EXPECT().GetPoolUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.PoolUsage{}, nil).AnyTimes()
 	mock.EXPECT().GetLeastRecentlyScrubbedObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	mock.EXPECT().IntegrityCoverage(gomock.Any(), gomock.Any()).Return(core.CoverageStat{}, nil).AnyTimes()
-	mock.EXPECT().GetObjectsWithoutHash(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	mock.EXPECT().GetObjectsWithoutHash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	st := proxytest.New(t, mock, &proxytest.StackOptions{
 		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
 			Backends:        map[string]backend.ObjectBackend{},

@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
@@ -202,16 +203,17 @@ func (s *Scrubber) verifyCopy(ctx context.Context, loc *core.ObjectLocation) Cop
 }
 
 // number of objects checked and the number of hash mismatches found.
-func (s *Scrubber) Scrub(ctx context.Context, batchSize int, observer progress.Observer) WorkSummary {
+func (s *Scrubber) Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) WorkSummary {
 	ctx = audit.WithRequestID(ctx, audit.NewID())
 	return runTickCycle(ctx, "Scrub", "scrub", func(ctx context.Context) WorkSummary {
-		return s.scrub(ctx, batchSize, observer)
+		return s.scrub(ctx, batchSize, backend, observer)
 	})
 }
 
 // scrub is the body of Scrub after the span is open.
-func (s *Scrubber) scrub(ctx context.Context, batchSize int, observer progress.Observer) WorkSummary {
+func (s *Scrubber) scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) WorkSummary {
 	affordable, declined := s.affordableBackends()
+	affordable = restrictToBackend(affordable, backend)
 
 	locs, err := s.store.GetLeastRecentlyScrubbedObjects(ctx, batchSize, affordable)
 	if err != nil {
@@ -276,6 +278,22 @@ func (s *Scrubber) affordableBackends() (affordable, declined []string) {
 		}
 	}
 	return affordable, declined
+}
+
+// restrictToBackend narrows an affordable set to the one backend a caller named,
+// or returns it whole when none was.
+//
+// A named backend the budget already declined stays out: the request asks to
+// scrub it, not to overspend on it, and the deferred count is what reports the
+// copies that went unread.
+func restrictToBackend(affordable []string, backend string) []string {
+	if backend == "" {
+		return affordable
+	}
+	if slices.Contains(affordable, backend) {
+		return []string{backend}
+	}
+	return nil
 }
 
 // countDeferred reports how many scrubbable copies sit on backends this cycle
@@ -409,12 +427,12 @@ func (s *Scrubber) dropCorruptedLocation(ctx context.Context, loc *core.ObjectLo
 // start step before each object is hashed and an end step after, carrying the
 // per-object outcome and duration. Returns the cycle summary and the next
 // offset for pagination (0 when done).
-func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int, observer progress.Observer) (WorkSummary, int) {
+func (s *Scrubber) Backfill(ctx context.Context, batchSize, offset int, backend string, observer progress.Observer) (WorkSummary, int) {
 	ctx = audit.WithRequestID(ctx, audit.NewID())
 	ctx, span := telemetry.StartSpan(ctx, "Backfill")
 	defer span.End()
 
-	locs, err := s.store.GetObjectsWithoutHash(ctx, batchSize, offset)
+	locs, err := s.store.GetObjectsWithoutHash(ctx, batchSize, offset, backend)
 	if err != nil {
 		s.log.ErrorContext(ctx, "failed to fetch objects", "error", err)
 		return WorkSummary{}, 0
