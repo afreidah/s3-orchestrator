@@ -108,6 +108,17 @@ strip-mock-package-docs:
 		echo "  stripped mockgen package comment: $$f"; \
 	done
 
+# cloc counts what is written here, not what is vendored into the tree. It does
+# not read .gitignore, so --vcs=git is what restricts it to tracked files and
+# keeps an installed node_modules out of the total; without it the worker's
+# dependencies read as hundreds of thousands of lines of TypeScript.
+#
+# The theme and the rendered site are tracked but are not this project's code:
+# they carry vendored mermaid, MathJax and swagger-ui bundles, which is the same
+# exclusion sonar-project.properties already makes for web/**.
+cloc: ## Count the lines this project actually holds, excluding vendored code
+	cloc . --vcs=git --exclude-dir=node_modules,themes,public
+
 test: ## Run Go tests with coverage
 	go test -race -cover ./...
 
@@ -721,5 +732,5 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push worker-install worker-typecheck worker-test worker-coverage worker-check worker-deploy worker-build worker-publish clean
+.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint cloc govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push worker-install worker-typecheck worker-test worker-coverage worker-check worker-deploy worker-build worker-publish clean
 .DEFAULT_GOAL := help
