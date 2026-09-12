@@ -127,7 +127,7 @@ func TestMarkObjectDecrypted_CreditsWhatTheEnvelopeCost(t *testing.T) {
 	stub := &quotaTxStub{copySize: 1064}
 	runner := &stubRunner{tx: stub}
 
-	if err := MarkObjectDecrypted(context.Background(), runner, "k", "b1", 1000); err != nil {
+	if err := MarkObjectDecrypted(context.Background(), runner, &DecryptedUpdate{ObjectKey: "k", BackendName: "b1", PlaintextSize: 1000}); err != nil {
 		t.Fatalf("MarkObjectDecrypted: %v", err)
 	}
 
@@ -147,7 +147,7 @@ func TestMarkObjectDecrypted_SizeReadFailureWritesNothing(t *testing.T) {
 	stub := &quotaTxStub{copySizeErr: errors.New("boom")}
 	runner := &stubRunner{tx: stub}
 
-	if err := MarkObjectDecrypted(context.Background(), runner, "k", "b1", 1000); err == nil {
+	if err := MarkObjectDecrypted(context.Background(), runner, &DecryptedUpdate{ObjectKey: "k", BackendName: "b1", PlaintextSize: 1000}); err == nil {
 		t.Fatal("expected the size read failure to surface")
 	}
 	if len(stub.decrypted) != 0 || len(stub.adjustments) != 0 {

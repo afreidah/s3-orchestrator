@@ -77,7 +77,7 @@ func (*noopTxAdapter) UpdateCompressedForm(context.Context, *CompressedUpdate) e
 
 func (*noopTxAdapter) MarkCopyEncrypted(context.Context, *EncryptedUpdate) error { return nil }
 
-func (*noopTxAdapter) MarkCopyDecrypted(context.Context, string, string, int64) error { return nil }
+func (*noopTxAdapter) MarkCopyDecrypted(context.Context, *DecryptedUpdate) error { return nil }
 
 func (*noopTxAdapter) GetCopySizeBytes(context.Context, string, string) (int64, error) {
 	return 0, nil

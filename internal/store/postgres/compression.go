@@ -127,5 +127,6 @@ func rewritableFromRow(r *rewritableRow) core.RewritableLocation {
 		CompressionLevel:         derefStr(r.CompressionLevel),
 		CompressionFormatVersion: int(derefOr(r.CompressionFormatVersion, 0)),
 		LogicalSize:              derefInt64(r.LogicalSize),
+		Etag:                     derefStr(r.Etag),
 	}
 }

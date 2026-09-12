@@ -687,48 +687,70 @@ func (a *sqliteTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName s
 // base nonce and wrapped key, so leaving the old ones would describe bytes
 // nothing can decrypt.
 func (a *sqliteTxAdapter) UpdateCompressedForm(ctx context.Context, u *core.CompressedUpdate) error {
-	if _, err := a.tx.ExecContext(ctx, `
+	res, err := a.tx.ExecContext(ctx, `
 		UPDATE object_locations
 		SET compression_algorithm = ?, compression_level = ?,
 		    compression_format_version = ?, logical_size = ?,
 		    size_bytes = ?, plaintext_size = ?,
 		    encryption_key = ?, key_id = ?
-		WHERE object_key = ? AND backend_name = ?`,
+		WHERE object_key = ? AND backend_name = ? AND etag IS ?`,
 		nullableString(u.Algorithm), nullableString(u.Level),
 		nullableInt64(int64(u.FormatVersion)), nullableInt64(u.LogicalSize),
 		u.SizeBytes, nullableInt64(u.PlaintextSize),
 		u.EncryptionKey, nullableString(u.KeyID),
-		u.ObjectKey, u.BackendName,
-	); err != nil {
+		u.ObjectKey, u.BackendName, nullableString(u.ExpectedEtag),
+	)
+	if err != nil {
 		return fmt.Errorf("update compressed form: %w", err)
 	}
-	return nil
+	return changedIfNoRows(res)
 }
 
 // MarkCopyEncrypted records the envelope columns for a copy encrypted in place.
 func (a *sqliteTxAdapter) MarkCopyEncrypted(ctx context.Context, u *core.EncryptedUpdate) error {
-	if _, err := a.tx.ExecContext(ctx, `
+	res, err := a.tx.ExecContext(ctx, `
 		UPDATE object_locations
 		SET encrypted = 1, encryption_key = ?, key_id = ?,
 		    plaintext_size = ?, size_bytes = ?
-		WHERE object_key = ? AND backend_name = ?`,
-		u.EncryptionKey, u.KeyID, u.PlaintextSize, u.CiphertextSize, u.ObjectKey, u.BackendName,
-	); err != nil {
+		WHERE object_key = ? AND backend_name = ? AND etag IS ?`,
+		u.EncryptionKey, u.KeyID, u.PlaintextSize, u.CiphertextSize,
+		u.ObjectKey, u.BackendName, nullableString(u.ExpectedEtag),
+	)
+	if err != nil {
 		return fmt.Errorf("mark copy encrypted: %w", err)
 	}
-	return nil
+	return changedIfNoRows(res)
 }
 
 // MarkCopyDecrypted clears the envelope columns for a copy decrypted in place.
-func (a *sqliteTxAdapter) MarkCopyDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error {
-	if _, err := a.tx.ExecContext(ctx, `
+func (a *sqliteTxAdapter) MarkCopyDecrypted(ctx context.Context, u *core.DecryptedUpdate) error {
+	res, err := a.tx.ExecContext(ctx, `
 		UPDATE object_locations
 		SET encrypted = 0, encryption_key = NULL, key_id = NULL,
 		    plaintext_size = NULL, size_bytes = ?
-		WHERE object_key = ? AND backend_name = ?`,
-		plaintextSize, objectKey, backendName,
-	); err != nil {
+		WHERE object_key = ? AND backend_name = ? AND etag IS ?`,
+		u.PlaintextSize, u.ObjectKey, u.BackendName, nullableString(u.ExpectedEtag),
+	)
+	if err != nil {
 		return fmt.Errorf("mark copy decrypted: %w", err)
+	}
+	return changedIfNoRows(res)
+}
+
+// changedIfNoRows turns a stored-form write that matched nothing into the
+// sentinel the passes skip on. The statements are keyed on the copy and its
+// etag, so no match means a client wrote the key after the pass read it.
+//
+// SQLite's IS is null-safe equality, which is what lets a copy with no etag be
+// matched by an empty expectation while one that gained an etag from a client
+// write is not.
+func changedIfNoRows(res sql.Result) error {
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if rows == 0 {
+		return core.ErrCopyChanged
 	}
 	return nil
 }

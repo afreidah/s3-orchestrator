@@ -96,7 +96,7 @@ func TestStoreInt_MarkObjectDecrypted_AdjustsBytesUsed(t *testing.T) {
 	}
 	beforeDecrypt := readBytesUsed(t, s, "backend-a")
 
-	if err := s.MarkObjectDecrypted(ctx, key, "backend-a", plaintextSize); err != nil {
+	if err := s.MarkObjectDecrypted(ctx, &core.DecryptedUpdate{ObjectKey: key, BackendName: "backend-a", PlaintextSize: plaintextSize}); err != nil {
 		t.Fatalf("MarkObjectDecrypted: %v", err)
 	}
 

@@ -211,6 +211,7 @@ func (c *Compression) compressOne(ctx context.Context, src *s3be.GetObjectResult
 		LogicalSize:   logical,
 		EncryptionKey: out.key,
 		KeyID:         out.keyID,
+		ExpectedEtag:  loc.Etag,
 	}
 	previous := loc.SizeBytes
 	return rewritten{
@@ -247,6 +248,7 @@ func (c *Compression) decompressOne(ctx context.Context, src *s3be.GetObjectResu
 		PlaintextSize: out.inner,
 		EncryptionKey: out.key,
 		KeyID:         out.keyID,
+		ExpectedEtag:  loc.Etag,
 	}
 	previous := loc.SizeBytes
 	return rewritten{
@@ -326,6 +328,10 @@ func (r *rewriteRow) rewriteBackend() string { return r.BackendName }
 
 // rewriteSize returns the row's stored size, used for quota accounting.
 func (r *rewriteRow) rewriteSize() int64 { return r.SizeBytes }
+
+// rewriteEtag returns what the copy reported when the listing selected it, which
+// the commit is predicated on.
+func (r *rewriteRow) rewriteEtag() string { return r.Etag }
 
 // LogicalSizeOfSource reports how many bytes the transform will read: the
 // object the client wrote. That is logical_size for an encoded copy,

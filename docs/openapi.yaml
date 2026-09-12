@@ -1352,6 +1352,9 @@ components:
             type: object
         CompressExistingResponse:
             properties:
+                changed:
+                    format: int64
+                    type: integer
                 compressed:
                     format: int64
                     type: integer
@@ -1369,6 +1372,7 @@ components:
             required:
                 - status
                 - skipped
+                - changed
                 - failed
                 - total
                 - compressed
@@ -1461,6 +1465,9 @@ components:
             type: object
         DecompressExistingResponse:
             properties:
+                changed:
+                    format: int64
+                    type: integer
                 decompressed:
                     format: int64
                     type: integer
@@ -1478,12 +1485,16 @@ components:
             required:
                 - status
                 - skipped
+                - changed
                 - failed
                 - total
                 - decompressed
             type: object
         DecryptExistingResponse:
             properties:
+                changed:
+                    format: int64
+                    type: integer
                 decrypted:
                     format: int64
                     type: integer
@@ -1501,6 +1512,7 @@ components:
             required:
                 - status
                 - skipped
+                - changed
                 - failed
                 - total
                 - decrypted
@@ -1528,6 +1540,9 @@ components:
             type: object
         EncryptExistingResponse:
             properties:
+                changed:
+                    format: int64
+                    type: integer
                 encrypted:
                     format: int64
                     type: integer
@@ -1545,6 +1560,7 @@ components:
             required:
                 - status
                 - skipped
+                - changed
                 - failed
                 - total
                 - encrypted

@@ -13,13 +13,18 @@
 package adminapi
 
 // BulkRewriteOutcome is the part every bulk rewrite pass reports identically:
-// the terminal status and the three counts that partition what the pass saw.
+// the terminal status and the counts that partition what the pass saw.
 // The per-operation responses embed it and add their own success count.
 //
 // Skipped is carried separately from Failed because a copy can be left alone on
 // purpose - too incompressible to be worth encoding, or on a backend already at
 // its usage limit - and folding those into failures would make a healthy run
 // read as broken.
+//
+// Changed is separate again: those copies were rewritten on the backend and then
+// could not be recorded, because a client wrote the key while the pass held it.
+// The work was spent and discarded, and a non-zero count means the conversion
+// overlapped live traffic rather than that anything is misconfigured.
 //
 // The four operations name their success count differently on the wire
 // (compressed, decompressed, encrypted, decrypted) even though each reports the
@@ -28,6 +33,7 @@ package adminapi
 type BulkRewriteOutcome struct {
 	Status  string `json:"status"`
 	Skipped int    `json:"skipped"`
+	Changed int    `json:"changed"`
 	Failed  int    `json:"failed"`
 	Total   int    `json:"total"`
 }

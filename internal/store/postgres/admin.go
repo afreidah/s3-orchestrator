@@ -137,6 +137,7 @@ func unencryptedLocationFromRow(r *db.ListUnencryptedLocationsRow) core.Unencryp
 		ObjectKey:   r.ObjectKey,
 		BackendName: r.BackendName,
 		SizeBytes:   r.SizeBytes,
+		Etag:        derefStr(r.Etag),
 	}
 }
 
@@ -166,6 +167,7 @@ func decryptableLocationFromRow(r *db.ListAllEncryptedLocationsRow) core.Decrypt
 		EncryptionKey: r.EncryptionKey,
 		KeyID:         derefStr(r.KeyID),
 		PlaintextSize: derefInt64(r.PlaintextSize),
+		Etag:          derefStr(r.Etag),
 	}
 }
 

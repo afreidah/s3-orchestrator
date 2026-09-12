@@ -866,17 +866,17 @@ func (mr *MockEncryptionStoreMockRecorder) ListUnencryptedLocations(ctx, limit, 
 }
 
 // MarkObjectDecrypted mocks base method.
-func (m *MockEncryptionStore) MarkObjectDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error {
+func (m *MockEncryptionStore) MarkObjectDecrypted(ctx context.Context, u *core.DecryptedUpdate) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MarkObjectDecrypted", ctx, objectKey, backendName, plaintextSize)
+	ret := m.ctrl.Call(m, "MarkObjectDecrypted", ctx, u)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // MarkObjectDecrypted indicates an expected call of MarkObjectDecrypted.
-func (mr *MockEncryptionStoreMockRecorder) MarkObjectDecrypted(ctx, objectKey, backendName, plaintextSize any) *gomock.Call {
+func (mr *MockEncryptionStoreMockRecorder) MarkObjectDecrypted(ctx, u any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkObjectDecrypted", reflect.TypeOf((*MockEncryptionStore)(nil).MarkObjectDecrypted), ctx, objectKey, backendName, plaintextSize)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkObjectDecrypted", reflect.TypeOf((*MockEncryptionStore)(nil).MarkObjectDecrypted), ctx, u)
 }
 
 // MarkObjectEncrypted mocks base method.

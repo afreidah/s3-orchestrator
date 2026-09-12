@@ -16,6 +16,7 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -95,5 +96,84 @@ func TestBackendFilter_UnknownBackendSelectsNothing(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Errorf("rows = %+v, want none", rows)
+	}
+}
+
+// TestConversionRace_RefusesAChangedCopy pins the etag predicate on the SQLite
+// engine, where the null-safe comparison is IS rather than IS NOT DISTINCT
+// FROM. A copy a client replaced must not be stamped with the form the pass
+// read before it.
+func TestConversionRace_RefusesAChangedCopy(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	key := "bucket/raced"
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key:      key,
+		Copies:   []core.ObjectCopy{{Backend: "backend-a"}},
+		Size:     100,
+		Identity: &core.ObjectIdentity{ETag: "etag-v1"},
+	}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key:      key,
+		Copies:   []core.ObjectCopy{{Backend: "backend-a"}},
+		Size:     140,
+		Identity: &core.ObjectIdentity{ETag: "etag-v2"},
+	}); err != nil {
+		t.Fatalf("RecordObject (client write): %v", err)
+	}
+
+	err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
+		ObjectKey:      key,
+		BackendName:    "backend-a",
+		EncryptionKey:  []byte("k"),
+		KeyID:          "test-key",
+		PlaintextSize:  100,
+		CiphertextSize: 200,
+		ExpectedEtag:   "etag-v1",
+	})
+	if !errors.Is(err, core.ErrCopyChanged) {
+		t.Fatalf("MarkObjectEncrypted = %v, want ErrCopyChanged", err)
+	}
+
+	locs, err := s.GetAllObjectLocations(ctx, key)
+	if err != nil {
+		t.Fatalf("GetAllObjectLocations: %v", err)
+	}
+	if locs[0].Encrypted {
+		t.Error("the row was stamped encrypted despite the copy having changed")
+	}
+}
+
+// TestConversionRace_ConvertsAnUnchangedCopy is the control: the predicate has
+// to let an untouched copy through.
+func TestConversionRace_ConvertsAnUnchangedCopy(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	key := "bucket/quiet"
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key:      key,
+		Copies:   []core.ObjectCopy{{Backend: "backend-a"}},
+		Size:     100,
+		Identity: &core.ObjectIdentity{ETag: "etag-v1"},
+	}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	if err := s.MarkObjectEncrypted(ctx, &core.EncryptedUpdate{
+		ObjectKey:      key,
+		BackendName:    "backend-a",
+		EncryptionKey:  []byte("k"),
+		KeyID:          "test-key",
+		PlaintextSize:  100,
+		CiphertextSize: 200,
+		ExpectedEtag:   "etag-v1",
+	}); err != nil {
+		t.Fatalf("MarkObjectEncrypted: %v", err)
 	}
 }

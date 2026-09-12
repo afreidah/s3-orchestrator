@@ -222,7 +222,7 @@ GROUP BY backend_name;
 -- An empty backend_filter selects every backend, which is what a pass over the
 -- whole fleet asks for. Filtering here rather than after the page is read is
 -- what keeps the row_limit spent on candidates the pass will act on.
-SELECT object_key, backend_name, size_bytes
+SELECT object_key, backend_name, size_bytes, etag
 FROM object_locations
 WHERE encrypted = FALSE
   AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
@@ -230,19 +230,26 @@ WHERE encrypted = FALSE
 ORDER BY object_key, backend_name
 LIMIT sqlc.arg(row_limit);
 
--- name: MarkObjectEncrypted :exec
+-- name: MarkObjectEncrypted :execrows
+--
+-- Committed only while the row still reports the etag the transform read. A
+-- client writing the key mid-pass changes it, and the bytes this would describe
+-- are then no longer the bytes stored - so no row matches and the caller skips
+-- the copy. IS NOT DISTINCT FROM rather than =, so a row that carried no etag
+-- and gained one from a client write fails the check instead of matching NULL.
 UPDATE object_locations
 SET encrypted = TRUE,
     encryption_key = $3,
     key_id = $4,
     plaintext_size = $5,
     size_bytes = $6
-WHERE object_key = $1 AND backend_name = $2;
+WHERE object_key = $1 AND backend_name = $2
+  AND etag IS NOT DISTINCT FROM sqlc.narg(expected_etag)::text;
 
 -- name: ListAllEncryptedLocations :many
 -- Cursor-paged for the same reason as ListUnencryptedLocations: decrypting a
 -- copy removes it from this set mid-walk.
-SELECT object_key, backend_name, size_bytes, encryption_key, key_id, plaintext_size
+SELECT object_key, backend_name, size_bytes, encryption_key, key_id, plaintext_size, etag
 FROM object_locations
 WHERE encrypted = TRUE
   AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
@@ -277,7 +284,7 @@ LIMIT sqlc.arg(row_limit);
 -- a page slot on every pass forever.
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
        plaintext_size, compression_algorithm, compression_level,
-       compression_format_version, logical_size
+       compression_format_version, logical_size, etag
 FROM object_locations
 WHERE compression_algorithm IS NULL
   AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
@@ -298,7 +305,7 @@ LIMIT sqlc.arg(row_limit);
 -- predicate, so an offset walk would skip whole pages and stop early.
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
        plaintext_size, compression_algorithm, compression_level,
-       compression_format_version, logical_size
+       compression_format_version, logical_size, etag
 FROM object_locations
 WHERE compression_algorithm IS NOT NULL
   AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
@@ -306,12 +313,18 @@ WHERE compression_algorithm IS NOT NULL
 ORDER BY object_key, backend_name
 LIMIT sqlc.arg(row_limit);
 
--- name: MarkObjectCompressed :exec
+-- name: MarkObjectCompressed :execrows
 -- Records how a rewritten copy is now stored. A NULL algorithm is the
 -- decompress direction, which also clears the columns that only describe an
 -- encoding. The envelope columns are rewritten too: re-encrypting an object
 -- mints a new base nonce and wrapped key, so leaving the old ones would
 -- describe bytes nothing can decrypt.
+--
+-- Committed only while the row still reports the etag the transform read. A
+-- client writing the key mid-pass changes it, and the bytes this would describe
+-- are then no longer the bytes stored - so no row matches and the caller skips
+-- the copy. IS NOT DISTINCT FROM rather than =, so a row that carried no etag
+-- and gained one from a client write fails the check instead of matching NULL.
 UPDATE object_locations
 SET compression_algorithm = $3,
     compression_level = $4,
@@ -321,7 +334,8 @@ SET compression_algorithm = $3,
     plaintext_size = $8,
     encryption_key = $9,
     key_id = $10
-WHERE object_key = $1 AND backend_name = $2;
+WHERE object_key = $1 AND backend_name = $2
+  AND etag IS NOT DISTINCT FROM sqlc.narg(expected_etag)::text;
 
 -- name: RecordCompressionProbe :exec
 -- Records what the encoder produced for a copy it declined to store compressed,
@@ -336,14 +350,21 @@ SET compression_probe_size = $3,
     compression_probe_level = $4
 WHERE object_key = $1 AND backend_name = $2;
 
--- name: MarkObjectDecrypted :exec
+-- name: MarkObjectDecrypted :execrows
+--
+-- Committed only while the row still reports the etag the transform read. A
+-- client writing the key mid-pass changes it, and the bytes this would describe
+-- are then no longer the bytes stored - so no row matches and the caller skips
+-- the copy. IS NOT DISTINCT FROM rather than =, so a row that carried no etag
+-- and gained one from a client write fails the check instead of matching NULL.
 UPDATE object_locations
 SET encrypted = FALSE,
     encryption_key = NULL,
     key_id = NULL,
     size_bytes = $3,
     plaintext_size = NULL
-WHERE object_key = $1 AND backend_name = $2;
+WHERE object_key = $1 AND backend_name = $2
+  AND etag IS NOT DISTINCT FROM sqlc.narg(expected_etag)::text;
 
 -- name: GetLeastRecentlyScrubbedObjects :many
 -- Return the copies least recently touched, by verification or by writing.
