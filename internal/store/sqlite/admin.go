@@ -85,15 +85,19 @@ func (s *Store) CountUnencryptedLocations(ctx context.Context) (int64, error) {
 // Cursor-paged: encrypting a copy takes it out of this predicate, so the set
 // shrinks as encrypt-existing walks it and an offset would step over the rows
 // that moved up.
-func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.UnencryptedLocation, error) {
+// An empty backend selects every one, which is what a pass over the whole fleet
+// asks for. Filtering in the query rather than after the page is read is what
+// keeps the limit spent on candidates the pass will act on.
+func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.UnencryptedLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes
 		FROM object_locations
 		WHERE encrypted = 0
+		  AND (? = '' OR backend_name = ?)
 		  AND (object_key, backend_name) > (?, ?)
 		ORDER BY object_key, backend_name
 		LIMIT ?`,
-		after.ObjectKey, after.BackendName, limit,
+		backend, backend, after.ObjectKey, after.BackendName, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list unencrypted locations: %w", err)
@@ -115,15 +119,16 @@ func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after c
 // with decryption metadata. Used by the decrypt-existing admin endpoint.
 // Cursor-paged for the same reason as ListUnencryptedLocations: decrypting a
 // copy removes it from this set mid-walk.
-func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.DecryptableLocation, error) {
+func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.DecryptableLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes, encryption_key, key_id, plaintext_size
 		FROM object_locations
 		WHERE encrypted = 1
+		  AND (? = '' OR backend_name = ?)
 		  AND (object_key, backend_name) > (?, ?)
 		ORDER BY object_key, backend_name
 		LIMIT ?`,
-		after.ObjectKey, after.BackendName, limit,
+		backend, backend, after.ObjectKey, after.BackendName, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list all encrypted locations: %w", err)

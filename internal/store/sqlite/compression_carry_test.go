@@ -237,7 +237,7 @@ func probeOn(t *testing.T, s *Store, key, backendName string) (int64, string) {
 // listKeys returns the keys the uncompressed listing offers under thresholds.
 func listKeys(t *testing.T, s *Store, thresholds core.CompressionThresholds) []string {
 	t.Helper()
-	rows, err := s.ListUncompressedLocations(context.Background(), 10, core.Cursor{}, thresholds)
+	rows, err := s.ListUncompressedLocations(context.Background(), 10, core.Cursor{}, thresholds, "")
 	if err != nil {
 		t.Fatalf("ListUncompressedLocations: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestListUncompressedLocations_SelectsOnlyVerbatim(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	verbatim, err := s.ListUncompressedLocations(ctx, 10, core.Cursor{}, anyCandidate())
+	verbatim, err := s.ListUncompressedLocations(ctx, 10, core.Cursor{}, anyCandidate(), "")
 	if err != nil {
 		t.Fatalf("ListUncompressedLocations: %v", err)
 	}
@@ -364,7 +364,7 @@ func TestListUncompressedLocations_SelectsOnlyVerbatim(t *testing.T) {
 		t.Fatalf("uncompressed listing = %+v, want only bucket/plain", verbatim)
 	}
 
-	encoded, err := s.ListCompressedLocations(ctx, 10, core.Cursor{})
+	encoded, err := s.ListCompressedLocations(ctx, 10, core.Cursor{}, "")
 	if err != nil {
 		t.Fatalf("ListCompressedLocations: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestListUncompressedLocations_PagesByCursor(t *testing.T) {
 	seen := map[string]int{}
 	var after core.Cursor
 	for range total {
-		page, err := s.ListUncompressedLocations(ctx, 2, after, anyCandidate())
+		page, err := s.ListUncompressedLocations(ctx, 2, after, anyCandidate(), "")
 		if err != nil {
 			t.Fatalf("ListUncompressedLocations: %v", err)
 		}

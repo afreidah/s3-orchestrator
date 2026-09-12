@@ -117,3 +117,42 @@ func TestBulkRewrite_RejectsBadFlags(t *testing.T) {
 		})
 	}
 }
+
+// TestBulkRewrite_BackendReachesTheServer verifies -backend is sent as the
+// backend query parameter, which is what restricts the pass to one backend's
+// copies.
+func TestBulkRewrite_BackendReachesTheServer(t *testing.T) {
+	t.Parallel()
+	for _, tc := range bulkRewriteCommands {
+		t.Run(tc.cmd, func(t *testing.T) {
+			t.Parallel()
+			_, path, query := runBulkRewriteCmd(t, tc.cmd, []string{"-backend", "minio-a"})
+			if path != tc.wantPath {
+				t.Errorf("path = %q, want %q", path, tc.wantPath)
+			}
+			if query != "backend=minio-a" {
+				t.Errorf("query = %q, want backend=minio-a", query)
+			}
+		})
+	}
+}
+
+// TestBulkRewrite_BackendAndMaxTogether verifies both parameters survive being
+// set at once, which the single "?max=%d" format string could not express.
+func TestBulkRewrite_BackendAndMaxTogether(t *testing.T) {
+	t.Parallel()
+	_, _, query := runBulkRewriteCmd(t, "compress-existing", []string{"-backend", "minio-a", "-max", "500"})
+	if query != "backend=minio-a&max=500" {
+		t.Errorf("query = %q, want both parameters", query)
+	}
+}
+
+// TestBulkRewrite_NoFlagsSendsNoQuery verifies an unqualified run still posts a
+// bare path, so the fleet-wide case is unchanged.
+func TestBulkRewrite_NoFlagsSendsNoQuery(t *testing.T) {
+	t.Parallel()
+	_, path, query := runBulkRewriteCmd(t, "compress-existing", nil)
+	if path != "/admin/api/compress-existing" || query != "" {
+		t.Errorf("path = %q, query = %q, want a bare path", path, query)
+	}
+}

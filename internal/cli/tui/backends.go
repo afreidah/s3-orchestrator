@@ -202,11 +202,32 @@ func (m *model) handleBackendsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case "d", "R", "Q", "x":
 		return m.armBackendAction(key.String())
+	case "a", "enter", "right", "l":
+		return m.openBackendActions()
 	}
 
 	var cmd tea.Cmd
 	m.backends.table, cmd = m.backends.table.Update(key)
 	return m, cmd
+}
+
+// openBackendActions shows the highlighted backend's action menu, which is the
+// ops pane scoped to that one backend.
+//
+// The menu is where the passes that read and rewrite a backend's copies live,
+// rather than more single letters on this pane: each names what it will do in
+// full and confirms against the backend, which a keystroke on the wrong row
+// cannot do.
+func (m *model) openBackendActions() (tea.Model, tea.Cmd) {
+	name := m.selectedBackend()
+	if name == "" {
+		return m, nil
+	}
+	m.section = sectionOps
+	m.navFocus = false
+	m.ops = opsView{actions: backendActions(), backend: name}
+	m.resizeOps()
+	return m, nil
 }
 
 // armBackendAction arms the action bound to key against the highlighted row.
@@ -598,7 +619,7 @@ func usagePercent(used, limit int64) int {
 // only while this pane is following a drain, so it cannot read as available
 // when there is nothing to stop.
 func (m *model) backendsFooterView() string {
-	hints := "up/down move - d drain - R reconcile - Q requeue dlq - r reload - tab nav - q quit"
+	hints := "up/down move - enter actions - d drain - R reconcile - Q requeue dlq - r reload - tab nav - q quit"
 	if m.backends.drain.backend != "" {
 		hints = "x cancel drain - " + hints
 	}

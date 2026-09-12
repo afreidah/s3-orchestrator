@@ -7,13 +7,17 @@
 # development and demos. Integration tests use testcontainers instead — see
 # internal/integration/helpers_test.go.
 #
+# The MinIO images come from quay.io at a pinned release. Docker Hub stopped
+# serving minio/minio and minio/mc to anonymous pulls, which leaves a machine
+# holding a cached copy working while a clean one cannot start the stack.
+#
 # Usage: make dev-deps        (or: docker compose -f docker-compose.test.yml up -d --wait)
 # Cleanup: make dev-clean     (or: docker compose -f docker-compose.test.yml down -v)
 # -------------------------------------------------------------------------------
 
 services:
   minio-1:
-    image: minio/minio
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
     command: server /data --console-address ":9001"
     ports:
       - "19000:9000"
@@ -29,7 +33,7 @@ services:
       retries: 5
 
   minio-2:
-    image: minio/minio
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
     command: server /data --console-address ":9001"
     ports:
       - "19002:9000"
@@ -45,7 +49,7 @@ services:
       retries: 5
 
   minio-3:
-    image: minio/minio
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
     command: server /data --console-address ":9001"
     ports:
       - "19004:9000"
@@ -85,7 +89,7 @@ services:
       retries: 5
 
   minio-setup:
-    image: minio/mc
+    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
     depends_on:
       minio-1:
         condition: service_healthy

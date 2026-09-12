@@ -516,13 +516,15 @@ const getObjectsWithoutHash = `-- name: GetObjectsWithoutHash :many
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at
 FROM object_locations
 WHERE content_hash IS NULL AND managed
+  AND ($1::text = '' OR backend_name = $1::text)
 ORDER BY created_at ASC
-LIMIT $1 OFFSET $2
+LIMIT $3 OFFSET $2
 `
 
 type GetObjectsWithoutHashParams struct {
-	Limit  int32
-	Offset int32
+	BackendFilter string
+	RowOffset     int32
+	RowLimit      int32
 }
 
 type GetObjectsWithoutHashRow struct {
@@ -545,7 +547,7 @@ type GetObjectsWithoutHashRow struct {
 // reads the whole body, so unmanaged rows are left alone rather than spending
 // egress on data the orchestrator does not manage.
 func (q *Queries) GetObjectsWithoutHash(ctx context.Context, arg GetObjectsWithoutHashParams) ([]GetObjectsWithoutHashRow, error) {
-	rows, err := q.db.Query(ctx, getObjectsWithoutHash, arg.Limit, arg.Offset)
+	rows, err := q.db.Query(ctx, getObjectsWithoutHash, arg.BackendFilter, arg.RowOffset, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -718,15 +720,17 @@ const listAllEncryptedLocations = `-- name: ListAllEncryptedLocations :many
 SELECT object_key, backend_name, size_bytes, encryption_key, key_id, plaintext_size
 FROM object_locations
 WHERE encrypted = TRUE
-  AND (object_key, backend_name) > ($1::text, $2::text)
+  AND ($1::text = '' OR backend_name = $1::text)
+  AND (object_key, backend_name) > ($2::text, $3::text)
 ORDER BY object_key, backend_name
-LIMIT $3
+LIMIT $4
 `
 
 type ListAllEncryptedLocationsParams struct {
-	AfterKey     string
-	AfterBackend string
-	RowLimit     int32
+	BackendFilter string
+	AfterKey      string
+	AfterBackend  string
+	RowLimit      int32
 }
 
 type ListAllEncryptedLocationsRow struct {
@@ -741,7 +745,12 @@ type ListAllEncryptedLocationsRow struct {
 // Cursor-paged for the same reason as ListUnencryptedLocations: decrypting a
 // copy removes it from this set mid-walk.
 func (q *Queries) ListAllEncryptedLocations(ctx context.Context, arg ListAllEncryptedLocationsParams) ([]ListAllEncryptedLocationsRow, error) {
-	rows, err := q.db.Query(ctx, listAllEncryptedLocations, arg.AfterKey, arg.AfterBackend, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listAllEncryptedLocations,
+		arg.BackendFilter,
+		arg.AfterKey,
+		arg.AfterBackend,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -773,15 +782,17 @@ SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
        compression_format_version, logical_size
 FROM object_locations
 WHERE compression_algorithm IS NOT NULL
-  AND (object_key, backend_name) > ($1::text, $2::text)
+  AND ($1::text = '' OR backend_name = $1::text)
+  AND (object_key, backend_name) > ($2::text, $3::text)
 ORDER BY object_key, backend_name
-LIMIT $3
+LIMIT $4
 `
 
 type ListCompressedLocationsParams struct {
-	AfterKey     string
-	AfterBackend string
-	RowLimit     int32
+	BackendFilter string
+	AfterKey      string
+	AfterBackend  string
+	RowLimit      int32
 }
 
 type ListCompressedLocationsRow struct {
@@ -803,7 +814,12 @@ type ListCompressedLocationsRow struct {
 // that makes it matter most: every object this pass succeeds on leaves the
 // predicate, so an offset walk would skip whole pages and stop early.
 func (q *Queries) ListCompressedLocations(ctx context.Context, arg ListCompressedLocationsParams) ([]ListCompressedLocationsRow, error) {
-	rows, err := q.db.Query(ctx, listCompressedLocations, arg.AfterKey, arg.AfterBackend, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listCompressedLocations,
+		arg.BackendFilter,
+		arg.AfterKey,
+		arg.AfterBackend,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1290,24 +1306,26 @@ SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
        compression_format_version, logical_size
 FROM object_locations
 WHERE compression_algorithm IS NULL
-  AND (CASE WHEN encrypted THEN plaintext_size ELSE size_bytes END) >= $1::bigint
+  AND ($1::text = '' OR backend_name = $1::text)
+  AND (CASE WHEN encrypted THEN plaintext_size ELSE size_bytes END) >= $2::bigint
   AND (compression_probe_size IS NULL
-       OR compression_probe_level IS DISTINCT FROM $2::text
+       OR compression_probe_level IS DISTINCT FROM $3::text
        OR compression_probe_size::float8
           / NULLIF(CASE WHEN encrypted THEN plaintext_size ELSE size_bytes END, 0)::float8
-          <= $3::float8)
-  AND (object_key, backend_name) > ($4::text, $5::text)
+          <= $4::float8)
+  AND (object_key, backend_name) > ($5::text, $6::text)
 ORDER BY object_key, backend_name
-LIMIT $6
+LIMIT $7
 `
 
 type ListUncompressedLocationsParams struct {
-	MinSize      int64
-	ProbeLevel   string
-	MinRatio     float64
-	AfterKey     string
-	AfterBackend string
-	RowLimit     int32
+	BackendFilter string
+	MinSize       int64
+	ProbeLevel    string
+	MinRatio      float64
+	AfterKey      string
+	AfterBackend  string
+	RowLimit      int32
 }
 
 type ListUncompressedLocationsRow struct {
@@ -1350,6 +1368,7 @@ type ListUncompressedLocationsRow struct {
 // a page slot on every pass forever.
 func (q *Queries) ListUncompressedLocations(ctx context.Context, arg ListUncompressedLocationsParams) ([]ListUncompressedLocationsRow, error) {
 	rows, err := q.db.Query(ctx, listUncompressedLocations,
+		arg.BackendFilter,
 		arg.MinSize,
 		arg.ProbeLevel,
 		arg.MinRatio,
@@ -1391,15 +1410,17 @@ const listUnencryptedLocations = `-- name: ListUnencryptedLocations :many
 SELECT object_key, backend_name, size_bytes
 FROM object_locations
 WHERE encrypted = FALSE
-  AND (object_key, backend_name) > ($1::text, $2::text)
+  AND ($1::text = '' OR backend_name = $1::text)
+  AND (object_key, backend_name) > ($2::text, $3::text)
 ORDER BY object_key, backend_name
-LIMIT $3
+LIMIT $4
 `
 
 type ListUnencryptedLocationsParams struct {
-	AfterKey     string
-	AfterBackend string
-	RowLimit     int32
+	BackendFilter string
+	AfterKey      string
+	AfterBackend  string
+	RowLimit      int32
 }
 
 type ListUnencryptedLocationsRow struct {
@@ -1411,8 +1432,17 @@ type ListUnencryptedLocationsRow struct {
 // Paged by cursor rather than offset. Encrypting a copy takes it out of this
 // predicate, so the set shrinks as encrypt-existing walks it and an offset
 // would step over the rows that moved up.
+//
+// An empty backend_filter selects every backend, which is what a pass over the
+// whole fleet asks for. Filtering here rather than after the page is read is
+// what keeps the row_limit spent on candidates the pass will act on.
 func (q *Queries) ListUnencryptedLocations(ctx context.Context, arg ListUnencryptedLocationsParams) ([]ListUnencryptedLocationsRow, error) {
-	rows, err := q.db.Query(ctx, listUnencryptedLocations, arg.AfterKey, arg.AfterBackend, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listUnencryptedLocations,
+		arg.BackendFilter,
+		arg.AfterKey,
+		arg.AfterBackend,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

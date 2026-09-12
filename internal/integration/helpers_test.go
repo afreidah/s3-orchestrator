@@ -112,6 +112,17 @@ func mustStartPostgres(ctx context.Context) *tcpostgres.PostgresContainer {
 	return c
 }
 
+// minioImage is the image the fleet's backends run.
+//
+// Pulled from quay.io rather than Docker Hub, where minio/minio stopped serving
+// anonymous pulls: a machine with the image already cached kept working while
+// every clean runner failed to start the suite at all.
+//
+// Pinned rather than tracking latest, which is what let that break arrive
+// silently, and what would otherwise let the backends' behaviour change under
+// the suite between one run and the next.
+const minioImage = "quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z"
+
 // mustStartMinios launches the three MinIO testcontainers the suite
 // uses to model a multi-backend fleet, sets MINIO{N}_ENDPOINT env vars
 // for downstream config, and bails the process on any failure.
@@ -127,7 +138,7 @@ func mustStartMinios(ctx context.Context) []minioInstance {
 	}
 	minios := make([]minioInstance, len(specs))
 	for i, spec := range specs {
-		ctr, err := tcminio.Run(ctx, "minio/minio:latest")
+		ctr, err := tcminio.Run(ctx, minioImage)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to start %s: %v\n", spec.name, err)
 			os.Exit(1)

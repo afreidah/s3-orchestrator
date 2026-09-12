@@ -28,6 +28,7 @@ func TestOpsMenu_NavAndArm(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.section = sectionOps
+	m.ops.actions = opsActions()
 
 	m.handleOpsKey(key("j")) // down to the second action
 	if m.ops.cursor != 1 {
@@ -55,6 +56,7 @@ func TestOps_RunStreamsToCompletion(t *testing.T) {
 	m := initialModel(&fakeLister{opEvents: events})
 	m.width, m.height = 100, 20
 	m.section = sectionOps
+	m.ops.actions = opsActions()
 	m.resizeOps()
 
 	// accepting the action switches to the output view before any request runs.
@@ -94,6 +96,7 @@ func TestOps_AcceptEntersOutputImmediately(t *testing.T) {
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 100, 20
 	m.section = sectionOps
+	m.ops.actions = opsActions()
 	m.resizeOps()
 
 	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter}) // arms the confirm
@@ -120,6 +123,7 @@ func TestOps_CancelStaysOnMenu(t *testing.T) {
 	m := initialModel(&fakeLister{})
 	m.width, m.height = 100, 20
 	m.section = sectionOps
+	m.ops.actions = opsActions()
 	m.resizeOps()
 
 	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter})
@@ -176,6 +180,7 @@ func TestOps_OutputBackToMenu(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.section = sectionOps
+	m.ops.actions = opsActions()
 	m.ops.showOut = true
 	m.ops.running = false
 	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEsc})
@@ -208,6 +213,7 @@ func runPrompted(t *testing.T, label, typed string) opsRequest {
 	f := &fakeLister{}
 	m := initialModel(f)
 	m.section = sectionOps
+	m.ops.actions = opsActions()
 	m.ops.cursor = actionNamed(t, label)
 
 	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter})
@@ -262,6 +268,7 @@ func TestOpsPrompt_RotateSendsKeyIDBody(t *testing.T) {
 	f := &fakeLister{}
 	m := initialModel(f)
 	m.section = sectionOps
+	m.ops.actions = opsActions()
 	m.ops.cursor = actionNamed(t, "Rotate encryption key")
 
 	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter})
@@ -289,6 +296,7 @@ func TestOpsPrompt_EmptyValueIsRefused(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.section = sectionOps
+	m.ops.actions = opsActions()
 	m.ops.cursor = actionNamed(t, "Invalidate a cached prefix")
 
 	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter})
@@ -309,6 +317,7 @@ func TestOpsPrompt_EscCancels(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.section = sectionOps
+	m.ops.actions = opsActions()
 	m.ops.cursor = actionNamed(t, "Invalidate one cached key")
 
 	m.handleOpsKey(tea.KeyMsg{Type: tea.KeyEnter})
@@ -328,6 +337,7 @@ func TestOpsPrompt_CapturesKeysBeforeThePane(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.section = sectionOps
+	m.ops.actions = opsActions()
 	m.ops.cursor = actionNamed(t, "Invalidate one cached key")
 	before := m.ops.cursor
 
@@ -348,6 +358,7 @@ func TestOpsMenu_PromptedActionsMarked(t *testing.T) {
 	t.Parallel()
 	m := initialModel(&fakeLister{})
 	m.section = sectionOps
+	m.ops.actions = opsActions()
 
 	view := m.opsMenuView()
 	if !strings.Contains(view, "Invalidate one cached key...") {

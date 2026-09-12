@@ -183,7 +183,7 @@ func TestStoreInt_GetObjectsWithoutHash(t *testing.T) {
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
-	rows, err := s.GetObjectsWithoutHash(ctx, 1000, 0)
+	rows, err := s.GetObjectsWithoutHash(ctx, 1000, 0, "")
 	if err != nil {
 		t.Fatalf("GetObjectsWithoutHash: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestStoreInt_GetObjectsWithoutHash(t *testing.T) {
 	if err := s.UpdateContentHash(ctx, key, "backend-a", "deadbeef"); err != nil {
 		t.Fatalf("UpdateContentHash: %v", err)
 	}
-	rows, err = s.GetObjectsWithoutHash(ctx, 1000, 0)
+	rows, err = s.GetObjectsWithoutHash(ctx, 1000, 0, "")
 	if err != nil {
 		t.Fatalf("GetObjectsWithoutHash(after): %v", err)
 	}
@@ -646,7 +646,7 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
 	// Initially unencrypted.
-	rows, err := s.ListUnencryptedLocations(ctx, 1000, core.Cursor{})
+	rows, err := s.ListUnencryptedLocations(ctx, 1000, core.Cursor{}, "")
 	if err != nil {
 		t.Fatalf("ListUnencryptedLocations: %v", err)
 	}
@@ -691,7 +691,7 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	}
 
 	// ListAllEncryptedLocations sees the row regardless of key ID.
-	if _, err := s.ListAllEncryptedLocations(ctx, 1000, core.Cursor{}); err != nil {
+	if _, err := s.ListAllEncryptedLocations(ctx, 1000, core.Cursor{}, ""); err != nil {
 		t.Fatalf("ListAllEncryptedLocations: %v", err)
 	}
 
@@ -1355,7 +1355,7 @@ func TestStoreInt_CountUnencryptedLocations(t *testing.T) {
 	}
 
 	// The count and the list describe the same set.
-	listed, err := s.ListUnencryptedLocations(ctx, 10000, core.Cursor{})
+	listed, err := s.ListUnencryptedLocations(ctx, 10000, core.Cursor{}, "")
 	if err != nil {
 		t.Fatalf("ListUnencryptedLocations: %v", err)
 	}

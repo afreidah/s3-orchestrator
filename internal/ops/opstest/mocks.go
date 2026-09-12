@@ -738,32 +738,32 @@ func (m *MockScrubberOps) EXPECT() *MockScrubberOpsMockRecorder {
 }
 
 // Backfill mocks base method.
-func (m *MockScrubberOps) Backfill(ctx context.Context, batchSize, offset int, observer progress.Observer) (worker.WorkSummary, int) {
+func (m *MockScrubberOps) Backfill(ctx context.Context, batchSize, offset int, arg3 string, observer progress.Observer) (worker.WorkSummary, int) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Backfill", ctx, batchSize, offset, observer)
+	ret := m.ctrl.Call(m, "Backfill", ctx, batchSize, offset, arg3, observer)
 	ret0, _ := ret[0].(worker.WorkSummary)
 	ret1, _ := ret[1].(int)
 	return ret0, ret1
 }
 
 // Backfill indicates an expected call of Backfill.
-func (mr *MockScrubberOpsMockRecorder) Backfill(ctx, batchSize, offset, observer any) *gomock.Call {
+func (mr *MockScrubberOpsMockRecorder) Backfill(ctx, batchSize, offset, arg3, observer any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Backfill", reflect.TypeOf((*MockScrubberOps)(nil).Backfill), ctx, batchSize, offset, observer)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Backfill", reflect.TypeOf((*MockScrubberOps)(nil).Backfill), ctx, batchSize, offset, arg3, observer)
 }
 
 // Scrub mocks base method.
-func (m *MockScrubberOps) Scrub(ctx context.Context, batchSize int, observer progress.Observer) worker.WorkSummary {
+func (m *MockScrubberOps) Scrub(ctx context.Context, batchSize int, arg2 string, observer progress.Observer) worker.WorkSummary {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Scrub", ctx, batchSize, observer)
+	ret := m.ctrl.Call(m, "Scrub", ctx, batchSize, arg2, observer)
 	ret0, _ := ret[0].(worker.WorkSummary)
 	return ret0
 }
 
 // Scrub indicates an expected call of Scrub.
-func (mr *MockScrubberOpsMockRecorder) Scrub(ctx, batchSize, observer any) *gomock.Call {
+func (mr *MockScrubberOpsMockRecorder) Scrub(ctx, batchSize, arg2, observer any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Scrub", reflect.TypeOf((*MockScrubberOps)(nil).Scrub), ctx, batchSize, observer)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Scrub", reflect.TypeOf((*MockScrubberOps)(nil).Scrub), ctx, batchSize, arg2, observer)
 }
 
 // ScrubKey mocks base method.
@@ -821,18 +821,18 @@ func (mr *MockEncryptionStoreMockRecorder) CountUnencryptedLocations(ctx any) *g
 }
 
 // ListAllEncryptedLocations mocks base method.
-func (m *MockEncryptionStore) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.DecryptableLocation, error) {
+func (m *MockEncryptionStore) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor, arg3 string) ([]core.DecryptableLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListAllEncryptedLocations", ctx, limit, after)
+	ret := m.ctrl.Call(m, "ListAllEncryptedLocations", ctx, limit, after, arg3)
 	ret0, _ := ret[0].([]core.DecryptableLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListAllEncryptedLocations indicates an expected call of ListAllEncryptedLocations.
-func (mr *MockEncryptionStoreMockRecorder) ListAllEncryptedLocations(ctx, limit, after any) *gomock.Call {
+func (mr *MockEncryptionStoreMockRecorder) ListAllEncryptedLocations(ctx, limit, after, arg3 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListAllEncryptedLocations", reflect.TypeOf((*MockEncryptionStore)(nil).ListAllEncryptedLocations), ctx, limit, after)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListAllEncryptedLocations", reflect.TypeOf((*MockEncryptionStore)(nil).ListAllEncryptedLocations), ctx, limit, after, arg3)
 }
 
 // ListEncryptedLocations mocks base method.
@@ -851,18 +851,18 @@ func (mr *MockEncryptionStoreMockRecorder) ListEncryptedLocations(ctx, keyID, li
 }
 
 // ListUnencryptedLocations mocks base method.
-func (m *MockEncryptionStore) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.UnencryptedLocation, error) {
+func (m *MockEncryptionStore) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor, arg3 string) ([]core.UnencryptedLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListUnencryptedLocations", ctx, limit, after)
+	ret := m.ctrl.Call(m, "ListUnencryptedLocations", ctx, limit, after, arg3)
 	ret0, _ := ret[0].([]core.UnencryptedLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListUnencryptedLocations indicates an expected call of ListUnencryptedLocations.
-func (mr *MockEncryptionStoreMockRecorder) ListUnencryptedLocations(ctx, limit, after any) *gomock.Call {
+func (mr *MockEncryptionStoreMockRecorder) ListUnencryptedLocations(ctx, limit, after, arg3 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUnencryptedLocations", reflect.TypeOf((*MockEncryptionStore)(nil).ListUnencryptedLocations), ctx, limit, after)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUnencryptedLocations", reflect.TypeOf((*MockEncryptionStore)(nil).ListUnencryptedLocations), ctx, limit, after, arg3)
 }
 
 // MarkObjectDecrypted mocks base method.
@@ -932,33 +932,33 @@ func (m *MockCompressionStore) EXPECT() *MockCompressionStoreMockRecorder {
 }
 
 // ListCompressedLocations mocks base method.
-func (m *MockCompressionStore) ListCompressedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.RewritableLocation, error) {
+func (m *MockCompressionStore) ListCompressedLocations(ctx context.Context, limit int, after core.Cursor, arg3 string) ([]core.RewritableLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListCompressedLocations", ctx, limit, after)
+	ret := m.ctrl.Call(m, "ListCompressedLocations", ctx, limit, after, arg3)
 	ret0, _ := ret[0].([]core.RewritableLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListCompressedLocations indicates an expected call of ListCompressedLocations.
-func (mr *MockCompressionStoreMockRecorder) ListCompressedLocations(ctx, limit, after any) *gomock.Call {
+func (mr *MockCompressionStoreMockRecorder) ListCompressedLocations(ctx, limit, after, arg3 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCompressedLocations", reflect.TypeOf((*MockCompressionStore)(nil).ListCompressedLocations), ctx, limit, after)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCompressedLocations", reflect.TypeOf((*MockCompressionStore)(nil).ListCompressedLocations), ctx, limit, after, arg3)
 }
 
 // ListUncompressedLocations mocks base method.
-func (m *MockCompressionStore) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor, t core.CompressionThresholds) ([]core.RewritableLocation, error) {
+func (m *MockCompressionStore) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor, t core.CompressionThresholds, arg4 string) ([]core.RewritableLocation, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListUncompressedLocations", ctx, limit, after, t)
+	ret := m.ctrl.Call(m, "ListUncompressedLocations", ctx, limit, after, t, arg4)
 	ret0, _ := ret[0].([]core.RewritableLocation)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListUncompressedLocations indicates an expected call of ListUncompressedLocations.
-func (mr *MockCompressionStoreMockRecorder) ListUncompressedLocations(ctx, limit, after, t any) *gomock.Call {
+func (mr *MockCompressionStoreMockRecorder) ListUncompressedLocations(ctx, limit, after, t, arg4 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUncompressedLocations", reflect.TypeOf((*MockCompressionStore)(nil).ListUncompressedLocations), ctx, limit, after, t)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUncompressedLocations", reflect.TypeOf((*MockCompressionStore)(nil).ListUncompressedLocations), ctx, limit, after, t, arg4)
 }
 
 // MarkObjectCompressed mocks base method.

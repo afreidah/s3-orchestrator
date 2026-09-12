@@ -198,7 +198,7 @@ func (h *Handler) scrubOp() adminActionOp[scrubStatus] {
 	return adminActionOp[scrubStatus]{
 		name: "scrub",
 		run: func(ctx context.Context) (adminActionCounts, string, error) {
-			res, err := h.integrity.Scrub(ctx, 0, nil)
+			res, err := h.integrity.Scrub(ctx, 0, "", nil)
 			if reason, skipped := skipReason(err); skipped {
 				return adminActionCounts{}, reason, nil
 			}
@@ -241,7 +241,7 @@ func (h *Handler) backfillOp() adminActionOp[backfillStatus] {
 	return adminActionOp[backfillStatus]{
 		name: "backfill-checksums",
 		run: func(ctx context.Context) (adminActionCounts, string, error) {
-			res, err := h.integrity.BackfillChecksums(ctx, 0, 0, 0, nil)
+			res, err := h.integrity.BackfillChecksums(ctx, 0, 0, 0, "", nil)
 			if reason, skipped := skipReason(err); skipped {
 				return adminActionCounts{}, reason, nil
 			}
@@ -304,7 +304,7 @@ func (h *Handler) encryptOp(maxObjects int) adminActionOp[encryptExistingStatus]
 	return adminActionOp[encryptExistingStatus]{
 		name: "encrypt-existing",
 		run: func(ctx context.Context) (adminActionCounts, string, error) {
-			return bulkRewriteCounts(h.encryption.EncryptExisting(ctx, nil, maxObjects))
+			return bulkRewriteCounts(h.encryption.EncryptExisting(ctx, nil, maxObjects, ""))
 		},
 		render: func(s adminActionState, c adminActionCounts) encryptExistingStatus {
 			return encryptExistingStatus{
@@ -349,7 +349,7 @@ func (h *Handler) compressOp(maxObjects int) adminActionOp[compressExistingStatu
 	return adminActionOp[compressExistingStatus]{
 		name: "compress-existing",
 		run: func(ctx context.Context) (adminActionCounts, string, error) {
-			return bulkRewriteCounts(h.compression.CompressExisting(ctx, nil, maxObjects))
+			return bulkRewriteCounts(h.compression.CompressExisting(ctx, nil, maxObjects, ""))
 		},
 		render: func(s adminActionState, c adminActionCounts) compressExistingStatus {
 			return compressExistingStatus{
@@ -389,7 +389,7 @@ func (h *Handler) decompressOp(maxObjects int) adminActionOp[decompressExistingS
 	return adminActionOp[decompressExistingStatus]{
 		name: "decompress-existing",
 		run: func(ctx context.Context) (adminActionCounts, string, error) {
-			return bulkRewriteCounts(h.compression.DecompressExisting(ctx, nil, maxObjects))
+			return bulkRewriteCounts(h.compression.DecompressExisting(ctx, nil, maxObjects, ""))
 		},
 		render: func(s adminActionState, c adminActionCounts) decompressExistingStatus {
 			return decompressExistingStatus{

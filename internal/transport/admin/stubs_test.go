@@ -270,8 +270,8 @@ type scrubberStub struct {
 func newScrubber(t *testing.T, cfg *scrubberStub) *opstest.MockScrubberOps {
 	t.Helper()
 	m := opstest.NewMockScrubberOps(gomock.NewController(t))
-	m.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ int, observer progress.Observer) worker.WorkSummary {
+	m.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ int, _ string, observer progress.Observer) worker.WorkSummary {
 			trackN(observer, cfg.scrubChecked, fixedKey(""))
 			return worker.WorkSummary{
 				Attempted: cfg.scrubChecked,
@@ -285,8 +285,8 @@ func newScrubber(t *testing.T, cfg *scrubberStub) *opstest.MockScrubberOps {
 		DoAndReturn(func(_ context.Context, _ string) ([]worker.CopyVerification, error) {
 			return cfg.scrubKeyCopies, cfg.scrubKeyErr
 		}).AnyTimes()
-	m.EXPECT().Backfill(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, batchSize, offset int, observer progress.Observer) (worker.WorkSummary, int) {
+	m.EXPECT().Backfill(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, batchSize, offset int, _ string, observer progress.Observer) (worker.WorkSummary, int) {
 			cfg.backfillCalls++
 			trackN(observer, cfg.backfillProcessed, fixedKey(""))
 			sum := worker.WorkSummary{Attempted: cfg.backfillProcessed, Succeeded: cfg.backfillProcessed}

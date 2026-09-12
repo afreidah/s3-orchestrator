@@ -33,7 +33,7 @@ import (
 // bulkRewritePass is any direction of any rewrite, which differ only in which
 // listing they walk and what they do to each object. Naming the shape lets one
 // handler serve all four rather than each carrying its own copy of the plumbing.
-type bulkRewritePass func(context.Context, progress.Observer, int) (ops.BulkRewriteResult, error)
+type bulkRewritePass func(context.Context, progress.Observer, int, string) (ops.BulkRewriteResult, error)
 
 // bulkRewriteEndpoint is one rewrite direction as the transport sees it: the
 // pass to run, how to word it, and how to render what it reported.
@@ -66,9 +66,9 @@ type bulkRewriteEndpoint struct {
 // the work rather than leaving a fleet-wide rewrite running unwatched. That
 // matches every other streaming pass; the web UI wraps these in its own
 // background job when it wants them to outlive the request.
-func (h *Handler) streamBulkRewrite(w http.ResponseWriter, r *http.Request, ep bulkRewriteEndpoint, maxObjects int) {
+func (h *Handler) streamBulkRewrite(w http.ResponseWriter, r *http.Request, ep bulkRewriteEndpoint, maxObjects int, backend string) {
 	h.streamSteps(w, ep.op, ep.verb, true, func(obs progress.Observer) (stepResult, error) {
-		res, err := ep.run(r.Context(), obs, maxObjects)
+		res, err := ep.run(r.Context(), obs, maxObjects, backend)
 		if reason, skipped := skipReason(err); skipped {
 			return stepResult{Skipped: reason}, nil
 		}
@@ -98,15 +98,23 @@ func (h *Handler) streamBulkRewrite(w http.ResponseWriter, r *http.Request, ep b
 // back for the next one: the copies it converts leave the listing that selected
 // them, and the ones a compression pass declines on ratio are recorded so they
 // leave it too.
+//
+// The optional backend parameter restricts the pass to one backend's copies,
+// which is how an operator limits the blast radius of a fleet-wide rewrite or
+// paces one against a single provider's read cost.
 func (h *Handler) handleBulkRewrite(w http.ResponseWriter, r *http.Request, ep bulkRewriteEndpoint) {
 	maxObjects := httputil.QueryPositiveInt(r.URL.Query().Get(paramMax))
-
-	if acceptsStream(r) {
-		h.streamBulkRewrite(w, r, ep, maxObjects)
+	backend, ok := h.backendParam(w, r)
+	if !ok {
 		return
 	}
 
-	res, err := ep.run(r.Context(), nil, maxObjects)
+	if acceptsStream(r) {
+		h.streamBulkRewrite(w, r, ep, maxObjects, backend)
+		return
+	}
+
+	res, err := ep.run(r.Context(), nil, maxObjects, backend)
 	if !h.writeBulkRewriteError(w, r, err, ep.listErrMsg) {
 		return
 	}

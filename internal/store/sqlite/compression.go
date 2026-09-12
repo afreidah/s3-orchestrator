@@ -69,14 +69,14 @@ const compressedPredicate = `compression_algorithm IS NOT NULL`
 
 // ListUncompressedLocations returns a page of copies whose bytes carry no
 // encoding, which is what compress-existing rewrites.
-func (s *Store) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor, t core.CompressionThresholds) ([]core.RewritableLocation, error) {
-	return s.listRewritable(ctx, uncompressedPredicate, limit, after, t.MinSize, t.Level, t.MinRatio)
+func (s *Store) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor, t core.CompressionThresholds, backend string) ([]core.RewritableLocation, error) {
+	return s.listRewritable(ctx, uncompressedPredicate, limit, after, backend, t.MinSize, t.Level, t.MinRatio)
 }
 
 // ListCompressedLocations returns a page of copies whose bytes are an encoding,
 // which is what decompress-existing rewrites.
-func (s *Store) ListCompressedLocations(ctx context.Context, limit int, after core.Cursor) ([]core.RewritableLocation, error) {
-	return s.listRewritable(ctx, compressedPredicate, limit, after)
+func (s *Store) ListCompressedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.RewritableLocation, error) {
+	return s.listRewritable(ctx, compressedPredicate, limit, after, backend)
 }
 
 // listRewritable runs one page of either listing. The predicate is the only
@@ -87,13 +87,18 @@ func (s *Store) ListCompressedLocations(ctx context.Context, limit int, after co
 // rows they read: each one processed leaves the predicate that selected it, so
 // an offset would advance into a set that shrank and skip the rows that moved
 // up to fill the gap.
-func (s *Store) listRewritable(ctx context.Context, predicate string, limit int, after core.Cursor, args ...any) ([]core.RewritableLocation, error) {
+// An empty backend selects every one, which is what a pass over the whole fleet
+// asks for. It binds ahead of the predicate's own placeholders because the
+// filter sits first in the WHERE clause.
+func (s *Store) listRewritable(ctx context.Context, predicate string, limit int, after core.Cursor, backend string, args ...any) ([]core.RewritableLocation, error) {
+	args = append([]any{backend, backend}, args...)
 	args = append(args, after.ObjectKey, after.BackendName, limit)
 	//nolint:gosec // G202: predicate is one of two package constants, never caller input
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+rewritableColumns+`
 		FROM object_locations
-		WHERE `+predicate+`
+		WHERE (? = '' OR backend_name = ?)
+		  AND `+predicate+`
 		  AND (object_key, backend_name) > (?, ?)
 		ORDER BY object_key, backend_name
 		LIMIT ?`,

@@ -144,7 +144,9 @@ func (m *model) selectSection(s section) (tea.Model, tea.Cmd) {
 		cmd := m.loadCache()
 		return m, cmd
 	case sectionOps:
-		m.ops.showOut = false
+		// Entering from the nav is always the fleet-wide menu. A backend-scoped
+		// one is opened by the backends pane, which fills these in itself.
+		m.ops = opsView{actions: opsActions()}
 		m.resizeOps()
 		return m, nil
 	case sectionLogs:

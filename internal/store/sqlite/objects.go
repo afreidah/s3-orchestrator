@@ -572,7 +572,9 @@ func (s *Store) IntegrityCoverage(ctx context.Context, reachable []string) (core
 
 // GetObjectsWithoutHash returns object locations that have no stored content
 // hash, ordered by creation time. Used by the backfill command.
-func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([]core.ObjectLocation, error) {
+// An empty backend selects every one, which is what a pass over the whole fleet
+// asks for.
+func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int, backend string) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT object_key, backend_name, size_bytes, encrypted, encryption_key,
 		       key_id, plaintext_size, content_hash,
@@ -580,8 +582,9 @@ func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int) ([
 		       created_at, last_scrubbed_at
 		FROM object_locations
 		WHERE content_hash IS NULL AND managed
+		  AND (? = '' OR backend_name = ?)
 		ORDER BY created_at ASC
-		LIMIT ? OFFSET ?`, limit, offset)
+		LIMIT ? OFFSET ?`, backend, backend, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get objects without hash: %w", err)
 	}

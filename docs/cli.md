@@ -233,6 +233,10 @@ s3-orchestrator admin compress-existing
 # Convert part of a fleet and stop; run it again to continue where it left off
 s3-orchestrator admin compress-existing -max=1000
 
+# Convert only one backend's copies, to bound the blast radius or pace the run
+# against a single provider's read cost
+s3-orchestrator admin compress-existing -backend wasabi-eu
+
 # Rewrite every compressed object back to the bytes the client wrote
 s3-orchestrator admin decompress-existing
 
@@ -245,8 +249,14 @@ s3-orchestrator admin scrub -batch-size 500
 # Verify every copy of one object now, without waiting for its turn in the queue
 s3-orchestrator admin scrub -key photos/2024/beach.jpg
 
+# Scrub only one backend's copies
+s3-orchestrator admin scrub -backend wasabi-eu
+
 # Compute and store content hashes for all unhashed objects
 s3-orchestrator admin backfill-checksums
+
+# Hash only the copies on one backend, which is what a restored backend needs
+s3-orchestrator admin backfill-checksums -backend wasabi-eu
 
 # Backfill with a custom batch size (objects fetched per pass)
 s3-orchestrator admin backfill-checksums -batch-size 50

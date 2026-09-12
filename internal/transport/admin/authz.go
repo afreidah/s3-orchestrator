@@ -19,6 +19,7 @@ import (
 	"crypto/subtle"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
@@ -158,6 +159,24 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, rt *route, w
 // the routes carrying the key in the path and those carrying it in the query.
 func (h *Handler) resourceValue(r *http.Request, rt *route) string {
 	return cmp.Or(r.PathValue(rt.Resource), r.URL.Query().Get(rt.Resource))
+}
+
+// backendParam reads the optional backend a pass is restricted to, and reports
+// whether the request may proceed. An empty value runs against every backend.
+//
+// An unknown name is refused rather than run: a filter matching nothing is
+// indistinguishable from a fleet with no work left, so a typo would report a
+// clean pass over a backend that was never read.
+func (h *Handler) backendParam(w http.ResponseWriter, r *http.Request) (string, bool) {
+	name := r.URL.Query().Get(paramBackend)
+	if name == "" {
+		return "", true
+	}
+	if !slices.Contains(h.backendNames(), name) {
+		httputil.WriteJSONError(w, http.StatusBadRequest, "unknown backend: "+name)
+		return "", false
+	}
+	return name, true
 }
 
 // bucketFromKey reads the bucket an admin object key names. The admin API

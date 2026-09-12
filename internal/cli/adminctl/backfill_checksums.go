@@ -26,6 +26,7 @@ func cmdBackfillChecksums(args []string, c *client) int {
 	batchSize := fs.Int(flagBatchSize, 100, "Objects per batch")
 	maxObjects := fs.Int("max", 0, "Cap objects processed this run (0 = drain entire backlog)")
 	delayMs := fs.Int("delay-ms", 0, "Pause between batches in milliseconds (rate-limits backend reads)")
+	backend := fs.String(flagBackend, "", usageBackend)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -39,9 +40,8 @@ func cmdBackfillChecksums(args []string, c *client) int {
 	if *delayMs > 0 {
 		q.Set("delay_ms", strconv.Itoa(*delayMs))
 	}
-	path := "/admin/api/backfill-checksums"
-	if enc := q.Encode(); enc != "" {
-		path += "?" + enc
+	if *backend != "" {
+		q.Set(queryBackend, *backend)
 	}
-	return c.stream(http.MethodPost, path, "")
+	return c.stream(http.MethodPost, withQuery("/admin/api/backfill-checksums", q), "")
 }

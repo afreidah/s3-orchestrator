@@ -312,7 +312,7 @@ func TestIntegrity_ScrubberDetectsCorruptedCopy(t *testing.T) {
 	// Backfill records the hashes the scrub will later compare against. The
 	// write path only stores them when integrity is configured, so this also
 	// exercises the backfill path itself.
-	sum, _ := testWorkers.Scrubber.Backfill(ctx, 100, 0, nil)
+	sum, _ := testWorkers.Scrubber.Backfill(ctx, 100, 0, "", nil)
 	if sum.Succeeded == 0 {
 		t.Fatalf("backfill stored no hashes: %+v", sum)
 	}
@@ -327,7 +327,7 @@ func TestIntegrity_ScrubberDetectsCorruptedCopy(t *testing.T) {
 	// copy. This is precisely why corruption needs a background detector.
 	assertProxyServes(t, ctx, client, key, body, "after corruption")
 
-	scrubSum := testWorkers.Scrubber.Scrub(ctx, 100, nil)
+	scrubSum := testWorkers.Scrubber.Scrub(ctx, 100, "", nil)
 	if scrubSum.Failed != 1 {
 		t.Errorf("scrub reported %d mismatches, want 1 (%+v)", scrubSum.Failed, scrubSum)
 	}
@@ -371,11 +371,11 @@ func TestIntegrity_ScrubberAcceptsHealthyCopies(t *testing.T) {
 	if _, err := testWorkers.Replicator.Replicate(ctx, replicationFactorTwo(), nil); err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
-	if sum, _ := testWorkers.Scrubber.Backfill(ctx, 100, 0, nil); sum.Succeeded == 0 {
+	if sum, _ := testWorkers.Scrubber.Backfill(ctx, 100, 0, "", nil); sum.Succeeded == 0 {
 		t.Fatalf("backfill stored no hashes: %+v", sum)
 	}
 
-	scrubSum := testWorkers.Scrubber.Scrub(ctx, 100, nil)
+	scrubSum := testWorkers.Scrubber.Scrub(ctx, 100, "", nil)
 	if scrubSum.Failed != 0 {
 		t.Errorf("scrub reported %d mismatches on healthy copies, want 0 (%+v)",
 			scrubSum.Failed, scrubSum)
@@ -618,7 +618,7 @@ func seedHashedObject(t *testing.T, ctx context.Context, client *s3.Client, pref
 	}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
-	if _, _ = testWorkers.Scrubber.Backfill(ctx, 100, 0, nil); queryHashedCopies(t, key) != 1 {
+	if _, _ = testWorkers.Scrubber.Backfill(ctx, 100, 0, "", nil); queryHashedCopies(t, key) != 1 {
 		t.Fatalf("expected the written copy of %q to carry a hash after backfill", key)
 	}
 	return key

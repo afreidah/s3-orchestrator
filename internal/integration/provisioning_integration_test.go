@@ -131,21 +131,22 @@ func provAdminMux(t *testing.T, opsSvc *ops.Services, st *proxytest.Stack) http.
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	h := admin.New(&admin.Deps{
-		BackendOps:  st.Usage,
-		Objects:     opsSvc.Objects,
-		Integrity:   opsSvc.Integrity,
-		Replication: opsSvc.Replication,
-		Rebalance:   opsSvc.Rebalance,
-		Encryption:  opsSvc.Encryption,
-		Compression: opsSvc.Compression,
-		Provision:   opsSvc.Provision,
-		Drain:       st.Drain,
-		Lifecycle:   testStore,
-		DBHealthy:   testDatabaseCB.IsHealthy,
-		Cleanup:     testStore,
-		Token:       adminToken,
-		Registry:    func() *auth.BucketRegistry { return nil },
-		LogLevel:    &lv,
+		BackendOps:   st.Usage,
+		Objects:      opsSvc.Objects,
+		Integrity:    opsSvc.Integrity,
+		Replication:  opsSvc.Replication,
+		Rebalance:    opsSvc.Rebalance,
+		Encryption:   opsSvc.Encryption,
+		Compression:  opsSvc.Compression,
+		Provision:    opsSvc.Provision,
+		Drain:        st.Drain,
+		Lifecycle:    testStore,
+		DBHealthy:    testDatabaseCB.IsHealthy,
+		Cleanup:      testStore,
+		Token:        adminToken,
+		Registry:     func() *auth.BucketRegistry { return nil },
+		BackendNames: func() []string { return []string{"backend-a", "backend-b"} },
+		LogLevel:     &lv,
 	})
 	mux := http.NewServeMux()
 	h.Register(mux)
