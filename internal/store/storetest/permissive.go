@@ -107,7 +107,7 @@ func Permissive(m *MockMetadataStore) {
 	r.ListUncompressedLocations(a, a, a, a, a).Return(nil, nil).AnyTimes()
 	r.MarkObjectCompressed(a, a, a).Return(nil).AnyTimes()
 	r.RecordCompressionProbe(a, a).Return(nil).AnyTimes()
-	r.MarkObjectDecrypted(a, a, a, a).Return(nil).AnyTimes()
+	r.MarkObjectDecrypted(a, a).Return(nil).AnyTimes()
 	r.MarkObjectEncrypted(a, a).Return(nil).AnyTimes()
 	r.MoveCleanupToDLQ(a, a, a).Return(false, nil).AnyTimes()
 	r.MoveObjectLocation(a, a, a, a).Return(int64(0), nil).AnyTimes()

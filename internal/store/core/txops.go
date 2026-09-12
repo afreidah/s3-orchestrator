@@ -132,6 +132,6 @@ func (o TxOps) MarkObjectEncrypted(ctx context.Context, u *EncryptedUpdate) erro
 
 // MarkObjectDecrypted records that a copy is plaintext again and credits the
 // backend the bytes the envelope cost.
-func (o TxOps) MarkObjectDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error {
-	return MarkObjectDecrypted(ctx, o.runner, objectKey, backendName, plaintextSize)
+func (o TxOps) MarkObjectDecrypted(ctx context.Context, u *DecryptedUpdate) error {
+	return MarkObjectDecrypted(ctx, o.runner, u)
 }

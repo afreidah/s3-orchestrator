@@ -91,6 +91,7 @@ type oneRowStore struct {
 	marked   atomic.Bool
 	probes   []core.CompressionProbe
 	probeErr error
+	markErr  error
 }
 
 // -------------------------------------------------------------------------
@@ -193,6 +194,9 @@ func pagedRows(n int, size int64) []core.RewritableLocation {
 
 // MarkObjectCompressed captures what the pass decided the copy now is.
 func (s *oneRowStore) MarkObjectCompressed(_ context.Context, u *core.CompressedUpdate, previousSize int64) error {
+	if s.markErr != nil {
+		return s.markErr
+	}
 	s.update, s.previous = *u, previousSize
 	s.marked.Store(true)
 	return nil
@@ -867,5 +871,57 @@ func TestCompressExisting_ReportsProgress(t *testing.T) {
 	if steps[1].Status != progress.StatusSkipped {
 		t.Errorf("status = %q, want %q: the object was declined, not failed",
 			steps[1].Status, progress.StatusSkipped)
+	}
+}
+
+// TestCompressExisting_ChangedCopyIsNotAFailure covers a client writing the key
+// while the pass was converting it. The commit refuses, and the copy is counted
+// as changed rather than failed: nothing is broken, the pass simply lost a race
+// it is expected to lose sometimes.
+func TestCompressExisting_ChangedCopyIsNotAFailure(t *testing.T) {
+	t.Parallel()
+	payload := compressibleBytes(8192)
+	store := &oneRowStore{
+		row: core.RewritableLocation{
+			ObjectKey: "bucket/raced.txt", BackendName: "backend-a", SizeBytes: int64(len(payload)),
+		},
+		markErr: core.ErrCopyChanged,
+	}
+	svc, _ := newCompression(t, store, compressionOn(), payload)
+
+	res, err := svc.CompressExisting(context.Background(), nil, 0, "")
+	if err != nil {
+		t.Fatalf("CompressExisting: %v", err)
+	}
+
+	if res.Changed != 1 {
+		t.Errorf("Changed = %d, want 1", res.Changed)
+	}
+	if res.Failed != 0 {
+		t.Errorf("Failed = %d, want 0 - a lost race is not a failure", res.Failed)
+	}
+	if res.Succeeded != 0 {
+		t.Errorf("Succeeded = %d, want 0 - nothing was recorded", res.Succeeded)
+	}
+}
+
+// TestCompressExisting_ChangedCopyCarriesTheEtag pins that the pass predicates
+// its commit on what the listing reported, which is what makes the refusal
+// possible at all.
+func TestCompressExisting_ChangedCopyCarriesTheEtag(t *testing.T) {
+	t.Parallel()
+	payload := compressibleBytes(8192)
+	store := &oneRowStore{row: core.RewritableLocation{
+		ObjectKey: "bucket/quiet.txt", BackendName: "backend-a",
+		SizeBytes: int64(len(payload)), Etag: "etag-v1",
+	}}
+	svc, _ := newCompression(t, store, compressionOn(), payload)
+
+	if _, err := svc.CompressExisting(context.Background(), nil, 0, ""); err != nil {
+		t.Fatalf("CompressExisting: %v", err)
+	}
+
+	if got := store.update.ExpectedEtag; got != "etag-v1" {
+		t.Errorf("ExpectedEtag = %q, want the etag the listing reported", got)
 	}
 }

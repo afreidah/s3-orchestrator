@@ -90,7 +90,7 @@ func (s *Store) CountUnencryptedLocations(ctx context.Context) (int64, error) {
 // keeps the limit spent on candidates the pass will act on.
 func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.UnencryptedLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT object_key, backend_name, size_bytes
+		SELECT object_key, backend_name, size_bytes, etag
 		FROM object_locations
 		WHERE encrypted = 0
 		  AND (? = '' OR backend_name = ?)
@@ -103,10 +103,14 @@ func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after c
 		return nil, fmt.Errorf("list unencrypted locations: %w", err)
 	}
 	return collectRows(rows, "unencrypted locations", func(rows *sql.Rows) (core.UnencryptedLocation, error) {
-		var loc core.UnencryptedLocation
-		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes); err != nil {
+		var (
+			loc  core.UnencryptedLocation
+			etag sql.NullString
+		)
+		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &etag); err != nil {
 			return core.UnencryptedLocation{}, fmt.Errorf("scan unencrypted location: %w", err)
 		}
+		loc.Etag = nullStringValue(etag)
 		return loc, nil
 	})
 }
@@ -121,7 +125,7 @@ func (s *Store) ListUnencryptedLocations(ctx context.Context, limit int, after c
 // copy removes it from this set mid-walk.
 func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit int, after core.Cursor, backend string) ([]core.DecryptableLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT object_key, backend_name, size_bytes, encryption_key, key_id, plaintext_size
+		SELECT object_key, backend_name, size_bytes, encryption_key, key_id, plaintext_size, etag
 		FROM object_locations
 		WHERE encrypted = 1
 		  AND (? = '' OR backend_name = ?)
@@ -134,10 +138,14 @@ func (s *Store) ListAllEncryptedLocations(ctx context.Context, limit int, after 
 		return nil, fmt.Errorf("list all encrypted locations: %w", err)
 	}
 	return collectRows(rows, "decryptable locations", func(rows *sql.Rows) (core.DecryptableLocation, error) {
-		var loc core.DecryptableLocation
-		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &loc.EncryptionKey, &loc.KeyID, &loc.PlaintextSize); err != nil {
+		var (
+			loc  core.DecryptableLocation
+			etag sql.NullString
+		)
+		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &loc.EncryptionKey, &loc.KeyID, &loc.PlaintextSize, &etag); err != nil {
 			return core.DecryptableLocation{}, fmt.Errorf("scan decryptable location: %w", err)
 		}
+		loc.Etag = nullStringValue(etag)
 		return loc, nil
 	})
 }

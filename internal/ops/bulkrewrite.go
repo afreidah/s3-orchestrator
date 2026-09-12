@@ -26,6 +26,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
@@ -60,10 +61,16 @@ const bulkRewriteBatchSize = 100
 // a compression pass declines objects too small or too incompressible to be
 // worth encoding, and reporting those as failures would make a healthy run look
 // broken.
+//
+// Changed is separate again: those copies were rewritten on the backend but the
+// row moved under the pass, so the work was spent and discarded. That is a
+// different thing for an operator to see than a copy the pass declined to touch,
+// because it means a conversion overlapped live traffic.
 type BulkRewriteResult struct {
 	Succeeded int
 	Failed    int
 	Skipped   int
+	Changed   int
 	Total     int
 }
 
@@ -73,6 +80,7 @@ type bulkRewriteRow interface {
 	rewriteKey() string
 	rewriteBackend() string
 	rewriteSize() int64
+	rewriteEtag() string
 }
 
 // bulkRewriteOp parameterises one direction of the rewrite: the listing query,
@@ -133,6 +141,7 @@ type rewriteOutcome int
 const (
 	rewriteDone rewriteOutcome = iota
 	rewriteSkipped
+	rewriteChanged
 	rewriteErrored
 )
 
@@ -146,7 +155,7 @@ func (o rewriteOutcome) status() string {
 	switch o {
 	case rewriteDone:
 		return progress.StatusOK
-	case rewriteSkipped:
+	case rewriteSkipped, rewriteChanged:
 		return progress.StatusSkipped
 	default:
 		return progress.StatusFailed
@@ -237,6 +246,8 @@ func (r *BulkRewriteResult) tally(outcome rewriteOutcome) {
 		r.Succeeded++
 	case rewriteSkipped:
 		r.Skipped++
+	case rewriteChanged:
+		r.Changed++
 	case rewriteErrored:
 		r.Failed++
 	}
@@ -320,6 +331,9 @@ func (op bulkRewriteOp[L]) processLocation(ctx context.Context, env bulkRewriteE
 	env.usage.RecordAll(backendName, writeOp, 0, out.size)
 
 	if err := out.commit(); err != nil {
+		if errors.Is(err, core.ErrCopyChanged) {
+			return op.changed(ctx, env, key, backendName, loc.rewriteEtag())
+		}
 		return op.failed(ctx, env, "metadata update failed", key, backendName, err)
 	}
 
@@ -332,4 +346,26 @@ func (op bulkRewriteOp[L]) failed(ctx context.Context, env bulkRewriteEnv, msg, 
 	env.log.WarnContext(ctx, op.opName+": "+msg, "key", key, "backend", backendName, "error", err)
 	op.counter.WithLabelValues("error").Inc()
 	return rewriteErrored
+}
+
+// changed records a copy a client wrote while the pass was converting it. The
+// commit is predicated on the etag the pass read, so it matched no row and
+// nothing was recorded.
+//
+// Audited rather than only logged, and counted with its own metric, because it
+// is the one signal that a conversion overlapped live traffic: the transformed
+// bytes did reach the backend before the commit refused, so this names a copy
+// whose stored bytes are now the pass's output over a newer write.
+func (op bulkRewriteOp[L]) changed(ctx context.Context, env bulkRewriteEnv, key, backendName, expectedEtag string) rewriteOutcome {
+	env.log.WarnContext(ctx, op.opName+": copy changed while it was being converted",
+		"key", key, "backend", backendName, "expected_etag", expectedEtag)
+	audit.Log(ctx, "storage.ConversionRaced",
+		slog.String("operation", op.opName),
+		slog.String("key", key),
+		slog.String("backend", backendName),
+		slog.String("expected_etag", expectedEtag),
+	)
+	op.counter.WithLabelValues("changed").Inc()
+	telemetry.BulkRewriteCopyChangedTotal.WithLabelValues(op.opName).Inc()
+	return rewriteChanged
 }

@@ -487,14 +487,24 @@ type EncryptedLocation struct {
 }
 
 // UnencryptedLocation represents an unencrypted object location.
+//
+// Etag is what the copy carried when the listing selected it, and the
+// conversion commits only while the row still reports it. A client writing the
+// key mid-pass changes it, which is how the commit knows the bytes it is about
+// to describe are no longer the bytes stored.
 type UnencryptedLocation struct {
 	ObjectKey   string
 	BackendName string
 	SizeBytes   int64
+	Etag        string
 }
 
 // DecryptableLocation represents an encrypted object location with all
 // metadata needed for decryption.
+//
+// Etag carries the same meaning it does on UnencryptedLocation: what the copy
+// reported when the listing selected it, tested again at commit so a conversion
+// cannot describe bytes a client replaced mid-pass.
 type DecryptableLocation struct {
 	ObjectKey     string
 	BackendName   string
@@ -502,6 +512,7 @@ type DecryptableLocation struct {
 	EncryptionKey []byte
 	KeyID         string
 	PlaintextSize int64
+	Etag          string
 }
 
 // Cursor is the position a paged admin listing resumes from: the last
@@ -539,6 +550,9 @@ type CompressionStat struct {
 // An empty CompressionAlgorithm means the stored bytes are not encoded, which
 // is what the compress direction selects on and the decompress direction
 // excludes.
+//
+// Etag is what the copy reported when the listing selected it, tested again at
+// commit so a pass cannot describe bytes a client replaced while it ran.
 type RewritableLocation struct {
 	ObjectKey                string
 	BackendName              string
@@ -551,6 +565,7 @@ type RewritableLocation struct {
 	CompressionLevel         string
 	CompressionFormatVersion int
 	LogicalSize              int64
+	Etag                     string
 }
 
 // CompressionThresholds are the settings that decide whether a copy is worth
@@ -609,6 +624,7 @@ type CompressedUpdate struct {
 	LogicalSize   int64
 	EncryptionKey []byte
 	KeyID         string
+	ExpectedEtag  string
 }
 
 // EncryptedUpdate is the new description of a copy an encryption pass has
@@ -622,6 +638,17 @@ type EncryptedUpdate struct {
 	KeyID          string
 	PlaintextSize  int64
 	CiphertextSize int64
+	ExpectedEtag   string
+}
+
+// DecryptedUpdate is the new description of a copy a decryption pass has
+// rewritten back to plaintext. PlaintextSize is what now occupies the backend,
+// and the envelope columns the row still holds are cleared.
+type DecryptedUpdate struct {
+	ObjectKey     string
+	BackendName   string
+	PlaintextSize int64
+	ExpectedEtag  string
 }
 
 // -------------------------------------------------------------------------

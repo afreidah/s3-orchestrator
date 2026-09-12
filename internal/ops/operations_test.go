@@ -123,7 +123,9 @@ func (emptyEncAdmin) ListAllEncryptedLocations(_ context.Context, _ int, _ core.
 }
 
 // MarkObjectDecrypted is a no-op.
-func (emptyEncAdmin) MarkObjectDecrypted(_ context.Context, _, _ string, _ int64) error { return nil }
+func (emptyEncAdmin) MarkObjectDecrypted(_ context.Context, _ *core.DecryptedUpdate) error {
+	return nil
+}
 
 // rowEncAdmin serves exactly one plaintext location, so the bulk-rewrite loop
 // processes a single object and then terminates.
@@ -547,7 +549,7 @@ func (d *decryptRowStore) ListAllEncryptedLocations(_ context.Context, _ int, _ 
 }
 
 // MarkObjectDecrypted records that the post-decrypt metadata update ran.
-func (d *decryptRowStore) MarkObjectDecrypted(_ context.Context, _, _ string, _ int64) error {
+func (d *decryptRowStore) MarkObjectDecrypted(_ context.Context, _ *core.DecryptedUpdate) error {
 	d.marked.Store(true)
 	return nil
 }

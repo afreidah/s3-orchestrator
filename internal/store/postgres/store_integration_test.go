@@ -696,7 +696,7 @@ func TestStoreInt_EncryptionAdminLifecycle(t *testing.T) {
 	}
 
 	// Mark decrypted.
-	if err := s.MarkObjectDecrypted(ctx, key, "backend-a", 80); err != nil {
+	if err := s.MarkObjectDecrypted(ctx, &core.DecryptedUpdate{ObjectKey: key, BackendName: "backend-a", PlaintextSize: 80}); err != nil {
 		t.Fatalf("MarkObjectDecrypted: %v", err)
 	}
 }

@@ -282,7 +282,7 @@ type EncryptionAdmin interface {
 	CountUnencryptedLocations(ctx context.Context) (int64, error)
 	MarkObjectEncrypted(ctx context.Context, u *EncryptedUpdate) error
 	ListAllEncryptedLocations(ctx context.Context, limit int, after Cursor, backend string) ([]DecryptableLocation, error)
-	MarkObjectDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error
+	MarkObjectDecrypted(ctx context.Context, u *DecryptedUpdate) error
 }
 
 // CompressionAdmin defines the admin-only bulk compression operations used by

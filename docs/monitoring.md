@@ -326,6 +326,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_compress_existing_objects_total` | Counter | status | Objects processed by compress-existing. `status="skipped"` counts objects deliberately left alone, which is the expected outcome for media and archives |
 | `s3o_decompress_existing_objects_total` | Counter | status | Objects processed by decompress-existing |
 | `s3o_bulk_rewrite_usage_declined_total` | Counter | operation | Objects a rewrite pass skipped because the backend had no usage headroom for the read and write. Distinct from a deliberate skip: this work was wanted and did not happen, so a pass reporting these has not finished its fleet |
+| `s3o_bulk_rewrite_copy_changed_total` | Counter | operation | Copies a rewrite pass converted but could not record, because a client wrote the key first. The transformed bytes reached the backend before the commit refused, so each one names an object that reverted to the pass's output: alert on any non-zero value and run the conversion against a quieter window |
 | `s3o_compression_logical_bytes_total` | Counter | — | Bytes clients wrote for objects that were then stored compressed |
 | `s3o_compression_stored_bytes_total` | Counter | — | What those objects occupy after encoding. Divide by the above for the fleet's ratio; subtract for bytes saved |
 | `s3o_compression_ratio` | Histogram | — | Encoded size as a fraction of logical size, per object |

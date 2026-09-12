@@ -119,7 +119,7 @@ type ObjectsTxAdapter interface {
 
 	UpdateCompressedForm(ctx context.Context, u *CompressedUpdate) error
 	MarkCopyEncrypted(ctx context.Context, u *EncryptedUpdate) error
-	MarkCopyDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error
+	MarkCopyDecrypted(ctx context.Context, u *DecryptedUpdate) error
 }
 
 // -------------------------------------------------------------------------

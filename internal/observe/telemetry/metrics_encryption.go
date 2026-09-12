@@ -140,6 +140,23 @@ var (
 		[]string{"operation"},
 	)
 
+	// BulkRewriteCopyChangedTotal counts copies a bulk rewrite pass converted
+	// and then could not record, because a client wrote the key while the pass
+	// held it, labelled by the pass that lost the race.
+	//
+	// Worth alerting on rather than merely counting: the transformed bytes
+	// reached the backend before the commit refused, so each one names a copy
+	// whose stored bytes are now the pass's output written over a newer client
+	// write. A non-zero value means a fleet conversion is overlapping live
+	// traffic and should be run against a quieter window.
+	BulkRewriteCopyChangedTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "s3o_bulk_rewrite_copy_changed_total",
+			Help: "Copies a bulk rewrite pass converted but could not record, because a client wrote the key first",
+		},
+		[]string{"operation"},
+	)
+
 	// EncryptExistingObjectsTotal counts objects processed during encrypt-existing.
 	EncryptExistingObjectsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

@@ -12,6 +12,12 @@
 //
 // The engines contribute the statements; the delta arithmetic and the rule that
 // a zero delta touches nothing are stated once, here.
+//
+// Each of the three commits only while the copy still reports the etag its pass
+// read. A client writing the key mid-pass changes it, so the statement matches
+// no row and the engine answers ErrCopyChanged - which rolls the transaction
+// back, leaving the quota untouched as well as the row. That is what stops a
+// conversion describing bytes a newer write already replaced.
 // -------------------------------------------------------------------------------
 
 package core
@@ -56,16 +62,16 @@ func MarkObjectEncrypted(ctx context.Context, runner Runner, u *EncryptedUpdate)
 // overwritten, because that read is the only place the delta can come from:
 // the caller knows the plaintext size it wrote and not the ciphertext size it
 // replaced.
-func MarkObjectDecrypted(ctx context.Context, runner Runner, objectKey, backendName string, plaintextSize int64) error {
+func MarkObjectDecrypted(ctx context.Context, runner Runner, u *DecryptedUpdate) error {
 	return runner.WithTx(ctx, func(ctx context.Context, tx TxAdapter) error {
-		currentSize, err := tx.GetCopySizeBytes(ctx, objectKey, backendName)
+		currentSize, err := tx.GetCopySizeBytes(ctx, u.ObjectKey, u.BackendName)
 		if err != nil {
 			return fmt.Errorf("read current size: %w", err)
 		}
-		if err := tx.MarkCopyDecrypted(ctx, objectKey, backendName, plaintextSize); err != nil {
+		if err := tx.MarkCopyDecrypted(ctx, u); err != nil {
 			return fmt.Errorf("mark decrypted: %w", err)
 		}
-		return resizeBackendUsage(ctx, tx, backendName, objectKey, plaintextSize-currentSize, "decryption")
+		return resizeBackendUsage(ctx, tx, u.BackendName, u.ObjectKey, u.PlaintextSize-currentSize, "decryption")
 	})
 }
 
