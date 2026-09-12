@@ -670,10 +670,13 @@ worker-deploy: ## Publish the edge proxy worker (requires wrangler login and sec
 # implicitly; Terraform cannot, because cloudflare_workers_script takes finished
 # script text. These targets produce that artifact and put it where Terraform
 # can read it back.
+# The key is scoped to this project, because the bucket it lands in is not: a
+# prefix like "cloudflare-worker" alone would collide with anything else that
+# ever publishes a worker there.
 WORKER_BUNDLE := $(WORKER_DIR)/dist/worker.js
-WORKER_KEY    := artifacts/cloudflare-worker/$(VERSION)/worker.js
+WORKER_KEY    := s3-orchestrator/cloudflare-worker/$(VERSION)/worker.js
 S3O_ENDPOINT  ?= http://s3-orchestrator.service.consul:9000
-S3O_BUCKET    ?= unified
+S3O_BUCKET    ?= artifacts
 
 worker-build: ## Bundle the edge proxy worker into a single ESM script
 	cd $(WORKER_DIR) && npm run build
