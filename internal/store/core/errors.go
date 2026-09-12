@@ -51,6 +51,12 @@ func (e *S3Error) Error() string {
 //
 // ErrCleanupItemNotFound is benign: another worker completed the row or moved it
 // to the DLQ first, so the caller treats it as a no-op.
+//
+// ErrCopyChanged is benign in the same way. A stored-form rewrite commits only
+// while the copy still reports the etag it read, so this says a client wrote the
+// key while the pass was converting it. The newer write already stored the
+// object in whatever form the write path was configured for, leaving the pass
+// nothing to record.
 var (
 	ErrNoSpaceAvailable       = errors.New("no backend has sufficient quota")
 	ErrDBUnavailable          = errors.New("database unavailable")
@@ -58,6 +64,7 @@ var (
 	ErrEncryptionFlagMismatch = errors.New("stored bytes disagree with the object's encryption flag")
 	ErrCleanupItemNotFound    = errors.New("cleanup queue row not found")
 	ErrNoCopiesToRecord       = errors.New("record object request names no copies")
+	ErrCopyChanged            = errors.New("copy changed since the pass read it")
 
 	ErrObjectNotFound = &S3Error{
 		StatusCode: http.StatusNotFound,

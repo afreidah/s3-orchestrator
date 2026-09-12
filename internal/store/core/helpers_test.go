@@ -308,13 +308,13 @@ func (t *quotaTxStub) MarkCopyEncrypted(_ context.Context, u *EncryptedUpdate) e
 }
 
 // MarkCopyDecrypted records the copy the decrypt pass rewrote.
-func (t *quotaTxStub) MarkCopyDecrypted(_ context.Context, objectKey, backendName string, plaintextSize int64) error {
+func (t *quotaTxStub) MarkCopyDecrypted(_ context.Context, u *DecryptedUpdate) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.formErr != nil {
 		return t.formErr
 	}
-	t.decrypted = append(t.decrypted, markedCopy{objectKey, backendName, plaintextSize})
+	t.decrypted = append(t.decrypted, markedCopy{u.ObjectKey, u.BackendName, u.PlaintextSize})
 	return nil
 }
 

@@ -63,6 +63,14 @@ Three reasons to reach for it. A re-encode or re-encrypt pass rewrites every obj
 
 The filter is applied when candidates are selected, not after, so `max` is spent on copies the pass will act on rather than on rows it would discard. A name this instance does not serve is refused with `400`: a filter matching nothing is indistinguishable from a fleet with no work left, so a typo would otherwise report a clean pass over a backend that was never read.
 
+## When a conversion meets a live write
+
+The four conversions -- `encrypt-existing`, `decrypt-existing`, `compress-existing` and `decompress-existing` -- read a stored copy, transform it, and write it back. A client writing the same key in between is a race the pass is expected to lose sometimes, and the result carries a `changed` count for the copies it lost.
+
+A conversion commits only while the copy still reports the ETag it read. When a client has replaced the object, no row matches and nothing is recorded, so the ledger never ends up describing bytes a newer write already replaced. Those copies are reported as `changed` rather than `failed`: nothing is misconfigured, and the newer write has already stored the object in whatever form the write path was set to use.
+
+A non-zero `changed` count is worth acting on. The transformed bytes reached the backend before the commit refused, so each one names a copy whose stored bytes are the pass's output written over a newer client write -- the object reverted. Each is recorded as a `storage.ConversionRaced` audit event naming the key, the backend and the ETag the pass expected, and counted by `s3o_bulk_rewrite_copy_changed_total`. If you see them, run the conversion against a quieter window.
+
 ## Verifying one object
 
 `POST /admin/api/object-scrub?key=...` reads every recorded copy of one key and compares it against the stored content hash, without waiting for the scrub queue to reach it. The response reports one verdict per copy -- `verified`, `mismatch`, `unreadable`, or `not_hashed` -- so a replicated object with one good copy and one bad one names the backend at fault.

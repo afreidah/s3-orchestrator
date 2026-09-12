@@ -77,11 +77,12 @@ func (h *Handler) streamBulkRewrite(w http.ResponseWriter, r *http.Request, ep b
 		}
 		return stepResult{
 			Processed: res.Succeeded,
-			Summary: fmt.Sprintf("rewrote %d, skipped %d, failed %d, of %d",
-				res.Succeeded, res.Skipped, res.Failed, res.Total),
+			Summary: fmt.Sprintf("rewrote %d, skipped %d, changed %d, failed %d, of %d",
+				res.Succeeded, res.Skipped, res.Changed, res.Failed, res.Total),
 			Fields: map[string]any{
 				"rewritten": res.Succeeded,
 				"skipped":   res.Skipped,
+				"changed":   res.Changed,
 				"failed":    res.Failed,
 				"total":     res.Total,
 			},

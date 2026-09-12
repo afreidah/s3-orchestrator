@@ -124,6 +124,7 @@ func (e *Encryption) EncryptExisting(ctx context.Context, obs progress.Observer,
 						KeyID:          encResult.KeyID,
 						PlaintextSize:  loc.SizeBytes,
 						CiphertextSize: encResult.CiphertextSize,
+						ExpectedEtag:   loc.Etag,
 					})
 				},
 			}, nil
@@ -167,7 +168,12 @@ func (e *Encryption) DecryptExisting(ctx context.Context, obs progress.Observer,
 				body: plainReader,
 				size: plainLen,
 				commit: func() error {
-					return e.store.MarkObjectDecrypted(ctx, loc.ObjectKey, loc.BackendName, loc.PlaintextSize)
+					return e.store.MarkObjectDecrypted(ctx, &core.DecryptedUpdate{
+						ObjectKey:     loc.ObjectKey,
+						BackendName:   loc.BackendName,
+						PlaintextSize: loc.PlaintextSize,
+						ExpectedEtag:  loc.Etag,
+					})
 				},
 			}, nil
 		},
@@ -265,6 +271,10 @@ func (r *encryptRow) rewriteBackend() string { return r.BackendName }
 // rewriteSize returns the row's stored size, used for quota accounting.
 func (r *encryptRow) rewriteSize() int64 { return r.SizeBytes }
 
+// rewriteEtag returns what the copy reported when the listing selected it, which
+// the commit is predicated on.
+func (r *encryptRow) rewriteEtag() string { return r.Etag }
+
 // decryptRow adapts an encrypted location to bulkRewriteRow, so one driver
 // serves both directions of the rewrite.
 type decryptRow struct{ core.DecryptableLocation }
@@ -277,6 +287,10 @@ func (r *decryptRow) rewriteBackend() string { return r.BackendName }
 
 // rewriteSize returns the row's stored size, used for quota accounting.
 func (r *decryptRow) rewriteSize() int64 { return r.SizeBytes }
+
+// rewriteEtag returns what the copy reported when the listing selected it, which
+// the commit is predicated on.
+func (r *decryptRow) rewriteEtag() string { return r.Etag }
 
 // rewriteEnv exposes this service's collaborators to the shared driver.
 func (e *Encryption) rewriteEnv() bulkRewriteEnv {

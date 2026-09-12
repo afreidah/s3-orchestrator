@@ -1900,7 +1900,7 @@ func TestEncryptionAdmin_MarkAndList(t *testing.T) {
 	}
 
 	// Decrypt
-	if err := s.MarkObjectDecrypted(ctx, "bucket/plain", "backend-a", 1024); err != nil {
+	if err := s.MarkObjectDecrypted(ctx, &core.DecryptedUpdate{ObjectKey: "bucket/plain", BackendName: "backend-a", PlaintextSize: 1024}); err != nil {
 		t.Fatalf("MarkObjectDecrypted: %v", err)
 	}
 
@@ -3699,7 +3699,7 @@ func TestMarkObjectDecrypted_DoesNotDriveQuotaNegative(t *testing.T) {
 	seedBytesUsed(t, s, "backend-a", 50)
 
 	// 900 -> 100 is a -800 delta against a counter holding 50.
-	if err := s.MarkObjectDecrypted(ctx, "bucket/secret", "backend-a", 100); err != nil {
+	if err := s.MarkObjectDecrypted(ctx, &core.DecryptedUpdate{ObjectKey: "bucket/secret", BackendName: "backend-a", PlaintextSize: 100}); err != nil {
 		t.Fatalf("MarkObjectDecrypted: %v", err)
 	}
 	if used := quotaBytesUsed(t, s, "backend-a"); used != 0 {

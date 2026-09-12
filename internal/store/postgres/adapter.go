@@ -479,7 +479,7 @@ func (a *pgTxAdapter) SetBackendBytesUsed(ctx context.Context, backendName strin
 // UpdateCompressedForm records the stored form a recompression pass left on
 // one copy.
 func (a *pgTxAdapter) UpdateCompressedForm(ctx context.Context, u *core.CompressedUpdate) error {
-	if err := a.q.MarkObjectCompressed(ctx, db.MarkObjectCompressedParams{
+	rows, err := a.q.MarkObjectCompressed(ctx, db.MarkObjectCompressedParams{
 		ObjectKey:                u.ObjectKey,
 		BackendName:              u.BackendName,
 		CompressionAlgorithm:     strPtr(u.Algorithm),
@@ -490,35 +490,51 @@ func (a *pgTxAdapter) UpdateCompressedForm(ctx context.Context, u *core.Compress
 		PlaintextSize:            int64Ptr(u.PlaintextSize),
 		EncryptionKey:            u.EncryptionKey,
 		KeyID:                    strPtr(u.KeyID),
-	}); err != nil {
+		ExpectedEtag:             strPtr(u.ExpectedEtag),
+	})
+	if err != nil {
 		return fmt.Errorf("update compressed form: %w", err)
 	}
-	return nil
+	return changedIfNoRows(rows)
 }
 
 // MarkCopyEncrypted records the envelope columns for a copy encrypted in place.
 func (a *pgTxAdapter) MarkCopyEncrypted(ctx context.Context, u *core.EncryptedUpdate) error {
-	if err := a.q.MarkObjectEncrypted(ctx, db.MarkObjectEncryptedParams{
+	rows, err := a.q.MarkObjectEncrypted(ctx, db.MarkObjectEncryptedParams{
 		ObjectKey:     u.ObjectKey,
 		BackendName:   u.BackendName,
 		EncryptionKey: u.EncryptionKey,
 		KeyID:         &u.KeyID,
 		PlaintextSize: &u.PlaintextSize,
 		SizeBytes:     u.CiphertextSize,
-	}); err != nil {
+		ExpectedEtag:  strPtr(u.ExpectedEtag),
+	})
+	if err != nil {
 		return fmt.Errorf("mark copy encrypted: %w", err)
 	}
-	return nil
+	return changedIfNoRows(rows)
 }
 
 // MarkCopyDecrypted clears the envelope columns for a copy decrypted in place.
-func (a *pgTxAdapter) MarkCopyDecrypted(ctx context.Context, objectKey, backendName string, plaintextSize int64) error {
-	if err := a.q.MarkObjectDecrypted(ctx, db.MarkObjectDecryptedParams{
-		ObjectKey:   objectKey,
-		BackendName: backendName,
-		SizeBytes:   plaintextSize,
-	}); err != nil {
+func (a *pgTxAdapter) MarkCopyDecrypted(ctx context.Context, u *core.DecryptedUpdate) error {
+	rows, err := a.q.MarkObjectDecrypted(ctx, db.MarkObjectDecryptedParams{
+		ObjectKey:    u.ObjectKey,
+		BackendName:  u.BackendName,
+		SizeBytes:    u.PlaintextSize,
+		ExpectedEtag: strPtr(u.ExpectedEtag),
+	})
+	if err != nil {
 		return fmt.Errorf("mark copy decrypted: %w", err)
+	}
+	return changedIfNoRows(rows)
+}
+
+// changedIfNoRows turns a stored-form write that matched nothing into the
+// sentinel the passes skip on. The statements are keyed on the copy and its
+// etag, so no match means a client wrote the key after the pass read it.
+func changedIfNoRows(rows int64) error {
+	if rows == 0 {
+		return core.ErrCopyChanged
 	}
 	return nil
 }
