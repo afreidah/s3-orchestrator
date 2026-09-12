@@ -58,7 +58,7 @@ func TestLoad_ReadsEveryTable(t *testing.T) {
 		Buckets:     []core.Bucket{{Name: "b"}},
 		Users:       []core.User{{ID: "u1"}},
 		Credentials: []core.Credential{{AccessKeyID: "AK"}},
-		Grants:      []core.Grant{{UserID: "u1", BucketName: "b"}},
+		Grants:      []core.Grant{{UserID: "u1", Resource: core.BucketResource("b")}},
 	}}
 
 	s, err := Load(context.Background(), r)

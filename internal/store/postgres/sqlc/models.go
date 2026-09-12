@@ -83,10 +83,11 @@ type Credential struct {
 }
 
 type Grant struct {
-	UserID      string
-	BucketName  string
-	CreatedAt   pgtype.Timestamptz
-	Permissions string
+	UserID       string
+	ResourceName string
+	CreatedAt    pgtype.Timestamptz
+	Permissions  string
+	ResourceKind string
 }
 
 type MultipartPart struct {

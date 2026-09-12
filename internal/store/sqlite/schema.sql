@@ -301,13 +301,18 @@ CREATE TABLE IF NOT EXISTS credentials (
 CREATE INDEX IF NOT EXISTS idx_credentials_user
     ON credentials(user_id);
 
+-- A grant names a resource: a kind and a name. The kinds are bucket, backend and
+-- fleet, and fleet carries the empty name because there is only one of it. The
+-- kind is in the key so one user can hold a grant on a bucket and on a backend
+-- that happen to share a name.
 CREATE TABLE IF NOT EXISTS grants (
-    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    bucket_name TEXT NOT NULL,
-    permissions TEXT NOT NULL DEFAULT '',
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    PRIMARY KEY (user_id, bucket_name)
+    user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    resource_kind TEXT NOT NULL DEFAULT 'bucket',
+    resource_name TEXT NOT NULL,
+    permissions   TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (user_id, resource_kind, resource_name)
 );
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (16);
+INSERT INTO schema_version (version) VALUES (17);

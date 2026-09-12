@@ -230,8 +230,8 @@ func TestMerge_GrantsJoinOntoUser(t *testing.T) {
 			Users:       []core.User{{ID: "u1", Name: "ci"}},
 			Credentials: []core.Credential{{AccessKeyID: "AK1", UserID: "u1", Secret: "s1"}},
 			Grants: []core.Grant{
-				{UserID: "u1", BucketName: "store-bucket"},
-				{UserID: "u1", BucketName: "config-bucket"},
+				{UserID: "u1", Resource: core.BucketResource("store-bucket")},
+				{UserID: "u1", Resource: core.BucketResource("config-bucket")},
 			},
 		},
 	)
@@ -263,9 +263,9 @@ func TestMerge_UserBucketsSorted(t *testing.T) {
 		Buckets: []core.Bucket{{Name: "zeta"}, {Name: "alpha"}, {Name: "mid"}},
 		Users:   []core.User{{ID: "u1", Name: "ci"}},
 		Grants: []core.Grant{
-			{UserID: "u1", BucketName: "zeta"},
-			{UserID: "u1", BucketName: "alpha"},
-			{UserID: "u1", BucketName: "mid"},
+			{UserID: "u1", Resource: core.BucketResource("zeta")},
+			{UserID: "u1", Resource: core.BucketResource("alpha")},
+			{UserID: "u1", Resource: core.BucketResource("mid")},
 		},
 	})
 
@@ -287,7 +287,7 @@ func TestMerge_DanglingGrantReported(t *testing.T) {
 	v := Merge(nil, &Snapshot{
 		Users:       []core.User{{ID: "u1", Name: "ci"}},
 		Credentials: []core.Credential{{AccessKeyID: "AK1", UserID: "u1", Secret: "s1"}},
-		Grants:      []core.Grant{{UserID: "u1", BucketName: "gone"}},
+		Grants:      []core.Grant{{UserID: "u1", Resource: core.BucketResource("gone")}},
 	})
 
 	if n := countNotices(v.Notices, NoticeDanglingGrant); n != 1 {
@@ -315,7 +315,7 @@ func TestMerge_DisabledCredentialOmitted(t *testing.T) {
 			{AccessKeyID: "LIVE", UserID: "u1", Secret: "s1"},
 			{AccessKeyID: "OFF", UserID: "u1", Secret: "s2", Disabled: true},
 		},
-		Grants: []core.Grant{{UserID: "u1", BucketName: "b"}},
+		Grants: []core.Grant{{UserID: "u1", Resource: core.BucketResource("b")}},
 	})
 
 	if _, ok := findCredential(v.Credentials, "OFF"); ok {

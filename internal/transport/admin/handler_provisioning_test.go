@@ -82,7 +82,7 @@ func TestHandleProvisioning_ListsBothSources(t *testing.T) {
 	provisioningWith(t, h, []config.BucketConfig{{Name: "from-config"}}, &provRows{
 		buckets: []core.Bucket{{Name: "from-store", MaxMultipartUploads: 4}},
 		users:   []core.User{{ID: "u1", Name: "ci"}},
-		grants:  []core.Grant{{UserID: "u1", BucketName: "from-store"}},
+		grants:  []core.Grant{{UserID: "u1", Resource: core.BucketResource("from-store")}},
 	})
 
 	w := httptest.NewRecorder()
@@ -145,7 +145,7 @@ func TestHandleProvisioning_ReportsNotices(t *testing.T) {
 	t.Parallel()
 	h := newCoverageHandler(t)
 	provisioningWith(t, h, nil, &provRows{
-		grants: []core.Grant{{UserID: "ghost", BucketName: "nowhere"}},
+		grants: []core.Grant{{UserID: "ghost", Resource: core.BucketResource("nowhere")}},
 	})
 
 	w := httptest.NewRecorder()
@@ -388,7 +388,7 @@ func TestHandleCreateGrant(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body=%s", w.Code, w.Body.String())
 	}
-	if stored.UserID != "u1" || stored.BucketName != "photos" {
+	if stored.UserID != "u1" || stored.Resource.Name != "photos" {
 		t.Errorf("stored grant = %+v, want u1 on photos", stored)
 	}
 }
@@ -400,9 +400,9 @@ func TestHandleDeleteGrant(t *testing.T) {
 	store := provisioningWith(t, h, []config.BucketConfig{{Name: "photos"}},
 		&provRows{
 			users:  []core.User{{ID: "u1", Name: "ci"}},
-			grants: []core.Grant{{UserID: "u1", BucketName: "photos"}},
+			grants: []core.Grant{{UserID: "u1", Resource: core.BucketResource("photos")}},
 		})
-	store.EXPECT().DeleteGrant(gomock.Any(), "u1", "photos").Return(nil)
+	store.EXPECT().DeleteGrant(gomock.Any(), "u1", core.BucketResource("photos")).Return(nil)
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete,
 		"/admin/api/provisioning/grants/u1/photos", nil)

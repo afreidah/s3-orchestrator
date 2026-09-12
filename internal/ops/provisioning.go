@@ -325,7 +325,7 @@ func (p *Provisioning) CreateGrant(ctx context.Context, userID, bucketName strin
 	if perms == 0 {
 		return ErrNoPermissions
 	}
-	grant := core.Grant{UserID: userID, BucketName: bucketName, Permissions: perms}
+	grant := core.Grant{UserID: userID, Resource: core.BucketResource(bucketName), Permissions: perms}
 	if err := p.store.CreateGrant(ctx, &grant); err != nil {
 		return err
 	}
@@ -350,7 +350,7 @@ func (p *Provisioning) DeleteGrant(ctx context.Context, userID, bucketName strin
 	if u.Source == provisioning.SourceConfig {
 		return fmt.Errorf("%w: user %q", ErrConfigDeclared, userID)
 	}
-	if err := p.store.DeleteGrant(ctx, userID, bucketName); err != nil {
+	if err := p.store.DeleteGrant(ctx, userID, core.BucketResource(bucketName)); err != nil {
 		return err
 	}
 	audit.Log(ctx, "provisioning.GrantDeleted",

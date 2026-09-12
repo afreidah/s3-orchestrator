@@ -333,7 +333,7 @@ type ProvisioningStore interface {
 	DeleteBucket(ctx context.Context, name string) error
 	DeleteUser(ctx context.Context, id string) error
 	DeleteCredential(ctx context.Context, accessKeyID string) error
-	DeleteGrant(ctx context.Context, userID, bucketName string) error
+	DeleteGrant(ctx context.Context, userID string, r Resource) error
 }
 
 // NotificationOutbox defines the durable notification outbox operations

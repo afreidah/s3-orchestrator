@@ -75,9 +75,9 @@ func (s *Store) ListCredentials(ctx context.Context) ([]core.Credential, error) 
 // ListGrants returns every stored grant, ordered by user then bucket.
 func (s *Store) ListGrants(ctx context.Context) ([]core.Grant, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT user_id, bucket_name, permissions, created_at
+		`SELECT user_id, resource_kind, resource_name, permissions, created_at
 		 FROM grants
-		 ORDER BY user_id, bucket_name`,
+		 ORDER BY user_id, resource_kind, resource_name`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list grants: %w", err)
@@ -137,13 +137,13 @@ func (s *Store) CreateCredential(ctx context.Context, c *core.Credential) error 
 	return nil
 }
 
-// CreateGrant gives a user access to one bucket.
+// CreateGrant gives a user access to one resource.
 func (s *Store) CreateGrant(ctx context.Context, g *core.Grant) error {
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO grants (user_id, bucket_name, permissions, created_at) VALUES (?, ?, ?, ?)`,
-		g.UserID, g.BucketName, g.Permissions.String(), now(),
+		`INSERT INTO grants (user_id, resource_kind, resource_name, permissions, created_at) VALUES (?, ?, ?, ?, ?)`,
+		g.UserID, string(g.Resource.Kind), g.Resource.Name, g.Permissions.String(), now(),
 	); err != nil {
-		return fmt.Errorf("create grant %s -> %s: %w", g.UserID, g.BucketName, err)
+		return fmt.Errorf("create grant %s -> %s %s: %w", g.UserID, g.Resource.Kind, g.Resource.Name, err)
 	}
 	return nil
 }
@@ -176,14 +176,14 @@ func (s *Store) DeleteCredential(ctx context.Context, accessKeyID string) error 
 	return nil
 }
 
-// DeleteGrant withdraws a user's access to one bucket, leaving its other grants
-// in place.
-func (s *Store) DeleteGrant(ctx context.Context, userID, bucketName string) error {
+// DeleteGrant withdraws a user's access to one resource, leaving its other
+// grants in place.
+func (s *Store) DeleteGrant(ctx context.Context, userID string, r core.Resource) error {
 	if _, err := s.db.ExecContext(ctx,
-		`DELETE FROM grants WHERE user_id = ? AND bucket_name = ?`,
-		userID, bucketName,
+		`DELETE FROM grants WHERE user_id = ? AND resource_kind = ? AND resource_name = ?`,
+		userID, string(r.Kind), r.Name,
 	); err != nil {
-		return fmt.Errorf("delete grant %s -> %s: %w", userID, bucketName, err)
+		return fmt.Errorf("delete grant %s -> %s %s: %w", userID, r.Kind, r.Name, err)
 	}
 	return nil
 }
@@ -259,15 +259,17 @@ func scanGrant(rows *sql.Rows) (core.Grant, error) {
 		perms   string
 		created string
 	)
-	if err := rows.Scan(&g.UserID, &g.BucketName, &perms, &created); err != nil {
+	var kind string
+	if err := rows.Scan(&g.UserID, &kind, &g.Resource.Name, &perms, &created); err != nil {
 		return core.Grant{}, fmt.Errorf("scan grant: %w", err)
 	}
+	g.Resource.Kind = core.ResourceKind(kind)
 	var err error
 	// A value nothing recognises fails the read rather than resolving to some
 	// set. Falling back to full access would grant what nobody wrote down, and
 	// to none would refuse a caller the operator authorized.
 	if g.Permissions, err = core.ParsePermissions(perms); err != nil {
-		return core.Grant{}, fmt.Errorf("grant %s -> %s: %w", g.UserID, g.BucketName, err)
+		return core.Grant{}, fmt.Errorf("grant %s -> %s %s: %w", g.UserID, g.Resource.Kind, g.Resource.Name, err)
 	}
 	if g.CreatedAt, err = parseTime(created); err != nil {
 		return core.Grant{}, fmt.Errorf("parse grant created_at: %w", err)

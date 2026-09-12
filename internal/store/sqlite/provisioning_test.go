@@ -169,14 +169,14 @@ func TestProvisioning_GrantRoundTrip(t *testing.T) {
 	s := newTestStore(t)
 	seedUser(t, s, "u1", "ci")
 
-	if err := s.CreateGrant(ctx, &core.Grant{UserID: "u1", BucketName: "declared-in-config"}); err != nil {
+	if err := s.CreateGrant(ctx, &core.Grant{UserID: "u1", Resource: core.BucketResource("declared-in-config")}); err != nil {
 		t.Fatalf("CreateGrant: %v", err)
 	}
 	got, err := s.ListGrants(ctx)
 	if err != nil {
 		t.Fatalf("ListGrants: %v", err)
 	}
-	if len(got) != 1 || got[0].UserID != "u1" || got[0].BucketName != "declared-in-config" {
+	if len(got) != 1 || got[0].UserID != "u1" || got[0].Resource.Name != "declared-in-config" {
 		t.Fatalf("grants = %+v, want one grant u1 -> declared-in-config", got)
 	}
 }
@@ -218,7 +218,7 @@ func TestProvisioning_DeleteUserRefusedWhileGrantsExist(t *testing.T) {
 	s := newTestStore(t)
 	seedUser(t, s, "u1", "ci")
 
-	if err := s.CreateGrant(ctx, &core.Grant{UserID: "u1", BucketName: "photos"}); err != nil {
+	if err := s.CreateGrant(ctx, &core.Grant{UserID: "u1", Resource: core.BucketResource("photos")}); err != nil {
 		t.Fatalf("CreateGrant: %v", err)
 	}
 	if err := s.DeleteUser(ctx, "u1"); err == nil {
@@ -236,11 +236,11 @@ func TestProvisioning_DeleteGrantLeavesSiblings(t *testing.T) {
 	seedUser(t, s, "u1", "ci")
 
 	for _, b := range []string{"photos", "backups"} {
-		if err := s.CreateGrant(ctx, &core.Grant{UserID: "u1", BucketName: b}); err != nil {
+		if err := s.CreateGrant(ctx, &core.Grant{UserID: "u1", Resource: core.BucketResource(b)}); err != nil {
 			t.Fatalf("CreateGrant(%s): %v", b, err)
 		}
 	}
-	if err := s.DeleteGrant(ctx, "u1", "photos"); err != nil {
+	if err := s.DeleteGrant(ctx, "u1", core.BucketResource("photos")); err != nil {
 		t.Fatalf("DeleteGrant: %v", err)
 	}
 
@@ -248,7 +248,7 @@ func TestProvisioning_DeleteGrantLeavesSiblings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListGrants: %v", err)
 	}
-	if len(got) != 1 || got[0].BucketName != "backups" {
+	if len(got) != 1 || got[0].Resource.Name != "backups" {
 		t.Errorf("grants = %+v, want only backups", got)
 	}
 }
@@ -355,7 +355,7 @@ func TestProvisioning_DuplicateWritesRefused(t *testing.T) {
 		t.Error("CreateCredential accepted a duplicate access key")
 	}
 
-	grant := core.Grant{UserID: "u1", BucketName: "photos"}
+	grant := core.Grant{UserID: "u1", Resource: core.BucketResource("photos")}
 	if err := s.CreateGrant(ctx, &grant); err != nil {
 		t.Fatalf("CreateGrant: %v", err)
 	}
@@ -377,7 +377,7 @@ func TestProvisioning_WritesRequireTheirUser(t *testing.T) {
 	}); err == nil {
 		t.Error("CreateCredential accepted an unknown user")
 	}
-	if err := s.CreateGrant(ctx, &core.Grant{UserID: "absent", BucketName: "photos"}); err == nil {
+	if err := s.CreateGrant(ctx, &core.Grant{UserID: "absent", Resource: core.BucketResource("photos")}); err == nil {
 		t.Error("CreateGrant accepted an unknown user")
 	}
 }
@@ -413,7 +413,7 @@ func TestProvisioning_ClosedStoreSurfacesErrors(t *testing.T) {
 	if err := s.CreateCredential(ctx, &core.Credential{AccessKeyID: "AK", UserID: "u", Secret: "s"}); err == nil {
 		t.Error("CreateCredential succeeded against a closed store")
 	}
-	if err := s.CreateGrant(ctx, &core.Grant{UserID: "u", BucketName: "b"}); err == nil {
+	if err := s.CreateGrant(ctx, &core.Grant{UserID: "u", Resource: core.BucketResource("b")}); err == nil {
 		t.Error("CreateGrant succeeded against a closed store")
 	}
 	if err := s.DeleteBucket(ctx, "b"); err == nil {
@@ -425,7 +425,7 @@ func TestProvisioning_ClosedStoreSurfacesErrors(t *testing.T) {
 	if err := s.DeleteCredential(ctx, "AK"); err == nil {
 		t.Error("DeleteCredential succeeded against a closed store")
 	}
-	if err := s.DeleteGrant(ctx, "u", "b"); err == nil {
+	if err := s.DeleteGrant(ctx, "u", core.BucketResource("b")); err == nil {
 		t.Error("DeleteGrant succeeded against a closed store")
 	}
 }
@@ -481,5 +481,99 @@ func TestProvisioning_ListingsAreOrdered(t *testing.T) {
 		if got[i].Name != want[i] {
 			t.Fatalf("bucket order = %+v, want %v", got, want)
 		}
+	}
+}
+
+// TestProvisioning_GrantsOnEveryResourceKind is what the resource model is for:
+// the control plane has no bucket, so a grant has to be able to name a backend
+// or the fleet before an admin action set has anything to hang off.
+func TestProvisioning_GrantsOnEveryResourceKind(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedUser(t, s, "u1", "ci")
+
+	want := []core.Resource{
+		core.BucketResource("declared-in-config"),
+		{Kind: core.ResourceBackend, Name: "minio-a"},
+		{Kind: core.ResourceFleet},
+	}
+	for _, r := range want {
+		if err := s.CreateGrant(ctx, &core.Grant{UserID: "u1", Resource: r}); err != nil {
+			t.Fatalf("CreateGrant(%s %q): %v", r.Kind, r.Name, err)
+		}
+	}
+
+	got, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatalf("ListGrants: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("grants = %d, want %d: %+v", len(got), len(want), got)
+	}
+	seen := make(map[core.Resource]bool, len(got))
+	for i := range got {
+		seen[got[i].Resource] = true
+	}
+	for _, r := range want {
+		if !seen[r] {
+			t.Errorf("grant on %s %q did not survive the round trip", r.Kind, r.Name)
+		}
+	}
+}
+
+// TestProvisioning_KindIsPartOfTheKey asserts a bucket and a backend sharing a
+// name are two grants rather than one overwriting the other, which is why the
+// kind is in the primary key.
+func TestProvisioning_KindIsPartOfTheKey(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedUser(t, s, "u1", "ci")
+
+	if err := s.CreateGrant(ctx, &core.Grant{UserID: "u1", Resource: core.BucketResource("shared")}); err != nil {
+		t.Fatalf("CreateGrant(bucket): %v", err)
+	}
+	if err := s.CreateGrant(ctx, &core.Grant{
+		UserID:   "u1",
+		Resource: core.Resource{Kind: core.ResourceBackend, Name: "shared"},
+	}); err != nil {
+		t.Fatalf("CreateGrant(backend): %v", err)
+	}
+
+	got, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatalf("ListGrants: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("grants = %d, want 2 - the kind is part of the key", len(got))
+	}
+}
+
+// TestProvisioning_DeleteGrantIsScopedToTheKind asserts withdrawing a bucket
+// grant leaves a backend grant of the same name alone.
+func TestProvisioning_DeleteGrantIsScopedToTheKind(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedUser(t, s, "u1", "ci")
+
+	backend := core.Resource{Kind: core.ResourceBackend, Name: "shared"}
+	for _, r := range []core.Resource{core.BucketResource("shared"), backend} {
+		if err := s.CreateGrant(ctx, &core.Grant{UserID: "u1", Resource: r}); err != nil {
+			t.Fatalf("CreateGrant(%s): %v", r.Kind, err)
+		}
+	}
+
+	if err := s.DeleteGrant(ctx, "u1", core.BucketResource("shared")); err != nil {
+		t.Fatalf("DeleteGrant: %v", err)
+	}
+
+	got, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatalf("ListGrants: %v", err)
+	}
+	if len(got) != 1 || got[0].Resource != backend {
+		t.Errorf("grants = %+v, want only the backend grant", got)
 	}
 }
