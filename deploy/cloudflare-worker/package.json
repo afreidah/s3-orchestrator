@@ -8,11 +8,13 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "coverage": "vitest run --coverage"
+    "coverage": "vitest run --coverage",
+    "build": "esbuild src/index.ts --bundle --format=esm --target=es2022 --minify --outfile=dist/worker.js"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.0.0",
     "@vitest/coverage-v8": "^3.0.0",
+    "esbuild": "^0.28.0",
     "typescript": "^5.0.0",
     "vitest": "^3.0.0"
   }
