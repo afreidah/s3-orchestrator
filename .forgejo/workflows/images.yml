@@ -1,0 +1,45 @@
+# -------------------------------------------------------------------------------
+# Build and push the container images on every merge to main.
+#
+# Author: Alex Freidah
+#
+# This file runs only on a Forgejo instance -- GitHub ignores .forgejo/workflows.
+# Its presence is also what stops Forgejo from falling back to .github/workflows,
+# which targets GitHub-hosted runners and fails on a self-hosted one.
+#
+# Nothing here is scoped to changed paths. The repository reaches Forgejo through
+# a mirror whose pushes are force-updated and can batch several commits, so a
+# push event's own commit range does not reliably describe what changed. A filter
+# that silently skips a build is worse than always building.
+#
+# `make push` tags from .version, so a merge that does not bump it republishes
+# that tag from current main.
+# -------------------------------------------------------------------------------
+
+name: Images
+
+on:
+  push:
+    branches: [main]
+
+env:
+  # The Makefile defaults REGISTRY to a placeholder so a fork never publishes here.
+  DOCKER_REGISTRY: registry.munchbox.cc
+
+jobs:
+  images:
+    name: Build and push images
+    runs-on: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and push
+        run: |
+          set -euo pipefail
+
+          # The build host carries no qemu handlers, so without this buildx
+          # reports amd64 only and the arm64 half of each image fails.
+          docker run --privileged --rm tonistiigi/binfmt --install all
+
+          make push
+          make web-push
