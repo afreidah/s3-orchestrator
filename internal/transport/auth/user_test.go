@@ -154,8 +154,8 @@ func TestNewBucketRegistry_StoredCredentialAuthenticates(t *testing.T) {
 		Users:       []core.User{{ID: "u1", Name: "ci"}},
 		Credentials: []core.Credential{{AccessKeyID: "STORED", UserID: "u1", Secret: "s1"}},
 		Grants: []core.Grant{
-			{UserID: "u1", BucketName: "photos"},
-			{UserID: "u1", BucketName: "backups"},
+			{UserID: "u1", Resource: core.BucketResource("photos")},
+			{UserID: "u1", Resource: core.BucketResource("backups")},
 		},
 	})
 
@@ -193,7 +193,7 @@ func TestNewBucketRegistry_ConfigShadowsStoredCredential(t *testing.T) {
 			Buckets:     []core.Bucket{{Name: "backups"}},
 			Users:       []core.User{{ID: "u1", Name: "ci"}},
 			Credentials: []core.Credential{{AccessKeyID: "AK", UserID: "u1", Secret: "stored-secret"}},
-			Grants:      []core.Grant{{UserID: "u1", BucketName: "backups"}},
+			Grants:      []core.Grant{{UserID: "u1", Resource: core.BucketResource("backups")}},
 		},
 	)
 
@@ -241,7 +241,7 @@ func TestAuthenticate_StoredCredentialSignsRequests(t *testing.T) {
 		Buckets:     []core.Bucket{{Name: "photos"}},
 		Users:       []core.User{{ID: "u1", Name: "ci"}},
 		Credentials: []core.Credential{{AccessKeyID: "STORED", UserID: "u1", Secret: "stored-secret"}},
-		Grants:      []core.Grant{{UserID: "u1", BucketName: "photos"}},
+		Grants:      []core.Grant{{UserID: "u1", Resource: core.BucketResource("photos")}},
 	})
 
 	r := signRequest(t, http.MethodGet, "/photos/test.txt", "STORED", "stored-secret")

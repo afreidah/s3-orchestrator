@@ -118,6 +118,24 @@ func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
 		}
 	}
 	return []schemaRewindStep{
+		// Rebuilt rather than column-dropped: the primary key moved onto the
+		// resource, and SQLite cannot take it back off in place any more than
+		// the migration could put it on.
+		{17, func() {
+			exec("rewind grants to a bucket name", `
+				CREATE TABLE grants_old (
+				    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+				    bucket_name TEXT NOT NULL,
+				    permissions TEXT NOT NULL DEFAULT '',
+				    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+				    PRIMARY KEY (user_id, bucket_name)
+				);
+				INSERT INTO grants_old (user_id, bucket_name, permissions, created_at)
+				SELECT user_id, resource_name, permissions, created_at
+				FROM grants WHERE resource_kind = 'bucket';
+				DROP TABLE grants;
+				ALTER TABLE grants_old RENAME TO grants;`)
+		}},
 		{16, func() { dropColumns(t, s, "grants", "permissions") }},
 		{14, func() {
 			exec("drop pending key index", `DROP INDEX IF EXISTS idx_pending_objects_key`)

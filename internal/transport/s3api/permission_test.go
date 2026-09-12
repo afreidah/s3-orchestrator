@@ -44,7 +44,7 @@ func grantRegistry(tb testing.TB, perms core.PermissionSet) *auth.BucketRegistry
 			{AccessKeyID: "AK", UserID: "u1", Secret: "SK"},
 		},
 		Grants: []core.Grant{
-			{UserID: "u1", BucketName: "mybucket", Permissions: perms},
+			{UserID: "u1", Resource: core.BucketResource("mybucket"), Permissions: perms},
 		},
 	})
 	// The proxy token is the simplest credential to sign nothing with, and

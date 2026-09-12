@@ -52,20 +52,26 @@ func (q *Queries) CreateCredential(ctx context.Context, arg CreateCredentialPara
 }
 
 const createGrant = `-- name: CreateGrant :exec
-INSERT INTO grants (user_id, bucket_name, permissions)
-VALUES ($1, $2, $3)
+INSERT INTO grants (user_id, resource_kind, resource_name, permissions)
+VALUES ($1, $2, $3, $4)
 `
 
 type CreateGrantParams struct {
-	UserID      string
-	BucketName  string
-	Permissions string
+	UserID       string
+	ResourceKind string
+	ResourceName string
+	Permissions  string
 }
 
 // permissions is the comma-separated set the grant carries; empty means all of
 // them, which is what every grant written before permissions existed holds.
 func (q *Queries) CreateGrant(ctx context.Context, arg CreateGrantParams) error {
-	_, err := q.db.Exec(ctx, createGrant, arg.UserID, arg.BucketName, arg.Permissions)
+	_, err := q.db.Exec(ctx, createGrant,
+		arg.UserID,
+		arg.ResourceKind,
+		arg.ResourceName,
+		arg.Permissions,
+	)
 	return err
 }
 
@@ -106,16 +112,17 @@ func (q *Queries) DeleteCredential(ctx context.Context, accessKeyID string) erro
 
 const deleteGrant = `-- name: DeleteGrant :exec
 DELETE FROM grants
-WHERE user_id = $1 AND bucket_name = $2
+WHERE user_id = $1 AND resource_kind = $2 AND resource_name = $3
 `
 
 type DeleteGrantParams struct {
-	UserID     string
-	BucketName string
+	UserID       string
+	ResourceKind string
+	ResourceName string
 }
 
 func (q *Queries) DeleteGrant(ctx context.Context, arg DeleteGrantParams) error {
-	_, err := q.db.Exec(ctx, deleteGrant, arg.UserID, arg.BucketName)
+	_, err := q.db.Exec(ctx, deleteGrant, arg.UserID, arg.ResourceKind, arg.ResourceName)
 	return err
 }
 
@@ -214,16 +221,17 @@ func (q *Queries) ListCredentials(ctx context.Context) ([]Credential, error) {
 }
 
 const listGrants = `-- name: ListGrants :many
-SELECT user_id, bucket_name, permissions, created_at
+SELECT user_id, resource_kind, resource_name, permissions, created_at
 FROM grants
-ORDER BY user_id, bucket_name
+ORDER BY user_id, resource_kind, resource_name
 `
 
 type ListGrantsRow struct {
-	UserID      string
-	BucketName  string
-	Permissions string
-	CreatedAt   pgtype.Timestamptz
+	UserID       string
+	ResourceKind string
+	ResourceName string
+	Permissions  string
+	CreatedAt    pgtype.Timestamptz
 }
 
 func (q *Queries) ListGrants(ctx context.Context) ([]ListGrantsRow, error) {
@@ -237,7 +245,8 @@ func (q *Queries) ListGrants(ctx context.Context) ([]ListGrantsRow, error) {
 		var i ListGrantsRow
 		if err := rows.Scan(
 			&i.UserID,
-			&i.BucketName,
+			&i.ResourceKind,
+			&i.ResourceName,
 			&i.Permissions,
 			&i.CreatedAt,
 		); err != nil {

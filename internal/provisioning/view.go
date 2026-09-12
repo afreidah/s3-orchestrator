@@ -222,26 +222,33 @@ func mergeStoredUsers(v *View, s *Snapshot, declared map[string]struct{}) {
 // rather than treated as a failure to start.
 //
 // Two grants naming one bucket union rather than the later replacing the
-// earlier. The schema keys on (user, bucket) so this cannot arise today, but
+// earlier. The schema keys on (user, resource) so this cannot arise today, but
 // resolving a duplicate by dropping permissions an operator wrote is the wrong
 // direction to fail if it ever can.
+//
+// Only bucket grants are indexed here. A grant on a backend or on the fleet is
+// storable and carries no meaning yet: what the control plane grants is its own
+// action set, over a resource this lookup has no question to answer about.
 func grantsByUser(grants []core.Grant, declared map[string]struct{}) (map[string]map[string]core.PermissionSet, []Notice) {
 	reach := make(map[string]map[string]core.PermissionSet)
 	var notices []Notice
 	for i := range grants {
 		g := &grants[i]
-		if _, ok := declared[g.BucketName]; !ok {
+		if g.Resource.Kind != core.ResourceBucket {
+			continue
+		}
+		if _, ok := declared[g.Resource.Name]; !ok {
 			notices = append(notices, Notice{
 				Kind: NoticeDanglingGrant,
 				Detail: fmt.Sprintf("grant names bucket %q, which neither config nor the store declares",
-					g.BucketName),
+					g.Resource.Name),
 			})
 			continue
 		}
 		if reach[g.UserID] == nil {
 			reach[g.UserID] = make(map[string]core.PermissionSet)
 		}
-		reach[g.UserID][g.BucketName] |= g.Permissions
+		reach[g.UserID][g.Resource.Name] |= g.Permissions
 	}
 	return reach, notices
 }
