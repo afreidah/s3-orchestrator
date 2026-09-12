@@ -219,17 +219,17 @@ func TestProvisioningInt_GrantRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	userID := seedProvisioningUser(t, s, "user")
 
-	if err := s.CreateGrant(ctx, &core.Grant{UserID: userID, BucketName: "declared-in-config"}); err != nil {
+	if err := s.CreateGrant(ctx, &core.Grant{UserID: userID, Resource: core.BucketResource("declared-in-config")}); err != nil {
 		t.Fatalf("CreateGrant: %v", err)
 	}
-	t.Cleanup(func() { _ = s.DeleteGrant(context.Background(), userID, "declared-in-config") })
+	t.Cleanup(func() { _ = s.DeleteGrant(context.Background(), userID, core.BucketResource("declared-in-config")) })
 
 	all, err := s.ListGrants(ctx)
 	if err != nil {
 		t.Fatalf("ListGrants: %v", err)
 	}
 	mine := grantsFor(all, userID)
-	if len(mine) != 1 || mine[0].BucketName != "declared-in-config" {
+	if len(mine) != 1 || mine[0].Resource.Name != "declared-in-config" {
 		t.Fatalf("grants = %+v, want one naming declared-in-config", mine)
 	}
 }
@@ -271,10 +271,10 @@ func TestProvisioningInt_DeleteUserRefusedWhileGrantsExist(t *testing.T) {
 	ctx := context.Background()
 	userID := seedProvisioningUser(t, s, "user")
 
-	if err := s.CreateGrant(ctx, &core.Grant{UserID: userID, BucketName: "photos"}); err != nil {
+	if err := s.CreateGrant(ctx, &core.Grant{UserID: userID, Resource: core.BucketResource("photos")}); err != nil {
 		t.Fatalf("CreateGrant: %v", err)
 	}
-	t.Cleanup(func() { _ = s.DeleteGrant(context.Background(), userID, "photos") })
+	t.Cleanup(func() { _ = s.DeleteGrant(context.Background(), userID, core.BucketResource("photos")) })
 
 	if err := s.DeleteUser(ctx, userID); err == nil {
 		t.Fatal("DeleteUser succeeded while a grant still referenced the user")
@@ -290,13 +290,13 @@ func TestProvisioningInt_DeleteGrantLeavesSiblings(t *testing.T) {
 	userID := seedProvisioningUser(t, s, "user")
 
 	for _, b := range []string{"photos", "backups"} {
-		if err := s.CreateGrant(ctx, &core.Grant{UserID: userID, BucketName: b}); err != nil {
+		if err := s.CreateGrant(ctx, &core.Grant{UserID: userID, Resource: core.BucketResource(b)}); err != nil {
 			t.Fatalf("CreateGrant(%s): %v", b, err)
 		}
 	}
-	t.Cleanup(func() { _ = s.DeleteGrant(context.Background(), userID, "backups") })
+	t.Cleanup(func() { _ = s.DeleteGrant(context.Background(), userID, core.BucketResource("backups")) })
 
-	if err := s.DeleteGrant(ctx, userID, "photos"); err != nil {
+	if err := s.DeleteGrant(ctx, userID, core.BucketResource("photos")); err != nil {
 		t.Fatalf("DeleteGrant: %v", err)
 	}
 	all, err := s.ListGrants(ctx)
@@ -304,7 +304,7 @@ func TestProvisioningInt_DeleteGrantLeavesSiblings(t *testing.T) {
 		t.Fatalf("ListGrants: %v", err)
 	}
 	mine := grantsFor(all, userID)
-	if len(mine) != 1 || mine[0].BucketName != "backups" {
+	if len(mine) != 1 || mine[0].Resource.Name != "backups" {
 		t.Errorf("grants = %+v, want only backups", mine)
 	}
 }
@@ -337,5 +337,74 @@ func TestProvisioningInt_DeleteCredentialLeavesSiblings(t *testing.T) {
 	mine := credentialsFor(all, userID)
 	if len(mine) != 1 || mine[0].AccessKeyID != second {
 		t.Errorf("credentials = %+v, want only %s", mine, second)
+	}
+}
+
+// TestProvisioningInt_GrantsOnEveryResourceKind is the Postgres half of what
+// the resource model is for: the control plane has no bucket, so a grant has to
+// name a backend or the fleet before an admin action set has anything to hang
+// off. The fleet carries the empty name, which has to survive a key made of it.
+func TestProvisioningInt_GrantsOnEveryResourceKind(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	userID := seedProvisioningUser(t, s, "resource-kinds")
+
+	want := []core.Resource{
+		core.BucketResource("declared-in-config"),
+		{Kind: core.ResourceBackend, Name: "backend-a"},
+		{Kind: core.ResourceFleet},
+	}
+	for _, r := range want {
+		if err := s.CreateGrant(ctx, &core.Grant{UserID: userID, Resource: r}); err != nil {
+			t.Fatalf("CreateGrant(%s %q): %v", r.Kind, r.Name, err)
+		}
+		t.Cleanup(func() { _ = s.DeleteGrant(context.Background(), userID, r) })
+	}
+
+	got, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatalf("ListGrants: %v", err)
+	}
+	seen := make(map[core.Resource]bool, len(got))
+	for i := range got {
+		if got[i].UserID == userID {
+			seen[got[i].Resource] = true
+		}
+	}
+	for _, r := range want {
+		if !seen[r] {
+			t.Errorf("grant on %s %q did not survive the round trip", r.Kind, r.Name)
+		}
+	}
+}
+
+// TestProvisioningInt_KindIsPartOfTheKey asserts a bucket and a backend sharing
+// a name are two grants rather than an insert conflict.
+func TestProvisioningInt_KindIsPartOfTheKey(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	userID := seedProvisioningUser(t, s, "resource-kinds")
+
+	bucket := core.BucketResource("shared")
+	backend := core.Resource{Kind: core.ResourceBackend, Name: "shared"}
+	for _, r := range []core.Resource{bucket, backend} {
+		if err := s.CreateGrant(ctx, &core.Grant{UserID: userID, Resource: r}); err != nil {
+			t.Fatalf("CreateGrant(%s): %v", r.Kind, err)
+		}
+		t.Cleanup(func() { _ = s.DeleteGrant(context.Background(), userID, r) })
+	}
+
+	got, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatalf("ListGrants: %v", err)
+	}
+	mine := 0
+	for i := range got {
+		if got[i].UserID == userID {
+			mine++
+		}
+	}
+	if mine != 2 {
+		t.Errorf("grants = %d, want 2 - the kind is part of the key", mine)
 	}
 }

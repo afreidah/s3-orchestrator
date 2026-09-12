@@ -257,7 +257,7 @@ func TestProvisioning_DeleteBucketRejectsGranted(t *testing.T) {
 	f := newProvFixture(t, nil, &provStore{
 		buckets: []core.Bucket{{Name: "photos"}},
 		users:   []core.User{{ID: "u1", Name: "ci"}},
-		grants:  []core.Grant{{UserID: "u1", BucketName: "photos"}},
+		grants:  []core.Grant{{UserID: "u1", Resource: core.BucketResource("photos")}},
 	})
 	f.objects.EXPECT().CountObjectsByPrefix(gomock.Any(), "photos/").Return(int64(0), nil)
 
@@ -352,7 +352,7 @@ func TestProvisioning_DeleteUserRejectsInUse(t *testing.T) {
 		{"grants", provStore{
 			buckets: []core.Bucket{{Name: "photos"}},
 			users:   []core.User{{ID: "u1", Name: "ci"}},
-			grants:  []core.Grant{{UserID: "u1", BucketName: "photos"}},
+			grants:  []core.Grant{{UserID: "u1", Resource: core.BucketResource("photos")}},
 		}},
 		{"credentials", provStore{
 			users:       []core.User{{ID: "u1", Name: "ci"}},
@@ -571,9 +571,9 @@ func TestProvisioning_DeleteGrant(t *testing.T) {
 	f := newProvFixture(t, nil, &provStore{
 		buckets: []core.Bucket{{Name: "photos"}},
 		users:   []core.User{{ID: "u1", Name: "ci"}},
-		grants:  []core.Grant{{UserID: "u1", BucketName: "photos"}},
+		grants:  []core.Grant{{UserID: "u1", Resource: core.BucketResource("photos")}},
 	})
-	f.store.EXPECT().DeleteGrant(gomock.Any(), "u1", "photos").Return(nil)
+	f.store.EXPECT().DeleteGrant(gomock.Any(), "u1", core.BucketResource("photos")).Return(nil)
 	f.expectRepublish()
 
 	if err := f.svc.DeleteGrant(context.Background(), "u1", "photos"); err != nil {
@@ -766,7 +766,7 @@ func TestProvisioning_ViewCarriesGrantPermissions(t *testing.T) {
 		users:   []core.User{{ID: "u1", Name: "ci"}},
 		grants: []core.Grant{{
 			UserID:      "u1",
-			BucketName:  "photos",
+			Resource:    core.BucketResource("photos"),
 			Permissions: core.PermRead | core.PermList,
 		}},
 	})

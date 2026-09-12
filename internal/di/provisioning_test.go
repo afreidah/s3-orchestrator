@@ -53,7 +53,7 @@ func TestAssembleBucketRegistry_MergesBothSources(t *testing.T) {
 	store.EXPECT().ListCredentials(a).
 		Return([]core.Credential{{AccessKeyID: "AK", UserID: "u1", Secret: "SK"}}, nil).AnyTimes()
 	store.EXPECT().ListGrants(a).
-		Return([]core.Grant{{UserID: "u1", BucketName: "stored"}}, nil).AnyTimes()
+		Return([]core.Grant{{UserID: "u1", Resource: core.BucketResource("stored")}}, nil).AnyTimes()
 
 	inj := do.New()
 	do.ProvideValue[core.ProvisioningStore](inj, store)
@@ -83,7 +83,7 @@ func TestAssembleBucketRegistry_ReportsNotices(t *testing.T) {
 	store.EXPECT().ListUsers(a).Return(nil, nil).AnyTimes()
 	store.EXPECT().ListCredentials(a).Return(nil, nil).AnyTimes()
 	store.EXPECT().ListGrants(a).
-		Return([]core.Grant{{UserID: "ghost", BucketName: "nowhere"}}, nil).AnyTimes()
+		Return([]core.Grant{{UserID: "ghost", Resource: core.BucketResource("nowhere")}}, nil).AnyTimes()
 
 	inj := do.New()
 	do.ProvideValue[core.ProvisioningStore](inj, store)
@@ -147,7 +147,7 @@ func TestRegistryPublisher_SwapsTheRunningRegistry(t *testing.T) {
 	store.EXPECT().ListCredentials(a).
 		Return([]core.Credential{{AccessKeyID: "AK", UserID: "u1", Secret: "SK"}}, nil).AnyTimes()
 	store.EXPECT().ListGrants(a).
-		Return([]core.Grant{{UserID: "u1", BucketName: "photos"}}, nil).AnyTimes()
+		Return([]core.Grant{{UserID: "u1", Resource: core.BucketResource("photos")}}, nil).AnyTimes()
 
 	inj := do.New()
 	do.ProvideValue[core.ProvisioningStore](inj, store)

@@ -991,17 +991,17 @@ func (mr *MockProvisioningStoreMockRecorder) DeleteCredential(ctx, accessKeyID a
 }
 
 // DeleteGrant mocks base method.
-func (m *MockProvisioningStore) DeleteGrant(ctx context.Context, userID, bucketName string) error {
+func (m *MockProvisioningStore) DeleteGrant(ctx context.Context, userID string, r core.Resource) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteGrant", ctx, userID, bucketName)
+	ret := m.ctrl.Call(m, "DeleteGrant", ctx, userID, r)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // DeleteGrant indicates an expected call of DeleteGrant.
-func (mr *MockProvisioningStoreMockRecorder) DeleteGrant(ctx, userID, bucketName any) *gomock.Call {
+func (mr *MockProvisioningStoreMockRecorder) DeleteGrant(ctx, userID, r any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteGrant", reflect.TypeOf((*MockProvisioningStore)(nil).DeleteGrant), ctx, userID, bucketName)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteGrant", reflect.TypeOf((*MockProvisioningStore)(nil).DeleteGrant), ctx, userID, r)
 }
 
 // DeleteUser mocks base method.

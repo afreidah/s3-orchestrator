@@ -125,14 +125,15 @@ func (s *Store) CreateCredential(ctx context.Context, c *core.Credential) error 
 	return nil
 }
 
-// CreateGrant gives a user access to one bucket.
+// CreateGrant gives a user access to one resource.
 func (s *Store) CreateGrant(ctx context.Context, g *core.Grant) error {
 	if err := s.queries.CreateGrant(ctx, db.CreateGrantParams{
-		UserID:      g.UserID,
-		BucketName:  g.BucketName,
-		Permissions: g.Permissions.String(),
+		UserID:       g.UserID,
+		ResourceKind: string(g.Resource.Kind),
+		ResourceName: g.Resource.Name,
+		Permissions:  g.Permissions.String(),
 	}); err != nil {
-		return fmt.Errorf("create grant %s -> %s: %w", g.UserID, g.BucketName, err)
+		return fmt.Errorf("create grant %s -> %s %s: %w", g.UserID, g.Resource.Kind, g.Resource.Name, err)
 	}
 	return nil
 }
@@ -164,14 +165,15 @@ func (s *Store) DeleteCredential(ctx context.Context, accessKeyID string) error 
 	return nil
 }
 
-// DeleteGrant withdraws a user's access to one bucket, leaving its other grants
-// in place.
-func (s *Store) DeleteGrant(ctx context.Context, userID, bucketName string) error {
+// DeleteGrant withdraws a user's access to one resource, leaving its other
+// grants in place.
+func (s *Store) DeleteGrant(ctx context.Context, userID string, r core.Resource) error {
 	if err := s.queries.DeleteGrant(ctx, db.DeleteGrantParams{
-		UserID:     userID,
-		BucketName: bucketName,
+		UserID:       userID,
+		ResourceKind: string(r.Kind),
+		ResourceName: r.Name,
 	}); err != nil {
-		return fmt.Errorf("delete grant %s -> %s: %w", userID, bucketName, err)
+		return fmt.Errorf("delete grant %s -> %s %s: %w", userID, r.Kind, r.Name, err)
 	}
 	return nil
 }
@@ -230,11 +232,11 @@ func credentialFromRow(r *db.Credential) core.Credential {
 func grantFromRow(r *db.ListGrantsRow) (core.Grant, error) {
 	perms, err := core.ParsePermissions(r.Permissions)
 	if err != nil {
-		return core.Grant{}, fmt.Errorf("grant %s -> %s: %w", r.UserID, r.BucketName, err)
+		return core.Grant{}, fmt.Errorf("grant %s -> %s %s: %w", r.UserID, r.ResourceKind, r.ResourceName, err)
 	}
 	return core.Grant{
 		UserID:      r.UserID,
-		BucketName:  r.BucketName,
+		Resource:    core.Resource{Kind: core.ResourceKind(r.ResourceKind), Name: r.ResourceName},
 		Permissions: perms,
 		CreatedAt:   r.CreatedAt.Time,
 	}, nil

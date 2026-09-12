@@ -392,17 +392,17 @@ func (mr *MockMetadataStoreMockRecorder) DeleteCredential(ctx, accessKeyID any) 
 }
 
 // DeleteGrant mocks base method.
-func (m *MockMetadataStore) DeleteGrant(ctx context.Context, userID, bucketName string) error {
+func (m *MockMetadataStore) DeleteGrant(ctx context.Context, userID string, r core.Resource) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteGrant", ctx, userID, bucketName)
+	ret := m.ctrl.Call(m, "DeleteGrant", ctx, userID, r)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // DeleteGrant indicates an expected call of DeleteGrant.
-func (mr *MockMetadataStoreMockRecorder) DeleteGrant(ctx, userID, bucketName any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) DeleteGrant(ctx, userID, r any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteGrant", reflect.TypeOf((*MockMetadataStore)(nil).DeleteGrant), ctx, userID, bucketName)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteGrant", reflect.TypeOf((*MockMetadataStore)(nil).DeleteGrant), ctx, userID, r)
 }
 
 // DeleteMultipartUpload mocks base method.
