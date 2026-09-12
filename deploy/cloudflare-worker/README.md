@@ -67,7 +67,16 @@ make worker-test       # vitest
 make worker-coverage   # vitest with thresholds enforced
 make worker-check      # typecheck + coverage
 make worker-deploy     # wrangler deploy
+make worker-build      # bundle to dist/worker.js
+make worker-publish    # bundle, then upload it to an S3 bucket
 ```
+
+`wrangler deploy` bundles the TypeScript on its way out. `worker-build` produces
+that same single-module bundle as a file instead, for deploying the worker
+through the Cloudflare API rather than wrangler -- the API takes finished script
+text, and Cloudflare runs JavaScript, not TypeScript. `worker-publish` uploads it
+under `artifacts/cloudflare-worker/<version>/worker.js`; override `S3O_ENDPOINT`
+and `S3O_BUCKET` to point somewhere else.
 
 The worker is the only TypeScript in an otherwise Go repository and carries its own npm toolchain here, so a contributor who never touches it never installs Node. CI runs the checks only when this directory changes, and SonarQube skips it under the existing `deploy/**` exclusion.
 

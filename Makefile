@@ -665,6 +665,28 @@ worker-check: worker-typecheck worker-coverage ## Run every edge proxy worker ch
 worker-deploy: ## Publish the edge proxy worker (requires wrangler login and secrets)
 	cd $(WORKER_DIR) && npx wrangler deploy
 
+# Cloudflare runs JavaScript, so the worker's TypeScript has to be bundled into
+# a single module before anything can upload it. `wrangler deploy` does that
+# implicitly; Terraform cannot, because cloudflare_workers_script takes finished
+# script text. These targets produce that artifact and put it where Terraform
+# can read it back.
+WORKER_BUNDLE := $(WORKER_DIR)/dist/worker.js
+WORKER_KEY    := artifacts/cloudflare-worker/$(VERSION)/worker.js
+S3O_ENDPOINT  ?= http://s3-orchestrator.service.consul:9000
+S3O_BUCKET    ?= unified
+
+worker-build: ## Bundle the edge proxy worker into a single ESM script
+	cd $(WORKER_DIR) && npm run build
+
+# The key carries the version and is never "latest", so munchbox pins what it
+# reads and a rebuild cannot change deployed infrastructure on an unrelated
+# apply. Content type is load-bearing: Terraform's S3 object data source only
+# exposes a body it considers textual.
+worker-publish: worker-build ## Upload the bundled worker to the artifact bucket
+	aws --endpoint-url $(S3O_ENDPOINT) s3 cp $(WORKER_BUNDLE) \
+		s3://$(S3O_BUCKET)/$(WORKER_KEY) --content-type text/plain
+	@echo "published s3://$(S3O_BUCKET)/$(WORKER_KEY)"
+
 ##@ Cleanup
 
 # -------------------------------------------------------------------------
@@ -696,5 +718,5 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push worker-install worker-typecheck worker-test worker-coverage worker-check worker-deploy clean
+.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push worker-install worker-typecheck worker-test worker-coverage worker-check worker-deploy worker-build worker-publish clean
 .DEFAULT_GOAL := help
