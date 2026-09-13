@@ -31,7 +31,10 @@ import (
 
 // PermissionSet is the access a grant carries. Bits are combined with OR when
 // the set is built and tested with AND when a request is authorized.
-type PermissionSet uint16
+//
+// Sixty-four bits for sixteen permissions is headroom: a new one takes the next
+// bit and nothing renumbers.
+type PermissionSet uint64
 
 // The permissions a grant may carry, one per operator-facing intent.
 //
@@ -51,14 +54,46 @@ const (
 	PermTags
 )
 
-// PermAll is every permission this server implements. It is also what a grant
-// recording none carries, which is every grant written before permissions
-// existed: narrowing those on upgrade would refuse clients that were working.
+// The permissions a grant on a backend or on the instance may carry. They share
+// the bit space so a stored row says what it allows without the reader knowing
+// which resource it names; which are valid where is checked when a grant is
+// written.
+//
+// Each is split from its neighbour where a real principal wants one and not the
+// other: a monitoring credential reads status but not logs, an on-call engineer
+// runs the repair passes but does not rewrite every object, and provisioning is
+// alone because it can mint any other permission.
+const (
+	PermAdminRead PermissionSet = 1 << (8 + iota)
+	PermAdminLogs
+	PermAdminMaintain
+	PermAdminConvert
+	PermAdminKeys
+	PermAdminCache
+	PermAdminDrain
+	PermAdminDecommission
+	PermAdminConfig
+	PermAdminProvision
+)
+
+// PermAll is every data-plane permission, and what a grant recording none
+// carries - which is every grant written before permissions existed, so it
+// cannot be widened to include the admin bits without granting them to rows
+// nobody wrote them on.
 const PermAll = PermListBuckets | PermList | PermRead | PermWrite | PermDelete | PermTags
 
-// permAllName is the shorthand a caller writes instead of naming every
-// permission, and what PermAll renders as.
-const permAllName = "all"
+// PermAdminAll is every admin permission. An admin grant recording none carries
+// nothing rather than everything: no row predates this vocabulary, so there is
+// no existing meaning to preserve.
+const PermAdminAll = PermAdminRead | PermAdminLogs | PermAdminMaintain | PermAdminConvert |
+	PermAdminKeys | PermAdminCache | PermAdminDrain | PermAdminDecommission |
+	PermAdminConfig | PermAdminProvision
+
+// The shorthands a caller writes instead of naming every permission in a set.
+const (
+	permAllName      = "all"
+	permAdminAllName = "admin-all"
+)
 
 // permissionNames pairs each bit with its stored name, in the order a rendered
 // set lists them, so two equal sets always render identically.
@@ -72,6 +107,16 @@ var permissionNames = []struct {
 	{PermWrite, "write"},
 	{PermDelete, "delete"},
 	{PermTags, "tags"},
+	{PermAdminRead, "admin-read"},
+	{PermAdminLogs, "admin-logs"},
+	{PermAdminMaintain, "admin-maintain"},
+	{PermAdminConvert, "admin-convert"},
+	{PermAdminKeys, "admin-keys"},
+	{PermAdminCache, "admin-cache"},
+	{PermAdminDrain, "admin-drain"},
+	{PermAdminDecommission, "admin-decommission"},
+	{PermAdminConfig, "admin-config"},
+	{PermAdminProvision, "admin-provision"},
 }
 
 // -------------------------------------------------------------------------
@@ -93,8 +138,11 @@ func (p PermissionSet) Has(want PermissionSet) bool {
 // order, or "all" for the full set. An empty set renders empty, which is what a
 // grant carrying nothing is.
 func (p PermissionSet) String() string {
-	if p == PermAll {
+	switch p {
+	case PermAll:
 		return permAllName
+	case PermAdminAll:
+		return permAdminAllName
 	}
 	var out []string
 	for _, entry := range permissionNames {
@@ -117,17 +165,21 @@ func (p PermissionSet) Names() []string {
 	return out
 }
 
-// ParsePermissions reads the stored form. An empty string is PermAll, because a
-// grant that records no permissions predates them and carried full access.
+// ParsePermissions reads the stored form for a grant on the given resource.
+//
+// An empty value on a bucket grant is PermAll, because a row that records no
+// permissions predates them and carried full access. On any other kind it is
+// nothing: no control-plane row predates this vocabulary, and defaulting one to
+// everything is the wrong direction to be generous in.
 //
 // An unrecognised name is an error rather than a bit quietly dropped. A set
 // that parses to less than it says would refuse a caller an operator believes
 // they authorized, and one that defaults to PermAll on a value nothing
 // recognises would grant access nobody wrote down.
-func ParsePermissions(s string) (PermissionSet, error) {
+func ParsePermissions(kind ResourceKind, s string) (PermissionSet, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return PermAll, nil
+		return emptyPermissions(kind), nil
 	}
 
 	var out PermissionSet
@@ -140,17 +192,29 @@ func ParsePermissions(s string) (PermissionSet, error) {
 			out |= PermAll
 			continue
 		}
+		if name == permAdminAllName {
+			out |= PermAdminAll
+			continue
+		}
 		bit, ok := permissionBit(name)
 		if !ok {
-			return 0, fmt.Errorf("unknown permission %q, want one of %s or %q",
-				name, strings.Join(PermAll.Names(), ", "), permAllName)
+			return 0, fmt.Errorf("unknown permission %q, want one of %s, %q or %q",
+				name, strings.Join(allPermissionNames(), ", "), permAllName, permAdminAllName)
 		}
 		out |= bit
 	}
 	if out == 0 {
-		return PermAll, nil
+		return emptyPermissions(kind), nil
 	}
 	return out, nil
+}
+
+// emptyPermissions is what a grant recording nothing carries.
+func emptyPermissions(kind ResourceKind) PermissionSet {
+	if kind == ResourceBucket {
+		return PermAll
+	}
+	return 0
 }
 
 // permissionBit looks up the bit a stored name selects.
@@ -161,4 +225,39 @@ func permissionBit(name string) (PermissionSet, bool) {
 		}
 	}
 	return 0, false
+}
+
+// allPermissionNames lists every name a grant may carry, for the error a bad
+// one produces.
+func allPermissionNames() []string {
+	out := make([]string, 0, len(permissionNames))
+	for _, entry := range permissionNames {
+		out = append(out, entry.name)
+	}
+	return out
+}
+
+// ValidOn reports the permissions a grant on the given resource may carry.
+//
+// A bucket cannot be drained and the instance holds no objects, so a grant
+// naming one and carrying the other's permissions is a mistake rather than a
+// narrow grant. Backends take the admin set: the maintenance and conversion
+// passes are the operations that name one.
+func ValidOn(kind ResourceKind) PermissionSet {
+	if kind == ResourceBucket {
+		return PermAll
+	}
+	return PermAdminAll
+}
+
+// ValidatePermissions refuses permissions that mean nothing on the resource a
+// grant names, so an operator is told at once rather than finding the grant
+// authorizes nothing later.
+func ValidatePermissions(kind ResourceKind, p PermissionSet) error {
+	stray := p &^ ValidOn(kind)
+	if stray == 0 {
+		return nil
+	}
+	return fmt.Errorf("permissions %s are not valid on a %s grant, want one of %s",
+		stray, kind, strings.Join(ValidOn(kind).Names(), ", "))
 }

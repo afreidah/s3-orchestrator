@@ -23,6 +23,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
 
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 
 	"github.com/charmbracelet/bubbles/table"
@@ -184,7 +185,7 @@ func usersReaching(users []adminapi.User, bucket string) []string {
 // grantOn reports the rendered permissions a user's grant on a bucket carries.
 func grantOn(u *adminapi.User, bucket string) (string, bool) {
 	for _, g := range u.Grants {
-		if g.Bucket == bucket {
+		if g.Kind == string(core.ResourceBucket) && g.Name == bucket {
 			return "(" + strings.Join(g.Permissions, ",") + ")", true
 		}
 	}

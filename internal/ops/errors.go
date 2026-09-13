@@ -74,4 +74,6 @@ var (
 	ErrCredentialNotFound = errors.New("credential not found")
 	ErrInvalidCORS        = errors.New("bucket cors rules are not valid")
 	ErrNoPermissions      = errors.New("a grant must carry at least one permission")
+	ErrBackendNotFound    = errors.New("backend not found")
+	ErrInvalidResource    = errors.New("grant resource is not valid")
 )

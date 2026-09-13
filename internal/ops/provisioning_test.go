@@ -51,6 +51,14 @@ type provStore struct {
 // declaring buckets.
 func newProvFixture(t *testing.T, cfgBuckets []config.BucketConfig, rows *provStore) *provFixture {
 	t.Helper()
+	return newProvFixtureCfg(t, &config.Config{Buckets: cfgBuckets}, rows)
+}
+
+// newProvFixtureCfg is newProvFixture over a whole config, which the grants
+// naming a backend need: which backends exist comes from config rather than
+// from the store.
+func newProvFixtureCfg(t *testing.T, cfg *config.Config, rows *provStore) *provFixture {
+	t.Helper()
 	ctrl := gomock.NewController(t)
 	f := &provFixture{
 		store:    opstest.NewMockProvisioningStore(ctrl),
@@ -67,7 +75,7 @@ func newProvFixture(t *testing.T, cfgBuckets []config.BucketConfig, rows *provSt
 		Store:    f.store,
 		Objects:  f.objects,
 		Registry: f.registry,
-		Config:   NewConfigStore(&config.Config{Buckets: cfgBuckets}),
+		Config:   NewConfigStore(cfg),
 	})
 	return f
 }
@@ -532,7 +540,7 @@ func TestProvisioning_CreateGrant(t *testing.T) {
 			f.store.EXPECT().CreateGrant(gomock.Any(), gomock.Any()).Return(nil)
 			f.expectRepublish()
 
-			if err := f.svc.CreateGrant(context.Background(), "u1", "photos", core.PermAll); err != nil {
+			if err := f.svc.CreateGrant(context.Background(), "u1", core.BucketResource("photos"), core.PermAll); err != nil {
 				t.Fatalf("CreateGrant: %v", err)
 			}
 		})
@@ -556,7 +564,7 @@ func TestProvisioning_CreateGrantRejectsUnknown(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := newProvFixture(t, nil, &tc.rows)
-			if err := f.svc.CreateGrant(context.Background(), "u1", "photos", core.PermAll); !errors.Is(err, tc.want) {
+			if err := f.svc.CreateGrant(context.Background(), "u1", core.BucketResource("photos"), core.PermAll); !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
 			}
 		})
@@ -576,7 +584,7 @@ func TestProvisioning_DeleteGrant(t *testing.T) {
 	f.store.EXPECT().DeleteGrant(gomock.Any(), "u1", core.BucketResource("photos")).Return(nil)
 	f.expectRepublish()
 
-	if err := f.svc.DeleteGrant(context.Background(), "u1", "photos"); err != nil {
+	if err := f.svc.DeleteGrant(context.Background(), "u1", core.BucketResource("photos")); err != nil {
 		t.Fatalf("DeleteGrant: %v", err)
 	}
 }
@@ -590,7 +598,7 @@ func TestProvisioning_DeleteGrantRejectsConfigUser(t *testing.T) {
 		{Name: "photos", Credentials: []config.CredentialConfig{{AccessKeyID: "AK", SecretAccessKey: "SK"}}},
 	}, &provStore{})
 
-	err := f.svc.DeleteGrant(context.Background(), "config:AK", "photos")
+	err := f.svc.DeleteGrant(context.Background(), "config:AK", core.BucketResource("photos"))
 	if !errors.Is(err, ErrConfigDeclared) {
 		t.Fatalf("err = %v, want ErrConfigDeclared", err)
 	}
@@ -602,7 +610,7 @@ func TestProvisioning_DeleteGrantRejectsUnknownUser(t *testing.T) {
 	t.Parallel()
 
 	f := newProvFixture(t, nil, &provStore{})
-	if err := f.svc.DeleteGrant(context.Background(), "u1", "photos"); !errors.Is(err, ErrUserNotFound) {
+	if err := f.svc.DeleteGrant(context.Background(), "u1", core.BucketResource("photos")); !errors.Is(err, ErrUserNotFound) {
 		t.Fatalf("err = %v, want ErrUserNotFound", err)
 	}
 }
@@ -730,7 +738,7 @@ func TestProvisioning_CreateGrantStoresPermissions(t *testing.T) {
 	f.expectRepublish()
 
 	readOnly := core.PermListBuckets | core.PermList | core.PermRead
-	if err := f.svc.CreateGrant(context.Background(), "u1", "photos", readOnly); err != nil {
+	if err := f.svc.CreateGrant(context.Background(), "u1", core.BucketResource("photos"), readOnly); err != nil {
 		t.Fatalf("CreateGrant: %v", err)
 	}
 	if stored.Permissions != readOnly {
@@ -750,9 +758,50 @@ func TestProvisioning_CreateGrantRejectsEmptyPermissions(t *testing.T) {
 	f := newProvFixture(t, []config.BucketConfig{{Name: "photos"}},
 		&provStore{users: []core.User{{ID: "u1", Name: "ci"}}})
 
-	err := f.svc.CreateGrant(context.Background(), "u1", "photos", 0)
+	err := f.svc.CreateGrant(context.Background(), "u1", core.BucketResource("photos"), 0)
 	if !errors.Is(err, ErrNoPermissions) {
 		t.Fatalf("err = %v, want ErrNoPermissions", err)
+	}
+}
+
+// TestProvisioning_CreateGrantOnControlPlaneResources verifies which resources
+// a grant may name, and that a wildcard is written without being looked up:
+// naming things that do not exist yet is the point of it.
+func TestProvisioning_CreateGrantOnControlPlaneResources(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Buckets:  []config.BucketConfig{{Name: "photos"}},
+		Backends: []config.BackendConfig{{Name: "b1"}},
+	}
+	for _, tc := range []struct {
+		name     string
+		resource core.Resource
+		perms    core.PermissionSet
+		want     error
+	}{
+		{"a configured backend", core.Resource{Kind: core.ResourceBackend, Name: "b1"}, core.PermAdminDrain, nil},
+		{"the backend wildcard", core.Resource{Kind: core.ResourceBackend, Name: core.ResourceWildcard}, core.PermAdminDrain, nil},
+		{"the bucket wildcard", core.BucketResource(core.ResourceWildcard), core.PermAll, nil},
+		{"the instance", core.Resource{Kind: core.ResourceInstance}, core.PermAdminProvision, nil},
+		{"a backend nothing serves", core.Resource{Kind: core.ResourceBackend, Name: "b9"}, core.PermAdminDrain, ErrBackendNotFound},
+		{"an instance with a name", core.Resource{Kind: core.ResourceInstance, Name: "b1"}, core.PermAdminProvision, ErrInvalidResource},
+		{"a kind nothing knows", core.Resource{Kind: "region", Name: "us"}, core.PermAdminRead, ErrInvalidResource},
+		{"admin permissions on a bucket", core.BucketResource("photos"), core.PermAdminDrain, ErrInvalidResource},
+		{"data-plane permissions on a backend", core.Resource{Kind: core.ResourceBackend, Name: "b1"}, core.PermRead, ErrInvalidResource},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newProvFixtureCfg(t, cfg, &provStore{users: []core.User{{ID: "u1", Name: "ci"}}})
+			if tc.want == nil {
+				f.store.EXPECT().CreateGrant(gomock.Any(), gomock.Any()).Return(nil)
+				f.expectRepublish()
+			}
+			err := f.svc.CreateGrant(context.Background(), "u1", tc.resource, tc.perms)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+		})
 	}
 }
 

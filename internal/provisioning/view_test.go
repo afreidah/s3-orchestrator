@@ -365,3 +365,104 @@ func TestMerge_UserWithoutGrantsReachesNothing(t *testing.T) {
 		t.Errorf("user reaches %v, want nothing", u.Buckets)
 	}
 }
+
+// wildcardGrant is the grant an operator holds to reach every bucket, including
+// ones created after it was written.
+func wildcardGrant(user string, perms core.PermissionSet) core.Grant {
+	return core.Grant{
+		UserID:      user,
+		Resource:    core.Resource{Kind: core.ResourceBucket, Name: core.ResourceWildcard},
+		Permissions: perms,
+	}
+}
+
+// TestMerge_WildcardReachesEveryBucket asserts a wildcard grant covers buckets
+// it never names, which is the point of it: a bucket created tomorrow is
+// reachable without anyone rewriting grants.
+func TestMerge_WildcardReachesEveryBucket(t *testing.T) {
+	t.Parallel()
+
+	v := Merge(nil, &Snapshot{
+		Buckets: []core.Bucket{{Name: "photos"}, {Name: "logs"}},
+		Users:   []core.User{{ID: "u1", Name: "devops"}},
+		Grants:  []core.Grant{wildcardGrant("u1", core.PermRead)},
+	})
+
+	u, ok := findUser(v.Users, "u1")
+	if !ok {
+		t.Fatal("u1 missing from the merged users")
+	}
+	for _, bucket := range []string{"photos", "logs"} {
+		if got := u.Grants[bucket]; got != core.PermRead {
+			t.Errorf("%s = %q, want read", bucket, got)
+		}
+	}
+}
+
+// TestMerge_NamedGrantNarrowsTheWildcard is the carve-out case: broad access
+// with one bucket cut down. A named grant replaces the wildcard rather than
+// adding to it, or the narrower grant would be unable to say anything.
+func TestMerge_NamedGrantNarrowsTheWildcard(t *testing.T) {
+	t.Parallel()
+
+	v := Merge(nil, &Snapshot{
+		Buckets: []core.Bucket{{Name: "photos"}, {Name: "secrets"}},
+		Users:   []core.User{{ID: "u1", Name: "devops"}},
+		Grants: []core.Grant{
+			wildcardGrant("u1", core.PermRead|core.PermWrite),
+			{UserID: "u1", Resource: core.BucketResource("secrets"), Permissions: core.PermRead},
+		},
+	})
+
+	u, _ := findUser(v.Users, "u1")
+	if got := u.Grants["photos"]; got != core.PermRead|core.PermWrite {
+		t.Errorf("photos = %q, want read,write from the wildcard", got)
+	}
+	if got := u.Grants["secrets"]; got != core.PermRead {
+		t.Errorf("secrets = %q, want read - the named grant replaces the wildcard", got)
+	}
+}
+
+// TestMerge_NamedGrantWidensTheWildcard covers the other direction, so the rule
+// is precedence rather than "narrowest wins".
+func TestMerge_NamedGrantWidensTheWildcard(t *testing.T) {
+	t.Parallel()
+
+	v := Merge(nil, &Snapshot{
+		Buckets: []core.Bucket{{Name: "photos"}, {Name: "uploads"}},
+		Users:   []core.User{{ID: "u1", Name: "devops"}},
+		Grants: []core.Grant{
+			wildcardGrant("u1", core.PermRead),
+			{UserID: "u1", Resource: core.BucketResource("uploads"), Permissions: core.PermRead | core.PermWrite | core.PermDelete},
+		},
+	})
+
+	u, _ := findUser(v.Users, "u1")
+	if got := u.Grants["uploads"]; got != core.PermRead|core.PermWrite|core.PermDelete {
+		t.Errorf("uploads = %q, want the named grant's permissions", got)
+	}
+	if got := u.Grants["photos"]; got != core.PermRead {
+		t.Errorf("photos = %q, want read from the wildcard", got)
+	}
+}
+
+// TestMerge_ControlPlaneGrantsStayOutOfTheBucketLookup asserts a backend or
+// instance grant reaches no bucket. They authorize the control plane, which this
+// lookup answers nothing about.
+func TestMerge_ControlPlaneGrantsStayOutOfTheBucketLookup(t *testing.T) {
+	t.Parallel()
+
+	v := Merge(nil, &Snapshot{
+		Buckets: []core.Bucket{{Name: "photos"}},
+		Users:   []core.User{{ID: "u1", Name: "devops"}},
+		Grants: []core.Grant{
+			{UserID: "u1", Resource: core.Resource{Kind: core.ResourceBackend, Name: core.ResourceWildcard}, Permissions: core.PermAdminDrain},
+			{UserID: "u1", Resource: core.Resource{Kind: core.ResourceInstance}, Permissions: core.PermAdminProvision},
+		},
+	})
+
+	u, _ := findUser(v.Users, "u1")
+	if len(u.Grants) != 0 {
+		t.Errorf("bucket grants = %v, want none from control-plane grants", u.Grants)
+	}
+}

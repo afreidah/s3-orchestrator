@@ -13,6 +13,7 @@
 package auth
 
 import (
+	"maps"
 	"slices"
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -32,11 +33,15 @@ type User struct {
 	FromConfig bool
 
 	grants map[string]core.PermissionSet
+	admin  map[core.Resource]core.PermissionSet
 }
 
-// NewUser builds a user holding the given grants. A nil or absent entry means
-// the user does not reach that bucket at all, which is a different answer from
-// reaching it with no permissions.
+// NewUser builds a user holding the given bucket grants. A nil or absent entry
+// means the user does not reach that bucket at all, which is a different answer
+// from reaching it with no permissions.
+//
+// Control-plane grants are added with WithAdmin, so the S3 path constructs a
+// user the same way it always has.
 func NewUser(id, name string, grants map[string]core.PermissionSet) *User {
 	u := &User{
 		ID:     id,
@@ -46,6 +51,13 @@ func NewUser(id, name string, grants map[string]core.PermissionSet) *User {
 	for bucket, perms := range grants {
 		u.grants[bucket] = perms
 	}
+	return u
+}
+
+// WithAdmin attaches the control-plane grants this user holds, keyed on the
+// resource each names.
+func (u *User) WithAdmin(admin map[core.Resource]core.PermissionSet) *User {
+	u.admin = maps.Clone(admin)
 	return u
 }
 
@@ -103,4 +115,39 @@ func (u *User) Buckets() []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// CanAdmin reports whether this user may act on the named control-plane
+// resource. A nil user reaches nothing.
+//
+// The named grant is asked first and the kind's wildcard second, so a grant on
+// one backend answers for that backend and a wildcard answers for every backend
+// the deployment gains later. They union rather than the named one displacing
+// the wildcard: a control-plane grant is written to widen, and there is no
+// carve-out case the way a read-only bucket under a broad grant is.
+//
+// Nothing is granted implicitly. A user with no control-plane grant at all is
+// refused here, which is what keeps an S3 credential out of the admin surface.
+func (u *User) CanAdmin(resource core.Resource, want core.PermissionSet) bool {
+	if u == nil {
+		return false
+	}
+	held := u.admin[resource]
+	if resource.Kind != core.ResourceInstance && !resource.IsWildcard() {
+		held |= u.admin[core.Resource{Kind: resource.Kind, Name: core.ResourceWildcard}]
+	}
+	return held.Has(want)
+}
+
+// AdminPermissions reports what this user holds on the named resource, the
+// kind's wildcard included, which is what an operator listing renders.
+func (u *User) AdminPermissions(resource core.Resource) core.PermissionSet {
+	if u == nil {
+		return 0
+	}
+	held := u.admin[resource]
+	if resource.Kind != core.ResourceInstance && !resource.IsWildcard() {
+		held |= u.admin[core.Resource{Kind: resource.Kind, Name: core.ResourceWildcard}]
+	}
+	return held
 }

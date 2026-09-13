@@ -117,7 +117,11 @@ func TestProvisioning_RequestBodies(t *testing.T) {
 		{"credential", []string{"credential", "issue", "-user", "user-abc", "-label", "backup job"},
 			map[string]any{"user_id": "user-abc", "label": "backup job"}},
 		{"grant", []string{"grant", "add", "-user", "user-abc", "-bucket", "photos"},
-			map[string]any{"user_id": "user-abc", "bucket": "photos"}},
+			map[string]any{"user_id": "user-abc", "kind": "bucket", "name": "photos"}},
+		{"backend grant", []string{"grant", "add", "-user", "user-abc", "-kind", "backend", "-name", "*", "-permissions", "admin-convert"},
+			map[string]any{"user_id": "user-abc", "kind": "backend", "name": "*"}},
+		{"instance grant", []string{"grant", "add", "-user", "user-abc", "-kind", "instance", "-permissions", "admin-provision"},
+			map[string]any{"user_id": "user-abc", "kind": "instance"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -315,5 +319,31 @@ func TestProvisioning_RejectionIsReported(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "config file") {
 		t.Errorf("stderr = %q, want the server's reason", stderr.String())
+	}
+}
+
+// TestProvisioning_UserListingNamesEachResource verifies the user listing
+// renders every grant an identity holds, on both planes, so an operator reads
+// what a credential reaches without a second call.
+func TestProvisioning_UserListingNamesEachResource(t *testing.T) {
+	t.Parallel()
+
+	reply := listingReply()
+	reply.Users[0].Grants = []adminapi.Grant{
+		{Kind: "bucket", Name: "from-store", Permissions: []string{"read", "write"}},
+		{Kind: "backend", Name: "*", Permissions: []string{"admin-convert"}},
+		{Kind: "instance", Permissions: []string{"admin-read"}},
+	}
+
+	code, _, stdout, stderr := runProvisioning(t, []string{"user", "list"}, reply)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr=%s", code, stderr)
+	}
+	for _, want := range []string{
+		"bucket:from-store(read,write)", "backend:*(admin-convert)", "instance(admin-read)",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("listing omits %q:\n%s", want, stdout)
+		}
 	}
 }

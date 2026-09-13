@@ -230,13 +230,16 @@ func credentialFromRow(r *db.Credential) core.Credential {
 // would grant what nobody wrote down, and to none would refuse a caller the
 // operator authorized.
 func grantFromRow(r *db.ListGrantsRow) (core.Grant, error) {
-	perms, err := core.ParsePermissions(r.Permissions)
+	resource := core.Resource{Kind: core.ResourceKind(r.ResourceKind), Name: r.ResourceName}
+	// The empty stored value means different things on the two planes, so the
+	// resource is what the parse is told.
+	perms, err := core.ParsePermissions(resource.Kind, r.Permissions)
 	if err != nil {
-		return core.Grant{}, fmt.Errorf("grant %s -> %s %s: %w", r.UserID, r.ResourceKind, r.ResourceName, err)
+		return core.Grant{}, fmt.Errorf("grant %s -> %s: %w", r.UserID, resource, err)
 	}
 	return core.Grant{
 		UserID:      r.UserID,
-		Resource:    core.Resource{Kind: core.ResourceKind(r.ResourceKind), Name: r.ResourceName},
+		Resource:    resource,
 		Permissions: perms,
 		CreatedAt:   r.CreatedAt.Time,
 	}, nil

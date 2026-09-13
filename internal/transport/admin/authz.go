@@ -8,8 +8,9 @@
 // object service the S3 transport does, so they are authorized against the same
 // permission set rather than against the bearer token alone.
 //
-// Every route passes through one chokepoint here. A route that declares no
-// permission is control plane and the token authorizes it, unchanged.
+// Every route passes through one chokepoint here. The control-plane endpoints
+// declare a permission over a backend or over the instance, so a credential
+// granted one provider's maintenance cannot start a pass over the fleet.
 // -------------------------------------------------------------------------------
 
 package admin
@@ -23,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
@@ -56,6 +58,15 @@ const (
 type principal struct {
 	User *auth.User
 	Root bool
+}
+
+// id names this principal in a log line. The root token carries no user, so it
+// reads as the token rather than as an empty field.
+func (p principal) id() string {
+	if p.User == nil {
+		return "admin-token"
+	}
+	return p.User.ID
 }
 
 // -------------------------------------------------------------------------
@@ -113,25 +124,29 @@ func (h *Handler) guard(rt *route) http.HandlerFunc {
 // authorize refuses a request whose grants do not carry what its route needs.
 // Reports whether it may proceed; the refusal is already written when it may not.
 //
-// Fails closed. A route declaring a permission whose resource does not resolve
-// to a bucket is refused rather than allowed through unchecked, because a key
-// this layer cannot read is one it cannot authorize.
+// Fails closed. A route declaring no permission is refused outright, and a
+// bucket route whose resource does not resolve to one bucket is refused rather
+// than allowed through unchecked, because a key this layer cannot read is one it
+// cannot authorize.
 func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, rt *route, who principal) bool {
-	// The control plane has no action vocabulary yet, so the admin token stays
-	// its authorization. A provisioned credential carries bucket grants, which
-	// say nothing about draining a backend or rotating a key, and treating an
-	// absent permission as "no check" would let any S3 credential reach every
-	// fleet operation.
+	// Nothing reaches a route that declared no permission. The table is tested
+	// for one, so this is unreachable by a served route and stays as the
+	// fallback that keeps the default closed.
 	if rt.Perm == 0 {
-		if who.Root {
-			return true
-		}
-		h.refuseControlPlane(r, w, rt, who)
+		h.refuse(r, w, rt, who, "", "route declares no permission")
 		return false
 	}
+	// The configured admin token authorizes everything, which is what an
+	// existing deployment relies on. Only the data plane warns: the control
+	// plane is what the token has always been for.
 	if who.Root {
-		h.warnTokenDeprecated(r)
+		if rt.kind() == core.ResourceBucket {
+			h.warnTokenDeprecated(r)
+		}
 		return true
+	}
+	if rt.kind() != core.ResourceBucket {
+		return h.authorizeAdmin(w, r, rt, who)
 	}
 
 	bucket, ok := bucketFromKey(h.resourceValue(r, rt))
@@ -145,6 +160,25 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, rt *route, w
 	}
 	if !who.User.Can(bucket, rt.Perm) {
 		h.refuse(r, w, rt, who, bucket, "grant does not carry the permission")
+		return false
+	}
+	return true
+}
+
+// authorizeAdmin refuses a control-plane request the caller's grants do not
+// carry.
+//
+// A backend route naming no backend runs against the whole fleet, so it is
+// authorized as the wildcard: an operator granted one provider cannot start a
+// pass that spends egress on every other one. Naming a backend asks about that
+// backend, which a grant on it or the wildcard both answer.
+func (h *Handler) authorizeAdmin(w http.ResponseWriter, r *http.Request, rt *route, who principal) bool {
+	resource := core.Resource{Kind: rt.kind()}
+	if resource.Kind == core.ResourceBackend {
+		resource.Name = cmp.Or(h.resourceValue(r, rt), core.ResourceWildcard)
+	}
+	if !who.User.CanAdmin(resource, rt.Perm) {
+		h.refuseAdmin(r, w, rt, who, resource)
 		return false
 	}
 	return true
@@ -204,7 +238,7 @@ func (h *Handler) refuse(r *http.Request, w http.ResponseWriter, rt *route, who 
 		"method", r.Method,
 		"path", r.URL.Path,
 		"client_addr", r.RemoteAddr,
-		"user", who.User.ID,
+		"user", who.id(),
 		"bucket", bucket,
 		"reason", reason,
 	)
@@ -222,22 +256,26 @@ func (h *Handler) refuse(r *http.Request, w http.ResponseWriter, rt *route, who 
 	httputil.WriteJSONError(w, http.StatusForbidden, msgForbidden)
 }
 
-// refuseControlPlane writes the 403 a provisioned credential gets when it asks
-// for a fleet operation. Recorded separately from a denied object operation
-// because the fix differs: one is a grant to widen, the other a caller using the
-// wrong credential entirely for the surface it is calling.
-func (h *Handler) refuseControlPlane(r *http.Request, w http.ResponseWriter, rt *route, who principal) {
-	h.log.WarnContext(r.Context(), "control-plane request from a provisioned credential",
+// refuseAdmin writes the 403 a credential gets when its control-plane grants do
+// not carry the operation. Recorded separately from a denied object operation
+// so one query finds every control-plane refusal without the object traffic.
+func (h *Handler) refuseAdmin(r *http.Request, w http.ResponseWriter, rt *route, who principal, resource core.Resource) {
+	held := who.User.AdminPermissions(resource)
+	h.log.WarnContext(r.Context(), "control-plane request not permitted by grant",
 		"method", r.Method,
 		"path", r.URL.Path,
 		"client_addr", r.RemoteAddr,
-		"user", who.User.ID,
+		"user", who.id(),
+		"resource", resource.String(),
 	)
 	audit.Log(r.Context(), "admin.ControlPlaneDenied",
 		slog.String("method", r.Method),
 		slog.String("path", r.URL.Path),
 		slog.String("client_addr", r.RemoteAddr),
+		slog.String("resource", resource.String()),
 		slog.String("operation", rt.Summary),
+		slog.String("required", rt.Perm.String()),
+		slog.String("held", held.String()),
 		slog.Int("status", http.StatusForbidden),
 	)
 	httputil.WriteJSONError(w, http.StatusForbidden, msgForbidden)

@@ -88,7 +88,7 @@ func TestPermissions_RoundTrip(t *testing.T) {
 		PermAll,
 		PermTags | PermDelete,
 	} {
-		got, err := ParsePermissions(set.String())
+		got, err := ParsePermissions(ResourceBucket, set.String())
 		if err != nil {
 			t.Fatalf("ParsePermissions(%q): %v", set.String(), err)
 		}
@@ -105,24 +105,29 @@ func TestParsePermissions(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
+		kind ResourceKind
 		in   string
 		want PermissionSet
 	}{
-		{"empty is every permission", "", PermAll},
-		{"whitespace is every permission", "   ", PermAll},
-		{"all is every permission", "all", PermAll},
-		{"single", "read", PermRead},
-		{"several", "read,write", PermRead | PermWrite},
-		{"spaces are trimmed", " read , write ", PermRead | PermWrite},
-		{"case is ignored", "READ,Write", PermRead | PermWrite},
-		{"repeats collapse", "read,read", PermRead},
-		{"empty fields are skipped", "read,,write", PermRead | PermWrite},
-		{"hyphenated name", "list-buckets", PermListBuckets},
-		{"all alongside a name", "all,read", PermAll},
+		{"empty is every permission", ResourceBucket, "", PermAll},
+		{"whitespace is every permission", ResourceBucket, "   ", PermAll},
+		{"all is every permission", ResourceBucket, "all", PermAll},
+		{"single", ResourceBucket, "read", PermRead},
+		{"several", ResourceBucket, "read,write", PermRead | PermWrite},
+		{"spaces are trimmed", ResourceBucket, " read , write ", PermRead | PermWrite},
+		{"case is ignored", ResourceBucket, "READ,Write", PermRead | PermWrite},
+		{"repeats collapse", ResourceBucket, "read,read", PermRead},
+		{"empty fields are skipped", ResourceBucket, "read,,write", PermRead | PermWrite},
+		{"hyphenated name", ResourceBucket, "list-buckets", PermListBuckets},
+		{"all alongside a name", ResourceBucket, "all,read", PermAll},
+		{"admin-all is every admin permission", ResourceBackend, "admin-all", PermAdminAll},
+		{"admin names", ResourceInstance, "admin-read,admin-logs", PermAdminRead | PermAdminLogs},
+		{"empty on a backend is nothing", ResourceBackend, "", 0},
+		{"empty on the instance is nothing", ResourceInstance, "", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := ParsePermissions(tc.in)
+			got, err := ParsePermissions(tc.kind, tc.in)
 			if err != nil {
 				t.Fatalf("ParsePermissions(%q): %v", tc.in, err)
 			}
@@ -140,7 +145,7 @@ func TestParsePermissions_RejectsUnknown(t *testing.T) {
 	t.Parallel()
 
 	for _, in := range []string{"admin", "read,admin", "readwrite", "list_buckets"} {
-		if _, err := ParsePermissions(in); err == nil {
+		if _, err := ParsePermissions(ResourceBucket, in); err == nil {
 			t.Errorf("ParsePermissions(%q) accepted an unknown permission", in)
 		}
 	}
@@ -160,6 +165,9 @@ func TestPermissionSet_String(t *testing.T) {
 		{PermWrite | PermRead, "read,write"},
 		{PermDelete | PermList, "list,delete"},
 		{PermAll, "all"},
+		{PermAdminAll, "admin-all"},
+		{PermAdminDrain, "admin-drain"},
+		{PermAdminRead | PermAdminProvision, "admin-read,admin-provision"},
 	} {
 		if got := tc.set.String(); got != tc.want {
 			t.Errorf("String() = %q, want %q", got, tc.want)
@@ -181,5 +189,52 @@ func TestPermissionSet_Names(t *testing.T) {
 	}
 	if n := len(PermissionSet(0).Names()); n != 0 {
 		t.Errorf("an empty set names %d permissions, want 0", n)
+	}
+}
+
+// TestValidatePermissions verifies a grant carrying permissions that mean
+// nothing on the resource it names is refused. The two vocabularies share a
+// type, so this is what keeps them from being mixed in one grant: a bucket
+// cannot be drained, and the instance holds no objects.
+func TestValidatePermissions(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		kind    ResourceKind
+		perms   PermissionSet
+		wantErr bool
+	}{
+		{"data-plane on a bucket", ResourceBucket, PermRead | PermWrite, false},
+		{"every data-plane on a bucket", ResourceBucket, PermAll, false},
+		{"admin on a bucket", ResourceBucket, PermAdminDrain, true},
+		{"admin mixed into a bucket grant", ResourceBucket, PermRead | PermAdminDrain, true},
+		{"admin on a backend", ResourceBackend, PermAdminConvert, false},
+		{"admin on the instance", ResourceInstance, PermAdminProvision, false},
+		{"data-plane on a backend", ResourceBackend, PermRead, true},
+		{"data-plane on the instance", ResourceInstance, PermList, true},
+		{"nothing is valid anywhere", ResourceBackend, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidatePermissions(tc.kind, tc.perms)
+			if tc.wantErr && err == nil {
+				t.Errorf("ValidatePermissions(%s, %q) accepted a set the resource has no meaning for", tc.kind, tc.perms)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("ValidatePermissions(%s, %q): %v", tc.kind, tc.perms, err)
+			}
+		})
+	}
+}
+
+// TestPermissionBits_DoNotOverlap verifies the two vocabularies occupy
+// disjoint bits. They share one type, so an overlap would make a bucket grant
+// silently authorize a control-plane operation.
+func TestPermissionBits_DoNotOverlap(t *testing.T) {
+	t.Parallel()
+
+	if PermAll&PermAdminAll != 0 {
+		t.Errorf("the data-plane and admin sets share bits: %q", PermAll&PermAdminAll)
 	}
 }

@@ -246,7 +246,7 @@ func (env *provEnv) onboard(t *testing.T, bucket, name string) (adminapi.CreateC
 		adminapi.CreateCredentialRequest{UserID: user.UserID, Label: name}, &cred)
 
 	env.mustAdmin(t, http.MethodPost, "/admin/api/provisioning/grants",
-		adminapi.CreateGrantRequest{UserID: user.UserID, Bucket: bucket}, nil)
+		adminapi.CreateGrantRequest{UserID: user.UserID, Name: bucket}, nil)
 
 	return cred, user.UserID
 }
@@ -353,7 +353,7 @@ func TestProvInt_GrantIsWhatAuthorizes(t *testing.T) {
 	}
 
 	env.mustAdmin(t, http.MethodPost, "/admin/api/provisioning/grants",
-		adminapi.CreateGrantRequest{UserID: user.UserID, Bucket: bucket}, nil)
+		adminapi.CreateGrantRequest{UserID: user.UserID, Name: bucket}, nil)
 
 	if err := putObject(ctx, client, bucket, "yes.txt", "ok"); err != nil {
 		t.Fatalf("PUT after the grant: %v", err)

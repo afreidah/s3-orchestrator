@@ -38,11 +38,13 @@ type CORSRule struct {
 	MaxAge         int      `json:"max_age,omitempty"`
 }
 
-// User is one identity as the API reports it, with the buckets it reaches.
+// User is one identity as the API reports it, with what it reaches.
 //
-// Buckets and Grants describe the same set. Buckets stays a plain name list so
-// a caller that only asks which buckets an identity reaches does not have to
-// walk an object; Grants adds what each of those reaches carries.
+// Buckets stays a plain name list so a caller that only asks which buckets an
+// identity reaches does not have to walk an object. Grants is the whole
+// picture: the bucket reach with what each carries, plus the control-plane
+// resources the identity holds. A bucket wildcard appears as the buckets it
+// expands to, which is what the request path will actually answer.
 type User struct {
 	ID      string   `json:"id"`
 	Name    string   `json:"name"`
@@ -51,9 +53,11 @@ type User struct {
 	Source  string   `json:"source"`
 }
 
-// Grant is one bucket a user reaches and the permissions that reach carries.
+// Grant is one resource a user reaches and the permissions that reach carries.
+// Name is empty on an instance grant, which names no one thing.
 type Grant struct {
-	Bucket      string   `json:"bucket"`
+	Kind        string   `json:"kind"`
+	Name        string   `json:"name,omitempty"`
 	Permissions []string `json:"permissions"`
 }
 
@@ -117,11 +121,17 @@ type CreateCredentialResponse struct {
 	Label           string `json:"label,omitempty"`
 }
 
-// CreateGrantRequest lets one user reach one bucket, with the permissions that
-// reach carries. An empty Permissions means all of them.
+// CreateGrantRequest lets one user reach one resource, with the permissions
+// that reach carries.
+//
+// Kind defaults to "bucket", so a caller onboarding a client onto a bucket
+// names only the bucket. Name may be "*" for every resource of the kind, and is
+// omitted on an instance grant. An empty Permissions means every permission
+// valid on the kind.
 type CreateGrantRequest struct {
 	UserID      string   `json:"user_id"`
-	Bucket      string   `json:"bucket"`
+	Kind        string   `json:"kind,omitempty"`
+	Name        string   `json:"name,omitempty"`
 	Permissions []string `json:"permissions,omitempty"`
 }
 
@@ -130,6 +140,7 @@ type CreateGrantRequest struct {
 type ProvisioningOperationResponse struct {
 	Status   string `json:"status"`
 	Bucket   string `json:"bucket,omitempty"`
+	Resource string `json:"resource,omitempty"`
 	UserID   string `json:"user_id,omitempty"`
 	UserName string `json:"user_name,omitempty"`
 }

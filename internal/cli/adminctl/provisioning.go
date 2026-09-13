@@ -15,6 +15,7 @@
 package adminctl
 
 import (
+	"cmp"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -24,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/output"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
@@ -41,13 +43,23 @@ const (
 
 	flagUser   = "user"
 	flagBucket = "bucket"
+	flagKind   = "kind"
+	flagName   = "name"
+
+	defaultGrantKind = "bucket"
 
 	usageBucketName = "Bucket name (required)"
 	usageUserID     = "User ID (required)"
+	usageGrantKind  = "Resource kind: bucket, backend or instance"
+	usageGrantName  = "Resource name, or * for every one of its kind; omitted for the instance"
 
-	errNameRequired   = "error: -name is required"
-	errUserRequired   = "error: -user is required"
-	errBucketRequired = "error: -bucket is required"
+	usageGrantPermissions = "Comma-separated permissions; all for every data-plane one, " +
+		"admin-all for every control-plane one"
+
+	errNameRequired      = "error: -name is required"
+	errUserRequired      = "error: -user is required"
+	errBucketRequired    = "error: -bucket is required"
+	errGrantNameRequired = "error: -name is required for a bucket or backend grant"
 
 	colSource = "Source"
 )
@@ -79,8 +91,8 @@ var cmdCredential = nounCommand("credential", []verb{
 
 // cmdGrant implements `s3-orchestrator admin grant <verb>`.
 var cmdGrant = nounCommand("grant", []verb{
-	{"add", "Let a user reach a bucket", grantAdd},
-	{"remove", "Withdraw one user's access to one bucket", grantRemove},
+	{"add", "Let a user reach a bucket, a backend or the instance", grantAdd},
+	{"remove", "Withdraw one user's access to one resource", grantRemove},
 })
 
 // -------------------------------------------------------------------------
@@ -231,14 +243,16 @@ func credentialRevoke(args []string, c *client) int {
 // GRANTS
 // -------------------------------------------------------------------------
 
-// grantAdd lets a user reach a bucket, with the permissions that reach carries.
+// grantAdd lets a user reach a resource, with the permissions that reach
+// carries.
 func grantAdd(args []string, c *client) int {
 	fs := flag.NewFlagSet("grant add", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
 	user := fs.String(flagUser, "", usageUserID)
+	kind := fs.String(flagKind, defaultGrantKind, usageGrantKind)
+	name := fs.String(flagName, "", usageGrantName)
 	bucket := fs.String(flagBucket, "", usageBucketName)
-	perms := fs.String("permissions", "all",
-		"Comma-separated permissions: list-buckets, list, read, write, delete, tags, or all")
+	perms := fs.String("permissions", "all", usageGrantPermissions)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -246,14 +260,19 @@ func grantAdd(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, errUserRequired)
 		return 1
 	}
-	if *bucket == "" {
-		fmt.Fprintln(c.stderr, errBucketRequired)
+	// -bucket is the older spelling of a bucket grant and stays as an alias, so
+	// an operator's existing scripts keep working now that grants reach past
+	// buckets.
+	resourceName := cmp.Or(*name, *bucket)
+	if resourceName == "" && *kind != string(core.ResourceInstance) {
+		fmt.Fprintln(c.stderr, errGrantNameRequired)
 		return 1
 	}
 
 	body, err := json.Marshal(adminapi.CreateGrantRequest{
 		UserID:      *user,
-		Bucket:      *bucket,
+		Kind:        *kind,
+		Name:        resourceName,
 		Permissions: splitPermissions(*perms),
 	})
 	if err != nil {
@@ -276,34 +295,32 @@ func splitPermissions(s string) []string {
 	return out
 }
 
-// grantRemove withdraws one user's access to one bucket.
+// grantRemove withdraws one user's access to one resource.
 func grantRemove(args []string, c *client) int {
-	user, bucket, code := parseGrantFlags("grant remove", args, c)
-	if code != 0 {
-		return code
-	}
-	return c.delete(pathProvGrants+"/"+url.PathEscape(user)+"/"+url.PathEscape(bucket), nil)
-}
-
-// parseGrantFlags reads the user and bucket both grant verbs name, reporting a
-// non-zero exit code when either is missing.
-func parseGrantFlags(name string, args []string, c *client) (user, bucket string, code int) {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs := flag.NewFlagSet("grant remove", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
-	userFlag := fs.String(flagUser, "", usageUserID)
-	bucketFlag := fs.String(flagBucket, "", usageBucketName)
+	user := fs.String(flagUser, "", usageUserID)
+	kind := fs.String(flagKind, defaultGrantKind, usageGrantKind)
+	name := fs.String(flagName, "", usageGrantName)
+	bucket := fs.String(flagBucket, "", usageBucketName)
 	if err := fs.Parse(args); err != nil {
-		return "", "", 1
+		return 1
 	}
-	if *userFlag == "" {
+	if *user == "" {
 		fmt.Fprintln(c.stderr, errUserRequired)
-		return "", "", 1
+		return 1
 	}
-	if *bucketFlag == "" {
-		fmt.Fprintln(c.stderr, errBucketRequired)
-		return "", "", 1
+	resourceName := cmp.Or(*name, *bucket)
+	if resourceName == "" && *kind != string(core.ResourceInstance) {
+		fmt.Fprintln(c.stderr, errGrantNameRequired)
+		return 1
 	}
-	return *userFlag, *bucketFlag, 0
+	// The instance has no name, so the path carries a placeholder segment the
+	// server discards once the kind says which resource is meant.
+	path := pathProvGrants + "/" + url.PathEscape(*user) + "/" +
+		url.PathEscape(cmp.Or(resourceName, string(core.ResourceInstance))) +
+		"?" + flagKind + "=" + url.QueryEscape(*kind)
+	return c.delete(path, nil)
 }
 
 // -------------------------------------------------------------------------
@@ -373,8 +390,8 @@ func renderNewCredential(w io.Writer, body []byte) error {
 }
 
 // renderGrants renders what a user reaches and what each reach carries, as
-// "bucket(read,write)". A user holding nothing renders empty, which is what an
-// identity created but not yet granted anything is.
+// "bucket:photos(read,write)". A user holding nothing renders empty, which is
+// what an identity created but not yet granted anything is.
 //
 // Falls back to the bucket list when the server sent no grants, so a listing
 // read from an older instance still says which buckets are reached.
@@ -384,7 +401,8 @@ func renderGrants(u *adminapi.User) string {
 	}
 	out := make([]string, 0, len(u.Grants))
 	for _, g := range u.Grants {
-		out = append(out, g.Bucket+"("+strings.Join(g.Permissions, ",")+")")
+		resource := core.Resource{Kind: core.ResourceKind(g.Kind), Name: g.Name}
+		out = append(out, resource.String()+"("+strings.Join(g.Permissions, ",")+")")
 	}
 	return strings.Join(out, " ")
 }

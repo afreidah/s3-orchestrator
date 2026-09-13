@@ -349,3 +349,82 @@ func TestUser_BucketsNeedsListBuckets(t *testing.T) {
 		t.Errorf("Buckets() = %v, want only the bucket carrying list-buckets", got)
 	}
 }
+
+// TestUser_CanAdminFallsBackToTheWildcard verifies a grant on one backend
+// answers for that backend only, while the kind's wildcard answers for every
+// backend, including one the deployment has not added yet.
+func TestUser_CanAdminFallsBackToTheWildcard(t *testing.T) {
+	t.Parallel()
+
+	named := NewUser("u1", "ci", nil).WithAdmin(map[core.Resource]core.PermissionSet{
+		{Kind: core.ResourceBackend, Name: "b1"}: core.PermAdminDrain,
+	})
+	wild := NewUser("u2", "ops", nil).WithAdmin(map[core.Resource]core.PermissionSet{
+		{Kind: core.ResourceBackend, Name: core.ResourceWildcard}: core.PermAdminDrain,
+	})
+
+	b1 := core.Resource{Kind: core.ResourceBackend, Name: "b1"}
+	b2 := core.Resource{Kind: core.ResourceBackend, Name: "b2"}
+	for _, tc := range []struct {
+		name string
+		user *User
+		on   core.Resource
+		want bool
+	}{
+		{"named grant on its backend", named, b1, true},
+		{"named grant on another backend", named, b2, false},
+		{"wildcard on a named backend", wild, b1, true},
+		{"wildcard on every other backend", wild, b2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.user.CanAdmin(tc.on, core.PermAdminDrain); got != tc.want {
+				t.Errorf("CanAdmin(%v) = %v, want %v", tc.on, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestUser_CanAdminRefusesWithoutAGrant verifies nothing is granted implicitly,
+// which is what keeps an S3 credential out of the control plane: bucket grants
+// say nothing about draining a backend.
+func TestUser_CanAdminRefusesWithoutAGrant(t *testing.T) {
+	t.Parallel()
+
+	u := NewUser("u1", "ci", map[string]core.PermissionSet{"photos": core.PermAll})
+	for _, on := range []core.Resource{
+		{Kind: core.ResourceInstance},
+		{Kind: core.ResourceBackend, Name: "b1"},
+		{Kind: core.ResourceBackend, Name: core.ResourceWildcard},
+	} {
+		if u.CanAdmin(on, core.PermAdminRead) {
+			t.Errorf("a bucket grant authorized %v", on)
+		}
+	}
+	if (*User)(nil).CanAdmin(core.Resource{Kind: core.ResourceInstance}, core.PermAdminRead) {
+		t.Error("a nil user authorized a control-plane operation")
+	}
+}
+
+// TestUser_CanAdminHoldsPermissionsApart verifies one control-plane permission
+// does not carry the others, which is the reason the vocabulary has more than
+// one bit.
+func TestUser_CanAdminHoldsPermissionsApart(t *testing.T) {
+	t.Parallel()
+
+	instance := core.Resource{Kind: core.ResourceInstance}
+	u := NewUser("u1", "monitor", nil).WithAdmin(map[core.Resource]core.PermissionSet{
+		instance: core.PermAdminRead,
+	})
+
+	if !u.CanAdmin(instance, core.PermAdminRead) {
+		t.Error("the granted permission was refused")
+	}
+	for _, want := range []core.PermissionSet{
+		core.PermAdminLogs, core.PermAdminKeys, core.PermAdminProvision, core.PermAdminRead | core.PermAdminLogs,
+	} {
+		if u.CanAdmin(instance, want) {
+			t.Errorf("a read-only grant authorized %q", want)
+		}
+	}
+}

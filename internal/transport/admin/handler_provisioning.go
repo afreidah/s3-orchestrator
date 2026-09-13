@@ -17,6 +17,7 @@ package admin
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -153,35 +154,50 @@ func (h *Handler) handleDeleteCredential(w http.ResponseWriter, r *http.Request)
 // GRANTS
 // -------------------------------------------------------------------------
 
-// handleCreateGrant lets a user reach a bucket.
+// handleCreateGrant lets a user reach a resource.
 func (h *Handler) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 	var req adminapi.CreateGrantRequest
 	if !httputil.DecodeJSONBody(w, r, &req, provisioningBodyLimit) {
 		return
 	}
-	perms, err := core.ParsePermissions(strings.Join(req.Permissions, ","))
+	resource := core.Resource{Kind: core.ResourceKind(req.Kind), Name: req.Name}
+	if req.Kind == "" {
+		resource.Kind = core.ResourceBucket
+	}
+	perms, err := core.ParsePermissions(resource.Kind, strings.Join(req.Permissions, ","))
 	if err != nil {
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.provision.CreateGrant(r.Context(), req.UserID, req.Bucket, perms); err != nil {
+	if err := h.provision.CreateGrant(r.Context(), req.UserID, resource, perms); err != nil {
 		h.provisioningError(w, r, "create grant failed", err)
 		return
 	}
 	httputil.WriteJSON(w, http.StatusCreated, adminapi.ProvisioningOperationResponse{
-		Status: statusOK, UserID: req.UserID, Bucket: req.Bucket,
+		Status: statusOK, UserID: req.UserID, Resource: resource.String(),
 	})
 }
 
-// handleDeleteGrant withdraws one user's access to one bucket.
+// handleDeleteGrant withdraws one user's access to one resource.
+//
+// The kind comes from the query string rather than a fourth path segment: a
+// bucket grant is the overwhelmingly common case, and the path a caller already
+// writes keeps working.
 func (h *Handler) handleDeleteGrant(w http.ResponseWriter, r *http.Request) {
-	userID, bucket := r.PathValue(paramID), r.PathValue(paramName)
-	if err := h.provision.DeleteGrant(r.Context(), userID, bucket); err != nil {
+	userID := r.PathValue(paramID)
+	resource := core.Resource{Kind: core.ResourceBucket, Name: r.PathValue(paramName)}
+	if kind := r.URL.Query().Get(paramKind); kind != "" {
+		resource.Kind = core.ResourceKind(kind)
+	}
+	if resource.Kind == core.ResourceInstance {
+		resource.Name = ""
+	}
+	if err := h.provision.DeleteGrant(r.Context(), userID, resource); err != nil {
 		h.provisioningError(w, r, "delete grant failed", err)
 		return
 	}
 	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{
-		Status: statusOK, UserID: userID, Bucket: bucket,
+		Status: statusOK, UserID: userID, Resource: resource.String(),
 	})
 }
 
@@ -197,9 +213,11 @@ func (h *Handler) provisioningError(w http.ResponseWriter, r *http.Request, msg 
 	case errors.Is(err, ops.ErrNameRequired),
 		errors.Is(err, ops.ErrUserRequired),
 		errors.Is(err, ops.ErrNoPermissions),
+		errors.Is(err, ops.ErrInvalidResource),
 		errors.Is(err, ops.ErrInvalidCORS):
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ops.ErrBucketNotFound),
+		errors.Is(err, ops.ErrBackendNotFound),
 		errors.Is(err, ops.ErrUserNotFound),
 		errors.Is(err, ops.ErrCredentialNotFound):
 		httputil.WriteJSONError(w, http.StatusNotFound, err.Error())
@@ -238,7 +256,7 @@ func provisioningResponse(v *provisioning.View) adminapi.ProvisioningResponse {
 			ID:      u.ID,
 			Name:    u.Name,
 			Buckets: u.Buckets,
-			Grants:  wireGrants(u.Buckets, u.Grants),
+			Grants:  wireGrants(u),
 			Source:  string(u.Source),
 		})
 	}
@@ -260,14 +278,29 @@ func provisioningResponse(v *provisioning.View) adminapi.ProvisioningResponse {
 	return out
 }
 
-// wireGrants renders a user's grants, ordered by the bucket list so a listing
-// is stable between reads rather than following map iteration.
-func wireGrants(buckets []string, grants map[string]core.PermissionSet) []adminapi.Grant {
-	out := make([]adminapi.Grant, 0, len(buckets))
-	for _, name := range buckets {
+// wireGrants renders everything a user reaches: the buckets first, in the order
+// the bucket list already fixes, then the control-plane resources sorted by
+// their rendered name so a listing is stable between reads rather than
+// following map iteration.
+func wireGrants(u *provisioning.User) []adminapi.Grant {
+	out := make([]adminapi.Grant, 0, len(u.Buckets)+len(u.Admin))
+	for _, name := range u.Buckets {
 		out = append(out, adminapi.Grant{
-			Bucket:      name,
-			Permissions: grants[name].Names(),
+			Kind:        string(core.ResourceBucket),
+			Name:        name,
+			Permissions: u.Grants[name].Names(),
+		})
+	}
+	admin := make([]core.Resource, 0, len(u.Admin))
+	for resource := range u.Admin {
+		admin = append(admin, resource)
+	}
+	slices.SortFunc(admin, func(a, b core.Resource) int { return strings.Compare(a.String(), b.String()) })
+	for _, resource := range admin {
+		out = append(out, adminapi.Grant{
+			Kind:        string(resource.Kind),
+			Name:        resource.Name,
+			Permissions: u.Admin[resource].Names(),
 		})
 	}
 	return out

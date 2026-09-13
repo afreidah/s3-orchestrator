@@ -8,7 +8,7 @@ weight: 22
 ## SigV4 and multi-bucket auth
 
 
-A credential proves a caller is one **user**. That user holds a **grant** on each virtual bucket it may reach. On every request, the orchestrator:
+A credential proves a caller is one **user**. That user holds a **grant** on each resource it may reach - a virtual bucket for object access, a backend or the instance itself for the control plane. On every request, the orchestrator:
 
 1. Extracts the access key from the SigV4 `Authorization` header, presigned URL query parameters, or token from `X-Proxy-Token`.
 2. Resolves the credential to the user behind it.
@@ -40,9 +40,11 @@ Config wins a collision, and the API refuses to modify anything the config file 
 
 The admin API is authenticated by its own `X-Admin-Token` header rather than by SigV4, but the endpoints under `/admin/api/objects` reach the same object service the S3 API does. Those are authorized against the same grants and the same permissions: a credential's token passed in that header reaches object data with exactly what its grant carries, and nothing more.
 
-The rest of the admin API is the control plane - backend drain, key rotation, provisioning, worker triggers. Those carry no permission a bucket grant can express, so they remain the configured admin token's to authorize, and a provisioned credential is refused on them.
+The rest of the admin API is the control plane - backend drain, key rotation, provisioning, worker triggers. Each of those endpoints declares a permission over a **backend** or over the **instance**, and a credential reaches it only by holding a grant carrying that permission. A credential holding only bucket grants is refused on all of them.
 
-The configured token also still reaches object data, which is how a deployment predating this behaviour keeps working. That path is deprecated and logs a warning; see [the admin API's authorization section](admin-api.md#authorization).
+A pass that names no backend runs against every one, so it is authorized as `backend:*`: an operator granted one provider cannot start a conversion that spends egress on the rest of the fleet. See [the admin API's authorization section](admin-api.md#authorization) for the permission each endpoint declares.
+
+The configured token also still reaches everything, which is how a deployment predating this behaviour keeps working. Its use on object data is deprecated and logs a warning.
 
 ## Bucket configuration
 
@@ -91,10 +93,10 @@ s3-orchestrator admin -addr $ADDR -token $TOKEN credential issue -user <user_id>
 
 ### Several credentials on one bucket
 
-Every credential that reaches a bucket has identical access to it. There is no read-only credential and no write-only credential: the two above can both list, upload, overwrite and delete everything under `app2-files`. The names say which service holds each key, not what it may do with it.
+Every credential the config file declares on a bucket has identical access to it: the two above can both list, upload, overwrite and delete everything under `app2-files`. The config file has no syntax for narrowing that, so a read-only client is provisioned through the store instead - `grant add -permissions list-buckets,list,read` - and reaches the same bucket with less.
 
-What separate credentials do buy is worth having anyway. Each rotates and is revoked on its own, so a leaked key is withdrawn without interrupting the other services sharing the bucket. Each resolves to its own user, so the audit trail attributes an action to the service that took it rather than to a key shared by several. And revoking one leaves its siblings working, which is what makes zero-downtime rotation possible.
+What separate credentials buy on one bucket is worth having either way. Each rotates and is revoked on its own, so a leaked key is withdrawn without interrupting the other services sharing the bucket. Each resolves to its own user, so the audit trail attributes an action to the service that took it rather than to a key shared by several. And revoking one leaves its siblings working, which is what makes zero-downtime rotation possible.
 
-Scoping access below the whole bucket - read-only grants, prefix-scoped credentials, and a policy model to express them - is tracked in [#356](https://github.com/afreidah/s3-orchestrator/issues/356).
+Scoping access below the whole bucket - prefix-scoped credentials and a policy model to express them - is tracked in [#356](https://github.com/afreidah/s3-orchestrator/issues/356).
 
 SigV4 credentials also support presigned URLs automatically. Clients can generate time-limited presigned URLs using any AWS SDK presign client — no additional configuration is needed on the orchestrator side.
