@@ -1,5 +1,6 @@
 ---
 description: "Structured log/slog conventions: the shared key vocabulary every call site uses, and the sloglint rules that keep it enforced in CI."
+title: "Structured Logging Conventions"
 ---
 
 # Structured Logging Conventions

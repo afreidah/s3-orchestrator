@@ -618,6 +618,10 @@ web-tools: ## Install Hugo and gomarkdoc for local website development
 # package list. The page filename is the package's basename; nested
 # packages produce non-colliding bases (e.g. transport/admin -> admin.md,
 # cli/adminctl -> adminctl.md).
+#
+# Each page carries the package synopsis as its description. gomarkdoc output
+# yields no summary the theme can fall back on, so without it every generated
+# page ships an empty meta description and search engines see one duplicate.
 web-godoc: ## Generate Go API reference markdown for the website
 	@mkdir -p web/content/godoc
 	@go list -f '{{.ImportPath}}' ./internal/... \
@@ -626,8 +630,9 @@ web-godoc: ## Generate Go API reference markdown for the website
 		| sort \
 		| while read pkg; do \
 			name=$$(basename $$pkg); \
+			doc=$$(go list -f '{{.Doc}}' ./internal/$$pkg | sed 's/"/\\"/g'); \
 			echo "  godoc: internal/$$pkg -> $$name.md"; \
-			printf -- '---\ntitle: "%s"\n---\n\n' "$$name" > web/content/godoc/$$name.md; \
+			printf -- '---\ntitle: "%s"\ndescription: "%s"\n---\n\n' "$$name" "$$doc" > web/content/godoc/$$name.md; \
 			gomarkdoc ./internal/$$pkg >> web/content/godoc/$$name.md; \
 			sed -i '/^# '"$$name"'$$/d' web/content/godoc/$$name.md; \
 		done
