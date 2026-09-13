@@ -13,6 +13,9 @@ packaging/changelog.gz
 loadtest/s3-loadtest
 loadtest/loadtest
 perf-results/
+
+# Keypair the local demo mints for the perf suite. Minted per run, never shared.
+deploy/nomad/local/.perf-credentials.env
 *.db
 *.db-shm
 *.db-wal

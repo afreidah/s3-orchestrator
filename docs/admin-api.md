@@ -32,9 +32,30 @@ curl -H "X-Admin-Token: $CREDENTIAL_TOKEN" \
   http://localhost:9000/admin/api/objects/photos/holiday.jpg
 ```
 
-Two limits follow from grants being per bucket. A prefix naming no single bucket -- the empty prefix, or a partial name like `pho` -- cannot be authorized against one grant and is refused. And a provisioned credential reaches only the object endpoints: the control plane carries no permissions a bucket grant can express, so a fleet operation like draining a backend is refused with `403`.
+A prefix naming no single bucket -- the empty prefix, or a partial name like `pho` -- cannot be authorized against one grant and is refused.
 
-The configured `ui.admin_token` still reaches every endpoint, which is what an existing deployment relies on. That is deprecated: using it to reach object data logs a warning naming the endpoint, and a future release removes it in favour of one credential type across both surfaces. Issue a provisioned credential for anything touching object data.
+### The control plane
+
+Every other endpoint declares a permission over a **backend** or over the **instance**, and a caller reaches it by holding a grant on that resource carrying that permission. A credential holding only bucket grants is refused on all of them.
+
+| Permission | What it reaches |
+| --- | --- |
+| `admin-read` | Status, workers, reload outcome, replication and over-replication counts, cleanup depths, cache utilization, the current log level, drain progress |
+| `admin-logs` | The in-memory log buffer and flight-recorder trace snapshots |
+| `admin-maintain` | `replicate`, `rebalance`, `lifecycle`, `scrub`, `reconcile`, `backfill-checksums`, over-replication cleanup, usage flush and reconcile, cleanup DLQ requeue |
+| `admin-convert` | `encrypt-existing`, `decrypt-existing`, `compress-existing`, `decompress-existing` |
+| `admin-keys` | Encryption key rotation |
+| `admin-cache` | Cache flush and per-key or per-prefix invalidation |
+| `admin-drain` | Starting and cancelling a backend drain |
+| `admin-decommission` | Removing a backend, with or without a purge |
+| `admin-config` | Setting the runtime log level |
+| `admin-provision` | Reading and writing buckets, users, credentials and grants |
+
+The permissions over a backend are the ones that name one: drain, decommission, and the maintenance and conversion passes. A pass naming no backend runs against every one, so it is authorized as `backend:*` -- an operator granted one provider cannot start a conversion that spends egress on the rest of the fleet. Grant `backend:*` to an operator who runs fleet-wide passes.
+
+`admin-provision` is deliberately its own permission rather than part of `admin-config`: a grant carrying it can mint a grant carrying anything.
+
+The configured `ui.admin_token` still reaches every endpoint, which is what an existing deployment relies on. That is deprecated: using it to reach object data logs a warning naming the endpoint, and a future release removes it in favour of one credential type across both surfaces. Issue a provisioned credential instead.
 
 ## Streaming progress
 

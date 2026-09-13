@@ -813,7 +813,7 @@ paths:
                     description: Missing or invalid admin token
     /admin/api/provisioning/grants:
         post:
-            summary: Let a user reach a bucket
+            summary: Let a user reach a resource
             operationId: postProvisioningGrants
             requestBody:
                 required: true
@@ -832,7 +832,7 @@ paths:
                     description: Missing or invalid admin token
     /admin/api/provisioning/grants/{id}/{name}:
         delete:
-            summary: Withdraw one user's access to one bucket
+            summary: Withdraw one user's access to one resource
             operationId: deleteProvisioningGrantsIdName
             parameters:
                 - name: id
@@ -843,8 +843,14 @@ paths:
                     type: string
                 - name: name
                   in: path
-                  description: Virtual bucket name
+                  description: Name of the granted resource, or * for every one of its kind
                   required: true
+                  schema:
+                    type: string
+                - name: kind
+                  in: query
+                  description: 'Kind of the granted resource: bucket, backend or instance; defaults to bucket'
+                  required: false
                   schema:
                     type: string
             responses:
@@ -1429,7 +1435,9 @@ components:
             type: object
         CreateGrantRequest:
             properties:
-                bucket:
+                kind:
+                    type: string
+                name:
                     type: string
                 permissions:
                     items:
@@ -1439,7 +1447,6 @@ components:
                     type: string
             required:
                 - user_id
-                - bucket
             type: object
         CreateUserRequest:
             properties:
@@ -1591,14 +1598,16 @@ components:
             type: object
         Grant:
             properties:
-                bucket:
+                kind:
+                    type: string
+                name:
                     type: string
                 permissions:
                     items:
                         type: string
                     type: array
             required:
-                - bucket
+                - kind
                 - permissions
             type: object
         IntegrityStatus:
@@ -1844,6 +1853,8 @@ components:
         ProvisioningOperationResponse:
             properties:
                 bucket:
+                    type: string
+                resource:
                     type: string
                 status:
                     type: string

@@ -58,11 +58,16 @@ type Bucket struct {
 // reaching the single bucket that declared it. Its id is derived from the access
 // key, which makes it stable across restarts - an audit record naming it means
 // the same thing tomorrow.
+// Admin holds the control-plane grants, keyed on the resource they name rather
+// than flattened the way Grants is: a backend wildcard cannot be expanded at
+// publish time, because the backends a request may name come from config rather
+// than from this view.
 type User struct {
 	ID      string
 	Name    string
 	Buckets []string
 	Grants  map[string]core.PermissionSet
+	Admin   map[core.Resource]core.PermissionSet
 	Source  Source
 }
 
@@ -181,6 +186,7 @@ func mergeConfigUsers(v *View, cfgBuckets []config.BucketConfig) {
 func mergeStoredUsers(v *View, s *Snapshot, declared map[string]struct{}) {
 	reach, notices := grantsByUser(s.Grants, declared)
 	v.Notices = append(v.Notices, notices...)
+	admin := adminGrantsByUser(s.Grants)
 
 	known := make(map[string]struct{}, len(s.Users))
 	for i := range s.Users {
@@ -192,6 +198,7 @@ func mergeStoredUsers(v *View, s *Snapshot, declared map[string]struct{}) {
 			Name:    u.Name,
 			Buckets: sortedKeys(grants),
 			Grants:  grants,
+			Admin:   admin[u.ID],
 			Source:  SourceStore,
 		})
 	}
@@ -226,15 +233,49 @@ func mergeStoredUsers(v *View, s *Snapshot, declared map[string]struct{}) {
 // resolving a duplicate by dropping permissions an operator wrote is the wrong
 // direction to fail if it ever can.
 //
-// Only bucket grants are indexed here. A grant on a backend or on the fleet is
-// storable and carries no meaning yet: what the control plane grants is its own
-// action set, over a resource this lookup has no question to answer about.
+// A bucket wildcard is expanded here against every declared bucket rather than
+// matched at request time, so the hot path stays one map read. Creating a bucket
+// republishes, which is what keeps the expansion from going stale.
+//
+// A named grant replaces the wildcard for that bucket rather than adding to it,
+// so an operator can hold broad access and still carve one bucket down to
+// read-only. Two grants naming the same bucket union, since neither is more
+// specific than the other.
+//
+// Only bucket grants are indexed here. Backend and instance grants authorize the
+// control plane, which this lookup has no question to answer about.
 func grantsByUser(grants []core.Grant, declared map[string]struct{}) (map[string]map[string]core.PermissionSet, []Notice) {
 	reach := make(map[string]map[string]core.PermissionSet)
-	var notices []Notice
+	expandWildcardGrants(grants, declared, reach)
+	notices := applyNamedGrants(grants, declared, reach)
+	return reach, notices
+}
+
+// expandWildcardGrants writes each bucket wildcard across every declared
+// bucket, which is the pass the named grants then narrow.
+func expandWildcardGrants(grants []core.Grant, declared map[string]struct{}, reach map[string]map[string]core.PermissionSet) {
 	for i := range grants {
 		g := &grants[i]
-		if g.Resource.Kind != core.ResourceBucket {
+		if g.Resource.Kind != core.ResourceBucket || !g.Resource.IsWildcard() {
+			continue
+		}
+		if reach[g.UserID] == nil {
+			reach[g.UserID] = make(map[string]core.PermissionSet)
+		}
+		for bucket := range declared {
+			reach[g.UserID][bucket] |= g.Permissions
+		}
+	}
+}
+
+// applyNamedGrants lays each named bucket grant over the expanded wildcard,
+// reporting the ones naming a bucket neither source declares.
+func applyNamedGrants(grants []core.Grant, declared map[string]struct{}, reach map[string]map[string]core.PermissionSet) []Notice {
+	var notices []Notice
+	named := make(map[string]map[string]bool)
+	for i := range grants {
+		g := &grants[i]
+		if g.Resource.Kind != core.ResourceBucket || g.Resource.IsWildcard() {
 			continue
 		}
 		if _, ok := declared[g.Resource.Name]; !ok {
@@ -248,9 +289,44 @@ func grantsByUser(grants []core.Grant, declared map[string]struct{}) (map[string
 		if reach[g.UserID] == nil {
 			reach[g.UserID] = make(map[string]core.PermissionSet)
 		}
+		if named[g.UserID] == nil {
+			named[g.UserID] = make(map[string]bool)
+		}
+		// The first named grant displaces whatever the wildcard put here; a
+		// second one unions with the first.
+		if !named[g.UserID][g.Resource.Name] {
+			reach[g.UserID][g.Resource.Name] = 0
+			named[g.UserID][g.Resource.Name] = true
+		}
 		reach[g.UserID][g.Resource.Name] |= g.Permissions
 	}
-	return reach, notices
+	return notices
+}
+
+// adminGrantsByUser indexes each user's control-plane grants by the resource
+// they name.
+//
+// Kept whole rather than expanded the way bucket wildcards are: the backends a
+// request may name come from config, which this view does not hold, so the
+// wildcard is resolved when the request is authorized instead.
+//
+// Nothing is reported for a grant naming a backend no deployment serves. The
+// grant is refused when it is written, and a backend leaving config later is the
+// same case as a bucket leaving it - the grant outlives it and authorizes
+// nothing.
+func adminGrantsByUser(grants []core.Grant) map[string]map[core.Resource]core.PermissionSet {
+	admin := make(map[string]map[core.Resource]core.PermissionSet)
+	for i := range grants {
+		g := &grants[i]
+		if g.Resource.Kind == core.ResourceBucket {
+			continue
+		}
+		if admin[g.UserID] == nil {
+			admin[g.UserID] = make(map[core.Resource]core.PermissionSet)
+		}
+		admin[g.UserID][g.Resource] |= g.Permissions
+	}
+	return admin
 }
 
 // sortedKeys lists the buckets a grant map names, in order, which is what a

@@ -496,7 +496,7 @@ func TestProvisioning_GrantsOnEveryResourceKind(t *testing.T) {
 	want := []core.Resource{
 		core.BucketResource("declared-in-config"),
 		{Kind: core.ResourceBackend, Name: "minio-a"},
-		{Kind: core.ResourceFleet},
+		{Kind: core.ResourceInstance},
 	}
 	for _, r := range want {
 		if err := s.CreateGrant(ctx, &core.Grant{UserID: "u1", Resource: r}); err != nil {
@@ -575,5 +575,93 @@ func TestProvisioning_DeleteGrantIsScopedToTheKind(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Resource != backend {
 		t.Errorf("grants = %+v, want only the backend grant", got)
+	}
+}
+
+// TestProvisioning_AdminGrantRoundTrips asserts a control-plane grant survives
+// the shared column with exactly the bits it was written with, and that an
+// instance grant recording nothing comes back as nothing rather than as the
+// full data-plane set an empty bucket grant means.
+func TestProvisioning_AdminGrantRoundTrips(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedUser(t, s, "u1", "ci")
+
+	instance := core.Resource{Kind: core.ResourceInstance}
+	if err := s.CreateGrant(ctx, &core.Grant{
+		UserID:      "u1",
+		Resource:    instance,
+		Permissions: core.PermAdminRead | core.PermAdminDrain,
+	}); err != nil {
+		t.Fatalf("CreateGrant: %v", err)
+	}
+
+	got, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatalf("ListGrants: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("grants = %d, want 1", len(got))
+	}
+	if got[0].Permissions != core.PermAdminRead|core.PermAdminDrain {
+		t.Errorf("permissions = %q, want admin-read,admin-drain", got[0].Permissions)
+	}
+	if got[0].Resource != instance {
+		t.Errorf("resource = %v, want %v", got[0].Resource, instance)
+	}
+}
+
+// TestProvisioning_EmptyAdminGrantCarriesNothing pins the direction an absent
+// value defaults in. An empty bucket grant means everything, because rows
+// predate permissions; an empty control-plane grant must not.
+func TestProvisioning_EmptyAdminGrantCarriesNothing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedUser(t, s, "u1", "ci")
+
+	if err := s.CreateGrant(ctx, &core.Grant{
+		UserID:   "u1",
+		Resource: core.Resource{Kind: core.ResourceBackend, Name: core.ResourceWildcard},
+	}); err != nil {
+		t.Fatalf("CreateGrant: %v", err)
+	}
+
+	got, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatalf("ListGrants: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("grants = %d, want 1", len(got))
+	}
+	if got[0].Permissions != 0 {
+		t.Errorf("permissions = %q, want none on a backend grant recording none", got[0].Permissions)
+	}
+}
+
+// TestProvisioning_BucketGrantIsUnaffected pins the other side: a bucket grant
+// still parses in the data-plane vocabulary, including the empty-means-all rule
+// that every grant written before permissions existed relies on.
+func TestProvisioning_BucketGrantIsUnaffected(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedUser(t, s, "u1", "ci")
+
+	if err := s.CreateGrant(ctx, &core.Grant{
+		UserID:      "u1",
+		Resource:    core.BucketResource("declared-in-config"),
+		Permissions: core.PermRead | core.PermList,
+	}); err != nil {
+		t.Fatalf("CreateGrant: %v", err)
+	}
+
+	got, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatalf("ListGrants: %v", err)
+	}
+	if got[0].Permissions != core.PermRead|core.PermList {
+		t.Errorf("permissions = %q, want read,list", got[0].Permissions)
 	}
 }

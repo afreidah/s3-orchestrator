@@ -289,7 +289,7 @@ s3-orchestrator admin trace-snapshot -o trace.bin
 s3-orchestrator admin bucket list
 s3-orchestrator admin user create -name nightly-backup
 s3-orchestrator admin credential issue -user user-abc123
-s3-orchestrator admin grant add -user user-abc123 -bucket backups
+s3-orchestrator admin grant add -user user-abc123 -name backups
 ```
 
 The admin API requires `ui.admin_token` (or `ui.admin_key` as fallback) to be set in the configuration. All requests are authenticated via the `X-Admin-Token` header.
@@ -317,15 +317,35 @@ These four commands provision what the config file otherwise declares, storing i
 | `bucket` | `list`, `create -name <name> [-max-multipart N]`, `delete -name <name>` |
 | `user` | `list`, `create -name <name>`, `delete -id <id>` |
 | `credential` | `list`, `issue -user <id> [-label <text>]`, `revoke -access-key <id>` |
-| `grant` | `add -user <id> -bucket <name>`, `remove -user <id> -bucket <name>` |
+| `grant` | `add -user <id> [-kind <kind>] -name <name> [-permissions <list>]`, `remove -user <id> [-kind <kind>] -name <name>` |
 
 Onboarding a client is three calls. The user comes first, because a keypair belongs to an identity rather than to a bucket:
 
 ```bash
 s3-orchestrator admin user create -name nightly-backup
 s3-orchestrator admin credential issue -user user-abc123 -label "backup job"
-s3-orchestrator admin grant add -user user-abc123 -bucket backups
+s3-orchestrator admin grant add -user user-abc123 -name backups -permissions list,read,write
 ```
+
+##### What a grant names
+
+`-kind` is one of `bucket` (the default), `backend`, or `instance`. `-name` is the one resource of that kind, or `*` for every one of them including those added later; the instance takes no name. `-bucket` remains an alias for `-name` on a bucket grant.
+
+`-permissions` is a comma-separated list, defaulting to `all`. A bucket grant takes `list-buckets`, `list`, `read`, `write`, `delete` and `tags`, or `all` for every one. A backend or instance grant takes the `admin-` permissions -- `admin-read`, `admin-logs`, `admin-maintain`, `admin-convert`, `admin-keys`, `admin-cache`, `admin-drain`, `admin-decommission`, `admin-config` and `admin-provision` -- or `admin-all`. Mixing the two in one grant is refused: a bucket cannot be drained, and the instance holds no objects.
+
+```bash
+# A monitoring credential that reads status and nothing else
+s3-orchestrator admin grant add -user user-mon -kind instance -permissions admin-read
+
+# An operator who may drain and decommission any backend, present or future
+s3-orchestrator admin grant add -user user-ops -kind backend -name '*' -permissions admin-drain,admin-decommission
+
+# Broad read access that reaches buckets created later, narrowed on one
+s3-orchestrator admin grant add -user user-ci -name '*' -permissions list-buckets,list,read
+s3-orchestrator admin grant add -user user-ci -name secrets -permissions list-buckets
+```
+
+A named grant replaces the wildcard for the bucket it names rather than adding to it, which is what lets broad access be carved down on one bucket. A bucket wildcard is expanded against the buckets a deployment declares when the registry is published, so creating a bucket extends it.
 
 `credential issue` prints the secret once, on stdout and nowhere else, so it can be captured into a secret store without passing through a log line. Nothing reads it back afterwards: a caller that loses it issues a replacement and revokes the old one. Several keypairs may name one user, which is what lets one be rotated while the rest keep working.
 

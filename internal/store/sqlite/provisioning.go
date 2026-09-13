@@ -264,12 +264,12 @@ func scanGrant(rows *sql.Rows) (core.Grant, error) {
 		return core.Grant{}, fmt.Errorf("scan grant: %w", err)
 	}
 	g.Resource.Kind = core.ResourceKind(kind)
-	var err error
 	// A value nothing recognises fails the read rather than resolving to some
 	// set. Falling back to full access would grant what nobody wrote down, and
 	// to none would refuse a caller the operator authorized.
-	if g.Permissions, err = core.ParsePermissions(perms); err != nil {
-		return core.Grant{}, fmt.Errorf("grant %s -> %s %s: %w", g.UserID, g.Resource.Kind, g.Resource.Name, err)
+	var err error
+	if g.Permissions, err = core.ParsePermissions(g.Resource.Kind, perms); err != nil {
+		return core.Grant{}, fmt.Errorf("grant %s -> %s: %w", g.UserID, g.Resource, err)
 	}
 	if g.CreatedAt, err = parseTime(created); err != nil {
 		return core.Grant{}, fmt.Errorf("parse grant created_at: %w", err)

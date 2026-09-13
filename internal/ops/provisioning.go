@@ -302,10 +302,13 @@ func (p *Provisioning) DeleteCredential(ctx context.Context, accessKeyID string)
 // GRANTS
 // -------------------------------------------------------------------------
 
-// CreateGrant lets a user reach a bucket. The bucket may come from either
-// source: granting a stored user access to a config-declared bucket is the
-// normal way a deployment onboards a client onto a bucket it already runs.
-func (p *Provisioning) CreateGrant(ctx context.Context, userID, bucketName string, perms core.PermissionSet) error {
+// CreateGrant gives a user access to one resource: a bucket, a backend, or the
+// instance itself.
+//
+// A bucket may come from either source, since granting a stored user access to
+// a config-declared bucket is the normal way a deployment onboards a client
+// onto a bucket it already runs.
+func (p *Provisioning) CreateGrant(ctx context.Context, userID string, resource core.Resource, perms core.PermissionSet) error {
 	view, err := p.View(ctx)
 	if err != nil {
 		return err
@@ -317,28 +320,31 @@ func (p *Provisioning) CreateGrant(ctx context.Context, userID, bucketName strin
 	if u.Source == provisioning.SourceConfig {
 		return fmt.Errorf("%w: user %q", ErrConfigDeclared, userID)
 	}
-	if _, ok := findBucket(view.Buckets, bucketName); !ok {
-		return fmt.Errorf("%w: %q", ErrBucketNotFound, bucketName)
+	if err := p.checkResource(&view, resource); err != nil {
+		return err
 	}
-	// A grant carrying nothing reaches the bucket and is refused on every
+	// A grant carrying nothing reaches the resource and is refused on every
 	// operation, which is a grant that does nothing but look like one.
 	if perms == 0 {
 		return ErrNoPermissions
 	}
-	grant := core.Grant{UserID: userID, Resource: core.BucketResource(bucketName), Permissions: perms}
+	if err := core.ValidatePermissions(resource.Kind, perms); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidResource, err)
+	}
+	grant := core.Grant{UserID: userID, Resource: resource, Permissions: perms}
 	if err := p.store.CreateGrant(ctx, &grant); err != nil {
 		return err
 	}
 	audit.Log(ctx, "provisioning.GrantCreated",
 		slog.String("user", userID),
-		slog.String("bucket", bucketName),
+		slog.String("resource", resource.String()),
 		slog.String("permissions", perms.String()))
 	return p.republish(ctx)
 }
 
-// DeleteGrant withdraws one user's access to one bucket, leaving its other
+// DeleteGrant withdraws one user's access to one resource, leaving its other
 // grants and every other user's alone.
-func (p *Provisioning) DeleteGrant(ctx context.Context, userID, bucketName string) error {
+func (p *Provisioning) DeleteGrant(ctx context.Context, userID string, resource core.Resource) error {
 	view, err := p.View(ctx)
 	if err != nil {
 		return err
@@ -350,12 +356,48 @@ func (p *Provisioning) DeleteGrant(ctx context.Context, userID, bucketName strin
 	if u.Source == provisioning.SourceConfig {
 		return fmt.Errorf("%w: user %q", ErrConfigDeclared, userID)
 	}
-	if err := p.store.DeleteGrant(ctx, userID, core.BucketResource(bucketName)); err != nil {
+	if err := p.store.DeleteGrant(ctx, userID, resource); err != nil {
 		return err
 	}
 	audit.Log(ctx, "provisioning.GrantDeleted",
-		slog.String("user", userID), slog.String("bucket", bucketName))
+		slog.String("user", userID), slog.String("resource", resource.String()))
 	return p.republish(ctx)
+}
+
+// checkResource refuses a grant over something this deployment does not have.
+//
+// A wildcard names things that do not exist yet, which is the point of it, so
+// only a named resource is looked up. The instance carries no name because
+// there is one of it.
+func (p *Provisioning) checkResource(view *provisioning.View, r core.Resource) error {
+	switch r.Kind {
+	case core.ResourceInstance:
+		if r.Name != "" {
+			return fmt.Errorf("%w: %s takes no name", ErrInvalidResource, r.Kind)
+		}
+		return nil
+	case core.ResourceBucket:
+		if r.IsWildcard() {
+			return nil
+		}
+		if _, ok := findBucket(view.Buckets, r.Name); !ok {
+			return fmt.Errorf("%w: %q", ErrBucketNotFound, r.Name)
+		}
+		return nil
+	case core.ResourceBackend:
+		if r.IsWildcard() {
+			return nil
+		}
+		backends := p.config.Load().Backends
+		for i := range backends {
+			if backends[i].Name == r.Name {
+				return nil
+			}
+		}
+		return fmt.Errorf("%w: %q", ErrBackendNotFound, r.Name)
+	default:
+		return fmt.Errorf("%w: unknown kind %q", ErrInvalidResource, r.Kind)
+	}
 }
 
 // -------------------------------------------------------------------------

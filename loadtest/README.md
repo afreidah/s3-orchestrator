@@ -38,6 +38,29 @@ All vegeta targets accept these variables:
 | `LOADTEST_MPU_PART_COUNT` | `5` | Parts per multipart upload |
 | `LOADTEST_MPU_PART_SIZE` | `5242880` | Per-part size in bytes (5 MiB minimum) |
 
+## Credentials
+
+`make perf` signs as a provisioned identity rather than the credential the
+config file declares. `make nomad-demo` creates a `perf` user, mints it a
+keypair, grants it `list-buckets,list,read,write,delete` on `photos`, and writes
+the keypair to `deploy/nomad/local/.perf-credentials.env`; `run-suite.sh` reads
+it from there and passes it to every scenario.
+
+This is deliberate. A config-declared credential carries full access, because
+the config file has no syntax for narrowing it, so a suite run as one would
+measure the request path with the permission check trivially satisfied. Signing
+as a stored user puts a real grant lookup on the hot path of every request the
+suite issues.
+
+The grant carries no `tags` permission, since no scenario in the suite tags an
+object. A tagging scenario added later needs the grant widened to match, which
+is the point: the grant says what the workload actually does.
+
+Set `PERF_CREDENTIALS` to read the keypair from elsewhere, or
+`PERF_ACCESS_KEY`/`PERF_SECRET_KEY` to override it directly. With none of them
+set the suite falls back to `photoskey`/`photossecret`, so a run against a
+deployment that has provisioned nothing still works.
+
 ### List performance
 
 `loadtest-listobjects` benchmarks `ListObjectsV2` latency against a

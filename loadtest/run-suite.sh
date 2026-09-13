@@ -54,6 +54,24 @@ case "$PROFILE" in
     ;;
 esac
 
+# Auto-resolve the keypair the scenarios sign with. The demo writes one when it
+# provisions its perf identity, so a suite run against it goes through a stored
+# user and a stored grant rather than the config credential, which carries full
+# access and would skip the permission check the request path is being measured
+# with.
+#
+# Falls back to the config credential so a run against a deployment that has not
+# provisioned one still works.
+# An explicit PERF_ACCESS_KEY wins over the file, matching how the admin token
+# below resolves: what the caller states beats what was found lying around.
+PERF_CREDENTIALS="${PERF_CREDENTIALS:-deploy/nomad/local/.perf-credentials.env}"
+if [[ -z "${PERF_ACCESS_KEY:-}" && -f "$PERF_CREDENTIALS" ]]; then
+  # shellcheck source=/dev/null
+  source "$PERF_CREDENTIALS"
+fi
+ACCESS_KEY="${PERF_ACCESS_KEY:-photoskey}"
+SECRET_KEY="${PERF_SECRET_KEY:-photossecret}"
+
 # Auto-resolve admin token: env var wins, else look for a local config.
 if [[ -z "${S3O_ADMIN_TOKEN:-}" ]]; then
   for cfg in config.yaml /etc/s3-orchestrator/config.yaml; do
@@ -68,13 +86,17 @@ if [[ -z "${S3O_ADMIN_TOKEN:-}" ]]; then
 fi
 
 mkdir -p "$RESULTS_DIR"
-echo "profile=$PROFILE results=$RESULTS_DIR endpoint=$ENDPOINT bucket=$BUCKET"
+echo "profile=$PROFILE results=$RESULTS_DIR endpoint=$ENDPOINT bucket=$BUCKET access_key=$ACCESS_KEY"
 echo
 
 # Run each scenario, recording PASS/FAIL by exit code. A non-zero exit
 # from the binary marks the scenario red and continues to the next so
 # operators see the full failure surface in one run.
 declare -A STATUS
+
+# The credential flags every Go scenario signs with, spelled once so a scenario
+# cannot be added that quietly falls back to the binary's built-in default.
+CREDS=(-access-key "$ACCESS_KEY" -secret-key "$SECRET_KEY")
 
 run_scenario() {
   local name="$1"; shift
@@ -88,21 +110,21 @@ run_scenario() {
 }
 
 run_scenario "put-sweep" "$BINARY" \
-  -endpoint "$ENDPOINT" -bucket "$BUCKET" \
+  -endpoint "$ENDPOINT" -bucket "$BUCKET" "${CREDS[@]}" \
   -op put -rate "$RATE" -duration "$DURATION" \
   -sizes "$SIZES" -max-error-rate "$MAX_ERROR_RATE" \
   -compressible "$COMPRESSIBLE" \
   -output-json "$RESULTS_DIR/put-sweep.json"
 
 run_scenario "get-warm" "$BINARY" \
-  -endpoint "$ENDPOINT" -bucket "$BUCKET" \
+  -endpoint "$ENDPOINT" -bucket "$BUCKET" "${CREDS[@]}" \
   -op get -rate "$RATE" -duration "$DURATION" \
   -sizes "$SIZES" -seed "$SEED" -max-error-rate "$MAX_ERROR_RATE" \
   -output-json "$RESULTS_DIR/get-warm.json"
 
 if [[ -n "${S3O_ADMIN_TOKEN:-}" ]]; then
   run_scenario "get-cold" "$BINARY" \
-    -endpoint "$ENDPOINT" -bucket "$BUCKET" \
+    -endpoint "$ENDPOINT" -bucket "$BUCKET" "${CREDS[@]}" \
     -op get -rate "$RATE" -duration "$DURATION" \
     -sizes "$SIZES" -seed "$COLD_SEED" -cold \
     -cache-flush-before -admin-token "$S3O_ADMIN_TOKEN" \
@@ -116,7 +138,7 @@ else
 fi
 
 run_scenario "mixed-ramp" "$BINARY" \
-  -endpoint "$ENDPOINT" -bucket "$BUCKET" \
+  -endpoint "$ENDPOINT" -bucket "$BUCKET" "${CREDS[@]}" \
   -op mixed -rate "$RAMP_FROM" -ramp-to "$RAMP_TO" -ramp-step "$RAMP_STEP" \
   -duration "$DURATION" -seed "$SEED" -compressible "$COMPRESSIBLE" \
   -output-json "$RESULTS_DIR/mixed-ramp.json"
@@ -126,28 +148,28 @@ run_scenario "mixed-ramp" "$BINARY" \
 # arriving for a key whose previous copies are still being placed. Every other
 # scenario writes unique keys and never reaches any of it.
 run_scenario "overwrite" "$BINARY" \
-  -endpoint "$ENDPOINT" -bucket "$BUCKET" \
+  -endpoint "$ENDPOINT" -bucket "$BUCKET" "${CREDS[@]}" \
   -op overwrite -rate "$RATE" -duration "$DURATION" \
   -sizes "$SIZES" -overwrite-keys "$OVERWRITE_KEYS" \
   -compressible "$COMPRESSIBLE" -max-error-rate "$MAX_ERROR_RATE" \
   -output-json "$RESULTS_DIR/overwrite.json"
 
 run_scenario "list" "$BINARY" \
-  -endpoint "$ENDPOINT" -bucket "$BUCKET" \
+  -endpoint "$ENDPOINT" -bucket "$BUCKET" "${CREDS[@]}" \
   -op listobjects -rate "$RATE" -duration "$DURATION" \
   -seed "$SEED" -max-error-rate "$MAX_ERROR_RATE" \
   -output-json "$RESULTS_DIR/list.json"
 
 if command -v k6 >/dev/null; then
-  # Pin the demo creds explicitly: multipart.js reads AWS_* from __ENV, so
-  # without these it would inherit whatever AWS_ACCESS_KEY_ID/SECRET are exported
-  # in the caller's shell and sign with the wrong key (-> 403). The Go scenarios
-  # don't hit this because they default creds via flags, not the environment.
+  # Pin the creds explicitly: multipart.js reads AWS_* from __ENV, so without
+  # these it would inherit whatever AWS_ACCESS_KEY_ID/SECRET are exported in the
+  # caller's shell and sign with the wrong key (-> 403). The Go scenarios don't
+  # hit this because they take creds as flags, not from the environment.
   # k6 --env wins over inherited OS env, so these override any ambient AWS_*.
   run_scenario "multipart" k6 run loadtest/k6/multipart.js \
     --env "S3_ENDPOINT=$ENDPOINT" --env "S3_BUCKET=$BUCKET" \
-    --env "AWS_ACCESS_KEY_ID=photoskey" \
-    --env "AWS_SECRET_ACCESS_KEY=photossecret" \
+    --env "AWS_ACCESS_KEY_ID=$ACCESS_KEY" \
+    --env "AWS_SECRET_ACCESS_KEY=$SECRET_KEY" \
     --env "AWS_REGION=us-east-1" \
     --env "CONCURRENCY=$MPU_CONCURRENCY" \
     --env "PART_COUNT=$MPU_PART_COUNT" \

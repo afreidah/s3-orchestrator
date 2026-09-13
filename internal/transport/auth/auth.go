@@ -103,6 +103,7 @@ func NewBucketRegistry(v *provisioning.View) (*BucketRegistry, error) {
 			Name:       u.Name,
 			FromConfig: u.Source == provisioning.SourceConfig,
 			grants:     maps.Clone(u.Grants),
+			admin:      maps.Clone(u.Admin),
 		}
 	}
 

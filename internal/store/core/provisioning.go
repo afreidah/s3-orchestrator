@@ -61,22 +61,30 @@ type Credential struct {
 	LastUsedAt  *time.Time
 }
 
-// ResourceKind says what a grant names. The control plane has no bucket, so an
-// operation on the fleet or on one backend needs a resource that is not one.
+// ResourceKind says what a grant names. The control plane has no bucket, so
+// draining a backend or provisioning a user needs a resource that is not one.
 //
-// ResourceFleet carries no name: there is one fleet, and the name is part of the
-// key rather than nullable, so it is stored as the empty string.
+// ResourceInstance carries no name: there is one instance, so the name is stored
+// empty.
 type ResourceKind string
 
 // The three kinds a grant may name.
 const (
-	ResourceBucket  ResourceKind = "bucket"
-	ResourceBackend ResourceKind = "backend"
-	ResourceFleet   ResourceKind = "fleet"
+	ResourceBucket   ResourceKind = "bucket"
+	ResourceBackend  ResourceKind = "backend"
+	ResourceInstance ResourceKind = "instance"
 )
 
-// Resource is what a grant is over: a kind and the name of the one thing of that
-// kind, or no name for the fleet.
+// ResourceWildcard is the name matching every resource of a kind, including ones
+// created later. It is how an operator is granted a fleet rather than a list
+// that goes stale the next time someone adds a bucket.
+//
+// Reserved rather than escapable: S3 bucket names cannot contain it and backend
+// names come from config, so nothing legitimate is shadowed.
+const ResourceWildcard = "*"
+
+// Resource is what a grant is over: a kind and the name of one thing of that
+// kind, the wildcard for all of them, or no name for the instance.
 //
 // Name may identify a bucket the config file declares rather than one the store
 // holds, which is why neither half is a foreign key.
@@ -86,13 +94,31 @@ type Resource struct {
 }
 
 // BucketResource names one bucket, which is what every grant written before the
-// control plane had its own action set is.
+// control plane had its own permissions is.
 func BucketResource(name string) Resource {
 	return Resource{Kind: ResourceBucket, Name: name}
 }
 
+// IsWildcard reports whether this resource stands for every one of its kind.
+func (r Resource) IsWildcard() bool {
+	return r.Name == ResourceWildcard
+}
+
+// String renders the resource the way a grant listing and an audit entry name
+// it, so the two read alike.
+func (r Resource) String() string {
+	if r.Kind == ResourceInstance {
+		return string(r.Kind)
+	}
+	return string(r.Kind) + ":" + r.Name
+}
+
 // Grant is a user's access to one resource, and the permissions that access
 // carries.
+//
+// One permission set covers both planes: a data-plane bit on a backend grant
+// and an admin bit on a bucket grant are refused when the grant is written, so
+// the type stays single and the resource decides what is meaningful.
 type Grant struct {
 	UserID      string
 	Resource    Resource

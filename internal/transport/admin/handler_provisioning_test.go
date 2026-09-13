@@ -383,7 +383,7 @@ func TestHandleCreateGrant(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	h.handleCreateGrant(w, jsonRequest(t, http.MethodPost, "/admin/api/provisioning/grants",
-		adminapi.CreateGrantRequest{UserID: "u1", Bucket: "photos"}))
+		adminapi.CreateGrantRequest{UserID: "u1", Name: "photos"}))
 
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body=%s", w.Code, w.Body.String())
