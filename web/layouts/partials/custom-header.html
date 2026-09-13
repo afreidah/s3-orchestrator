@@ -12,6 +12,12 @@
   is what ties it to this repository.
 */ -}}
 <link rel="canonical" href="{{ .Permalink }}">
+{{- /*
+  The logo is the largest element painted on every page, and the browser reaches
+  it only after the stylesheets resolve. Naming it here starts the fetch with the
+  document rather than at the end of the critical path.
+*/ -}}
+<link rel="preload" as="image" href="/images/logo.png?v=3" fetchpriority="high">
 {{- if .IsHome }}
 {{- $ld := dict
   "@context" "https://schema.org"

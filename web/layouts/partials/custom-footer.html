@@ -55,6 +55,50 @@
 </script>
 
 {{- /*
+  Holds the search index back until someone opens the search box.
+
+  The theme downloads the index and builds the lunr index on every page load.
+  That build is a single uninterruptible task over the whole documentation
+  corpus - measured at 430ms, which is the site's entire Total Blocking Time -
+  and it runs whether or not the visitor ever searches.
+
+  The theme's adapter reads window.relearn.index_js_url when it initialises, so
+  hiding the URL until first focus leaves that initialisation a no-op and moves
+  the cost onto the one interaction that needs it. This script runs while the
+  body is still parsing, before the adapter's DOMContentLoaded handler. The
+  dedicated search page is left eager, since it searches without a focus.
+*/ -}}
+<script>
+  (function () {
+    var relearn = window.relearn || {};
+    var indexURL = relearn.index_js_url;
+    if (!indexURL || document.querySelector('#R-search-by-detail')) {
+      return;
+    }
+    delete relearn.index_js_url;
+
+    var armed = false;
+    function arm() {
+      if (armed) {
+        return;
+      }
+      armed = true;
+      relearn.index_js_url = indexURL;
+      if (relearn.search && relearn.search.adapter) {
+        relearn.search.adapter.init();
+      }
+    }
+
+    document.addEventListener('focusin', function (event) {
+      var target = event.target;
+      if (target.closest && target.closest('search, #R-search-by')) {
+        arm();
+      }
+    });
+  })();
+</script>
+
+{{- /*
   Emits the Cloudflare Web Analytics beacon.
 
   The zone carries a Web Analytics site record with auto_install set, which asks

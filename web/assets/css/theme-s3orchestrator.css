@@ -1,5 +1,52 @@
 @import "theme-relearn-dark.css";
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;800&display=swap');
+
+/* Playfair is served from this origin rather than fonts.googleapis.com, whose
+   stylesheet blocked rendering from a third party before the face was even
+   known to be needed. Only the one weight the h1 accent uses is shipped. */
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url('/fonts/playfair/playfair-display-800-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url('/fonts/playfair/playfair-display-800-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* Font Awesome declares its faces with font-display:block, which leaves every
+   icon invisible for up to three seconds on a slow connection. The same faces
+   re-declared here win, since this sheet loads last, and swap instead. */
+@font-face {
+  font-family: "Font Awesome 7 Free";
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url('/fonts/fontawesome/webfonts/fa-solid-900.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: "Font Awesome 7 Free";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/fontawesome/webfonts/fa-regular-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: "Font Awesome 7 Brands";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/fontawesome/webfonts/fa-brands-400.woff2') format('woff2');
+}
 
 :root {
   --MAIN-BG-color: #1a1e24;
@@ -31,7 +78,7 @@
   --CODE-BLOCK-color: #e2e8f0;
   --CODE-BLOCK-BORDER-color: #334155;
   --CODE-INLINE-BG-color: #1e293b;
-  --CODE-INLINE-color: #2a9d73;
+  --CODE-INLINE-color: #34b882;
   --CODE-INLINE-BORDER-color: #334155;
   --MENU-WIDTH-L: 21rem;
   /* Body and secondary headings use a readable system sans; Playfair is a
@@ -40,6 +87,14 @@
   --MAIN-font-weight: 400;
   --MAIN-TITLES-H1-font: 'Playfair Display', serif;
   --MAIN-TITLES-H1-font-weight: 800;
+}
+
+/* Prose links are underlined rather than relying on their colour, which sits at
+   2.8:1 against body text - short of the 3:1 that makes colour a cue on its
+   own. Card, button and image links carry their own shape, so they opt out. */
+article a[href]:not(.landing-card):not(.btn):not(.lightbox-back):not(:has(img)) {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
 }
 
 article img.lightbox {
@@ -370,7 +425,7 @@ a.landing-card:hover p {
   top: 0.3rem;
   width: 1.8rem;
   height: 1.8rem;
-  background: url('/images/logo.png?v=2') no-repeat center / contain;
+  background: url('/images/favicon.png') no-repeat center / contain;
 }
 
 /* Navbar bullets for sub-items */
@@ -395,7 +450,7 @@ a.landing-card:hover p {
 
 .btn.cstyle.button.primary a {
   background-color: #14332a !important;
-  color: #2a9d73 !important;
+  color: #34b882 !important;
   border-color: #334155 !important;
 }
 
