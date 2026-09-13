@@ -389,6 +389,12 @@ prep-changelog: ## Compress changelog for Debian packaging
 deb: prep-changelog ## Build .deb packages via GoReleaser snapshot
 	goreleaser release --snapshot --clean --skip=publish,sign
 
+# Versions from the tag rather than the snapshot template, for publishing a
+# release. --skip=publish is explicit here because, unlike snapshot mode,
+# a real release would otherwise try to create a GitHub release of its own.
+deb-release: prep-changelog ## Build .deb packages for the checked-out tag
+	goreleaser release --clean --skip=publish,sign
+
 deb-lint: deb ## Run lintian on the .deb packages
 	@for f in dist/*.deb; do echo "--- $$f ---"; lintian --tag-display-limit 0 "$$f"; done
 
@@ -732,5 +738,5 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint cloc govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-lint publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push worker-install worker-typecheck worker-test worker-coverage worker-check worker-deploy worker-build worker-publish clean
+.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint cloc govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-release deb-lint publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push worker-install worker-typecheck worker-test worker-coverage worker-check worker-deploy worker-build worker-publish clean
 .DEFAULT_GOAL := help
