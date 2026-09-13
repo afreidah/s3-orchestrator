@@ -38,9 +38,13 @@ type apiClient struct {
 	c *adminclient.Client
 }
 
-// newAPIClient builds a client for the resolved target address and token.
-func newAPIClient(baseAddr, token string) *apiClient {
-	return &apiClient{c: adminclient.New(baseAddr, token)}
+// newAPIClient builds a client for the resolved target, signing where a
+// keypair was given and falling back to the token otherwise.
+func newAPIClient(t target) *apiClient {
+	if t.signs() {
+		return &apiClient{c: adminclient.NewSigned(t.baseAddr, t.accessKeyID, t.secretKey)}
+	}
+	return &apiClient{c: adminclient.New(t.baseAddr, t.token)}
 }
 
 // ListObjects fetches one delimiter-grouped page under prefix. A non-empty

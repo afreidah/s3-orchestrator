@@ -85,6 +85,10 @@ func setupProvEnv(t *testing.T) *provEnv {
 		Name:        virtualBucket,
 		Credentials: []config.CredentialConfig{{AccessKeyID: "test", SecretAccessKey: "test"}},
 	}}}
+	// The shared admin token resolves onto a root identity rather than
+	// authorizing by itself, so one has to be declared or every admin request
+	// these tests make is refused.
+	cfg.Auth.LegacySharedToken = adminToken
 
 	srv := &s3api.Server{Objects: st.Objects, Multipart: st.Multipart}
 	declared := provisioning.NewDeclared()
@@ -120,13 +124,13 @@ func setupProvEnv(t *testing.T) *provEnv {
 
 	env := &provEnv{declared: declared, cfg: cfg}
 	env.proxyAddr = serveHTTP(t, srv)
-	env.adminAddr = serveHTTP(t, provAdminMux(t, opsSvc, st))
+	env.adminAddr = serveHTTP(t, provAdminMux(t, opsSvc, st, srv))
 	return env
 }
 
 // provAdminMux builds the admin handler's mux with the provisioning service
 // wired, which is the dependency the hand-built harness has to supply.
-func provAdminMux(t *testing.T, opsSvc *ops.Services, st *proxytest.Stack) http.Handler {
+func provAdminMux(t *testing.T, opsSvc *ops.Services, st *proxytest.Stack, srv *s3api.Server) http.Handler {
 	t.Helper()
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
@@ -144,7 +148,7 @@ func provAdminMux(t *testing.T, opsSvc *ops.Services, st *proxytest.Stack) http.
 		DBHealthy:    testDatabaseCB.IsHealthy,
 		Cleanup:      testStore,
 		Token:        adminToken,
-		Registry:     func() *auth.BucketRegistry { return nil },
+		Registry:     func() *auth.BucketRegistry { return srv.GetBucketAuth() },
 		BackendNames: func() []string { return []string{"backend-a", "backend-b"} },
 		LogLevel:     &lv,
 	})
@@ -654,7 +658,7 @@ func TestProvInt_RebuildPreservesStoredState(t *testing.T) {
 
 	cred, _ := env.onboard(t, bucket, "persistent")
 
-	view, err := provisioning.LoadMerged(ctx, testStore, env.cfg.Buckets)
+	view, err := provisioning.LoadMerged(ctx, testStore, env.cfg.Buckets, env.cfg.Auth)
 	if err != nil {
 		t.Fatalf("LoadMerged: %v", err)
 	}

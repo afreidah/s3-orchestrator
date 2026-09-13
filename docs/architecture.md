@@ -28,11 +28,11 @@ PostgreSQL (or embedded SQLite) stores:
 - **`object_locations`** - every object's exact backend placement + content hash + per-copy size, plus a `managed` flag marking objects that count toward quota but that the workers do not act on, and the client-facing identity (ETag, content type, user metadata) that lets a HEAD answer without a backend request
 
   `created_at` is the **object's write time, not the copy's**, and every copy of a key carries the same value. A replica inherits it from the source rather than being stamped when it was made, and a discovered object takes whatever modification time the backend reported, falling back to the moment of discovery when the backend reports none. It is what reads return as `Last-Modified`, in preference to whatever the serving backend says, so an unmodified object reports the same time no matter which copy answered - the same reason ETag is stored per object rather than read from the backend. Note that this makes `created_at` unsuitable as a per-copy age: the scrub queue tracks that separately in `last_scrubbed_at`.
-- **`backend_quotas`** — per-backend ceiling + orphan-bytes tracking
-- **`backend_quota_stripes`** — each backend's stored byte total, split across rows so concurrent writes charging one backend take different row locks
+- **`backend_quotas`** - per-backend ceiling + orphan-bytes tracking
+- **`backend_quota_stripes`** - each backend's stored byte total, split across rows so concurrent writes charging one backend take different row locks
 - **`backend_usage`** - per-backend monthly API-call and egress counters
 - **`backend_request_usage`** - per-backend monthly request counts per configured budget pool
-- **`multipart_uploads`** / **`multipart_parts`** — multipart upload state
+- **`multipart_uploads`** / **`multipart_parts`** - multipart upload state
 - **`cleanup_queue`** - durable retry queue for failed deletions
 - **`cleanup_dlq`** - cleanup rows that exhausted their retries, surfaced for operator action
 - **`pending_objects`** - PUT-before-COMMIT crash-recovery rows
@@ -46,15 +46,15 @@ See [docs/database.md](database.md) for engine choice, migration mechanics, and 
 
 Split into three Go packages so the same orchestration code drives both engines:
 
-- `internal/store/core` — engine-agnostic types, role interfaces, and orchestration helpers (the multi-step transactional operations like `RecordObject`, `PromotePending`, `MoveObjectLocation`)
-- `internal/store/postgres` — Postgres adapter
-- `internal/store/sqlite` — SQLite adapter
+- `internal/store/core` - engine-agnostic types, role interfaces, and orchestration helpers (the multi-step transactional operations like `RecordObject`, `PromotePending`, `MoveObjectLocation`)
+- `internal/store/postgres` - Postgres adapter
+- `internal/store/sqlite` - SQLite adapter
 
 Both adapters implement `core.TxAdapter`. SQLite is the default for single-instance use; PostgreSQL is required for multi-instance deployments.
 
 ## Backends
 
-Standard S3-compatible services accessed via AWS SDK v2, each with a dedicated tuned HTTP transport (connection pooling, idle timeout for DNS freshness). Streaming operations use a shared buffer pool to reduce GC pressure. Any provider that speaks the S3 API works — OCI Object Storage, Backblaze B2, AWS S3, MinIO, Wasabi, Cloudflare R2, GCS (with caveats), etc.
+Standard S3-compatible services accessed via AWS SDK v2, each with a dedicated tuned HTTP transport (connection pooling, idle timeout for DNS freshness). Streaming operations use a shared buffer pool to reduce GC pressure. Any provider that speaks the S3 API works - OCI Object Storage, Backblaze B2, AWS S3, MinIO, Wasabi, Cloudflare R2, GCS (with caveats), etc.
 
 See [docs/backends.md](backends.md) for the provider quick-reference table and supported configurations.
 
@@ -75,14 +75,14 @@ See [docs/compression.md](compression.md) and [docs/encryption.md](encryption.md
 
 The `routing_strategy` config selects how a write picks its target backend:
 
-- **`pack`** (default) — try backends in config order, so writes fill one before moving on. Good for stacking free-tier allocations sequentially.
-- **`spread`** — try backends least-utilized first. Good for distributing load evenly.
+- **`pack`** (default) - try backends in config order, so writes fill one before moving on. Good for stacking free-tier allocations sequentially.
+- **`spread`** - try backends least-utilized first. Good for distributing load evenly.
 
 The strategy only decides the order candidates are tried. Whether a backend has room is settled by the statement that claims the space: the write's pending intent is inserted only if the backend's live rows still have headroom, so a candidate that has filled up since it was ranked declines and the next one is tried. A write that no candidate accepts fails with 507. Because the test reads rows rather than an in-memory figure, every instance in a fleet is judged against the same totals.
 
-A write places one copy by default and the replicator brings the object up to `replication.factor` afterwards. With `write_path.parallel_copies` on it claims the top N candidates instead, one intent each, and uploads to all of them at once from the payload it already materialized — answering the client on the first copy committed and letting the rest finish behind the response. That removes the read the replicator would otherwise make of every further copy, and moves those bytes to write time. See [configuration](configuration.md#write_pathparallel_copies).
+A write places one copy by default and the replicator brings the object up to `replication.factor` afterwards. With `write_path.parallel_copies` on it claims the top N candidates instead, one intent each, and uploads to all of them at once from the payload it already materialized - answering the client on the first copy committed and letting the rest finish behind the response. That removes the read the replicator would otherwise make of every further copy, and moves those bytes to write time. See [configuration](configuration.md#write_pathparallel_copies).
 
-Quota is charged in the same transaction as the object location record, so the counter cannot drift from the ledger. Set `quota_bytes: 0` (or omit it) to disable quota enforcement on a backend — useful when you want unified access or replication without cost control. Backends with a `max_object_size` limit automatically skip objects that exceed the limit during routing, rebalancing, and replication, preventing repeated 413 errors from providers with per-object size restrictions.
+Quota is charged in the same transaction as the object location record, so the counter cannot drift from the ledger. Set `quota_bytes: 0` (or omit it) to disable quota enforcement on a backend - useful when you want unified access or replication without cost control. Backends with a `max_object_size` limit automatically skip objects that exceed the limit during routing, rebalancing, and replication, preventing repeated 413 errors from providers with per-object size restrictions.
 
 See [docs/backends.md](backends.md) for full routing semantics.
 
@@ -98,7 +98,7 @@ See [docs/backends.md](backends.md) for the enforcement semantics and [docs/moni
 
 ## Replication
 
-Set a per-bucket `replication.factor` and every object ends up with N copies across distinct backends — placed by the background replicator, or by the write itself when [`write_path.parallel_copies`](configuration.md#write_pathparallel_copies) is on. Replication is health-aware: a backend whose circuit breaker is open is excluded from the replica count, and the replicator creates a substitute copy on a healthy backend to maintain the factor. When the unhealthy backend returns, the over-replication cleaner removes the excess copy according to a scoring policy (draining < circuit-broken < healthy-by-utilization).
+Set a per-bucket `replication.factor` and every object ends up with N copies across distinct backends - placed by the background replicator, or by the write itself when [`write_path.parallel_copies`](configuration.md#write_pathparallel_copies) is on. Replication is health-aware: a backend whose circuit breaker is open is excluded from the replica count, and the replicator creates a substitute copy on a healthy backend to maintain the factor. When the unhealthy backend returns, the over-replication cleaner removes the excess copy according to a scoring policy (draining < circuit-broken < healthy-by-utilization).
 
 See [docs/replication.md](replication.md) for the full lifecycle, including orphan reconciliation.
 

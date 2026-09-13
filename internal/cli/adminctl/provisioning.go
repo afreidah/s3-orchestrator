@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -402,9 +403,24 @@ func renderGrants(u *adminapi.User) string {
 	out := make([]string, 0, len(u.Grants))
 	for _, g := range u.Grants {
 		resource := core.Resource{Kind: core.ResourceKind(g.Kind), Name: g.Name}
-		out = append(out, resource.String()+"("+strings.Join(g.Permissions, ",")+")")
+		out = append(out, resource.String()+"("+shorthand(g.Permissions)+")")
 	}
 	return strings.Join(out, " ")
+}
+
+// shorthand renders a permission list the way the stored form does, collapsing
+// a complete set to the one word that names it.
+//
+// A full control-plane set is ten names, which is wider than the terminal a
+// listing is read in. The API keeps every name, because a caller parsing it
+// should not have to know what the shorthand expands to.
+func shorthand(perms []string) string {
+	for _, full := range []core.PermissionSet{core.PermAll, core.PermAdminAll} {
+		if slices.Equal(perms, full.Names()) {
+			return full.String()
+		}
+	}
+	return strings.Join(perms, ",")
 }
 
 // decodeProvisioning parses the shared listing response.

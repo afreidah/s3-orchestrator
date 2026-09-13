@@ -23,6 +23,11 @@ import (
 const (
 	EnvAddr  = "S3O_ADMIN_ADDR"
 	EnvToken = "S3O_ADMIN_TOKEN" //nolint:gosec // G101: env var name, not a credential
+
+	// EnvAccessKey and EnvSecretKey carry the keypair a client signs with,
+	// which needs no config file to resolve.
+	EnvAccessKey = "S3O_ACCESS_KEY_ID"
+	EnvSecretKey = "S3O_SECRET_ACCESS_KEY" //nolint:gosec // G101: env var name, not a credential
 )
 
 // Resolve determines the admin API base address and token using the precedence

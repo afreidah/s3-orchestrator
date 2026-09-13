@@ -48,7 +48,7 @@ func newCoverageHandler(t *testing.T) *Handler {
 	return &Handler{
 		log:       slog.Default().With(logfmt.Component("admin")),
 		token:     "test-token",
-		registry:  func() *auth.BucketRegistry { return nil },
+		registry:  func() *auth.BucketRegistry { return rootRegistry(t) },
 		logLevel:  &lv,
 		dbHealthy: func() bool { return true },
 	}

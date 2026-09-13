@@ -57,6 +57,7 @@ type Config struct {
 	Encryption            EncryptionConfig            `yaml:"encryption"`
 	Compression           CompressionConfig           `yaml:"compression"`
 	UI                    UIConfig                    `yaml:"ui"`
+	Auth                  AuthConfig                  `yaml:"auth"`
 	CleanupQueue          CleanupQueueConfig          `yaml:"cleanup_queue"`
 	WritePath             WritePathConfig             `yaml:"write_path"`
 	UsageFlush            UsageFlushConfig            `yaml:"usage_flush"`
@@ -182,6 +183,14 @@ func (c *Config) validatePerTypeSections() []error {
 	errs = append(errs, c.Encryption.setDefaultsAndValidate()...)
 	errs = append(errs, c.Compression.setDefaultsAndValidate()...)
 	errs = append(errs, c.UI.setDefaultsAndValidate()...)
+	// The dashboard's token is the same authority as a root credential, so it
+	// is carried alongside one rather than consulted separately. admin_key is
+	// the fallback the admin surface has always used when admin_token is unset,
+	// and it has to be applied here too: the root identity is built from this
+	// value, so missing the fallback would leave a deployment that declares only
+	// admin_key with a token that resolves to nobody.
+	c.Auth.LegacySharedToken = cmp.Or(c.UI.AdminToken, c.UI.AdminKey)
+	errs = append(errs, c.Auth.setDefaultsAndValidate()...)
 	errs = append(errs, c.UsageFlush.setDefaultsAndValidate()...)
 	errs = append(errs, validateLifecycleRules(c.Lifecycle.Rules)...)
 	errs = append(errs, c.Integrity.setDefaultsAndValidate()...)

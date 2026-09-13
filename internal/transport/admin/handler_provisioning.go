@@ -283,8 +283,23 @@ func provisioningResponse(v *provisioning.View) adminapi.ProvisioningResponse {
 // their rendered name so a listing is stable between reads rather than
 // following map iteration.
 func wireGrants(u *provisioning.User) []adminapi.Grant {
-	out := make([]adminapi.Grant, 0, len(u.Buckets)+len(u.Admin))
+	out := make([]adminapi.Grant, 0, len(u.Buckets)+len(u.Admin)+1)
+	// A wildcard is reported as itself rather than as the buckets it currently
+	// expands to, because those two say different things: the expansion is what
+	// this identity reaches today, and the wildcard is what it will reach after
+	// the next bucket is created. Only the buckets carrying something other than
+	// the wildcard are then worth naming - the rest are the wildcard repeated.
+	if u.AllBuckets != 0 {
+		out = append(out, adminapi.Grant{
+			Kind:        string(core.ResourceBucket),
+			Name:        core.ResourceWildcard,
+			Permissions: u.AllBuckets.Names(),
+		})
+	}
 	for _, name := range u.Buckets {
+		if u.AllBuckets != 0 && u.Grants[name] == u.AllBuckets {
+			continue
+		}
 		out = append(out, adminapi.Grant{
 			Kind:        string(core.ResourceBucket),
 			Name:        name,

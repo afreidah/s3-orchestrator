@@ -10,7 +10,7 @@ The orchestrator has two required stateful components and one optional:
 
 - **PostgreSQL** stores object locations, quota counters, usage stats, multipart state, and the cleanup queue. This is the source of truth for "which object lives on which backend."
 - **Storage backends** (OCI, R2, S3, MinIO, etc.) hold the actual object data. These are independent and unaware of each other.
-- **Redis** (optional) provides shared usage counters across instances. Not a data dependency — all authoritative data lives in PostgreSQL. See [Redis Failure](#redis-failure) below.
+- **Redis** (optional) provides shared usage counters across instances. Not a data dependency - all authoritative data lives in PostgreSQL. See [Redis Failure](#redis-failure) below.
 
 The orchestrator binary itself is stateless. Any instance with access to the database and backends can serve requests.
 
@@ -41,10 +41,10 @@ The `/health` endpoint continues to return `200 OK` with `"status":"degraded"` d
 
 The orchestrator connects to PostgreSQL via a standard connection string and has no opinion about how the database is made highly available. Any PostgreSQL-compatible endpoint works, including:
 
-- **Patroni** — open-source HA with automatic failover via etcd/ZooKeeper consensus
-- **Amazon RDS Multi-AZ** / **Aurora** — managed failover with DNS endpoint
-- **Google Cloud SQL HA** — regional instances with automatic failover
-- **Neon / Supabase** — serverless PostgreSQL with built-in redundancy
+- **Patroni** - open-source HA with automatic failover via etcd/ZooKeeper consensus
+- **Amazon RDS Multi-AZ** / **Aurora** - managed failover with DNS endpoint
+- **Google Cloud SQL HA** - regional instances with automatic failover
+- **Neon / Supabase** - serverless PostgreSQL with built-in redundancy
 
 When the database fails over to a replica, the circuit breaker briefly opens (writes return 503), then the probe detects the new primary and recovers automatically. The failover window is typically under 30 seconds with Patroni or managed services.
 
@@ -59,9 +59,9 @@ If the primary backend fails before replication completes, unreplicated objects 
 - Turn on [`write_path.parallel_copies`](configuration.md#write_pathparallel_copies) so the write places its own copies instead of leaving them to the replicator. This shrinks the window from a worker interval to the time one upload takes, and it is the largest single reduction available
 - Set `replication.worker_interval` to a lower value (e.g., `30s`) at the cost of more backend API calls
 - Use backends with built-in durability guarantees (e.g., S3 Standard stores objects across 3+ availability zones)
-- Monitor `s3o_replication_pending` — a sustained non-zero value indicates the replicator cannot keep up
+- Monitor `s3o_replication_pending` - a sustained non-zero value indicates the replicator cannot keep up
 
-**With `parallel_copies` on**, the window is not closed, only narrowed, and it is worth being precise about what remains. The client is answered on the first copy committed, so a second copy uploading at that moment is not yet durable: an instance lost in that window leaves the object on one backend, exactly as the default does, and the replicator repairs it. What changes is duration — the exposure lasts as long as one upload rather than as long as a replicator interval. Two counters say how often it happens: `s3o_replication_write_fanout_skipped_total` counts writes that placed a single copy because the in-flight ceiling was full, and `s3o_replication_write_copies_committed` is the distribution of copies per write, which sits at your replication factor when every write is placing them all.
+**With `parallel_copies` on**, the window is not closed, only narrowed, and it is worth being precise about what remains. The client is answered on the first copy committed, so a second copy uploading at that moment is not yet durable: an instance lost in that window leaves the object on one backend, exactly as the default does, and the replicator repairs it. What changes is duration - the exposure lasts as long as one upload rather than as long as a replicator interval. Two counters say how often it happens: `s3o_replication_write_fanout_skipped_total` counts writes that placed a single copy because the in-flight ceiling was full, and `s3o_replication_write_copies_committed` is the distribution of copies per write, which sits at your replication factor when every write is placing them all.
 
 A graceful shutdown waits up to 30 seconds for copies still uploading, so a planned restart does not itself create this exposure. A kill does; those copies are resolved by the pending reaper on a later tick.
 
@@ -125,7 +125,7 @@ Then remove the backend from the config file and restart.
 If a backend is still reachable but you want to decommission it, use the drain operation to migrate all objects to other backends first (no data loss):
 
 ```bash
-# Start the drain — objects are migrated in the background
+# Start the drain - objects are migrated in the background
 s3-orchestrator admin drain <backend-name>
 
 # Monitor progress
@@ -194,7 +194,7 @@ When Redis is configured for shared usage counters:
 
 ### What happens
 
-The circuit breaker opens after consecutive failures (default: 3). Each instance falls back to local in-memory counters — identical behavior to running without Redis. Usage enforcement continues but with the per-instance blind spot restored. The `s3o_redis_fallback_active` gauge transitions to `1`.
+The circuit breaker opens after consecutive failures (default: 3). Each instance falls back to local in-memory counters - identical behavior to running without Redis. Usage enforcement continues but with the per-instance blind spot restored. The `s3o_redis_fallback_active` gauge transitions to `1`.
 
 A background health probe PINGs Redis every 5 seconds while the circuit is open. This requires no manual intervention.
 
@@ -203,23 +203,23 @@ A background health probe PINGs Redis every 5 seconds while the circuit is open.
 When the health probe detects Redis is reachable again:
 
 1. Stale Redis keys for the current period are deleted (PG already absorbed those values via flushes during the outage)
-2. Each instance INCRBYs its unflushed local deltas to Redis (additive — safe even if instances recover at different times)
+2. Each instance INCRBYs its unflushed local deltas to Redis (additive - safe even if instances recover at different times)
 3. Local counters are zeroed
 4. Circuit breaker closes, shared operation resumes
 
 ### Monitoring
 
-- `s3o_redis_fallback_active` — `1` when using local counters, `0` when Redis is healthy
-- `s3o_redis_operations_total{operation,status}` — track Redis operation success/error rates
-- `s3o_circuit_breaker_state{name="redis"}` — circuit breaker state (closed/open)
+- `s3o_redis_fallback_active` - `1` when using local counters, `0` when Redis is healthy
+- `s3o_redis_operations_total{operation,status}` - track Redis operation success/error rates
+- `s3o_circuit_breaker_state{name="redis"}` - circuit breaker state (closed/open)
 
 ### Impact
 
 Redis is a performance optimization, not a data dependency. All authoritative usage data lives in PostgreSQL. A Redis outage causes:
 
-- **Temporary accuracy reduction** — same as running without Redis (per-instance counters with flush-gap)
-- **No data loss** — PG flush continues via local counters, one instance per tick
-- **Automatic recovery** — no operator action required
+- **Temporary accuracy reduction** - same as running without Redis (per-instance counters with flush-gap)
+- **No data loss** - PG flush continues via local counters, one instance per tick
+- **Automatic recovery** - no operator action required
 
 ## Recovery Checklist
 

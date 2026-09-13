@@ -21,9 +21,9 @@ replication:
 
 The replication factor must be `<= number of backends`. The worker runs once at startup to catch up on any pending replicas, then continues at the configured interval. Reads automatically fail over to replicas if the primary copy is unavailable.
 
-Replication is **asynchronous by default** — writes go to a single backend and the replicator creates additional copies in the background. When a client overwrites an existing key, all old copies (including replicas) are removed and a single new copy is written. The replication factor drops to 1 until the next replicator cycle creates the additional copies. If the single backend holding the new copy fails before replication runs, the new version of the object is at risk. For most workloads this window (up to `worker_interval`) is acceptable. Lowering `worker_interval` reduces the exposure at the cost of more frequent DB queries and backend I/O.
+Replication is **asynchronous by default** - writes go to a single backend and the replicator creates additional copies in the background. When a client overwrites an existing key, all old copies (including replicas) are removed and a single new copy is written. The replication factor drops to 1 until the next replicator cycle creates the additional copies. If the single backend holding the new copy fails before replication runs, the new version of the object is at risk. For most workloads this window (up to `worker_interval`) is acceptable. Lowering `worker_interval` reduces the exposure at the cost of more frequent DB queries and backend I/O.
 
-**Or the write places them itself.** [`write_path.parallel_copies`](configuration.md#write_pathparallel_copies) has a write claim several backends, upload to all of them at once from the payload it already has in hand, and answer the client on the first copy committed. The replicator is then left with repair rather than routine copy-making, which removes a full GET of the object plus the source backend's egress for every copy it would have made. The exposure above narrows from a worker interval to the length of one upload, and the cost is that those bytes go out at write time instead of spread across replicator cycles — on a constrained uplink that can cost PUT throughput even as it lowers the bill. Off by default; the rest of this page describes what the replicator does either way, since it still owns repair, health-triggered copies and everything a write did not place.
+**Or the write places them itself.** [`write_path.parallel_copies`](configuration.md#write_pathparallel_copies) has a write claim several backends, upload to all of them at once from the payload it already has in hand, and answer the client on the first copy committed. The replicator is then left with repair rather than routine copy-making, which removes a full GET of the object plus the source backend's egress for every copy it would have made. The exposure above narrows from a worker interval to the length of one upload, and the cost is that those bytes go out at write time instead of spread across replicator cycles - on a constrained uplink that can cost PUT throughput even as it lowers the bill. Off by default; the rest of this page describes what the replicator does either way, since it still owns repair, health-triggered copies and everything a write did not place.
 
 **Health-aware replication:** When backend circuit breakers are enabled, the replicator monitors backend health. If a backend's circuit breaker has been open longer than `unhealthy_threshold`, copies on that backend are treated as unavailable and replacement copies are created on healthy backends. This prevents sustained outages from silently reducing redundancy. The threshold prevents churn during brief transient failures. Set to `0` to disable health-aware replication (copies on down backends are still counted).
 
@@ -33,7 +33,7 @@ Replication is **asynchronous by default** — writes go to a single backend and
 ## Rebalance
 
 
-Moves objects between backends to optimize storage distribution. Disabled by default — enabling it will generate egress/ingress traffic on your backends.
+Moves objects between backends to optimize storage distribution. Disabled by default - enabling it will generate egress/ingress traffic on your backends.
 
 ```yaml
 rebalance:
@@ -45,8 +45,8 @@ rebalance:
   concurrency: 5                 # parallel moves per run (default: 10)
 ```
 
-- **pack** — fills backends in config order, consolidating free space onto the last backend. Good for maximizing free-tier allocations.
-- **spread** — equalizes utilization ratios across all backends. Good for distributing load.
+- **pack** - fills backends in config order, consolidating free space onto the last backend. Good for maximizing free-tier allocations.
+- **spread** - equalizes utilization ratios across all backends. Good for distributing load.
 
 Object moves run concurrently within each batch, bounded by `concurrency`. Increase for faster rebalancing; decrease to reduce backend load.
 
@@ -61,9 +61,9 @@ The cleaner scores each copy by its backend's health and storage utilization, th
 
 - **Draining backend**: score 0 (always removed first)
 - **Circuit-broken backend**: score 1 (removed next)
-- **Healthy backend**: score 2 + (1 − utilization ratio), range [2..3]
+- **Healthy backend**: score 2 + (1 - utilization ratio), range [2..3]
 
-Among healthy backends, the most utilized backend gets the lowest score — freeing space where it is scarcest. Each object's copies are locked with `FOR UPDATE` to prevent races with concurrent replicator or rebalancer activity.
+Among healthy backends, the most utilized backend gets the lowest score - freeing space where it is scarcest. Each object's copies are locked with `FOR UPDATE` to prevent races with concurrent replicator or rebalancer activity.
 
 The worker runs at the `replication.worker_interval` and shares the same `batch_size` and `concurrency` settings. It only runs when `replication.factor > 1`. Like the replicator, it uses a PostgreSQL advisory lock for multi-instance coordination.
 
@@ -72,7 +72,7 @@ Cleanup can also be triggered on demand via the admin API (`POST /admin/api/over
 ## Orphan reconciliation
 
 
-Optional background service that periodically scans each backend's S3 bucket and reconciles it against the metadata database. For each backend, it walks both sides as ascending key streams — S3 paginated by `ListObjects` and the DB paginated by `ListObjectsByBackendKeyAsc` — and merges them in lockstep. Keys present only on the backend are imported; keys present only in the DB are removed. Memory is bounded by the page size on each side (1000 entries) regardless of object count, so backends holding millions of objects reconcile without OOM. Objects are imported at their literal backend key, including keys outside every configured virtual bucket prefix; those rows are marked unmanaged, so they count toward the backend's quota without replication, rebalance, integrity or drain acting on them.
+Optional background service that periodically scans each backend's S3 bucket and reconciles it against the metadata database. For each backend, it walks both sides as ascending key streams - S3 paginated by `ListObjects` and the DB paginated by `ListObjectsByBackendKeyAsc` - and merges them in lockstep. Keys present only on the backend are imported; keys present only in the DB are removed. Memory is bounded by the page size on each side (1000 entries) regardless of object count, so backends holding millions of objects reconcile without OOM. Objects are imported at their literal backend key, including keys outside every configured virtual bucket prefix; those rows are marked unmanaged, so they count toward the backend's quota without replication, rebalance, integrity or drain acting on them.
 
 ```yaml
 reconcile:
@@ -82,7 +82,7 @@ reconcile:
 
 Disabled by default. Requires a restart to enable/disable (non-reloadable). Runs under advisory lock `1009` to prevent concurrent scans across instances.
 
-On-demand reconciliation is available via the admin API — useful after backend data loss or token expiry events:
+On-demand reconciliation is available via the admin API - useful after backend data loss or token expiry events:
 
 ```bash
 # Reconcile all backends

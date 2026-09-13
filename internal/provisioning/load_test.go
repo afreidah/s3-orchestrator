@@ -94,7 +94,7 @@ func TestLoadMerged_FoldsConfigIn(t *testing.T) {
 
 	r := &fakeReader{snap: Snapshot{Buckets: []core.Bucket{{Name: "from-store"}}}}
 
-	v, err := LoadMerged(context.Background(), r, []config.BucketConfig{{Name: "from-config"}})
+	v, err := LoadMerged(context.Background(), r, []config.BucketConfig{{Name: "from-config"}}, config.AuthConfig{})
 	if err != nil {
 		t.Fatalf("LoadMerged: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestLoadMerged_ReadFailurePropagates(t *testing.T) {
 
 	boom := errors.New("boom")
 	r := &fakeReader{failOn: "users", err: boom}
-	if _, err := LoadMerged(context.Background(), r, nil); !errors.Is(err, boom) {
+	if _, err := LoadMerged(context.Background(), r, nil, config.AuthConfig{}); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want a wrap of boom", err)
 	}
 }

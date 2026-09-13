@@ -144,7 +144,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		DBHealthy:    testDatabaseCB.IsHealthy,
 		Cleanup:      testStore,
 		Token:        adminToken,
-		Registry:     func() *auth.BucketRegistry { return nil },
+		Registry:     func() *auth.BucketRegistry { return srv.GetBucketAuth() },
 		BackendNames: func() []string { return []string{"backend-a", "backend-b"} },
 		LogLevel:     &lv,
 	})

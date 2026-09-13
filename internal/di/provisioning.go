@@ -49,7 +49,7 @@ func AssembleBucketRegistry(ctx context.Context, i do.Injector, cfg *config.Conf
 		return nil, err
 	}
 
-	view, err := provisioning.LoadMerged(ctx, store, cfg.Buckets)
+	view, err := provisioning.LoadMerged(ctx, store, cfg.Buckets, cfg.Auth)
 	if err != nil {
 		return nil, err
 	}

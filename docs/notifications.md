@@ -9,8 +9,8 @@ Optional outbound webhooks for object mutations and operational events. Events a
 
 ## Event categories
 
-- **Data events** — S3-style object mutations (`s3:ObjectCreated:Put`, `s3:ObjectRemoved:Delete`, etc.) carrying the bucket and key.
-- **Operational events** — backend health (`backend.circuit.opened`, `backend.capacity.warning`), integrity (`integrity.corruption_detected`), cleanup (`cleanup.exhausted`), replication and lifecycle completions.
+- **Data events** - S3-style object mutations (`s3:ObjectCreated:Put`, `s3:ObjectRemoved:Delete`, etc.) carrying the bucket and key.
+- **Operational events** - backend health (`backend.circuit.opened`, `backend.capacity.warning`), integrity (`integrity.corruption_detected`), cleanup (`cleanup.exhausted`), replication and lifecycle completions.
 
 The full event catalog and signature-verification recipe live in the [Event Notifications guide](/guides/event-notifications/) on the project website.
 
@@ -45,9 +45,9 @@ notifications:
 ## Delivery semantics
 
 - Events are appended to `notification_outbox` in the same DB transaction as the originating mutation. If the transaction rolls back, no event is queued.
-- The notification drainer ticks every 5 seconds (no advisory lock — one drainer per instance is fine because each row is claimed via row-level locking before POST).
+- The notification drainer ticks every 5 seconds (no advisory lock - one drainer per instance is fine because each row is claimed via row-level locking before POST).
 - Failed deliveries retry with exponential backoff. After `max_retries`, the row is dropped and an audit warning emitted; counted in the `s3o_notification_dropped_total` Prometheus metric.
-- The drainer never sends the same event twice — `notification_outbox` rows are deleted on successful POST and the row claim survives crashes.
+- The drainer never sends the same event twice - `notification_outbox` rows are deleted on successful POST and the row claim survives crashes.
 
 ## Operational observability
 

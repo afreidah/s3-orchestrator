@@ -18,7 +18,7 @@ A credential proves a caller is one **user**. That user holds a **grant** on eac
 Three auth methods are supported, checked in order:
 
 1. **AWS SigV4** (recommended) - Standard AWS Signature Version 4 via the `Authorization` header. Compatible with `aws cli`, SDKs, and any S3 client. Signature verification is constant-time: unknown access keys still compute a full HMAC to prevent timing side-channel enumeration. Streaming-payload uploads (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD`, `STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER`, `STREAMING-UNSIGNED-PAYLOAD-TRAILER`) are accepted and the chunk chain is fully validated end-to-end.
-2. **Presigned URLs** - SigV4 query-parameter authentication (`X-Amz-Algorithm`, `X-Amz-Credential`, etc.) for time-limited, shareable URLs. Works with any AWS SDK presign client. Maximum expiry: 7 days. Uses the same credentials as normal requests — no additional configuration required.
+2. **Presigned URLs** - SigV4 query-parameter authentication (`X-Amz-Algorithm`, `X-Amz-Credential`, etc.) for time-limited, shareable URLs. Works with any AWS SDK presign client. Maximum expiry: 7 days. Uses the same credentials as normal requests - no additional configuration required.
 3. **Legacy token** - Simple `X-Proxy-Token` header for backward compatibility.
 
 Access key IDs must be globally unique. Authentication is always required, and a user holding no grants authenticates successfully and is refused on every bucket - which is a clearer answer for a client that has been created but not yet granted anything than a failed signature would be.
@@ -38,13 +38,28 @@ Config wins a collision, and the API refuses to modify anything the config file 
 
 ## The admin surface
 
-The admin API is authenticated by its own `X-Admin-Token` header rather than by SigV4, but the endpoints under `/admin/api/objects` reach the same object service the S3 API does. Those are authorized against the same grants and the same permissions: a credential's token passed in that header reaches object data with exactly what its grant carries, and nothing more.
+The admin API takes the same credential the S3 API does: an access key and secret, SigV4-signed, resolving to the user that holds the grants. One keypair reaches both surfaces, and the endpoints under `/admin/api/objects` are authorized against the same grants and the same permissions as the S3 path.
+
+The identity that administers a deployment is declared under `auth.root`:
+
+```yaml
+auth:
+  root:
+    access_key_id: "AKIAROOT..."
+    secret_access_key: "..."
+```
+
+It is an ordinary user that happens to hold every permission on every resource. There is no separate code path authorizing it, which is what makes it possible to issue narrower administrative credentials and have them behave predictably.
+
+Three older mechanisms still work, each resolving onto this same model rather than around it: `X-Admin-Token` resolves to the root user, `X-Proxy-Token` resolves to the user that owns the token, and the dashboard's `admin_key`/`admin_secret` login resolves to the root user. A later release removes them.
 
 The rest of the admin API is the control plane - backend drain, key rotation, provisioning, worker triggers. Each of those endpoints declares a permission over a **backend** or over the **instance**, and a credential reaches it only by holding a grant carrying that permission. A credential holding only bucket grants is refused on all of them.
 
 A pass that names no backend runs against every one, so it is authorized as `backend:*`: an operator granted one provider cannot start a conversion that spends egress on the rest of the fleet. See [the admin API's authorization section](admin-api.md#authorization) for the permission each endpoint declares.
 
-The configured token also still reaches everything, which is how a deployment predating this behaviour keeps working. Its use on object data is deprecated and logs a warning.
+The configured token reaches everything because the root user holds everything, not because the token is special. Its use on object data logs a deprecation warning.
+
+The dashboard logs in with a credential and its session carries the user that credential proved, which is what removes `admin_key`/`admin_secret` as a third mechanism rather than a third spelling of the first.
 
 ## Bucket configuration
 
@@ -99,4 +114,4 @@ What separate credentials buy on one bucket is worth having either way. Each rot
 
 Scoping access below the whole bucket - prefix-scoped credentials and a policy model to express them - is tracked in [#356](https://github.com/afreidah/s3-orchestrator/issues/356).
 
-SigV4 credentials also support presigned URLs automatically. Clients can generate time-limited presigned URLs using any AWS SDK presign client — no additional configuration is needed on the orchestrator side.
+SigV4 credentials also support presigned URLs automatically. Clients can generate time-limited presigned URLs using any AWS SDK presign client - no additional configuration is needed on the orchestrator side.

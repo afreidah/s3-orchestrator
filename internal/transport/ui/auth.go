@@ -28,6 +28,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -230,9 +231,8 @@ func (h *Handler) processLoginAttempt(w http.ResponseWriter, r *http.Request) {
 
 	key := r.FormValue("access_key")
 	secret := r.FormValue("secret_key")
-	keyMatch := subtle.ConstantTimeCompare([]byte(key), []byte(h.adminKey)) == 1
-	secretMatch := checkSecret(h.adminSecret, secret)
-	if !keyMatch || !secretMatch {
+	userID, ok := h.resolveLogin(key, secret)
+	if !ok {
 		if h.loginThrottle != nil {
 			h.loginThrottle.RecordFailure(clientIP)
 		}
@@ -244,9 +244,38 @@ func (h *Handler) processLoginAttempt(w http.ResponseWriter, r *http.Request) {
 	if h.loginThrottle != nil {
 		h.loginThrottle.RecordSuccess(clientIP)
 	}
-	h.log.InfoContext(r.Context(), "admin login", "client_addr", clientIP)
-	h.createSession(w, r, key)
+	h.log.InfoContext(r.Context(), "admin login", "client_addr", clientIP, "user", userID)
+	h.createSession(w, r, userID)
 	http.Redirect(w, r, h.prefix+"/", http.StatusSeeOther)
+}
+
+// resolveLogin verifies a submitted keypair and reports the user it proves.
+//
+// The configured admin_key is tried first and resolves to the root user, which
+// is what an existing deployment's dashboard login keeps working as. Anything
+// else is a provisioned credential, verified against the registry the S3 path
+// authenticates with, so one keypair reaches the dashboard and the data.
+//
+// Both halves are always compared, so a wrong access key takes the same work as
+// a wrong secret and the response cannot be used to learn which was which.
+func (h *Handler) resolveLogin(key, secret string) (string, bool) {
+	keyMatch := subtle.ConstantTimeCompare([]byte(key), []byte(h.adminKey)) == 1
+	secretMatch := checkSecret(h.adminSecret, secret)
+	if keyMatch && secretMatch {
+		return provisioning.RootUserID, true
+	}
+	if h.registry == nil {
+		return "", false
+	}
+	registry := h.registry()
+	if registry == nil {
+		return "", false
+	}
+	user, err := registry.AuthenticateSecret(key, secret)
+	if err != nil {
+		return "", false
+	}
+	return user.ID, true
 }
 
 // renderLoginError writes the login form with status and an inline error

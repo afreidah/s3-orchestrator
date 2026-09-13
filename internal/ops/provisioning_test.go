@@ -832,3 +832,58 @@ func TestProvisioning_ViewCarriesGrantPermissions(t *testing.T) {
 		t.Errorf("merged permissions = %q, want read,list", got)
 	}
 }
+
+// TestProvisioning_WildcardReachDoesNotPinABucket verifies a bucket stays
+// deletable when the only identity reaching it does so through a wildcard.
+//
+// What makes a bucket undeletable is a grant row that would be left naming
+// nothing. A wildcard does not dangle, and the root credential holds one over
+// every bucket, so judging this by the merged reach would make every bucket in
+// a deployment declaring a root credential permanently undeletable.
+func TestProvisioning_WildcardReachDoesNotPinABucket(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Auth: config.AuthConfig{
+			Root: config.RootCredential{AccessKeyID: "AK", SecretAccessKey: "SK"},
+		},
+	}
+	f := newProvFixtureCfg(t, cfg, &provStore{
+		buckets: []core.Bucket{{Name: "transient"}},
+		users:   []core.User{{ID: "u1", Name: "ci"}},
+		grants: []core.Grant{{
+			UserID:      "u1",
+			Resource:    core.BucketResource(core.ResourceWildcard),
+			Permissions: core.PermAll,
+		}},
+	})
+	f.objects.EXPECT().CountObjectsByPrefix(gomock.Any(), "transient/").Return(int64(0), nil)
+	f.store.EXPECT().DeleteBucket(gomock.Any(), "transient").Return(nil)
+	f.expectRepublish()
+
+	if err := f.svc.DeleteBucket(context.Background(), "transient"); err != nil {
+		t.Fatalf("a bucket reached only by a wildcard was refused: %v", err)
+	}
+}
+
+// TestProvisioning_NamedGrantStillPinsABucket pins the other side: a grant row
+// naming the bucket still refuses the delete, because that row would be left
+// pointing at nothing.
+func TestProvisioning_NamedGrantStillPinsABucket(t *testing.T) {
+	t.Parallel()
+
+	f := newProvFixture(t, nil, &provStore{
+		buckets: []core.Bucket{{Name: "photos"}},
+		users:   []core.User{{ID: "u1", Name: "ci"}},
+		grants: []core.Grant{{
+			UserID:      "u1",
+			Resource:    core.BucketResource("photos"),
+			Permissions: core.PermAll,
+		}},
+	})
+	f.objects.EXPECT().CountObjectsByPrefix(gomock.Any(), "photos/").Return(int64(0), nil)
+
+	if err := f.svc.DeleteBucket(context.Background(), "photos"); !errors.Is(err, ErrBucketGranted) {
+		t.Fatalf("err = %v, want ErrBucketGranted", err)
+	}
+}

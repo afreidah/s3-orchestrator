@@ -34,17 +34,36 @@ nomad() { NOMAD_ADDR="http://127.0.0.1:4646" command nomad "$@"; }
 
 cd "$REPO_ROOT"
 
-ADMIN_TOKEN="admin"
 BUCKET="photos"
 PERF_USER="perf"
 PERF_GRANTS="list-buckets,list,read,write,delete"
 CREDENTIALS_FILE="$SCRIPT_DIR/.perf-credentials.env"
 
+# rand_chars draws n characters from the given set.
+#
+# The random source is a fixed-size read rather than a stream, because a reader
+# that stops early leaves the filter writing into a closed pipe: under
+# "set -o pipefail" that SIGPIPE fails the whole script, which is a confusing
+# way for a demo to die before it prints anything.
+rand_chars() {
+    local set="$1" n="$2"
+    head -c 1024 /dev/urandom | LC_ALL=C tr -dc "$set" | cut -c1-"$n"
+}
+
+# The root keypair, minted per run and substituted into the job's config. This
+# is the credential the demo administers itself with: the admin API, the TUI and
+# the dashboard all take it, so there is one thing to hold rather than a token
+# for one surface and a password for another.
+ROOT_ACCESS_KEY="AKIA$(rand_chars 'A-Z0-9' 16)"
+ROOT_SECRET_KEY="$(rand_chars 'A-Za-z0-9' 40)"
+
 # s3o runs the admin CLI out of the image the demo just built, so the demo needs
-# no host-installed binary beyond docker.
+# no host-installed binary beyond docker. It signs, rather than presenting a
+# token, which is the path an operator should be on.
 s3o() {
     docker run --rm --network host "$IMAGE" \
-        admin -addr "http://127.0.0.1:$PORT" -token "$ADMIN_TOKEN" "$@"
+        admin -addr "http://127.0.0.1:$PORT" \
+        -access-key "$ROOT_ACCESS_KEY" -secret-key "$ROOT_SECRET_KEY" "$@"
 }
 
 # provision_perf_identity creates the user, mints its keypair and grants it the
@@ -97,11 +116,14 @@ provision_perf_identity() {
     (
         umask 077
         cat > "$CREDENTIALS_FILE" <<EOF
-# Written by demo.sh. The perf suite signs as this identity, so a run goes
-# through a stored grant rather than the config credential's full access.
+# Written by demo.sh. The perf suite signs as the perf identity, so a run goes
+# through a stored grant rather than the config credential's full access. The
+# root keypair is here too, for reaching the admin API by hand.
 PERF_ACCESS_KEY="$access_key"
 PERF_SECRET_KEY="$secret"
 PERF_USER_ID="$user_id"
+S3O_ACCESS_KEY_ID="$ROOT_ACCESS_KEY"
+S3O_SECRET_ACCESS_KEY="$ROOT_SECRET_KEY"
 EOF
     )
     echo "  user $user_id, key $access_key, granted $PERF_GRANTS on $BUCKET"
@@ -168,7 +190,10 @@ docker compose -f docker-compose.test.yml up -d tempo loki alloy prometheus graf
 
 # --- Submit job ---
 echo "Submitting Nomad job..."
-sed "s/__HOST_IP__/$HOST_IP/g" "$SCRIPT_DIR/s3-orchestrator.nomad.hcl" | nomad job run -detach -
+sed -e "s/__HOST_IP__/$HOST_IP/g" \
+    -e "s|__ROOT_ACCESS_KEY__|$ROOT_ACCESS_KEY|g" \
+    -e "s|__ROOT_SECRET_KEY__|$ROOT_SECRET_KEY|g" \
+    "$SCRIPT_DIR/s3-orchestrator.nomad.hcl" | nomad job run -detach -
 
 # --- Wait for healthy allocation ---
 echo "Waiting for allocation to become healthy..."
@@ -213,7 +238,16 @@ if echo "$HEALTH" | grep -q '"status":"ok"'; then
     echo "  Tempo:      http://localhost:3200"
     echo "  Nomad UI:   http://localhost:4646"
     echo ""
-    echo "  Dashboard login: admin / admin"
+    echo "  Root keypair - the only credential, for the dashboard login, the"
+    echo "  TUI, and the admin API:"
+    echo "    access key: $ROOT_ACCESS_KEY"
+    echo "    secret key: $ROOT_SECRET_KEY"
+    echo ""
+    echo "    export S3O_ADMIN_ADDR=http://localhost:$PORT"
+    echo "    export S3O_ACCESS_KEY_ID=$ROOT_ACCESS_KEY"
+    echo "    export S3O_SECRET_ACCESS_KEY=$ROOT_SECRET_KEY"
+    echo "    s3-orchestrator admin status"
+    echo "    s3-orchestrator tui"
     echo ""
     echo "  Test upload:"
     echo "    aws --endpoint-url http://localhost:$PORT s3 cp /etc/hostname s3://$BUCKET/test.txt"
@@ -222,7 +256,7 @@ if echo "$HEALTH" | grep -q '"status":"ok"'; then
     echo "  Its keypair is in $CREDENTIALS_FILE, and 'make perf' signs as it."
     echo ""
     echo "  See what it reaches:"
-    echo "    s3-orchestrator admin -addr http://localhost:$PORT -token $ADMIN_TOKEN user list"
+    echo "    s3-orchestrator admin user list"
     echo ""
     echo "  Nomad agent log: /tmp/nomad-demo.log"
     echo ""

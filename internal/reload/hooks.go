@@ -149,7 +149,7 @@ func (*corsHook) Check(_, newCfg *config.Config) error {
 	if newCfg == nil {
 		return nil
 	}
-	_, err := cors.NewRegistry(provisioning.Merge(newCfg.Buckets, &provisioning.Snapshot{}).Buckets)
+	_, err := cors.NewRegistry(provisioning.Merge(newCfg.Buckets, newCfg.Auth, &provisioning.Snapshot{}).Buckets)
 	return err
 }
 

@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 )
 
 // -------------------------------------------------------------------------
@@ -53,6 +54,7 @@ func newObjectsHandlerWithAPI(t *testing.T) (*opstest.MockObjectAPI, http.Handle
 		}),
 		token:    "test-token",
 		logLevel: &lv,
+		registry: func() *auth.BucketRegistry { return rootRegistry(t) },
 	}
 	mux := http.NewServeMux()
 	h.Register(mux)

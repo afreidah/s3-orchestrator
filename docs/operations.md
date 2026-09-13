@@ -25,7 +25,7 @@ Many settings can be updated without restarting the orchestrator by sending `SIG
 
 **What takes effect immediately:**
 
-- Log level (`server.log_level`) — can also be changed at runtime via `s3-orchestrator admin log-level -set debug`
+- Log level (`server.log_level`) - can also be changed at runtime via `s3-orchestrator admin log-level -set debug`
 - Bucket credentials (add/remove/rotate credentials without downtime)
 - Rate limit settings (requests per second, burst)
 - Backend quota limits (`quota_bytes`)
@@ -51,11 +51,11 @@ If any of these fields change, the reload still proceeds for the reloadable sett
 {"level":"ERROR","msg":"Config reload failed, keeping current config","error":"invalid config: ..."}
 ```
 
-No partial reload happens — either all reloadable settings update, or none do.
+No partial reload happens - either all reloadable settings update, or none do.
 
 ### Adding a new backend
 
-Add the backend to the `backends` list in your config and restart the orchestrator. Backend count changes are not reloadable — a restart is required. Quota limits are synced to the database on startup.
+Add the backend to the `backends` list in your config and restart the orchestrator. Backend count changes are not reloadable - a restart is required. Quota limits are synced to the database on startup.
 
 ### Onboarding a client onto a new bucket
 
@@ -139,7 +139,7 @@ Draining migrates all objects off a backend to other backends without data loss.
 4. **Remove the backend from config and restart:**
 
    ```bash
-   # Edit config.yaml — remove the backend entry
+   # Edit config.yaml - remove the backend entry
    # Restart or redeploy the orchestrator
    ```
 
@@ -165,7 +165,7 @@ Objects already moved are not rolled back. The backend becomes eligible for new 
 
 ### Removing a backend
 
-Removing deletes all database records for a backend. This is destructive — objects on that backend become inaccessible. Use `drain` first if you want to preserve data.
+Removing deletes all database records for a backend. This is destructive - objects on that backend become inaccessible. Use `drain` first if you want to preserve data.
 
 **Drop database records only** (objects remain on the backend's S3 storage):
 
@@ -193,17 +193,17 @@ After removing, edit the config to remove the backend entry and restart.
 
 ### Important: update the config after drain or remove
 
-Drain and remove state is held in memory only — it is **not** persisted to the database. This means:
+Drain and remove state is held in memory only - it is **not** persisted to the database. This means:
 
 - **If the service restarts with a drained/removed backend still in the config**, `SyncQuotaLimits` re-creates the backend's quota record and the backend is re-initialized as a fresh, empty backend eligible for new writes. No data is lost, but the decommissioned backend silently starts receiving traffic again.
 - **If the service crashes during an active drain**, all drain progress is lost. The backend reverts to active on restart. You would need to restart the drain.
-- **SIGHUP does not remove backends** — config reload only updates quota limits and usage limits. The in-memory backend map is set at startup and cannot be modified at runtime.
+- **SIGHUP does not remove backends** - config reload only updates quota limits and usage limits. The in-memory backend map is set at startup and cannot be modified at runtime.
 
 **Always remove the backend from the config file and restart (or redeploy) after a drain or remove operation completes.** The dashboard UI shows a pulsing "Draining" badge on backends with an active drain so you can monitor progress visually.
 
 ### Adjusting quotas
 
-Change `quota_bytes` in the config and send `SIGHUP`. Quota limits are synced to the database on reload. Alternatively, restart the orchestrator — `SyncQuotaLimits` also runs on startup.
+Change `quota_bytes` in the config and send `SIGHUP`. Quota limits are synced to the database on reload. Alternatively, restart the orchestrator - `SyncQuotaLimits` also runs on startup.
 
 ### Enabling replication after initial setup
 
@@ -231,7 +231,7 @@ If you enable encryption on an orchestrator that already has unencrypted objects
 
 3. **Monitor** via the `s3o_encrypt_existing_objects_total` metric (labels: `success`, `error`).
 
-Failed objects are logged individually and can be retried by calling `encrypt-existing` again — it only processes objects without encryption metadata.
+Failed objects are logged individually and can be retried by calling `encrypt-existing` again - it only processes objects without encryption metadata.
 
 ### Disabling encryption / decrypting existing data
 
@@ -253,7 +253,7 @@ To remove encryption from all objects and restore plaintext on backends, use the
 
 3. **Monitor** via the `s3o_decrypt_existing_objects_total` metric (labels: `success`, `error`).
 
-Failed objects are logged individually and can be retried by calling `decrypt-existing` again — it only processes objects with encryption metadata.
+Failed objects are logged individually and can be retried by calling `decrypt-existing` again - it only processes objects with encryption metadata.
 
 Both `encrypt-existing` and `decrypt-existing` keep `backend_quotas.bytes_used` consistent with the on-disk byte count: each object is rewritten at a different size (encryption inflates by per-chunk overhead, decryption removes it), and the per-backend counter advances by the size delta inside the same transaction as the metadata update. No manual reconciliation against `SUM(object_locations.size_bytes)` is needed after a run.
 
@@ -273,7 +273,7 @@ Key rotation re-wraps DEKs with a new master key without re-encrypting object da
    openssl rand -base64 32
    ```
 
-2. **Update the config** — set the new key as `master_key` and move the old key to `previous_keys`:
+2. **Update the config** - set the new key as `master_key` and move the old key to `previous_keys`:
 
    ```yaml
    encryption:
@@ -344,7 +344,7 @@ To perform a zero-downtime rotation, temporarily declare both old and new creden
          - access_key_id: "NEW_KEY"
            secret_access_key: "new_secret"
    ```
-2. Send `SIGHUP` — both credentials now work.
+2. Send `SIGHUP` - both credentials now work.
 3. Update the client to use the new credentials.
 4. Remove the old credential from the config and send `SIGHUP` again.
 

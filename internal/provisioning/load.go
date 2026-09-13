@@ -52,10 +52,10 @@ func Load(ctx context.Context, r Reader) (*Snapshot, error) {
 
 // LoadMerged reads the store and folds config in, which is the whole of what
 // both the request-time registry and an operator's listing are built from.
-func LoadMerged(ctx context.Context, r Reader, cfgBuckets []config.BucketConfig) (View, error) {
+func LoadMerged(ctx context.Context, r Reader, cfgBuckets []config.BucketConfig, auth config.AuthConfig) (View, error) {
 	s, err := Load(ctx, r)
 	if err != nil {
 		return View{}, err
 	}
-	return Merge(cfgBuckets, s), nil
+	return Merge(cfgBuckets, auth, s), nil
 }

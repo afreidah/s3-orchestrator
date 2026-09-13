@@ -131,6 +131,9 @@ var (
 var (
 	ErrAdminAuthIncomplete = errors.New("admin_key and admin_secret must both be set (or both empty)")
 	ErrSessionSecretReqd   = errors.New("session_secret is required when UI is enabled")
+
+	ErrRootCredentialIncomplete = errors.New(
+		"auth.root.access_key_id and auth.root.secret_access_key must both be set (or both empty)")
 )
 
 // Rate limit errors.

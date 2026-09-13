@@ -18,14 +18,14 @@ database:
 Each S3 request uses at least one database connection. Background workers (rebalancer, replicator, cleanup, usage flush) each hold a connection during their tick. Advisory lock acquisition uses a dedicated connection.
 
 ```
-max_conns = max_concurrent_requests + (active_workers × 2) + 10
+max_conns = max_concurrent_requests + (active_workers x 2) + 10
 ```
 
 | Workload | max_concurrent_requests | Recommended max_conns |
 |----------|------------------------|----------------------|
 | Dev / testing | 10 | 50 (default) |
 | Low traffic (<100 RPS) | 50 | 50 (default) |
-| Medium traffic (100–500 RPS) | 100 | 100–150 |
+| Medium traffic (100-500 RPS) | 100 | 100-150 |
 | High traffic (500+ RPS) | 200+ | 200+ |
 
 ### Guidelines
@@ -63,7 +63,7 @@ When `load_shed_threshold` is set (e.g. `0.8`), the server begins probabilistica
 
 ### Admission wait
 
-When `admission_wait` is set (e.g. `50ms`), requests briefly wait for a slot to free up before being rejected. This smooths micro-bursts where a slot opens up within milliseconds. The request's context deadline is also respected — whichever fires first wins. Set to `0` (default) for instant rejection.
+When `admission_wait` is set (e.g. `50ms`), requests briefly wait for a slot to free up before being rejected. This smooths micro-bursts where a slot opens up within milliseconds. The request's context deadline is also respected - whichever fires first wins. Set to `0` (default) for instant rejection.
 
 ### When to set this
 
@@ -75,10 +75,10 @@ When `admission_wait` is set (e.g. `50ms`), requests briefly wait for a slot to 
 
 ### Monitoring
 
-- `s3o_admission_rejections_total` — requests rejected at the hard admission limit
-- `s3o_load_shed_total` — requests probabilistically shed before the hard limit
-- `s3o_early_rejections_total` — uploads rejected before body transmission (no backend capacity)
-- `s3o_inflight_requests` — gauge of currently processing requests by method. Use this to find the right limit value.
+- `s3o_admission_rejections_total` - requests rejected at the hard admission limit
+- `s3o_load_shed_total` - requests probabilistically shed before the hard limit
+- `s3o_early_rejections_total` - uploads rejected before body transmission (no backend capacity)
+- `s3o_inflight_requests` - gauge of currently processing requests by method. Use this to find the right limit value.
 
 ## Backend Timeout
 
@@ -87,7 +87,7 @@ server:
   backend_timeout: "30s"
 ```
 
-This timeout applies to each individual S3 API call to a backend (GET, PUT, HEAD, DELETE). It does not cover the full request lifecycle — just the backend leg.
+This timeout applies to each individual S3 API call to a backend (GET, PUT, HEAD, DELETE). It does not cover the full request lifecycle - just the backend leg.
 
 ### Provider-Specific Recommendations
 
@@ -141,7 +141,7 @@ config {
 }
 ```
 
-**Kubernetes:** Set at the node level or via an init container — pod-level ulimits are not directly configurable in the pod spec.
+**Kubernetes:** Set at the node level or via an init container - pod-level ulimits are not directly configurable in the pod spec.
 
 ### Recommended host sysctls
 
@@ -163,7 +163,7 @@ Set `GOMEMLIMIT` to ~90% of the container's memory allocation so the Go garbage 
 GOMEMLIMIT=922MiB
 ```
 
-The default `GOGC=100` provides smooth GC behavior with `GOMEMLIMIT` set. Setting `GOGC=off` minimizes GC CPU overhead but risks latency spikes from large collections — only use it after profiling your workload.
+The default `GOGC=100` provides smooth GC behavior with `GOMEMLIMIT` set. Setting `GOGC=off` minimizes GC CPU overhead but risks latency spikes from large collections - only use it after profiling your workload.
 
 ## Backend HTTP Transport
 
@@ -310,7 +310,7 @@ redis:
   open_timeout: "15s"
 ```
 
-Redis adds ~0.2ms per write operation (pipelined `INCRBY`) and ~0.2ms per read (`GET` pipeline). For most workloads the latency is negligible compared to backend S3 calls. If Redis becomes unavailable, the circuit breaker falls back to local counters automatically — no manual intervention needed.
+Redis adds ~0.2ms per write operation (pipelined `INCRBY`) and ~0.2ms per read (`GET` pipeline). For most workloads the latency is negligible compared to backend S3 calls. If Redis becomes unavailable, the circuit breaker falls back to local counters automatically - no manual intervention needed.
 
 **When to use Redis:**
 - Running 2+ instances with usage limits enabled
@@ -330,7 +330,7 @@ backend_circuit_breaker:
   open_timeout: "5m"     # delay before probing recovery (default: 5m)
 ```
 
-Per-backend circuit breakers stop sending traffic to a backend after `failure_threshold` consecutive errors (expired credentials, network failures, provider outages). The circuit opens immediately — no timeout waiting — and all subsequent requests route around the failed backend. After `open_timeout`, the next organic request is allowed through as a probe.
+Per-backend circuit breakers stop sending traffic to a backend after `failure_threshold` consecutive errors (expired credentials, network failures, provider outages). The circuit opens immediately - no timeout waiting - and all subsequent requests route around the failed backend. After `open_timeout`, the next organic request is allowed through as a probe.
 
 ### Tuning Guidelines
 
@@ -346,18 +346,18 @@ Per-backend circuit breakers stop sending traffic to a backend after `failure_th
 | AWS S3 / R2 | `5` | `5m` | Defaults work well; outages are rare |
 | OCI Object Storage | `3` | `5m` | OCI can return auth errors in bursts during credential rotation |
 | Backblaze B2 | `5` | `5m` | B2 maintenance windows are short |
-| MinIO (local) | `3` | `30s` | Local failures are usually configuration issues — probe quickly |
+| MinIO (local) | `3` | `30s` | Local failures are usually configuration issues - probe quickly |
 
 ### When to Enable
 
-- **Multi-backend with replication** — highly recommended. Reads fail over to replicas on healthy backends, writes route to other backends, and the replication worker creates replacement copies after a sustained outage (`replication.unhealthy_threshold`). A single backend failure becomes invisible to clients.
-- **Single backend** — less useful. The circuit opens but there's nowhere to fail over to. Requests return `ErrBackendUnavailable` instead of timing out, which is still an improvement (faster failure).
-- **Cost-sensitive environments** — the probe request after `open_timeout` is a real S3 API call. With a 5-minute timeout, that's at most 12 probes/hour to a down backend. Health-aware replication also creates additional copies during sustained outages, which consume backend I/O and storage.
+- **Multi-backend with replication** - highly recommended. Reads fail over to replicas on healthy backends, writes route to other backends, and the replication worker creates replacement copies after a sustained outage (`replication.unhealthy_threshold`). A single backend failure becomes invisible to clients.
+- **Single backend** - less useful. The circuit opens but there's nowhere to fail over to. Requests return `ErrBackendUnavailable` instead of timing out, which is still an improvement (faster failure).
+- **Cost-sensitive environments** - the probe request after `open_timeout` is a real S3 API call. With a 5-minute timeout, that's at most 12 probes/hour to a down backend. Health-aware replication also creates additional copies during sustained outages, which consume backend I/O and storage.
 
 ### Monitoring
 
-- `s3o_circuit_breaker_state{name="<backend>"}` — 0=closed, 1=open, 2=half-open
-- `s3o_circuit_breaker_transitions_total{name="<backend>"}` — state change counter
+- `s3o_circuit_breaker_state{name="<backend>"}` - 0=closed, 1=open, 2=half-open
+- `s3o_circuit_breaker_transitions_total{name="<backend>"}` - state change counter
 
 A sustained `state=1` for a backend means it's been unreachable. Check the backend's credentials and connectivity.
 
@@ -365,7 +365,7 @@ A sustained `state=1` for a backend means it's been unreachable. Check the backe
 
 Every PUT is materialized before it reaches a backend, so a failed write can be retried against another one without asking the client to resend. Bodies up to 32 MiB are held in memory; larger ones spill to a temporary file.
 
-That makes the upload footprint `32 MiB x max_concurrent_writes` — but only if the spill lands on disk. The default spill location is the OS temp directory, and `/tmp` is tmpfs under the systemd default and in most container images. On those hosts the spill is still RAM, and the real worst case goes back to being the size of the objects in flight:
+That makes the upload footprint `32 MiB x max_concurrent_writes` - but only if the spill lands on disk. The default spill location is the OS temp directory, and `/tmp` is tmpfs under the systemd default and in most container images. On those hosts the spill is still RAM, and the real worst case goes back to being the size of the objects in flight:
 
 ```yaml
 server:
@@ -401,20 +401,20 @@ The per-IP rate limiter stores a token bucket for every unique client IP. A back
 
 ### Memory under attack
 
-Under sustained high-cardinality traffic (e.g., DDoS with spoofed source IPs), the map can accumulate up to `cleanup_max_age / cleanup_interval` sweeps' worth of unique IPs before eviction catches up. Each entry is roughly 100 bytes, so 1 million unique IPs ≈ 100 MB.
+Under sustained high-cardinality traffic (e.g., DDoS with spoofed source IPs), the map can accumulate up to `cleanup_max_age / cleanup_interval` sweeps' worth of unique IPs before eviction catches up. Each entry is roughly 100 bytes, so 1 million unique IPs ~ 100 MB.
 
 To limit memory growth under attack:
 
-- Lower `cleanup_max_age` to `1m` or `2m` — entries are evicted faster at the cost of re-creating limiters for legitimate clients who pause briefly.
-- Lower `cleanup_interval` to `30s` — sweeps run more frequently, keeping the high-water mark lower.
+- Lower `cleanup_max_age` to `1m` or `2m` - entries are evicted faster at the cost of re-creating limiters for legitimate clients who pause briefly.
+- Lower `cleanup_interval` to `30s` - sweeps run more frequently, keeping the high-water mark lower.
 
 ### Monitoring
 
-- `s3o_rate_limit_rejections_total` — counter of rejected requests. A sustained non-zero rate means the limiter is actively throttling traffic.
+- `s3o_rate_limit_rejections_total` - counter of rejected requests. A sustained non-zero rate means the limiter is actively throttling traffic.
 
 ## Tracing Sample Rate
 
-The `telemetry.sample_rate` controls what fraction of requests generate OpenTelemetry trace spans exported to the collector (Tempo, Jaeger, etc.). This does not affect Prometheus metrics or structured logs — only distributed traces.
+The `telemetry.sample_rate` controls what fraction of requests generate OpenTelemetry trace spans exported to the collector (Tempo, Jaeger, etc.). This does not affect Prometheus metrics or structured logs - only distributed traces.
 
 ```yaml
 telemetry:
@@ -426,12 +426,12 @@ telemetry:
 | Development | `1.0` | Trace every request for debugging |
 | Staging | `0.1` | Enough to see patterns; 10x less volume |
 | Production < 100 RPS | `0.1` | ~10 traces/sec is manageable |
-| Production 100–1000 RPS | `0.01` | ~1–10 traces/sec |
-| Production > 1000 RPS | `0.001–0.01` | Reduce collector storage and CPU |
+| Production 100-1000 RPS | `0.01` | ~1-10 traces/sec |
+| Production > 1000 RPS | `0.001-0.01` | Reduce collector storage and CPU |
 
-At `1.0` with 1000 RPS, the trace collector receives ~1000 spans/sec per request hop (multiple spans per request: HTTP → manager → backend). This can generate gigabytes of trace data per day and significant CPU overhead for serialization and export.
+At `1.0` with 1000 RPS, the trace collector receives ~1000 spans/sec per request hop (multiple spans per request: HTTP -> manager -> backend). This can generate gigabytes of trace data per day and significant CPU overhead for serialization and export.
 
-Prometheus metrics always capture 100% of requests regardless of sample rate — use metrics for alerting and dashboards, traces for debugging specific requests.
+Prometheus metrics always capture 100% of requests regardless of sample rate - use metrics for alerting and dashboards, traces for debugging specific requests.
 
 ## Load Testing
 
@@ -441,9 +441,9 @@ To characterise a deployment end to end rather than tune one knob, [`performance
 
 ### Tools
 
-**vegeta (Go)** — constant-rate latency profiling. Best for answering "what is P99 latency at N requests/second?"
+**vegeta (Go)** - constant-rate latency profiling. Best for answering "what is P99 latency at N requests/second?"
 
-**k6** — scenario-based workflow simulation. Best for answering "how does the system behave under realistic mixed traffic patterns?"
+**k6** - scenario-based workflow simulation. Best for answering "how does the system behave under realistic mixed traffic patterns?"
 
 ### Quick Start
 
@@ -497,19 +497,19 @@ Status Codes  [code:count]                      200:3000
 
 **k6 output:**
 
-- `put_success` / `get_success` — per-operation success rates
-- `shed_503` (burst test) — number of requests rejected by admission control
-- `http_req_duration` — latency percentiles across all operations
+- `put_success` / `get_success` - per-operation success rates
+- `shed_503` (burst test) - number of requests rejected by admission control
+- `http_req_duration` - latency percentiles across all operations
 
 ### What to Watch in Grafana
 
 While load tests run, the Grafana dashboard shows system behavior in real time:
 
-- **Quota & Storage** — per-backend utilization during writes
-- **Request Performance** — latency percentiles, status code distribution, request rate
-- **Circuit Breaker** — backend health state transitions under load
-- **Replication** — pending replica count and copy duration after write bursts
-- **Cleanup Queue** — orphaned objects queued for cleanup after failures
+- **Quota & Storage** - per-backend utilization during writes
+- **Request Performance** - latency percentiles, status code distribution, request rate
+- **Circuit Breaker** - backend health state transitions under load
+- **Replication** - pending replica count and copy duration after write bursts
+- **Cleanup Queue** - orphaned objects queued for cleanup after failures
 
 ### Baseline Workflow
 
@@ -533,7 +533,7 @@ These reference numbers were measured on a single instance with three local MinI
 | Mixed 1KB | 300/s | ~8ms | ~140% | 50/50 PUT/GET |
 | Burst (100 VUs) | ~280/s | ~96ms | 150-200% spikes | k6 scenario, all PUTs |
 
-CPU percentages are relative to the container's CPU allocation. Memory remained flat across all tests at 1KB object sizes — the streaming architecture avoids buffering objects in memory. Larger objects (1MB+) will increase memory usage proportionally to concurrency.
+CPU percentages are relative to the container's CPU allocation. Memory remained flat across all tests at 1KB object sizes - the streaming architecture avoids buffering objects in memory. Larger objects (1MB+) will increase memory usage proportionally to concurrency.
 
 ## Object Data Cache
 
@@ -553,11 +553,11 @@ The cache consumes container memory proportional to `max_size`. Size it based on
 
 | Container Memory | Recommended `max_size` | Notes |
 |-----------------|----------------------|-------|
-| 512 MB | 64–128 MB | Leave room for GC and streaming buffers |
-| 1 GB | 128–256 MB | Good for most workloads |
-| 2+ GB | 256–512 MB | Large working sets or many concurrent readers |
+| 512 MB | 64-128 MB | Leave room for GC and streaming buffers |
+| 1 GB | 128-256 MB | Good for most workloads |
+| 2+ GB | 256-512 MB | Large working sets or many concurrent readers |
 
-When `GOMEMLIMIT` is set (recommended — see [Go runtime: GOMEMLIMIT](#go-runtime-gomemlimit)), include the cache's `max_size` in your calculation:
+When `GOMEMLIMIT` is set (recommended - see [Go runtime: GOMEMLIMIT](#go-runtime-gomemlimit)), include the cache's `max_size` in your calculation:
 
 ```bash
 # Example: 1024 MB container, 256 MB cache
@@ -566,23 +566,23 @@ GOMEMLIMIT=$(( (1024 - 256) * 90 / 100 ))MiB   # ~691 MiB for Go heap
 
 ### When Caching Helps Most
 
-- **Read-heavy workloads** — a small set of objects serves the majority of reads (thumbnails, config files, static assets). A high `s3o_cache_hits_total` / (`hits` + `misses`) ratio confirms the cache is effective.
-- **Egress-limited backends** — backends with monthly egress caps (OCI free tier, B2 free tier). Each cache hit avoids an egress charge.
-- **High-latency backends** — caching eliminates backend round-trips, improving P50 and P99 latency for hot objects.
+- **Read-heavy workloads** - a small set of objects serves the majority of reads (thumbnails, config files, static assets). A high `s3o_cache_hits_total` / (`hits` + `misses`) ratio confirms the cache is effective.
+- **Egress-limited backends** - backends with monthly egress caps (OCI free tier, B2 free tier). Each cache hit avoids an egress charge.
+- **High-latency backends** - caching eliminates backend round-trips, improving P50 and P99 latency for hot objects.
 
 ### When Caching Adds Little Value
 
-- **Write-heavy or write-once-read-once workloads** — objects are rarely read more than once, so the cache turns over constantly with minimal hits.
-- **Objects too large for the cache** — if most objects exceed `max_object_size`, they bypass the cache entirely.
-- **Uniform access patterns** — when reads are evenly distributed across many unique objects, the working set exceeds `max_size` and eviction rates stay high.
+- **Write-heavy or write-once-read-once workloads** - objects are rarely read more than once, so the cache turns over constantly with minimal hits.
+- **Objects too large for the cache** - if most objects exceed `max_object_size`, they bypass the cache entirely.
+- **Uniform access patterns** - when reads are evenly distributed across many unique objects, the working set exceeds `max_size` and eviction rates stay high.
 
 ### Monitoring
 
-- `s3o_cache_hits_total` / `s3o_cache_misses_total` — compute the hit ratio. Below ~50%, the cache may be undersized or the workload is not a good fit.
-- `s3o_cache_evictions_total` — a sustained high eviction rate means objects are being evicted before they can be re-read. Increase `max_size` or lower `max_object_size` to fit more objects.
-- `s3o_cache_size_bytes` — if this consistently sits well below `max_size`, the cache is oversized and you can reclaim memory.
-- `s3o_cache_entries` — useful alongside `cache_size_bytes` to understand average cached object size.
+- `s3o_cache_hits_total` / `s3o_cache_misses_total` - compute the hit ratio. Below ~50%, the cache may be undersized or the workload is not a good fit.
+- `s3o_cache_evictions_total` - a sustained high eviction rate means objects are being evicted before they can be re-read. Increase `max_size` or lower `max_object_size` to fit more objects.
+- `s3o_cache_size_bytes` - if this consistently sits well below `max_size`, the cache is oversized and you can reclaim memory.
+- `s3o_cache_entries` - useful alongside `cache_size_bytes` to understand average cached object size.
 
 ### Multi-Instance Staleness
 
-The cache is per-instance and not shared. In multi-instance deployments, a write on instance A does not invalidate the cached copy on instance B. The `ttl` setting bounds how long a stale entry can be served — lower TTL values reduce the staleness window at the cost of more backend requests after expiry. For workloads that require strict read-after-write consistency across instances, either disable the cache or set a very low TTL.
+The cache is per-instance and not shared. In multi-instance deployments, a write on instance A does not invalidate the cached copy on instance B. The `ttl` setting bounds how long a stale entry can be served - lower TTL values reduce the staleness window at the cost of more backend requests after expiry. For workloads that require strict read-after-write consistency across instances, either disable the cache or set a very low TTL.

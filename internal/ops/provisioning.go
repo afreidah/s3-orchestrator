@@ -95,7 +95,8 @@ type NewCredential struct {
 // View returns everything a deployment declares, from both sources, each entry
 // carrying where it came from.
 func (p *Provisioning) View(ctx context.Context) (provisioning.View, error) {
-	return provisioning.LoadMerged(ctx, p.store, p.config.Load().Buckets)
+	cfg := p.config.Load()
+	return provisioning.LoadMerged(ctx, p.store, cfg.Buckets, cfg.Auth)
 }
 
 // -------------------------------------------------------------------------
@@ -152,7 +153,7 @@ func (p *Provisioning) DeleteBucket(ctx context.Context, name string) error {
 	if b.Source == provisioning.SourceConfig {
 		return fmt.Errorf("%w: bucket %q", ErrConfigDeclared, name)
 	}
-	if err := p.refuseIfBucketInUse(ctx, name, &view); err != nil {
+	if err := p.refuseIfBucketInUse(ctx, name); err != nil {
 		return err
 	}
 	if err := p.store.DeleteBucket(ctx, name); err != nil {
@@ -164,7 +165,7 @@ func (p *Provisioning) DeleteBucket(ctx context.Context, name string) error {
 
 // refuseIfBucketInUse reports the objects or grants that make a bucket
 // undeletable.
-func (p *Provisioning) refuseIfBucketInUse(ctx context.Context, name string, view *provisioning.View) error {
+func (p *Provisioning) refuseIfBucketInUse(ctx context.Context, name string) error {
 	n, err := p.objects.CountObjectsByPrefix(ctx, name+"/")
 	if err != nil {
 		return err
@@ -172,12 +173,19 @@ func (p *Provisioning) refuseIfBucketInUse(ctx context.Context, name string, vie
 	if n > 0 {
 		return fmt.Errorf("%w: bucket %q holds %s", ErrBucketNotEmpty, name, plural(n, "object"))
 	}
-	for i := range view.Users {
-		u := &view.Users[i]
-		for _, granted := range u.Buckets {
-			if granted == name {
-				return fmt.Errorf("%w: bucket %q is granted to user %q", ErrBucketGranted, name, u.ID)
-			}
+	// Grant rows are asked rather than the merged reach, because what makes a
+	// bucket undeletable is a grant that would be left naming nothing. A
+	// wildcard does not dangle - it simply covers one bucket fewer - and an
+	// identity holding one reaches every bucket, so reading the merged view
+	// here would make every bucket permanently undeletable.
+	grants, err := p.store.ListGrants(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range grants {
+		g := &grants[i]
+		if g.Resource.Kind == core.ResourceBucket && g.Resource.Name == name {
+			return fmt.Errorf("%w: bucket %q is granted to user %q", ErrBucketGranted, name, g.UserID)
 		}
 	}
 	return nil

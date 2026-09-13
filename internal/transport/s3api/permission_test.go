@@ -19,6 +19,7 @@ import (
 
 	"go.uber.org/mock/gomock"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
@@ -37,7 +38,7 @@ import (
 // as a stored grant.
 func grantRegistry(tb testing.TB, perms core.PermissionSet) *auth.BucketRegistry {
 	tb.Helper()
-	v := provisioning.Merge(nil, &provisioning.Snapshot{
+	v := provisioning.Merge(nil, config.AuthConfig{}, &provisioning.Snapshot{
 		Buckets: []core.Bucket{{Name: "mybucket"}},
 		Users:   []core.User{{ID: "u1", Name: "narrow"}},
 		Credentials: []core.Credential{

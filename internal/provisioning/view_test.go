@@ -84,6 +84,7 @@ func TestMerge_StoredBucketsFollowConfig(t *testing.T) {
 
 	v := Merge(
 		[]config.BucketConfig{{Name: "from-config"}},
+		config.AuthConfig{},
 		&Snapshot{Buckets: []core.Bucket{{Name: "from-store", MaxMultipartUploads: 7}}},
 	)
 
@@ -110,6 +111,7 @@ func TestMerge_ConfigWinsNameCollision(t *testing.T) {
 
 	v := Merge(
 		[]config.BucketConfig{{Name: "photos", MaxMultipartUploads: 1}},
+		config.AuthConfig{},
 		&Snapshot{Buckets: []core.Bucket{{Name: "photos", MaxMultipartUploads: 99}}},
 	)
 
@@ -133,6 +135,7 @@ func TestMerge_BucketCORSCarriesAcross(t *testing.T) {
 	rule := []config.CORSRule{{AllowedOrigins: []string{"https://example.com"}, AllowedMethods: []string{"GET"}}}
 	v := Merge(
 		[]config.BucketConfig{{Name: "cfg", CORS: rule}},
+		config.AuthConfig{},
 		&Snapshot{Buckets: []core.Bucket{{Name: "sto", CORS: rule}}},
 	)
 
@@ -159,7 +162,7 @@ func TestMerge_ConfigCredentialBecomesAUser(t *testing.T) {
 		{Name: "backups", Credentials: []config.CredentialConfig{
 			{AccessKeyID: "BK", SecretAccessKey: "BS"},
 		}},
-	}, &Snapshot{})
+	}, config.AuthConfig{}, &Snapshot{})
 
 	cred, ok := findCredential(v.Credentials, "AK")
 	if !ok {
@@ -190,7 +193,7 @@ func TestMerge_KeypairAndTokenShareOneCredential(t *testing.T) {
 		{Name: "photos", Credentials: []config.CredentialConfig{
 			{AccessKeyID: "AK", SecretAccessKey: "SK", Token: "TOK"},
 		}},
-	}, &Snapshot{})
+	}, config.AuthConfig{}, &Snapshot{})
 
 	if len(v.Credentials) != 1 {
 		t.Fatalf("merged %d credentials, want 1", len(v.Credentials))
@@ -225,6 +228,7 @@ func TestMerge_GrantsJoinOntoUser(t *testing.T) {
 
 	v := Merge(
 		[]config.BucketConfig{{Name: "config-bucket"}},
+		config.AuthConfig{},
 		&Snapshot{
 			Buckets:     []core.Bucket{{Name: "store-bucket"}},
 			Users:       []core.User{{ID: "u1", Name: "ci"}},
@@ -259,7 +263,7 @@ func TestMerge_GrantsJoinOntoUser(t *testing.T) {
 func TestMerge_UserBucketsSorted(t *testing.T) {
 	t.Parallel()
 
-	v := Merge(nil, &Snapshot{
+	v := Merge(nil, config.AuthConfig{}, &Snapshot{
 		Buckets: []core.Bucket{{Name: "zeta"}, {Name: "alpha"}, {Name: "mid"}},
 		Users:   []core.User{{ID: "u1", Name: "ci"}},
 		Grants: []core.Grant{
@@ -284,7 +288,7 @@ func TestMerge_UserBucketsSorted(t *testing.T) {
 func TestMerge_DanglingGrantReported(t *testing.T) {
 	t.Parallel()
 
-	v := Merge(nil, &Snapshot{
+	v := Merge(nil, config.AuthConfig{}, &Snapshot{
 		Users:       []core.User{{ID: "u1", Name: "ci"}},
 		Credentials: []core.Credential{{AccessKeyID: "AK1", UserID: "u1", Secret: "s1"}},
 		Grants:      []core.Grant{{UserID: "u1", Resource: core.BucketResource("gone")}},
@@ -308,7 +312,7 @@ func TestMerge_DanglingGrantReported(t *testing.T) {
 func TestMerge_DisabledCredentialOmitted(t *testing.T) {
 	t.Parallel()
 
-	v := Merge(nil, &Snapshot{
+	v := Merge(nil, config.AuthConfig{}, &Snapshot{
 		Buckets: []core.Bucket{{Name: "b"}},
 		Users:   []core.User{{ID: "u1", Name: "ci"}},
 		Credentials: []core.Credential{
@@ -331,7 +335,7 @@ func TestMerge_DisabledCredentialOmitted(t *testing.T) {
 func TestMerge_CredentialWithoutUserOmitted(t *testing.T) {
 	t.Parallel()
 
-	v := Merge(nil, &Snapshot{
+	v := Merge(nil, config.AuthConfig{}, &Snapshot{
 		Credentials: []core.Credential{{AccessKeyID: "AK1", UserID: "missing", Secret: "s1"}},
 	})
 
@@ -348,6 +352,7 @@ func TestMerge_UserWithoutGrantsReachesNothing(t *testing.T) {
 
 	v := Merge(
 		[]config.BucketConfig{{Name: "photos"}},
+		config.AuthConfig{},
 		&Snapshot{
 			Users:       []core.User{{ID: "u1", Name: "new"}},
 			Credentials: []core.Credential{{AccessKeyID: "AK1", UserID: "u1", Secret: "s1"}},
@@ -382,7 +387,7 @@ func wildcardGrant(user string, perms core.PermissionSet) core.Grant {
 func TestMerge_WildcardReachesEveryBucket(t *testing.T) {
 	t.Parallel()
 
-	v := Merge(nil, &Snapshot{
+	v := Merge(nil, config.AuthConfig{}, &Snapshot{
 		Buckets: []core.Bucket{{Name: "photos"}, {Name: "logs"}},
 		Users:   []core.User{{ID: "u1", Name: "devops"}},
 		Grants:  []core.Grant{wildcardGrant("u1", core.PermRead)},
@@ -405,7 +410,7 @@ func TestMerge_WildcardReachesEveryBucket(t *testing.T) {
 func TestMerge_NamedGrantNarrowsTheWildcard(t *testing.T) {
 	t.Parallel()
 
-	v := Merge(nil, &Snapshot{
+	v := Merge(nil, config.AuthConfig{}, &Snapshot{
 		Buckets: []core.Bucket{{Name: "photos"}, {Name: "secrets"}},
 		Users:   []core.User{{ID: "u1", Name: "devops"}},
 		Grants: []core.Grant{
@@ -428,7 +433,7 @@ func TestMerge_NamedGrantNarrowsTheWildcard(t *testing.T) {
 func TestMerge_NamedGrantWidensTheWildcard(t *testing.T) {
 	t.Parallel()
 
-	v := Merge(nil, &Snapshot{
+	v := Merge(nil, config.AuthConfig{}, &Snapshot{
 		Buckets: []core.Bucket{{Name: "photos"}, {Name: "uploads"}},
 		Users:   []core.User{{ID: "u1", Name: "devops"}},
 		Grants: []core.Grant{
@@ -452,7 +457,7 @@ func TestMerge_NamedGrantWidensTheWildcard(t *testing.T) {
 func TestMerge_ControlPlaneGrantsStayOutOfTheBucketLookup(t *testing.T) {
 	t.Parallel()
 
-	v := Merge(nil, &Snapshot{
+	v := Merge(nil, config.AuthConfig{}, &Snapshot{
 		Buckets: []core.Bucket{{Name: "photos"}},
 		Users:   []core.User{{ID: "u1", Name: "devops"}},
 		Grants: []core.Grant{
