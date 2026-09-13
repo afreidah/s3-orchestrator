@@ -28,7 +28,8 @@ RUN mkdir -p /godoc && \
         | sort \
         | while read pkg; do \
             name=$(basename "$pkg"); \
-            printf -- '---\ntitle: "%s"\n---\n\n' "$name" > /godoc/$name.md; \
+            doc=$(go list -f '{{.Doc}}' ./internal/$pkg | sed 's/"/\\"/g'); \
+            printf -- '---\ntitle: "%s"\ndescription: "%s"\n---\n\n' "$name" "$doc" > /godoc/$name.md; \
             gomarkdoc ./internal/$pkg >> /godoc/$name.md; \
             sed -i '/^# '"$name"'$/d' /godoc/$name.md; \
         done

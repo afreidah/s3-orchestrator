@@ -1,5 +1,6 @@
 ---
 title: "s3-orchestrator go api reference"
+description: "Generated Go package documentation: the object path, the metadata store, the backend abstraction, the transports, and the background workers."
 linkTitle: "Go API Reference"
 chapter: true
 weight: 40

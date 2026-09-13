@@ -1,7 +1,7 @@
 ---
 description: "Interactive diagram of how the periodic workers coordinate to maintain storage health, enforce replication, and persist counters."
-title: "Background Services"
-linkTitle: "Background Services"
+title: "Background Services Flow"
+linkTitle: "Background Services Flow"
 weight: 7
 ---
 

@@ -1,7 +1,7 @@
 ---
 description: "Interactive diagram of object tagging: the four ways a tag set is written, where it is stored, how it is read back, and what clears it."
-title: "Object Tagging"
-linkTitle: "Object Tagging"
+title: "Object Tagging Flow"
+linkTitle: "Object Tagging Flow"
 weight: 9
 ---
 

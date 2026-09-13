@@ -13,10 +13,12 @@ baseURL = "https://s3-orchestrator.munchbox.cc/"
 languageCode = "en-us"
 title = "s3-orchestrator"
 theme = "hugo-theme-relearn"
+# No page here is filed under a tag or a category, so the taxonomy listings are
+# empty pages a crawler still reaches and reports as missing a description.
+disableKinds = ["taxonomy", "term"]
 
 [params]
   themeVariant = ["s3orchestrator"]
-  description = "Unified S3-compatible storage across multiple backends"
   # Social card. The OpenGraph and Twitter partials switch to the large-image
   # card once a page resolves an image; without one, a link shared to Slack,
   # Reddit, or X renders as bare text.
@@ -35,7 +37,6 @@ theme = "hugo-theme-relearn"
   disableLandingPageButton = false
   alwaysopen = true
   collapsibleMenu = true
-  disableSearch = false
   [params.topbar]
     showTableOfContents = false
     showBreadcrumbs = false
