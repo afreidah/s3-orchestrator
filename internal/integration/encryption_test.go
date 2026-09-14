@@ -43,10 +43,6 @@ import (
 // testMasterKey is a 256-bit AES key used for integration test encryption.
 var testMasterKey = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte("K"), 32))
 
-// adminToken is the admin auth token used by encryption-flow
-// integration tests against the real test instance.
-const adminToken = "test-admin-token"
-
 // encryptionTestEnv holds the components needed for encryption integration tests.
 type encryptionTestEnv struct {
 	proxyClient *s3.Client
@@ -143,7 +139,6 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		Lifecycle:    testStore,
 		DBHealthy:    testDatabaseCB.IsHealthy,
 		Cleanup:      testStore,
-		Token:        adminToken,
 		Registry:     func() *auth.BucketRegistry { return srv.GetBucketAuth() },
 		BackendNames: func() []string { return []string{"backend-a", "backend-b"} },
 		LogLevel:     &lv,
@@ -182,7 +177,7 @@ func (env *encryptionTestEnv) callAdmin(t *testing.T, path string) map[string]an
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
-	req.Header.Set("X-Admin-Token", adminToken)
+	signAdmin(t, req)
 
 	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {

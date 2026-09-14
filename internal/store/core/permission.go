@@ -54,17 +54,23 @@ const (
 	PermTags
 )
 
-// The permissions a grant on a backend or on the instance may carry. They share
-// the bit space so a stored row says what it allows without the reader knowing
-// which resource it names; which are valid where is checked when a grant is
-// written.
+// The permissions a grant on a backend or on the orchestrator may carry. They
+// share the bit space so a stored row says what it allows without the reader
+// knowing which resource it names; which are valid where is checked when a
+// grant is written.
+//
+// These continue where the data-plane bits stop rather than overlapping them,
+// which is what lets one integer hold either vocabulary unambiguously: no set
+// of bucket permissions can ever add up to an administrative one. Where a bit
+// sits carries no meaning beyond being distinct - the stored form is the names,
+// so a bit may be renumbered without touching a single row.
 //
 // Each is split from its neighbour where a real principal wants one and not the
 // other: a monitoring credential reads status but not logs, an on-call engineer
 // runs the repair passes but does not rewrite every object, and provisioning is
 // alone because it can mint any other permission.
 const (
-	PermAdminRead PermissionSet = 1 << (8 + iota)
+	PermAdminRead PermissionSet = 1 << (6 + iota)
 	PermAdminLogs
 	PermAdminMaintain
 	PermAdminConvert

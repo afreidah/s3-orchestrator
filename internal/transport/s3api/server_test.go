@@ -149,7 +149,7 @@ func TestBucketOnlyPUT_MethodNotAllowed(t *testing.T) {
 
 	// PUT to a bucket-only path (no key) should hit the default case
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
@@ -173,7 +173,7 @@ func TestMultipartUpload_UnsupportedMethod(t *testing.T) {
 
 	// PATCH to a key path with uploadId should hit the multipart default case
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPatch, ts.URL+"/mybucket/testkey?uploadId=upload-1", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +198,7 @@ func TestInvalidPath_Returns400(t *testing.T) {
 	// POST to "/"  -  not intercepted as ListBuckets, so parsePath returns
 	// false for the empty path and the server returns 400.
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
@@ -226,7 +226,7 @@ func newOpsServer(t *testing.T) (*httptest.Server, *MockObjectOps, *MockMultipar
 
 	srv := &Server{Objects: objects, Multipart: multipart, MaxObjectSize: 10 * 1024 * 1024}
 	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
-		{Name: "mybucket", Credentials: []config.CredentialConfig{{Token: "test-token"}}},
+		{Name: "mybucket", Credentials: []config.CredentialConfig{testCredential()}},
 	}))
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)

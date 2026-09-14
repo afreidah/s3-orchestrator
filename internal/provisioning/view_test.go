@@ -183,15 +183,15 @@ func TestMerge_ConfigCredentialBecomesAUser(t *testing.T) {
 	}
 }
 
-// TestMerge_KeypairAndTokenShareOneCredential verifies a config credential
-// carrying both proofs stays one credential proving one user, so either
-// attributes the same actor.
-func TestMerge_KeypairAndTokenShareOneCredential(t *testing.T) {
+// TestMerge_ConfigCredentialCarriesItsKeypair verifies a config credential
+// reaches the registry with both halves, which is what the request path repeats
+// the caller's SigV4 derivation with.
+func TestMerge_ConfigCredentialCarriesItsKeypair(t *testing.T) {
 	t.Parallel()
 
 	v := Merge([]config.BucketConfig{
 		{Name: "photos", Credentials: []config.CredentialConfig{
-			{AccessKeyID: "AK", SecretAccessKey: "SK", Token: "TOK"},
+			{AccessKeyID: "AK", SecretAccessKey: "SK"},
 		}},
 	}, config.AuthConfig{}, &Snapshot{})
 
@@ -199,21 +199,19 @@ func TestMerge_KeypairAndTokenShareOneCredential(t *testing.T) {
 		t.Fatalf("merged %d credentials, want 1", len(v.Credentials))
 	}
 	c := v.Credentials[0]
-	if c.AccessKeyID != "AK" || c.Secret != "SK" || c.Token != "TOK" {
-		t.Errorf("credential = %+v, want both proofs carried", c)
+	if c.AccessKeyID != "AK" || c.Secret != "SK" {
+		t.Errorf("credential = %+v, want the keypair carried", c)
 	}
 }
 
-// TestConfigUserID_FallsBackToPosition verifies a token-only credential, which
-// has no public identifier, still names a stable user.
-func TestConfigUserID_FallsBackToPosition(t *testing.T) {
+// TestConfigUserID_NamesTheAccessKey verifies the id a config credential
+// resolves to is its access key, which makes it stable across restarts and
+// across reordering a bucket's credential list.
+func TestConfigUserID_NamesTheAccessKey(t *testing.T) {
 	t.Parallel()
 
-	if got := ConfigUserID("photos", 0, "AK"); got != "config:AK" {
-		t.Errorf("ConfigUserID with an access key = %q, want config:AK", got)
-	}
-	if got := ConfigUserID("photos", 2, ""); got != "config:photos:2" {
-		t.Errorf("ConfigUserID without an access key = %q, want config:photos:2", got)
+	if got := ConfigUserID("AK"); got != "config:AK" {
+		t.Errorf("ConfigUserID = %q, want config:AK", got)
 	}
 }
 
@@ -462,7 +460,7 @@ func TestMerge_ControlPlaneGrantsStayOutOfTheBucketLookup(t *testing.T) {
 		Users:   []core.User{{ID: "u1", Name: "devops"}},
 		Grants: []core.Grant{
 			{UserID: "u1", Resource: core.Resource{Kind: core.ResourceBackend, Name: core.ResourceWildcard}, Permissions: core.PermAdminDrain},
-			{UserID: "u1", Resource: core.Resource{Kind: core.ResourceInstance}, Permissions: core.PermAdminProvision},
+			{UserID: "u1", Resource: core.Resource{Kind: core.ResourceOrchestrator}, Permissions: core.PermAdminProvision},
 		},
 	})
 

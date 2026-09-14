@@ -12,6 +12,7 @@ package adminctl
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,34 +27,47 @@ import (
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestMain clears the S3O_ADMIN_* environment variables before the suite runs.
-// A developer's exported admin addr/token would otherwise leak into the tests
-// that exercise config-file loading, which Run skips whenever those env vars
-// are set.
+// testCreds is the keypair these tests sign with. No server here verifies a
+// signature, so only the access key it names is ever asserted on.
+var testCreds = Credentials{ //nolint:gosec // G101: test credential
+	AccessKeyID: "AKIAADMINCTLTEST",
+	SecretKey:   "adminctl-test-secret",
+}
+
+// TestMain clears the credential environment variables before the suite runs.
+// A developer's exported admin address or keypair would otherwise leak into the
+// tests that exercise config-file loading and flag precedence.
 func TestMain(m *testing.M) {
 	os.Unsetenv(admintarget.EnvAddr)
-	os.Unsetenv(admintarget.EnvToken)
+	os.Unsetenv(admintarget.EnvAccessKey)
+	os.Unsetenv(admintarget.EnvSecretKey)
 	os.Exit(m.Run())
 }
 
 // TestRun_FlagTarget drives Run end-to-end against a fake server using only
-// -addr/-token, proving the admin CLI works with no config file present.
+// the address and credential flags, proving the admin CLI works with no config
+// file present.
 func TestRun_FlagTarget(t *testing.T) {
-	var gotToken string
+	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotToken = r.Header.Get("X-Admin-Token")
+		gotAuth = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer srv.Close()
 
 	var out, errb bytes.Buffer
-	code := Run([]string{"-addr", srv.URL, "-token", "tok", "status"}, &out, &errb)
+	code := Run([]string{
+		"-addr", srv.URL,
+		"-access-key", testCreds.AccessKeyID,
+		"-secret-key", testCreds.SecretKey,
+		"status",
+	}, &out, &errb)
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
 	}
-	if gotToken != "tok" {
-		t.Errorf("server saw token %q, want tok", gotToken)
+	if !strings.Contains(gotAuth, testCreds.AccessKeyID) {
+		t.Errorf("server saw Authorization %q, want it to name %s", gotAuth, testCreds.AccessKeyID)
 	}
 }
 
@@ -62,7 +76,7 @@ func TestRun_FlagTarget(t *testing.T) {
 func TestCommand_Drain_MissingBackend(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	code := Command("drain", nil, "http://unused", "tok", &stdout, &stderr)
+	code := Command("drain", nil, "http://unused", testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -76,7 +90,7 @@ func TestCommand_Drain_MissingBackend(t *testing.T) {
 func TestCommand_DrainStatus_MissingBackend(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	code := Command("drain-status", nil, "http://unused", "tok", &stdout, &stderr)
+	code := Command("drain-status", nil, "http://unused", testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -90,7 +104,7 @@ func TestCommand_DrainStatus_MissingBackend(t *testing.T) {
 func TestCommand_DrainCancel_MissingBackend(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	code := Command("drain-cancel", nil, "http://unused", "tok", &stdout, &stderr)
+	code := Command("drain-cancel", nil, "http://unused", testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -104,7 +118,7 @@ func TestCommand_DrainCancel_MissingBackend(t *testing.T) {
 func TestCommand_RemoveBackend_MissingBackend(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	code := Command("remove-backend", nil, "http://unused", "tok", &stdout, &stderr)
+	code := Command("remove-backend", nil, "http://unused", testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -118,7 +132,7 @@ func TestCommand_RemoveBackend_MissingBackend(t *testing.T) {
 func TestCommand_Unknown(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	code := Command("nonexistent", nil, "http://unused", "tok", &stdout, &stderr)
+	code := Command("nonexistent", nil, "http://unused", testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -131,18 +145,18 @@ func TestCommand_Unknown(t *testing.T) {
 // Asserts that exit code = , want 0.
 func TestCommand_Drain_SendsPost(t *testing.T) {
 	t.Parallel()
-	var gotMethod, gotPath, gotToken string
+	var gotMethod, gotPath, gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotPath = r.URL.Path
-		gotToken = r.Header.Get("X-Admin-Token")
+		gotAuth = r.Header.Get("Authorization")
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "drain started"})
 	}))
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("drain", []string{"mybackend"}, srv.URL, "secret", &stdout, &stderr)
+	code := Command("drain", []string{"mybackend"}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
@@ -152,8 +166,8 @@ func TestCommand_Drain_SendsPost(t *testing.T) {
 	if gotPath != "/admin/api/backends/mybackend/drain" {
 		t.Errorf("path = %q, want /admin/api/backends/mybackend/drain", gotPath)
 	}
-	if gotToken != "secret" {
-		t.Errorf("token = %q, want secret", gotToken)
+	if !strings.Contains(gotAuth, testCreds.AccessKeyID) {
+		t.Errorf("Authorization = %q, want it to name %s", gotAuth, testCreds.AccessKeyID)
 	}
 }
 
@@ -170,7 +184,7 @@ func TestCommand_DrainStatus_SendsGet(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("drain-status", []string{"oci"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("drain-status", []string{"oci"}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
@@ -195,7 +209,7 @@ func TestCommand_DrainCancel_SendsDelete(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("drain-cancel", []string{"oci"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("drain-cancel", []string{"oci"}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
@@ -221,7 +235,7 @@ func TestCommand_RemoveBackend_SendsDelete(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("remove-backend", []string{"oci"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("remove-backend", []string{"oci"}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
@@ -249,7 +263,7 @@ func TestCommand_RemoveBackend_Purge(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("remove-backend", []string{"-purge", "oci"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("remove-backend", []string{"-purge", "oci"}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
@@ -275,7 +289,7 @@ func TestCommand_Reconcile_DefaultPostsAllBackends(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("reconcile", nil, srv.URL, "tok", &stdout, &stderr)
+	code := Command("reconcile", nil, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
@@ -302,7 +316,7 @@ func TestCommand_Reconcile_ScopesToBackend(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("reconcile", []string{"-backend", "g3"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("reconcile", []string{"-backend", "g3"}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
@@ -322,7 +336,7 @@ func TestCommand_ServerError(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("drain", []string{"bad"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("drain", []string{"bad"}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -346,7 +360,7 @@ func TestCommand_ServerErrorJSON(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := CommandWithFormat("drain", []string{"bad"}, srv.URL, "tok", output.FormatJSON, &stdout, &stderr)
+	code := CommandWithFormat("drain", []string{"bad"}, srv.URL, testCreds, output.FormatJSON, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -396,13 +410,13 @@ var simpleWrapperCases = []wrapperCase{
 	{"log-level-set", "log-level", []string{"-set", "debug"}, http.MethodPut, "/admin/api/log-level", ""},
 	{"scrub", "scrub", nil, http.MethodPost, "/admin/api/scrub", ""},
 	{"scrub-batch", "scrub", []string{"-batch-size", "50"}, http.MethodPost, "/admin/api/scrub", "batch_size=50"},
-	{"scrub-key", "scrub", []string{"-key", "bucket/a b"}, http.MethodPost, "/admin/api/object-scrub", "key=bucket%2Fa+b"},
+	{"scrub-key", "scrub", []string{"-key", "bucket/a b"}, http.MethodPost, "/admin/api/object-scrub", "key=bucket%2Fa%20b"},
 	{"backfill-checksums", "backfill-checksums", nil, http.MethodPost, "/admin/api/backfill-checksums", ""},
 	{"backfill-checksums-batch", "backfill-checksums", []string{"-batch-size", "50"}, http.MethodPost, "/admin/api/backfill-checksums", "batch_size=50"},
 	{"backfill-checksums-max", "backfill-checksums", []string{"-max", "200"}, http.MethodPost, "/admin/api/backfill-checksums", "max=200"},
 	{"backfill-checksums-delay", "backfill-checksums", []string{"-delay-ms", "500"}, http.MethodPost, "/admin/api/backfill-checksums", "delay_ms=500"},
 	{"backfill-checksums-all", "backfill-checksums", []string{"-batch-size", "50", "-max", "200", "-delay-ms", "500"}, http.MethodPost, "/admin/api/backfill-checksums", "batch_size=50&delay_ms=500&max=200"},
-	{"object-locations", "object-locations", []string{"-key", "my/key"}, http.MethodGet, "/admin/api/object-locations", "key=my/key"},
+	{"object-locations", "object-locations", []string{"-key", "my/key"}, http.MethodGet, "/admin/api/object-locations", "key=my%2Fkey"},
 	// The key is escaped on the way out so a key carrying "?" or "#" reaches
 	// the server intact; the server decodes it again, so the path recorded
 	// here is the decoded form.
@@ -428,7 +442,7 @@ func runWrapperCase(t *testing.T, tc *wrapperCase) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command(tc.cmd, tc.args, srv.URL, "tok", &stdout, &stderr)
+	code := Command(tc.cmd, tc.args, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, stderr.String())
 	}
@@ -463,7 +477,7 @@ func TestCommand_SimpleGetAndPostWrappers(t *testing.T) {
 func TestCommand_ObjectLocations_MissingKey(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	code := Command("object-locations", nil, "http://unused", "tok", &stdout, &stderr)
+	code := Command("object-locations", nil, "http://unused", testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -486,7 +500,7 @@ func TestCommand_RemoveBackend_PurgePreviewPrintsCount(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("remove-backend", []string{"-purge", "oci"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("remove-backend", []string{"-purge", "oci"}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, stderr.String())
 	}
@@ -512,7 +526,7 @@ func TestCommand_RemoveBackend_PurgeConfirm(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("remove-backend", []string{"-purge", "-confirm", "oci"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("remove-backend", []string{"-purge", "-confirm", "oci"}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, stderr.String())
 	}
@@ -534,7 +548,7 @@ func TestCommand_RemoveBackend_PurgeMissingToken(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("remove-backend", []string{"-purge", "-confirm", "oci"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("remove-backend", []string{"-purge", "-confirm", "oci"}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1", code)
 	}
@@ -543,9 +557,10 @@ func TestCommand_RemoveBackend_PurgeMissingToken(t *testing.T) {
 	}
 }
 
-// minimalAdminYAML is the smallest valid config blob admin tests
-// need to reach the dispatcher; only the server.admin_token field is
-// load-bearing for the auth path under test.
+// minimalAdminYAML is the smallest valid config blob admin tests need to reach
+// the dispatcher; only server.listen_addr is load-bearing, because the config
+// answers for the address and nothing else. The credential comes from flags or
+// the environment.
 const minimalAdminYAML = `
 server:
   listen_addr: "%ADDR%"
@@ -564,21 +579,26 @@ backends:
     bucket: bucket1
     access_key_id: ak
     secret_access_key: sk
-ui:
-  admin_token: "%TOKEN%"
 `
 
-// writeAdminConfig drops a config file with the given listener address and
-// admin token so Run() finds enough state to dispatch.
-func writeAdminConfig(t *testing.T, addr, token string) string {
+// writeAdminConfig drops a config file with the given listener address, so
+// Run() finds enough state to dispatch.
+func writeAdminConfig(t *testing.T, addr string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := dir + "/config.yaml"
-	body := strings.NewReplacer("%ADDR%", addr, "%TOKEN%", token).Replace(minimalAdminYAML)
+	body := strings.NewReplacer("%ADDR%", addr).Replace(minimalAdminYAML)
 	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	return path
+}
+
+// runWithCreds drives Run with the test keypair supplied as flags, which is how
+// every credential reaches the admin CLI.
+func runWithCreds(args []string, stdout, stderr io.Writer) int {
+	full := []string{"-access-key", testCreds.AccessKeyID, "-secret-key", testCreds.SecretKey}
+	return Run(append(full, args...), stdout, stderr)
 }
 
 // TestRun_Help drives the no-args branch which prints usage and exits 0.
@@ -598,48 +618,48 @@ func TestRun_Help(t *testing.T) {
 func TestRun_BadConfigPath(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"-config", "/no/such/file.yaml", "status"}, &stdout, &stderr)
+	code := runWithCreds([]string{"-config", "/no/such/file.yaml", "status"}, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
 }
 
-// TestRun_MissingAdminToken covers the empty-token branch where the config
-// loads cleanly but no admin_token / admin_key was set.
-func TestRun_MissingAdminToken(t *testing.T) {
-	t.Parallel()
-	path := writeAdminConfig(t, "127.0.0.1:9999", "")
+// TestRun_MissingCredential covers the branch where no keypair was supplied.
+// The config file cannot answer for it, so the run stops before it reaches a
+// server rather than signing with half a credential.
+func TestRun_MissingCredential(t *testing.T) {
+	path := writeAdminConfig(t, "127.0.0.1:9999")
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"-config", path, "status"}, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
-	if !strings.Contains(stderr.String(), "admin_token") {
-		t.Errorf("stderr = %q, want admin_token error", stderr.String())
+	if !strings.Contains(stderr.String(), "credential is required") {
+		t.Errorf("stderr = %q, want a missing-credential error", stderr.String())
 	}
 }
 
-// TestRun_DispatchesViaConfigAddr drives the full Run path: config is read,
-// the address is auto-prefixed with http://, the token comes from
-// admin_token, and the dispatch reaches the live test server.
+// TestRun_DispatchesViaConfigAddr drives the full Run path: config is read, the
+// address is auto-prefixed with http://, the credential comes from the flags,
+// and the dispatch reaches the live test server.
 func TestRun_DispatchesViaConfigAddr(t *testing.T) {
 	t.Parallel()
-	var gotToken string
+	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotToken = r.Header.Get("X-Admin-Token")
+		gotAuth = r.Header.Get("Authorization")
 		jsonOK(w, r)
 	}))
 	defer srv.Close()
 
 	addr := strings.TrimPrefix(srv.URL, "http://")
-	path := writeAdminConfig(t, addr, "tok")
+	path := writeAdminConfig(t, addr)
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"-config", path, "status"}, &stdout, &stderr)
+	code := runWithCreds([]string{"-config", path, "status"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, stderr.String())
 	}
-	if gotToken != "tok" {
-		t.Errorf("token = %q, want tok", gotToken)
+	if !strings.Contains(gotAuth, testCreds.AccessKeyID) {
+		t.Errorf("Authorization = %q, want it to name %s", gotAuth, testCreds.AccessKeyID)
 	}
 }
 
@@ -654,9 +674,9 @@ func TestRun_AddrFlagOverridesConfig(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	path := writeAdminConfig(t, "127.0.0.1:9999", "tok")
+	path := writeAdminConfig(t, "127.0.0.1:9999")
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"-config", path, "-addr", srv.URL, "status"}, &stdout, &stderr)
+	code := runWithCreds([]string{"-config", path, "-addr", srv.URL, "status"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, stderr.String())
 	}
@@ -673,7 +693,7 @@ func TestCommand_TransportError(t *testing.T) {
 	srv.Close() // immediately close so connections fail
 
 	var stdout, stderr bytes.Buffer
-	code := Command("status", nil, srv.URL, "tok", &stdout, &stderr)
+	code := Command("status", nil, srv.URL, testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -682,29 +702,29 @@ func TestCommand_TransportError(t *testing.T) {
 	}
 }
 
-// TestCommand_CacheFlush_SendsPost verifies the cache-flush subcommand
-// POSTs to /admin/api/cache/flush with the admin token.
+// TestCommand_CacheFlush_SendsPost verifies the cache-flush subcommand POSTs to
+// /admin/api/cache/flush, signed.
 func TestCommand_CacheFlush_SendsPost(t *testing.T) {
 	t.Parallel()
-	var gotMethod, gotPath, gotToken string
+	var gotMethod, gotPath, gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotPath = r.URL.Path
-		gotToken = r.Header.Get("X-Admin-Token")
+		gotAuth = r.Header.Get("Authorization")
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "flushed", "entries_dropped": 0})
 	}))
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("cache-flush", nil, srv.URL, "tok", &stdout, &stderr)
+	code := Command("cache-flush", nil, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0; stderr=%s", code, stderr.String())
 	}
 	if gotMethod != http.MethodPost || gotPath != "/admin/api/cache/flush" {
 		t.Errorf("got %s %s, want POST /admin/api/cache/flush", gotMethod, gotPath)
 	}
-	if gotToken != "tok" {
-		t.Errorf("token = %q, want tok", gotToken)
+	if !strings.Contains(gotAuth, testCreds.AccessKeyID) {
+		t.Errorf("Authorization = %q, want it to name %s", gotAuth, testCreds.AccessKeyID)
 	}
 }
 
@@ -721,7 +741,7 @@ func TestCommand_CacheStats_SendsGet(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("cache-stats", nil, srv.URL, "tok", &stdout, &stderr)
+	code := Command("cache-stats", nil, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0; stderr=%s", code, stderr.String())
 	}
@@ -747,7 +767,7 @@ func TestCommand_CacheInvalidate_SendsDelete(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("cache-invalidate", []string{"-key=photos/foo.jpg"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("cache-invalidate", []string{"-key=photos/foo.jpg"}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0; stderr=%s", code, stderr.String())
 	}
@@ -764,7 +784,7 @@ func TestCommand_CacheInvalidate_SendsDelete(t *testing.T) {
 func TestCommand_CacheInvalidate_MissingKey(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	code := Command("cache-invalidate", nil, "http://unused.invalid", "tok", &stdout, &stderr)
+	code := Command("cache-invalidate", nil, "http://unused.invalid", testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -788,7 +808,7 @@ func TestCommand_CacheInvalidatePrefix_SendsDelete(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("cache-invalidate-prefix", []string{"-prefix=users/1/"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("cache-invalidate-prefix", []string{"-prefix=users/1/"}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0; stderr=%s", code, stderr.String())
 	}
@@ -805,7 +825,7 @@ func TestCommand_CacheInvalidatePrefix_SendsDelete(t *testing.T) {
 func TestCommand_CacheInvalidatePrefix_MissingPrefix(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	code := Command("cache-invalidate-prefix", nil, "http://unused.invalid", "tok", &stdout, &stderr)
+	code := Command("cache-invalidate-prefix", nil, "http://unused.invalid", testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -849,7 +869,7 @@ func TestCommand_TextVsJSONRendering(t *testing.T) {
 	defer srv.Close()
 
 	var textOut, textErr bytes.Buffer
-	if code := Command("cache-stats", nil, srv.URL, "tok", &textOut, &textErr); code != 0 {
+	if code := Command("cache-stats", nil, srv.URL, testCreds, &textOut, &textErr); code != 0 {
 		t.Fatalf("text exit = %d (stderr=%q)", code, textErr.String())
 	}
 	if !strings.Contains(textOut.String(), "entries: 3") {
@@ -860,7 +880,7 @@ func TestCommand_TextVsJSONRendering(t *testing.T) {
 	}
 
 	var jsonOut, jsonErr bytes.Buffer
-	if code := CommandWithFormat("cache-stats", nil, srv.URL, "tok", output.FormatJSON, &jsonOut, &jsonErr); code != 0 {
+	if code := CommandWithFormat("cache-stats", nil, srv.URL, testCreds, output.FormatJSON, &jsonOut, &jsonErr); code != 0 {
 		t.Fatalf("json exit = %d (stderr=%q)", code, jsonErr.String())
 	}
 	if !strings.Contains(jsonOut.String(), "{\n  \"") {
@@ -881,7 +901,7 @@ func TestCommand_FlagParseErrors(t *testing.T) {
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
 			var stdout, stderr bytes.Buffer
-			code := Command(cmd, []string{"-nonexistent-flag"}, "http://unused.invalid", "tok", &stdout, &stderr)
+			code := Command(cmd, []string{"-nonexistent-flag"}, "http://unused.invalid", testCreds, &stdout, &stderr)
 			if code != 1 {
 				t.Errorf("exit code = %d, want 1 on unknown flag", code)
 			}

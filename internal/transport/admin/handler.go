@@ -17,6 +17,7 @@ package admin
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"io"
 	"log/slog"
@@ -64,10 +65,10 @@ type Handler struct {
 	cleanup      core.CleanupStore
 	objectCache  cache.ObjectCache
 	flightRec    io.WriterTo // nil when debug.flight_recorder.enabled is false
-	token        string
 	registry     func() *auth.BucketRegistry
 	backendNames func() []string
 	logLevel     *slog.LevelVar
+	confirmKey   []byte
 	reloadStatus func() *adminapi.ReloadStatusResponse // nil before the first reload
 }
 
@@ -96,7 +97,6 @@ type Deps struct {
 	ObjectCache  cache.ObjectCache // nil when object data caching is disabled
 	FlightRec    io.WriterTo       // nil when debug.flight_recorder.enabled is false
 	Reconciler   Reconciler
-	Token        string
 	Registry     func() *auth.BucketRegistry // the live registry, re-read so a reload is not missed
 	BackendNames func() []string             // typically *infra.BackendRuntime.BackendOrder
 	LogLevel     *slog.LevelVar
@@ -145,11 +145,26 @@ func New(d *Deps) *Handler {
 		cleanup:      d.Cleanup,
 		objectCache:  d.ObjectCache,
 		flightRec:    d.FlightRec,
-		token:        d.Token,
 		registry:     d.Registry,
 		backendNames: d.BackendNames,
 		logLevel:     d.LogLevel,
+		confirmKey:   mustConfirmKey(),
 	}
+}
+
+// mustConfirmKey mints the key a purge confirmation token is signed with.
+//
+// Random per process rather than derived from configuration: the token only has
+// to survive between the preview call and the execute call that follows it, and
+// a key that never leaves memory cannot be used to forge one from a leaked
+// config. A restart invalidates any confirmation in flight, which costs the
+// operator one repeated preview.
+func mustConfirmKey() []byte {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		panic("admin: cannot read random bytes for the confirmation key: " + err.Error())
+	}
+	return key
 }
 
 // SetReloadStatusProvider wires the callback that returns the most recent

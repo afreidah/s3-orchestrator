@@ -49,7 +49,7 @@ func runBulkRewriteCmd(t *testing.T, cmd string, args []string) (code int, path,
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code = Command(cmd, args, srv.URL, "tok", &stdout, &stderr)
+	code = Command(cmd, args, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("%s exit = %d, want 0; stderr=%s", cmd, code, stderr.String())
 	}
@@ -109,7 +109,7 @@ func TestBulkRewrite_RejectsBadFlags(t *testing.T) {
 			t.Parallel()
 			for _, args := range [][]string{{"-nonexistent-flag"}, {"-max", "not-a-number"}} {
 				var stdout, stderr bytes.Buffer
-				code := Command(tc.cmd, args, "http://127.0.0.1:0", "tok", &stdout, &stderr)
+				code := Command(tc.cmd, args, "http://127.0.0.1:0", testCreds, &stdout, &stderr)
 				if code != 1 {
 					t.Errorf("args %v: exit = %d, want 1", args, code)
 				}

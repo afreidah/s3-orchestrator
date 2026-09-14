@@ -164,7 +164,7 @@ func (u *User) CanAdmin(resource core.Resource, want core.PermissionSet) bool {
 		return false
 	}
 	held := u.admin[resource]
-	if resource.Kind != core.ResourceInstance && !resource.IsWildcard() {
+	if resource.Kind != core.ResourceOrchestrator && !resource.IsWildcard() {
 		held |= u.admin[core.Resource{Kind: resource.Kind, Name: core.ResourceWildcard}]
 	}
 	return held.Has(want)
@@ -177,7 +177,7 @@ func (u *User) AdminPermissions(resource core.Resource) core.PermissionSet {
 		return 0
 	}
 	held := u.admin[resource]
-	if resource.Kind != core.ResourceInstance && !resource.IsWildcard() {
+	if resource.Kind != core.ResourceOrchestrator && !resource.IsWildcard() {
 		held |= u.admin[core.Resource{Kind: resource.Kind, Name: core.ResourceWildcard}]
 	}
 	return held

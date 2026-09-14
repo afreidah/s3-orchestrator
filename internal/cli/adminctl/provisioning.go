@@ -51,8 +51,8 @@ const (
 
 	usageBucketName = "Bucket name (required)"
 	usageUserID     = "User ID (required)"
-	usageGrantKind  = "Resource kind: bucket, backend or instance"
-	usageGrantName  = "Resource name, or * for every one of its kind; omitted for the instance"
+	usageGrantKind  = "Resource kind: bucket, backend or orchestrator"
+	usageGrantName  = "Resource name, or * for every one of its kind; omitted for the orchestrator"
 
 	usageGrantPermissions = "Comma-separated permissions; all for every data-plane one, " +
 		"admin-all for every control-plane one"
@@ -92,7 +92,7 @@ var cmdCredential = nounCommand("credential", []verb{
 
 // cmdGrant implements `s3-orchestrator admin grant <verb>`.
 var cmdGrant = nounCommand("grant", []verb{
-	{"add", "Let a user reach a bucket, a backend or the instance", grantAdd},
+	{"add", "Let a user reach a bucket, a backend or the orchestrator", grantAdd},
 	{"remove", "Withdraw one user's access to one resource", grantRemove},
 })
 
@@ -265,14 +265,17 @@ func grantAdd(args []string, c *client) int {
 	// an operator's existing scripts keep working now that grants reach past
 	// buckets.
 	resourceName := cmp.Or(*name, *bucket)
-	if resourceName == "" && *kind != string(core.ResourceInstance) {
+	// Normalised here as well as on the server, so the retired "instance"
+	// spelling is not asked for a name the orchestrator does not have.
+	resourceKind := core.ParseResourceKind(*kind)
+	if resourceName == "" && resourceKind != core.ResourceOrchestrator {
 		fmt.Fprintln(c.stderr, errGrantNameRequired)
 		return 1
 	}
 
 	body, err := json.Marshal(adminapi.CreateGrantRequest{
 		UserID:      *user,
-		Kind:        *kind,
+		Kind:        string(resourceKind),
 		Name:        resourceName,
 		Permissions: splitPermissions(*perms),
 	})
@@ -312,15 +315,18 @@ func grantRemove(args []string, c *client) int {
 		return 1
 	}
 	resourceName := cmp.Or(*name, *bucket)
-	if resourceName == "" && *kind != string(core.ResourceInstance) {
+	// Normalised here as well as on the server, so the retired "instance"
+	// spelling is not asked for a name the orchestrator does not have.
+	resourceKind := core.ParseResourceKind(*kind)
+	if resourceName == "" && resourceKind != core.ResourceOrchestrator {
 		fmt.Fprintln(c.stderr, errGrantNameRequired)
 		return 1
 	}
-	// The instance has no name, so the path carries a placeholder segment the
-	// server discards once the kind says which resource is meant.
+	// The orchestrator has no name, so the path carries a placeholder segment
+	// the server discards once the kind says which resource is meant.
 	path := pathProvGrants + "/" + url.PathEscape(*user) + "/" +
-		url.PathEscape(cmp.Or(resourceName, string(core.ResourceInstance))) +
-		"?" + flagKind + "=" + url.QueryEscape(*kind)
+		url.PathEscape(cmp.Or(resourceName, string(core.ResourceOrchestrator))) +
+		"?" + flagKind + "=" + url.QueryEscape(string(resourceKind))
 	return c.delete(path, nil)
 }
 
@@ -402,7 +408,7 @@ func renderGrants(u *adminapi.User) string {
 	}
 	out := make([]string, 0, len(u.Grants))
 	for _, g := range u.Grants {
-		resource := core.Resource{Kind: core.ResourceKind(g.Kind), Name: g.Name}
+		resource := core.Resource{Kind: core.ParseResourceKind(g.Kind), Name: g.Name}
 		out = append(out, resource.String()+"("+shorthand(g.Permissions)+")")
 	}
 	return strings.Join(out, " ")

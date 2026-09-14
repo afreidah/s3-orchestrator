@@ -212,7 +212,8 @@ The config file contains sensitive credentials:
 
 - Database password (`database.password`)
 - Backend S3 credentials (`backends[].access_key_id`, `backends[].secret_access_key`)
-- UI admin credentials (`ui.admin_key`, `ui.admin_secret`, `ui.admin_token`)
+- Root credential (`auth.root.access_key_id`, `auth.root.secret_access_key`)
+- Dashboard session key (`ui.session_secret`)
 - Client S3 credentials (`buckets[].credentials[]`)
 - Encryption master key (`encryption.master_key`, `encryption.previous_keys[]`)
 - Vault token (`encryption.vault.token`)
@@ -456,16 +457,18 @@ signing key derived from the seed signature.
 
 ## Web UI Authentication
 
-### Admin Token Separation
+### Separating administrative credentials
 
-By default, the admin API (`/admin/api/`) uses the same `admin_key` as the dashboard login. For production deployments, set a separate `admin_token` so the dashboard login credential and the API token can be managed independently:
+The dashboard, the admin API and the S3 API all authenticate the same credential type, so separating administrative access is a matter of issuing separate credentials rather than of configuring separate mechanisms. Declare `auth.root` for break-glass, then issue each operator a credential of their own and grant it only the control-plane permissions their job needs:
 
-```yaml
-ui:
-  admin_key: "dashboard-login-key"
-  admin_secret: "dashboard-login-secret"
-  admin_token: "separate-api-token"    # falls back to admin_key if not set
+```bash
+# A monitoring credential that can read the control plane and nothing else.
+s3-orchestrator admin user create -name monitoring
+s3-orchestrator admin credential issue -user user-mon -label "prometheus sidecar"
+s3-orchestrator admin grant add -user user-mon -kind orchestrator -permissions admin-read
 ```
+
+Each credential is revoked on its own, and an audit entry names the user behind the action rather than a key several people share. `admin-provision` is worth withholding in particular: a grant carrying it can mint a grant carrying anything.
 
 The admin API returns operational metadata only. Object and backend responses never include secret material - the object-locations endpoint reports whether a copy is encrypted and the wrapping `key_id`, but never the wrapped or raw data-encryption key.
 
@@ -497,37 +500,32 @@ ui:
 
 State-changing UI API requests (POST to `/ui/api/*`) require a `X-CSRF-Token` header matching the `s3orch_csrf` cookie. This double-submit cookie pattern prevents cross-site request forgery attacks from same-site subdomains. The dashboard JavaScript handles this automatically. GET requests and non-UI endpoints (S3 API, admin API) are unaffected.
 
-### Bcrypt-Hashed Admin Secret
+### Keeping the root secret off disk
 
-For bare-metal deployments where the config file is stored on disk without external secret injection, use a bcrypt hash for `admin_secret` instead of plaintext:
-
-```bash
-# Generate a bcrypt hash
-htpasswd -nbBC 10 "" 'your-secret' | cut -d: -f2
-```
+The root secret is a signing key, so it has to be readable in full - there is no hashed form that would still verify a signature. Keep it out of the config file itself: every value supports `${ENV_VAR}` expansion, so a Vault template, a Nomad template or a Kubernetes secret can supply it without the secret ever touching disk.
 
 ```yaml
-ui:
-  enabled: true
-  admin_key: "ADMIN_ACCESS_KEY"
-  admin_secret: "$2y$10$..."   # bcrypt hash
+auth:
+  root:
+    access_key_id: "${ROOT_ACCESS_KEY_ID}"
+    secret_access_key: "${ROOT_SECRET_ACCESS_KEY}"
 ```
 
-The orchestrator detects bcrypt hashes automatically (any value starting with `$2`). Plaintext secrets continue to work - no migration is required.
-
-**Recommendation:** Use bcrypt for bare-metal and `.deb` installations. For container deployments with Vault, Nomad templates, or Kubernetes secrets, plaintext with `${ENV_VAR}` expansion is equally secure since the secret never touches disk.
+For a bare-metal or `.deb` installation where the file is at rest on disk, restrict it to the service account (`chmod 600`) and treat it like any other credential file. A deployment that would rather hold no administering secret at all can leave `auth.root` out entirely and administer itself through credentials the store holds, provided the dashboard is disabled.
 
 ### Session Portability
 
 Session keys are derived deterministically from the config (via HMAC-SHA256), so sessions survive restarts and are portable across instances sharing the same config. No session storage or shared state is required beyond the config file itself.
 
-For multi-instance deployments behind a load balancer, ensure all instances use the same `session_secret`. A session created on one instance will be accepted by any other instance with a matching value. `session_secret` is independent of `admin_secret` - rotating one does not affect the other.
+For multi-instance deployments behind a load balancer, ensure all instances use the same `session_secret`. A session created on one instance will be accepted by any other instance with a matching value. `session_secret` is independent of every credential - rotating one does not affect the other.
 
 ## Credential Rotation
 
-S3 client credentials can be rotated without downtime using the SIGHUP reload mechanism. See the [admin guide](operations.md#rotating-client-credentials) for the zero-downtime rotation procedure.
+Stored credentials rotate through the provisioning API with no restart and no reload: issue a replacement keypair for the user, move the client onto it, then revoke the old one. Several keypairs may name one user, which is what makes the overlap possible. See the [admin guide](operations.md#rotating-client-credentials) for the procedure.
 
-The admin API token (`ui.admin_token`, or `ui.admin_key` if `admin_token` is not set) requires a restart to change since the UI config section is not reloadable.
+Config-declared client credentials rotate through the SIGHUP reload mechanism instead, since the config file is their source of truth.
+
+The root credential rotates on `SIGHUP` like any config-declared credential: the registry is rebuilt from the file merged with the store, so the new keypair takes effect on the next request and the old one stops working at the same moment.
 
 ## Presigned URL Security
 

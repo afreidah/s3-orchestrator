@@ -49,7 +49,6 @@ func overrideFailingRateLimiter(inj do.Injector) {
 // the admin mux is still mounted (without a limiter wrap).
 func TestRegisterAdminHandler_RateLimiterFailedFallsBack(t *testing.T) {
 	cfg := loadCfg(t, validTestConfigYAML)
-	cfg.UI.AdminKey = "test-key"
 	inj, cleanup := resolvedInjector(t, cfg, "all")
 	defer cleanup()
 
@@ -77,23 +76,11 @@ func TestRegisterS3Handler_RateLimiterFailedFallsBack(t *testing.T) {
 	}
 }
 
-// TestRegisterAdminHandler_DisabledByEmptyKey covers the early-return
-// when no admin key is configured: the function should noop without
-// touching the injector.
-func TestRegisterAdminHandler_DisabledByEmptyKey(t *testing.T) {
-	cfg := &config.Config{}
-	if err := registerAdminHandler(http.NewServeMux(), do.New(), cfg); err != nil {
-		t.Fatalf("registerAdminHandler: %v", err)
-	}
-}
-
 // TestRegisterAdminHandler_AdminHandlerInvokeFails drives the
-// "initialize admin handler" wrapped-error path by configuring an admin
-// key against a bare injector that has no admin.Handler provider.
+// "initialize admin handler" wrapped-error path against a bare injector
+// that has no admin.Handler provider.
 func TestRegisterAdminHandler_AdminHandlerInvokeFails(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.UI.AdminKey = "key"
-	err := registerAdminHandler(http.NewServeMux(), do.New(), cfg)
+	err := registerAdminHandler(http.NewServeMux(), do.New(), &config.Config{})
 	if err == nil {
 		t.Fatal("expected error when admin.Handler is not registered")
 	}

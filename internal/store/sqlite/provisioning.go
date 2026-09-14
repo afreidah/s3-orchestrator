@@ -263,7 +263,7 @@ func scanGrant(rows *sql.Rows) (core.Grant, error) {
 	if err := rows.Scan(&g.UserID, &kind, &g.Resource.Name, &perms, &created); err != nil {
 		return core.Grant{}, fmt.Errorf("scan grant: %w", err)
 	}
-	g.Resource.Kind = core.ResourceKind(kind)
+	g.Resource.Kind = core.ParseResourceKind(kind)
 	// A value nothing recognises fails the read rather than resolving to some
 	// set. Falling back to full access would grant what nobody wrote down, and
 	// to none would refuse a caller the operator authorized.

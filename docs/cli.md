@@ -25,11 +25,12 @@ s3-orchestrator validate -config config.yaml
 
 ### admin
 
-Operational CLI for inspecting and controlling a running instance. Resolves the server address and admin token with the precedence **flag &rarr; environment &rarr; config file**, loading `config.yaml` only when a value is still missing. This lets a local binary target a remote instance with just env vars and no server config:
+Operational CLI for inspecting and controlling a running instance. Requests are signed, so a keypair is required; it comes from the flags or the environment and never from the server's config file. The address resolves with the precedence **flag &rarr; environment &rarr; config file**, and `config.yaml` is loaded only when it is still missing. This lets a local binary target a remote instance with three environment variables and no server config:
 
 ```bash
 export S3O_ADMIN_ADDR="https://s3.example.com"
-export S3O_ADMIN_TOKEN="$(your-secret-tool get admin-token)"
+export S3O_ACCESS_KEY_ID="$(your-secret-tool get access-key)"
+export S3O_SECRET_ACCESS_KEY="$(your-secret-tool get secret-key)"
 s3-orchestrator admin usage-reconcile
 ```
 
@@ -41,9 +42,8 @@ s3-orchestrator admin [flags] <command>
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-config` | `config.yaml` | Path to config file; loaded only when `-addr`/`-token` (or their env vars) are unset |
+| `-config` | `config.yaml` | Path to config file; loaded only when `-addr` and its env var are unset |
 | `-addr` | `$S3O_ADMIN_ADDR`, else config `server.listen_addr` | Server address |
-| `-token` | `$S3O_ADMIN_TOKEN`, else config `ui.admin_token` / `ui.admin_key` | Admin API token |
 | `-access-key` | `$S3O_ACCESS_KEY_ID` | Access key ID to sign requests with |
 | `-secret-key` | `$S3O_SECRET_ACCESS_KEY` | Secret access key to sign requests with |
 | `-json` | off | Emit raw JSON instead of human-readable text |
@@ -296,7 +296,7 @@ s3-orchestrator admin grant add -user user-abc123 -name backups
 
 Requests are authenticated by a keypair, SigV4-signed, which is the same credential the S3 API takes. Pass `-access-key` and `-secret-key`, or set `$S3O_ACCESS_KEY_ID` and `$S3O_SECRET_ACCESS_KEY`; declare the administering keypair under `auth.root` in the configuration file.
 
-`ui.admin_token` (or `ui.admin_key` as fallback) still works and is sent as the `X-Admin-Token` header. It resolves onto the same root identity as `auth.root`, so it reaches the same endpoints; a later release removes it.
+What a keypair reaches is decided by the grants its user holds, so a narrower credential runs the subcommands it was granted and is refused the rest with `403`.
 
 #### object-tags
 
@@ -333,13 +333,17 @@ s3-orchestrator admin grant add -user user-abc123 -name backups -permissions lis
 
 ##### What a grant names
 
-`-kind` is one of `bucket` (the default), `backend`, or `instance`. `-name` is the one resource of that kind, or `*` for every one of them including those added later; the instance takes no name. `-bucket` remains an alias for `-name` on a bucket grant.
+`-kind` is one of `bucket` (the default), `backend`, or `orchestrator`. A **bucket** is the namespace clients address; a **backend** is one storage provider holding copies of those objects; the **orchestrator** is the service running in front of both, and is what a grant names for an operation belonging to no single bucket or provider - reading logs, rotating keys, provisioning.
+
+`-name` is the one resource of that kind, or `*` for every one of them including those added later; the orchestrator takes no name, because a deployment has only one. `-bucket` remains an alias for `-name` on a bucket grant.
+
+`instance` is still accepted as a spelling of `orchestrator`, and grants stored under it still authorize, but it renders as `orchestrator` in every listing. It was renamed because it read as one process of a deployment running several, when the grant has always covered every process.
 
 `-permissions` is a comma-separated list, defaulting to `all`. A bucket grant takes `list-buckets`, `list`, `read`, `write`, `delete` and `tags`, or `all` for every one. A backend or instance grant takes the `admin-` permissions -- `admin-read`, `admin-logs`, `admin-maintain`, `admin-convert`, `admin-keys`, `admin-cache`, `admin-drain`, `admin-decommission`, `admin-config` and `admin-provision` -- or `admin-all`. Mixing the two in one grant is refused: a bucket cannot be drained, and the instance holds no objects.
 
 ```bash
 # A monitoring credential that reads status and nothing else
-s3-orchestrator admin grant add -user user-mon -kind instance -permissions admin-read
+s3-orchestrator admin grant add -user user-mon -kind orchestrator -permissions admin-read
 
 # An operator who may drain and decommission any backend, present or future
 s3-orchestrator admin grant add -user user-ops -kind backend -name '*' -permissions admin-drain,admin-decommission
@@ -361,11 +365,12 @@ Every change takes effect on the next request rather than the next restart: the 
 
 ### tui
 
-Full-screen terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status; **Buckets** lists the virtual buckets both the config file and the store declare, marking which are read-only and which identities reach each one; **Replication** shows a self-refreshing view of replication health; **Workers** shows each background service's last-tick health; **Cleanup** shows the cleanup queue and its dead-letter table; **Cache** shows the object data cache's utilization and hit rate; **Logs** shows recent structured log entries; **Ops** runs admin write actions. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the server address and admin token with the same precedence as `admin` (**flag &rarr; environment &rarr; config file**), loading `config.yaml` only when a value is still missing:
+Full-screen terminal UI. Launches an interactive [Bubble Tea](https://github.com/charmbracelet/bubbletea) app with a persistent left navigation bar: **Files** browses the object namespace one prefix at a time and, on any object, opens an inspector pane showing every backend copy; **Backends** shows the configured backends and their live status; **Buckets** lists the virtual buckets both the config file and the store declare, marking which are read-only and which identities reach each one; **Replication** shows a self-refreshing view of replication health; **Workers** shows each background service's last-tick health; **Cleanup** shows the cleanup queue and its dead-letter table; **Cache** shows the object data cache's utilization and hit rate; **Logs** shows recent structured log entries; **Ops** runs admin write actions. The pane with keyboard focus is shown with a bright title bar (the other is muted). Resolves the address and the signing keypair the same way `admin` does:
 
 ```bash
 export S3O_ADMIN_ADDR="https://s3.example.com"
-export S3O_ADMIN_TOKEN="$(your-secret-tool get admin-token)"
+export S3O_ACCESS_KEY_ID="$(your-secret-tool get access-key)"
+export S3O_SECRET_ACCESS_KEY="$(your-secret-tool get secret-key)"
 s3-orchestrator tui
 ```
 
@@ -375,9 +380,10 @@ s3-orchestrator tui
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-config` | `config.yaml` | Path to config file; loaded only when `-addr`/`-token` (or their env vars) are unset |
+| `-config` | `config.yaml` | Path to config file; loaded only when `-addr` and its env var are unset |
 | `-addr` | `$S3O_ADMIN_ADDR`, else config `server.listen_addr` | Server address |
-| `-token` | `$S3O_ADMIN_TOKEN`, else config `ui.admin_token` / `ui.admin_key` | Admin API token |
+| `-access-key` | `$S3O_ACCESS_KEY_ID` | Access key ID to sign requests with |
+| `-secret-key` | `$S3O_SECRET_ACCESS_KEY` | Secret access key to sign requests with |
 
 **Keys:**
 

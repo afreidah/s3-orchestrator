@@ -14,7 +14,6 @@
 package di
 
 import (
-	"cmp"
 	"context"
 	"log/slog"
 	"time"
@@ -280,7 +279,6 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	adminToken := cmp.Or(d.cfg.UI.AdminToken, d.cfg.UI.AdminKey)
 	recRes := Optional[*worker.Reconciler](i)
 	if recRes.Failed() {
 		slog.WarnContext(context.Background(),
@@ -328,7 +326,6 @@ func ProvideAdminHandler(i do.Injector) (*admin.Handler, error) {
 		ObjectCache:  resolveOptionalCache(i),
 		FlightRec:    frRes.Value.Recorder(),
 		Reconciler:   recRes.Value,
-		Token:        adminToken,
 		Registry:     adminBucketRegistry(i),
 		BackendNames: runtime.BackendOrder,
 		LogLevel:     d.logLevel,

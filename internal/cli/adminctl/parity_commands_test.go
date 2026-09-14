@@ -45,15 +45,15 @@ func TestCommand_ParityVerbsAndPaths(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.cmd, func(t *testing.T) {
 			t.Parallel()
-			var gotMethod, gotPath, gotToken string
+			var gotMethod, gotPath, gotAuth string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				gotMethod, gotPath, gotToken = r.Method, r.URL.Path, r.Header.Get("X-Admin-Token")
+				gotMethod, gotPath, gotAuth = r.Method, r.URL.Path, r.Header.Get("Authorization")
 				_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
 			}))
 			defer srv.Close()
 
 			var stdout, stderr bytes.Buffer
-			code := Command(tc.cmd, tc.args, srv.URL, "secret", &stdout, &stderr)
+			code := Command(tc.cmd, tc.args, srv.URL, testCreds, &stdout, &stderr)
 			if code != 0 {
 				t.Fatalf("exit code = %d, want 0; stderr=%s", code, stderr.String())
 			}
@@ -63,8 +63,8 @@ func TestCommand_ParityVerbsAndPaths(t *testing.T) {
 			if gotPath != tc.wantPath {
 				t.Errorf("path = %q, want %q", gotPath, tc.wantPath)
 			}
-			if gotToken != "secret" {
-				t.Errorf("token = %q, want secret", gotToken)
+			if !strings.Contains(gotAuth, testCreds.AccessKeyID) {
+				t.Errorf("Authorization = %q, want it to name %s", gotAuth, testCreds.AccessKeyID)
 			}
 		})
 	}
@@ -82,7 +82,7 @@ func TestCommand_RotateEncryptionKey_SendsBody(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("rotate-encryption-key", []string{"-old-key-id", "config-0"}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("rotate-encryption-key", []string{"-old-key-id", "config-0"}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; stderr=%s", code, stderr.String())
 	}
@@ -96,7 +96,7 @@ func TestCommand_RotateEncryptionKey_SendsBody(t *testing.T) {
 func TestCommand_RotateEncryptionKey_RequiresFlag(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	code := Command("rotate-encryption-key", nil, "http://unused", "tok", &stdout, &stderr)
+	code := Command("rotate-encryption-key", nil, "http://unused", testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1", code)
 	}
@@ -113,7 +113,7 @@ func TestCommand_FlaggedCommands_RejectBadFlags(t *testing.T) {
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
 			var stdout, stderr bytes.Buffer
-			code := Command(cmd, []string{"-nonexistent-flag"}, "http://unused", "tok", &stdout, &stderr)
+			code := Command(cmd, []string{"-nonexistent-flag"}, "http://unused", testCreds, &stdout, &stderr)
 			if code != 1 {
 				t.Errorf("exit code = %d, want 1", code)
 			}
@@ -128,7 +128,7 @@ func TestCommand_TraceSnapshot_TransportError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// Port 0 on a closed loopback address never accepts a connection.
 	code := Command("trace-snapshot", []string{"-o", filepath.Join(t.TempDir(), "t.bin")},
-		"http://127.0.0.1:0", "tok", &stdout, &stderr)
+		"http://127.0.0.1:0", testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1; stderr=%s", code, stderr.String())
 	}
@@ -148,7 +148,7 @@ func TestCommand_TraceSnapshot_UnwritablePath(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	bad := filepath.Join(t.TempDir(), "no-such-dir", "trace.bin")
-	code := Command("trace-snapshot", []string{"-o", bad}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("trace-snapshot", []string{"-o", bad}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1; stderr=%s", code, stderr.String())
 	}
@@ -172,7 +172,7 @@ func TestCommand_TraceSnapshot_WritesFile(t *testing.T) {
 
 	out := filepath.Join(t.TempDir(), "trace.bin")
 	var stdout, stderr bytes.Buffer
-	code := Command("trace-snapshot", []string{"-o", out}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("trace-snapshot", []string{"-o", out}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; stderr=%s", code, stderr.String())
 	}
@@ -203,7 +203,7 @@ func TestCommand_TraceSnapshot_DisabledRendersError(t *testing.T) {
 
 	out := filepath.Join(t.TempDir(), "trace.bin")
 	var stdout, stderr bytes.Buffer
-	code := Command("trace-snapshot", []string{"-o", out}, srv.URL, "tok", &stdout, &stderr)
+	code := Command("trace-snapshot", []string{"-o", out}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1", code)
 	}

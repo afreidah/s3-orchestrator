@@ -82,7 +82,7 @@ func (c *client) do(method, path, body string, render renderFunc) int {
 
 // request issues an authenticated request and returns the response body, the
 // HTTP status code, and an exit code (non-zero when a transport or read error
-// was already reported to stderr). Sets the X-Admin-Token header for auth, the
+// was already reported to stderr). Signs the request, sets the
 // Content-Type header when a body is present, and a fixed client timeout so a
 // hung server cannot stall the CLI indefinitely.
 func (c *client) request(method, path, body string) ([]byte, int, int) {

@@ -13,7 +13,9 @@ package ui
 import (
 	"testing"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 )
 
@@ -23,24 +25,19 @@ import (
 func TestResolveLogin(t *testing.T) {
 	t.Parallel()
 
-	view := provisioning.View{
-		Users: []provisioning.User{{ID: "u1", Name: "ops", Source: provisioning.SourceStore}},
-		Credentials: []provisioning.Credential{{
-			AccessKeyID: "AKIALOGIN",
-			UserID:      "u1",
-			Secret:      "the-secret",
-			Source:      provisioning.SourceStore,
-		}},
-	}
+	view := provisioning.Merge(nil, config.AuthConfig{
+		Root: config.RootCredential{AccessKeyID: "AKIAROOT", SecretAccessKey: "root-secret"},
+	}, &provisioning.Snapshot{
+		Users: []core.User{{ID: "u1", Name: "ops"}},
+		Credentials: []core.Credential{
+			{AccessKeyID: "AKIALOGIN", UserID: "u1", Secret: "the-secret"},
+		},
+	})
 	registry, err := auth.NewBucketRegistry(&view)
 	if err != nil {
 		t.Fatalf("NewBucketRegistry: %v", err)
 	}
-	h := &Handler{
-		adminKey:    "admin",
-		adminSecret: "admin-pass",
-		registry:    func() *auth.BucketRegistry { return registry },
-	}
+	h := &Handler{registry: func() *auth.BucketRegistry { return registry }}
 
 	for _, tc := range []struct {
 		name   string
@@ -49,7 +46,7 @@ func TestResolveLogin(t *testing.T) {
 		want   string
 		ok     bool
 	}{
-		{"the configured dashboard login resolves to root", "admin", "admin-pass", provisioning.RootUserID, true},
+		{"the root credential resolves to root", "AKIAROOT", "root-secret", provisioning.RootUserID, true},
 		{"a provisioned credential resolves to its user", "AKIALOGIN", "the-secret", "u1", true},
 		{"a wrong secret is refused", "AKIALOGIN", "wrong", "", false},
 		{"an unknown key is refused", "AKIANOPE", "the-secret", "", false},
@@ -65,17 +62,19 @@ func TestResolveLogin(t *testing.T) {
 	}
 }
 
-// TestResolveLogin_WithoutARegistry verifies the dashboard still logs in with
-// the configured credential before any registry is published, which is the
-// state a deployment is in while it starts up.
+// TestResolveLogin_WithoutARegistry verifies no keypair logs in before a
+// registry is published, which is the state a deployment is in while it starts
+// up. Refusing is the only safe answer: there is nothing to check against.
 func TestResolveLogin_WithoutARegistry(t *testing.T) {
 	t.Parallel()
 
-	h := &Handler{adminKey: "admin", adminSecret: "admin-pass"}
-	if got, ok := h.resolveLogin("admin", "admin-pass"); !ok || got != provisioning.RootUserID {
-		t.Errorf("resolveLogin = %q,%v; want the root user", got, ok)
-	}
-	if _, ok := h.resolveLogin("AKIALOGIN", "the-secret"); ok {
+	h := &Handler{}
+	if _, ok := h.resolveLogin("AKIAROOT", "root-secret"); ok {
 		t.Error("a credential authenticated with no registry to check it against")
+	}
+
+	h = &Handler{registry: func() *auth.BucketRegistry { return nil }}
+	if _, ok := h.resolveLogin("AKIAROOT", "root-secret"); ok {
+		t.Error("a credential authenticated against a nil registry")
 	}
 }

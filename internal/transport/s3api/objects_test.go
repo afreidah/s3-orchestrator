@@ -80,7 +80,7 @@ func newTestServerWithQuota(
 
 	buckets := []config.BucketConfig{
 		{Name: "mybucket", Credentials: []config.CredentialConfig{
-			{Token: "test-token"},
+			testCredential(),
 		}},
 	}
 	srv.SetBucketAuth(mustBucketRegistry(t, buckets))
@@ -104,10 +104,10 @@ func doReq(t *testing.T, ts *httptest.Server, method, url string, body io.Reader
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("X-Proxy-Token", "test-token")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/octet-stream")
 	}
+	signRequest(t, req)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +127,7 @@ func TestPut_Success(t *testing.T) {
 	data := []byte("hello world")
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", bytes.NewReader(data))
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("Content-Type", "text/plain")
 	req.ContentLength = int64(len(data))
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
@@ -156,9 +156,11 @@ func TestPut_MissingContentLength(t *testing.T) {
 	ts, _, _ := newOpsServer(t)
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
-	req.Header.Set("X-Proxy-Token", "test-token")
-	// Explicitly set ContentLength to -1 to simulate missing Content-Length
+	// Explicitly set ContentLength to -1 to simulate missing Content-Length.
+	// Set before signing, so the signature does not cover a length the request
+	// then goes on not to send.
 	req.ContentLength = -1
+	signRequest(t, req)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +186,7 @@ func TestPut_EntityTooLarge(t *testing.T) {
 	body := io.LimitReader(neverEndingReader{}, bigSize)
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", body)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.ContentLength = bigSize
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
@@ -222,7 +224,7 @@ func TestPut_IfNoneMatchStarRejectsExistingKey(t *testing.T) {
 
 	data := []byte("hello")
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", bytes.NewReader(data))
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("If-None-Match", "*")
 	req.ContentLength = int64(len(data))
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
@@ -250,7 +252,7 @@ func TestPut_IfNoneMatchStarAllowsNewKey(t *testing.T) {
 
 	data := []byte("hello")
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/newkey", bytes.NewReader(data))
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("If-None-Match", "*")
 	req.ContentLength = int64(len(data))
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
@@ -282,7 +284,7 @@ func TestPut_IfNoneMatchSpecificETagIgnored(t *testing.T) {
 
 	data := []byte("hello")
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", bytes.NewReader(data))
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("If-None-Match", `"some-etag"`)
 	req.ContentLength = int64(len(data))
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
@@ -312,7 +314,7 @@ func TestPut_QuotaExhausted(t *testing.T) {
 	})
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.ContentLength = 4
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
@@ -346,7 +348,7 @@ func TestPut_NoBackendCapacity_BodyIncludesCapacityHint(t *testing.T) {
 	ts := newCapacityHintTestServer(t, mockStore)
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.ContentLength = 4
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
@@ -388,7 +390,7 @@ func TestPut_NoBackendCapacity_QuotaStatsErrFallsBack(t *testing.T) {
 	ts := newCapacityHintTestServer(t, mockStore)
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.ContentLength = 4
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
@@ -432,7 +434,7 @@ func newCapacityHintTestServer(t *testing.T, mockStore *storetest.MockMetadataSt
 		MaxObjectSize: 10 * 1024 * 1024,
 	}
 	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
-		{Name: "mybucket", Credentials: []config.CredentialConfig{{Token: "test-token"}}},
+		{Name: "mybucket", Credentials: []config.CredentialConfig{testCredential()}},
 	}))
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
@@ -451,7 +453,7 @@ func TestPut_DBUnavailable(t *testing.T) {
 	})
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey", strings.NewReader("data"))
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.ContentLength = 4
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
@@ -719,7 +721,7 @@ func TestPut_MetadataStored(t *testing.T) {
 	data := []byte("hello")
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/metakey", bytes.NewReader(data))
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("Content-Type", "text/plain")
 	req.Header.Set("X-Amz-Meta-Project", "acme")
 	req.Header.Set("X-Amz-Meta-Env", "prod")
@@ -805,7 +807,7 @@ func TestPut_MetadataTooLarge(t *testing.T) {
 	data := []byte("hello")
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/metakey", bytes.NewReader(data))
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("Content-Type", "text/plain")
 	req.Header.Set("X-Amz-Meta-Big", strings.Repeat("x", maxUserMetadataBytes+1))
 	req.ContentLength = int64(len(data))
@@ -1081,7 +1083,7 @@ func TestCopy_Success(t *testing.T) {
 		Data: []byte("copy me"), ContentType: "text/plain", ETag: `"src"`,
 	}
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("X-Amz-Copy-Source", "/mybucket/source-key")
 	req.ContentLength = 0
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
@@ -1112,7 +1114,7 @@ func TestCopy_SourceNotFound(t *testing.T) {
 	})
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("X-Amz-Copy-Source", "/mybucket/no-such-key")
 	req.ContentLength = 0
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
@@ -1142,7 +1144,7 @@ func TestCopy_URLEncodedSource(t *testing.T) {
 		Data: []byte("encoded"), ContentType: "text/plain", ETag: `"enc"`,
 	}
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("X-Amz-Copy-Source", "/mybucket/my%20file.txt")
 	req.ContentLength = 0
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
@@ -1169,7 +1171,7 @@ func TestCopy_CrossBucketDenied(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/dest-key", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("X-Amz-Copy-Source", "/otherbucket/source-key")
 	req.ContentLength = 0
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
@@ -1194,7 +1196,7 @@ func TestAuth_BadCredentials(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/mybucket/testkey", nil)
-	req.Header.Set("X-Proxy-Token", "wrong-token")
+	signRequestAs(t, req, "AKIANOTAREALKEY", "not-the-right-secret")
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
@@ -1214,7 +1216,7 @@ func TestAuth_BucketMismatch(t *testing.T) {
 
 	// Token is valid for "mybucket" but request goes to "otherbucket"
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/otherbucket/testkey", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
@@ -1232,7 +1234,7 @@ func TestAuth_AccessDeniedDoesNotLeakBucketName(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/otherbucket/testkey", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
@@ -1256,7 +1258,7 @@ func TestUnsupportedMethod(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPatch, ts.URL+"/mybucket/testkey", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
@@ -1322,7 +1324,7 @@ func condServer(t *testing.T) (*httptest.Server, time.Time) {
 func condReq(t *testing.T, ts *httptest.Server, method string, headers map[string]string) *http.Response {
 	t.Helper()
 	req, _ := http.NewRequestWithContext(context.Background(), method, ts.URL+"/mybucket/testkey", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}

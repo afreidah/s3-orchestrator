@@ -230,38 +230,38 @@ func BenchmarkVerifyPresignedSigV4(b *testing.B) {
 	}
 }
 
-// BenchmarkTokenAuth measures the token auth path by exercising fmt.Sprintf, http.NewRequestWithContext, context.Background.
-func BenchmarkTokenAuth(b *testing.B) {
-	tokens := []struct {
+// BenchmarkSecretAuth measures resolving a keypair presented whole, which is
+// the dashboard's login path.
+//
+// The bucket count is varied because the lookup is a map read and should not
+// depend on it: a result that grows with the fleet would mean the registry had
+// regressed to a scan.
+func BenchmarkSecretAuth(b *testing.B) {
+	for _, tc := range []struct {
 		name  string
 		count int
 	}{
 		{"1_bucket", 1},
 		{"5_buckets", 5},
 		{"20_buckets", 20},
-	}
-
-	for _, tc := range tokens {
+	} {
 		b.Run(tc.name, func(b *testing.B) {
 			buckets := make([]config.BucketConfig, tc.count)
 			for i := range tc.count {
 				buckets[i] = config.BucketConfig{
 					Name: fmt.Sprintf("bucket-%d", i),
 					Credentials: []config.CredentialConfig{{
-						Token: fmt.Sprintf("token-%032d", i),
+						AccessKeyID:     fmt.Sprintf("AKIA%028d", i),
+						SecretAccessKey: fmt.Sprintf("secret-%032d", i),
 					}},
 				}
 			}
 			br := mustBucketRegistry(b, buckets)
 
-			// Use the last token so the loop iterates all entries
-			lastToken := buckets[tc.count-1].Credentials[0].Token
-			r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket/key", nil)
-			r.Header.Set("X-Proxy-Token", lastToken)
-
+			last := buckets[tc.count-1].Credentials[0]
 			b.ResetTimer()
 			for b.Loop() {
-				_, _, _ = br.Authenticate(r)
+				_, _ = br.AuthenticateSecret(last.AccessKeyID, last.SecretAccessKey)
 			}
 		})
 	}

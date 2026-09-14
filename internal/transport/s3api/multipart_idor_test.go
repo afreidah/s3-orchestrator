@@ -38,9 +38,16 @@ import (
 // FIXTURE
 // -------------------------------------------------------------------------
 
+// bucketACredential and bucketBCredential reach one bucket each, so a request
+// signed with one is the attacker and the other is the victim.
+var (
+	bucketACredential = config.CredentialConfig{AccessKeyID: "AKIABUCKETAKEY", SecretAccessKey: "bucket-a-secret"}
+	bucketBCredential = config.CredentialConfig{AccessKeyID: "AKIABUCKETBKEY", SecretAccessKey: "bucket-b-secret"}
+)
+
 // twoBucketServer constructs a test server with two distinct buckets, each
-// with its own credential token, so cross-bucket IDOR scenarios can be
-// driven by varying the X-Proxy-Token header. The mock store's
+// with its own credential, so cross-bucket IDOR scenarios can be driven by
+// varying the keypair a request is signed with. The mock store's
 // GetMultipartUpload always returns mu, simulating a multipart upload that
 // physically lives under bucket-b.
 func twoBucketServer(t *testing.T, mu *core.MultipartUpload) (*httptest.Server, *storetest.MockMetadataStore) {
@@ -66,8 +73,8 @@ func twoBucketServer(t *testing.T, mu *core.MultipartUpload) (*httptest.Server, 
 		MaxObjectSize: 10 * 1024 * 1024,
 	}
 	srv.SetBucketAuth(mustBucketRegistry(t, []config.BucketConfig{
-		{Name: "bucket-a", Credentials: []config.CredentialConfig{{Token: "token-a"}}},
-		{Name: "bucket-b", Credentials: []config.CredentialConfig{{Token: "token-b"}}},
+		{Name: "bucket-a", Credentials: []config.CredentialConfig{bucketACredential}},
+		{Name: "bucket-b", Credentials: []config.CredentialConfig{bucketBCredential}},
 	}))
 
 	ts := httptest.NewServer(srv)
@@ -75,19 +82,26 @@ func twoBucketServer(t *testing.T, mu *core.MultipartUpload) (*httptest.Server, 
 	return ts, mockStore
 }
 
-// doMultipartReq sends a request with the given bucket-A token and returns
+// doMultipartReq sends a request signed with the given credential and returns
 // the response. Centralised so each test focuses on its specific URL/body.
-func doMultipartReq(t *testing.T, ts *httptest.Server, method, url, token string, body io.Reader, contentLength int64) *http.Response {
+func doMultipartReq(
+	t *testing.T,
+	ts *httptest.Server,
+	method, url string,
+	creds config.CredentialConfig,
+	body io.Reader,
+	contentLength int64,
+) *http.Response {
 	t.Helper()
 	req, err := http.NewRequestWithContext(context.Background(), method, url, body)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
-	req.Header.Set("X-Proxy-Token", token)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/octet-stream")
 		req.ContentLength = contentLength
 	}
+	signRequestAs(t, req, creds.AccessKeyID, creds.SecretAccessKey)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL is localhost
 	if err != nil {
 		t.Fatalf("Do: %v", err)
@@ -120,7 +134,7 @@ func TestMultipartIDOR_UploadPart_RejectsCrossBucket(t *testing.T) {
 	resp := doMultipartReq(t, ts,
 		http.MethodPut,
 		ts.URL+"/bucket-a/anything?uploadId=victim-upload&partNumber=1",
-		"token-a",
+		bucketACredential,
 		body, int64(len("attacker-bytes")),
 	)
 	defer resp.Body.Close()
@@ -160,7 +174,7 @@ func TestMultipartIDOR_CompleteMultipart_RejectsCrossBucket(t *testing.T) {
 	resp := doMultipartReq(t, ts,
 		http.MethodPost,
 		ts.URL+"/bucket-a/anything?uploadId=victim-upload",
-		"token-a",
+		bucketACredential,
 		strings.NewReader(string(body)), int64(len(body)),
 	)
 	defer resp.Body.Close()
@@ -194,7 +208,7 @@ func TestMultipartIDOR_ListParts_RejectsCrossBucket(t *testing.T) {
 	resp := doMultipartReq(t, ts,
 		http.MethodGet,
 		ts.URL+"/bucket-a/anything?uploadId=victim-upload",
-		"token-a",
+		bucketACredential,
 		nil, 0,
 	)
 	defer resp.Body.Close()
@@ -228,7 +242,7 @@ func TestMultipartIDOR_AbortMultipart_RejectsCrossBucket(t *testing.T) {
 	resp := doMultipartReq(t, ts,
 		http.MethodDelete,
 		ts.URL+"/bucket-a/anything?uploadId=victim-upload",
-		"token-a",
+		bucketACredential,
 		nil, 0,
 	)
 	defer resp.Body.Close()

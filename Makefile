@@ -558,13 +558,13 @@ loadtest-burst-read: ## Run k6 read burst test (requires k6, use PEAK_VUS, SEED_
 		--env S3_ENDPOINT=$(LOADTEST_ENDPOINT) --env S3_BUCKET=$(LOADTEST_BUCKET)
 
 PERF_PROFILE ?= smoke
-# Admin token for the cache-flush (cold-read) scenario. Defaults to the local
-# demo's token; set PERF_ADMIN_TOKEN=... when targeting another deployment.
-# Passed inline so it wins over any stale S3O_ADMIN_TOKEN in the shell.
-PERF_ADMIN_TOKEN ?= admin
 
-perf: loadtest-build ## Run the full perf-envelope suite (PROFILE=smoke|baseline|saturation; PERF_ADMIN_TOKEN for cold-read flush)
-	@S3O_ADMIN_TOKEN=$(PERF_ADMIN_TOKEN) ./loadtest/run-suite.sh $(PERF_PROFILE)
+# The cold-read scenario signs its cache-flush call with the admin keypair the
+# demo wrote alongside the perf credential. Targeting another deployment means
+# exporting S3O_ACCESS_KEY_ID and S3O_SECRET_ACCESS_KEY; without them that one
+# scenario is skipped and the rest of the suite still runs.
+perf: loadtest-build ## Run the full perf-envelope suite (PERF_PROFILE=smoke|baseline|saturation)
+	@./loadtest/run-suite.sh $(PERF_PROFILE)
 
 LOADTEST_MPU_CONCURRENCY ?= 10
 LOADTEST_MPU_PART_COUNT  ?= 5

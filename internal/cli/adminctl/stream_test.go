@@ -54,7 +54,7 @@ func TestStream_TextRendersStepsAndResult(t *testing.T) {
 	srv, accept := ndjsonServer(t, lines)
 
 	var stdout, stderr bytes.Buffer
-	if code := Command("backfill-checksums", nil, srv.URL, "tok", &stdout, &stderr); code != 0 {
+	if code := Command("backfill-checksums", nil, srv.URL, testCreds, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d (stderr=%q)", code, stderr.String())
 	}
 	if !strings.Contains(*accept, "application/x-ndjson") {
@@ -94,7 +94,7 @@ func TestStream_ConcurrentRendersLabeledLines(t *testing.T) {
 	srv, accept := ndjsonServer(t, lines)
 
 	var stdout, stderr bytes.Buffer
-	if code := Command("replicate", nil, srv.URL, "tok", &stdout, &stderr); code != 0 {
+	if code := Command("replicate", nil, srv.URL, testCreds, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d (stderr=%q)", code, stderr.String())
 	}
 	if !strings.Contains(*accept, "application/x-ndjson") {
@@ -125,7 +125,7 @@ func TestStream_NotDrainedHint(t *testing.T) {
 `
 	srv, _ := ndjsonServer(t, lines)
 	var stdout bytes.Buffer
-	Command("backfill-checksums", nil, srv.URL, "tok", &stdout, new(bytes.Buffer))
+	Command("backfill-checksums", nil, srv.URL, testCreds, &stdout, new(bytes.Buffer))
 	if !strings.Contains(stdout.String(), "more remain, re-run to continue") {
 		t.Errorf("output missing re-run hint:\n%s", stdout.String())
 	}
@@ -138,7 +138,7 @@ func TestStream_JSONPassthrough(t *testing.T) {
 `
 	srv, _ := ndjsonServer(t, lines)
 	var stdout bytes.Buffer
-	code := CommandWithFormat("backfill-checksums", nil, srv.URL, "tok", output.FormatJSON, &stdout, new(bytes.Buffer))
+	code := CommandWithFormat("backfill-checksums", nil, srv.URL, testCreds, output.FormatJSON, &stdout, new(bytes.Buffer))
 	if code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
@@ -158,7 +158,7 @@ func TestStream_FailedOutcomeExits1(t *testing.T) {
 `
 	srv, _ := ndjsonServer(t, lines)
 	var stdout, stderr bytes.Buffer
-	code := Command("backfill-checksums", nil, srv.URL, "tok", &stdout, &stderr)
+	code := Command("backfill-checksums", nil, srv.URL, testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit = %d, want 1 on failed outcome", code)
 	}
@@ -173,7 +173,7 @@ func TestStream_SkippedOutcome(t *testing.T) {
 `
 	srv, _ := ndjsonServer(t, lines)
 	var stdout bytes.Buffer
-	code := Command("backfill-checksums", nil, srv.URL, "tok", &stdout, new(bytes.Buffer))
+	code := Command("backfill-checksums", nil, srv.URL, testCreds, &stdout, new(bytes.Buffer))
 	if code != 0 {
 		t.Errorf("exit = %d, want 0 on skipped", code)
 	}
@@ -190,7 +190,7 @@ func TestStream_HTTPError(t *testing.T) {
 	}))
 	defer srv.Close()
 	var stdout, stderr bytes.Buffer
-	code := Command("backfill-checksums", nil, srv.URL, "tok", &stdout, &stderr)
+	code := Command("backfill-checksums", nil, srv.URL, testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit = %d, want 1 on HTTP error", code)
 	}

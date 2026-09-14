@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Covers what a credential reaches on the admin surface: a provisioned one is
-// held to the grants it carries on the objects it names, the configured admin
-// token still reaches everything, and neither reaches what the other is for.
+// held to the grants it carries on the objects it names, and the root
+// credential reaches everything because of the grants its user holds.
 //
 // The object operations are mocked at the store, so these tests assert the
 // decision rather than the work it guards - a refused request is one the store
@@ -37,20 +37,16 @@ import (
 // CONSTANTS
 // -------------------------------------------------------------------------
 
-// The credential the grant tests authenticate with, and the bucket it holds a
-// grant on.
-const (
-	grantedToken  = "granted-token"
-	grantedBucket = "photos"
-)
+// grantedBucket is the bucket the granted credential holds a grant on.
+const grantedBucket = "photos"
 
 // -------------------------------------------------------------------------
 // HELPERS
 // -------------------------------------------------------------------------
 
-// registryGranting builds a registry holding one token credential whose user
-// reaches grantedBucket with the given permissions and holds the given
-// control-plane grants.
+// registryGranting builds a registry holding one credential whose user reaches
+// grantedBucket with the given permissions and holds the given control-plane
+// grants.
 func registryGranting(t *testing.T, perms core.PermissionSet, admin map[core.Resource]core.PermissionSet) *auth.BucketRegistry {
 	t.Helper()
 	view := provisioning.View{
@@ -64,15 +60,21 @@ func registryGranting(t *testing.T, perms core.PermissionSet, admin map[core.Res
 			Source:  provisioning.SourceStore,
 		}},
 		Credentials: []provisioning.Credential{{
-			AccessKeyID: "AKIATEST",
+			AccessKeyID: grantedAccessKey,
 			UserID:      "u1",
-			Token:       grantedToken,
+			Secret:      grantedSecret,
 			Source:      provisioning.SourceStore,
 		}},
 	}
-	// The shared admin token resolves onto the root user rather than onto a
-	// privileged flag, so a registry a token test runs against has to hold one.
+	// The root credential is what the everything-reaches test presents, so a
+	// registry those run against has to hold the identity it resolves onto.
 	view.Users = append(view.Users, rootUser())
+	view.Credentials = append(view.Credentials, provisioning.Credential{
+		AccessKeyID: rootAccessKey,
+		UserID:      provisioning.RootUserID,
+		Secret:      rootSecret,
+		Source:      provisioning.SourceConfig,
+	})
 	registry, err := auth.NewBucketRegistry(&view)
 	if err != nil {
 		t.Fatalf("NewBucketRegistry: %v", err)
@@ -91,7 +93,6 @@ func authzMux(t *testing.T, mock core.ObjectStore, perms core.PermissionSet, adm
 		log:          slog.Default().With(logfmt.Component("admin")),
 		dbHealthy:    cb.IsHealthy,
 		objects:      objectsOver(t, mock),
-		token:        "test-token",
 		registry:     func() *auth.BucketRegistry { return registry },
 		logLevel:     &lv,
 		backendNames: func() []string { return []string{"b1", "b2"} },
@@ -101,33 +102,32 @@ func authzMux(t *testing.T, mock core.ObjectStore, perms core.PermissionSet, adm
 	return mux
 }
 
-// doToken builds a request carrying the given admin token value.
-func doToken(token, method, path, body string) *http.Request {
-	req := httptest.NewRequestWithContext(context.Background(), method, path, strings.NewReader(body))
-	req.Header.Set(adminTokenHeader, token)
-	return req
-}
-
 // serveAs runs one request through a handler granting perms and reports the
 // status. The store is a strict mock with no expectations, so a request that
 // reaches an object operation fails the test rather than passing quietly.
-func serveAs(t *testing.T, perms core.PermissionSet, token, method, target string) int {
+func serveAs(t *testing.T, perms core.PermissionSet, req *http.Request) int {
 	t.Helper()
-	return serveAsAdmin(t, perms, nil, token, method, target)
+	return serveAsAdmin(t, perms, nil, req)
 }
 
 // serveAsAdmin is serveAs with control-plane grants attached to the identity.
-func serveAsAdmin(t *testing.T, perms core.PermissionSet, admin map[core.Resource]core.PermissionSet, token, method, target string) int {
+func serveAsAdmin(t *testing.T, perms core.PermissionSet, admin map[core.Resource]core.PermissionSet, req *http.Request) int {
 	t.Helper()
 	mock := storetest.NewMockObjectStore(gomock.NewController(t))
 	w := httptest.NewRecorder()
-	authzMux(t, mock, perms, admin).ServeHTTP(w, doToken(token, method, target, ""))
+	authzMux(t, mock, perms, admin).ServeHTTP(w, req)
 	return w.Code
 }
 
-// onInstance and onBackend name the resources the control-plane tests grant.
-func onInstance(perms core.PermissionSet) map[core.Resource]core.PermissionSet {
-	return map[core.Resource]core.PermissionSet{{Kind: core.ResourceInstance}: perms}
+// asGranted builds a request signed by the credential the grant tests issue.
+func asGranted(t *testing.T, method, target string) *http.Request {
+	t.Helper()
+	return doSigned(t, grantedAccessKey, grantedSecret, method, target, "")
+}
+
+// onOrchestrator and onBackend name the resources the control-plane tests grant.
+func onOrchestrator(perms core.PermissionSet) map[core.Resource]core.PermissionSet {
+	return map[core.Resource]core.PermissionSet{{Kind: core.ResourceOrchestrator}: perms}
 }
 
 func onBackend(name string, perms core.PermissionSet) map[core.Resource]core.PermissionSet {
@@ -159,13 +159,12 @@ func decideAdmin(t *testing.T, admin map[core.Resource]core.PermissionSet, rt *r
 	registry := registryGranting(t, 0, admin)
 	h := &Handler{
 		log:      slog.Default().With(logfmt.Component("admin")),
-		token:    "test-token",
 		registry: func() *auth.BucketRegistry { return registry },
 	}
-	r := doToken(grantedToken, rt.Method, target, "")
+	r := asGranted(t, rt.Method, target)
 	who, ok := h.authenticate(r)
 	if !ok {
-		t.Fatal("the granted token did not authenticate")
+		t.Fatal("the granted credential did not authenticate")
 	}
 	return h.authorize(httptest.NewRecorder(), r, rt, who)
 }
@@ -195,7 +194,7 @@ func TestAuthz_GrantDoesNotCarryPermission(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := serveAs(t, tc.held, grantedToken, tc.method, tc.target); got != http.StatusForbidden {
+			if got := serveAs(t, tc.held, asGranted(t, tc.method, tc.target)); got != http.StatusForbidden {
 				t.Errorf("status = %d, want 403", got)
 			}
 		})
@@ -207,16 +206,17 @@ func TestAuthz_GrantDoesNotCarryPermission(t *testing.T) {
 func TestAuthz_BucketNotGranted(t *testing.T) {
 	t.Parallel()
 
-	if got := serveAs(t, core.PermAll, grantedToken, http.MethodGet, "/admin/api/objects/other/cat.jpg"); got != http.StatusForbidden {
+	req := asGranted(t, http.MethodGet, "/admin/api/objects/other/cat.jpg")
+	if got := serveAs(t, core.PermAll, req); got != http.StatusForbidden {
 		t.Errorf("status = %d, want 403", got)
 	}
 }
 
-// TestAuthz_BucketlessPrefixNeedsTheAdminToken refuses a prefix naming no
+// TestAuthz_BucketlessPrefixNeedsTheRootCredential refuses a prefix naming no
 // single bucket. The empty prefix is the whole namespace and a partial name
 // spans every bucket it prefixes, so neither can be authorized against one
 // grant.
-func TestAuthz_BucketlessPrefixNeedsTheAdminToken(t *testing.T) {
+func TestAuthz_BucketlessPrefixNeedsTheRootCredential(t *testing.T) {
 	t.Parallel()
 
 	for _, target := range []string{
@@ -226,7 +226,7 @@ func TestAuthz_BucketlessPrefixNeedsTheAdminToken(t *testing.T) {
 	} {
 		t.Run(target, func(t *testing.T) {
 			t.Parallel()
-			if got := serveAs(t, core.PermAll, grantedToken, http.MethodGet, target); got != http.StatusForbidden {
+			if got := serveAs(t, core.PermAll, asGranted(t, http.MethodGet, target)); got != http.StatusForbidden {
 				t.Errorf("status = %d, want 403", got)
 			}
 		})
@@ -250,7 +250,7 @@ func TestAuthz_ControlPlaneRefusesBucketGrants(t *testing.T) {
 	} {
 		t.Run(tc.target, func(t *testing.T) {
 			t.Parallel()
-			if got := serveAs(t, core.PermAll, grantedToken, tc.method, tc.target); got != http.StatusForbidden {
+			if got := serveAs(t, core.PermAll, asGranted(t, tc.method, tc.target)); got != http.StatusForbidden {
 				t.Errorf("status = %d, want 403", got)
 			}
 		})
@@ -269,16 +269,16 @@ func TestAuthz_ControlPlaneHoldsEachPermissionApart(t *testing.T) {
 		method string
 		target string
 	}{
-		{"reader cannot rotate keys", onInstance(core.PermAdminRead), http.MethodPost, "/admin/api/rotate-encryption-key"},
-		{"reader cannot provision", onInstance(core.PermAdminRead), http.MethodPost, "/admin/api/provisioning/users"},
-		{"reader cannot read logs", onInstance(core.PermAdminRead), http.MethodGet, "/admin/api/logs"},
-		{"reader cannot set the log level", onInstance(core.PermAdminRead), http.MethodPut, "/admin/api/log-level"},
+		{"reader cannot rotate keys", onOrchestrator(core.PermAdminRead), http.MethodPost, "/admin/api/rotate-encryption-key"},
+		{"reader cannot provision", onOrchestrator(core.PermAdminRead), http.MethodPost, "/admin/api/provisioning/users"},
+		{"reader cannot read logs", onOrchestrator(core.PermAdminRead), http.MethodGet, "/admin/api/logs"},
+		{"reader cannot set the log level", onOrchestrator(core.PermAdminRead), http.MethodPut, "/admin/api/log-level"},
 		{"maintainer cannot decommission", onBackend("b1", core.PermAdminMaintain), http.MethodDelete, "/admin/api/backends/b1"},
 		{"drainer cannot convert", onBackend("b1", core.PermAdminDrain), http.MethodPost, "/admin/api/encrypt-existing?backend=b1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := serveAsAdmin(t, 0, tc.held, grantedToken, tc.method, tc.target); got != http.StatusForbidden {
+			if got := serveAsAdmin(t, 0, tc.held, asGranted(t, tc.method, tc.target)); got != http.StatusForbidden {
 				t.Errorf("status = %d, want 403", got)
 			}
 		})
@@ -350,23 +350,40 @@ func TestAuthz_EveryRouteDeclaresAPermission(t *testing.T) {
 	}
 }
 
-// TestAuthz_UnknownTokenIsUnauthenticated separates a credential that proved
-// nothing from one that proved an identity holding too little: the first is a
-// 401, the second a 403.
-func TestAuthz_UnknownTokenIsUnauthenticated(t *testing.T) {
+// TestAuthz_UnknownCredentialIsUnauthenticated separates a credential that
+// proved nothing from one that proved an identity holding too little: the first
+// is a 401, the second a 403.
+func TestAuthz_UnknownCredentialIsUnauthenticated(t *testing.T) {
 	t.Parallel()
 
-	for _, token := range []string{"", "not-a-token"} {
-		if got := serveAs(t, core.PermAll, token, http.MethodGet, "/admin/api/objects/photos/cat.jpg"); got != http.StatusUnauthorized {
-			t.Errorf("token %q: status = %d, want 401", token, got)
-		}
+	const target = "/admin/api/objects/photos/cat.jpg"
+	for _, tc := range []struct {
+		name string
+		req  func() *http.Request
+	}{
+		{"no signature at all", func() *http.Request {
+			return httptest.NewRequestWithContext(context.Background(), http.MethodGet, target, strings.NewReader(""))
+		}},
+		{"an access key the registry does not hold", func() *http.Request {
+			return doSigned(t, "AKIANOSUCHKEY", grantedSecret, http.MethodGet, target, "")
+		}},
+		{"the right key with the wrong secret", func() *http.Request {
+			return doSigned(t, grantedAccessKey, "not-the-secret", http.MethodGet, target, "")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := serveAs(t, core.PermAll, tc.req()); got != http.StatusUnauthorized {
+				t.Errorf("status = %d, want 401", got)
+			}
+		})
 	}
 }
 
-// TestAuthz_AdminTokenStillReachesEverything pins the fallback an existing
-// deployment relies on. It is deprecated rather than removed, so every route it
-// reached before this change still answers.
-func TestAuthz_AdminTokenStillReachesEverything(t *testing.T) {
+// TestAuthz_RootCredentialReachesEverything pins what makes a deployment
+// administrable: the credential its config declares holds every permission on
+// every resource, so every route answers it.
+func TestAuthz_RootCredentialReachesEverything(t *testing.T) {
 	t.Parallel()
 
 	mock := storetest.NewMockObjectStore(gomock.NewController(t))
@@ -374,7 +391,7 @@ func TestAuthz_AdminTokenStillReachesEverything(t *testing.T) {
 		Return(&core.ListDelimitedResult{}, nil).Times(1)
 
 	w := httptest.NewRecorder()
-	authzMux(t, mock, core.PermAll, nil).ServeHTTP(w, doToken("test-token", http.MethodGet, "/admin/api/objects?prefix=", ""))
+	authzMux(t, mock, core.PermAll, nil).ServeHTTP(w, doRoot(t, http.MethodGet, "/admin/api/objects?prefix=", ""))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -391,16 +408,16 @@ func TestAuthz_GrantedOperationReachesTheStore(t *testing.T) {
 		Return(&core.ListDelimitedResult{}, nil).Times(1)
 
 	w := httptest.NewRecorder()
-	authzMux(t, mock, core.PermList, nil).ServeHTTP(w, doToken(grantedToken, http.MethodGet, "/admin/api/objects?prefix=photos/", ""))
+	authzMux(t, mock, core.PermList, nil).ServeHTTP(w, asGranted(t, http.MethodGet, "/admin/api/objects?prefix=photos/"))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
 }
 
-// rootRegistry builds the registry a deployment carrying a shared admin token
-// has: one root user holding every permission, which is what that token
-// resolves onto now that it is no longer a privileged flag at the guard.
+// rootRegistry builds the registry a deployment declaring a root credential
+// has: one root user holding every permission, reached by the keypair the
+// config names.
 //
 // The buckets the object tests name are declared, because root's bucket reach
 // is expanded across what a deployment declares rather than being open-ended.
@@ -408,7 +425,9 @@ func rootRegistry(tb testing.TB) *auth.BucketRegistry {
 	tb.Helper()
 	v := provisioning.Merge(
 		[]config.BucketConfig{{Name: "bucket"}, {Name: grantedBucket}},
-		config.AuthConfig{LegacySharedToken: "test-token"},
+		config.AuthConfig{
+			Root: config.RootCredential{AccessKeyID: rootAccessKey, SecretAccessKey: rootSecret},
+		},
 		&provisioning.Snapshot{},
 	)
 	registry, err := auth.NewBucketRegistry(&v)
@@ -418,15 +437,15 @@ func rootRegistry(tb testing.TB) *auth.BucketRegistry {
 	return registry
 }
 
-// rootUser is the identity the shared admin token resolves onto: every
-// permission on every bucket, and every control-plane permission.
+// rootUser is the identity the root credential resolves onto: every permission
+// on every bucket, and every control-plane permission.
 func rootUser() provisioning.User {
 	return provisioning.User{
 		ID:         provisioning.RootUserID,
 		Name:       "root",
 		AllBuckets: core.PermAll,
 		Admin: map[core.Resource]core.PermissionSet{
-			{Kind: core.ResourceInstance}:                             core.PermAdminAll,
+			{Kind: core.ResourceOrchestrator}:                         core.PermAdminAll,
 			{Kind: core.ResourceBackend, Name: core.ResourceWildcard}: core.PermAdminAll,
 		},
 		Source: provisioning.SourceConfig,

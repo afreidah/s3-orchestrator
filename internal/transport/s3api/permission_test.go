@@ -30,8 +30,8 @@ import (
 // HELPERS
 // -------------------------------------------------------------------------
 
-// grantRegistry builds a registry holding one stored user, reached by the test
-// proxy token, whose grant on the test bucket carries exactly perms.
+// grantRegistry builds a registry holding one stored user, reached by the
+// shared test credential, whose grant on the test bucket carries exactly perms.
 //
 // Built from a store snapshot rather than config because a config-declared
 // credential always carries every permission; narrowing one is only expressible
@@ -42,16 +42,11 @@ func grantRegistry(tb testing.TB, perms core.PermissionSet) *auth.BucketRegistry
 		Buckets: []core.Bucket{{Name: "mybucket"}},
 		Users:   []core.User{{ID: "u1", Name: "narrow"}},
 		Credentials: []core.Credential{
-			{AccessKeyID: "AK", UserID: "u1", Secret: "SK"},
+			{AccessKeyID: testAccessKeyID, UserID: "u1", Secret: testSecretKey},
 		},
 		Grants: []core.Grant{
 			{UserID: "u1", Resource: core.BucketResource("mybucket"), Permissions: perms},
 		},
-	})
-	// The proxy token is the simplest credential to sign nothing with, and
-	// authorization is what these exercise rather than signature verification.
-	v.Credentials = append(v.Credentials, provisioning.Credential{
-		UserID: "u1", Token: "test-token", Source: provisioning.SourceStore,
 	})
 	br, err := auth.NewBucketRegistry(&v)
 	if err != nil {
@@ -74,7 +69,7 @@ func serveWithGrant(t *testing.T, perms core.PermissionSet, method, target strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	if body != "" {
 		req.Header.Set("Content-Type", "application/octet-stream")
 	}
@@ -217,7 +212,7 @@ func TestPermissions_RefusedBeforeTheHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)

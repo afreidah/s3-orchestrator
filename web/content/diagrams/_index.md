@@ -24,6 +24,13 @@ weight: 35
       <p>Detailed request lifecycle through admission control, authentication, routing, and circuit breakers.</p>
     </div>
   </a>
+  <a class="landing-card" href="access-control/">
+    <i class="fas fa-user-shield landing-card-icon" style="color: #34b882;"></i>
+    <div>
+      <strong>Access Control Flow</strong>
+      <p>How a credential resolves to a user, and how that user's grants authorize the S3 API, the admin API and the dashboard alike.</p>
+    </div>
+  </a>
   <a class="landing-card" href="write-path/">
     <i class="fas fa-upload landing-card-icon" style="color: #3fb950;"></i>
     <div>

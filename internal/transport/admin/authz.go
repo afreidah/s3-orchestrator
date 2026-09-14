@@ -17,14 +17,12 @@ package admin
 
 import (
 	"cmp"
-	"crypto/subtle"
 	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
-	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -33,9 +31,6 @@ import (
 // -------------------------------------------------------------------------
 // CONSTANTS
 // -------------------------------------------------------------------------
-
-// adminTokenHeader carries the credential proving an admin request.
-const adminTokenHeader = "X-Admin-Token"
 
 // The refusal messages. A caller is told it was refused and nothing about what
 // would have been allowed, so the response cannot be used to map the grants an
@@ -52,12 +47,9 @@ const (
 // principal is who an admin request authenticated as.
 //
 // Every caller is a user holding grants, the root credential included: what
-// makes root privileged is the grants it holds, not a branch here. LegacyToken
-// records only which door it came through, so the deprecation warning can name
-// the mechanism without the authorization path having a second case.
+// makes root privileged is the grants it holds, not a branch here.
 type principal struct {
-	User        *auth.User
-	LegacyToken bool
+	User *auth.User
 }
 
 // id names this principal in a log line.
@@ -94,37 +86,11 @@ func (h *Handler) authenticate(r *http.Request) (principal, bool) {
 	if registry == nil {
 		return principal{}, false
 	}
-	if isSigned(r) {
-		user, _, err := registry.Authenticate(r)
-		if err != nil {
-			return principal{}, false
-		}
-		return principal{User: user}, true
-	}
-
-	token := r.Header.Get(adminTokenHeader)
-	if token == "" {
-		return principal{}, false
-	}
-	if h.token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(h.token)) == 1 {
-		root, ok := registry.UserByID(provisioning.RootUserID)
-		if !ok {
-			return principal{}, false
-		}
-		return principal{User: root, LegacyToken: true}, true
-	}
-	user, err := registry.AuthenticateToken(token)
+	user, _, err := registry.Authenticate(r)
 	if err != nil {
 		return principal{}, false
 	}
 	return principal{User: user}, true
-}
-
-// isSigned reports whether the request carries SigV4 material, by header or as
-// a presigned query. Anything else is left to the token paths.
-func isSigned(r *http.Request) bool {
-	return strings.HasPrefix(r.Header.Get("Authorization"), "AWS4-HMAC-SHA256") ||
-		r.URL.Query().Get("X-Amz-Signature") != ""
 }
 
 // -------------------------------------------------------------------------
@@ -163,12 +129,6 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, rt *route, w
 	if rt.Perm == 0 {
 		h.refuse(r, w, rt, who, "", "route declares no permission")
 		return false
-	}
-	// The shared token still reaches everything, because it resolves to the
-	// root user and that user holds everything. Only the data plane warns: the
-	// control plane is what the token has always been for.
-	if who.LegacyToken && rt.kind() == core.ResourceBucket {
-		h.warnTokenDeprecated(r)
 	}
 	if rt.kind() != core.ResourceBucket {
 		return h.authorizeAdmin(w, r, rt, who)
@@ -311,20 +271,4 @@ func (h *Handler) refuseAdmin(r *http.Request, w http.ResponseWriter, rt *route,
 		slog.Int("status", http.StatusForbidden),
 	)
 	httputil.WriteJSONError(w, http.StatusForbidden, msgForbidden)
-}
-
-// warnTokenDeprecated records that the shared admin token authorized an
-// operation on object data, which a provisioned credential should be carrying
-// instead.
-//
-// Only the data-plane routes warn. The control plane is what the token is still
-// for, and warning there would bury the entries that matter under every
-// dashboard status poll.
-func (h *Handler) warnTokenDeprecated(r *http.Request) {
-	h.log.WarnContext(r.Context(),
-		"admin token authorized an object operation; issue a provisioned credential instead",
-		"method", r.Method,
-		"path", r.URL.Path,
-		"client_addr", r.RemoteAddr,
-	)
 }

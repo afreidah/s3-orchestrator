@@ -61,24 +61,25 @@ Add the backend to the `backends` list in your config and restart the orchestrat
 
 Declaring a virtual bucket and issuing the credential that reaches it are API operations, so neither needs a config edit or a `SIGHUP`. Every change takes effect on the next request: the registry the request path authenticates against is rebuilt before the command returns.
 
-The commands below take `-addr` and `-token` explicitly. They resolve flag, then `$S3O_ADMIN_ADDR` / `$S3O_ADMIN_TOKEN`, then the config file, so an omitted target can reach an instance you did not mean.
+The commands below name their target explicitly. The address resolves flag, then `$S3O_ADMIN_ADDR`, then the config file, so an omitted one can reach an instance you did not mean; the keypair comes from the flags or `$S3O_ACCESS_KEY_ID` / `$S3O_SECRET_ACCESS_KEY` and never from the server's config.
 
 ```bash
-ADDR=http://localhost:9000
-TOKEN=your-admin-token
+export S3O_ADMIN_ADDR=http://localhost:9000
+export S3O_ACCESS_KEY_ID=AKIA...
+export S3O_SECRET_ACCESS_KEY=...
 
 # 1. Declare the bucket.
-s3-orchestrator admin -addr $ADDR -token $TOKEN bucket create -name app3-files
+s3-orchestrator admin bucket create -name app3-files
 
 # 2. Declare the identity the credential will belong to. The response
 #    carries the generated user_id every later command names it by.
-s3-orchestrator admin -addr $ADDR -token $TOKEN user create -name app3
+s3-orchestrator admin user create -name app3
 
 # 3. Mint the keypair. This response is the only place the secret appears.
-s3-orchestrator admin -addr $ADDR -token $TOKEN credential issue -user <user_id> -label "app3 prod"
+s3-orchestrator admin credential issue -user <user_id> -label "app3 prod"
 
 # 4. Grant the user the bucket.
-s3-orchestrator admin -addr $ADDR -token $TOKEN grant add -user <user_id> -bucket app3-files
+s3-orchestrator admin grant add -user <user_id> -bucket app3-files
 ```
 
 The order matters only in that a credential needs its user first and a grant needs both sides. A user created but not yet granted anything authenticates and reaches nothing, which is a safe intermediate state to leave it in.
@@ -88,8 +89,8 @@ Capture the secret at step 3. It is not stored anywhere it can be read back, and
 Confirm what the deployment now declares, from both sources at once:
 
 ```bash
-s3-orchestrator admin -addr $ADDR -token $TOKEN bucket list
-s3-orchestrator admin -addr $ADDR -token $TOKEN credential list
+s3-orchestrator admin bucket list
+s3-orchestrator admin credential list
 ```
 
 Every row carries a source. An entry marked `config` comes from the config file and the API refuses to change it - edit the file and send `SIGHUP` for those. An entry marked `store` is managed through these commands.
@@ -102,14 +103,13 @@ Removal is refused while anything still depends on what is being removed, so tea
 # Objects first - the orchestrator will not drop a namespace that still
 # addresses data, which would leave those bytes occupying every backend
 # they were written to with no way to reach them. Empty it with any S3
-# client, or with the admin API's prefix delete.
+# client, or with the TUI's prefix delete.
 aws --endpoint-url $S3_ENDPOINT s3 rm --recursive s3://app3-files/
-curl -X DELETE -H "X-Admin-Token: $TOKEN" "$ADDR/admin/api/objects?prefix=app3-files/"
 
-s3-orchestrator admin -addr $ADDR -token $TOKEN grant remove -user <user_id> -bucket app3-files
-s3-orchestrator admin -addr $ADDR -token $TOKEN credential revoke -access-key <access_key_id>
-s3-orchestrator admin -addr $ADDR -token $TOKEN user delete -id <user_id>
-s3-orchestrator admin -addr $ADDR -token $TOKEN bucket delete -name app3-files
+s3-orchestrator admin grant remove -user <user_id> -bucket app3-files
+s3-orchestrator admin credential revoke -access-key <access_key_id>
+s3-orchestrator admin user delete -id <user_id>
+s3-orchestrator admin bucket delete -name app3-files
 ```
 
 Each refusal names what is in the way and returns a non-zero exit code, so a script that runs these out of order stops rather than half-completing.
@@ -316,12 +316,12 @@ How you rotate depends on which source declared the credential. `credential list
 
 ```bash
 # 1. Issue the replacement. Both keypairs now authenticate.
-s3-orchestrator admin -addr $ADDR -token $TOKEN credential issue -user <user_id> -label "app1 rotated 2026-09"
+s3-orchestrator admin credential issue -user <user_id> -label "app1 rotated 2026-09"
 
 # 2. Update the client to use the new keypair.
 
 # 3. Revoke the old one. It stops authenticating on the next request.
-s3-orchestrator admin -addr $ADDR -token $TOKEN credential revoke -access-key <old_access_key_id>
+s3-orchestrator admin credential revoke -access-key <old_access_key_id>
 ```
 
 Step 3 takes effect immediately rather than at the next reload, so a leaked key is withdrawn the moment the command returns. Revoking one keypair leaves its siblings working, which is what makes the overlap in step 1 safe.

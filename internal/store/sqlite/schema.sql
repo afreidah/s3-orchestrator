@@ -315,4 +315,4 @@ CREATE TABLE IF NOT EXISTS grants (
 );
 
 -- Stamp the schema version after all tables and indexes are created.
-INSERT INTO schema_version (version) VALUES (17);
+INSERT INTO schema_version (version) VALUES (18);

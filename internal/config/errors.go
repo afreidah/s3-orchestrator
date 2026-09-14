@@ -129,11 +129,27 @@ var (
 
 // UI / auth errors.
 var (
-	ErrAdminAuthIncomplete = errors.New("admin_key and admin_secret must both be set (or both empty)")
-	ErrSessionSecretReqd   = errors.New("session_secret is required when UI is enabled")
+	ErrSessionSecretReqd = errors.New("session_secret is required when UI is enabled")
 
 	ErrRootCredentialIncomplete = errors.New(
 		"auth.root.access_key_id and auth.root.secret_access_key must both be set (or both empty)")
+
+	ErrRootCredentialRequired = errors.New(
+		"auth.root is required when the dashboard is enabled: it is the credential " +
+			"a deployment administers itself with, and without it nothing can log in " +
+			"or provision the first user")
+
+	ErrRemovedAdminToken = errors.New(
+		"ui.admin_token has been removed: declare auth.root and sign admin " +
+			"requests with that keypair")
+
+	ErrRemovedAdminLogin = errors.New(
+		"ui.admin_key and ui.admin_secret have been removed: the dashboard logs " +
+			"in with auth.root or any provisioned credential")
+
+	ErrRemovedProxyToken = errors.New(
+		"credential token has been removed: give the credential an " +
+			"access_key_id and secret_access_key instead")
 )
 
 // Rate limit errors.

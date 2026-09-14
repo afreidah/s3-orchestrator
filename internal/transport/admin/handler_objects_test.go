@@ -52,7 +52,6 @@ func newObjectsHandler(t *testing.T, mock core.ObjectStore) *Handler {
 		log:       slog.Default().With(logfmt.Component("admin")),
 		dbHealthy: cb.IsHealthy,
 		objects:   objectsOver(t, mock),
-		token:     "test-token",
 		registry:  func() *auth.BucketRegistry { return rootRegistry(t) },
 		logLevel:  &lv,
 	}
@@ -77,7 +76,7 @@ func TestHandleListObjects_Happy(t *testing.T) {
 	newObjectsHandler(t, mock).Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/objects?prefix=&delimiter=/", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/objects?prefix=&delimiter=/", ""))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -119,7 +118,7 @@ func TestHandleListObjects_DelimiterDefaultAndFlat(t *testing.T) {
 
 	// omitted: hierarchical
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/objects?prefix=", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/objects?prefix=", ""))
 	var grouped adminapi.ObjectListResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &grouped); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -130,7 +129,7 @@ func TestHandleListObjects_DelimiterDefaultAndFlat(t *testing.T) {
 
 	// present but empty: flat
 	w = httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/objects?prefix=bucket/dir/&delimiter=", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/objects?prefix=bucket/dir/&delimiter=", ""))
 	var flat adminapi.ObjectListResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &flat); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -150,7 +149,7 @@ func TestHandleListObjects_StoreError(t *testing.T) {
 	newObjectsHandler(t, mock).Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/objects", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/objects", ""))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
@@ -170,7 +169,6 @@ func objectsAPIHandler(t *testing.T) (*Handler, *opstest.MockObjectAPI, *http.Se
 			Store:   storetest.NewMockObjectStore(gomock.NewController(t)),
 			Buckets: declaredBuckets("bucket"),
 		}),
-		token:    "test-token",
 		logLevel: &lv,
 		registry: func() *auth.BucketRegistry { return rootRegistry(t) },
 	}
@@ -194,7 +192,7 @@ func TestHandleGetObject_StreamsBytes(t *testing.T) {
 		}, nil).Times(1)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/objects/bucket/dir/file.txt", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/objects/bucket/dir/file.txt", ""))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -219,7 +217,7 @@ func TestHandleGetObject_NotFound(t *testing.T) {
 		Return(nil, core.ErrObjectNotFound).Times(1)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/objects/bucket/ghost", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/objects/bucket/ghost", ""))
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404; body=%s", w.Code, w.Body.String())
@@ -233,7 +231,7 @@ func TestHandleGetObject_RejectsKeyOutsideBucket(t *testing.T) {
 	_, _, mux := objectsAPIHandler(t)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/objects/nosuchbucket/file.txt", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/objects/nosuchbucket/file.txt", ""))
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400; body=%s", w.Code, w.Body.String())
@@ -256,7 +254,7 @@ func TestHandlePutObject_StoresBody(t *testing.T) {
 			return "etag-1", err
 		}).Times(1)
 
-	req := doAuth(http.MethodPut, "/admin/api/objects/bucket/dir/file.txt", "hello")
+	req := doAuth(t, http.MethodPut, "/admin/api/objects/bucket/dir/file.txt", "hello")
 	req.Header.Set("Content-Type", "text/plain")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -282,7 +280,7 @@ func TestHandlePutObject_RequiresLength(t *testing.T) {
 	t.Parallel()
 	_, _, mux := objectsAPIHandler(t)
 
-	req := doAuth(http.MethodPut, "/admin/api/objects/bucket/file.txt", "")
+	req := doAuth(t, http.MethodPut, "/admin/api/objects/bucket/file.txt", "")
 	req.ContentLength = -1
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -298,7 +296,7 @@ func TestHandlePutObject_RejectsOversize(t *testing.T) {
 	t.Parallel()
 	_, _, mux := objectsAPIHandler(t)
 
-	req := doAuth(http.MethodPut, "/admin/api/objects/bucket/file.txt", "")
+	req := doAuth(t, http.MethodPut, "/admin/api/objects/bucket/file.txt", "")
 	req.ContentLength = ops.MaxUploadSize + 1
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -316,7 +314,7 @@ func TestHandleDeleteObject_ReportsOne(t *testing.T) {
 	api.EXPECT().DeleteObject(gomock.Any(), "bucket/file.txt").Return(nil).Times(1)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodDelete, "/admin/api/objects/bucket/file.txt", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodDelete, "/admin/api/objects/bucket/file.txt", ""))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -339,7 +337,7 @@ func TestHandleDeleteObject_BackendFailureIs500(t *testing.T) {
 		Return(errors.New("backend unavailable")).Times(1)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodDelete, "/admin/api/objects/bucket/file.txt", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodDelete, "/admin/api/objects/bucket/file.txt", ""))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500; body=%s", w.Code, w.Body.String())
@@ -353,7 +351,7 @@ func TestHandleDeleteObject_RejectsKeyOutsideBucket(t *testing.T) {
 	_, _, mux := objectsAPIHandler(t)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodDelete, "/admin/api/objects/nosuchbucket/file.txt", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodDelete, "/admin/api/objects/nosuchbucket/file.txt", ""))
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400; body=%s", w.Code, w.Body.String())
@@ -369,7 +367,7 @@ func TestHandlePutObject_BackendFailureIs500(t *testing.T) {
 		Return("", errors.New("backend unavailable")).Times(1)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPut, "/admin/api/objects/bucket/file.txt", "hello"))
+	mux.ServeHTTP(w, doAuth(t, http.MethodPut, "/admin/api/objects/bucket/file.txt", "hello"))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500; body=%s", w.Code, w.Body.String())
@@ -385,7 +383,7 @@ func TestHandleDeletePrefix_ListingFailureIs500(t *testing.T) {
 		Return(nil, errors.New("ledger unavailable")).Times(1)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodDelete, "/admin/api/objects?prefix=bucket/dir/", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodDelete, "/admin/api/objects?prefix=bucket/dir/", ""))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500; body=%s", w.Code, w.Body.String())
@@ -406,7 +404,7 @@ func TestHandleDeletePrefix_ReportsCount(t *testing.T) {
 		Return([]object.DeleteObjectResult{{Key: keys[0]}, {Key: keys[1]}}).Times(1)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodDelete, "/admin/api/objects?prefix=bucket/dir/", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodDelete, "/admin/api/objects?prefix=bucket/dir/", ""))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -427,7 +425,7 @@ func TestHandleDeletePrefix_RequiresPrefix(t *testing.T) {
 	_, _, mux := objectsAPIHandler(t)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodDelete, "/admin/api/objects", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodDelete, "/admin/api/objects", ""))
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400; body=%s", w.Code, w.Body.String())
@@ -451,7 +449,7 @@ func TestHandleDeletePrefix_PartialFailureIsReported(t *testing.T) {
 		}).Times(1)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodDelete, "/admin/api/objects?prefix=bucket/dir/", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodDelete, "/admin/api/objects?prefix=bucket/dir/", ""))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())

@@ -52,9 +52,8 @@ secrets:
   MINIO2_SECRET_KEY: "minioadmin"
   MINIO3_ACCESS_KEY: "minioadmin"
   MINIO3_SECRET_KEY: "minioadmin"
-  UI_ADMIN_KEY: "admin"
-  UI_ADMIN_SECRET: "admin"
-  UI_ADMIN_TOKEN: "admin"
+  ROOT_ACCESS_KEY_ID: "AKIALOCALDEVROOT"
+  ROOT_SECRET_ACCESS_KEY: "local-dev-root-secret"
   UI_SESSION_SECRET: "local-dev-session-key"
 
 config:
@@ -167,9 +166,11 @@ config:
     requests_per_sec: 1500
     burst: 2000
 
+  auth:
+    root:
+      access_key_id: "${ROOT_ACCESS_KEY_ID}"
+      secret_access_key: "${ROOT_SECRET_ACCESS_KEY}"
+
   ui:
     enabled: true
-    admin_key: "${UI_ADMIN_KEY}"
-    admin_secret: "${UI_ADMIN_SECRET}"
     session_secret: "${UI_SESSION_SECRET}"
-    admin_token: "${UI_ADMIN_TOKEN}"

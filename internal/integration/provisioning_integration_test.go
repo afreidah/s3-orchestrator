@@ -85,10 +85,9 @@ func setupProvEnv(t *testing.T) *provEnv {
 		Name:        virtualBucket,
 		Credentials: []config.CredentialConfig{{AccessKeyID: "test", SecretAccessKey: "test"}},
 	}}}
-	// The shared admin token resolves onto a root identity rather than
-	// authorizing by itself, so one has to be declared or every admin request
-	// these tests make is refused.
-	cfg.Auth.LegacySharedToken = adminToken
+	// The root credential is what every admin request these tests make signs
+	// with, so it has to be declared or they are all refused.
+	cfg.Auth = rootAuthConfig()
 
 	srv := &s3api.Server{Objects: st.Objects, Multipart: st.Multipart}
 	declared := provisioning.NewDeclared()
@@ -147,7 +146,6 @@ func provAdminMux(t *testing.T, opsSvc *ops.Services, st *proxytest.Stack, srv *
 		Lifecycle:    testStore,
 		DBHealthy:    testDatabaseCB.IsHealthy,
 		Cleanup:      testStore,
-		Token:        adminToken,
 		Registry:     func() *auth.BucketRegistry { return srv.GetBucketAuth() },
 		BackendNames: func() []string { return []string{"backend-a", "backend-b"} },
 		LogLevel:     &lv,
@@ -206,7 +204,7 @@ func (env *provEnv) admReq(t *testing.T, method, path string, body, out any) int
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
-	req.Header.Set("X-Admin-Token", adminToken)
+	signAdmin(t, req)
 
 	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
@@ -627,7 +625,7 @@ func TestProvInt_ListingNeverRendersASecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
-	req.Header.Set("X-Admin-Token", adminToken)
+	signAdmin(t, req)
 	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatalf("GET provisioning: %v", err)

@@ -124,7 +124,7 @@ job "s3-orchestrator" {
       # All sensitive values are pulled from Vault KV v2.
       # Create the secret at: vault kv put secret/s3-orchestrator \
       #   db_password=... bucket_access_key=... bucket_secret_key=... \
-      #   ui_admin_key=... ui_admin_secret=... \
+      #   root_access_key_id=... root_secret_access_key=... ui_session_secret=... \
       #   oci_endpoint=... oci_region=... oci_bucket=... \
       #   oci_access_key=... oci_secret_key=... \
       #   b2_endpoint=... b2_region=... b2_bucket=... \
@@ -291,13 +291,18 @@ job "s3-orchestrator" {
               - "10.0.0.0/8"
               - "172.16.0.0/12"
 
+          # --- Root credential ---
+          # The keypair this deployment administers itself with: it signs admin
+          # API requests, logs into the dashboard, and reaches every bucket.
+          auth:
+            root:
+              access_key_id: "{{ .Data.data.root_access_key_id }}"
+              secret_access_key: "{{ .Data.data.root_secret_access_key }}"
+
           # --- Web dashboard ---
           ui:
             enabled: true
-            admin_key: "{{ .Data.data.ui_admin_key }}"
-            admin_secret: "{{ .Data.data.ui_admin_secret }}"
             session_secret: "{{ .Data.data.ui_session_secret }}"
-            admin_token: "{{ .Data.data.ui_admin_token }}"
             force_secure_cookies: true
 
           # --- Object lifecycle ---

@@ -32,14 +32,23 @@ import (
 
 // capture records what the server saw, so header and path assertions read as
 // one struct rather than a fistful of closures.
+// The keypair these tests sign with. The server side is a bare recorder, so
+// nothing verifies the signature here - what is under test is that the client
+// builds and sends one.
+const (
+	testAccessKey = "AKIACLIENTTEST"
+	testSecretKey = "client-test-secret"
+)
+
 type capture struct {
-	method      string
-	path        string
-	rawQuery    string
-	token       string
-	accept      string
-	contentType string
-	body        string
+	method        string
+	path          string
+	rawQuery      string
+	authorization string
+	contentSHA    string
+	accept        string
+	contentType   string
+	body          string
 }
 
 // newCaptureServer returns a server that records the request and replies with
@@ -50,13 +59,14 @@ func newCaptureServer(t *testing.T, status int, body string) (*httptest.Server, 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		*got = capture{
-			method:      r.Method,
-			path:        r.URL.Path,
-			rawQuery:    r.URL.RawQuery,
-			token:       r.Header.Get(TokenHeader),
-			accept:      r.Header.Get("Accept"),
-			contentType: r.Header.Get("Content-Type"),
-			body:        string(b),
+			method:        r.Method,
+			path:          r.URL.Path,
+			rawQuery:      r.URL.RawQuery,
+			authorization: r.Header.Get("Authorization"),
+			contentSHA:    r.Header.Get(contentSHAHeader),
+			accept:        r.Header.Get("Accept"),
+			contentType:   r.Header.Get("Content-Type"),
+			body:          string(b),
 		}
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, body)
@@ -75,7 +85,7 @@ func TestNew_TrimsTrailingSlash(t *testing.T) {
 	t.Parallel()
 	srv, got := newCaptureServer(t, http.StatusOK, `{}`)
 
-	c := New(srv.URL+"/", "tok")
+	c := NewSigned(srv.URL+"/", testAccessKey, testSecretKey)
 	resp, err := c.Do(t.Context(), http.MethodGet, "/admin/api/status", nil, nil)
 	if err != nil {
 		t.Fatalf("Do: %v", err)
@@ -94,15 +104,18 @@ func TestDo_SetsTokenAndOmitsEmptyQuery(t *testing.T) {
 	t.Parallel()
 	srv, got := newCaptureServer(t, http.StatusOK, `{}`)
 
-	c := New(srv.URL, "tok")
+	c := NewSigned(srv.URL, testAccessKey, testSecretKey)
 	resp, err := c.Do(t.Context(), http.MethodGet, "/admin/api/status", nil, nil)
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
 	defer resp.Body.Close()
 
-	if got.token != "tok" {
-		t.Errorf("token header = %q, want tok", got.token)
+	// The signature names the access key in its credential scope, which is what
+	// the server reads to find the identity before verifying anything.
+	if !strings.HasPrefix(got.authorization, "AWS4-HMAC-SHA256 ") ||
+		!strings.Contains(got.authorization, testAccessKey) {
+		t.Errorf("authorization = %q, want a SigV4 signature naming %s", got.authorization, testAccessKey)
 	}
 	if got.rawQuery != "" {
 		t.Errorf("raw query = %q, want empty", got.rawQuery)
@@ -122,7 +135,7 @@ func TestDo_EncodesQueryAndBody(t *testing.T) {
 	t.Parallel()
 	srv, got := newCaptureServer(t, http.StatusOK, `{}`)
 
-	c := New(srv.URL, "tok")
+	c := NewSigned(srv.URL, testAccessKey, testSecretKey)
 	resp, err := c.Do(t.Context(), http.MethodPost, "/admin/api/x",
 		url.Values{"backend": {"b1"}}, strings.NewReader(`{"k":"v"}`))
 	if err != nil {
@@ -148,7 +161,7 @@ func TestDo_ReturnsNonOKResponseAlive(t *testing.T) {
 	t.Parallel()
 	srv, _ := newCaptureServer(t, http.StatusForbidden, `{"error":"denied"}`)
 
-	c := New(srv.URL, "tok")
+	c := NewSigned(srv.URL, testAccessKey, testSecretKey)
 	resp, err := c.Do(t.Context(), http.MethodGet, "/admin/api/status", nil, nil)
 	if err != nil {
 		t.Fatalf("Do returned an error for a 403; the raw body must stay readable: %v", err)
@@ -177,7 +190,7 @@ func TestGet_DecodesAndTypesErrors(t *testing.T) {
 			Entries int `json:"entries"`
 			Hits    int `json:"hits"`
 		}
-		out, err := New(srv.URL, "tok").Get[stats](t.Context(), "/admin/api/cache", nil)
+		out, err := NewSigned(srv.URL, testAccessKey, testSecretKey).Get[stats](t.Context(), "/admin/api/cache", nil)
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
@@ -192,7 +205,7 @@ func TestGet_DecodesAndTypesErrors(t *testing.T) {
 	t.Run("types a non-2xx", func(t *testing.T) {
 		t.Parallel()
 		srv, _ := newCaptureServer(t, http.StatusServiceUnavailable, `{"status":"disabled","reason":"caching is off"}`)
-		_, err := New(srv.URL, "tok").Get[struct{}](t.Context(), "/admin/api/cache", nil)
+		_, err := NewSigned(srv.URL, testAccessKey, testSecretKey).Get[struct{}](t.Context(), "/admin/api/cache", nil)
 
 		apiErr, ok := errors.AsType[*Error](err)
 		if !ok {
@@ -209,7 +222,7 @@ func TestGet_DecodesAndTypesErrors(t *testing.T) {
 	t.Run("surfaces a decode failure", func(t *testing.T) {
 		t.Parallel()
 		srv, _ := newCaptureServer(t, http.StatusOK, `{not json`)
-		if _, err := New(srv.URL, "tok").Get[struct{}](t.Context(), "/admin/api/cache", nil); err == nil {
+		if _, err := NewSigned(srv.URL, testAccessKey, testSecretKey).Get[struct{}](t.Context(), "/admin/api/cache", nil); err == nil {
 			t.Error("expected a decode error")
 		}
 	})
@@ -224,7 +237,7 @@ func TestPost_UsesPOST(t *testing.T) {
 	type resp struct {
 		Requeued int `json:"requeued"`
 	}
-	out, err := New(srv.URL, "tok").Post[resp](t.Context(), "/admin/api/cleanup-dlq/requeue",
+	out, err := NewSigned(srv.URL, testAccessKey, testSecretKey).Post[resp](t.Context(), "/admin/api/cleanup-dlq/requeue",
 		url.Values{"backend": {"b1"}}, nil)
 	if err != nil {
 		t.Fatalf("Post: %v", err)
@@ -245,7 +258,7 @@ func TestStream_OptsIntoNDJSONAndYieldsEventsInOrder(t *testing.T) {
 	body := `{"kind":"step","message":"one"}` + "\n" + `{"kind":"result","outcome":"ok","message":"done"}` + "\n"
 	srv, got := newCaptureServer(t, http.StatusOK, body)
 
-	events, err := New(srv.URL, "tok").Stream(t.Context(), http.MethodPost, "/admin/api/scrub", nil, nil)
+	events, err := NewSigned(srv.URL, testAccessKey, testSecretKey).Stream(t.Context(), http.MethodPost, "/admin/api/scrub", nil, nil)
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}
@@ -277,7 +290,7 @@ func TestStream_TypesANonOKStatus(t *testing.T) {
 	t.Parallel()
 	srv, _ := newCaptureServer(t, http.StatusInternalServerError, `{"error":"boom"}`)
 
-	_, err := New(srv.URL, "tok").Stream(t.Context(), http.MethodPost, "/admin/api/scrub", nil, nil)
+	_, err := NewSigned(srv.URL, testAccessKey, testSecretKey).Stream(t.Context(), http.MethodPost, "/admin/api/scrub", nil, nil)
 	apiErr, ok := errors.AsType[*Error](err)
 	if !ok {
 		t.Fatalf("err = %v (%T), want *Error", err, err)
@@ -291,7 +304,7 @@ func TestStream_TypesANonOKStatus(t *testing.T) {
 func TestStream_TransportFailure(t *testing.T) {
 	t.Parallel()
 	// Port 0 is never listening, so Do fails before any response exists.
-	if _, err := New("http://127.0.0.1:0", "tok").Stream(t.Context(), http.MethodPost, "/x", nil, nil); err == nil {
+	if _, err := NewSigned("http://127.0.0.1:0", testAccessKey, testSecretKey).Stream(t.Context(), http.MethodPost, "/x", nil, nil); err == nil {
 		t.Error("expected a transport error")
 	}
 }
@@ -328,7 +341,7 @@ func TestSliceStream_Empty(t *testing.T) {
 // progress events; a one-shot call must not hang forever.
 func TestRequestTimeoutIsSetOnOneShotButNotStreams(t *testing.T) {
 	t.Parallel()
-	c := New("http://example.invalid", "tok")
+	c := NewSigned("http://example.invalid", testAccessKey, testSecretKey)
 	if c.http.Timeout != RequestTimeout {
 		t.Errorf("one-shot timeout = %v, want %v", c.http.Timeout, RequestTimeout)
 	}
@@ -342,7 +355,7 @@ func TestRequestTimeoutIsSetOnOneShotButNotStreams(t *testing.T) {
 // rather than being swallowed into a nil response.
 func TestSend_RejectsAnUnbuildableRequest(t *testing.T) {
 	t.Parallel()
-	c := New("http://example.invalid", "tok")
+	c := NewSigned("http://example.invalid", testAccessKey, testSecretKey)
 	// A method containing a space is not a valid HTTP token.
 	resp, err := c.Do(t.Context(), "BAD METHOD", "/x", nil, nil)
 	if err == nil {
@@ -356,7 +369,7 @@ func TestSend_RejectsAnUnbuildableRequest(t *testing.T) {
 func TestGet_TransportFailure(t *testing.T) {
 	t.Parallel()
 	// Port 0 is never listening, so the round trip fails outright.
-	_, err := New("http://127.0.0.1:0", "tok").Get[struct{}](t.Context(), "/x", nil)
+	_, err := NewSigned("http://127.0.0.1:0", testAccessKey, testSecretKey).Get[struct{}](t.Context(), "/x", nil)
 	if err == nil {
 		t.Fatal("expected a transport error")
 	}

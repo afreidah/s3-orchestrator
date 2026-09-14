@@ -685,11 +685,15 @@ func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 	}
 }
 
-// duplicateTokenConfig is a config whose buckets both claim one proxy token.
-func duplicateTokenConfig() *config.Config {
+// duplicateKeyConfig is a config whose buckets both claim one access key.
+func duplicateKeyConfig() *config.Config {
 	return &config.Config{Buckets: []config.BucketConfig{
-		{Name: "backups", Credentials: []config.CredentialConfig{{Token: "SAME"}}},
-		{Name: "traces", Credentials: []config.CredentialConfig{{Token: "SAME"}}},
+		{Name: "backups", Credentials: []config.CredentialConfig{
+			{AccessKeyID: "SAME", SecretAccessKey: "backups-secret"},
+		}},
+		{Name: "traces", Credentials: []config.CredentialConfig{
+			{AccessKeyID: "SAME", SecretAccessKey: "traces-secret"},
+		}},
 	}}
 }
 
@@ -717,14 +721,14 @@ func emptyProvisioningStore(t *testing.T, inj do.Injector) {
 // TestBucketAuthHook_CheckRejectsAmbiguousCredential proves an ambiguous
 // credential is caught in the Check pass. That is what matters for safety:
 // Reload aborts before any hook applies, so the server keeps serving with the
-// registry it already had rather than one where a token resolves to whichever
-// bucket happened to be written last.
+// registry it already had rather than one where an access key resolves to
+// whichever bucket happened to be written last.
 func TestBucketAuthHook_CheckRejectsAmbiguousCredential(t *testing.T) {
 	inj := do.New()
 	emptyProvisioningStore(t, inj)
 	h := &bucketAuthHook{inj: inj}
-	if err := h.Check(&config.Config{}, duplicateTokenConfig()); err == nil {
-		t.Fatal("Check must reject a token claimed by two buckets")
+	if err := h.Check(&config.Config{}, duplicateKeyConfig()); err == nil {
+		t.Fatal("Check must reject an access key claimed by two buckets")
 	}
 }
 
@@ -735,8 +739,12 @@ func TestBucketAuthHook_CheckAcceptsDistinctCredentials(t *testing.T) {
 	emptyProvisioningStore(t, inj)
 	h := &bucketAuthHook{inj: inj}
 	cfg := &config.Config{Buckets: []config.BucketConfig{
-		{Name: "backups", Credentials: []config.CredentialConfig{{Token: "one"}}},
-		{Name: "traces", Credentials: []config.CredentialConfig{{Token: "two"}}},
+		{Name: "backups", Credentials: []config.CredentialConfig{
+			{AccessKeyID: "AKIABACKUPS", SecretAccessKey: "backups-secret"},
+		}},
+		{Name: "traces", Credentials: []config.CredentialConfig{
+			{AccessKeyID: "AKIATRACES", SecretAccessKey: "traces-secret"},
+		}},
 	}}
 	if err := h.Check(&config.Config{}, cfg); err != nil {
 		t.Fatalf("Check rejected a valid config: %v", err)
@@ -751,7 +759,7 @@ func TestBucketAuthHook_ApplyRejectsAmbiguousCredential(t *testing.T) {
 	do.ProvideValue(inj, &s3api.Server{})
 	emptyProvisioningStore(t, inj)
 	h := &bucketAuthHook{inj: inj}
-	status, err := h.Apply(context.Background(), nil, duplicateTokenConfig())
+	status, err := h.Apply(context.Background(), nil, duplicateKeyConfig())
 	if status != HookFailed || err == nil {
 		t.Fatalf("Apply = (%s, %v), want (failed, error)", status, err)
 	}

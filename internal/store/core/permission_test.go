@@ -121,9 +121,9 @@ func TestParsePermissions(t *testing.T) {
 		{"hyphenated name", ResourceBucket, "list-buckets", PermListBuckets},
 		{"all alongside a name", ResourceBucket, "all,read", PermAll},
 		{"admin-all is every admin permission", ResourceBackend, "admin-all", PermAdminAll},
-		{"admin names", ResourceInstance, "admin-read,admin-logs", PermAdminRead | PermAdminLogs},
+		{"admin names", ResourceOrchestrator, "admin-read,admin-logs", PermAdminRead | PermAdminLogs},
 		{"empty on a backend is nothing", ResourceBackend, "", 0},
-		{"empty on the instance is nothing", ResourceInstance, "", 0},
+		{"empty on the instance is nothing", ResourceOrchestrator, "", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -210,9 +210,9 @@ func TestValidatePermissions(t *testing.T) {
 		{"admin on a bucket", ResourceBucket, PermAdminDrain, true},
 		{"admin mixed into a bucket grant", ResourceBucket, PermRead | PermAdminDrain, true},
 		{"admin on a backend", ResourceBackend, PermAdminConvert, false},
-		{"admin on the instance", ResourceInstance, PermAdminProvision, false},
+		{"admin on the instance", ResourceOrchestrator, PermAdminProvision, false},
 		{"data-plane on a backend", ResourceBackend, PermRead, true},
-		{"data-plane on the instance", ResourceInstance, PermList, true},
+		{"data-plane on the instance", ResourceOrchestrator, PermList, true},
 		{"nothing is valid anywhere", ResourceBackend, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -236,5 +236,51 @@ func TestPermissionBits_DoNotOverlap(t *testing.T) {
 
 	if PermAll&PermAdminAll != 0 {
 		t.Errorf("the data-plane and admin sets share bits: %q", PermAll&PermAdminAll)
+	}
+}
+
+// TestParseResourceKind covers the spellings a stored row or a submitted
+// request may carry, including the retired one.
+func TestParseResourceKind(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		in   string
+		want ResourceKind
+	}{
+		{"empty is the bucket", "", ResourceBucket},
+		{"bucket", "bucket", ResourceBucket},
+		{"backend", "backend", ResourceBackend},
+		{"orchestrator", "orchestrator", ResourceOrchestrator},
+		{"the retired instance spelling", "instance", ResourceOrchestrator},
+		{"an unknown kind is left alone to be refused later", "nonsense", ResourceKind("nonsense")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ParseResourceKind(tc.in); got != tc.want {
+				t.Errorf("ParseResourceKind(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestResourceString_OrchestratorCarriesNoName verifies the orchestrator
+// renders bare while the other kinds render with the resource they name, so a
+// grant listing and an audit entry read alike.
+func TestResourceString_OrchestratorCarriesNoName(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		in   Resource
+		want string
+	}{
+		{Resource{Kind: ResourceOrchestrator}, "orchestrator"},
+		{Resource{Kind: ResourceBucket, Name: "photos"}, "bucket:photos"},
+		{Resource{Kind: ResourceBackend, Name: "*"}, "backend:*"},
+	} {
+		if got := tc.in.String(); got != tc.want {
+			t.Errorf("Resource.String() = %q, want %q", got, tc.want)
+		}
 	}
 }

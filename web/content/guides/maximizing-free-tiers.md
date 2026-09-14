@@ -196,10 +196,13 @@ rate_limit:
     - "192.168.0.0/16"
     - "127.0.0.1/32"
 
+auth:
+  root:
+    access_key_id: "{{ .Data.data.root_access_key_id }}"
+    secret_access_key: "{{ .Data.data.root_secret_access_key }}"
+
 ui:
   enabled: true
-  admin_key: "{{ .Data.data.ui_admin_key }}"
-  admin_secret: "{{ .Data.data.ui_admin_secret }}"
   session_secret: "{{ .Data.data.ui_session_secret }}"
   force_secure_cookies: true   # unconditionally sets Secure on session cookies; alternative is to let the orchestrator detect TLS via X-Forwarded-Proto from a trusted_proxies CIDR — see docs/security-hardening.md
 

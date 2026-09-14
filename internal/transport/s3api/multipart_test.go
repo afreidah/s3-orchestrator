@@ -52,7 +52,7 @@ func TestCreateMultipartUpload_Success(t *testing.T) {
 	})
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploads", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("Content-Type", "text/plain")
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
@@ -94,7 +94,7 @@ func TestCreateMultipartUpload_StoreError(t *testing.T) {
 	})
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploads", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +123,7 @@ func TestCreateMultipartUpload_DefaultContentType(t *testing.T) {
 
 	// No Content-Type header  -  should default to application/octet-stream
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploads", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
 		t.Fatal(err)
@@ -142,7 +142,7 @@ func TestCreateMultipartUpload_MetadataTooLarge(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploads", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("X-Amz-Meta-Big", strings.Repeat("x", maxUserMetadataBytes+1))
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
@@ -175,7 +175,7 @@ func TestUploadPart_Success(t *testing.T) {
 
 	body := strings.NewReader("part-data")
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey?uploadId=upload-1&partNumber=1", body)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.ContentLength = int64(len("part-data"))
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
@@ -199,7 +199,7 @@ func TestUploadPart_InvalidPartNumber(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey?uploadId=upload-1&partNumber=abc", strings.NewReader("data"))
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.ContentLength = 4
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
@@ -219,7 +219,7 @@ func TestUploadPart_ZeroPartNumber(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey?uploadId=upload-1&partNumber=0", strings.NewReader("data"))
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.ContentLength = 4
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {
@@ -239,8 +239,10 @@ func TestUploadPart_MissingContentLength(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey?uploadId=upload-1&partNumber=1", strings.NewReader("data"))
-	req.Header.Set("X-Proxy-Token", "test-token")
+	// Set before signing, so the signature does not cover a length the request
+	// then goes on not to send.
 	req.ContentLength = -1
+	signRequest(t, req)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
@@ -260,7 +262,7 @@ func TestUploadPart_EntityTooLarge(t *testing.T) {
 
 	bigSize := int64(20 * 1024 * 1024)
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, ts.URL+"/mybucket/testkey?uploadId=upload-1&partNumber=1", io.LimitReader(neverEndingReader{}, bigSize))
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.ContentLength = bigSize
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
@@ -302,7 +304,7 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 	}
 	xmlBody := `<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"part1"</ETag></Part></CompleteMultipartUpload>`
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploadId=upload-1", strings.NewReader(xmlBody))
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
@@ -334,7 +336,7 @@ func TestCompleteMultipartUpload_MalformedXML(t *testing.T) {
 	ts, _, _ := newTestServer(t)
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mybucket/testkey?uploadId=upload-1", strings.NewReader("not xml"))
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
@@ -367,7 +369,7 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 	})
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, ts.URL+"/mybucket/testkey?uploadId=upload-1", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
@@ -390,7 +392,7 @@ func TestAbortMultipartUpload_NotFound(t *testing.T) {
 	})
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, ts.URL+"/mybucket/testkey?uploadId=nonexistent", nil)
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatal(err)
@@ -696,7 +698,7 @@ func newTestServerWithMultipartLimit(t *testing.T, maxUploads int, opts ...func(
 	buckets := []config.BucketConfig{{
 		Name:                "mybucket",
 		MaxMultipartUploads: maxUploads,
-		Credentials:         []config.CredentialConfig{{Token: "test-token"}},
+		Credentials:         []config.CredentialConfig{testCredential()},
 	}}
 	srv.SetBucketAuth(mustBucketRegistry(t, buckets))
 
@@ -813,7 +815,7 @@ func uploadPartCopy(t *testing.T, ts *httptest.Server, source, copyRange string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("X-Amz-Copy-Source", source)
 	if copyRange != "" {
 		req.Header.Set("x-amz-copy-source-range", copyRange)
@@ -975,7 +977,7 @@ func TestUploadPartCopy_RejectsUnusableRequests(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			req.Header.Set("X-Proxy-Token", "test-token")
+			signRequest(t, req)
 			req.Header.Set("X-Amz-Copy-Source", tc.source)
 			req.ContentLength = 0
 			resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL

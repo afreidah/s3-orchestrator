@@ -121,10 +121,11 @@ per invocation).
 
 `-cache-flush-before` POSTs to `/admin/api/cache/flush` before each
 scenario step so cache-cold runs are not contaminated by previous
-steps' warm hits. Requires an admin token (`-admin-token` flag or
-`S3O_ADMIN_TOKEN` env var). 503 from the flush endpoint is treated
-as success - it just means the orchestrator has caching disabled,
-not that the call failed.
+steps' warm hits. The call is signed, so it needs a keypair holding
+admin permissions: `-admin-access-key` and `-admin-secret-key`, or
+`S3O_ACCESS_KEY_ID` and `S3O_SECRET_ACCESS_KEY`. 503 from the flush
+endpoint is treated as success - it just means the orchestrator has
+caching disabled, not that the call failed.
 
 ### Concurrent multipart
 
@@ -196,8 +197,9 @@ go build -o s3-loadtest .
 | `-ramp-to` | `0` | Saturation-find: ramp from `-rate` up to this rate; stops when error rate exceeds `-ramp-error-threshold` (0 disables ramp) |
 | `-ramp-step` | `100` | Rate increment per ramp step |
 | `-ramp-error-threshold` | `0.05` | Error rate threshold (0..1) for ramp termination |
-| `-cache-flush-before` | `false` | POST `/admin/api/cache/flush` before each scenario step (requires `-admin-token`) |
-| `-admin-token` | (unset) | Admin token for cache-flush calls (or `S3O_ADMIN_TOKEN` env var) |
+| `-cache-flush-before` | `false` | POST `/admin/api/cache/flush` before each scenario step (requires an admin keypair) |
+| `-admin-access-key` | (unset) | Access key ID the cache-flush calls sign with (or `S3O_ACCESS_KEY_ID`) |
+| `-admin-secret-key` | (unset) | Secret access key the cache-flush calls sign with (or `S3O_SECRET_ACCESS_KEY`) |
 
 ### k6 — Scenario-based workflow simulation
 

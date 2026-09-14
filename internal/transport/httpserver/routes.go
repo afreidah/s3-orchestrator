@@ -31,12 +31,13 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/ui"
 )
 
-// registerAdminHandler mounts the admin API at /admin/ when the admin key is
-// configured. Returns nil silently when the admin surface is disabled.
-func registerAdminHandler(mux *http.ServeMux, inj do.Injector, cfg *config.Config) error {
-	if cfg.UI.AdminKey == "" {
-		return nil
-	}
+// registerAdminHandler mounts the admin API at /admin/.
+//
+// Always mounted: the surface authenticates credentials rather than a
+// configured token, so there is no setting that turns it off. What a caller
+// reaches on it is decided by the grants its credential holds, and a deployment
+// that has issued none simply has nobody able to call it.
+func registerAdminHandler(mux *http.ServeMux, inj do.Injector, _ *config.Config) error {
 	adminHandler, err := do.Invoke[*admin.Handler](inj)
 	if err != nil {
 		return fmt.Errorf("initialize admin handler: %w", err)

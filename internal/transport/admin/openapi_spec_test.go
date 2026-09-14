@@ -47,15 +47,16 @@ var specInfo = openapi.Info{
 	Title:   "s3-orchestrator Admin API",
 	Version: "1.0.0",
 	Description: "Operational control plane for a running s3-orchestrator instance. " +
-		"Every endpoint requires the admin token; long-running operations can stream " +
+		"Every endpoint requires a signed request; long-running operations can stream " +
 		"newline-delimited progress events when the caller asks for them.",
 }
 
-// specSecurity describes the token every route is mounted behind.
+// specSecurity describes the signature every route is mounted behind.
 var specSecurity = openapi.SecurityScheme{
-	Name:        "adminToken",
-	HeaderName:  "X-Admin-Token",
-	Description: "Shared admin token, configured as server.admin_token",
+	Name:   "sigv4",
+	Scheme: "aws4-hmac-sha256",
+	Description: "AWS SigV4 signature over the request, using an access key the deployment " +
+		"holds. What a credential reaches is decided by the grants its user carries.",
 }
 
 // -------------------------------------------------------------------------

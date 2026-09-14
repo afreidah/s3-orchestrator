@@ -445,6 +445,7 @@ func TestNewInjector_DefaultsRegisterRequiredOnly(t *testing.T) {
 		"internal/proxy/usage.Service",
 		"internal/transport/s3api.Server",
 		"internal/lifecycle.Manager",
+		"internal/transport/admin.Handler",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("required service %q not registered; got: %s", want, joined)
@@ -456,7 +457,6 @@ func TestNewInjector_DefaultsRegisterRequiredOnly(t *testing.T) {
 		"internal/counter.RedisCounterBackend",
 		"internal/transport/s3api.RateLimiter",
 		"internal/transport/ui.Handler",
-		"internal/transport/admin.Handler",
 		"internal/notify.Notifier",
 	} {
 		if strings.Contains(joined, unwanted) {
@@ -529,11 +529,14 @@ func happyPathConfig(tmpDir string) *config.Config {
 			RequestsPerSec: 10,
 			Burst:          10,
 		},
+		Auth: config.AuthConfig{
+			Root: config.RootCredential{ //nolint:gosec // G101: test credential
+				AccessKeyID:     "AKIADITESTROOT",
+				SecretAccessKey: "di-test-root-secret",
+			},
+		},
 		UI: config.UIConfig{
 			Enabled:       true,
-			AdminKey:      "admin-key",
-			AdminSecret:   "admin-secret",
-			AdminToken:    "secret-token",
 			SessionSecret: "0123456789abcdef0123456789abcdef",
 		},
 	}

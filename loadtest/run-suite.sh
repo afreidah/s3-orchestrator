@@ -62,28 +62,24 @@ esac
 #
 # Falls back to the config credential so a run against a deployment that has not
 # provisioned one still works.
-# An explicit PERF_ACCESS_KEY wins over the file, matching how the admin token
-# below resolves: what the caller states beats what was found lying around.
+#
+# The same file carries the root keypair, which the cold-read scenario signs its
+# cache-flush call with. Whatever the caller states in the environment wins over
+# what was found lying around, so the overrides are captured before the file is
+# sourced and put back after.
 PERF_CREDENTIALS="${PERF_CREDENTIALS:-deploy/nomad/local/.perf-credentials.env}"
-if [[ -z "${PERF_ACCESS_KEY:-}" && -f "$PERF_CREDENTIALS" ]]; then
+override_access="${PERF_ACCESS_KEY:-}"
+override_secret="${PERF_SECRET_KEY:-}"
+override_admin_key="${S3O_ACCESS_KEY_ID:-}"
+override_admin_secret="${S3O_SECRET_ACCESS_KEY:-}"
+if [[ -f "$PERF_CREDENTIALS" ]]; then
   # shellcheck source=/dev/null
   source "$PERF_CREDENTIALS"
 fi
-ACCESS_KEY="${PERF_ACCESS_KEY:-photoskey}"
-SECRET_KEY="${PERF_SECRET_KEY:-photossecret}"
-
-# Auto-resolve admin token: env var wins, else look for a local config.
-if [[ -z "${S3O_ADMIN_TOKEN:-}" ]]; then
-  for cfg in config.yaml /etc/s3-orchestrator/config.yaml; do
-    if [[ -f "$cfg" ]] && command -v yq >/dev/null; then
-      tok=$(yq -r '.ui.admin_token // .ui.admin_key // ""' "$cfg" 2>/dev/null || echo "")
-      if [[ -n "$tok" && "$tok" != "null" ]]; then
-        S3O_ADMIN_TOKEN="$tok"
-        break
-      fi
-    fi
-  done
-fi
+ACCESS_KEY="${override_access:-${PERF_ACCESS_KEY:-photoskey}}"
+SECRET_KEY="${override_secret:-${PERF_SECRET_KEY:-photossecret}}"
+ADMIN_ACCESS_KEY="${override_admin_key:-${S3O_ACCESS_KEY_ID:-}}"
+ADMIN_SECRET_KEY="${override_admin_secret:-${S3O_SECRET_ACCESS_KEY:-}}"
 
 mkdir -p "$RESULTS_DIR"
 echo "profile=$PROFILE results=$RESULTS_DIR endpoint=$ENDPOINT bucket=$BUCKET access_key=$ACCESS_KEY"
@@ -122,17 +118,18 @@ run_scenario "get-warm" "$BINARY" \
   -sizes "$SIZES" -seed "$SEED" -max-error-rate "$MAX_ERROR_RATE" \
   -output-json "$RESULTS_DIR/get-warm.json"
 
-if [[ -n "${S3O_ADMIN_TOKEN:-}" ]]; then
+if [[ -n "$ADMIN_ACCESS_KEY" && -n "$ADMIN_SECRET_KEY" ]]; then
   run_scenario "get-cold" "$BINARY" \
     -endpoint "$ENDPOINT" -bucket "$BUCKET" "${CREDS[@]}" \
     -op get -rate "$RATE" -duration "$DURATION" \
     -sizes "$SIZES" -seed "$COLD_SEED" -cold \
-    -cache-flush-before -admin-token "$S3O_ADMIN_TOKEN" \
+    -cache-flush-before \
+    -admin-access-key "$ADMIN_ACCESS_KEY" -admin-secret-key "$ADMIN_SECRET_KEY" \
     -max-error-rate "$MAX_ERROR_RATE" \
     -output-json "$RESULTS_DIR/get-cold.json"
 else
   echo "=== get-cold ==="
-  echo "skipped: S3O_ADMIN_TOKEN not set and no local config.yaml found"
+  echo "skipped: no admin keypair (set S3O_ACCESS_KEY_ID and S3O_SECRET_ACCESS_KEY)"
   STATUS["get-cold"]=SKIP
   echo
 fi

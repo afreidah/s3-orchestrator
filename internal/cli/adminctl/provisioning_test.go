@@ -47,7 +47,7 @@ func runProvisioning(t *testing.T, args []string, reply any) (int, capture, stri
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command(args[0], args[1:], srv.URL, "secret", &stdout, &stderr)
+	code := Command(args[0], args[1:], srv.URL, testCreds, &stdout, &stderr)
 	return code, got, stdout.String(), stderr.String()
 }
 
@@ -121,8 +121,10 @@ func TestProvisioning_RequestBodies(t *testing.T) {
 			map[string]any{"user_id": "user-abc", "kind": "bucket", "name": "photos"}},
 		{"backend grant", []string{"grant", "add", "-user", "user-abc", "-kind", "backend", "-name", "*", "-permissions", "admin-convert"},
 			map[string]any{"user_id": "user-abc", "kind": "backend", "name": "*"}},
-		{"instance grant", []string{"grant", "add", "-user", "user-abc", "-kind", "instance", "-permissions", "admin-provision"},
-			map[string]any{"user_id": "user-abc", "kind": "instance"}},
+		{"orchestrator grant", []string{"grant", "add", "-user", "user-abc", "-kind", "orchestrator", "-permissions", "admin-provision"},
+			map[string]any{"user_id": "user-abc", "kind": "orchestrator"}},
+		{"the retired instance spelling", []string{"grant", "add", "-user", "user-abc", "-kind", "instance", "-permissions", "admin-provision"},
+			map[string]any{"user_id": "user-abc", "kind": "orchestrator"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -314,7 +316,7 @@ func TestProvisioning_RejectionIsReported(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := Command("bucket", []string{"delete", "-name", "photos"}, srv.URL, "secret", &stdout, &stderr)
+	code := Command("bucket", []string{"delete", "-name", "photos"}, srv.URL, testCreds, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1", code)
 	}
@@ -333,7 +335,10 @@ func TestProvisioning_UserListingNamesEachResource(t *testing.T) {
 	reply.Users[0].Grants = []adminapi.Grant{
 		{Kind: "bucket", Name: "from-store", Permissions: []string{"read", "write"}},
 		{Kind: "backend", Name: "*", Permissions: []string{"admin-convert"}},
-		{Kind: "instance", Permissions: []string{"admin-read"}},
+		{Kind: "orchestrator", Permissions: []string{"admin-read"}},
+		// A grant a server still stores under the retired spelling renders as
+		// the current one, so a listing does not show two names for one thing.
+		{Kind: "instance", Permissions: []string{"admin-logs"}},
 	}
 
 	code, _, stdout, stderr := runProvisioning(t, []string{"user", "list"}, reply)
@@ -341,7 +346,8 @@ func TestProvisioning_UserListingNamesEachResource(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0; stderr=%s", code, stderr)
 	}
 	for _, want := range []string{
-		"bucket:from-store(read,write)", "backend:*(admin-convert)", "instance(admin-read)",
+		"bucket:from-store(read,write)", "backend:*(admin-convert)",
+		"orchestrator(admin-read)", "orchestrator(admin-logs)",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("listing omits %q:\n%s", want, stdout)

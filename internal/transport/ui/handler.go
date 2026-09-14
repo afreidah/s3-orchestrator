@@ -128,8 +128,6 @@ type Handler struct {
 	logBuffer      *telemetry.LogBuffer
 	loginThrottle  *httputil.LoginThrottle
 	prefix         string
-	adminKey       string
-	adminSecret    string
 	sessionKey     []byte
 	forceSecure    bool
 	trustedProxies []*net.IPNet
@@ -170,8 +168,6 @@ func New(d *Deps) *Handler {
 		templates:      loadTemplates(),
 		logBuffer:      d.LogBuffer,
 		loginThrottle:  d.LoginThrottle,
-		adminKey:       d.Cfg.UI.AdminKey,
-		adminSecret:    d.Cfg.UI.AdminSecret,
 		sessionKey:     deriveSessionKey(&d.Cfg.UI),
 		forceSecure:    d.Cfg.UI.ForceSecureCookies,
 		trustedProxies: httputil.ParseTrustedProxies(d.Cfg.RateLimit.TrustedProxies),

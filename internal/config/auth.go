@@ -3,14 +3,13 @@
 //
 // Author: Alex Freidah
 //
-// Defines AuthConfig - the root credential a deployment declares to administer
-// itself before any credential exists in the store. It is an ordinary keypair
-// resolving to an ordinary user, and what makes it root is the grants that user
-// holds rather than a branch in the request path.
+// Defines AuthConfig - the root credential a deployment administers itself with.
+// It is an ordinary keypair resolving to an ordinary user, and what makes it
+// root is the grants that user holds rather than a branch in the request path.
 //
-// Declaring one is what lets the shared admin token be retired: the token and
-// the dashboard login both resolve onto this same identity, so a deployment has
-// one principal to reason about instead of three mechanisms.
+// It is also the only way in. The admin API, the dashboard and the S3 API all
+// authenticate the same credential type, so a deployment with no root credential
+// and no provisioned one has nothing able to create the first user.
 // -------------------------------------------------------------------------------
 
 package config
@@ -25,36 +24,42 @@ type RootCredential struct {
 	SecretAccessKey string `yaml:"secret_access_key"`
 }
 
-// Declared reports whether a root credential was configured at all. A
-// deployment may run without one and administer itself through the store.
+// Declared reports whether a root credential was configured at all.
 func (r RootCredential) Declared() bool {
 	return r.AccessKeyID != "" || r.SecretAccessKey != ""
 }
 
+// Complete reports whether both halves are present, which is what it takes to
+// sign.
+func (r RootCredential) Complete() bool {
+	return r.AccessKeyID != "" && r.SecretAccessKey != ""
+}
+
 // AuthConfig holds the credentials a deployment declares for itself, as opposed
 // to the ones it issues to clients.
-//
-// LegacySharedToken is not declared here: it is ui.admin_token, copied in
-// during validation so that everything asking who administers a deployment has
-// one place to read rather than two spellings of the same idea.
 type AuthConfig struct {
-	Root              RootCredential `yaml:"root"`
-	LegacySharedToken string         `yaml:"-"`
+	Root RootCredential `yaml:"root"`
 }
 
-// HasRoot reports whether the deployment declares an administering identity by
-// either mechanism.
+// HasRoot reports whether the deployment declares an administering identity.
 func (a AuthConfig) HasRoot() bool {
-	return a.Root.Declared() || a.LegacySharedToken != ""
+	return a.Root.Complete()
 }
 
-// setDefaultsAndValidate refuses a half-declared root credential.
-func (a *AuthConfig) setDefaultsAndValidate() []error {
-	if !a.Root.Declared() {
-		return nil
-	}
-	if a.Root.AccessKeyID == "" || a.Root.SecretAccessKey == "" {
+// setDefaultsAndValidate refuses a half-declared root credential, and a missing
+// one where something needs it.
+//
+// needsRoot is whether the dashboard is enabled. The admin API is always served,
+// so a deployment without a root credential can still run as a pure S3 endpoint
+// administered by credentials already in its store - but one that has neither
+// has locked itself out, and saying so at boot is kinder than serving 401 to
+// every administrative request.
+func (a *AuthConfig) setDefaultsAndValidate(needsRoot bool) []error {
+	if a.Root.Declared() && !a.Root.Complete() {
 		return []error{ErrRootCredentialIncomplete}
+	}
+	if needsRoot && !a.HasRoot() {
+		return []error{ErrRootCredentialRequired}
 	}
 	return nil
 }

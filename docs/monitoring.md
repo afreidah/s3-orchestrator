@@ -40,10 +40,10 @@ When a backend loses data (expired credentials, provider outage, accidental dele
 
 ```bash
 # Reconcile all backends
-curl -X POST -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/reconcile
+s3-orchestrator admin reconcile
 
 # Reconcile a single backend
-curl -X POST -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/reconcile?backend=g3
+s3-orchestrator admin reconcile -backend g3
 ```
 
 Response:
@@ -57,7 +57,7 @@ Response:
 
 The background reconciler (`reconcile.enabled: true`) runs the same logic on a timer. The admin endpoint is for immediate use after incidents.
 
-The dashboard requires authentication. Users log in at `{path}/login` with the `admin_key` and `admin_secret` configured in the `ui` section. Sessions last 24 hours.
+The dashboard requires authentication. Users log in at `{path}/login` with a credential the deployment holds - the `auth.root` keypair, or any credential the store has issued. Sessions last 24 hours.
 
 The dashboard is server-rendered HTML. The object tree uses JavaScript for lazy-loaded directory expansion - directories fetch their children on click via the `/ui/api/tree` endpoint.
 
@@ -99,7 +99,7 @@ background service's last-tick health, including `last_success`,
 during incidents to distinguish:
 
 ```bash
-curl -H "X-Admin-Token: $TOKEN" http://localhost:9000/admin/api/workers
+s3-orchestrator admin workers
 ```
 
 ```json

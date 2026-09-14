@@ -123,20 +123,25 @@ func TestNewBucketRegistry_ConfigUserIDIsStable(t *testing.T) {
 	}
 }
 
-// TestNewBucketRegistry_KeypairAndTokenShareOneUser verifies a credential
-// carrying both proofs resolves to one identity, so either attributes the same
-// actor.
-func TestNewBucketRegistry_KeypairAndTokenShareOneUser(t *testing.T) {
+// TestNewBucketRegistry_SiblingKeypairsShareOneUser verifies two keypairs a
+// bucket declares resolve to one identity, so either attributes the same actor
+// and revoking one leaves the other working.
+func TestNewBucketRegistry_SiblingKeypairsShareOneUser(t *testing.T) {
 	t.Parallel()
 
 	br := mustBucketRegistry(t, []config.BucketConfig{
 		{Name: "photos", Credentials: []config.CredentialConfig{
-			{AccessKeyID: "AK", SecretAccessKey: "SK", Token: "TOK"},
+			{AccessKeyID: "AK1", SecretAccessKey: "SK1"},
+			{AccessKeyID: "AK2", SecretAccessKey: "SK2"},
 		}},
 	})
 
-	if br.byAccessKey["AK"].user != br.byToken["TOK"].user {
-		t.Error("keypair and token resolved to different users")
+	first, second := br.byAccessKey["AK1"].user, br.byAccessKey["AK2"].user
+	if first == nil || second == nil {
+		t.Fatal("a declared keypair did not register")
+	}
+	if !first.CanReach("photos") || !second.CanReach("photos") {
+		t.Error("sibling keypairs did not both reach the bucket that declared them")
 	}
 }
 
@@ -393,7 +398,7 @@ func TestUser_CanAdminRefusesWithoutAGrant(t *testing.T) {
 
 	u := NewUser("u1", "ci", map[string]core.PermissionSet{"photos": core.PermAll})
 	for _, on := range []core.Resource{
-		{Kind: core.ResourceInstance},
+		{Kind: core.ResourceOrchestrator},
 		{Kind: core.ResourceBackend, Name: "b1"},
 		{Kind: core.ResourceBackend, Name: core.ResourceWildcard},
 	} {
@@ -401,7 +406,7 @@ func TestUser_CanAdminRefusesWithoutAGrant(t *testing.T) {
 			t.Errorf("a bucket grant authorized %v", on)
 		}
 	}
-	if (*User)(nil).CanAdmin(core.Resource{Kind: core.ResourceInstance}, core.PermAdminRead) {
+	if (*User)(nil).CanAdmin(core.Resource{Kind: core.ResourceOrchestrator}, core.PermAdminRead) {
 		t.Error("a nil user authorized a control-plane operation")
 	}
 }
@@ -412,7 +417,7 @@ func TestUser_CanAdminRefusesWithoutAGrant(t *testing.T) {
 func TestUser_CanAdminHoldsPermissionsApart(t *testing.T) {
 	t.Parallel()
 
-	instance := core.Resource{Kind: core.ResourceInstance}
+	instance := core.Resource{Kind: core.ResourceOrchestrator}
 	u := NewUser("u1", "monitor", nil).WithAdmin(map[core.Resource]core.PermissionSet{
 		instance: core.PermAdminRead,
 	})
