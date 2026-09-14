@@ -138,6 +138,30 @@ func (s *Store) CreateGrant(ctx context.Context, g *core.Grant) error {
 	return nil
 }
 
+// RenameUser changes the name an operator reads a user by. The id is what
+// credentials and grants reference and does not move.
+func (s *Store) RenameUser(ctx context.Context, id, name string) error {
+	if err := s.queries.RenameUser(ctx, db.RenameUserParams{ID: id, Name: name}); err != nil {
+		return fmt.Errorf("rename user %s: %w", id, err)
+	}
+	return nil
+}
+
+// SetGrant records exactly what a user reaches on one resource, creating the
+// grant when it is absent. The upsert is what lets a caller declare access
+// without first asking whether it is already there.
+func (s *Store) SetGrant(ctx context.Context, g *core.Grant) error {
+	if err := s.queries.SetGrant(ctx, db.SetGrantParams{
+		UserID:       g.UserID,
+		ResourceKind: string(g.Resource.Kind),
+		ResourceName: g.Resource.Name,
+		Permissions:  g.Permissions.String(),
+	}); err != nil {
+		return fmt.Errorf("set grant %s -> %s %s: %w", g.UserID, g.Resource.Kind, g.Resource.Name, err)
+	}
+	return nil
+}
+
 // DeleteBucket removes a stored bucket. Objects under it are unaffected, so a
 // caller that means to destroy data does that first.
 func (s *Store) DeleteBucket(ctx context.Context, name string) error {

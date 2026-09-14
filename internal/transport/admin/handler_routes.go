@@ -556,6 +556,16 @@ func (h *Handler) routes() []route {
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
 		{
+			Method: http.MethodPatch, Pattern: pathProvUsers + "/{id}", Handler: h.handleRenameUser,
+			Summary:  "Rename an identity, leaving the ID its credentials and grants reference",
+			Request:  adminapi.RenameUserRequest{},
+			Response: adminapi.ProvisioningOperationResponse{},
+			Params: []param{
+				{Name: paramID, In: inPath, Required: true, Type: typeString, Description: descUserID},
+			},
+			Kind: core.ResourceOrchestrator, Perm: core.PermAdminProvision,
+		},
+		{
 			Method: http.MethodDelete, Pattern: pathProvUsers + "/{id}", Handler: h.handleDeleteUser,
 			Summary:  "Remove an identity that holds no credentials and no grants",
 			Response: adminapi.ProvisioningOperationResponse{},
@@ -566,7 +576,7 @@ func (h *Handler) routes() []route {
 		},
 		{
 			Method: http.MethodPost, Pattern: pathProvCreds, Handler: h.handleCreateCredential,
-			Summary:  "Mint a keypair for a user and return it once",
+			Summary:  "Register a keypair for a user, minting one when none is supplied",
 			Request:  adminapi.CreateCredentialRequest{},
 			Response: adminapi.CreateCredentialResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminProvision,
@@ -586,6 +596,18 @@ func (h *Handler) routes() []route {
 			Request:  adminapi.CreateGrantRequest{},
 			Response: adminapi.ProvisioningOperationResponse{},
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminProvision,
+		},
+		{
+			Method: http.MethodPut, Pattern: pathProvGrants + "/{id}/{name}", Handler: h.handleSetGrant,
+			Summary:  "Declare exactly what one user reaches on one resource",
+			Request:  adminapi.SetGrantRequest{},
+			Response: adminapi.ProvisioningOperationResponse{},
+			Params: []param{
+				{Name: paramID, In: inPath, Required: true, Type: typeString, Description: descUserID},
+				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descResourceName},
+				{Name: paramKind, In: inQuery, Type: typeString, Description: descResourceKind},
+			},
+			Kind: core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
 		{
 			Method: http.MethodDelete, Pattern: pathProvGrants + "/{id}/{name}", Handler: h.handleDeleteGrant,

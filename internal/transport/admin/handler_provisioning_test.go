@@ -559,3 +559,311 @@ func TestWireGrants_WithoutAWildcardNamesEveryBucket(t *testing.T) {
 		t.Errorf("grants = %+v, want the one named bucket", got)
 	}
 }
+
+// -------------------------------------------------------------------------
+// UPDATES
+// -------------------------------------------------------------------------
+
+// TestHandleRenameUser verifies the name reaches the store and the response
+// reports both halves of the identity it acted on.
+func TestHandleRenameUser(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	store := provisioningWith(t, h, nil, &provRows{users: []core.User{{ID: "u1", Name: "old"}}})
+	store.EXPECT().RenameUser(gomock.Any(), "u1", "new").Return(nil)
+
+	req := jsonRequest(t, http.MethodPatch, "/admin/api/provisioning/users/u1",
+		adminapi.RenameUserRequest{Name: "new"})
+	req.SetPathValue(paramID, "u1")
+	w := httptest.NewRecorder()
+	h.handleRenameUser(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var got adminapi.ProvisioningOperationResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.UserID != "u1" || got.UserName != "new" {
+		t.Errorf("response = %+v, want u1 carrying the new name", got)
+	}
+}
+
+// TestHandleRenameUser_Refusals verifies each rejection reaches the status a
+// caller can act on, rather than collapsing onto one code.
+func TestHandleRenameUser_Refusals(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		cfgBuckets []config.BucketConfig
+		rows       *provRows
+		id         string
+		body       adminapi.RenameUserRequest
+		want       int
+	}{
+		{
+			name: "an empty name",
+			rows: &provRows{users: []core.User{{ID: "u1", Name: "old"}}},
+			id:   "u1",
+			want: http.StatusBadRequest,
+		},
+		{
+			name: "an identity nothing declares",
+			rows: &provRows{},
+			id:   "u1",
+			body: adminapi.RenameUserRequest{Name: "new"},
+			want: http.StatusNotFound,
+		},
+		{
+			name: "one the config file owns",
+			cfgBuckets: []config.BucketConfig{
+				{Name: "photos", Credentials: []config.CredentialConfig{{AccessKeyID: "AK", SecretAccessKey: "SK"}}},
+			},
+			rows: &provRows{},
+			id:   "config:AK",
+			body: adminapi.RenameUserRequest{Name: "new"},
+			want: http.StatusForbidden,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newCoverageHandler(t)
+			provisioningWith(t, h, tc.cfgBuckets, tc.rows)
+
+			req := jsonRequest(t, http.MethodPatch, "/admin/api/provisioning/users/"+tc.id, tc.body)
+			req.SetPathValue(paramID, tc.id)
+			w := httptest.NewRecorder()
+			h.handleRenameUser(w, req)
+
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", w.Code, tc.want, w.Body.String())
+			}
+		})
+	}
+}
+
+// TestHandleRenameUser_MalformedBodyIs400 verifies an unparseable body is
+// refused before the store is reached.
+func TestHandleRenameUser_MalformedBodyIs400(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	provisioningWith(t, h, nil, &provRows{users: []core.User{{ID: "u1", Name: "old"}}})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch,
+		"/admin/api/provisioning/users/u1", strings.NewReader("{"))
+	req.SetPathValue(paramID, "u1")
+	w := httptest.NewRecorder()
+	h.handleRenameUser(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+// TestHandleSetGrant verifies the declared permission set reaches the store
+// against the resource the path and query name.
+func TestHandleSetGrant(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	store := provisioningWith(t, h, []config.BucketConfig{{Name: "photos"}},
+		&provRows{users: []core.User{{ID: "u1", Name: "ci"}}})
+
+	var stored core.Grant
+	store.EXPECT().SetGrant(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, g *core.Grant) error {
+			stored = *g
+			return nil
+		})
+
+	req := jsonRequest(t, http.MethodPut, "/admin/api/provisioning/grants/u1/photos",
+		adminapi.SetGrantRequest{Permissions: []string{"list", "read"}})
+	req.SetPathValue(paramID, "u1")
+	req.SetPathValue(paramName, "photos")
+	w := httptest.NewRecorder()
+	h.handleSetGrant(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if stored.UserID != "u1" || stored.Resource.Name != "photos" {
+		t.Errorf("stored grant = %+v, want u1 on photos", stored)
+	}
+	if want := core.PermList | core.PermRead; stored.Permissions != want {
+		t.Errorf("permissions = %q, want %q", stored.Permissions, want)
+	}
+}
+
+// TestHandleSetGrant_OrchestratorTakesNoName verifies the placeholder path
+// segment is discarded once the kind says the orchestrator is meant, so the
+// grant is keyed the way a listing renders it.
+func TestHandleSetGrant_OrchestratorTakesNoName(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	store := provisioningWith(t, h, nil, &provRows{users: []core.User{{ID: "u1", Name: "ops"}}})
+
+	var stored core.Grant
+	store.EXPECT().SetGrant(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, g *core.Grant) error {
+			stored = *g
+			return nil
+		})
+
+	req := jsonRequest(t, http.MethodPut,
+		"/admin/api/provisioning/grants/u1/orchestrator?kind=orchestrator",
+		adminapi.SetGrantRequest{Permissions: []string{"admin-read"}})
+	req.SetPathValue(paramID, "u1")
+	req.SetPathValue(paramName, "orchestrator")
+	w := httptest.NewRecorder()
+	h.handleSetGrant(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if stored.Resource.Kind != core.ResourceOrchestrator || stored.Resource.Name != "" {
+		t.Errorf("resource = %+v, want the orchestrator carrying no name", stored.Resource)
+	}
+}
+
+// TestHandleSetGrant_Refusals verifies the declarative route is held to the
+// same rules the imperative one is, and that each maps onto its own status.
+func TestHandleSetGrant_Refusals(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		cfgBuckets []config.BucketConfig
+		rows       *provRows
+		target     string
+		resource   string
+		body       adminapi.SetGrantRequest
+		want       int
+	}{
+		{
+			name:     "a permission name nothing recognises",
+			rows:     &provRows{users: []core.User{{ID: "u1", Name: "ci"}}},
+			resource: "photos",
+			body:     adminapi.SetGrantRequest{Permissions: []string{"nonsense"}},
+			want:     http.StatusBadRequest,
+		},
+		{
+			name:     "an identity nothing declares",
+			rows:     &provRows{},
+			resource: "photos",
+			body:     adminapi.SetGrantRequest{Permissions: []string{"read"}},
+			want:     http.StatusNotFound,
+		},
+		{
+			name:     "a bucket nothing declares",
+			rows:     &provRows{users: []core.User{{ID: "u1", Name: "ci"}}},
+			resource: "nowhere",
+			body:     adminapi.SetGrantRequest{Permissions: []string{"read"}},
+			want:     http.StatusNotFound,
+		},
+		{
+			name: "an identity the config file owns",
+			cfgBuckets: []config.BucketConfig{
+				{Name: "photos", Credentials: []config.CredentialConfig{{AccessKeyID: "AK", SecretAccessKey: "SK"}}},
+			},
+			rows:     &provRows{},
+			target:   "config:AK",
+			resource: "photos",
+			body:     adminapi.SetGrantRequest{Permissions: []string{"read"}},
+			want:     http.StatusForbidden,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newCoverageHandler(t)
+			cfg := tc.cfgBuckets
+			if cfg == nil {
+				cfg = []config.BucketConfig{{Name: "photos"}}
+			}
+			provisioningWith(t, h, cfg, tc.rows)
+
+			userID := tc.target
+			if userID == "" {
+				userID = "u1"
+			}
+			req := jsonRequest(t, http.MethodPut,
+				"/admin/api/provisioning/grants/"+userID+"/"+tc.resource, tc.body)
+			req.SetPathValue(paramID, userID)
+			req.SetPathValue(paramName, tc.resource)
+			w := httptest.NewRecorder()
+			h.handleSetGrant(w, req)
+
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", w.Code, tc.want, w.Body.String())
+			}
+		})
+	}
+}
+
+// TestHandleSetGrant_MalformedBodyIs400 verifies an unparseable body is refused
+// before the store is reached.
+func TestHandleSetGrant_MalformedBodyIs400(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	provisioningWith(t, h, []config.BucketConfig{{Name: "photos"}},
+		&provRows{users: []core.User{{ID: "u1", Name: "ci"}}})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPut,
+		"/admin/api/provisioning/grants/u1/photos", strings.NewReader("{"))
+	req.SetPathValue(paramID, "u1")
+	req.SetPathValue(paramName, "photos")
+	w := httptest.NewRecorder()
+	h.handleSetGrant(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+// TestHandleDeleteGrant_Refusals verifies a withdrawal naming an identity the
+// API cannot act on reports why, rather than answering as though it removed
+// something.
+func TestHandleDeleteGrant_Refusals(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		cfgBuckets []config.BucketConfig
+		rows       *provRows
+		userID     string
+		want       int
+	}{
+		{
+			name:   "an identity nothing declares",
+			rows:   &provRows{},
+			userID: "u1",
+			want:   http.StatusNotFound,
+		},
+		{
+			name: "one the config file owns",
+			cfgBuckets: []config.BucketConfig{
+				{Name: "photos", Credentials: []config.CredentialConfig{{AccessKeyID: "AK", SecretAccessKey: "SK"}}},
+			},
+			rows:   &provRows{},
+			userID: "config:AK",
+			want:   http.StatusForbidden,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newCoverageHandler(t)
+			provisioningWith(t, h, tc.cfgBuckets, tc.rows)
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete,
+				"/admin/api/provisioning/grants/"+tc.userID+"/photos", nil)
+			req.SetPathValue(paramID, tc.userID)
+			req.SetPathValue(paramName, "photos")
+			w := httptest.NewRecorder()
+			h.handleDeleteGrant(w, req)
+
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", w.Code, tc.want, w.Body.String())
+			}
+		})
+	}
+}

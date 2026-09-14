@@ -57,8 +57,13 @@ const (
 	usageGrantPermissions = "Comma-separated permissions; all for every data-plane one, " +
 		"admin-all for every control-plane one"
 
+	usageIssueAccessKey = "Access key ID to register; omit with -secret-key to mint a keypair instead"
+	usageIssueSecretKey = "Secret access key to register; required with -access-key"
+
+	errIDRequired        = "error: -id is required"
 	errNameRequired      = "error: -name is required"
 	errUserRequired      = "error: -user is required"
+	errKeypairIncomplete = "error: -access-key and -secret-key must both be given, or both omitted"
 	errBucketRequired    = "error: -bucket is required"
 	errGrantNameRequired = "error: -name is required for a bucket or backend grant"
 
@@ -80,19 +85,21 @@ var cmdBucket = nounCommand("bucket", []verb{
 var cmdUser = nounCommand("user", []verb{
 	{"list", "List every identity and the buckets it reaches", userList},
 	{"create", "Declare an identity credentials can be issued against", userCreate},
+	{"rename", "Change the name an identity is read by", userRename},
 	{"delete", "Remove an identity that holds no credentials and no grants", userDelete},
 })
 
 // cmdCredential implements `s3-orchestrator admin credential <verb>`.
 var cmdCredential = nounCommand("credential", []verb{
 	{"list", "List every keypair, without its secret", credentialList},
-	{"issue", "Mint a keypair for a user and print it once", credentialIssue},
+	{"issue", "Mint or register a keypair for a user and print it", credentialIssue},
 	{"revoke", "Revoke one keypair, leaving its siblings working", credentialRevoke},
 })
 
 // cmdGrant implements `s3-orchestrator admin grant <verb>`.
 var cmdGrant = nounCommand("grant", []verb{
 	{"add", "Let a user reach a bucket, a backend or the orchestrator", grantAdd},
+	{"set", "Declare exactly what a user reaches on one resource", grantSet},
 	{"remove", "Withdraw one user's access to one resource", grantRemove},
 })
 
@@ -175,6 +182,35 @@ func userCreate(args []string, c *client) int {
 	return c.post(pathProvUsers, string(body), nil)
 }
 
+// userRename changes the name an identity is read by.
+//
+// The ID does not move, so credentials and grants hanging off the user are
+// untouched. Correcting a name is otherwise impossible: a delete is refused
+// while the user holds either of those.
+func userRename(args []string, c *client) int {
+	fs := flag.NewFlagSet("user rename", flag.ContinueOnError)
+	fs.SetOutput(c.stderr)
+	id := fs.String("id", "", usageUserID)
+	name := fs.String("name", "", "New name for the identity (required)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if *id == "" {
+		fmt.Fprintln(c.stderr, errIDRequired)
+		return 1
+	}
+	if *name == "" {
+		fmt.Fprintln(c.stderr, errNameRequired)
+		return 1
+	}
+	body, err := json.Marshal(adminapi.RenameUserRequest{Name: *name})
+	if err != nil {
+		fmt.Fprintf(c.stderr, "error: encode request: %v\n", err)
+		return 1
+	}
+	return c.patch(pathProvUsers+"/"+url.PathEscape(*id), string(body), nil)
+}
+
 // userDelete removes an identity.
 func userDelete(args []string, c *client) int {
 	fs := flag.NewFlagSet("user delete", flag.ContinueOnError)
@@ -200,16 +236,22 @@ func credentialList(_ []string, c *client) int {
 	return c.get(pathProvisioning, renderCredentials)
 }
 
-// credentialIssue mints a keypair and prints it once.
+// credentialIssue records a keypair against a user and prints it.
 //
-// The secret reaches stdout and nowhere else, so the output can be piped into a
-// secret store without the value passing through a log line. Nothing reads it
-// back afterwards: a caller that loses it issues a replacement.
+// A minted secret reaches stdout and nowhere else, so the output can be piped
+// into a secret store without the value passing through a log line. Nothing
+// reads it back afterwards: a caller that loses it issues a replacement.
+//
+// Supplying a keypair registers one the caller already holds instead, which is
+// what lets the same command run twice without minting a second credential to
+// distribute.
 func credentialIssue(args []string, c *client) int {
 	fs := flag.NewFlagSet("credential issue", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
 	user := fs.String(flagUser, "", "User ID to issue against (required)")
 	label := fs.String("label", "", "Human label recording what holds this keypair")
+	accessKey := fs.String("access-key", "", usageIssueAccessKey)
+	secretKey := fs.String("secret-key", "", usageIssueSecretKey)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -217,7 +259,16 @@ func credentialIssue(args []string, c *client) int {
 		fmt.Fprintln(c.stderr, errUserRequired)
 		return 1
 	}
-	body, err := json.Marshal(adminapi.CreateCredentialRequest{UserID: *user, Label: *label})
+	if (*accessKey == "") != (*secretKey == "") {
+		fmt.Fprintln(c.stderr, errKeypairIncomplete)
+		return 1
+	}
+	body, err := json.Marshal(adminapi.CreateCredentialRequest{
+		UserID:          *user,
+		Label:           *label,
+		AccessKeyID:     *accessKey,
+		SecretAccessKey: *secretKey,
+	})
 	if err != nil {
 		fmt.Fprintf(c.stderr, "error: encode request: %v\n", err)
 		return 1
@@ -244,39 +295,79 @@ func credentialRevoke(args []string, c *client) int {
 // GRANTS
 // -------------------------------------------------------------------------
 
+// grantFlagValues holds what the flags every grant verb names its target with
+// parse into.
+type grantFlagValues struct {
+	user   *string
+	kind   *string
+	name   *string
+	bucket *string
+}
+
+// grantFlags registers the flags every grant verb shares and returns the set,
+// so a verb can add the ones only it takes before parsing.
+func grantFlags(verb string, c *client) (*flag.FlagSet, *grantFlagValues) {
+	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
+	fs.SetOutput(c.stderr)
+	return fs, &grantFlagValues{
+		user:   fs.String(flagUser, "", usageUserID),
+		kind:   fs.String(flagKind, defaultGrantKind, usageGrantKind),
+		name:   fs.String(flagName, "", usageGrantName),
+		bucket: fs.String(flagBucket, "", usageBucketName),
+	}
+}
+
+// resolveGrant parses the arguments and reports the user and resource they
+// name, or false once it has said on stderr why not.
+//
+// -bucket is the older spelling of a bucket grant and stays as an alias, so an
+// operator's existing scripts keep working now that grants reach past buckets.
+// The kind is normalised here as well as on the server, so the retired
+// "instance" spelling is not asked for a name the orchestrator does not have.
+func resolveGrant(
+	fs *flag.FlagSet, args []string, c *client, v *grantFlagValues,
+) (string, core.Resource, bool) {
+	if err := fs.Parse(args); err != nil {
+		return "", core.Resource{}, false
+	}
+	if *v.user == "" {
+		fmt.Fprintln(c.stderr, errUserRequired)
+		return "", core.Resource{}, false
+	}
+	resource := core.Resource{
+		Kind: core.ParseResourceKind(*v.kind),
+		Name: cmp.Or(*v.name, *v.bucket),
+	}
+	if resource.Name == "" && resource.Kind != core.ResourceOrchestrator {
+		fmt.Fprintln(c.stderr, errGrantNameRequired)
+		return "", core.Resource{}, false
+	}
+	return *v.user, resource, true
+}
+
+// grantPath addresses one grant.
+//
+// The orchestrator has no name, so the path carries a placeholder segment the
+// server discards once the kind says which resource is meant.
+func grantPath(user string, r core.Resource) string {
+	return pathProvGrants + "/" + url.PathEscape(user) + "/" +
+		url.PathEscape(cmp.Or(r.Name, string(core.ResourceOrchestrator))) +
+		"?" + flagKind + "=" + url.QueryEscape(string(r.Kind))
+}
+
 // grantAdd lets a user reach a resource, with the permissions that reach
 // carries.
 func grantAdd(args []string, c *client) int {
-	fs := flag.NewFlagSet("grant add", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
-	user := fs.String(flagUser, "", usageUserID)
-	kind := fs.String(flagKind, defaultGrantKind, usageGrantKind)
-	name := fs.String(flagName, "", usageGrantName)
-	bucket := fs.String(flagBucket, "", usageBucketName)
+	fs, v := grantFlags("grant add", c)
 	perms := fs.String("permissions", "all", usageGrantPermissions)
-	if err := fs.Parse(args); err != nil {
+	user, resource, ok := resolveGrant(fs, args, c, v)
+	if !ok {
 		return 1
 	}
-	if *user == "" {
-		fmt.Fprintln(c.stderr, errUserRequired)
-		return 1
-	}
-	// -bucket is the older spelling of a bucket grant and stays as an alias, so
-	// an operator's existing scripts keep working now that grants reach past
-	// buckets.
-	resourceName := cmp.Or(*name, *bucket)
-	// Normalised here as well as on the server, so the retired "instance"
-	// spelling is not asked for a name the orchestrator does not have.
-	resourceKind := core.ParseResourceKind(*kind)
-	if resourceName == "" && resourceKind != core.ResourceOrchestrator {
-		fmt.Fprintln(c.stderr, errGrantNameRequired)
-		return 1
-	}
-
 	body, err := json.Marshal(adminapi.CreateGrantRequest{
-		UserID:      *user,
-		Kind:        string(resourceKind),
-		Name:        resourceName,
+		UserID:      user,
+		Kind:        string(resource.Kind),
+		Name:        resource.Name,
 		Permissions: splitPermissions(*perms),
 	})
 	if err != nil {
@@ -299,35 +390,36 @@ func splitPermissions(s string) []string {
 	return out
 }
 
+// grantSet declares exactly what a user reaches on one resource.
+//
+// Upsert rather than update, so a caller declaring access does not have to know
+// whether the grant is already there. That is what separates it from `add`:
+// `add` is the imperative "give this user access", `set` is the declarative
+// "this user's access here is exactly these permissions", and re-running it
+// converges rather than failing the second time.
+func grantSet(args []string, c *client) int {
+	fs, v := grantFlags("grant set", c)
+	perms := fs.String("permissions", "all", usageGrantPermissions)
+	user, resource, ok := resolveGrant(fs, args, c, v)
+	if !ok {
+		return 1
+	}
+	body, err := json.Marshal(adminapi.SetGrantRequest{Permissions: splitPermissions(*perms)})
+	if err != nil {
+		fmt.Fprintf(c.stderr, "error: encode request: %v\n", err)
+		return 1
+	}
+	return c.put(grantPath(user, resource), string(body), nil)
+}
+
 // grantRemove withdraws one user's access to one resource.
 func grantRemove(args []string, c *client) int {
-	fs := flag.NewFlagSet("grant remove", flag.ContinueOnError)
-	fs.SetOutput(c.stderr)
-	user := fs.String(flagUser, "", usageUserID)
-	kind := fs.String(flagKind, defaultGrantKind, usageGrantKind)
-	name := fs.String(flagName, "", usageGrantName)
-	bucket := fs.String(flagBucket, "", usageBucketName)
-	if err := fs.Parse(args); err != nil {
+	fs, v := grantFlags("grant remove", c)
+	user, resource, ok := resolveGrant(fs, args, c, v)
+	if !ok {
 		return 1
 	}
-	if *user == "" {
-		fmt.Fprintln(c.stderr, errUserRequired)
-		return 1
-	}
-	resourceName := cmp.Or(*name, *bucket)
-	// Normalised here as well as on the server, so the retired "instance"
-	// spelling is not asked for a name the orchestrator does not have.
-	resourceKind := core.ParseResourceKind(*kind)
-	if resourceName == "" && resourceKind != core.ResourceOrchestrator {
-		fmt.Fprintln(c.stderr, errGrantNameRequired)
-		return 1
-	}
-	// The orchestrator has no name, so the path carries a placeholder segment
-	// the server discards once the kind says which resource is meant.
-	path := pathProvGrants + "/" + url.PathEscape(*user) + "/" +
-		url.PathEscape(cmp.Or(resourceName, string(core.ResourceOrchestrator))) +
-		"?" + flagKind + "=" + url.QueryEscape(string(resourceKind))
-	return c.delete(path, nil)
+	return c.delete(grantPath(user, resource), nil)
 }
 
 // -------------------------------------------------------------------------

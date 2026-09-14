@@ -285,3 +285,46 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 	}
 	return items, nil
 }
+
+const renameUser = `-- name: RenameUser :exec
+UPDATE users SET name = $1 WHERE id = $2
+`
+
+type RenameUserParams struct {
+	Name string
+	ID   string
+}
+
+// The id is what credentials and grants reference, so only the name an operator
+// reads changes.
+func (q *Queries) RenameUser(ctx context.Context, arg RenameUserParams) error {
+	_, err := q.db.Exec(ctx, renameUser, arg.Name, arg.ID)
+	return err
+}
+
+const setGrant = `-- name: SetGrant :exec
+INSERT INTO grants (user_id, resource_kind, resource_name, permissions)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (user_id, resource_kind, resource_name)
+DO UPDATE SET permissions = EXCLUDED.permissions
+`
+
+type SetGrantParams struct {
+	UserID       string
+	ResourceKind string
+	ResourceName string
+	Permissions  string
+}
+
+// Upsert rather than update: a caller declaring what a user reaches should not
+// have to know whether the grant is already there, so re-applying the same
+// statement converges instead of failing the second time.
+func (q *Queries) SetGrant(ctx context.Context, arg SetGrantParams) error {
+	_, err := q.db.Exec(ctx, setGrant,
+		arg.UserID,
+		arg.ResourceKind,
+		arg.ResourceName,
+		arg.Permissions,
+	)
+	return err
+}

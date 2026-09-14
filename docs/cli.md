@@ -319,9 +319,9 @@ These four commands provision what the config file otherwise declares, storing i
 | Command | Verbs |
 |---|---|
 | `bucket` | `list`, `create -name <name> [-max-multipart N]`, `delete -name <name>` |
-| `user` | `list`, `create -name <name>`, `delete -id <id>` |
-| `credential` | `list`, `issue -user <id> [-label <text>]`, `revoke -access-key <id>` |
-| `grant` | `add -user <id> [-kind <kind>] -name <name> [-permissions <list>]`, `remove -user <id> [-kind <kind>] -name <name>` |
+| `user` | `list`, `create -name <name>`, `rename -id <id> -name <name>`, `delete -id <id>` |
+| `credential` | `list`, `issue -user <id> [-label <text>] [-access-key <id> -secret-key <secret>]`, `revoke -access-key <id>` |
+| `grant` | `add -user <id> [-kind <kind>] -name <name> [-permissions <list>]`, `set -user <id> [-kind <kind>] -name <name> [-permissions <list>]`, `remove -user <id> [-kind <kind>] -name <name>` |
 
 Onboarding a client is three calls. The user comes first, because a keypair belongs to an identity rather than to a bucket:
 
@@ -355,7 +355,41 @@ s3-orchestrator admin grant add -user user-ci -name secrets -permissions list-bu
 
 A named grant replaces the wildcard for the bucket it names rather than adding to it, which is what lets broad access be carved down on one bucket. A bucket wildcard is expanded against the buckets a deployment declares when the registry is published, so creating a bucket extends it.
 
+##### add versus set
+
+`add` is the imperative form: give this user access to this resource. `set` is the declarative one: this user's access here is exactly these permissions, whether or not a grant already exists.
+
+```bash
+# Narrow an existing grant without a window where the client reaches nothing.
+s3-orchestrator admin grant set -user user-abc123 -name backups -permissions list,read
+```
+
+`set` upserts, so re-running it converges rather than failing the second time, and changing a permission set replaces it in place rather than revoking and re-granting. That is what a caller driving this from a config file or a Terraform run wants; `add` stays the one to reach for at a terminal.
+
+##### Renaming an identity
+
+`user rename` changes the name an identity is read by and leaves its ID alone, so the credentials and grants hanging off it are untouched:
+
+```bash
+s3-orchestrator admin user rename -id user-abc123 -name nightly-backup-v2
+```
+
+There is no other way to correct a name: `user delete` is refused while the user holds a credential or a grant, so destroy-and-recreate cannot get there.
+
 `credential issue` prints the secret once, on stdout and nowhere else, so it can be captured into a secret store without passing through a log line. Nothing reads it back afterwards: a caller that loses it issues a replacement and revokes the old one. Several keypairs may name one user, which is what lets one be rotated while the rest keep working.
+
+##### Registering a keypair you already hold
+
+`-access-key` and `-secret-key` record a keypair instead of minting one, for a caller whose secrets are generated somewhere else - Terraform, a secret manager, a config-management run:
+
+```bash
+s3-orchestrator admin credential issue -user user-abc123 -label "vault-managed" \
+  -access-key "$ACCESS_KEY" -secret-key "$SECRET_KEY"
+```
+
+Both are required together; one alone is refused rather than half-minted. The response echoes what was recorded, so the same command shape covers both paths.
+
+This is what makes the call safe to re-run. A caller rebuilding lost state re-registers the keypair it holds rather than minting a second one it then has to distribute. An access key another credential already claims - from either source - is refused with `409` rather than overwriting it.
 
 Every listing carries a source column. An entry marked `config` comes from the config file, and the server refuses to change it - those are edited in the file and applied with `SIGHUP`. See [config versus the provisioning API](configuration.md#config-versus-the-provisioning-api) for the precedence rule.
 

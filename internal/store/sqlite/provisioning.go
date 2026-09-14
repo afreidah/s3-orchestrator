@@ -148,6 +148,36 @@ func (s *Store) CreateGrant(ctx context.Context, g *core.Grant) error {
 	return nil
 }
 
+// RenameUser changes the name an operator reads a user by. The id is what
+// credentials and grants reference and does not move.
+func (s *Store) RenameUser(ctx context.Context, id, name string) error {
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE users SET name = ? WHERE id = ?`, name, id,
+	); err != nil {
+		return fmt.Errorf("rename user %s: %w", id, err)
+	}
+	return nil
+}
+
+// SetGrant records exactly what a user reaches on one resource, creating the
+// grant when it is absent. The upsert is what lets a caller declare access
+// without first asking whether it is already there.
+//
+// created_at is left alone on the update, so a re-declared grant keeps the age
+// it has rather than looking newly issued.
+func (s *Store) SetGrant(ctx context.Context, g *core.Grant) error {
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO grants (user_id, resource_kind, resource_name, permissions, created_at)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT (user_id, resource_kind, resource_name)
+		 DO UPDATE SET permissions = excluded.permissions`,
+		g.UserID, string(g.Resource.Kind), g.Resource.Name, g.Permissions.String(), now(),
+	); err != nil {
+		return fmt.Errorf("set grant %s -> %s %s: %w", g.UserID, g.Resource.Kind, g.Resource.Name, err)
+	}
+	return nil
+}
+
 // DeleteBucket removes a stored bucket. Objects under it are unaffected, so a
 // caller that means to destroy data does that first.
 func (s *Store) DeleteBucket(ctx context.Context, name string) error {

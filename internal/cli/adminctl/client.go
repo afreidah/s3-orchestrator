@@ -60,6 +60,10 @@ func (c *client) put(path, body string, render renderFunc) int {
 	return c.do(http.MethodPut, path, body, render)
 }
 
+func (c *client) patch(path, body string, render renderFunc) int {
+	return c.do(http.MethodPatch, path, body, render)
+}
+
 func (c *client) delete(path string, render renderFunc) int {
 	return c.do(http.MethodDelete, path, "", render)
 }

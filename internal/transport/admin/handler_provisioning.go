@@ -103,6 +103,23 @@ func (h *Handler) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleRenameUser changes the name an identity is read by, leaving the ID that
+// its credentials and grants reference in place.
+func (h *Handler) handleRenameUser(w http.ResponseWriter, r *http.Request) {
+	var req adminapi.RenameUserRequest
+	if !httputil.DecodeJSONBody(w, r, &req, provisioningBodyLimit) {
+		return
+	}
+	id := r.PathValue(paramID)
+	if err := h.provision.RenameUser(r.Context(), id, req.Name); err != nil {
+		h.provisioningError(w, r, "rename user failed", err)
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{
+		Status: statusOK, UserID: id, UserName: req.Name,
+	})
+}
+
 // handleDeleteUser removes an identity that holds nothing.
 func (h *Handler) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue(paramID)
@@ -119,15 +136,16 @@ func (h *Handler) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 // CREDENTIALS
 // -------------------------------------------------------------------------
 
-// handleCreateCredential mints a keypair and returns it once. The secret is in
-// this response and nowhere else, so a caller that loses it issues a
-// replacement rather than recovering this one.
+// handleCreateCredential records a keypair against a user, minting one when the
+// caller supplied none. A minted secret is in this response and nowhere else,
+// so a caller that loses it issues a replacement rather than recovering it.
 func (h *Handler) handleCreateCredential(w http.ResponseWriter, r *http.Request) {
 	var req adminapi.CreateCredentialRequest
 	if !httputil.DecodeJSONBody(w, r, &req, provisioningBodyLimit) {
 		return
 	}
-	c, err := h.provision.CreateCredential(r.Context(), req.UserID, req.Label)
+	keys := ops.Keypair{AccessKeyID: req.AccessKeyID, SecretAccessKey: req.SecretAccessKey}
+	c, err := h.provision.CreateCredential(r.Context(), req.UserID, req.Label, keys)
 	if err != nil {
 		h.provisioningError(w, r, "create credential failed", err)
 		return
@@ -175,20 +193,39 @@ func (h *Handler) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleSetGrant declares exactly what one user reaches on one resource,
+// writing the grant when it is absent and replacing its permissions when it is
+// not.
+//
+// The kind comes from the query string, matching the delete route, so the two
+// address a grant the same way.
+func (h *Handler) handleSetGrant(w http.ResponseWriter, r *http.Request) {
+	var req adminapi.SetGrantRequest
+	if !httputil.DecodeJSONBody(w, r, &req, provisioningBodyLimit) {
+		return
+	}
+	userID, resource := grantTarget(r)
+	perms, err := core.ParsePermissions(resource.Kind, strings.Join(req.Permissions, ","))
+	if err != nil {
+		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.provision.SetGrant(r.Context(), userID, resource, perms); err != nil {
+		h.provisioningError(w, r, "set grant failed", err)
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{
+		Status: statusOK, UserID: userID, Resource: resource.String(),
+	})
+}
+
 // handleDeleteGrant withdraws one user's access to one resource.
 //
 // The kind comes from the query string rather than a fourth path segment: a
 // bucket grant is the overwhelmingly common case, and the path a caller already
 // writes keeps working.
 func (h *Handler) handleDeleteGrant(w http.ResponseWriter, r *http.Request) {
-	userID := r.PathValue(paramID)
-	resource := core.Resource{Kind: core.ResourceBucket, Name: r.PathValue(paramName)}
-	if kind := r.URL.Query().Get(paramKind); kind != "" {
-		resource.Kind = core.ParseResourceKind(kind)
-	}
-	if resource.Kind == core.ResourceOrchestrator {
-		resource.Name = ""
-	}
+	userID, resource := grantTarget(r)
 	if err := h.provision.DeleteGrant(r.Context(), userID, resource); err != nil {
 		h.provisioningError(w, r, "delete grant failed", err)
 		return
@@ -202,6 +239,25 @@ func (h *Handler) handleDeleteGrant(w http.ResponseWriter, r *http.Request) {
 // INTERNALS
 // -------------------------------------------------------------------------
 
+// grantTarget reads the user and resource a grant route addresses.
+//
+// The kind comes from the query string rather than a fourth path segment: a
+// bucket grant is the overwhelmingly common case, and the path a caller already
+// writes keeps working. An absent kind is therefore the bucket.
+//
+// The orchestrator carries no name, so the placeholder segment a caller has to
+// put in the path is discarded once the kind says the orchestrator is meant.
+func grantTarget(r *http.Request) (string, core.Resource) {
+	resource := core.Resource{Kind: core.ResourceBucket, Name: r.PathValue(paramName)}
+	if kind := r.URL.Query().Get(paramKind); kind != "" {
+		resource.Kind = core.ParseResourceKind(kind)
+	}
+	if resource.Kind == core.ResourceOrchestrator {
+		resource.Name = ""
+	}
+	return r.PathValue(paramID), resource
+}
+
 // provisioningError maps an operation's rejection onto a status. Everything the
 // operations layer names is something the caller stated or asked for, so it is
 // reported with its own reason; anything else is a fault and says nothing.
@@ -211,6 +267,7 @@ func (h *Handler) provisioningError(w http.ResponseWriter, r *http.Request, msg 
 		errors.Is(err, ops.ErrUserRequired),
 		errors.Is(err, ops.ErrNoPermissions),
 		errors.Is(err, ops.ErrInvalidResource),
+		errors.Is(err, ops.ErrKeypairIncomplete),
 		errors.Is(err, ops.ErrInvalidCORS):
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ops.ErrBucketNotFound),
@@ -223,6 +280,7 @@ func (h *Handler) provisioningError(w http.ResponseWriter, r *http.Request, msg 
 	case errors.Is(err, ops.ErrBucketExists),
 		errors.Is(err, ops.ErrBucketNotEmpty),
 		errors.Is(err, ops.ErrBucketGranted),
+		errors.Is(err, ops.ErrCredentialExists),
 		errors.Is(err, ops.ErrUserInUse):
 		httputil.WriteJSONError(w, http.StatusConflict, err.Error())
 	default:

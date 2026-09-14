@@ -103,22 +103,47 @@ type CreateUserRequest struct {
 	Name string `json:"name"`
 }
 
-// CreateCredentialRequest mints a keypair for an existing user. The user is
-// required: a keypair with no owner is a credential nobody can account for.
-// Label is free text an operator uses to say what holds it.
+// CreateCredentialRequest registers a keypair against an existing user. The
+// user is required: a keypair with no owner is a credential nobody can account
+// for. Label is free text an operator uses to say what holds it.
+//
+// AccessKeyID and SecretAccessKey are for a caller that already holds the
+// keypair, which is the shape anything driving this declaratively is in: the
+// secret is generated wherever that caller keeps its secrets and recorded here.
+// Both are required together, and omitting both mints one instead.
 type CreateCredentialRequest struct {
-	UserID string `json:"user_id"`
-	Label  string `json:"label,omitempty"`
+	UserID          string `json:"user_id"`
+	Label           string `json:"label,omitempty"`
+	AccessKeyID     string `json:"access_key_id,omitempty"`
+	SecretAccessKey string `json:"secret_access_key,omitempty"`
 }
 
-// CreateCredentialResponse is the one place a secret crosses the wire. It is
-// not stored anywhere it can be read back, so a caller that loses it issues a
-// replacement rather than recovering this one.
+// CreateCredentialResponse carries the keypair the request produced.
+//
+// A minted secret crosses the wire here and nowhere else: it is not stored
+// anywhere it can be read back, so a caller that loses it issues a replacement
+// rather than recovering this one. A supplied secret is echoed rather than
+// withheld, so one response shape covers both and a caller can confirm what was
+// recorded against what it sent.
 type CreateCredentialResponse struct {
 	AccessKeyID     string `json:"access_key_id"`
 	SecretAccessKey string `json:"secret_access_key"`
 	UserID          string `json:"user_id"`
 	Label           string `json:"label,omitempty"`
+}
+
+// RenameUserRequest changes the name an operator reads an identity by. The ID
+// is in the path and does not move: credentials and grants reference it.
+type RenameUserRequest struct {
+	Name string `json:"name"`
+}
+
+// SetGrantRequest declares exactly what a user reaches on one resource. The
+// user and resource are in the path; an empty Permissions is refused rather
+// than read as every permission, because a declaration saying nothing is more
+// likely a mistake than a request for full access.
+type SetGrantRequest struct {
+	Permissions []string `json:"permissions"`
 }
 
 // CreateGrantRequest lets one user reach one resource, with the permissions

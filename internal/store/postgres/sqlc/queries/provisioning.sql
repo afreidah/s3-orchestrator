@@ -54,6 +54,20 @@ VALUES (@access_key_id, @user_id, @secret, @label, @disabled);
 INSERT INTO grants (user_id, resource_kind, resource_name, permissions)
 VALUES (@user_id, @resource_kind, @resource_name, @permissions);
 
+-- name: RenameUser :exec
+-- The id is what credentials and grants reference, so only the name an operator
+-- reads changes.
+UPDATE users SET name = @name WHERE id = @id;
+
+-- name: SetGrant :exec
+-- Upsert rather than update: a caller declaring what a user reaches should not
+-- have to know whether the grant is already there, so re-applying the same
+-- statement converges instead of failing the second time.
+INSERT INTO grants (user_id, resource_kind, resource_name, permissions)
+VALUES (@user_id, @resource_kind, @resource_name, @permissions)
+ON CONFLICT (user_id, resource_kind, resource_name)
+DO UPDATE SET permissions = EXCLUDED.permissions;
+
 -- name: DeleteBucket :exec
 -- Objects stored under the bucket are untouched, so a caller that means to
 -- destroy data does that first.

@@ -774,7 +774,7 @@ paths:
                     description: Missing or invalid admin token
     /admin/api/provisioning/credentials:
         post:
-            summary: Mint a keypair for a user and return it once
+            summary: Register a keypair for a user, minting one when none is supplied
             operationId: postProvisioningCredentials
             requestBody:
                 required: true
@@ -862,6 +862,43 @@ paths:
                                 $ref: '#/components/schemas/ProvisioningOperationResponse'
                 "401":
                     description: Missing or invalid admin token
+        put:
+            summary: Declare exactly what one user reaches on one resource
+            operationId: putProvisioningGrantsIdName
+            parameters:
+                - name: id
+                  in: path
+                  description: User ID
+                  required: true
+                  schema:
+                    type: string
+                - name: name
+                  in: path
+                  description: Name of the granted resource, or * for every one of its kind
+                  required: true
+                  schema:
+                    type: string
+                - name: kind
+                  in: query
+                  description: 'Kind of the granted resource: bucket, backend or orchestrator; defaults to bucket'
+                  required: false
+                  schema:
+                    type: string
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/SetGrantRequest'
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ProvisioningOperationResponse'
+                "401":
+                    description: Missing or invalid admin token
     /admin/api/provisioning/users:
         post:
             summary: Declare an identity credentials can be issued against
@@ -892,6 +929,31 @@ paths:
                   required: true
                   schema:
                     type: string
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ProvisioningOperationResponse'
+                "401":
+                    description: Missing or invalid admin token
+        patch:
+            summary: Rename an identity, leaving the ID its credentials and grants reference
+            operationId: patchProvisioningUsersId
+            parameters:
+                - name: id
+                  in: path
+                  description: User ID
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/RenameUserRequest'
             responses:
                 "200":
                     description: Success
@@ -1411,7 +1473,11 @@ components:
             type: object
         CreateCredentialRequest:
             properties:
+                access_key_id:
+                    type: string
                 label:
+                    type: string
+                secret_access_key:
                     type: string
                 user_id:
                     type: string
@@ -1985,6 +2051,13 @@ components:
                 - confirm_token
                 - expires_in
             type: object
+        RenameUserRequest:
+            properties:
+                name:
+                    type: string
+            required:
+                - name
+            type: object
         ReplicateResponse:
             properties:
                 copies_created:
@@ -2083,6 +2156,15 @@ components:
                 - failed
                 - unreadable
                 - deferred
+            type: object
+        SetGrantRequest:
+            properties:
+                permissions:
+                    items:
+                        type: string
+                    type: array
+            required:
+                - permissions
             type: object
         SetLogLevelRequest:
             properties:

@@ -180,6 +180,27 @@ back into any listing. A caller that loses it mints a replacement and revokes
 the old one; several keypairs may name one user, which is what lets one be
 rotated while the rest keep working.
 
+A caller whose secrets are generated somewhere else supplies the keypair
+instead, by sending `access_key_id` and `secret_access_key` on the create
+request. Both are required together and one alone is refused; the response
+echoes what was recorded either way, so both paths have the same shape.
+
+Supplying is what makes the call converge. A caller rebuilding lost state
+re-registers the keypair its secret store holds rather than minting a second one
+it then has to distribute. An access key another credential already claims,
+whether the config file or the store declares it, is refused with `409`.
+
+`PUT /admin/api/provisioning/grants/{id}/{name}` declares exactly what a user
+reaches on one resource, writing the grant when it is absent and replacing its
+permissions when it is not. It takes the same `kind` query parameter the delete
+route does. Being an upsert is what lets a caller state access without first
+asking whether it is already there, and replacing in place is what keeps a
+narrowing from leaving a window where the client reaches nothing.
+
+`PATCH /admin/api/provisioning/users/{id}` changes the name an identity is read
+by. The ID does not move, because credentials and grants reference it. This is
+the only way to correct a name: a delete is refused while the user holds either.
+
 Every change takes effect on the next request. The registry the request path
 authenticates against is rebuilt before the call returns, so a credential
 created here works immediately and one revoked here stops working immediately.

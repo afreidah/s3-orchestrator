@@ -1445,6 +1445,20 @@ func (mr *MockMetadataStoreMockRecorder) RemoveExcessCopy(ctx, key, backendName,
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveExcessCopy", reflect.TypeOf((*MockMetadataStore)(nil).RemoveExcessCopy), ctx, key, backendName, factor)
 }
 
+// RenameUser mocks base method.
+func (m *MockMetadataStore) RenameUser(ctx context.Context, id, name string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RenameUser", ctx, id, name)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RenameUser indicates an expected call of RenameUser.
+func (mr *MockMetadataStoreMockRecorder) RenameUser(ctx, id, name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RenameUser", reflect.TypeOf((*MockMetadataStore)(nil).RenameUser), ctx, id, name)
+}
+
 // ReplaceObjectTags mocks base method.
 func (m *MockMetadataStore) ReplaceObjectTags(ctx context.Context, key string, tags []core.Tag) error {
 	m.ctrl.T.Helper()
@@ -1514,6 +1528,20 @@ func (m *MockMetadataStore) RunMigrations(ctx context.Context) error {
 func (mr *MockMetadataStoreMockRecorder) RunMigrations(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunMigrations", reflect.TypeOf((*MockMetadataStore)(nil).RunMigrations), ctx)
+}
+
+// SetGrant mocks base method.
+func (m *MockMetadataStore) SetGrant(ctx context.Context, g *core.Grant) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetGrant", ctx, g)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetGrant indicates an expected call of SetGrant.
+func (mr *MockMetadataStoreMockRecorder) SetGrant(ctx, g any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetGrant", reflect.TypeOf((*MockMetadataStore)(nil).SetGrant), ctx, g)
 }
 
 // SweepStaleCleanupQueueRows mocks base method.
