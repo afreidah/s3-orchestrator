@@ -237,7 +237,7 @@ func newOpsServer(t *testing.T) (*httptest.Server, *MockObjectOps, *MockMultipar
 // the test if that config turns out to be ambiguous.
 func mustBucketRegistry(tb testing.TB, buckets []config.BucketConfig) *auth.BucketRegistry {
 	tb.Helper()
-	v := provisioning.Merge(buckets, &provisioning.Snapshot{})
+	v := provisioning.Merge(buckets, config.AuthConfig{}, &provisioning.Snapshot{})
 	br, err := auth.NewBucketRegistry(&v)
 	if err != nil {
 		tb.Fatalf("NewBucketRegistry: %v", err)

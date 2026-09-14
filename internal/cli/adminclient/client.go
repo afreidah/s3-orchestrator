@@ -20,12 +20,19 @@
 package adminclient
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
@@ -39,10 +46,34 @@ const TokenHeader = "X-Admin-Token"
 // the caller's context, not a deadline.
 const RequestTimeout = 30 * time.Second
 
+// signingRegion is the scope a signed admin request is signed under. The server
+// takes the access key from the credential scope and verifies against whatever
+// scope the header carries, so this only has to match between the two halves of
+// one request.
+const signingRegion = "us-east-1"
+
+// contentSHAHeader carries the payload hash the signature was built over.
+const contentSHAHeader = "X-Amz-Content-Sha256"
+
+// unsignedPayload is the SigV4 sentinel for a body whose hash is not computed,
+// which is what an upload streams: hashing it would mean buffering the object.
+const unsignedPayload = "UNSIGNED-PAYLOAD"
+
+// keypair is the credential a client signs with, when it signs.
+type keypair struct {
+	accessKeyID string
+	secretKey   string
+}
+
 // Client issues authenticated requests against one admin API instance.
+//
+// Exactly one of token or keys proves the caller. Signing is the path an
+// operator should be on; the token remains for a deployment that has not moved
+// off it yet.
 type Client struct {
 	baseAddr string
 	token    string
+	keys     *keypair
 	http     *http.Client
 	stream   *http.Client // deadline-free; see RequestTimeout
 }
@@ -57,6 +88,43 @@ func New(addr, token string) *Client {
 		http:     &http.Client{Timeout: RequestTimeout},
 		stream:   &http.Client{},
 	}
+}
+
+// NewSigned builds a client that signs each request with SigV4, which is the
+// same credential the S3 API accepts.
+func NewSigned(addr, accessKeyID, secretKey string) *Client {
+	c := New(addr, "")
+	c.keys = &keypair{accessKeyID: accessKeyID, secretKey: secretKey}
+	return c
+}
+
+// authorize proves the request, by signature where the client holds a keypair
+// and by token otherwise.
+//
+// payload is the body's SHA-256, or unsignedPayload for a streamed one. A
+// signature covers the headers it names, so this runs after every other header
+// is set.
+func (c *Client) authorize(ctx context.Context, req *http.Request, payload string) error {
+	if c.keys == nil {
+		req.Header.Set(TokenHeader, c.token)
+		return nil
+	}
+	creds := aws.Credentials{
+		AccessKeyID:     c.keys.accessKeyID,
+		SecretAccessKey: c.keys.secretKey,
+	}
+	// The server reads the payload hash from this header and falls back to
+	// UNSIGNED-PAYLOAD when it is absent, so a body hashed into the signature
+	// has to be declared here or the two sides canonicalise differently and
+	// every signed request is refused. Set before signing, so it is covered.
+	req.Header.Set(contentSHAHeader, payload)
+	return v4.NewSigner().SignHTTP(ctx, creds, req, payload, "s3", signingRegion, time.Now().UTC())
+}
+
+// hashOf renders the SHA-256 a signature covers the body with.
+func hashOf(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
 }
 
 // Do issues an authenticated request and returns the raw response, which the
@@ -96,11 +164,15 @@ func (c *Client) Upload(
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set(TokenHeader, c.token)
 	req.Header.Set("Content-Type", contentType)
 	// A streamed body has no length of its own, and the endpoint refuses an
 	// upload it cannot size, so it is declared here.
 	req.ContentLength = size
+	// The body is not hashed: an object is streamed, and hashing it would mean
+	// holding the whole upload to sign it.
+	if err := c.authorize(ctx, req, unsignedPayload); err != nil {
+		return nil, fmt.Errorf("sign request: %w", err)
+	}
 	//nolint:gosec // G704: the target address is operator-supplied by design.
 	return c.http.Do(req)
 }
@@ -115,16 +187,30 @@ func (c *Client) send(
 	body io.Reader,
 	accept string,
 ) (*http.Response, error) {
+	// Read the body up front so the signature can cover it. These carry names
+	// and small JSON documents, never object data, so holding one is cheap and
+	// it is what lets the request be retried or signed at all.
+	var payload []byte
+	if body != nil {
+		var err error
+		if payload, err = io.ReadAll(body); err != nil {
+			return nil, fmt.Errorf("read request body: %w", err)
+		}
+		body = bytes.NewReader(payload)
+	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseAddr+path+queryOf(q), body)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set(TokenHeader, c.token)
 	if accept != "" {
 		req.Header.Set("Accept", accept)
 	}
-	if body != nil {
+	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
+		req.ContentLength = int64(len(payload))
+	}
+	if err := c.authorize(ctx, req, hashOf(payload)); err != nil {
+		return nil, fmt.Errorf("sign request: %w", err)
 	}
 	//nolint:gosec // G704: the target address is operator-supplied by design.
 	return httpClient.Do(req)

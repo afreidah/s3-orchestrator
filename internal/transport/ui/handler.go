@@ -39,6 +39,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/dashboard"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
@@ -105,6 +106,7 @@ type Deps struct {
 	Cfg           *config.Config
 	LogBuffer     *telemetry.LogBuffer
 	LoginThrottle *httputil.LoginThrottle
+	Registry      func() *auth.BucketRegistry
 }
 
 // Handler serves the web UI dashboard.
@@ -131,6 +133,7 @@ type Handler struct {
 	sessionKey     []byte
 	forceSecure    bool
 	trustedProxies []*net.IPNet
+	registry       func() *auth.BucketRegistry
 	asyncOps       asyncOpTracker
 }
 
@@ -172,6 +175,7 @@ func New(d *Deps) *Handler {
 		sessionKey:     deriveSessionKey(&d.Cfg.UI),
 		forceSecure:    d.Cfg.UI.ForceSecureCookies,
 		trustedProxies: httputil.ParseTrustedProxies(d.Cfg.RateLimit.TrustedProxies),
+		registry:       d.Registry,
 	}
 	h.cfg.Store(d.Cfg)
 	return h

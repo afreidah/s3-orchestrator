@@ -509,7 +509,7 @@ func newTestHandler(t *testing.T) *Handler {
 	h := &Handler{
 		log:      slog.Default().With(logfmt.Component("admin")),
 		token:    "test-token",
-		registry: func() *auth.BucketRegistry { return nil },
+		registry: func() *auth.BucketRegistry { return rootRegistry(t) },
 		logLevel: &lv,
 	}
 	// Operations over stubs that do nothing, so a test only installs the one

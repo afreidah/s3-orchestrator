@@ -35,6 +35,14 @@ const (
 	SourceStore  Source = "store"
 )
 
+// RootUserID names the user the configured root credential resolves to. It is
+// fixed rather than derived from the access key, so rotating that key leaves
+// every audit record naming the same identity.
+const RootUserID = "config:root"
+
+// rootUserName is what an operator's listing calls the root user.
+const rootUserName = "root"
+
 // Snapshot is what the store holds, read whole so the merge runs against one
 // consistent picture rather than four queries a write could land between.
 type Snapshot struct {
@@ -62,13 +70,20 @@ type Bucket struct {
 // than flattened the way Grants is: a backend wildcard cannot be expanded at
 // publish time, because the backends a request may name come from config rather
 // than from this view.
+//
+// AllBuckets is what a bucket wildcard carries, kept beside the expansion in
+// Grants rather than replaced by it. The expansion answers which buckets exist
+// for this identity; the wildcard answers whether it may act on one the
+// expansion does not name - a bucket created since, or an operation spanning
+// the whole namespace.
 type User struct {
-	ID      string
-	Name    string
-	Buckets []string
-	Grants  map[string]core.PermissionSet
-	Admin   map[core.Resource]core.PermissionSet
-	Source  Source
+	ID         string
+	Name       string
+	Buckets    []string
+	Grants     map[string]core.PermissionSet
+	AllBuckets core.PermissionSet
+	Admin      map[core.Resource]core.PermissionSet
+	Source     Source
 }
 
 // Credential is one proof of a user, by keypair, by legacy proxy token, or by
@@ -103,12 +118,61 @@ type View struct {
 //
 // Pure, so the precedence and grant-joining rules can be exercised without a
 // store or an injector.
-func Merge(cfgBuckets []config.BucketConfig, s *Snapshot) View {
+func Merge(cfgBuckets []config.BucketConfig, auth config.AuthConfig, s *Snapshot) View {
 	var v View
 	declared := mergeBuckets(&v, cfgBuckets, s.Buckets)
+	mergeRootUser(&v, auth, declared)
 	mergeConfigUsers(&v, cfgBuckets)
 	mergeStoredUsers(&v, s, declared)
 	return v
+}
+
+// mergeRootUser turns the configured root credential into the user that
+// administers the deployment.
+//
+// It is an ordinary user holding every permission on every resource, which is
+// what lets the request path authorize it the way it authorizes anyone else. A
+// deployment that declares none simply has no such user, and administers itself
+// through credentials the store holds.
+//
+// The bucket half is expanded across what either source declares, matching how
+// a stored bucket wildcard is published, so root reaches a bucket created later
+// only once the registry is rebuilt - which creating a bucket already does.
+//
+// A deployment carrying only the legacy shared token gets the user without a
+// keypair. The token is not registered as a credential here: it would then also
+// authenticate on the S3 API, which is a door it has never opened. The admin
+// surface resolves it onto this user by id instead.
+func mergeRootUser(v *View, auth config.AuthConfig, declared map[string]struct{}) {
+	if !auth.HasRoot() {
+		return
+	}
+	grants := make(map[string]core.PermissionSet, len(declared))
+	for bucket := range declared {
+		grants[bucket] = core.PermAll
+	}
+	v.Users = append(v.Users, User{
+		ID:         RootUserID,
+		Name:       rootUserName,
+		Buckets:    sortedKeys(grants),
+		Grants:     grants,
+		AllBuckets: core.PermAll,
+		Admin: map[core.Resource]core.PermissionSet{
+			{Kind: core.ResourceInstance}:                             core.PermAdminAll,
+			{Kind: core.ResourceBackend, Name: core.ResourceWildcard}: core.PermAdminAll,
+		},
+		Source: SourceConfig,
+	})
+	if !auth.Root.Declared() {
+		return
+	}
+	v.Credentials = append(v.Credentials, Credential{
+		AccessKeyID: auth.Root.AccessKeyID,
+		UserID:      RootUserID,
+		Secret:      auth.Root.SecretAccessKey,
+		Label:       rootUserName,
+		Source:      SourceConfig,
+	})
 }
 
 // mergeBuckets appends both sources' buckets, config first, and returns the set
@@ -184,7 +248,7 @@ func mergeConfigUsers(v *View, cfgBuckets []config.BucketConfig) {
 // take effect: nothing downstream learns the access key, so it authenticates
 // nothing while its row survives for the record of what it did.
 func mergeStoredUsers(v *View, s *Snapshot, declared map[string]struct{}) {
-	reach, notices := grantsByUser(s.Grants, declared)
+	reach, wildcard, notices := grantsByUser(s.Grants, declared)
 	v.Notices = append(v.Notices, notices...)
 	admin := adminGrantsByUser(s.Grants)
 
@@ -194,12 +258,13 @@ func mergeStoredUsers(v *View, s *Snapshot, declared map[string]struct{}) {
 		known[u.ID] = struct{}{}
 		grants := reach[u.ID]
 		v.Users = append(v.Users, User{
-			ID:      u.ID,
-			Name:    u.Name,
-			Buckets: sortedKeys(grants),
-			Grants:  grants,
-			Admin:   admin[u.ID],
-			Source:  SourceStore,
+			ID:         u.ID,
+			Name:       u.Name,
+			Buckets:    sortedKeys(grants),
+			Grants:     grants,
+			AllBuckets: wildcard[u.ID],
+			Admin:      admin[u.ID],
+			Source:     SourceStore,
 		})
 	}
 
@@ -244,21 +309,31 @@ func mergeStoredUsers(v *View, s *Snapshot, declared map[string]struct{}) {
 //
 // Only bucket grants are indexed here. Backend and instance grants authorize the
 // control plane, which this lookup has no question to answer about.
-func grantsByUser(grants []core.Grant, declared map[string]struct{}) (map[string]map[string]core.PermissionSet, []Notice) {
+func grantsByUser(grants []core.Grant, declared map[string]struct{}) (
+	map[string]map[string]core.PermissionSet, map[string]core.PermissionSet, []Notice,
+) {
 	reach := make(map[string]map[string]core.PermissionSet)
-	expandWildcardGrants(grants, declared, reach)
+	wildcard := expandWildcardGrants(grants, declared, reach)
 	notices := applyNamedGrants(grants, declared, reach)
-	return reach, notices
+	return reach, wildcard, notices
 }
 
 // expandWildcardGrants writes each bucket wildcard across every declared
 // bucket, which is the pass the named grants then narrow.
-func expandWildcardGrants(grants []core.Grant, declared map[string]struct{}, reach map[string]map[string]core.PermissionSet) {
+// Returns what each user's wildcard carries, which the expansion cannot express
+// on its own: a listing needs the buckets named, and authorizing an operation
+// that spans them - the empty prefix is the whole namespace - needs to know the
+// caller may reach a bucket nobody has declared yet.
+func expandWildcardGrants(
+	grants []core.Grant, declared map[string]struct{}, reach map[string]map[string]core.PermissionSet,
+) map[string]core.PermissionSet {
+	wildcard := make(map[string]core.PermissionSet)
 	for i := range grants {
 		g := &grants[i]
 		if g.Resource.Kind != core.ResourceBucket || !g.Resource.IsWildcard() {
 			continue
 		}
+		wildcard[g.UserID] |= g.Permissions
 		if reach[g.UserID] == nil {
 			reach[g.UserID] = make(map[string]core.PermissionSet)
 		}
@@ -266,6 +341,7 @@ func expandWildcardGrants(grants []core.Grant, declared map[string]struct{}, rea
 			reach[g.UserID][bucket] |= g.Permissions
 		}
 	}
+	return wildcard
 }
 
 // applyNamedGrants lays each named bucket grant over the expanded wildcard,

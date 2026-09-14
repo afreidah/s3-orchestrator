@@ -44,6 +44,8 @@ s3-orchestrator admin [flags] <command>
 | `-config` | `config.yaml` | Path to config file; loaded only when `-addr`/`-token` (or their env vars) are unset |
 | `-addr` | `$S3O_ADMIN_ADDR`, else config `server.listen_addr` | Server address |
 | `-token` | `$S3O_ADMIN_TOKEN`, else config `ui.admin_token` / `ui.admin_key` | Admin API token |
+| `-access-key` | `$S3O_ACCESS_KEY_ID` | Access key ID to sign requests with |
+| `-secret-key` | `$S3O_SECRET_ACCESS_KEY` | Secret access key to sign requests with |
 | `-json` | off | Emit raw JSON instead of human-readable text |
 
 **Output format:**
@@ -292,7 +294,9 @@ s3-orchestrator admin credential issue -user user-abc123
 s3-orchestrator admin grant add -user user-abc123 -name backups
 ```
 
-The admin API requires `ui.admin_token` (or `ui.admin_key` as fallback) to be set in the configuration. All requests are authenticated via the `X-Admin-Token` header.
+Requests are authenticated by a keypair, SigV4-signed, which is the same credential the S3 API takes. Pass `-access-key` and `-secret-key`, or set `$S3O_ACCESS_KEY_ID` and `$S3O_SECRET_ACCESS_KEY`; declare the administering keypair under `auth.root` in the configuration file.
+
+`ui.admin_token` (or `ui.admin_key` as fallback) still works and is sent as the `X-Admin-Token` header. It resolves onto the same root identity as `auth.root`, so it reaches the same endpoints; a later release removes it.
 
 #### object-tags
 
@@ -349,7 +353,7 @@ A named grant replaces the wildcard for the bucket it names rather than adding t
 
 `credential issue` prints the secret once, on stdout and nowhere else, so it can be captured into a secret store without passing through a log line. Nothing reads it back afterwards: a caller that loses it issues a replacement and revokes the old one. Several keypairs may name one user, which is what lets one be rotated while the rest keep working.
 
-Every listing carries a source column. An entry marked `config` comes from the config file, and the server refuses to change it — those are edited in the file and applied with `SIGHUP`. See [config versus the provisioning API](configuration.md#config-versus-the-provisioning-api) for the precedence rule.
+Every listing carries a source column. An entry marked `config` comes from the config file, and the server refuses to change it - those are edited in the file and applied with `SIGHUP`. See [config versus the provisioning API](configuration.md#config-versus-the-provisioning-api) for the precedence rule.
 
 Removal is refused while something still depends on it. A bucket that holds objects or is granted to a user, and a user that holds credentials or grants, all fail with the reason, so emptying a bucket and revoking a credential stay deliberate acts.
 

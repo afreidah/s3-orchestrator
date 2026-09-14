@@ -12,17 +12,17 @@ cd s3-orchestrator
 make run
 ```
 
-This starts three MinIO instances via Docker Compose, then launches the orchestrator pointing at them. The included `config.yaml` uses embedded SQLite (no external database needed) and is pre-configured for this environment — no manual setup required.
+This starts three MinIO instances via Docker Compose, then launches the orchestrator pointing at them. The included `config.yaml` uses embedded SQLite (no external database needed) and is pre-configured for this environment - no manual setup required.
 
 ## What `make run` does
 
-1. **`make dev-deps`** — runs `docker compose -f docker-compose.test.yml up -d` to start:
+1. **`make dev-deps`** - runs `docker compose -f docker-compose.test.yml up -d` to start:
    - MinIO 1 on `localhost:19000` (bucket: `backend1`)
    - MinIO 2 on `localhost:19002` (bucket: `backend2`)
    - MinIO 3 on `localhost:19004` (bucket: `backend3`)
    - A setup container that creates the MinIO buckets
    - PostgreSQL and Redis are also started for integration tests, but the default `config.yaml` uses embedded SQLite so neither is required for local development
-2. **`go run ./cmd/s3-orchestrator -config config.yaml`** — compiles and starts the server on port 9000
+2. **`go run ./cmd/s3-orchestrator -config config.yaml`** - compiles and starts the server on port 9000
 
 ## Test it
 
@@ -108,13 +108,13 @@ docker compose -f docker-compose.test.yml down -v
 
 ## Troubleshooting
 
-- **`make run` fails immediately** — is Docker running? Check with `docker ps`.
-- **Port 9000 already in use** — another service is on port 9000. Stop it or change `listen_addr` in `config.yaml`.
-- **Container health checks failing** — check backing service logs: `docker compose -f docker-compose.test.yml logs`
-- **Stale data from a previous run** — clean volumes: `docker compose -f docker-compose.test.yml down -v`
+- **`make run` fails immediately** - is Docker running? Check with `docker ps`.
+- **Port 9000 already in use** - another service is on port 9000. Stop it or change `listen_addr` in `config.yaml`.
+- **Container health checks failing** - check backing service logs: `docker compose -f docker-compose.test.yml logs`
+- **Stale data from a previous run** - clean volumes: `docker compose -f docker-compose.test.yml down -v`
 
 ## Next steps
 
-- [Admin Guide](admin-guide.md) — production deployment, backend configuration, operational procedures
-- [User Guide](user-guide.md) — client setup for AWS CLI, rclone, boto3, and Go SDK
-- [README](../README.md) — architecture, features, and full configuration reference
+- [Admin Guide](admin-guide.md) - production deployment, backend configuration, operational procedures
+- [User Guide](user-guide.md) - client setup for AWS CLI, rclone, boto3, and Go SDK
+- [README](../README.md) - architecture, features, and full configuration reference

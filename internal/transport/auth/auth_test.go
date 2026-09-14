@@ -1014,7 +1014,7 @@ func mustBucketRegistry(tb testing.TB, buckets []config.BucketConfig) *BucketReg
 // that exercise the merge rather than the config path alone.
 func mustBucketRegistryWithStore(tb testing.TB, buckets []config.BucketConfig, s *provisioning.Snapshot) *BucketRegistry {
 	tb.Helper()
-	v := provisioning.Merge(buckets, s)
+	v := provisioning.Merge(buckets, config.AuthConfig{}, s)
 	br, err := NewBucketRegistry(&v)
 	if err != nil {
 		tb.Fatalf("NewBucketRegistry: %v", err)
@@ -1025,7 +1025,7 @@ func mustBucketRegistryWithStore(tb testing.TB, buckets []config.BucketConfig, s
 // configRegistry builds a registry from config alone, returning the error for
 // the tests that assert construction refuses something.
 func configRegistry(buckets []config.BucketConfig) (*BucketRegistry, error) {
-	v := provisioning.Merge(buckets, &provisioning.Snapshot{})
+	v := provisioning.Merge(buckets, config.AuthConfig{}, &provisioning.Snapshot{})
 	return NewBucketRegistry(&v)
 }
 
@@ -1102,5 +1102,63 @@ func TestNewBucketRegistry_TokenResolvesToItsOwnBucket(t *testing.T) {
 		if aErr != nil || !u.CanReach(want) {
 			t.Errorf("token %q reached %v (%v), want %q", tok, u.Buckets(), aErr, want)
 		}
+	}
+}
+
+// TestAuthenticateSecret verifies a keypair presented whole, which is what the
+// dashboard's form login submits rather than a signature.
+func TestAuthenticateSecret(t *testing.T) {
+	t.Parallel()
+
+	view := provisioning.View{
+		Users: []provisioning.User{{ID: "u1", Name: "ops", Source: provisioning.SourceStore}},
+		Credentials: []provisioning.Credential{{
+			AccessKeyID: "AKIALOGIN",
+			UserID:      "u1",
+			Secret:      "the-secret",
+			Source:      provisioning.SourceStore,
+		}},
+	}
+	br, err := NewBucketRegistry(&view)
+	if err != nil {
+		t.Fatalf("NewBucketRegistry: %v", err)
+	}
+
+	u, err := br.AuthenticateSecret("AKIALOGIN", "the-secret")
+	if err != nil || u == nil || u.ID != "u1" {
+		t.Fatalf("a correct keypair did not authenticate: %v", err)
+	}
+	for _, tc := range []struct{ name, key, secret string }{
+		{"wrong secret", "AKIALOGIN", "wrong"},
+		{"unknown access key", "AKIANOPE", "the-secret"},
+		{"empty", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := br.AuthenticateSecret(tc.key, tc.secret); err == nil {
+				t.Error("authenticated a credential it should have refused")
+			}
+		})
+	}
+}
+
+// TestUserByID verifies an identity resolves by name, for a caller that proved
+// itself by something this registry does not hold - the shared admin token, or
+// a dashboard session naming the user it logged in as.
+func TestUserByID(t *testing.T) {
+	t.Parallel()
+
+	view := provisioning.View{
+		Users: []provisioning.User{{ID: "u1", Name: "ops", Source: provisioning.SourceStore}},
+	}
+	br, err := NewBucketRegistry(&view)
+	if err != nil {
+		t.Fatalf("NewBucketRegistry: %v", err)
+	}
+	if u, ok := br.UserByID("u1"); !ok || u.Name != "ops" {
+		t.Errorf("UserByID(u1) = %v,%v", u, ok)
+	}
+	if _, ok := br.UserByID("nobody"); ok {
+		t.Error("UserByID resolved an identity that does not exist")
 	}
 }

@@ -32,8 +32,29 @@ type User struct {
 	Name       string
 	FromConfig bool
 
-	grants map[string]core.PermissionSet
-	admin  map[core.Resource]core.PermissionSet
+	grants     map[string]core.PermissionSet
+	allBuckets core.PermissionSet
+	admin      map[core.Resource]core.PermissionSet
+}
+
+// WithAllBuckets attaches what this user's bucket wildcard carries, which
+// applies to every bucket including ones declared after the registry was built.
+func (u *User) WithAllBuckets(perms core.PermissionSet) *User {
+	u.allBuckets = perms
+	return u
+}
+
+// AllBuckets reports what this user may do on any bucket, named or not. Zero
+// means it holds no wildcard and reaches only the buckets it is granted.
+//
+// This is what authorizes an operation spanning the namespace rather than
+// naming one bucket: the empty prefix is every bucket, and no per-bucket grant
+// can answer for it.
+func (u *User) AllBuckets() core.PermissionSet {
+	if u == nil {
+		return 0
+	}
+	return u.allBuckets
 }
 
 // NewUser builds a user holding the given bucket grants. A nil or absent entry
@@ -72,19 +93,27 @@ func (u *User) CanReach(bucket string) bool {
 	if u == nil {
 		return false
 	}
-	_, ok := u.grants[bucket]
-	return ok
+	if _, ok := u.grants[bucket]; ok {
+		return true
+	}
+	return u.allBuckets != 0
 }
 
 // Can reports whether this user's grant on the named bucket carries every
 // permission in want. An empty want is satisfied by any grant, which is what an
 // operation needing no permission asks for.
+// A named grant answers alone, without the wildcard unioned in, which is what
+// lets broad access be carved down on one bucket: the publish-time expansion
+// already replaced the wildcard for every bucket a grant names, and this keeps
+// that same rule for the ones it does not.
 func (u *User) Can(bucket string, want core.PermissionSet) bool {
 	if u == nil {
 		return false
 	}
-	held, ok := u.grants[bucket]
-	return ok && held.Has(want)
+	if held, ok := u.grants[bucket]; ok {
+		return held.Has(want)
+	}
+	return u.allBuckets != 0 && u.allBuckets.Has(want)
 }
 
 // Permissions reports what this user's grant on the named bucket carries, and
@@ -93,8 +122,10 @@ func (u *User) Permissions(bucket string) (core.PermissionSet, bool) {
 	if u == nil {
 		return 0, false
 	}
-	held, ok := u.grants[bucket]
-	return held, ok
+	if held, ok := u.grants[bucket]; ok {
+		return held, true
+	}
+	return u.allBuckets, u.allBuckets != 0
 }
 
 // Buckets lists what this user reaches, sorted, which is what a ListBuckets

@@ -230,13 +230,29 @@ job "s3-orchestrator" {
             requests_per_sec: 2500
             burst: 4000
 
+          # The credential that administers this deployment. An ordinary
+          # identity holding every permission, which is what the admin API,
+          # the TUI and the dashboard all authenticate as. demo.sh mints the
+          # keypair per run and substitutes it here.
+          auth:
+            root:
+              access_key_id: "__ROOT_ACCESS_KEY__"
+              secret_access_key: "__ROOT_SECRET_KEY__"
+
+          # admin_key and admin_secret are still required while the dashboard is
+          # enabled, so they are set to the root keypair rather than to a second
+          # credential. There is one thing to hold, and nothing to guess.
+          #
+          # The dashboard resolves a submitted keypair through the credential
+          # store, so the root keypair would log in here even if these were set
+          # to something else. They stop being required at all once the separate
+          # dashboard login is removed.
           ui:
             enabled: true
-            admin_key: "admin"
-            admin_secret: "admin"
+            admin_key: "__ROOT_ACCESS_KEY__"
+            admin_secret: "__ROOT_SECRET_KEY__"
             session_secret: "local-dev-session-key"
-            admin_token: "admin"     # Separate token for admin API (defaults to admin_key)
-            # force_secure_cookies: false        # Local dev — no TLS proxy
+            # force_secure_cookies: false        # Local dev - no TLS proxy
         YAML
       }
 

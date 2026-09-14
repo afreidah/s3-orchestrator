@@ -11,7 +11,7 @@ Server-side envelope encryption with chunked AES-256-GCM. When enabled, objects 
 ```yaml
 encryption:
   enabled: true
-  chunk_size: 65536                    # default: 64KB (range: 4KB–1MB, must be power of 2)
+  chunk_size: 65536                    # default: 64KB (range: 4KB-1MB, must be power of 2)
   master_key: "${ENCRYPTION_KEY}"      # base64-encoded 256-bit key
 ```
 
@@ -21,7 +21,7 @@ encryption:
 openssl rand -base64 32
 ```
 
-**Key source options** — exactly one of the following must be set:
+**Key source options** - exactly one of the following must be set:
 
 | Source | Config field | When to use |
 |--------|-------------|-------------|
@@ -41,7 +41,7 @@ encryption:
     mount_path: "transit"     # default: transit
 ```
 
-The Vault Transit engine handles wrapping and unwrapping DEKs — the orchestrator never sees the master key material. The `key_name` must reference an existing key in the Transit engine.
+The Vault Transit engine handles wrapping and unwrapping DEKs - the orchestrator never sees the master key material. The `key_name` must reference an existing key in the Transit engine.
 
 **Key rotation support:**
 
@@ -59,7 +59,7 @@ After updating the config, call the `rotate-encryption-key` admin API to re-wrap
 
 **Important notes:**
 - Per-object data-encryption keys and wrapped key material are held server-side only. They are never serialized in API responses - the admin object-locations endpoint reports the `encrypted` flag and `key_id`, never the key itself.
-- Encryption is **not reloadable** — changing encryption settings requires a restart.
+- Encryption is **not reloadable** - changing encryption settings requires a restart.
 - The `chunk_size` must stay the same for the lifetime of the data. Changing it after objects are encrypted will make those objects unreadable.
 - Encrypted objects are slightly larger than their plaintext (header + per-chunk overhead). The exact overhead is: 32 bytes (header) + 28 bytes per chunk (nonce + auth tag). Because that overhead is a fixed function of the size, the stored size of a write is known before it starts, and placement and the usage counters both use it rather than the size the client announced.
 
@@ -119,5 +119,5 @@ integrity:
 - **Scrubber:** A background worker works through the copies least recently verified, reads them from their backend, decrypts if needed, and checks the hash. A copy that fails has its bytes discarded and its ledger row removed, so the replicator rebuilds it from a healthy copy. Each read counts against the backend's usage quota.
 - **Backfill:** Objects written before integrity was enabled have no stored hash. Use `admin backfill-checksums` to read those objects and compute their hashes.
 
-**Integrity is hot-reloadable** — changes take effect on SIGHUP without a restart.
+**Integrity is hot-reloadable** - changes take effect on SIGHUP without a restart.
 

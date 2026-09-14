@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
 
@@ -345,5 +346,31 @@ func TestProvisioning_UserListingNamesEachResource(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("listing omits %q:\n%s", want, stdout)
 		}
+	}
+}
+
+// TestShorthand verifies a complete set renders as the one word that names it,
+// which is what keeps a listing's Grants column inside a terminal: the full
+// control-plane set is ten names.
+func TestShorthand(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		perms []string
+		want  string
+	}{
+		{"the full data-plane set", core.PermAll.Names(), "all"},
+		{"the full admin set", core.PermAdminAll.Names(), "admin-all"},
+		{"a partial set is listed", []string{"read", "write"}, "read,write"},
+		{"one permission", []string{"admin-read"}, "admin-read"},
+		{"nothing", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := shorthand(tc.perms); got != tc.want {
+				t.Errorf("shorthand(%v) = %q, want %q", tc.perms, got, tc.want)
+			}
+		})
 	}
 }

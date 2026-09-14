@@ -11,11 +11,13 @@
 package tui
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/cli/adminclient"
@@ -643,43 +645,77 @@ func (m *model) bodyView() string {
 // ENTRY POINT
 // -------------------------------------------------------------------------
 
+// target is the resolved admin endpoint and the credential to reach it with.
+// A keypair signs; a token is the older mechanism used when none is given.
+type target struct {
+	baseAddr    string
+	token       string
+	accessKeyID string
+	secretKey   string
+}
+
+// signs reports whether this target carries a keypair to sign with.
+func (t target) signs() bool {
+	return t.accessKeyID != "" && t.secretKey != ""
+}
+
 // resolveTarget parses the tui flags and resolves the admin base address and
-// token (flag -> env -> config), returning an http-prefixed base address or an
-// error describing what is missing.
-func resolveTarget(args []string) (baseAddr, token string, err error) {
+// credential (flag -> env -> config), returning an http-prefixed base address
+// or an error describing what is missing.
+func resolveTarget(args []string) (target, error) {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", "config.yaml", "Path to config file (only loaded when -addr/-token or their env vars are unset)")
 	addr := fs.String("addr", "", "Server address (overrides $S3O_ADMIN_ADDR and config)")
 	tokenFlag := fs.String("token", "", "Admin API token (overrides $S3O_ADMIN_TOKEN and config)")
+	accessKey := fs.String("access-key", "", "Access key ID to sign with (overrides $S3O_ACCESS_KEY_ID)")
+	secretKey := fs.String("secret-key", "", "Secret access key to sign with (overrides $S3O_SECRET_ACCESS_KEY)")
 	if err := fs.Parse(args); err != nil {
-		return "", "", err
+		return target{}, err
 	}
 
-	baseAddr, token, err = admintarget.Resolve(*addr, *tokenFlag, func() (*config.Config, error) {
-		return config.LoadConfig(*configPath)
-	})
-	if err != nil {
-		return "", "", err
+	t := target{
+		baseAddr:    cmp.Or(*addr, os.Getenv(admintarget.EnvAddr)),
+		accessKeyID: cmp.Or(*accessKey, os.Getenv(admintarget.EnvAccessKey)),
+		secretKey:   cmp.Or(*secretKey, os.Getenv(admintarget.EnvSecretKey)),
 	}
-	if baseAddr == "" || token == "" {
-		return "", "", errors.New("admin address and token required (set -addr/-token, $S3O_ADMIN_ADDR/$S3O_ADMIN_TOKEN, or config)")
+	// The config file is only read for what is still missing, so a keypair and
+	// an address given outright need no config on the machine running the TUI.
+	if !t.signs() || t.baseAddr == "" {
+		baseAddr, token, err := admintarget.Resolve(*addr, *tokenFlag, func() (*config.Config, error) {
+			return config.LoadConfig(*configPath)
+		})
+		if err != nil {
+			return target{}, err
+		}
+		t.baseAddr, t.token = baseAddr, token
 	}
-	if !strings.HasPrefix(baseAddr, "http") {
-		baseAddr = "http://" + baseAddr
+	if t.baseAddr == "" {
+		return target{}, errors.New("admin address required (set -addr, $S3O_ADMIN_ADDR, or config)")
 	}
-	return baseAddr, token, nil
+	if !t.signs() && t.token == "" {
+		return target{}, errors.New("a credential is required (set -access-key and -secret-key, " +
+			"or -token, $S3O_ADMIN_TOKEN, or config)")
+	}
+	// A bare host:port defaults to http, because the common target is a local
+	// instance reached over a loopback or a private network. An operator
+	// pointing at a remote one supplies the scheme, and https is preserved
+	// exactly because the prefix check passes it through untouched.
+	if !strings.HasPrefix(t.baseAddr, "http") {
+		t.baseAddr = "http://" + t.baseAddr //nolint:gosec // NOSONAR S5332: scheme default for an operator-supplied address
+	}
+	return t, nil
 }
 
 // Run resolves the admin target, starts the TUI, and returns a process exit
 // code.
 func Run(args []string, _, stderr io.Writer) int { // codecov:ignore -- TUI entry point
-	baseAddr, token, err := resolveTarget(args)
+	t, err := resolveTarget(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
-	if _, err := tea.NewProgram(initialModel(newAPIClient(baseAddr, token)), tea.WithAltScreen()).Run(); err != nil {
+	if _, err := tea.NewProgram(initialModel(newAPIClient(t)), tea.WithAltScreen()).Run(); err != nil {
 		fmt.Fprintf(stderr, "tui error: %v\n", err)
 		return 1
 	}

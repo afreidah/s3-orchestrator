@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
@@ -50,21 +51,19 @@ const (
 
 // principal is who an admin request authenticated as.
 //
-// Root marks the deprecated fallback: the configured admin token authorizes
-// everything, which is what an existing deployment relies on. It is deliberately
-// not a property of auth.User - the S3 path shares that type and has no such
-// caller - so removing the fallback removes this field with it rather than
-// leaving a privileged flag behind in the identity model.
+// Every caller is a user holding grants, the root credential included: what
+// makes root privileged is the grants it holds, not a branch here. LegacyToken
+// records only which door it came through, so the deprecation warning can name
+// the mechanism without the authorization path having a second case.
 type principal struct {
-	User *auth.User
-	Root bool
+	User        *auth.User
+	LegacyToken bool
 }
 
-// id names this principal in a log line. The root token carries no user, so it
-// reads as the token rather than as an empty field.
+// id names this principal in a log line.
 func (p principal) id() string {
 	if p.User == nil {
-		return "admin-token"
+		return "unknown"
 	}
 	return p.User.ID
 }
@@ -76,27 +75,56 @@ func (p principal) id() string {
 // authenticate resolves the credential a request carries. Reports whether one
 // proved an identity at all.
 //
-// The configured admin token is tried first and answers as root. Anything else
-// is looked up as a provisioned credential, so a token minted through the
-// provisioning API reaches the admin API with exactly the grants it was given.
+// A SigV4-signed request is verified the way the S3 API verifies one, against
+// the same registry, so one keypair reaches both surfaces. This is the path an
+// operator should be on.
+//
+// The shared admin token is still accepted and resolves onto the root user
+// rather than onto a privileged flag, which is what lets the authorization path
+// stay single. A token minted through the provisioning API is looked up last.
 func (h *Handler) authenticate(r *http.Request) (principal, bool) {
+	// Without a registry nothing can be resolved to an identity, so nothing is
+	// authenticated. The credential model is the only way in now, which means a
+	// handler assembled without one authorizes no request rather than falling
+	// back to the token.
+	if h.registry == nil {
+		return principal{}, false
+	}
+	registry := h.registry()
+	if registry == nil {
+		return principal{}, false
+	}
+	if isSigned(r) {
+		user, _, err := registry.Authenticate(r)
+		if err != nil {
+			return principal{}, false
+		}
+		return principal{User: user}, true
+	}
+
 	token := r.Header.Get(adminTokenHeader)
 	if token == "" {
 		return principal{}, false
 	}
-	if subtle.ConstantTimeCompare([]byte(token), []byte(h.token)) == 1 {
-		return principal{Root: true}, true
-	}
-
-	registry := h.registry()
-	if registry == nil {
-		return principal{}, false
+	if h.token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(h.token)) == 1 {
+		root, ok := registry.UserByID(provisioning.RootUserID)
+		if !ok {
+			return principal{}, false
+		}
+		return principal{User: root, LegacyToken: true}, true
 	}
 	user, err := registry.AuthenticateToken(token)
 	if err != nil {
 		return principal{}, false
 	}
 	return principal{User: user}, true
+}
+
+// isSigned reports whether the request carries SigV4 material, by header or as
+// a presigned query. Anything else is left to the token paths.
+func isSigned(r *http.Request) bool {
+	return strings.HasPrefix(r.Header.Get("Authorization"), "AWS4-HMAC-SHA256") ||
+		r.URL.Query().Get("X-Amz-Signature") != ""
 }
 
 // -------------------------------------------------------------------------
@@ -136,14 +164,11 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, rt *route, w
 		h.refuse(r, w, rt, who, "", "route declares no permission")
 		return false
 	}
-	// The configured admin token authorizes everything, which is what an
-	// existing deployment relies on. Only the data plane warns: the control
-	// plane is what the token has always been for.
-	if who.Root {
-		if rt.kind() == core.ResourceBucket {
-			h.warnTokenDeprecated(r)
-		}
-		return true
+	// The shared token still reaches everything, because it resolves to the
+	// root user and that user holds everything. Only the data plane warns: the
+	// control plane is what the token has always been for.
+	if who.LegacyToken && rt.kind() == core.ResourceBucket {
+		h.warnTokenDeprecated(r)
 	}
 	if rt.kind() != core.ResourceBucket {
 		return h.authorizeAdmin(w, r, rt, who)
@@ -151,6 +176,13 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, rt *route, w
 
 	bucket, ok := bucketFromKey(h.resourceValue(r, rt))
 	if !ok {
+		// The value names no single bucket: the empty prefix is the whole
+		// namespace and a partial name spans every bucket it prefixes. Only a
+		// caller holding the bucket wildcard can be authorized for that, since
+		// no per-bucket grant answers for buckets it does not name.
+		if who.User.AllBuckets().Has(rt.Perm) {
+			return true
+		}
 		h.refuse(r, w, rt, who, "", "resource names no bucket")
 		return false
 	}

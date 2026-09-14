@@ -33,6 +33,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 
 	"go.uber.org/mock/gomock"
 
@@ -87,6 +88,7 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 		cleanup:      mock,
 		token:        "test-token",
 		logLevel:     &lv,
+		registry:     func() *auth.BucketRegistry { return rootRegistry(t) },
 	}
 }
 
@@ -240,7 +242,7 @@ func TestHandleObjectLocations_Happy(t *testing.T) {
 	}}, nil).Times(1)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: objectsOver(t, mock), token: "test-token", logLevel: &lv}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: objectsOver(t, mock), token: "test-token", logLevel: &lv, registry: func() *auth.BucketRegistry { return rootRegistry(t) }}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -611,7 +613,7 @@ func TestHandleObjectLocations_StoreError(t *testing.T) {
 	mock.EXPECT().GetAllObjectLocations(gomock.Any(), "foo").Return(nil, errors.New("query failed")).Times(1)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: objectsOver(t, mock), token: "test-token", logLevel: &lv}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: objectsOver(t, mock), token: "test-token", logLevel: &lv, registry: func() *auth.BucketRegistry { return rootRegistry(t) }}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -791,6 +793,7 @@ func TestHandleStartDrain_AcknowledgementShape(t *testing.T) {
 		lifecycle:    mock,
 		token:        "test-token",
 		logLevel:     &lv,
+		registry:     func() *auth.BucketRegistry { return rootRegistry(t) },
 	}
 	t.Cleanup(func() { _ = h.drain.CancelDrain("b1") })
 

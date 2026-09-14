@@ -75,7 +75,7 @@ cost of declining and never as the work of encoding.
    make loadtest-listobjects LOADTEST_SEED=1000000 LOADTEST_OUTPUT_JSON=list-1m.json
    ```
 
-6. **Overwrite** — rewrites a bounded key set, so each request after the first
+6. **Overwrite** - rewrites a bounded key set, so each request after the first
    pass replaces an object that already exists
    ```bash
    ./loadtest/s3-loadtest \
@@ -233,7 +233,7 @@ until writes reach them, and the backend total is their sum either
 way.
 
 Symptom on the client side is P50 staying sub-ms while P95/P99 blow
-out to seconds — most requests are fast, but a tail queues behind a
+out to seconds - most requests are fast, but a tail queues behind a
 row lock and admission control sheds them.
 
 Other mitigations:

@@ -44,11 +44,11 @@ SQLite is the default for single-instance use; PostgreSQL is required for multi-
 
 The orchestrator supports two metadata-store engines:
 
-- **SQLite** (default) — embedded, zero-dependency, single-instance. Schema is
+- **SQLite** (default) - embedded, zero-dependency, single-instance. Schema is
   applied at startup from a single consolidated `schema.sql` and pinned by a
   `schema_version` table, so a database written by a newer binary is refused
   rather than silently mis-read.
-- **PostgreSQL** — required for multi-instance deployments. Connects via
+- **PostgreSQL** - required for multi-instance deployments. Connects via
   pgx/v5 pools and auto-applies versioned migrations on startup using
   [goose](https://github.com/pressly/goose); migration files are embedded
   in the binary and tracked via a `goose_db_version` table so only

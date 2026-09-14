@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
 	"github.com/afreidah/s3-orchestrator/internal/ops/opstest"
+	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
 )
@@ -508,5 +509,53 @@ func TestProvisioningError_StatusMapping(t *testing.T) {
 				t.Errorf("error = %q, want it to carry the reason", body["error"])
 			}
 		})
+	}
+}
+
+// TestWireGrants_ReportsTheWildcardNotItsExpansion verifies a listing names the
+// rule an identity holds rather than the buckets it happens to cover today.
+//
+// The expansion answers what is reachable now; the wildcard answers what will be
+// reachable after the next bucket is created. Reporting only the expansion hides
+// that an identity reaches buckets nobody has made yet.
+func TestWireGrants_ReportsTheWildcardNotItsExpansion(t *testing.T) {
+	t.Parallel()
+
+	u := &provisioning.User{
+		ID:      "u1",
+		Buckets: []string{"photos", "secrets"},
+		Grants: map[string]core.PermissionSet{
+			"photos":  core.PermAll,
+			"secrets": core.PermListBuckets,
+		},
+		AllBuckets: core.PermAll,
+	}
+
+	got := wireGrants(u)
+	if len(got) != 2 {
+		t.Fatalf("grants = %+v, want the wildcard and the one carve-out", got)
+	}
+	if got[0].Kind != "bucket" || got[0].Name != core.ResourceWildcard {
+		t.Errorf("first grant = %+v, want the bucket wildcard", got[0])
+	}
+	// photos matches the wildcard exactly, so naming it would just repeat it.
+	if got[1].Name != "secrets" {
+		t.Errorf("second grant = %+v, want only the bucket that differs", got[1])
+	}
+}
+
+// TestWireGrants_WithoutAWildcardNamesEveryBucket pins the ordinary case: an
+// identity holding only named grants has each of them reported.
+func TestWireGrants_WithoutAWildcardNamesEveryBucket(t *testing.T) {
+	t.Parallel()
+
+	u := &provisioning.User{
+		ID:      "u1",
+		Buckets: []string{"photos"},
+		Grants:  map[string]core.PermissionSet{"photos": core.PermRead},
+	}
+	got := wireGrants(u)
+	if len(got) != 1 || got[0].Name != "photos" {
+		t.Errorf("grants = %+v, want the one named bucket", got)
 	}
 }

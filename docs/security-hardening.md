@@ -77,7 +77,7 @@ Clients without a valid certificate receive a TLS handshake error and cannot con
 
 ## Server-Side Encryption
 
-When encryption is enabled, all objects are encrypted with AES-256-GCM before being stored on backends. Backends never see plaintext — they only store ciphertext. This protects against data exposure if a backend is compromised or if storage media is improperly decommissioned.
+When encryption is enabled, all objects are encrypted with AES-256-GCM before being stored on backends. Backends never see plaintext - they only store ciphertext. This protects against data exposure if a backend is compromised or if storage media is improperly decommissioned.
 
 ### Key Management
 
@@ -111,7 +111,7 @@ encryption:
     mount_path: "transit"
 ```
 
-- The orchestrator calls Vault to wrap/unwrap DEKs — the master key never leaves Vault.
+- The orchestrator calls Vault to wrap/unwrap DEKs - the master key never leaves Vault.
 - Vault provides audit logging of all key operations.
 - Key rotation in Vault automatically versions the key; the orchestrator's `rotate-encryption-key` API re-wraps DEKs to the latest version.
 
@@ -131,7 +131,7 @@ Monitor encryption health with these Prometheus metrics:
 
 ### Nonce Safety
 
-Chunked encryption derives per-chunk nonces by XORing the chunk index into a random base nonce. AES-GCM security requires that the same (key, nonce) pair is never reused. This is guaranteed because each object gets a fresh random DEK and a fresh random base nonce — even re-uploads of identical content produce different ciphertext. The `SAFETY INVARIANT` comment block at `internal/encryption/chunk.go:258-280` captures the three-clause reasoning (fresh DEK per object, fresh base nonce per call, sequential chunk indices) and notes when this derivation must be replaced (e.g., if the DEK-per-object invariant is ever relaxed for performance).
+Chunked encryption derives per-chunk nonces by XORing the chunk index into a random base nonce. AES-GCM security requires that the same (key, nonce) pair is never reused. This is guaranteed because each object gets a fresh random DEK and a fresh random base nonce - even re-uploads of identical content produce different ciphertext. The `SAFETY INVARIANT` comment block at `internal/encryption/chunk.go:258-280` captures the three-clause reasoning (fresh DEK per object, fresh base nonce per call, sequential chunk indices) and notes when this derivation must be replaced (e.g., if the DEK-per-object invariant is ever relaxed for performance).
 
 ## SigV4 Path Handling
 
@@ -165,7 +165,7 @@ observing differing failure modes.
 
 ## Object Data Cache
 
-When the in-memory object data cache is enabled (`cache.enabled: true`), cached objects are stored as post-decryption plaintext in process memory. This has the same security properties as any other in-process data — the plaintext exists in the orchestrator's address space for the duration of the cache entry's TTL, just as it does transiently during a normal GET response stream. The cache does not persist data to disk. Standard process isolation and memory protection apply; if an attacker can read the orchestrator's memory, they can already intercept plaintext during streaming regardless of caching.
+When the in-memory object data cache is enabled (`cache.enabled: true`), cached objects are stored as post-decryption plaintext in process memory. This has the same security properties as any other in-process data - the plaintext exists in the orchestrator's address space for the duration of the cache entry's TTL, just as it does transiently during a normal GET response stream. The cache does not persist data to disk. Standard process isolation and memory protection apply; if an attacker can read the orchestrator's memory, they can already intercept plaintext during streaming regardless of caching.
 
 ## Data Integrity Verification
 
@@ -192,7 +192,7 @@ integrity:
 
 ### Recommendations
 
-- **Enable `verify_on_read`** for production deployments. The overhead is minimal — SHA-256 is computed inline during streaming with no additional buffering.
+- **Enable `verify_on_read`** for production deployments. The overhead is minimal - SHA-256 is computed inline during streaming with no additional buffering.
 - **Enable the scrubber** to catch corruption in objects that haven't been read recently. A 6-hour interval with 100 objects per batch provides steady coverage without excessive backend API usage.
 - **Weigh `verify_on_replicate` against your egress bill.** Unlike the other checks it is not close to free: reading each new copy back doubles what a replica costs to create. It is worth it where a silently corrupt replica counting toward the replication factor is the risk you care about, and hard to justify where the scrubber already reaches every copy often enough.
 - **Run backfill** after enabling integrity on an existing deployment. Unhashed objects are invisible to read-time verification, to replica verification, and to the scrubber.
@@ -259,17 +259,17 @@ Provide the environment variables via systemd `EnvironmentFile`, Vault agent inj
 
   When `listen` is set, `/metrics` is not served on the main S3 port. Prometheus scrapes from the internal address instead.
 
-- **Pprof endpoints** (`/debug/pprof/*`) expose deep runtime state — stack frames, command-line flags, on-demand CPU profiles that double as DoS amplifiers (`/debug/pprof/profile?seconds=300`). They are **off by default** and only mounted when both `telemetry.metrics.listen` is set AND `telemetry.metrics.pprof: true`. Inline-metrics deployments (no dedicated listener) never get pprof regardless of the flag. Enable temporarily for profiling investigations only, and keep the metrics listener bound to an internal-only interface. `/debug/pprof/goroutineleak` belongs in the amplifier category too: serving it runs repeated stop-the-world leak-detection garbage collections until they converge. See [Monitoring](monitoring.md#goroutine-leak-profile).
+- **Pprof endpoints** (`/debug/pprof/*`) expose deep runtime state - stack frames, command-line flags, on-demand CPU profiles that double as DoS amplifiers (`/debug/pprof/profile?seconds=300`). They are **off by default** and only mounted when both `telemetry.metrics.listen` is set AND `telemetry.metrics.pprof: true`. Inline-metrics deployments (no dedicated listener) never get pprof regardless of the flag. Enable temporarily for profiling investigations only, and keep the metrics listener bound to an internal-only interface. `/debug/pprof/goroutineleak` belongs in the amplifier category too: serving it runs repeated stop-the-world leak-detection garbage collections until they converge. See [Monitoring](monitoring.md#goroutine-leak-profile).
 
 ### Kubernetes Hardening
 
 The provided Kubernetes manifests include several security measures:
 
-- **seccompProfile: RuntimeDefault** — applies the default seccomp profile to restrict syscalls
-- **automountServiceAccountToken: false** — the orchestrator does not need Kubernetes API access
-- **NetworkPolicy** — restricts ingress to port 9000 (and the metrics port when `metrics.dedicatedListener.enabled` is set, scoped to the configured `scraperSelector`); egress is permissive since backend endpoints are config-driven
-- **Dedicated metrics Service** — when `metrics.dedicatedListener.enabled: true`, the chart renders a separate `*-metrics` ClusterIP Service that is forced to `ClusterIP` regardless of the public Service type. This prevents the metrics surface (and any opted-in pprof) from accidentally being exposed externally if the public Service is upgraded to LoadBalancer/NodePort.
-- **readOnlyRootFilesystem**, **runAsNonRoot**, **capabilities.drop: ALL** — standard container hardening (see `deploy/helm/s3-orchestrator/templates/deployment.yaml`)
+- **seccompProfile: RuntimeDefault** - applies the default seccomp profile to restrict syscalls
+- **automountServiceAccountToken: false** - the orchestrator does not need Kubernetes API access
+- **NetworkPolicy** - restricts ingress to port 9000 (and the metrics port when `metrics.dedicatedListener.enabled` is set, scoped to the configured `scraperSelector`); egress is permissive since backend endpoints are config-driven
+- **Dedicated metrics Service** - when `metrics.dedicatedListener.enabled: true`, the chart renders a separate `*-metrics` ClusterIP Service that is forced to `ClusterIP` regardless of the public Service type. This prevents the metrics surface (and any opted-in pprof) from accidentally being exposed externally if the public Service is upgraded to LoadBalancer/NodePort.
+- **readOnlyRootFilesystem**, **runAsNonRoot**, **capabilities.drop: ALL** - standard container hardening (see `deploy/helm/s3-orchestrator/templates/deployment.yaml`)
 
 ```
 Internet --> Reverse Proxy --> S3 Orchestrator --> PostgreSQL (private)
@@ -392,12 +392,12 @@ CORS rules are declared per bucket (see [Configuration](configuration.md#browser
 
 What a rule does and does not grant:
 
-- **A preflight is answered before authentication.** It has to be — a browser cannot sign one. The preflight grants no access on its own; it reports whether the request the browser intends to send is one the operator permits, and that request authenticates with SigV4 or a presigned signature exactly as any other does. A CORS rule is not a credential and never substitutes for one.
+- **A preflight is answered before authentication.** It has to be - a browser cannot sign one. The preflight grants no access on its own; it reports whether the request the browser intends to send is one the operator permits, and that request authenticates with SigV4 or a presigned signature exactly as any other does. A CORS rule is not a credential and never substitutes for one.
 - **A refused preflight reveals nothing.** The response is identical whether the bucket has no rules, has rules that do not admit the request, or does not exist at all, so the one endpoint reachable without a credential cannot be used to enumerate buckets.
 - **Preflights are rate-limited and admission-controlled.** The CORS middleware sits inside both, so an unsigned preflight is bounded by the same protections as any other request on the surface.
 - **`Access-Control-Allow-Credentials` is not supported.** Authentication travels in headers or a presigned query string, never in cookies, so credentialed mode adds nothing and would forbid wildcard origins.
 
-Scope each rule as narrowly as the application allows. `allowed_origins: ["*"]` lets any site on the internet make a browser read a response from the bucket, which is only appropriate for content that is genuinely public. Prefer naming the origins, and note that a wildcard entry like `https://*.example.com` matches any subdomain — including one an attacker controls if subdomain takeover is possible.
+Scope each rule as narrowly as the application allows. `allowed_origins: ["*"]` lets any site on the internet make a browser read a response from the bucket, which is only appropriate for content that is genuinely public. Prefer naming the origins, and note that a wildcard entry like `https://*.example.com` matches any subdomain - including one an attacker controls if subdomain takeover is possible.
 
 Watch `s3o_cors_preflight_total{result="rejected"}`: a sustained climb from an origin you did not configure is either a misconfigured deployment of your own application or somebody probing the surface from a browser.
 
@@ -473,7 +473,7 @@ The admin API returns operational metadata only. Object and backend responses ne
 
 When the orchestrator sits behind a TLS-terminating reverse proxy (Traefik, nginx, ALB), the connection to the orchestrator itself is plaintext HTTP. The session and CSRF cookies still need the `Secure` flag so browsers only send them over HTTPS. There are two ways to get the `Secure` flag set in this layout.
 
-**Recommended: trust the proxy and honour `X-Forwarded-Proto`.** Configure `rate_limit.trusted_proxies` with the CIDR(s) the proxy connects from, and ensure the proxy forwards `X-Forwarded-Proto: https`. The orchestrator sets `Secure` on every cookie when the direct peer is in the trusted CIDR set and the header reads `https`. The check is spoof-resistant — requests from outside the trusted CIDR cannot claim TLS by setting the header themselves.
+**Recommended: trust the proxy and honour `X-Forwarded-Proto`.** Configure `rate_limit.trusted_proxies` with the CIDR(s) the proxy connects from, and ensure the proxy forwards `X-Forwarded-Proto: https`. The orchestrator sets `Secure` on every cookie when the direct peer is in the trusted CIDR set and the header reads `https`. The check is spoof-resistant - requests from outside the trusted CIDR cannot claim TLS by setting the header themselves.
 
 ```yaml
 rate_limit:
@@ -482,7 +482,7 @@ rate_limit:
     - "172.16.0.0/12"
 ```
 
-Most reverse proxies forward `X-Forwarded-Proto` automatically, but the option may be named differently or off by default depending on the implementation — consult the proxy's documentation.
+Most reverse proxies forward `X-Forwarded-Proto` automatically, but the option may be named differently or off by default depending on the implementation - consult the proxy's documentation.
 
 **Alternative: force the flag unconditionally.** When the proxy is not under your control, or you'd rather not depend on the header path, set `force_secure_cookies: true`. Cookies then ship with `Secure=true` regardless of the request's apparent scheme.
 
@@ -513,7 +513,7 @@ ui:
   admin_secret: "$2y$10$..."   # bcrypt hash
 ```
 
-The orchestrator detects bcrypt hashes automatically (any value starting with `$2`). Plaintext secrets continue to work — no migration is required.
+The orchestrator detects bcrypt hashes automatically (any value starting with `$2`). Plaintext secrets continue to work - no migration is required.
 
 **Recommendation:** Use bcrypt for bare-metal and `.deb` installations. For container deployments with Vault, Nomad templates, or Kubernetes secrets, plaintext with `${ENV_VAR}` expansion is equally secure since the secret never touches disk.
 
@@ -521,7 +521,7 @@ The orchestrator detects bcrypt hashes automatically (any value starting with `$
 
 Session keys are derived deterministically from the config (via HMAC-SHA256), so sessions survive restarts and are portable across instances sharing the same config. No session storage or shared state is required beyond the config file itself.
 
-For multi-instance deployments behind a load balancer, ensure all instances use the same `session_secret`. A session created on one instance will be accepted by any other instance with a matching value. `session_secret` is independent of `admin_secret` — rotating one does not affect the other.
+For multi-instance deployments behind a load balancer, ensure all instances use the same `session_secret`. A session created on one instance will be accepted by any other instance with a matching value. `session_secret` is independent of `admin_secret` - rotating one does not affect the other.
 
 ## Credential Rotation
 

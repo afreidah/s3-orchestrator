@@ -28,7 +28,7 @@ The orchestrator runs a set of long-running background workers that keep the met
 
 Every worker above can be run on demand rather than waited for, from the admin API, `adminctl`, the TUI and the dashboard: rebalance, replicate, over-replication, scrub, backfill-checksums, reconcile, usage-flush and lifecycle.
 
-A manual pass deliberately does not take the advisory lock the scheduled tick holds, so it can overlap a scheduled one. Every pass is idempotent — a repeated delete of the same key is a no-op — so the overlap costs a little duplicated work rather than correctness.
+A manual pass deliberately does not take the advisory lock the scheduled tick holds, so it can overlap a scheduled one. Every pass is idempotent - a repeated delete of the same key is a no-op - so the overlap costs a little duplicated work rather than correctness.
 
 Lifecycle is the one where this matters most in practice. Its tick is hourly and a restart adds up to half that again as jitter, so a rule you have just written can take 90 minutes to prove itself. Until it runs, a rule that matches nothing looks exactly like a rule that ran and found nothing expired; the trigger reports deleted and failed counts separately so you can tell those apart immediately.
 

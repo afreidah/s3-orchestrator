@@ -34,7 +34,7 @@ backends:
 | MinIO | `http://<host>:9000` | `true` |
 | Wasabi | `https://s3.<region>.wasabisys.com` | `true` |
 
-**Quota:** Set `quota_bytes` to limit how much data a backend can hold. Set to `0` or omit for unlimited. Quota is tracked in PostgreSQL and updated atomically with every write/delete. Note that multipart uploads do not reserve quota upfront — temporary parts consume backend storage without being counted against the quota until `CompleteMultipartUpload` records the final object size. A client uploading many large parts could temporarily exceed a backend's quota before completion.
+**Quota:** Set `quota_bytes` to limit how much data a backend can hold. Set to `0` or omit for unlimited. Quota is tracked in PostgreSQL and updated atomically with every write/delete. Note that multipart uploads do not reserve quota upfront - temporary parts consume backend storage without being counted against the quota until `CompleteMultipartUpload` records the final object size. A client uploading many large parts could temporarily exceed a backend's quota before completion.
 
 **Max object size:** Some providers impose per-object size limits (e.g. Supabase rejects uploads over 50 MB with 413 EntityTooLarge). Set `max_object_size` to prevent the orchestrator from routing writes, rebalance moves, or replication copies to a backend when the object exceeds the limit:
 
@@ -79,17 +79,17 @@ Per-pool usage is published as `s3o_usage_pool_requests{backend,pool}` against `
 
 **Unsigned payload:** By default, uploads stream directly to backends without buffering the entire body in memory. The AWS SDK normally buffers the request body to compute a SigV4 payload hash (SHA-256), but the orchestrator uses `UNSIGNED-PAYLOAD` to skip this. Without streaming, large uploads (multipart completion, replication) can cause out-of-memory kills.
 
-For HTTPS endpoints, unsigned payload is enabled by default. For plain HTTP endpoints, it is auto-disabled unless explicitly set — AWS S3 rejects unsigned payloads over HTTP, but most S3-compatible backends (MinIO, R2, etc.) accept them. Set `unsigned_payload: true` on HTTP backends to enable streaming:
+For HTTPS endpoints, unsigned payload is enabled by default. For plain HTTP endpoints, it is auto-disabled unless explicitly set - AWS S3 rejects unsigned payloads over HTTP, but most S3-compatible backends (MinIO, R2, etc.) accept them. Set `unsigned_payload: true` on HTTP backends to enable streaming:
 
 ```yaml
     unsigned_payload: true   # stream uploads without buffering (auto-enabled for HTTPS)
 ```
 
-Set `unsigned_payload: false` to force payload hashing. This buffers the entire object in memory before uploading — only use this if you have a specific compliance requirement for end-to-end payload integrity independent of TLS.
+Set `unsigned_payload: false` to force payload hashing. This buffers the entire object in memory before uploading - only use this if you have a specific compliance requirement for end-to-end payload integrity independent of TLS.
 
-Streaming never means an unknown length: every upload declares its size up front, so `Content-Length` is always sent and `Transfer-Encoding: chunked` is never used. That matters because SigV4 signs `content-length`, so a request that streams without it cannot validate — backends that require the header answer `411`, and backends that merely check the signature answer `403 SignatureDoesNotMatch`.
+Streaming never means an unknown length: every upload declares its size up front, so `Content-Length` is always sent and `Transfer-Encoding: chunked` is never used. That matters because SigV4 signs `content-length`, so a request that streams without it cannot validate - backends that require the header answer `411`, and backends that merely check the signature answer `403 SignatureDoesNotMatch`.
 
-**Disable checksum:** AWS SDK v2 defaults to sending streaming checksums (CRC64NVME) on uploads. Some S3-compatible providers — notably Google Cloud Storage — reject these with `SignatureDoesNotMatch`. Set `disable_checksum: true` on backends that don't support the AWS checksum headers:
+**Disable checksum:** AWS SDK v2 defaults to sending streaming checksums (CRC64NVME) on uploads. Some S3-compatible providers - notably Google Cloud Storage - reject these with `SignatureDoesNotMatch`. Set `disable_checksum: true` on backends that don't support the AWS checksum headers:
 
 ```yaml
     disable_checksum: true   # required for GCS HMAC interoperability
@@ -117,7 +117,7 @@ For GCS backends, you typically need both `disable_checksum: true` and `strip_sd
     strip_sdk_headers: true
 ```
 
-**Credential source:** `credential_source` selects how the orchestrator obtains credentials for the backend. Default is `static`, which uses the `access_key_id` / `secret_access_key` fields above. Set to `default_chain` to delegate to the AWS SDK's default credential chain (env vars, EC2 IMDS, SSO, `~/.aws/credentials`, STS assume-role). When `default_chain` is set, the two key fields must be omitted — leaving stale keys behind is rejected at validation so they cannot silently shadow the SDK-resolved credentials.
+**Credential source:** `credential_source` selects how the orchestrator obtains credentials for the backend. Default is `static`, which uses the `access_key_id` / `secret_access_key` fields above. Set to `default_chain` to delegate to the AWS SDK's default credential chain (env vars, EC2 IMDS, SSO, `~/.aws/credentials`, STS assume-role). When `default_chain` is set, the two key fields must be omitted - leaving stale keys behind is rejected at validation so they cannot silently shadow the SDK-resolved credentials.
 
 Use `default_chain` when:
 
@@ -146,10 +146,10 @@ Controls how the orchestrator selects a backend when writing new objects.
 routing_strategy: "pack"       # "pack" or "spread" (default: pack)
 ```
 
-- **pack** (default) — tries backends in config order, filling the first until it is full and overflowing to the next. Best for stacking free-tier allocations sequentially.
-- **spread** — tries backends least-utilized first, by the ratio `(bytes_used + orphan_bytes + in-flight) / bytes_limit`. Best for distributing storage evenly across backends.
+- **pack** (default) - tries backends in config order, filling the first until it is full and overflowing to the next. Best for stacking free-tier allocations sequentially.
+- **spread** - tries backends least-utilized first, by the ratio `(bytes_used + orphan_bytes + in-flight) / bytes_limit`. Best for distributing storage evenly across backends.
 
-The strategy decides the order candidates are tried, not which one accepts. A backend admits a write by letting its pending intent insert succeed, and that insert tests the backend's live headroom — stored bytes, orphans awaiting cleanup, and writes already in flight — against its ceiling. A backend with no room declines and the next candidate is tried; a write no candidate accepts fails with 507.
+The strategy decides the order candidates are tried, not which one accepts. A backend admits a write by letting its pending intent insert succeed, and that insert tests the backend's live headroom - stored bytes, orphans awaiting cleanup, and writes already in flight - against its ceiling. A backend with no room declines and the next candidate is tried; a write no candidate accepts fails with 507.
 
 Usage limits are separate and are applied when building the candidate list, so a backend over its monthly API or bandwidth allowance is never ranked in the first place.
 
@@ -213,7 +213,7 @@ backends:
     access_key_id: "${OCI_KEY}"
     secret_access_key: "${OCI_SECRET}"
     force_path_style: true
-    # no quota_bytes — unlimited
+    # no quota_bytes - unlimited
 
   - name: "aws"
     endpoint: "https://s3.us-east-1.amazonaws.com"
@@ -221,7 +221,7 @@ backends:
     bucket: "bucket-b"
     access_key_id: "${AWS_KEY}"
     secret_access_key: "${AWS_SECRET}"
-    # no quota_bytes — unlimited
+    # no quota_bytes - unlimited
 
 replication:
   factor: 2
@@ -234,12 +234,12 @@ replication:
 
 ## Usage Limits
 
-Per-backend monthly limits for API requests, egress bytes, and ingress bytes. Set any limit to `0` (or omit it) for unlimited. Limits reset naturally each month — the usage tracking table is keyed by `YYYY-MM` period.
+Per-backend monthly limits for API requests, egress bytes, and ingress bytes. Set any limit to `0` (or omit it) for unlimited. Limits reset naturally each month - the usage tracking table is keyed by `YYYY-MM` period.
 
 **Enforcement behavior:**
 
-- **Writes** (PutObject, CopyObject, CreateMultipartUpload, UploadPart) — backends over their limits are excluded from selection; writes overflow to the next eligible backend. If all backends are over-limit, the orchestrator returns `507 InsufficientStorage`.
-- **Reads** (GetObject, HeadObject) — over-limit backends are skipped; the orchestrator tries replicas. Returns `429 SlowDown` only when *all* copies of the object are on over-limit backends.
-- **Deletes** (DeleteObject, DeleteObjects, AbortMultipartUpload) — always allowed regardless of limits.
+- **Writes** (PutObject, CopyObject, CreateMultipartUpload, UploadPart) - backends over their limits are excluded from selection; writes overflow to the next eligible backend. If all backends are over-limit, the orchestrator returns `507 InsufficientStorage`.
+- **Reads** (GetObject, HeadObject) - over-limit backends are skipped; the orchestrator tries replicas. Returns `429 SlowDown` only when *all* copies of the object are on over-limit backends.
+- **Deletes** (DeleteObject, DeleteObjects, AbortMultipartUpload) - always allowed regardless of limits.
 
 Effective usage is computed as `DB baseline + unflushed counters + proposed operation`, so enforcement stays accurate between flush/refresh cycles without double-counting. The flush interval is configurable (default 30s) and can adaptively shorten when backends approach their limits. For multi-instance deployments, optional [Redis shared counters](#usage-counters) eliminate the cross-instance blind spot between flushes.

@@ -211,6 +211,7 @@ func ProvideUIHandler(i do.Injector) (*ui.Handler, error) {
 		Cfg:           cfg,
 		LogBuffer:     logBuffer,
 		LoginThrottle: loginThrottle,
+		Registry:      adminBucketRegistry(i),
 	}), nil
 }
 

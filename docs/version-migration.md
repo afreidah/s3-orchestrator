@@ -58,7 +58,7 @@ Before upgrading to a new version:
 - [ ] Test a PUT + GET round-trip in staging
 - [ ] Deploy to production with rolling update (readiness probe gates traffic)
 
-To roll back: restore the database backup and deploy the previous binary version. Schema migrations are forward-only — downgrade requires a database restore.
+To roll back: restore the database backup and deploy the previous binary version. Schema migrations are forward-only - downgrade requires a database restore.
 
 ## Version History
 
@@ -215,14 +215,14 @@ As part of the same change, the `GET /admin/api/object-locations` response was r
 
 **Cleanup DELETE 404 treated as idempotent success ([#877](https://github.com/afreidah/s3-orchestrator/pull/877), v0.57.1)**
 
-A backend cleanup `DeleteObject` that returns HTTP 404 / `NoSuchKey` is now treated as idempotent success: the `cleanup_queue` row drops immediately instead of retrying nine more times and graduating to `cleanup_dlq`. The motivating incident: 63 phantom rows accumulated in `cleanup_dlq` against one MinIO backend over two days — all `StatusCode: 404`, none of them real un-cleanable orphans (the upstream PUTs had silently failed during a network outage, so the cleanup correctly identified objects to remove and got confused when the backend already agreed they didn't exist). The DLQ noise masked real un-cleanable orphans.
+A backend cleanup `DeleteObject` that returns HTTP 404 / `NoSuchKey` is now treated as idempotent success: the `cleanup_queue` row drops immediately instead of retrying nine more times and graduating to `cleanup_dlq`. The motivating incident: 63 phantom rows accumulated in `cleanup_dlq` against one MinIO backend over two days - all `StatusCode: 404`, none of them real un-cleanable orphans (the upstream PUTs had silently failed during a network outage, so the cleanup correctly identified objects to remove and got confused when the backend already agreed they didn't exist). The DLQ noise masked real un-cleanable orphans.
 
-The same 404 → drop logic was also added to `DeleteOrEnqueue` in the write coordinator, so a 404 never seeds the cleanup queue in the first place.
+The same 404 -> drop logic was also added to `DeleteOrEnqueue` in the write coordinator, so a 404 never seeds the cleanup queue in the first place.
 
 New surfaces:
 
-- `s3o_cleanup_queue_processed_total{status="success_absent"}` — counter label for idempotent drops. Add this to dashboards alongside `success` / `retry` / `exhausted`.
-- `cleanup_queue.already_absent` audit event — emitted when the 404 path fires.
+- `s3o_cleanup_queue_processed_total{status="success_absent"}` - counter label for idempotent drops. Add this to dashboards alongside `success` / `retry` / `exhausted`.
+- `cleanup_queue.already_absent` audit event - emitted when the 404 path fires.
 
 `backend.IsNotFound` was promoted from a private worker helper to an exported function in `internal/backend/`. Existing call sites in `worker/replicator.go`, `worker/pending.go`, and `backend/circuitbreaker.go` were consolidated onto it.
 
@@ -236,29 +236,29 @@ New surfaces:
 Three related fixes around backend drain:
 
 1. **Drain race closed.** A drain that began while a backend `PutObject` was in flight could land bytes on the now-draining backend. The write path now re-checks `IsDraining(backend)` after the backend PUT succeeds, before the metadata commit. On a positive re-check the bytes are cleaned up via `RecoverFromRecordFailure` and the attempt fails over to the next eligible backend.
-2. **`s3o_drain_active` is now Inc/Dec instead of Set(1)/Set(0).** Concurrent drains across multiple backends now compose correctly — the gauge reports the count of in-flight drains, not just "is any drain running?".
+2. **`s3o_drain_active` is now Inc/Dec instead of Set(1)/Set(0).** Concurrent drains across multiple backends now compose correctly - the gauge reports the count of in-flight drains, not just "is any drain running?".
 3. **`PurgeBackendObjects` bails on zero DB progress.** A pathological list-and-fail loop (e.g., the page-list works but every per-row `DeleteObjectLocation` fails) could spin indefinitely. The worker now exits the page when it finishes a list with zero rows actually deleted, preventing the infinite-list-and-fail spin.
 
 New surfaces:
 
-- `s3o_drain_race_aborted_total` (counter) — increments each time the post-PUT re-check fires.
+- `s3o_drain_race_aborted_total` (counter) - increments each time the post-PUT re-check fires.
 
 **Operator action items after upgrade:**
 
 - Dashboards / alerts that read `s3o_drain_active == 1` should switch to `s3o_drain_active > 0` to keep working when multiple drains overlap.
 - Add an alert on any non-zero rate of `s3o_drain_race_aborted_total`. A persistent rate suggests a longer-than-expected gap between `EligibleForWrite` and the backend PUT (e.g., very large objects against a fast-draining backend).
 
-### v0.55.x – v0.56.x
+### v0.55.x - v0.56.x
 
 **UsageTracker swapped to atomic.Pointer snapshots ([#874](https://github.com/afreidah/s3-orchestrator/pull/874), v0.56.0)**
 
 The internal `UsageTracker` (the per-backend rolling-window counter feeding `BackendsWithinLimits` and the eligibility filter) replaced its `sync.RWMutex` pair with `atomic.Pointer[T]` snapshots and copy-on-write writes. The hot read path no longer touches a mutex.
 
-No behavior change. Measured improvement on parallel `WithinLimits` benchmarks: 65.93 ns/op → 29.80 ns/op (~2.2× under contention). The change only matters at high request rates where `BackendsWithinLimits` is dispatched per request; below ~500 RPS it is in the noise.
+No behavior change. Measured improvement on parallel `WithinLimits` benchmarks: 65.93 ns/op -> 29.80 ns/op (~2.2x under contention). The change only matters at high request rates where `BackendsWithinLimits` is dispatched per request; below ~500 RPS it is in the noise.
 
 **Operator action items:** none.
 
-### v0.53.x – v0.54.x
+### v0.53.x - v0.54.x
 
 **Optimize PutObject buffering + integrity pipeline ([#869](https://github.com/afreidah/s3-orchestrator/pull/869), v0.54.0)**
 
@@ -267,7 +267,7 @@ The `PutObject` body materialization layer (the buffer that lets the write path 
 **Operator action items after upgrade:**
 
 - Container memory limits sized off pre-v0.54 baselines can be tightened; equivalently, the previous limits absorb more concurrent in-flight PUTs.
-- Tempfiles are written under the orchestrator's `TMPDIR` (defaults to `/tmp`). Operators running with a tmpfs `/tmp` should size it to accommodate `max_concurrent_writes × p99_object_size`, or set `TMPDIR` to a disk-backed location.
+- Tempfiles are written under the orchestrator's `TMPDIR` (defaults to `/tmp`). Operators running with a tmpfs `/tmp` should size it to accommodate `max_concurrent_writes x p99_object_size`, or set `TMPDIR` to a disk-backed location.
 
 **Same-backend server-side copy fast path ([#868](https://github.com/afreidah/s3-orchestrator/pull/868), v0.53.0)**
 
@@ -280,9 +280,9 @@ New surfaces:
 
 **Operator action items after upgrade:**
 
-- If you compute "data transferred" from `s3o_usage_egress_bytes` + `s3o_usage_ingress_bytes`, native-copy traffic is now invisible to that metric (which is correct — no bytes left the backend). Add a panel querying for spans with `s3o.native_copy=true` if you need a copy-volume signal.
+- If you compute "data transferred" from `s3o_usage_egress_bytes` + `s3o_usage_ingress_bytes`, native-copy traffic is now invisible to that metric (which is correct - no bytes left the backend). Add a panel querying for spans with `s3o.native_copy=true` if you need a copy-volume signal.
 
-### v0.51.x – v0.52.x
+### v0.51.x - v0.52.x
 
 **Per-operation completion observability centralized ([#866](https://github.com/afreidah/s3-orchestrator/pull/866), v0.52.0)**
 
@@ -298,7 +298,7 @@ When the read path is in degraded mode (one source unhealthy) it fires probe rea
 
 **Operator action items:** none.
 
-### v0.49.x – v0.50.x
+### v0.49.x - v0.50.x
 
 **Consumer-declared interfaces for proxy subpackages ([#847](https://github.com/afreidah/s3-orchestrator/pull/847), v0.49.0)**
 
@@ -319,11 +319,11 @@ Internal refactor only (proxy package decomposed into focused subpackages, [#845
 
 **Surface orphan-enqueue failures during DB outages ([#824](https://github.com/afreidah/s3-orchestrator/pull/824), v0.47.5)**
 
-When the write path enqueues a cleanup row after a partial write failure and the enqueue itself fails (e.g., the DB is unreachable), the orphan bytes were previously silent — the backend held data the orchestrator could not see. The failure path now emits a metric and an audit event so operators can pivot to the exact backend / key / size and reconcile manually once DB connectivity returns.
+When the write path enqueues a cleanup row after a partial write failure and the enqueue itself fails (e.g., the DB is unreachable), the orphan bytes were previously silent - the backend held data the orchestrator could not see. The failure path now emits a metric and an audit event so operators can pivot to the exact backend / key / size and reconcile manually once DB connectivity returns.
 
 New surfaces:
 
-- `s3o_cleanup_enqueue_failures_total{backend, reason, stage}` counter. `stage="enqueue"` means the cleanup_queue row itself did not persist (worst case — the cleanup worker will never see this orphan). `stage="orphan_bytes"` means the row persisted but the `orphan_bytes` counter did not increment (quota accounting drifts but cleanup still runs).
+- `s3o_cleanup_enqueue_failures_total{backend, reason, stage}` counter. `stage="enqueue"` means the cleanup_queue row itself did not persist (worst case - the cleanup worker will never see this orphan). `stage="orphan_bytes"` means the row persisted but the `orphan_bytes` counter did not increment (quota accounting drifts but cleanup still runs).
 - `storage.OrphanEnqueueFailed` audit event carrying backend, key, size, stage, error.
 
 **Operator action items after upgrade:**
@@ -464,7 +464,7 @@ already encode.
 without checking that the upload belonged to the bucket on the request
 URL. An authenticated caller for any bucket could manipulate in-flight
 multipart uploads owned by another bucket: write parts into them, abort
-them, or complete them under their own bucket's URL — silent cross-tenant
+them, or complete them under their own bucket's URL - silent cross-tenant
 data corruption with no detection signal.
 
 The fix adds bucket and key parameters to the manager-layer methods that
@@ -507,7 +507,7 @@ died mid-process does not leave the row stuck.
 **Database migration:** `00011_cleanup_queue_claim` runs automatically on
 startup. The migration uses `+goose NO TRANSACTION` plus
 `CREATE INDEX CONCURRENTLY` so applying it against a populated table does
-not require a write outage. `ExpectedSchemaVersion` is bumped 10 → 11.
+not require a write outage. `ExpectedSchemaVersion` is bumped 10 -> 11.
 
 **New configuration field:**
 
@@ -620,21 +620,21 @@ Cleanup queue rows that exhausted their retry budget previously stayed pinned in
 
 **Database migration:**
 
-- `00009_cleanup_dlq.sql` — adds the `cleanup_dlq` table (auto-applied on startup). The columns mirror `cleanup_queue` plus `original_id`, `first_enqueued_at`, and `moved_at` so each DLQ row carries enough context to investigate the orphan.
+- `00009_cleanup_dlq.sql` - adds the `cleanup_dlq` table (auto-applied on startup). The columns mirror `cleanup_queue` plus `original_id`, `first_enqueued_at`, and `moved_at` so each DLQ row carries enough context to investigate the orphan.
 
 **Behavioral changes:**
 
-- **Exhaustion path** — the cleanup worker now calls `MoveCleanupToDLQ(id, last_error)` instead of `RetryCleanupItem(id, 0, ...)` when `attempts` reaches 10. The move is a single transaction (read queue row → insert DLQ row → delete queue row) so the row is never duplicated or lost.
-- **Quota accounting unchanged** — `orphan_bytes` is intentionally NOT decremented when a row is moved to the DLQ. The backend object is still on disk; the bytes really are still occupying the backend's quota. Reclaim happens only when an operator confirms the object is gone (e.g. via the reconciler) and writes off the row deliberately.
+- **Exhaustion path** - the cleanup worker now calls `MoveCleanupToDLQ(id, last_error)` instead of `RetryCleanupItem(id, 0, ...)` when `attempts` reaches 10. The move is a single transaction (read queue row -> insert DLQ row -> delete queue row) so the row is never duplicated or lost.
+- **Quota accounting unchanged** - `orphan_bytes` is intentionally NOT decremented when a row is moved to the DLQ. The backend object is still on disk; the bytes really are still occupying the backend's quota. Reclaim happens only when an operator confirms the object is gone (e.g. via the reconciler) and writes off the row deliberately.
 
 **New metrics:**
 
-- `s3o_cleanup_dlq_depth` (gauge) — current count of unrecoverable orphans waiting in the DLQ.
-- `s3o_cleanup_dlq_enqueued_total{backend}` (counter) — rate of graduations per backend; one backend dominating means that backend's delete path is broken.
+- `s3o_cleanup_dlq_depth` (gauge) - current count of unrecoverable orphans waiting in the DLQ.
+- `s3o_cleanup_dlq_enqueued_total{backend}` (counter) - rate of graduations per backend; one backend dominating means that backend's delete path is broken.
 
 **New audit event:**
 
-- `cleanup_queue.exhausted_to_dlq` — emitted with the row's key, backend, attempts, size_bytes, and final last_error each time a queue row is graduated.
+- `cleanup_queue.exhausted_to_dlq` - emitted with the row's key, backend, attempts, size_bytes, and final last_error each time a queue row is graduated.
 
 **Operator action items after upgrade:**
 
@@ -663,23 +663,23 @@ integrity:
 
 A `verify_on_replicate` field was also parsed from this section, but nothing read it and replicas were never hash-checked. It became a real setting in v0.101.x.
 
-All fields are optional and default to disabled. This is a non-breaking change — existing configs work without modification.
+All fields are optional and default to disabled. This is a non-breaking change - existing configs work without modification.
 
 **New admin commands:**
 
-- `admin scrub [-batch-size N]` — trigger an on-demand integrity scrub cycle.
-- `admin backfill-checksums [-batch-size N]` — compute and store hashes for objects written before integrity was enabled.
+- `admin scrub [-batch-size N]` - trigger an on-demand integrity scrub cycle.
+- `admin backfill-checksums [-batch-size N]` - compute and store hashes for objects written before integrity was enabled.
 
 **New metrics:**
 
-- `s3o_integrity_checks_total{operation}` — hash verifications performed (read, scrub).
-- `s3o_integrity_errors_total{operation}` — hash mismatches detected (read, scrub).
+- `s3o_integrity_checks_total{operation}` - hash verifications performed (read, scrub).
+- `s3o_integrity_errors_total{operation}` - hash mismatches detected (read, scrub).
 
 **Behavioral notes:**
 
 - Integrity config is hot-reloadable via SIGHUP.
 - The scrubber reads objects from backends, which counts against usage quota (API calls + egress).
-- Encrypted objects are decrypted before hashing — the hash is always computed on plaintext.
+- Encrypted objects are decrypted before hashing - the hash is always computed on plaintext.
 
 ### v0.19.x
 
@@ -691,12 +691,12 @@ All fields are optional and default to disabled. This is a non-breaking change �
 **Config validation:**
 
 - `encryption.master_key_file` must exist and be exactly 32 bytes at startup. Previously validated only at first use.
-- Invalid worker pool concurrency (≤ 0) logs a warning when clamped to 1.
+- Invalid worker pool concurrency (<= 0) logs a warning when clamped to 1.
 
 **Metrics:**
 
-- `s3o_rebalance_pending` (gauge) — objects planned for rebalance in the current cycle.
-- `s3o_encryption_unknown_key_id_total` (counter) — decryption attempts with an unrecognized keyID.
+- `s3o_rebalance_pending` (gauge) - objects planned for rebalance in the current cycle.
+- `s3o_encryption_unknown_key_id_total` (counter) - decryption attempts with an unrecognized keyID.
 
 **Behavioral changes:**
 
@@ -713,8 +713,8 @@ All fields are optional and default to disabled. This is a non-breaking change �
 
 **New config fields:**
 
-- `buckets[].max_multipart_uploads` — optional limit on active multipart uploads per bucket (default: 0, unlimited). Returns `503 SlowDown` when exceeded.
-- `telemetry.metrics.listen` — optional separate address for the metrics endpoint (e.g., `127.0.0.1:9091`).
+- `buckets[].max_multipart_uploads` - optional limit on active multipart uploads per bucket (default: 0, unlimited). Returns `503 SlowDown` when exceeded.
+- `telemetry.metrics.listen` - optional separate address for the metrics endpoint (e.g., `127.0.0.1:9091`).
 
 ### v0.14.x
 
@@ -759,14 +759,14 @@ All fields are optional and default to disabled. This is a non-breaking change �
 
 **Behavioral changes:**
 
-- **Worker pool parallelism** — the cleanup worker, replicator, single-key DeleteObject, batch DeleteObjects, and rebalancer now use a shared bounded-concurrency worker pool. The cleanup worker and replicator concurrency are configurable; the rebalancer retains its existing `rebalance.concurrency` field.
-- **Orphan bytes tracking** — the cleanup queue now tracks the size of each enqueued item. On enqueue, the backend's `orphan_bytes` counter is incremented; on successful cleanup, it is decremented. All capacity checks (write routing, replication target selection, spread utilization ratio) subtract `orphan_bytes` from available space to prevent quota overcommitment during backend outages.
-- **Exhausted cleanup items preserved** — items that exceed 10 retry attempts remain in the queue with `orphan_bytes` still reserved, rather than being removed. This prevents the write path from overcommitting storage. Operators must manually resolve these items.
-- **Overwrite displaced copies** — when a PutObject overwrites an existing key, stale copies on other backends are now enqueued for cleanup with their size tracked, rather than being silently abandoned if the immediate delete fails.
+- **Worker pool parallelism** - the cleanup worker, replicator, single-key DeleteObject, batch DeleteObjects, and rebalancer now use a shared bounded-concurrency worker pool. The cleanup worker and replicator concurrency are configurable; the rebalancer retains its existing `rebalance.concurrency` field.
+- **Orphan bytes tracking** - the cleanup queue now tracks the size of each enqueued item. On enqueue, the backend's `orphan_bytes` counter is incremented; on successful cleanup, it is decremented. All capacity checks (write routing, replication target selection, spread utilization ratio) subtract `orphan_bytes` from available space to prevent quota overcommitment during backend outages.
+- **Exhausted cleanup items preserved** - items that exceed 10 retry attempts remain in the queue with `orphan_bytes` still reserved, rather than being removed. This prevents the write path from overcommitting storage. Operators must manually resolve these items.
+- **Overwrite displaced copies** - when a PutObject overwrites an existing key, stale copies on other backends are now enqueued for cleanup with their size tracked, rather than being silently abandoned if the immediate delete fails.
 
 **New metrics:**
 
-- `s3o_quota_orphan_bytes` (gauge, `backend` label) — bytes reserved by pending cleanup items per backend
+- `s3o_quota_orphan_bytes` (gauge, `backend` label) - bytes reserved by pending cleanup items per backend
 
 ### v0.11.x
 
@@ -794,7 +794,7 @@ All fields are optional and default to disabled. This is a non-breaking change �
 - `x-amz-meta-*` user metadata passthrough on PutObject, GetObject, HeadObject, CopyObject, and multipart uploads
 - `govulncheck` CI job for Go dependency vulnerability scanning
 - Optional Redis shared counters for multi-instance usage tracking with circuit breaker fallback to local counters
-- Dashboard file download — download individual objects directly from the file tree in the admin UI
+- Dashboard file download - download individual objects directly from the file tree in the admin UI
 
 **New dependencies:**
 

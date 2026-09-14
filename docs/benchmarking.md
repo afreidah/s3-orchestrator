@@ -65,10 +65,10 @@ Sample output:
 goos: linux
 goarch: amd64
 pkg: github.com/afreidah/s3-orchestrator/internal/proxy/object
-                              │ bench-before │          bench-after          │
-                              │    sec/op    │   sec/op    vs base           │
-LocationCache_Get_Hit-8          45.2ns ± 1%   44.8ns ± 2%  ~ (p=0.35 n=6)
-LocationCache_Set-8              112ns  ± 3%   245ns  ± 1%  +119% (p=0.002)
+                              | bench-before |          bench-after          |
+                              |    sec/op    |   sec/op    vs base           |
+LocationCache_Get_Hit-8          45.2ns +/- 1%   44.8ns +/- 2%  ~ (p=0.35 n=6)
+LocationCache_Set-8              112ns  +/- 3%   245ns  +/- 1%  +119% (p=0.002)
 ```
 
 ### 5. Interpret results

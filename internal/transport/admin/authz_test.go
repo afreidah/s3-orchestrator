@@ -70,6 +70,9 @@ func registryGranting(t *testing.T, perms core.PermissionSet, admin map[core.Res
 			Source:      provisioning.SourceStore,
 		}},
 	}
+	// The shared admin token resolves onto the root user rather than onto a
+	// privileged flag, so a registry a token test runs against has to hold one.
+	view.Users = append(view.Users, rootUser())
 	registry, err := auth.NewBucketRegistry(&view)
 	if err != nil {
 		t.Fatalf("NewBucketRegistry: %v", err)
@@ -392,5 +395,40 @@ func TestAuthz_GrantedOperationReachesTheStore(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// rootRegistry builds the registry a deployment carrying a shared admin token
+// has: one root user holding every permission, which is what that token
+// resolves onto now that it is no longer a privileged flag at the guard.
+//
+// The buckets the object tests name are declared, because root's bucket reach
+// is expanded across what a deployment declares rather than being open-ended.
+func rootRegistry(tb testing.TB) *auth.BucketRegistry {
+	tb.Helper()
+	v := provisioning.Merge(
+		[]config.BucketConfig{{Name: "bucket"}, {Name: grantedBucket}},
+		config.AuthConfig{LegacySharedToken: "test-token"},
+		&provisioning.Snapshot{},
+	)
+	registry, err := auth.NewBucketRegistry(&v)
+	if err != nil {
+		tb.Fatalf("NewBucketRegistry: %v", err)
+	}
+	return registry
+}
+
+// rootUser is the identity the shared admin token resolves onto: every
+// permission on every bucket, and every control-plane permission.
+func rootUser() provisioning.User {
+	return provisioning.User{
+		ID:         provisioning.RootUserID,
+		Name:       "root",
+		AllBuckets: core.PermAll,
+		Admin: map[core.Resource]core.PermissionSet{
+			{Kind: core.ResourceInstance}:                             core.PermAdminAll,
+			{Kind: core.ResourceBackend, Name: core.ResourceWildcard}: core.PermAdminAll,
+		},
+		Source: provisioning.SourceConfig,
 	}
 }

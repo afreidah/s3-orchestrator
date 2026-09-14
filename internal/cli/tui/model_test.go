@@ -296,25 +296,57 @@ func TestHandleKey_TableDelegationAndUnknownMsg(t *testing.T) {
 
 func TestResolveTarget(t *testing.T) {
 	// flags win and the address gets an http prefix
-	addr, tok, err := resolveTarget([]string{"-addr", "host:9000", "-token", "tok"})
-	if err != nil || addr != "http://host:9000" || tok != "tok" {
-		t.Fatalf("flags: addr=%q tok=%q err=%v", addr, tok, err)
+	got, err := resolveTarget([]string{"-addr", "host:9000", "-token", "tok"})
+	if err != nil || got.baseAddr != "http://host:9000" || got.token != "tok" {
+		t.Fatalf("flags: addr=%q tok=%q err=%v", got.baseAddr, got.token, err)
+	}
+	if got.signs() {
+		t.Error("a token-only target reported that it signs")
 	}
 
 	// an explicit scheme is left untouched
-	if addr, _, _ := resolveTarget([]string{"-addr", "https://x", "-token", "t"}); addr != "https://x" {
-		t.Errorf("scheme passthrough: addr=%q", addr)
+	if got, _ := resolveTarget([]string{"-addr", "https://x", "-token", "t"}); got.baseAddr != "https://x" {
+		t.Errorf("scheme passthrough: addr=%q", got.baseAddr)
+	}
+
+	// a keypair is resolved and reported as the signing credential
+	got, err = resolveTarget([]string{"-addr", "host:9000", "-access-key", "AK", "-secret-key", "SK"})
+	if err != nil || !got.signs() || got.accessKeyID != "AK" || got.secretKey != "SK" {
+		t.Fatalf("keypair: %+v err=%v", got, err)
 	}
 
 	// an unknown flag surfaces the parse error
-	if _, _, err := resolveTarget([]string{"-nope"}); err == nil {
+	if _, err := resolveTarget([]string{"-nope"}); err == nil {
 		t.Error("bad flag: expected error")
 	}
 
 	// with no flags/env and an unreadable config, resolution fails
 	t.Setenv("S3O_ADMIN_ADDR", "")
 	t.Setenv("S3O_ADMIN_TOKEN", "")
-	if _, _, err := resolveTarget([]string{"-config", "/no/such/file.yaml"}); err == nil {
+	if _, err := resolveTarget([]string{"-config", "/no/such/file.yaml"}); err == nil {
 		t.Error("missing target: expected error")
+	}
+}
+
+// TestResolveTarget_KeypairNeedsNoConfig pins that a keypair and an address
+// given outright resolve without a config file.
+//
+// The config is loaded whenever a token is still missing, and a signing caller
+// has no token by design, so without this the documented two-variable setup
+// fails on a machine that holds no server config.
+func TestResolveTarget_KeypairNeedsNoConfig(t *testing.T) {
+	t.Setenv("S3O_ADMIN_ADDR", "")
+	t.Setenv("S3O_ADMIN_TOKEN", "")
+
+	got, err := resolveTarget([]string{
+		"-config", "/no/such/file.yaml",
+		"-addr", "host:9000",
+		"-access-key", "AK", "-secret-key", "SK",
+	})
+	if err != nil {
+		t.Fatalf("a keypair still required the config file: %v", err)
+	}
+	if !got.signs() || got.baseAddr != "http://host:9000" {
+		t.Errorf("target = %+v", got)
 	}
 }

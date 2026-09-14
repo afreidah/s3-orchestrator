@@ -44,6 +44,10 @@ const presignedMaxExpiry = 7 * 24 * time.Hour
 const (
 	errAuthFailed = "authentication failed"
 	sigV4Prefix   = "AWS4-HMAC-SHA256 "
+
+	// dummySecret keeps an unknown access key costing the same work as a known
+	// one, so response timing cannot be used to enumerate valid keys.
+	dummySecret = "dummy-secret-for-constant-time-auth"
 )
 
 // -------------------------------------------------------------------------
@@ -66,6 +70,7 @@ type entry struct {
 type BucketRegistry struct {
 	byAccessKey    map[string]entry      // access_key_id -> identity and its secret
 	byToken        map[string]entry      // token -> identity
+	byUserID       map[string]*User      // user id -> identity, for a caller that proved itself another way
 	multipartLimit map[string]int        // bucket name -> max active multipart uploads (0 = unlimited)
 	notices        []provisioning.Notice // what registration found and served through anyway
 }
@@ -85,6 +90,7 @@ func NewBucketRegistry(v *provisioning.View) (*BucketRegistry, error) {
 	br := &BucketRegistry{
 		byAccessKey:    make(map[string]entry),
 		byToken:        make(map[string]entry),
+		byUserID:       make(map[string]*User, len(v.Users)),
 		multipartLimit: make(map[string]int),
 		notices:        slices.Clone(v.Notices),
 	}
@@ -103,8 +109,10 @@ func NewBucketRegistry(v *provisioning.View) (*BucketRegistry, error) {
 			Name:       u.Name,
 			FromConfig: u.Source == provisioning.SourceConfig,
 			grants:     maps.Clone(u.Grants),
+			allBuckets: u.AllBuckets,
 			admin:      maps.Clone(u.Admin),
 		}
+		br.byUserID[u.ID] = users[u.ID]
 	}
 
 	// Config credentials claim their keys first, so a stored one colliding with
@@ -189,6 +197,39 @@ func (br *BucketRegistry) addToken(c *provisioning.Credential, u *User) error {
 	return nil
 }
 
+// UserByID returns the identity with the given id, for a caller that proved
+// itself by something other than a credential this registry holds - the shared
+// admin token, or a dashboard session naming the user it logged in as.
+//
+// It authenticates nothing on its own. Whatever proved the caller has already
+// done so; this only resolves the name to the grants behind it.
+func (br *BucketRegistry) UserByID(id string) (*User, bool) {
+	u, ok := br.byUserID[id]
+	return u, ok
+}
+
+// AuthenticateSecret verifies a keypair presented whole rather than used to
+// sign, which is what a form login submits.
+//
+// The secret is compared in constant time, and an unknown access key is
+// compared against a dummy of the same shape so both outcomes take the same
+// work. Without that, response timing would enumerate valid access keys.
+//
+// This is not a substitute for SigV4 on an API: presenting the secret exposes
+// it to anything on the path, which is acceptable for a browser posting over
+// TLS to the dashboard and is not acceptable for a client library.
+func (br *BucketRegistry) AuthenticateSecret(accessKey, secret string) (*User, error) {
+	e, ok := br.byAccessKey[accessKey]
+	known := e.secret
+	if !ok {
+		known = dummySecret
+	}
+	if subtle.ConstantTimeCompare([]byte(secret), []byte(known)) != 1 || !ok {
+		return nil, errors.New(errAuthFailed)
+	}
+	return e.user, nil
+}
+
 // MaxMultipartUploads returns the configured limit for active multipart
 // uploads on the given bucket. Returns 0 if unlimited.
 func (br *BucketRegistry) MaxMultipartUploads(bucket string) int {
@@ -235,7 +276,7 @@ func (br *BucketRegistry) authenticateSigV4(r *http.Request, authHeader string) 
 	}
 
 	e, ok := br.byAccessKey[accessKey]
-	secret := "dummy-secret-for-constant-time-auth"
+	secret := dummySecret
 	if ok {
 		secret = e.secret
 	}
@@ -445,7 +486,7 @@ func (br *BucketRegistry) authenticatePresigned(r *http.Request) (*User, error) 
 	}
 
 	e, ok := br.byAccessKey[accessKey]
-	secret := "dummy-secret-for-constant-time-auth"
+	secret := dummySecret
 	if ok {
 		secret = e.secret
 	}

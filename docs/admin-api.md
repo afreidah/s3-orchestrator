@@ -10,26 +10,47 @@ The reference below is generated from the server's route table, so it always mat
 
 ## Authentication
 
-Every endpoint requires the `X-Admin-Token` header:
+The admin API takes the same credential the S3 API does: an access key and secret, SigV4-signed. Use `s3-orchestrator admin`, which signs for you:
+
+```bash
+s3-orchestrator admin -access-key AKIA... -secret-key ... status
+```
+
+The keypair also reads from `$S3O_ACCESS_KEY_ID` and `$S3O_SECRET_ACCESS_KEY`. Hand-signing SigV4 in a shell is not worth doing, which is why the examples on this page use `adminctl` rather than `curl`.
+
+Declare the credential that administers a deployment under `auth.root`:
+
+```yaml
+auth:
+  root:
+    access_key_id: "AKIAROOT..."
+    secret_access_key: "..."
+```
+
+That is an ordinary identity holding every permission on every resource, not a special case in the request path. Issue narrower credentials through the provisioning API and grant them what they need.
+
+### The shared token
+
+`X-Admin-Token` still works and is still what `ui.admin_token` (falling back to `ui.admin_key`) sets:
 
 ```bash
 curl -H "X-Admin-Token: YOUR_ADMIN_TOKEN" \
   http://localhost:9000/admin/api/status
 ```
 
-The token is the `ui.admin_token` value from the configuration file, falling back to `ui.admin_key` when it is not set. The `s3-orchestrator admin` subcommand reads it from configuration automatically, so prefer that for interactive use.
+It now resolves onto the same root identity rather than authorizing by itself, so what it reaches is what that identity holds. Nothing that worked before stops working; a future release removes it in favour of the keypair.
 
-Requests without a valid token get `401` with a JSON body. Request bodies are capped at 1 MB.
+Requests without a valid credential get `401` with a JSON body. Request bodies are capped at 1 MB.
 
 ## Authorization
 
 The endpoints under `/admin/api/objects` read and write object data, reaching the same service the S3 API does. They are authorized against the permissions the caller's grant carries, not against the token alone: browsing needs `list`, downloading needs `read`, uploading needs `write`, removing a key or a prefix needs `delete`, and the tag endpoints need `tags`. A caller whose grant does not carry what the operation needs gets `403`.
 
-A provisioned credential reaches those endpoints with exactly the grants it holds. Pass its token in the same `X-Admin-Token` header:
+A provisioned credential reaches those endpoints with exactly the grants it holds:
 
 ```bash
-curl -H "X-Admin-Token: $CREDENTIAL_TOKEN" \
-  http://localhost:9000/admin/api/objects/photos/holiday.jpg
+s3-orchestrator admin -access-key AKIA... -secret-key ... \
+  object-locations -key photos/holiday.jpg
 ```
 
 A prefix naming no single bucket -- the empty prefix, or a partial name like `pho` -- cannot be authorized against one grant and is refused.
@@ -55,7 +76,7 @@ The permissions over a backend are the ones that name one: drain, decommission, 
 
 `admin-provision` is deliberately its own permission rather than part of `admin-config`: a grant carrying it can mint a grant carrying anything.
 
-The configured `ui.admin_token` still reaches every endpoint, which is what an existing deployment relies on. That is deprecated: using it to reach object data logs a warning naming the endpoint, and a future release removes it in favour of one credential type across both surfaces. Issue a provisioned credential instead.
+The configured `ui.admin_token` still reaches every endpoint, because it resolves to the root identity and that identity holds everything. Using it to reach object data logs a warning naming the endpoint. Issue a provisioned credential instead, or declare `auth.root` and sign.
 
 ## Streaming progress
 

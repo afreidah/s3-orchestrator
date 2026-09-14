@@ -53,7 +53,7 @@ func newObjectsHandler(t *testing.T, mock core.ObjectStore) *Handler {
 		dbHealthy: cb.IsHealthy,
 		objects:   objectsOver(t, mock),
 		token:     "test-token",
-		registry:  func() *auth.BucketRegistry { return nil },
+		registry:  func() *auth.BucketRegistry { return rootRegistry(t) },
 		logLevel:  &lv,
 	}
 }
@@ -172,6 +172,7 @@ func objectsAPIHandler(t *testing.T) (*Handler, *opstest.MockObjectAPI, *http.Se
 		}),
 		token:    "test-token",
 		logLevel: &lv,
+		registry: func() *auth.BucketRegistry { return rootRegistry(t) },
 	}
 	mux := http.NewServeMux()
 	h.Register(mux)

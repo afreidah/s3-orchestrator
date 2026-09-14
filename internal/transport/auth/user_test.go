@@ -428,3 +428,47 @@ func TestUser_CanAdminHoldsPermissionsApart(t *testing.T) {
 		}
 	}
 }
+
+// TestUser_AllBucketsIsTheWildcard verifies the wildcard is carried and
+// reported, which is what authorizes an operation spanning the namespace.
+func TestUser_AllBucketsIsTheWildcard(t *testing.T) {
+	t.Parallel()
+
+	plain := NewUser("u1", "ci", map[string]core.PermissionSet{"photos": core.PermRead})
+	if got := plain.AllBuckets(); got != 0 {
+		t.Errorf("a user holding no wildcard reported %q", got)
+	}
+
+	wild := NewUser("u2", "ops", nil).WithAllBuckets(core.PermList | core.PermRead)
+	if got := wild.AllBuckets(); got != core.PermList|core.PermRead {
+		t.Errorf("AllBuckets() = %q, want list,read", got)
+	}
+	if (*User)(nil).AllBuckets() != 0 {
+		t.Error("a nil user reported a wildcard")
+	}
+}
+
+// TestUser_WildcardReachesAnUnnamedBucket verifies the wildcard answers for a
+// bucket no grant names, while a named grant still answers alone so broad
+// access can be carved down on one bucket.
+func TestUser_WildcardReachesAnUnnamedBucket(t *testing.T) {
+	t.Parallel()
+
+	u := NewUser("u1", "ops", map[string]core.PermissionSet{
+		"secrets": core.PermListBuckets,
+	}).WithAllBuckets(core.PermAll)
+
+	if !u.CanReach("anything") || !u.Can("anything", core.PermWrite) {
+		t.Error("the wildcard did not reach a bucket no grant names")
+	}
+	if u.Can("secrets", core.PermWrite) {
+		t.Error("the wildcard widened a named grant that carved it down")
+	}
+	held, ok := u.Permissions("anything")
+	if !ok || held != core.PermAll {
+		t.Errorf("Permissions(unnamed) = %q,%v, want the wildcard", held, ok)
+	}
+	if held, _ := u.Permissions("secrets"); held != core.PermListBuckets {
+		t.Errorf("Permissions(named) = %q, want the named grant alone", held)
+	}
+}

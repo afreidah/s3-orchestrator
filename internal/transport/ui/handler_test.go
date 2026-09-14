@@ -2143,6 +2143,6 @@ func TestAPICleanExcessStatus_RequiresAuth(t *testing.T) {
 // assembly applies before publishing it.
 func declaredFrom(cfg *config.Config) *provisioning.Declared {
 	d := provisioning.NewDeclared()
-	d.Set(provisioning.Merge(cfg.Buckets, &provisioning.Snapshot{}).Buckets)
+	d.Set(provisioning.Merge(cfg.Buckets, config.AuthConfig{}, &provisioning.Snapshot{}).Buckets)
 	return d
 }

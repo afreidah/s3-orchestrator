@@ -374,7 +374,11 @@ func TestMain(m *testing.M) {
 		Objects:   stack.Objects,
 		Multipart: stack.Multipart,
 	}
-	view := provisioning.Merge(cfg.Buckets, &provisioning.Snapshot{})
+	// The shared admin token resolves onto a root identity rather than
+	// authorizing by itself, so the view has to declare one or every admin
+	// request in these tests is refused.
+	view := provisioning.Merge(cfg.Buckets,
+		config.AuthConfig{LegacySharedToken: adminToken}, &provisioning.Snapshot{})
 	bucketAuth, err := auth.NewBucketRegistry(&view)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build bucket registry: %v\n", err)
@@ -1246,9 +1250,14 @@ func newTestS3Backend(t *testing.T, name string) *s3be.S3Backend {
 
 // mustBucketRegistry builds a registry from config the test controls, failing
 // the test if that config turns out to be ambiguous.
+//
+// The shared admin token is declared so a root identity exists: the token
+// resolves onto that identity rather than authorizing by itself, so a registry
+// without one refuses every admin request a test makes.
 func mustBucketRegistry(tb testing.TB, buckets []config.BucketConfig) *auth.BucketRegistry {
 	tb.Helper()
-	v := provisioning.Merge(buckets, &provisioning.Snapshot{})
+	v := provisioning.Merge(buckets,
+		config.AuthConfig{LegacySharedToken: adminToken}, &provisioning.Snapshot{})
 	br, err := auth.NewBucketRegistry(&v)
 	if err != nil {
 		tb.Fatalf("NewBucketRegistry: %v", err)
@@ -1261,6 +1270,6 @@ func mustBucketRegistry(tb testing.TB, buckets []config.BucketConfig) *auth.Buck
 // assembly performs before publishing it.
 func declaredForConfig(buckets []config.BucketConfig) *provisioning.Declared {
 	d := provisioning.NewDeclared()
-	d.Set(provisioning.Merge(buckets, &provisioning.Snapshot{}).Buckets)
+	d.Set(provisioning.Merge(buckets, config.AuthConfig{}, &provisioning.Snapshot{}).Buckets)
 	return d
 }
