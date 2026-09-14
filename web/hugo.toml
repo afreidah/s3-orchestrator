@@ -32,6 +32,12 @@ disableKinds = ["taxonomy", "term"]
   # HTTP it disagrees with the canonical tag every page carries, leaving og:url
   # naming a different URL than the page claims for itself.
   disableExplicitIndexURLs = true
+  # Sections kept out of search results. Pages under these prefixes carry a
+  # noindex robots tag and are left out of the sitemap, so the two cannot
+  # disagree about which pages a search result may land on. The generated Go
+  # API reference outnumbers the documentation two to one, and a crawler
+  # spending its budget there reaches less of what the site is for.
+  noIndexSections = ["/godoc/"]
   editURL = "https://github.com/afreidah/s3-orchestrator/edit/main/web/content/"
   showVisitedLinks = false
   disableLandingPageButton = false
