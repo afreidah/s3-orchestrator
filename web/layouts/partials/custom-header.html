@@ -13,6 +13,24 @@
 */ -}}
 <link rel="canonical" href="{{ .Permalink }}">
 {{- /*
+  Keeps the sections named by noIndexSections out of search results. Leaving
+  them out of the sitemap asks for nothing on its own: a page reached by a link
+  is crawled and indexed whether or not a sitemap mentions it, and the generated
+  Go API reference is linked from both the landing page and the menu.
+
+  Indexing is what is refused, not crawling. The pages stay followable so the
+  documentation they link to is still reached through them, which a robots.txt
+  disallow would prevent by stopping the crawler at the section boundary.
+*/ -}}
+{{- $page := . }}
+{{- $noIndex := false }}
+{{- range site.Params.noIndexSections }}
+{{- if hasPrefix $page.RelPermalink . }}{{ $noIndex = true }}{{ end }}
+{{- end }}
+{{- if $noIndex }}
+<meta name="robots" content="noindex, follow">
+{{- end }}
+{{- /*
   The logo is the largest element painted on every page, and the browser reaches
   it only after the stylesheets resolve. Naming it here starts the fetch with the
   document rather than at the end of the critical path.
