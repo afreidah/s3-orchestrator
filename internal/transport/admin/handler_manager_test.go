@@ -86,7 +86,6 @@ func newTestHandlerWithManager(t *testing.T) *Handler {
 		lifecycle:    mock,
 		dbHealthy:    cb.IsHealthy,
 		cleanup:      mock,
-		token:        "test-token",
 		logLevel:     &lv,
 		registry:     func() *auth.BucketRegistry { return rootRegistry(t) },
 	}
@@ -127,11 +126,10 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 	})
 }
 
-// doAuth builds a request pre-populated with the correct admin token.
-func doAuth(method, path string, body string) *http.Request {
-	req := httptest.NewRequestWithContext(context.Background(), method, path, strings.NewReader(body))
-	req.Header.Set("X-Admin-Token", "test-token")
-	return req
+// doAuth builds a request signed with the root credential.
+func doAuth(tb testing.TB, method, path string, body string) *http.Request {
+	tb.Helper()
+	return doRoot(tb, method, path, body)
 }
 
 // -------------------------------------------------------------------------
@@ -148,7 +146,7 @@ func TestHandleStatus_EmptyBackends(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/status", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/status", ""))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -174,7 +172,7 @@ func TestHandleCleanupQueue_ReturnsDepth(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/cleanup-queue", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/cleanup-queue", ""))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -202,7 +200,7 @@ func TestHandleCleanupQueue_ItemShape(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/cleanup-queue", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/cleanup-queue", ""))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -242,12 +240,12 @@ func TestHandleObjectLocations_Happy(t *testing.T) {
 	}}, nil).Times(1)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: objectsOver(t, mock), token: "test-token", logLevel: &lv, registry: func() *auth.BucketRegistry { return rootRegistry(t) }}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: objectsOver(t, mock), logLevel: &lv, registry: func() *auth.BucketRegistry { return rootRegistry(t) }}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/object-locations?key=foo", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/object-locations?key=foo", ""))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -283,7 +281,7 @@ func TestHandleObjectLocations_NotFound(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/object-locations?key=ghost", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/object-locations?key=ghost", ""))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
@@ -325,7 +323,7 @@ func TestManagerRouteOutcomes(t *testing.T) {
 			h.Register(mux)
 
 			w := httptest.NewRecorder()
-			mux.ServeHTTP(w, doAuth(tt.method, tt.path, ""))
+			mux.ServeHTTP(w, doAuth(t, tt.method, tt.path, ""))
 
 			if tt.want == 0 {
 				if w.Code >= 500 {
@@ -350,7 +348,7 @@ func TestHandleScrub_IntegrityDisabled(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/scrub", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodPost, "/admin/api/scrub", ""))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -377,7 +375,7 @@ func TestHandleRemoveBackend_NonPurge(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodDelete, "/admin/api/backends/someb", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodDelete, "/admin/api/backends/someb", ""))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -394,7 +392,7 @@ func TestHandleRemoveBackend_PurgePhase1(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodDelete, "/admin/api/backends/b1?purge=true", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodDelete, "/admin/api/backends/b1?purge=true", ""))
 
 	// MockStore is permissive  -  it may return 200 with a confirm_token, or
 	// 400 if the backend doesn't exist in its view. Either is a contract-
@@ -413,7 +411,7 @@ func TestHandleRotateEncryptionKey_NoEncryptor(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/rotate-encryption-key", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodPost, "/admin/api/rotate-encryption-key", ""))
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
@@ -470,7 +468,7 @@ func TestHandleRotateEncryptionKey_BodyValidation(t *testing.T) {
 			h.Register(mux)
 
 			w := httptest.NewRecorder()
-			mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/rotate-encryption-key", tc.body))
+			mux.ServeHTTP(w, doAuth(t, http.MethodPost, "/admin/api/rotate-encryption-key", tc.body))
 
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
@@ -502,7 +500,7 @@ func TestHandleCleanupQueue_DepthError(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/cleanup-queue", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/cleanup-queue", ""))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
@@ -522,7 +520,7 @@ func TestHandleCleanupQueue_PendingError(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/cleanup-queue", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/cleanup-queue", ""))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
@@ -543,7 +541,7 @@ func TestHandleUsageFlush_Error(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/usage-flush", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodPost, "/admin/api/usage-flush", ""))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
@@ -577,7 +575,7 @@ func TestHandleReconcile_CancelledContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	req := doAuth(http.MethodPost, "/admin/api/reconcile", "")
+	req := doAuth(t, http.MethodPost, "/admin/api/reconcile", "")
 	req = req.WithContext(ctx)
 
 	w := httptest.NewRecorder()
@@ -598,7 +596,7 @@ func TestHandleStatus_DashboardError(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/status", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/status", ""))
 
 	if w.Code < 500 {
 		t.Fatalf("status = %d, want 5xx; body=%s", w.Code, w.Body.String())
@@ -613,12 +611,12 @@ func TestHandleObjectLocations_StoreError(t *testing.T) {
 	mock.EXPECT().GetAllObjectLocations(gomock.Any(), "foo").Return(nil, errors.New("query failed")).Times(1)
 	cb := store.NewDatabaseBreaker(config.CircuitBreakerConfig{FailureThreshold: 3})
 	var lv slog.LevelVar
-	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: objectsOver(t, mock), token: "test-token", logLevel: &lv, registry: func() *auth.BucketRegistry { return rootRegistry(t) }}
+	h := &Handler{log: slog.Default().With(logfmt.Component("admin")), dbHealthy: cb.IsHealthy, objects: objectsOver(t, mock), logLevel: &lv, registry: func() *auth.BucketRegistry { return rootRegistry(t) }}
 	mux := http.NewServeMux()
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/object-locations?key=foo", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/object-locations?key=foo", ""))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
@@ -633,7 +631,7 @@ func TestHandleLogLevel_Get(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/log-level", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/log-level", ""))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -648,7 +646,7 @@ func TestHandleLogLevel_PutValid(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPut, "/admin/api/log-level", `{"level":"debug"}`))
+	mux.ServeHTTP(w, doAuth(t, http.MethodPut, "/admin/api/log-level", `{"level":"debug"}`))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -664,7 +662,7 @@ func TestHandleLogLevel_PutInvalidBody(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPut, "/admin/api/log-level", `not json`))
+	mux.ServeHTTP(w, doAuth(t, http.MethodPut, "/admin/api/log-level", `not json`))
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
@@ -682,7 +680,7 @@ func TestHandleDrainProgress_InactiveShape(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/backends/b1/drain", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/backends/b1/drain", ""))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -712,7 +710,7 @@ func TestHandleRemoveBackend_AcknowledgementShape(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodDelete, "/admin/api/backends/b1", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodDelete, "/admin/api/backends/b1", ""))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -737,7 +735,7 @@ func TestHandleRemoveBackend_PurgeTwoPhaseShapes(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodDelete, "/admin/api/backends/b1?purge=true", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodDelete, "/admin/api/backends/b1?purge=true", ""))
 	if w.Code != http.StatusOK {
 		t.Fatalf("preview status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
@@ -753,7 +751,7 @@ func TestHandleRemoveBackend_PurgeTwoPhaseShapes(t *testing.T) {
 	}
 
 	w2 := httptest.NewRecorder()
-	mux.ServeHTTP(w2, doAuth(http.MethodDelete,
+	mux.ServeHTTP(w2, doAuth(t, http.MethodDelete,
 		"/admin/api/backends/b1?purge=true&confirm="+preview.ConfirmToken, ""))
 	if w2.Code != http.StatusOK {
 		t.Fatalf("purge status = %d, want 200; body=%s", w2.Code, w2.Body.String())
@@ -791,7 +789,6 @@ func TestHandleStartDrain_AcknowledgementShape(t *testing.T) {
 		dashboardOps: dashboard.New(mock, st.Runtime.Usage(), nil, st.Runtime, st.Drain),
 		drain:        st.Drain,
 		lifecycle:    mock,
-		token:        "test-token",
 		logLevel:     &lv,
 		registry:     func() *auth.BucketRegistry { return rootRegistry(t) },
 	}
@@ -801,7 +798,7 @@ func TestHandleStartDrain_AcknowledgementShape(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/backends/b1/drain", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodPost, "/admin/api/backends/b1/drain", ""))
 
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202; body=%s", w.Code, w.Body.String())

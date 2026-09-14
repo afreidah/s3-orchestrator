@@ -35,7 +35,7 @@ func doObjectRequest(t *testing.T, url, method string) http.Header {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatalf("do request: %v", err)
@@ -135,7 +135,7 @@ func doTagging(t *testing.T, url, method, body string) (int, string) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
 		t.Fatalf("do request: %v", err)
@@ -225,7 +225,7 @@ func TestPutObject_TaggingHeaderReachesTheStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("x-amz-tagging", "zeta=3&alpha=1")
 	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
@@ -252,7 +252,7 @@ func TestPutObject_BadTaggingHeaderRejectedBeforeTheWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("x-amz-tagging", "a=1&a=2")
 	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {
@@ -344,7 +344,7 @@ func TestCopyObject_TaggingDirectiveReachesTheManager(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("X-Amz-Copy-Source", "/mybucket/src")
 	req.Header.Set("x-amz-tagging-directive", "REPLACE")
 	req.Header.Set("x-amz-tagging", "fresh=1")
@@ -369,7 +369,7 @@ func TestCopyObject_BadDirectiveRejectedBeforeTheCopy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("X-Amz-Copy-Source", "/mybucket/src")
 	req.Header.Set("x-amz-tagging-directive", "MERGE")
 	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
@@ -400,7 +400,7 @@ func TestCreateMultipartUpload_BadTaggingHeaderRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 	req.Header.Set("x-amz-tagging", "a=1&a=2")
 	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test server URL
 	if err != nil {

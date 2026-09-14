@@ -39,7 +39,7 @@ func TestHandleRebalance_HappyPath(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/rebalance", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -69,7 +69,7 @@ func TestHandleRebalance_NotWired(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/rebalance", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -100,7 +100,7 @@ func TestHandleRebalance_SkippedCycle(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/rebalance", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -122,7 +122,7 @@ func TestHandleRebalance_Error(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/rebalance", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 

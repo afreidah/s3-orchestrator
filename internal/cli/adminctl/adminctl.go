@@ -3,10 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// CLI wrapper around the admin API endpoints. Resolves the target server
-// address and admin token with the precedence flag -> environment
-// ($S3O_ADMIN_ADDR / $S3O_ADMIN_TOKEN) -> config file, loading the config only
-// when a value is still missing - so a local binary can target a remote
+// CLI wrapper around the admin API endpoints. Requests are SigV4-signed, so the
+// keypair comes from the caller's flags or environment ($S3O_ACCESS_KEY_ID /
+// $S3O_SECRET_ACCESS_KEY) and never from the server's config. The address
+// resolves flag -> environment ($S3O_ADMIN_ADDR) -> config file, loading the
+// config only when it is still missing, so a local binary can target a remote
 // instance with no server config. Responses render as human-readable text by
 // default and as raw JSON when --json is passed.
 // -------------------------------------------------------------------------------
@@ -32,7 +33,6 @@ import (
 // message literals the subcommands share.
 const (
 	adminBackendsPath = "/admin/api/backends/"
-	adminTokenHeader  = "X-Admin-Token"
 
 	flagBatchSize = "batch-size"
 	fmtBatchSize  = "?batch_size=%d"
@@ -52,9 +52,8 @@ const (
 // Returns the process exit code so the caller in cmd/ can os.Exit cleanly.
 func Run(args []string, stdout, stderr io.Writer) int { // codecov:ignore -- CLI entry point
 	fs := flag.NewFlagSet("admin", flag.ExitOnError)
-	configPath := fs.String("config", "config.yaml", "Path to config file (only loaded when -addr/-token or their env vars are unset)")
+	configPath := fs.String("config", "config.yaml", "Path to config file (only loaded when -addr and its env var are unset)")
 	addr := fs.String("addr", "", "Server address (overrides $S3O_ADMIN_ADDR and config)")
-	tokenFlag := fs.String("token", "", "Admin API token (overrides $S3O_ADMIN_TOKEN and config)")
 	accessKey := fs.String("access-key", "", "Access key ID to sign with (overrides $S3O_ACCESS_KEY_ID)")
 	secretKey := fs.String("secret-key", "", "Secret access key to sign with (overrides $S3O_SECRET_ACCESS_KEY)")
 	jsonOut := fs.Bool("json", false, "Output raw JSON instead of human-readable text")
@@ -116,27 +115,23 @@ Flags:
 		AccessKeyID: cmp.Or(*accessKey, os.Getenv(admintarget.EnvAccessKey)),
 		SecretKey:   cmp.Or(*secretKey, os.Getenv(admintarget.EnvSecretKey)),
 	}
-	baseAddr := cmp.Or(*addr, os.Getenv(admintarget.EnvAddr))
-	// The config file is only read for what is still missing. A keypair and an
-	// address given outright need nothing from it, which is what lets a binary
-	// target a remote instance with two environment variables and no config.
-	if !creds.signs() || baseAddr == "" {
-		var err error
-		baseAddr, creds.Token, err = admintarget.Resolve(*addr, *tokenFlag, func() (*config.Config, error) {
-			return config.LoadConfig(*configPath)
-		})
-		if err != nil {
-			fmt.Fprintf(stderr, fmtError, err)
-			return 1
-		}
+	if !creds.signs() {
+		fmt.Fprintln(stderr, "error: a credential is required (set -access-key and -secret-key, "+
+			"or $S3O_ACCESS_KEY_ID and $S3O_SECRET_ACCESS_KEY)")
+		return 1
+	}
+	// The config file is only read when the address is still missing, which is
+	// what lets a binary target a remote instance with three environment
+	// variables and nothing on disk.
+	baseAddr, err := admintarget.Resolve(*addr, func() (*config.Config, error) {
+		return config.LoadConfig(*configPath)
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, fmtError, err)
+		return 1
 	}
 	if baseAddr == "" {
 		fmt.Fprintln(stderr, "error: server address required (set -addr, $S3O_ADMIN_ADDR, or server.listen_addr in config)")
-		return 1
-	}
-	if !creds.signs() && creds.Token == "" {
-		fmt.Fprintln(stderr, "error: a credential is required (set -access-key and -secret-key, "+
-			"or -token, $S3O_ADMIN_TOKEN, or ui.admin_token/admin_key in config)")
 		return 1
 	}
 	// A bare host:port defaults to http, because the common target is a local
@@ -147,7 +142,7 @@ Flags:
 		baseAddr = "http://" + baseAddr //nolint:gosec // NOSONAR S5332: scheme default for an operator-supplied address
 	}
 
-	return CommandWithCredentials(fs.Arg(0), fs.Args()[1:], baseAddr, creds, output.FromJSON(*jsonOut), stdout, stderr)
+	return CommandWithFormat(fs.Arg(0), fs.Args()[1:], baseAddr, creds, output.FromJSON(*jsonOut), stdout, stderr)
 }
 
 // -------------------------------------------------------------------------
@@ -200,22 +195,12 @@ var handlers = map[string]handler{
 // Command executes an admin CLI command in text output mode, returning the
 // exit code. Exposed so tests can drive subcommands directly without parsing
 // process-level flags.
-func Command(cmd string, args []string, baseAddr, token string, stdout, stderr io.Writer) int {
-	return CommandWithFormat(cmd, args, baseAddr, token, output.FormatText, stdout, stderr)
+func Command(cmd string, args []string, baseAddr string, creds Credentials, stdout, stderr io.Writer) int {
+	return CommandWithFormat(cmd, args, baseAddr, creds, output.FormatText, stdout, stderr)
 }
 
-// CommandWithFormat executes an admin CLI command with an explicit output
-// format, returning the exit code. Run uses this with the format derived from
-// the --json flag; Command wraps it with the text default.
-func CommandWithFormat(cmd string, args []string, baseAddr, token string, format output.Format, stdout, stderr io.Writer) int {
-	return CommandWithCredentials(cmd, args, baseAddr, Credentials{Token: token}, format, stdout, stderr)
-}
-
-// Credentials is what proves an admin CLI invocation. A keypair is signed with
-// and is the path an operator should be on; a token is the older mechanism and
-// is used when no keypair is given.
+// Credentials is the keypair an admin CLI invocation signs with.
 type Credentials struct {
-	Token       string
 	AccessKeyID string
 	SecretKey   string
 }
@@ -225,9 +210,9 @@ func (c Credentials) signs() bool {
 	return c.AccessKeyID != "" && c.SecretKey != ""
 }
 
-// CommandWithCredentials executes one admin CLI command with an explicit
-// credential, returning the exit code.
-func CommandWithCredentials(
+// CommandWithFormat executes one admin CLI command in an explicit output
+// format, returning the exit code.
+func CommandWithFormat(
 	cmd string, args []string, baseAddr string, creds Credentials,
 	format output.Format, stdout, stderr io.Writer,
 ) int {
@@ -236,10 +221,7 @@ func CommandWithCredentials(
 		fmt.Fprintf(stderr, "unknown admin command: %s\n", cmd)
 		return 1
 	}
-	api := adminclient.New(baseAddr, creds.Token)
-	if creds.signs() {
-		api = adminclient.NewSigned(baseAddr, creds.AccessKeyID, creds.SecretKey)
-	}
+	api := adminclient.NewSigned(baseAddr, creds.AccessKeyID, creds.SecretKey)
 	return h(args, &client{
 		api:    api,
 		format: format,

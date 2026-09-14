@@ -43,7 +43,6 @@ var corsMethods = map[string]bool{
 type CredentialConfig struct {
 	AccessKeyID     string `yaml:"access_key_id"`
 	SecretAccessKey string `yaml:"secret_access_key"`
-	Token           string `yaml:"token"`
 }
 
 // CORSRule declares which browser origins may reach a bucket cross-origin,
@@ -206,9 +205,7 @@ func validateCredential(bucketPrefix string, idx int, cred *CredentialConfig, se
 	prefix := fmt.Sprintf("%s.credentials[%d]", bucketPrefix, idx)
 	var errs []error
 
-	hasSigV4 := cred.AccessKeyID != "" && cred.SecretAccessKey != ""
-	hasToken := cred.Token != ""
-	if !hasSigV4 && !hasToken {
+	if cred.AccessKeyID == "" || cred.SecretAccessKey == "" {
 		errs = append(errs, prefixed(prefix, ErrInvalidCredential))
 	}
 	if cred.AccessKeyID != "" {
@@ -216,13 +213,6 @@ func validateCredential(bucketPrefix string, idx int, cred *CredentialConfig, se
 			errs = append(errs, prefixedDetail(prefix, ErrDuplicateCredential, fmt.Sprintf("%q", cred.AccessKeyID)))
 		}
 		seen.accessKeys[cred.AccessKeyID] = true
-	}
-	// The token itself is the secret, so it is never echoed in the error.
-	if hasToken {
-		if seen.tokens[cred.Token] {
-			errs = append(errs, prefixed(prefix, ErrDuplicateToken))
-		}
-		seen.tokens[cred.Token] = true
 	}
 	return errs
 }

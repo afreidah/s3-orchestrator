@@ -916,19 +916,32 @@ func TestConfigValidation_MultipleCredentialsOnSameBucket(t *testing.T) {
 	}
 }
 
-// TestConfigValidation_TokenCredential verifies the config validation token credential contract.
-// Asserts that token-only credential should pass:.
-func TestConfigValidation_TokenCredential(t *testing.T) {
+// TestConfigValidation_CredentialNeedsAKeypair verifies a credential must carry
+// both halves of a keypair.
+//
+// A token-only credential used to be valid. Tokens are gone, so such an entry
+// now names no way to authenticate and is refused rather than silently
+// producing a credential nothing can present.
+func TestConfigValidation_CredentialNeedsAKeypair(t *testing.T) {
 	t.Parallel()
-	cfg := validBaseConfig()
-	cfg.Buckets = []BucketConfig{
-		{Name: "legacy", Credentials: []CredentialConfig{
-			{Token: "my-token"},
-		}},
-	}
-
-	if err := cfg.SetDefaultsAndValidate(); err != nil {
-		t.Errorf("token-only credential should pass: %v", err)
+	for _, tc := range []struct {
+		name string
+		cred CredentialConfig
+	}{
+		{"neither half", CredentialConfig{}},
+		{"key alone", CredentialConfig{AccessKeyID: "AK"}},
+		{"secret alone", CredentialConfig{SecretAccessKey: "SK"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := validBaseConfig()
+			cfg.Buckets = []BucketConfig{
+				{Name: "legacy", Credentials: []CredentialConfig{tc.cred}},
+			}
+			if err := cfg.SetDefaultsAndValidate(); err == nil {
+				t.Error("a credential with no usable keypair passed validation")
+			}
+		})
 	}
 }
 
@@ -2323,19 +2336,23 @@ backends:
 // UI CONFIG TESTS
 // -------------------------------------------------------------------------
 
-// TestUIConfig_EnabledMissingCredentials verifies the uiconfig enabled missing credentials contract.
-// Asserts that error = , want mention of admin_key and admin_secret.
-func TestUIConfig_EnabledMissingCredentials(t *testing.T) {
+// TestUIConfig_EnabledRequiresARootCredential verifies the dashboard cannot be
+// enabled without an identity able to log into it.
+//
+// The dashboard has no login of its own: it authenticates the same credentials
+// every other surface does, so enabling it with no root credential declared
+// would serve a login page that nothing can get past.
+func TestUIConfig_EnabledRequiresARootCredential(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
-	cfg.UI = UIConfig{Enabled: true}
+	cfg.UI = UIConfig{Enabled: true, SessionSecret: "sess"}
 
 	err := cfg.SetDefaultsAndValidate()
 	if err == nil {
-		t.Fatal("expected validation error for UI enabled without credentials")
+		t.Fatal("expected validation error for UI enabled without a root credential")
 	}
-	if !strings.Contains(err.Error(), "admin_key") || !strings.Contains(err.Error(), "admin_secret") {
-		t.Errorf("error = %q, want mention of admin_key and admin_secret", err)
+	if !strings.Contains(err.Error(), "auth.root") {
+		t.Errorf("error = %q, want mention of auth.root", err)
 	}
 }
 
@@ -2344,7 +2361,8 @@ func TestUIConfig_EnabledMissingCredentials(t *testing.T) {
 func TestUIConfig_EnabledMissingSessionSecret(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
-	cfg.UI = UIConfig{Enabled: true, AdminKey: "key", AdminSecret: "secret"}
+	cfg.Auth.Root = RootCredential{AccessKeyID: "AK", SecretAccessKey: "SK"}
+	cfg.UI = UIConfig{Enabled: true}
 
 	err := cfg.SetDefaultsAndValidate()
 	if err == nil {
@@ -2360,7 +2378,8 @@ func TestUIConfig_EnabledMissingSessionSecret(t *testing.T) {
 func TestUIConfig_EnabledWithCredentials(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
-	cfg.UI = UIConfig{Enabled: true, AdminKey: "key", AdminSecret: "secret", SessionSecret: "sess"}
+	cfg.Auth.Root = RootCredential{AccessKeyID: "AK", SecretAccessKey: "SK"}
+	cfg.UI = UIConfig{Enabled: true, SessionSecret: "sess"}
 
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		t.Errorf("valid UI config should pass: %v", err)
@@ -2387,10 +2406,9 @@ func TestUIConfig_DisabledSkipsValidation(t *testing.T) {
 func TestUIConfig_SessionSecret(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
+	cfg.Auth.Root = RootCredential{AccessKeyID: "AK", SecretAccessKey: "SK"}
 	cfg.UI = UIConfig{ //nolint:gosec // G101: test config values
 		Enabled:       true,
-		AdminKey:      "key",
-		AdminSecret:   "secret",
 		SessionSecret: "my-session-secret",
 	}
 
@@ -3522,59 +3540,6 @@ func TestRateLimitConfig_CIDRValidatedWhenDisabled(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("invalid CIDR should be caught even when disabled, got: %v", errs)
-	}
-}
-
-// TestConfigValidation_DuplicateTokensAcrossBuckets verifies a proxy token
-// claimed by two buckets fails validation. The token selects the bucket a
-// request is authorized against, so allowing it would let a credential issued
-// for one namespace resolve to another.
-func TestConfigValidation_DuplicateTokensAcrossBuckets(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfig()
-	cfg.Buckets = []BucketConfig{
-		{Name: "b1", Credentials: []CredentialConfig{{Token: "SAME"}}},
-		{Name: "b2", Credentials: []CredentialConfig{{Token: "SAME"}}},
-	}
-
-	err := cfg.SetDefaultsAndValidate()
-	if err == nil {
-		t.Fatal("duplicate proxy tokens across buckets should fail validation")
-	}
-	if !strings.Contains(err.Error(), "duplicate proxy token") {
-		t.Errorf("error should mention duplicate proxy token, got: %v", err)
-	}
-	if strings.Contains(err.Error(), "SAME") {
-		t.Error("the token is a secret and must not appear in the error")
-	}
-}
-
-// TestConfigValidation_DuplicateTokensWithinBucket verifies the check spans
-// credentials inside one bucket too, not just across bucket boundaries.
-func TestConfigValidation_DuplicateTokensWithinBucket(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfig()
-	cfg.Buckets = []BucketConfig{
-		{Name: "b1", Credentials: []CredentialConfig{{Token: "SAME"}, {Token: "SAME"}}},
-	}
-
-	if err := cfg.SetDefaultsAndValidate(); err == nil {
-		t.Error("duplicate proxy tokens within a bucket should fail validation")
-	}
-}
-
-// TestConfigValidation_DistinctTokensAccepted verifies unique tokens still
-// validate, so the new check does not reject working configurations.
-func TestConfigValidation_DistinctTokensAccepted(t *testing.T) {
-	t.Parallel()
-	cfg := validBaseConfig()
-	cfg.Buckets = []BucketConfig{
-		{Name: "b1", Credentials: []CredentialConfig{{Token: "one"}}},
-		{Name: "b2", Credentials: []CredentialConfig{{Token: "two"}}},
-	}
-
-	if err := cfg.SetDefaultsAndValidate(); err != nil {
-		t.Errorf("distinct tokens must validate, got: %v", err)
 	}
 }
 

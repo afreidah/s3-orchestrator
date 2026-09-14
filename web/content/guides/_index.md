@@ -24,6 +24,13 @@ weight: 30
       <p>Combine free-tier storage from multiple cloud providers into a single pool without exceeding any provider's limits.</p>
     </div>
   </a>
+  <a class="landing-card" href="access-control/">
+    <i class="fas fa-user-shield landing-card-icon" style="color: #5eead4;"></i>
+    <div>
+      <strong>Setting Up Access Control</strong>
+      <p>Declare the administering credential, onboard a client with only the access it needs, and scope an operator to the control plane.</p>
+    </div>
+  </a>
   <a class="landing-card" href="replication-guide/">
     <i class="fas fa-copy landing-card-icon" style="color: #67e8f9;"></i>
     <div>

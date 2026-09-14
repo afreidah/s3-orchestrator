@@ -27,7 +27,7 @@ func TestListBuckets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("X-Proxy-Token", "test-token")
+	signRequest(t, req)
 
 	resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL is localhost, not tainted
 	if err != nil {

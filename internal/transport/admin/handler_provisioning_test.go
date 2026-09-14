@@ -118,7 +118,7 @@ func TestHandleProvisioning_NeverRendersASecret(t *testing.T) {
 	provisioningWith(t, h,
 		[]config.BucketConfig{
 			{Name: "photos", Credentials: []config.CredentialConfig{
-				{AccessKeyID: "CFGAK", SecretAccessKey: "config-secret", Token: "config-token"},
+				{AccessKeyID: "CFGAK", SecretAccessKey: "config-secret"},
 			}},
 		},
 		&provRows{

@@ -84,10 +84,11 @@ type Route struct {
 	StreamMediaType string // required when Stream is set
 }
 
-// SecurityScheme describes how callers authenticate.
+// SecurityScheme describes how callers authenticate. Scheme is the HTTP
+// authorization scheme the Authorization header carries.
 type SecurityScheme struct {
 	Name        string
-	HeaderName  string
+	Scheme      string
 	Description string
 }
 
@@ -101,9 +102,8 @@ func Generate(info Info, sec SecurityScheme, routes []Route) ([]byte, error) {
 			Schemas: schemaSet{},
 			SecuritySchemes: map[string]securityScheme{
 				sec.Name: {
-					Type:        "apiKey",
-					In:          "header",
-					ParamName:   sec.HeaderName,
+					Type:        "http",
+					Scheme:      sec.Scheme,
 					Description: sec.Description,
 				},
 			},
@@ -278,8 +278,7 @@ type components struct {
 
 type securityScheme struct {
 	Type        string `yaml:"type"`
-	In          string `yaml:"in"`
-	ParamName   string `yaml:"name"`
+	Scheme      string `yaml:"scheme"`
 	Description string `yaml:"description,omitempty"`
 }
 

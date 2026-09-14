@@ -379,7 +379,7 @@ func (p *Provisioning) DeleteGrant(ctx context.Context, userID string, resource 
 // there is one of it.
 func (p *Provisioning) checkResource(view *provisioning.View, r core.Resource) error {
 	switch r.Kind {
-	case core.ResourceInstance:
+	case core.ResourceOrchestrator:
 		if r.Name != "" {
 			return fmt.Errorf("%w: %s takes no name", ErrInvalidResource, r.Kind)
 		}

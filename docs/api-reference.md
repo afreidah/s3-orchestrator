@@ -12,18 +12,18 @@ UI API endpoints use session cookie authentication. Obtain a session by posting 
 
 ```bash
 curl -c cookies.txt -X POST \
-  -d "admin_key=YOUR_KEY&admin_secret=YOUR_SECRET" \
+  -d "access_key=AKIA...&secret_key=YOUR_SECRET" \
   http://localhost:9000/ui/login
 
 # Use the session cookie for subsequent requests
 curl -b cookies.txt http://localhost:9000/ui/api/dashboard
 ```
 
-Sessions are HMAC-SHA256 signed cookies with a 24-hour TTL.
+The keypair is any credential the deployment holds - the `auth.root` one, or any the store has issued - and the session carries the user it proved. Sessions are HMAC-SHA256 signed cookies with a 24-hour TTL.
 
 ### Admin API
 
-Admin endpoints use a token rather than a session; see [Admin API](../admin-api/#authentication).
+Admin endpoints take a signed request rather than a session; see [Admin API](../admin-api/#authentication).
 
 All JSON request bodies on admin and UI endpoints are limited to 1 MB.
 

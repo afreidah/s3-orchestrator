@@ -318,60 +318,39 @@ func TestVerifySigV4_HostHeaderMustBeSigned(t *testing.T) {
 	}
 }
 
-// TestBucketRegistry_TokenAuthIteratesAllTokens verifies the bucket registry token auth iterates all tokens contract.
-// Asserts that token should succeed:.
-func TestBucketRegistry_TokenAuthIteratesAllTokens(t *testing.T) {
+// TestBucketRegistry_UnsignedRequestDenied verifies a request carrying no SigV4
+// material authenticates as nobody.
+//
+// A signature is the only proof accepted now, so a header that used to work -
+// the legacy proxy token - reaches the same refusal as no credential at all.
+func TestBucketRegistry_UnsignedRequestDenied(t *testing.T) {
 	t.Parallel()
-	// Verify that token auth works correctly with multiple tokens of varying lengths
-	buckets := []config.BucketConfig{
+
+	br := mustBucketRegistry(t, []config.BucketConfig{
 		{Name: "bucket-a", Credentials: []config.CredentialConfig{
-			{Token: "short"},
+			{AccessKeyID: "AK", SecretAccessKey: "SK"},
 		}},
-		{Name: "bucket-b", Credentials: []config.CredentialConfig{
-			{Token: "medium-token"},
-		}},
-		{Name: "bucket-c", Credentials: []config.CredentialConfig{
-			{Token: "a-very-long-token-value"},
-		}},
-	}
+	})
 
-	br := mustBucketRegistry(t, buckets)
-
-	// Each token should resolve to the correct bucket
-	for _, tt := range []struct {
-		token, wantBucket string
+	for _, tc := range []struct {
+		name   string
+		header string
+		value  string
 	}{
-		{"short", "bucket-a"},
-		{"medium-token", "bucket-b"},
-		{"a-very-long-token-value", "bucket-c"},
+		{"nothing at all", "", ""},
+		{"the removed proxy-token header", "X-Proxy-Token", "short"},
+		{"a bearer token", "Authorization", "Bearer something"},
 	} {
-		r, _ := http.NewRequestWithContext(context.Background(), "GET", "/"+tt.wantBucket+"/key", nil)
-		r.Header.Set("X-Proxy-Token", tt.token)
-
-		u, _, err := br.Authenticate(r)
-		if err != nil {
-			t.Errorf("token %q should succeed: %v", tt.token, err)
-			continue
-		}
-		if !u.CanReach(tt.wantBucket) {
-			t.Errorf("token %q reached %v, want %q", tt.token, u.Buckets(), tt.wantBucket)
-		}
-	}
-
-	// Wrong token should fail
-	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket-a/key", nil)
-	r.Header.Set("X-Proxy-Token", "wrong")
-	_, _, err := br.Authenticate(r)
-	if err == nil {
-		t.Error("wrong token should be denied")
-	}
-
-	// Token with same length as a valid token but different content should fail
-	r2, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket-a/key", nil)
-	r2.Header.Set("X-Proxy-Token", "SHORT") // same length as "short"
-	_, _, err = br.Authenticate(r2)
-	if err == nil {
-		t.Error("wrong token (same length) should be denied")
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r, _ := http.NewRequestWithContext(context.Background(), "GET", "/bucket-a/key", nil)
+			if tc.header != "" {
+				r.Header.Set(tc.header, tc.value)
+			}
+			if _, _, err := br.Authenticate(r); err == nil {
+				t.Error("an unsigned request authenticated")
+			}
+		})
 	}
 }
 
@@ -444,25 +423,20 @@ func TestBucketRegistry_SigV4ResolvesCorrectBucket(t *testing.T) {
 
 // TestBucketRegistry_TokenResolvesCorrectBucket verifies the bucket registry token resolves correct bucket contract.
 // Asserts that token auth should succeed:.
-func TestBucketRegistry_TokenResolvesCorrectBucket(t *testing.T) {
+func TestBucketRegistry_KeypairResolvesCorrectBucket(t *testing.T) {
 	t.Parallel()
-	buckets := []config.BucketConfig{
-		{Name: "legacy-bucket", Credentials: []config.CredentialConfig{
-			{Token: "my-secret-token"},
+	br := mustBucketRegistry(t, []config.BucketConfig{
+		{Name: "one-bucket", Credentials: []config.CredentialConfig{
+			{AccessKeyID: "AKONE", SecretAccessKey: "SK"},
 		}},
-	}
+	})
 
-	br := mustBucketRegistry(t, buckets)
-
-	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/legacy-bucket/key", nil)
-	r.Header.Set("X-Proxy-Token", "my-secret-token")
-
-	u, _, err := br.Authenticate(r)
+	u, err := br.AuthenticateSecret("AKONE", "SK")
 	if err != nil {
-		t.Fatalf("token auth should succeed: %v", err)
+		t.Fatalf("keypair auth should succeed: %v", err)
 	}
-	if !u.CanReach("legacy-bucket") {
-		t.Errorf("reached %v, want %q", u.Buckets(), "legacy-bucket")
+	if !u.CanReach("one-bucket") {
+		t.Errorf("reached %v, want %q", u.Buckets(), "one-bucket")
 	}
 }
 
@@ -484,23 +458,18 @@ func TestBucketRegistry_UnknownAccessKeyDenied(t *testing.T) {
 	}
 }
 
-// TestBucketRegistry_InvalidTokenDenied verifies the bucket registry invalid token denied path by exercising http.NewRequestWithContext, context.Background, br.AuthenticateAndResolveBucket.
-func TestBucketRegistry_InvalidTokenDenied(t *testing.T) {
+// TestBucketRegistry_WrongSecretDeniedWholeKeypair verifies the form-login path
+// refuses a mismatched secret, which the signing path covers separately.
+func TestBucketRegistry_WrongSecretDeniedWholeKeypair(t *testing.T) {
 	t.Parallel()
-	buckets := []config.BucketConfig{
+	br := mustBucketRegistry(t, []config.BucketConfig{
 		{Name: "mybucket", Credentials: []config.CredentialConfig{
-			{Token: "correct-token"},
+			{AccessKeyID: "AKMINE", SecretAccessKey: "correct-secret"},
 		}},
-	}
+	})
 
-	br := mustBucketRegistry(t, buckets)
-
-	r, _ := http.NewRequestWithContext(context.Background(), "GET", "/mybucket/key", nil)
-	r.Header.Set("X-Proxy-Token", "wrong-token")
-
-	_, _, err := br.Authenticate(r)
-	if err == nil {
-		t.Error("invalid token should be denied")
+	if _, err := br.AuthenticateSecret("AKMINE", "wrong-secret"); err == nil {
+		t.Error("a wrong secret should be denied")
 	}
 }
 
@@ -1029,29 +998,9 @@ func configRegistry(buckets []config.BucketConfig) (*BucketRegistry, error) {
 	return NewBucketRegistry(&v)
 }
 
-// TestNewBucketRegistry_RejectsDuplicateToken verifies registry construction
-// refuses a token two buckets both claim. Config validation rejects this too;
-// this is the backstop that keeps a gap there from silently granting one
-// bucket's credential access to another's namespace.
-func TestNewBucketRegistry_RejectsDuplicateToken(t *testing.T) {
-	t.Parallel()
-	_, err := configRegistry([]config.BucketConfig{
-		{Name: "backups", Credentials: []config.CredentialConfig{{Token: "SAME"}}},
-		{Name: "traces", Credentials: []config.CredentialConfig{{Token: "SAME"}}},
-	})
-	if !errors.Is(err, ErrDuplicateCredential) {
-		t.Fatalf("expected ErrDuplicateCredential, got %v", err)
-	}
-	if strings.Contains(err.Error(), "SAME") {
-		t.Error("the token is a secret and must not appear in the error")
-	}
-	if !strings.Contains(err.Error(), "backups") || !strings.Contains(err.Error(), "traces") {
-		t.Errorf("error should name both buckets, got: %v", err)
-	}
-}
-
-// TestNewBucketRegistry_RejectsDuplicateAccessKey verifies the same backstop
-// covers SigV4 credentials, whose map overwrites identically.
+// TestNewBucketRegistry_RejectsDuplicateAccessKey verifies the backstop that
+// keeps a gap in config validation from silently granting one bucket's
+// credential access to another's namespace.
 func TestNewBucketRegistry_RejectsDuplicateAccessKey(t *testing.T) {
 	t.Parallel()
 	_, err := configRegistry([]config.BucketConfig{
@@ -1069,38 +1018,37 @@ func TestNewBucketRegistry_AllowsOneBucketManyCredentials(t *testing.T) {
 	t.Parallel()
 	br, err := configRegistry([]config.BucketConfig{
 		{Name: "b1", Credentials: []config.CredentialConfig{
-			{Token: "one"},
-			{Token: "two"},
-			{AccessKeyID: "AK", SecretAccessKey: "s1"},
+			{AccessKeyID: "AK1", SecretAccessKey: "s1"},
+			{AccessKeyID: "AK2", SecretAccessKey: "s2"},
 		}},
 	})
 	if err != nil {
 		t.Fatalf("NewBucketRegistry: %v", err)
 	}
-	for _, tok := range []string{"one", "two"} {
-		u, aErr := br.AuthenticateToken(tok)
-		if aErr != nil || !u.CanReach("b1") {
-			t.Errorf("token %q reached %v (%v), want b1", tok, u.Buckets(), aErr)
+	for _, key := range []string{"AK1", "AK2"} {
+		u, aErr := br.UserByID("config:" + key)
+		if !aErr || !u.CanReach("b1") {
+			t.Errorf("access key %q reached %v, want b1", key, u.Buckets())
 		}
 	}
 }
 
-// TestNewBucketRegistry_TokenResolvesToItsOwnBucket is the behaviour the fix
-// protects: with distinct tokens, each resolves to the bucket that declared it
-// regardless of the order the buckets appear in.
-func TestNewBucketRegistry_TokenResolvesToItsOwnBucket(t *testing.T) {
+// TestNewBucketRegistry_CredentialResolvesToItsOwnBucket verifies each keypair
+// resolves to the bucket that declared it, regardless of the order the buckets
+// appear in.
+func TestNewBucketRegistry_CredentialResolvesToItsOwnBucket(t *testing.T) {
 	t.Parallel()
 	br, err := configRegistry([]config.BucketConfig{
-		{Name: "backups", Credentials: []config.CredentialConfig{{Token: "backups-token"}}},
-		{Name: "traces", Credentials: []config.CredentialConfig{{Token: "traces-token"}}},
+		{Name: "backups", Credentials: []config.CredentialConfig{{AccessKeyID: "AKB", SecretAccessKey: "s"}}},
+		{Name: "traces", Credentials: []config.CredentialConfig{{AccessKeyID: "AKT", SecretAccessKey: "s"}}},
 	})
 	if err != nil {
 		t.Fatalf("NewBucketRegistry: %v", err)
 	}
-	for tok, want := range map[string]string{"backups-token": "backups", "traces-token": "traces"} {
-		u, aErr := br.AuthenticateToken(tok)
+	for key, want := range map[string]string{"AKB": "backups", "AKT": "traces"} {
+		u, aErr := br.AuthenticateSecret(key, "s")
 		if aErr != nil || !u.CanReach(want) {
-			t.Errorf("token %q reached %v (%v), want %q", tok, u.Buckets(), aErr, want)
+			t.Errorf("access key %q reached %v (%v), want %q", key, u.Buckets(), aErr, want)
 		}
 	}
 }

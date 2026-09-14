@@ -45,13 +45,13 @@ vault kv put secret/s3-orchestrator \
   r2_s3_bucket="my-bucket" \
   r2_s3_access_key="R2_ACCESS_KEY" \
   r2_s3_secret_key="R2_SECRET_KEY" \
-  ui_admin_key="ADMIN_KEY" \
-  ui_admin_secret="ADMIN_SECRET" \
+  root_access_key_id="ROOT_ACCESS_KEY" \
+  root_secret_access_key="ROOT_SECRET_KEY" \
   ui_session_secret="$(openssl rand -hex 32)"
 ```
 
 {{% notice tip %}}
-Generate strong credentials for the virtual bucket and UI admin with `openssl rand -hex 20` for keys and `openssl rand -base64 30` for secrets.
+Generate strong credentials for the virtual bucket and the root identity with `openssl rand -hex 20` for keys and `openssl rand -base64 30` for secrets.
 {{% /notice %}}
 
 ## Step 2: Create a Vault Policy and Role
@@ -283,10 +283,13 @@ rate_limit:
     - "192.168.0.0/16"
     - "127.0.0.1/32"
 
+auth:
+  root:
+    access_key_id: "{{ .Data.data.root_access_key_id }}"
+    secret_access_key: "{{ .Data.data.root_secret_access_key }}"
+
 ui:
   enabled: true
-  admin_key: "{{ .Data.data.ui_admin_key }}"
-  admin_secret: "{{ .Data.data.ui_admin_secret }}"
   session_secret: "{{ .Data.data.ui_session_secret }}"
   force_secure_cookies: true   # unconditionally sets Secure on session cookies. The
                                # trusted_proxies block above also lets the orchestrator

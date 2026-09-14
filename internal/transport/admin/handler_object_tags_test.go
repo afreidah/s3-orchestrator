@@ -52,7 +52,6 @@ func newObjectsHandlerWithAPI(t *testing.T) (*opstest.MockObjectAPI, http.Handle
 			Store:   storetest.NewMockObjectStore(gomock.NewController(t)),
 			Buckets: declaredBuckets("bucket"),
 		}),
-		token:    "test-token",
 		logLevel: &lv,
 		registry: func() *auth.BucketRegistry { return rootRegistry(t) },
 	}
@@ -65,7 +64,7 @@ func newObjectsHandlerWithAPI(t *testing.T) (*opstest.MockObjectAPI, http.Handle
 func tagsRequest(t *testing.T, mux http.Handler, method, key, body string) (int, string) {
 	t.Helper()
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(method, "/admin/api/objects/tags/"+key, body))
+	mux.ServeHTTP(w, doAuth(t, method, "/admin/api/objects/tags/"+key, body))
 	return w.Code, w.Body.String()
 }
 

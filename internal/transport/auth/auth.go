@@ -5,9 +5,8 @@
 //
 // Implements AWS SigV4 signature verification for S3 client compatibility. Parses
 // the Authorization header or presigned URL query parameters, reconstructs the
-// canonical request, and verifies the HMAC-SHA256 signature chain. Also supports
-// legacy X-Proxy-Token authentication for backward compatibility with simple
-// clients.
+// canonical request, and verifies the HMAC-SHA256 signature chain. A signature is
+// the only proof this accepts: one credential type reaches every surface.
 //
 // BucketRegistry maps client credentials to virtual buckets, enabling multi-tenant
 // access with per-bucket credential isolation.
@@ -69,7 +68,6 @@ type entry struct {
 // BucketRegistry resolves client credentials to the identity behind them.
 type BucketRegistry struct {
 	byAccessKey    map[string]entry      // access_key_id -> identity and its secret
-	byToken        map[string]entry      // token -> identity
 	byUserID       map[string]*User      // user id -> identity, for a caller that proved itself another way
 	multipartLimit map[string]int        // bucket name -> max active multipart uploads (0 = unlimited)
 	notices        []provisioning.Notice // what registration found and served through anyway
@@ -89,7 +87,6 @@ type BucketRegistry struct {
 func NewBucketRegistry(v *provisioning.View) (*BucketRegistry, error) {
 	br := &BucketRegistry{
 		byAccessKey:    make(map[string]entry),
-		byToken:        make(map[string]entry),
 		byUserID:       make(map[string]*User, len(v.Users)),
 		multipartLimit: make(map[string]int),
 		notices:        slices.Clone(v.Notices),
@@ -147,9 +144,6 @@ func (br *BucketRegistry) register(creds []provisioning.Credential, users map[st
 		if err := br.addKeypair(c, u); err != nil {
 			return err
 		}
-		if err := br.addToken(c, u); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -173,27 +167,6 @@ func (br *BucketRegistry) addKeypair(c *provisioning.Credential, u *User) error 
 			ErrDuplicateCredential, c.AccessKeyID, prior.user.Name, u.Name)
 	}
 	br.byAccessKey[c.AccessKeyID] = entry{secret: c.Secret, user: u}
-	return nil
-}
-
-// addToken registers a credential's legacy proxy token. The token is itself the
-// secret, so a collision names only the users, never the value.
-func (br *BucketRegistry) addToken(c *provisioning.Credential, u *User) error {
-	if c.Token == "" {
-		return nil
-	}
-	if prior, ok := br.byToken[c.Token]; ok {
-		if c.Source == provisioning.SourceStore {
-			br.notices = append(br.notices, provisioning.Notice{
-				Kind:   provisioning.NoticeCredentialShadowed,
-				Detail: "a stored proxy token is shadowed by a config credential",
-			})
-			return nil
-		}
-		return fmt.Errorf("%w: one proxy token claimed by %q and %q",
-			ErrDuplicateCredential, prior.user.Name, u.Name)
-	}
-	br.byToken[c.Token] = entry{secret: c.Token, user: u}
 	return nil
 }
 
@@ -253,10 +226,6 @@ func (br *BucketRegistry) Authenticate(r *http.Request) (*User, *StreamingMateri
 		p, err := br.authenticatePresigned(r)
 		return p, nil, err
 	}
-	if proxyToken := r.Header.Get("X-Proxy-Token"); proxyToken != "" {
-		p, err := br.AuthenticateToken(proxyToken)
-		return p, nil, err
-	}
 	return nil, nil, fmt.Errorf("missing authentication credentials")
 }
 
@@ -287,30 +256,6 @@ func (br *BucketRegistry) authenticateSigV4(r *http.Request, authHeader string) 
 		return nil, nil, errors.New(errAuthFailed)
 	}
 	return e.user, mat, nil
-}
-
-// AuthenticateToken resolves a token-shaped credential to the identity behind
-// it, in constant time. Iterates every entry to avoid leaking which token
-// matched; ConstantTimeCompare requires equal-length inputs, so mismatched
-// lengths short-circuit without revealing the match position.
-//
-// Exported because the admin surface authenticates the same credentials the S3
-// path does. A second lookup against the same table would be a second place for
-// the constant-time handling to be got wrong.
-func (br *BucketRegistry) AuthenticateToken(proxyToken string) (*User, error) {
-	var matched *User
-	found := 0
-	for token, e := range br.byToken {
-		if len(token) == len(proxyToken) &&
-			subtle.ConstantTimeCompare([]byte(proxyToken), []byte(token)) == 1 {
-			matched = e.user
-			found = 1
-		}
-	}
-	if found == 1 {
-		return matched, nil
-	}
-	return nil, fmt.Errorf("invalid authentication token")
 }
 
 // -------------------------------------------------------------------------

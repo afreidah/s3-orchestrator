@@ -23,9 +23,9 @@ cannot be compared against anything. Each table block therefore carries an
   backend and the database reachable from the orchestrator
 - `make` and `go` in PATH (vegeta loadtest builds via Makefile target)
 - `k6` for the multipart and burst scenarios
-- Admin token from `ui.admin_token` (or `S3O_ADMIN_TOKEN` env var) so
-  the loadtest binary can call `POST /admin/api/cache/flush` between
-  cache-cold runs
+- A keypair holding admin permissions, in `S3O_ACCESS_KEY_ID` and
+  `S3O_SECRET_ACCESS_KEY`, so the loadtest binary can call
+  `POST /admin/api/cache/flush` between cache-cold runs
 
 ### Scenario inventory
 
@@ -55,7 +55,7 @@ cost of declining and never as the work of encoding.
      -op get -rate 500 -duration 60s \
      -sizes 1024,1048576 \
      -seed 1000 \
-     -cache-flush-before -admin-token "$S3O_ADMIN_TOKEN" \
+     -cache-flush-before \
      -output-json get-cold.json
    ```
 

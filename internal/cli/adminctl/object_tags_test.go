@@ -77,7 +77,7 @@ func TestTagList_String(t *testing.T) {
 func TestCmdObjectTags_RequiresKey(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	if Command("object-tags", nil, "http://unused", "tok", &stdout, &stderr) == 0 {
+	if Command("object-tags", nil, "http://unused", testCreds, &stdout, &stderr) == 0 {
 		t.Error("expected a non-zero exit without -key")
 	}
 	if !strings.Contains(stderr.String(), "-key is required") {
@@ -91,7 +91,7 @@ func TestCmdObjectTags_ClearAndTagConflict(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	code := Command("object-tags", []string{"-key", "bucket/k", "-clear", "-tag", "a=1"},
-		"http://unused", "tok", &stdout, &stderr)
+		"http://unused", testCreds, &stdout, &stderr)
 	if code == 0 {
 		t.Error("expected a non-zero exit for -clear with -tag")
 	}
@@ -115,7 +115,7 @@ func TestCmdObjectTags_SetSendsTheSet(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Command("object-tags",
 		[]string{"-key", "bucket/k", "-tag", "retain=30d", "-tag", "team=infra"},
-		srv.URL, "tok", &stdout, &stderr)
+		srv.URL, testCreds, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr = %s", code, stderr.String())
 	}

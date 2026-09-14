@@ -104,8 +104,8 @@ secrets:
   DB_PASSWORD: ""
   BUCKET_ACCESS_KEY: ""
   BUCKET_SECRET_KEY: ""
-  UI_ADMIN_KEY: ""
-  UI_ADMIN_SECRET: ""
+  ROOT_ACCESS_KEY_ID: ""
+  ROOT_SECRET_ACCESS_KEY: ""
   # Add backend credentials as needed:
   # BACKEND1_ACCESS_KEY: ""
   # BACKEND1_SECRET_KEY: ""
@@ -207,10 +207,13 @@ config:
     requests_per_sec: 100
     burst: 200
 
+  auth:
+    root:
+      access_key_id: "${ROOT_ACCESS_KEY_ID}"
+      secret_access_key: "${ROOT_SECRET_ACCESS_KEY}"
+
   ui:
     enabled: true
-    admin_key: "${UI_ADMIN_KEY}"
-    admin_secret: "${UI_ADMIN_SECRET}"
     session_secret: "${UI_SESSION_SECRET}"
 
   telemetry:

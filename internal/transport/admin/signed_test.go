@@ -16,7 +16,6 @@
 package admin
 
 import (
-	"cmp"
 	"context"
 	"log/slog"
 	"net/http"
@@ -73,7 +72,6 @@ func signedServer(t *testing.T, admin map[core.Resource]core.PermissionSet) stri
 	var lv slog.LevelVar
 	h := &Handler{
 		log:      slog.Default().With(logfmt.Component("admin")),
-		token:    "test-token",
 		registry: func() *auth.BucketRegistry { return registry },
 		logLevel: &lv,
 	}
@@ -117,7 +115,7 @@ func statusOf(t *testing.T, addr, accessKey, secret, method, path string, body s
 func TestSigned_RoundTripAuthenticates(t *testing.T) {
 	t.Parallel()
 
-	addr := signedServer(t, onInstance(core.PermAdminRead))
+	addr := signedServer(t, onOrchestrator(core.PermAdminRead))
 	if got := statusOf(t, addr, signedAccessKey, signedSecret,
 		http.MethodGet, "/admin/api/log-level", ""); got != http.StatusOK {
 		t.Errorf("status = %d, want 200; the signed request did not verify", got)
@@ -135,7 +133,7 @@ func TestSigned_RoundTripAuthenticates(t *testing.T) {
 func TestSigned_QueryIsCanonicalised(t *testing.T) {
 	t.Parallel()
 
-	addr := signedServer(t, onInstance(core.PermAdminRead))
+	addr := signedServer(t, onOrchestrator(core.PermAdminRead))
 	if got := statusOf(t, addr, signedAccessKey, signedSecret,
 		http.MethodGet, "/admin/api/log-level?b=2&a=1&c=hello+world", ""); got != http.StatusOK {
 		t.Errorf("status = %d, want 200; a query parameter broke the signature", got)
@@ -148,7 +146,7 @@ func TestSigned_QueryIsCanonicalised(t *testing.T) {
 func TestSigned_BodyIsCovered(t *testing.T) {
 	t.Parallel()
 
-	addr := signedServer(t, onInstance(core.PermAdminConfig))
+	addr := signedServer(t, onOrchestrator(core.PermAdminConfig))
 	if statusOf(t, addr, signedAccessKey, signedSecret,
 		http.MethodPut, "/admin/api/log-level", `{"level":"debug"}`) == http.StatusUnauthorized {
 		t.Error("status = 401; the request body broke the signature")
@@ -161,7 +159,7 @@ func TestSigned_BodyIsCovered(t *testing.T) {
 func TestSigned_WrongSecretIsRefused(t *testing.T) {
 	t.Parallel()
 
-	addr := signedServer(t, onInstance(core.PermAdminRead))
+	addr := signedServer(t, onOrchestrator(core.PermAdminRead))
 	for _, tc := range []struct {
 		name   string
 		key    string
@@ -186,7 +184,7 @@ func TestSigned_WrongSecretIsRefused(t *testing.T) {
 func TestSigned_ResolvesToItsGrants(t *testing.T) {
 	t.Parallel()
 
-	addr := signedServer(t, onInstance(core.PermAdminRead))
+	addr := signedServer(t, onOrchestrator(core.PermAdminRead))
 	for _, tc := range []struct {
 		name   string
 		method string
@@ -261,53 +259,5 @@ func TestSigned_ConfigDeclaresTheRootCredential(t *testing.T) {
 	if got := statusOf(t, srv.URL, signedAccessKey, signedSecret,
 		http.MethodGet, "/admin/api/log-level", ""); got != http.StatusOK {
 		t.Errorf("status = %d, want 200; the root credential did not reach the control plane", got)
-	}
-}
-
-// TestSharedToken_ResolvesToRoot pins the path an existing deployment is on:
-// a config declaring only ui.admin_token, with no root keypair, still has its
-// token reach the control plane.
-//
-// The token no longer authorizes by itself - it resolves to the root user and
-// that user's grants answer - so a config that produced no root user would
-// refuse every admin request. This is the demo's configuration.
-func TestSharedToken_ResolvesToRoot(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		name string
-		ui   config.UIConfig
-	}{
-		{"admin_token set", config.UIConfig{AdminToken: "admin"}},
-		{"only admin_key set", config.UIConfig{AdminKey: "admin", AdminSecret: "admin"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			cfg := &config.Config{UI: tc.ui}
-			// The fallback from admin_token to admin_key lives in validation, so
-			// the identity is built from whichever the operator declared.
-			cfg.Auth.LegacySharedToken = cmp.Or(cfg.UI.AdminToken, cfg.UI.AdminKey)
-
-			view := provisioning.Merge(nil, cfg.Auth, &provisioning.Snapshot{})
-			registry, err := auth.NewBucketRegistry(&view)
-			if err != nil {
-				t.Fatalf("NewBucketRegistry: %v", err)
-			}
-			var lv slog.LevelVar
-			h := &Handler{
-				log:      slog.Default().With(logfmt.Component("admin")),
-				token:    cfg.Auth.LegacySharedToken,
-				registry: func() *auth.BucketRegistry { return registry },
-				logLevel: &lv,
-			}
-			mux := http.NewServeMux()
-			h.Register(mux)
-
-			w := httptest.NewRecorder()
-			mux.ServeHTTP(w, doToken("admin", http.MethodGet, "/admin/api/log-level", ""))
-			if w.Code != http.StatusOK {
-				t.Errorf("status = %d, want 200; the shared token reached nobody", w.Code)
-			}
-		})
 	}
 }

@@ -46,7 +46,7 @@ func TestBackendParam_UnknownNameIsRefused(t *testing.T) {
 			h.Register(mux)
 
 			w := httptest.NewRecorder()
-			mux.ServeHTTP(w, doAuth(http.MethodPost, path+"?backend=nosuch", ""))
+			mux.ServeHTTP(w, doAuth(t, http.MethodPost, path+"?backend=nosuch", ""))
 
 			if w.Code != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400; body=%s", w.Code, w.Body.String())

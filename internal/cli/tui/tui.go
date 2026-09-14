@@ -645,11 +645,9 @@ func (m *model) bodyView() string {
 // ENTRY POINT
 // -------------------------------------------------------------------------
 
-// target is the resolved admin endpoint and the credential to reach it with.
-// A keypair signs; a token is the older mechanism used when none is given.
+// target is the resolved admin endpoint and the keypair to reach it with.
 type target struct {
 	baseAddr    string
-	token       string
 	accessKeyID string
 	secretKey   string
 }
@@ -667,7 +665,6 @@ func resolveTarget(args []string) (target, error) {
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", "config.yaml", "Path to config file (only loaded when -addr/-token or their env vars are unset)")
 	addr := fs.String("addr", "", "Server address (overrides $S3O_ADMIN_ADDR and config)")
-	tokenFlag := fs.String("token", "", "Admin API token (overrides $S3O_ADMIN_TOKEN and config)")
 	accessKey := fs.String("access-key", "", "Access key ID to sign with (overrides $S3O_ACCESS_KEY_ID)")
 	secretKey := fs.String("secret-key", "", "Secret access key to sign with (overrides $S3O_SECRET_ACCESS_KEY)")
 	if err := fs.Parse(args); err != nil {
@@ -675,27 +672,24 @@ func resolveTarget(args []string) (target, error) {
 	}
 
 	t := target{
-		baseAddr:    cmp.Or(*addr, os.Getenv(admintarget.EnvAddr)),
 		accessKeyID: cmp.Or(*accessKey, os.Getenv(admintarget.EnvAccessKey)),
 		secretKey:   cmp.Or(*secretKey, os.Getenv(admintarget.EnvSecretKey)),
 	}
-	// The config file is only read for what is still missing, so a keypair and
-	// an address given outright need no config on the machine running the TUI.
-	if !t.signs() || t.baseAddr == "" {
-		baseAddr, token, err := admintarget.Resolve(*addr, *tokenFlag, func() (*config.Config, error) {
-			return config.LoadConfig(*configPath)
-		})
-		if err != nil {
-			return target{}, err
-		}
-		t.baseAddr, t.token = baseAddr, token
+	if !t.signs() {
+		return target{}, errors.New("a credential is required (set -access-key and -secret-key, " +
+			"or $S3O_ACCESS_KEY_ID and $S3O_SECRET_ACCESS_KEY)")
 	}
+	// The config file is only read when the address is still missing, so a
+	// keypair and an address given outright need no config on this machine.
+	baseAddr, err := admintarget.Resolve(*addr, func() (*config.Config, error) {
+		return config.LoadConfig(*configPath)
+	})
+	if err != nil {
+		return target{}, err
+	}
+	t.baseAddr = baseAddr
 	if t.baseAddr == "" {
 		return target{}, errors.New("admin address required (set -addr, $S3O_ADMIN_ADDR, or config)")
-	}
-	if !t.signs() && t.token == "" {
-		return target{}, errors.New("a credential is required (set -access-key and -secret-key, " +
-			"or -token, $S3O_ADMIN_TOKEN, or config)")
 	}
 	// A bare host:port defaults to http, because the common target is a local
 	// instance reached over a loopback or a private network. An operator

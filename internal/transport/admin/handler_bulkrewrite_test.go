@@ -67,7 +67,7 @@ func postBulkRewrite(t *testing.T, h *Handler, path string) *httptest.ResponseRe
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 	return w
@@ -166,7 +166,7 @@ func TestCompressExisting_StreamsProgress(t *testing.T) {
 			h.Register(mux)
 
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, nil)
-			req.Header.Set("X-Admin-Token", "test-token")
+			signRoot(t, req)
 			req.Header.Set("Accept", adminstream.ContentType)
 			w := httptest.NewRecorder()
 			mux.ServeHTTP(w, req)
@@ -252,7 +252,7 @@ func TestEncryptExisting_StreamsProgress(t *testing.T) {
 			h.Register(mux)
 
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, nil)
-			req.Header.Set("X-Admin-Token", "test-token")
+			signRoot(t, req)
 			req.Header.Set("Accept", adminstream.ContentType)
 			w := httptest.NewRecorder()
 			mux.ServeHTTP(w, req)

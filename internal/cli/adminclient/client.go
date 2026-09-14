@@ -37,9 +37,6 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
-// TokenHeader carries the admin token on every request.
-const TokenHeader = "X-Admin-Token"
-
 // RequestTimeout bounds a one-shot admin call. Streams deliberately run
 // without one: the server flushes a progress event per batch, so the
 // connection stays active for the life of the operation and cancellation is
@@ -59,56 +56,39 @@ const contentSHAHeader = "X-Amz-Content-Sha256"
 // which is what an upload streams: hashing it would mean buffering the object.
 const unsignedPayload = "UNSIGNED-PAYLOAD"
 
-// keypair is the credential a client signs with, when it signs.
+// keypair is the credential a client signs with.
 type keypair struct {
 	accessKeyID string
 	secretKey   string
 }
 
-// Client issues authenticated requests against one admin API instance.
-//
-// Exactly one of token or keys proves the caller. Signing is the path an
-// operator should be on; the token remains for a deployment that has not moved
-// off it yet.
+// Client issues authenticated requests against one admin API instance, signing
+// each with the keypair it holds.
 type Client struct {
 	baseAddr string
-	token    string
-	keys     *keypair
+	keys     keypair
 	http     *http.Client
 	stream   *http.Client // deadline-free; see RequestTimeout
 }
 
-// New builds a client for the resolved target address and token. A trailing
-// slash on addr is tolerated so callers can pass an operator-supplied value
-// through unmodified.
-func New(addr, token string) *Client {
+// NewSigned builds a client that signs each request with SigV4, the same
+// credential the S3 API accepts. A trailing slash on addr is tolerated so
+// callers can pass an operator-supplied value through unmodified.
+func NewSigned(addr, accessKeyID, secretKey string) *Client {
 	return &Client{
 		baseAddr: strings.TrimRight(addr, "/"),
-		token:    token,
+		keys:     keypair{accessKeyID: accessKeyID, secretKey: secretKey},
 		http:     &http.Client{Timeout: RequestTimeout},
 		stream:   &http.Client{},
 	}
 }
 
-// NewSigned builds a client that signs each request with SigV4, which is the
-// same credential the S3 API accepts.
-func NewSigned(addr, accessKeyID, secretKey string) *Client {
-	c := New(addr, "")
-	c.keys = &keypair{accessKeyID: accessKeyID, secretKey: secretKey}
-	return c
-}
-
-// authorize proves the request, by signature where the client holds a keypair
-// and by token otherwise.
+// authorize signs the request.
 //
 // payload is the body's SHA-256, or unsignedPayload for a streamed one. A
 // signature covers the headers it names, so this runs after every other header
 // is set.
 func (c *Client) authorize(ctx context.Context, req *http.Request, payload string) error {
-	if c.keys == nil {
-		req.Header.Set(TokenHeader, c.token)
-		return nil
-	}
 	creds := aws.Credentials{
 		AccessKeyID:     c.keys.accessKeyID,
 		SecretAccessKey: c.keys.secretKey,

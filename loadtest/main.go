@@ -22,6 +22,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -161,18 +162,19 @@ type scenarioFlags struct {
 	op               string
 	overwriteKeys    uint64
 	cacheFlushBefore bool
-	adminToken       string
+	adminCreds       adminCredentials
 	cold             bool
 }
 
 // validateScenarioFlags rejects combinations an operation cannot honour, so a
 // run fails at the flag rather than partway through a scenario.
-func validateScenarioFlags(f scenarioFlags) error {
+func validateScenarioFlags(f *scenarioFlags) error {
 	if f.op == "overwrite" && f.overwriteKeys == 0 {
 		return errors.New("-overwrite-keys must be positive: a rewrite scenario needs a key set to rewrite")
 	}
-	if f.cacheFlushBefore && f.adminToken == "" {
-		return errors.New("-cache-flush-before requires -admin-token (or S3O_ADMIN_TOKEN env var)")
+	if f.cacheFlushBefore && !f.adminCreds.complete() {
+		return errors.New("-cache-flush-before requires an admin keypair " +
+			"(-admin-access-key and -admin-secret-key, or $S3O_ACCESS_KEY_ID and $S3O_SECRET_ACCESS_KEY)")
 	}
 	if f.cold && f.op != "get" {
 		return errors.New("-cold only applies to -op get")
@@ -206,15 +208,18 @@ func main() {
 		rampStep         = flag.Int("ramp-step", 100, "Rate increment per ramp step")
 		rampErrThreshold = flag.Float64("ramp-error-threshold", 0.05, "Error rate threshold (0..1) for ramp termination")
 		maxErrorRate     = flag.Float64("max-error-rate", defaultMaxErrorRate, "Fail the run when any result exceeds this error rate (0..1); 0 disables")
-		cacheFlushBefore = flag.Bool("cache-flush-before", false, "POST /admin/api/cache/flush before each scenario step (requires -admin-token)")
-		adminToken       = flag.String("admin-token", "", "Admin token for cache-flush calls (also read from S3O_ADMIN_TOKEN env var)")
+		cacheFlushBefore = flag.Bool("cache-flush-before", false, "POST /admin/api/cache/flush before each scenario step (requires an admin keypair)")
+		adminAccessKey   = flag.String("admin-access-key", "", "Access key ID the cache-flush calls sign with (also read from S3O_ACCESS_KEY_ID)")
+		adminSecretKey   = flag.String("admin-secret-key", "", "Secret access key the cache-flush calls sign with (also read from S3O_SECRET_ACCESS_KEY)")
 		cold             = flag.Bool("cold", false, "Cold-cache read mode for -op get: read each seeded object exactly once so every GET is a first touch; the run lasts one pass over the working set, not -duration")
 		compressible     = flag.Float64("compressible", 0, "Fraction of each body that is repetitive (0..1). 0 is incompressible random bytes; 0.8 encodes to roughly a fifth. Applies to every scenario that writes")
 		overwriteKeys    = flag.Uint64("overwrite-keys", 1000, "Size of the key set -op overwrite rewrites, so a key is written every -overwrite-keys requests")
 	)
 	flag.Parse()
-	if *adminToken == "" {
-		*adminToken = os.Getenv("S3O_ADMIN_TOKEN")
+	adminCreds := adminCredentials{
+		accessKey: cmp.Or(*adminAccessKey, os.Getenv("S3O_ACCESS_KEY_ID")),
+		secretKey: cmp.Or(*adminSecretKey, os.Getenv("S3O_SECRET_ACCESS_KEY")),
+		region:    *region,
 	}
 
 	sizes, err := parseSizes(*sizesFlag, *size)
@@ -227,11 +232,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	if err := validateScenarioFlags(scenarioFlags{
+	if err := validateScenarioFlags(&scenarioFlags{
 		op:               *op,
 		overwriteKeys:    *overwriteKeys,
 		cacheFlushBefore: *cacheFlushBefore,
-		adminToken:       *adminToken,
+		adminCreds:       adminCreds,
 		cold:             *cold,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -286,9 +291,9 @@ func main() {
 	}
 
 	if *rampTo > 0 {
-		runRamp(&cfg, sizes[0], *rampTo, *rampStep, *rampErrThreshold, *cacheFlushBefore, *endpoint, *adminToken, &results)
+		runRamp(&cfg, sizes[0], *rampTo, *rampStep, *rampErrThreshold, *cacheFlushBefore, *endpoint, adminCreds, &results)
 	} else {
-		runSizes(&cfg, sizes, *cacheFlushBefore, *endpoint, *adminToken, &results)
+		runSizes(&cfg, sizes, *cacheFlushBefore, *endpoint, adminCreds, &results)
 	}
 
 	printMarkdownSummary(os.Stdout, &results)
@@ -337,13 +342,13 @@ func enforceErrorBudget(results *sweepResults, maxRate float64, ramp bool) error
 // runSizes executes the scenario once per size in sizes, optionally
 // flushing the orchestrator cache before each step. Appends each
 // result to results.Results.
-func runSizes(cfg *scenarioConfig, sizes []int, flushBefore bool, endpoint, adminToken string, results *sweepResults) {
+func runSizes(cfg *scenarioConfig, sizes []int, flushBefore bool, endpoint string, adminCreds adminCredentials, results *sweepResults) {
 	for _, sz := range sizes {
 		if len(sizes) > 1 {
 			fmt.Printf("\n=== size=%d bytes ===\n", sz)
 		}
 		if flushBefore {
-			if err := flushAdminCache(endpoint, adminToken); err != nil {
+			if err := flushAdminCache(endpoint, adminCreds); err != nil {
 				fmt.Fprintf(os.Stderr, "error: cache flush failed: %v (cold-cache results would be silently warm; check the admin token)\n", err)
 				os.Exit(1)
 			}
@@ -363,13 +368,13 @@ func runSizes(cfg *scenarioConfig, sizes []int, flushBefore bool, endpoint, admi
 // step's rate as the saturation point. Each step optionally
 // pre-flushes the cache so saturation reflects the cache-cold
 // path rather than steady-state warm hits.
-func runRamp(cfg *scenarioConfig, size, rampTo, step int, errThreshold float64, flushBefore bool, endpoint, adminToken string, results *sweepResults) {
+func runRamp(cfg *scenarioConfig, size, rampTo, step int, errThreshold float64, flushBefore bool, endpoint string, adminCreds adminCredentials, results *sweepResults) {
 	startRate := cfg.rate
 	for rate := startRate; rate <= rampTo; rate += step {
 		fmt.Printf("\n=== rate=%d req/s ===\n", rate)
 		cfg.rate = rate
 		if flushBefore {
-			if err := flushAdminCache(endpoint, adminToken); err != nil {
+			if err := flushAdminCache(endpoint, adminCreds); err != nil {
 				fmt.Fprintf(os.Stderr, "error: cache flush failed: %v (cold-cache results would be silently warm; check the admin token)\n", err)
 				os.Exit(1)
 			}
@@ -393,13 +398,18 @@ func runRamp(cfg *scenarioConfig, size, rampTo, step int, errThreshold float64, 
 // each ramp/sweep step starts from a known cold cache state. 503 is
 // treated as success since it just means the orchestrator has caching
 // disabled, not that the call failed.
-func flushAdminCache(endpoint, adminToken string) error {
+//
+// The admin API authenticates the same signed credential the data plane does,
+// so this signs with the keypair the run is already using.
+func flushAdminCache(endpoint string, creds adminCredentials) error {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
 		endpoint+"/admin/api/cache/flush", nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-Admin-Token", adminToken)
+	if err := signAdminRequest(req, creds); err != nil {
+		return err
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
@@ -409,6 +419,28 @@ func flushAdminCache(endpoint, adminToken string) error {
 		return fmt.Errorf("flush returned %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// adminCredentials is the keypair an admin call signs with.
+type adminCredentials struct {
+	accessKey string
+	secretKey string
+	region    string
+}
+
+// complete reports whether both halves are present, which is what it takes to
+// sign.
+func (c adminCredentials) complete() bool {
+	return c.accessKey != "" && c.secretKey != ""
+}
+
+// signAdminRequest signs an admin request with SigV4. The payload is declared
+// unsigned because these calls carry no body.
+func signAdminRequest(req *http.Request, creds adminCredentials) error {
+	req.Header.Set("X-Amz-Content-Sha256", unsignedPayload)
+	return v4.NewSigner().SignHTTP(req.Context(),
+		aws.Credentials{AccessKeyID: creds.accessKey, SecretAccessKey: creds.secretKey},
+		req, unsignedPayload, "s3", creds.region, time.Now().UTC())
 }
 
 // parseSizes resolves the effective per-run object sizes. -sizes wins

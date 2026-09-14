@@ -2,9 +2,9 @@ openapi: 3.1.0
 info:
     title: s3-orchestrator Admin API
     version: 1.0.0
-    description: Operational control plane for a running s3-orchestrator instance. Every endpoint requires the admin token; long-running operations can stream newline-delimited progress events when the caller asks for them.
+    description: Operational control plane for a running s3-orchestrator instance. Every endpoint requires a signed request; long-running operations can stream newline-delimited progress events when the caller asks for them.
 security:
-    - adminToken: []
+    - sigv4: []
 paths:
     /admin/api/backends/{name}:
         delete:
@@ -849,7 +849,7 @@ paths:
                     type: string
                 - name: kind
                   in: query
-                  description: 'Kind of the granted resource: bucket, backend or instance; defaults to bucket'
+                  description: 'Kind of the granted resource: bucket, backend or orchestrator; defaults to bucket'
                   required: false
                   schema:
                     type: string
@@ -2183,8 +2183,7 @@ components:
                 - workers
             type: object
     securitySchemes:
-        adminToken:
-            type: apiKey
-            in: header
-            name: X-Admin-Token
-            description: Shared admin token, configured as server.admin_token
+        sigv4:
+            type: http
+            scheme: aws4-hmac-sha256
+            description: AWS SigV4 signature over the request, using an access key the deployment holds. What a credential reaches is decided by the grants its user carries.

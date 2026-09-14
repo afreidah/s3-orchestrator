@@ -40,7 +40,7 @@ func TestTraceSnapshot_Disabled(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/trace/snapshot", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -58,7 +58,7 @@ func TestTraceSnapshot_Success(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/trace/snapshot", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -86,7 +86,7 @@ func TestTraceSnapshot_WriteToError(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/trace/snapshot", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 

@@ -38,13 +38,9 @@ type apiClient struct {
 	c *adminclient.Client
 }
 
-// newAPIClient builds a client for the resolved target, signing where a
-// keypair was given and falling back to the token otherwise.
+// newAPIClient builds a signing client for the resolved target.
 func newAPIClient(t target) *apiClient {
-	if t.signs() {
-		return &apiClient{c: adminclient.NewSigned(t.baseAddr, t.accessKeyID, t.secretKey)}
-	}
-	return &apiClient{c: adminclient.New(t.baseAddr, t.token)}
+	return &apiClient{c: adminclient.NewSigned(t.baseAddr, t.accessKeyID, t.secretKey)}
 }
 
 // ListObjects fetches one delimiter-grouped page under prefix. A non-empty

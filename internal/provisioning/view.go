@@ -86,18 +86,16 @@ type User struct {
 	Source     Source
 }
 
-// Credential is one proof of a user, by keypair, by legacy proxy token, or by
-// both - a config-declared credential may carry either or each, and both prove
-// the same user.
+// Credential is one keypair proving a user. A user may hold several, so one can
+// be replaced or revoked while its siblings keep working.
 //
-// Secret and Token are carried because the request path needs the literal values
-// to repeat the client's SigV4 key derivation and to compare a token. Nothing
-// that renders a credential to an operator may include either.
+// Secret is carried because the request path needs the literal value to repeat
+// the client's SigV4 key derivation. Nothing that renders a credential to an
+// operator may include it.
 type Credential struct {
 	AccessKeyID string
 	UserID      string
 	Secret      string
-	Token       string
 	Label       string
 	Source      Source
 }
@@ -136,13 +134,8 @@ func Merge(cfgBuckets []config.BucketConfig, auth config.AuthConfig, s *Snapshot
 // through credentials the store holds.
 //
 // The bucket half is expanded across what either source declares, matching how
-// a stored bucket wildcard is published, so root reaches a bucket created later
-// only once the registry is rebuilt - which creating a bucket already does.
-//
-// A deployment carrying only the legacy shared token gets the user without a
-// keypair. The token is not registered as a credential here: it would then also
-// authenticate on the S3 API, which is a door it has never opened. The admin
-// surface resolves it onto this user by id instead.
+// a stored bucket wildcard is published; the wildcard it also carries is what
+// reaches a bucket created since.
 func mergeRootUser(v *View, auth config.AuthConfig, declared map[string]struct{}) {
 	if !auth.HasRoot() {
 		return
@@ -158,14 +151,11 @@ func mergeRootUser(v *View, auth config.AuthConfig, declared map[string]struct{}
 		Grants:     grants,
 		AllBuckets: core.PermAll,
 		Admin: map[core.Resource]core.PermissionSet{
-			{Kind: core.ResourceInstance}:                             core.PermAdminAll,
+			{Kind: core.ResourceOrchestrator}:                         core.PermAdminAll,
 			{Kind: core.ResourceBackend, Name: core.ResourceWildcard}: core.PermAdminAll,
 		},
 		Source: SourceConfig,
 	})
-	if !auth.Root.Declared() {
-		return
-	}
 	v.Credentials = append(v.Credentials, Credential{
 		AccessKeyID: auth.Root.AccessKeyID,
 		UserID:      RootUserID,
@@ -220,7 +210,7 @@ func mergeConfigUsers(v *View, cfgBuckets []config.BucketConfig) {
 		bkt := &cfgBuckets[i]
 		for j := range bkt.Credentials {
 			cred := &bkt.Credentials[j]
-			id := ConfigUserID(bkt.Name, j, cred.AccessKeyID)
+			id := ConfigUserID(cred.AccessKeyID)
 			// Full access, matching what a config credential has always
 			// carried. The config file has no syntax for narrowing it, and
 			// inventing one here would split the same idea across two places.
@@ -231,12 +221,12 @@ func mergeConfigUsers(v *View, cfgBuckets []config.BucketConfig) {
 				Grants:  map[string]core.PermissionSet{bkt.Name: core.PermAll},
 				Source:  SourceConfig,
 			})
-			out := Credential{UserID: id, Token: cred.Token, Source: SourceConfig}
-			if cred.AccessKeyID != "" && cred.SecretAccessKey != "" {
-				out.AccessKeyID = cred.AccessKeyID
-				out.Secret = cred.SecretAccessKey
-			}
-			v.Credentials = append(v.Credentials, out)
+			v.Credentials = append(v.Credentials, Credential{
+				AccessKeyID: cred.AccessKeyID,
+				UserID:      id,
+				Secret:      cred.SecretAccessKey,
+				Source:      SourceConfig,
+			})
 		}
 	}
 }
@@ -416,13 +406,11 @@ func sortedKeys(grants map[string]core.PermissionSet) []string {
 	return out
 }
 
-// ConfigUserID names the user a config-declared credential resolves to. The
-// access key is the stable choice where there is one; a token-only credential
-// has no public identifier, so it falls back to its position, which is stable as
-// long as the bucket's credential list is.
-func ConfigUserID(bucketName string, idx int, accessKeyID string) string {
-	if accessKeyID != "" {
-		return "config:" + accessKeyID
-	}
-	return fmt.Sprintf("config:%s:%d", bucketName, idx)
+// ConfigUserID names the user a config-declared credential resolves to.
+//
+// The access key is what identifies it, which makes the id stable across
+// restarts and across reordering the bucket's credential list - an audit record
+// naming it means the same thing tomorrow.
+func ConfigUserID(accessKeyID string) string {
+	return "config:" + accessKeyID
 }

@@ -29,29 +29,27 @@ import (
 )
 
 // TestRouteGuards covers what the admin routes answer before any handler
-// body runs: the token check on every route, the method each one accepts, and
-// the query parameters a route cannot work without. One request each, so they
-// are stated as a table rather than as a function apiece.
+// body runs: the signature check on every route, the method each one accepts,
+// and the query parameters a route cannot work without. One request each, so
+// they are stated as a table rather than as a function apiece.
 func TestRouteGuards(t *testing.T) {
 	t.Parallel()
-	const validToken = "test-token"
 
 	tests := []struct {
 		name   string
 		method string
 		path   string
-		token  string
+		signed bool
 		want   int
 	}{
-		{"no token", http.MethodGet, "/admin/api/status", "", http.StatusUnauthorized},
-		{"wrong token", http.MethodGet, "/admin/api/status", "wrong-token", http.StatusUnauthorized},
-		{"valid token", http.MethodGet, "/admin/api/log-level", validToken, http.StatusOK},
-		{"status rejects POST", http.MethodPost, "/admin/api/status", validToken, http.StatusMethodNotAllowed},
-		{"log-level rejects DELETE", http.MethodDelete, "/admin/api/log-level", validToken, http.StatusMethodNotAllowed},
-		{"usage-flush rejects GET", http.MethodGet, "/admin/api/usage-flush", validToken, http.StatusMethodNotAllowed},
-		{"replicate rejects GET", http.MethodGet, "/admin/api/replicate", validToken, http.StatusMethodNotAllowed},
-		{"decrypt-existing rejects GET", http.MethodGet, "/admin/api/decrypt-existing", validToken, http.StatusMethodNotAllowed},
-		{"object-locations without a key", http.MethodGet, "/admin/api/object-locations", validToken, http.StatusBadRequest},
+		{"unsigned", http.MethodGet, "/admin/api/status", false, http.StatusUnauthorized},
+		{"signed", http.MethodGet, "/admin/api/log-level", true, http.StatusOK},
+		{"status rejects POST", http.MethodPost, "/admin/api/status", true, http.StatusMethodNotAllowed},
+		{"log-level rejects DELETE", http.MethodDelete, "/admin/api/log-level", true, http.StatusMethodNotAllowed},
+		{"usage-flush rejects GET", http.MethodGet, "/admin/api/usage-flush", true, http.StatusMethodNotAllowed},
+		{"replicate rejects GET", http.MethodGet, "/admin/api/replicate", true, http.StatusMethodNotAllowed},
+		{"decrypt-existing rejects GET", http.MethodGet, "/admin/api/decrypt-existing", true, http.StatusMethodNotAllowed},
+		{"object-locations without a key", http.MethodGet, "/admin/api/object-locations", true, http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
@@ -62,8 +60,8 @@ func TestRouteGuards(t *testing.T) {
 			h.Register(mux)
 
 			req := httptest.NewRequestWithContext(context.Background(), tt.method, tt.path, nil)
-			if tt.token != "" {
-				req.Header.Set("X-Admin-Token", tt.token)
+			if tt.signed {
+				signRoot(t, req)
 			}
 			w := httptest.NewRecorder()
 			mux.ServeHTTP(w, req)
@@ -84,7 +82,7 @@ func TestLogLevel_Get(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/log-level", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -111,7 +109,7 @@ func TestLogLevel_Put(t *testing.T) {
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/admin/api/log-level",
 		strings.NewReader(`{"level":"debug"}`))
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -143,7 +141,7 @@ func TestLogLevel_PutInvalidJSON(t *testing.T) {
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/admin/api/log-level",
 		strings.NewReader(`not json`))
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -161,7 +159,7 @@ func TestReloadStatus_NoReloadYet(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/reload-status", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -186,7 +184,7 @@ func TestReloadStatus_ReturnsProvidedResult(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/reload-status", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -216,7 +214,7 @@ func TestCacheFlush_Disabled(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/cache/flush", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -241,7 +239,7 @@ func TestCacheFlush_Empty(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/cache/flush", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -278,7 +276,7 @@ func TestCacheFlush_Cleared(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/cache/flush", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -306,7 +304,7 @@ func TestCacheStats_Disabled(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/cache", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -328,7 +326,7 @@ func TestCacheStats_Populated(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/api/cache", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -363,7 +361,7 @@ func TestCacheInvalidateKey_RemovesEntry(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/keys/a/1", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -395,7 +393,7 @@ func TestCacheInvalidateKey_UnknownKey(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/keys/nonexistent", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -419,7 +417,7 @@ func TestCacheInvalidatePrefix_DropsMatching(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/prefix?prefix=users/1/", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -451,7 +449,7 @@ func TestCacheInvalidatePrefix_EmptyRejected(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/prefix", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -470,7 +468,7 @@ func TestCacheInvalidateKey_Disabled(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/keys/foo", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -488,7 +486,7 @@ func TestCacheInvalidatePrefix_Disabled(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/admin/api/cache/prefix?prefix=foo/", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -507,10 +505,10 @@ func newTestHandler(t *testing.T) *Handler {
 	var lv slog.LevelVar
 	lv.Set(slog.LevelInfo)
 	h := &Handler{
-		log:      slog.Default().With(logfmt.Component("admin")),
-		token:    "test-token",
-		registry: func() *auth.BucketRegistry { return rootRegistry(t) },
-		logLevel: &lv,
+		log:        slog.Default().With(logfmt.Component("admin")),
+		registry:   func() *auth.BucketRegistry { return rootRegistry(t) },
+		logLevel:   &lv,
+		confirmKey: mustConfirmKey(),
 	}
 	// Operations over stubs that do nothing, so a test only installs the one
 	// service whose branch it drives. The rebalancer is deliberately absent,
@@ -554,7 +552,7 @@ func TestDecryptExisting_NoEncryptor(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/decrypt-existing", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -580,7 +578,7 @@ func TestEncryptExisting_NoEncryptor(t *testing.T) {
 	h.Register(mux)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/api/encrypt-existing", nil)
-	req.Header.Set("X-Admin-Token", "test-token")
+	signRoot(t, req)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -673,7 +671,7 @@ func TestRemoveToken_BadPayloadFormat(t *testing.T) {
 func TestRemoveToken_WrongKey(t *testing.T) {
 	t.Parallel()
 	h1 := newTestHandler(t)
-	h2 := &Handler{token: "different-key"}
+	h2 := &Handler{confirmKey: mustConfirmKey()}
 
 	token := h1.generateRemoveToken("my-backend")
 	if h2.validRemoveToken(token, "my-backend") {

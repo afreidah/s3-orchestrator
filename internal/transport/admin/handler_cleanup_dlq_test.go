@@ -61,7 +61,7 @@ func TestHandleCleanupDLQ_ListReturnsTypedShape(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodGet, "/admin/api/cleanup-dlq?backend=b2&limit=25", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodGet, "/admin/api/cleanup-dlq?backend=b2&limit=25", ""))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
@@ -85,7 +85,7 @@ func TestHandleCleanupDLQRequeue_ReturnsCount(t *testing.T) {
 	h.Register(mux)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, doAuth(http.MethodPost, "/admin/api/cleanup-dlq/requeue?backend=b2", ""))
+	mux.ServeHTTP(w, doAuth(t, http.MethodPost, "/admin/api/cleanup-dlq/requeue?backend=b2", ""))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}

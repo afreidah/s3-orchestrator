@@ -296,23 +296,24 @@ func TestHandleKey_TableDelegationAndUnknownMsg(t *testing.T) {
 
 func TestResolveTarget(t *testing.T) {
 	// flags win and the address gets an http prefix
-	got, err := resolveTarget([]string{"-addr", "host:9000", "-token", "tok"})
-	if err != nil || got.baseAddr != "http://host:9000" || got.token != "tok" {
-		t.Fatalf("flags: addr=%q tok=%q err=%v", got.baseAddr, got.token, err)
+	got, err := resolveTarget([]string{"-addr", "host:9000", "-access-key", "AK", "-secret-key", "SK"})
+	if err != nil || got.baseAddr != "http://host:9000" {
+		t.Fatalf("flags: addr=%q err=%v", got.baseAddr, err)
 	}
-	if got.signs() {
-		t.Error("a token-only target reported that it signs")
+	if !got.signs() || got.accessKeyID != "AK" || got.secretKey != "SK" {
+		t.Fatalf("keypair: %+v", got)
 	}
 
 	// an explicit scheme is left untouched
-	if got, _ := resolveTarget([]string{"-addr", "https://x", "-token", "t"}); got.baseAddr != "https://x" {
+	if got, _ := resolveTarget([]string{
+		"-addr", "https://x", "-access-key", "AK", "-secret-key", "SK",
+	}); got.baseAddr != "https://x" {
 		t.Errorf("scheme passthrough: addr=%q", got.baseAddr)
 	}
 
-	// a keypair is resolved and reported as the signing credential
-	got, err = resolveTarget([]string{"-addr", "host:9000", "-access-key", "AK", "-secret-key", "SK"})
-	if err != nil || !got.signs() || got.accessKeyID != "AK" || got.secretKey != "SK" {
-		t.Fatalf("keypair: %+v err=%v", got, err)
+	// half a keypair proves nothing and cannot sign
+	if got, _ := resolveTarget([]string{"-addr", "host:9000", "-access-key", "AK"}); got.signs() {
+		t.Error("a target holding only an access key reported that it signs")
 	}
 
 	// an unknown flag surfaces the parse error
@@ -322,21 +323,17 @@ func TestResolveTarget(t *testing.T) {
 
 	// with no flags/env and an unreadable config, resolution fails
 	t.Setenv("S3O_ADMIN_ADDR", "")
-	t.Setenv("S3O_ADMIN_TOKEN", "")
 	if _, err := resolveTarget([]string{"-config", "/no/such/file.yaml"}); err == nil {
 		t.Error("missing target: expected error")
 	}
 }
 
 // TestResolveTarget_KeypairNeedsNoConfig pins that a keypair and an address
-// given outright resolve without a config file.
-//
-// The config is loaded whenever a token is still missing, and a signing caller
-// has no token by design, so without this the documented two-variable setup
-// fails on a machine that holds no server config.
+// given outright resolve without a config file, which is the documented setup
+// for a binary targeting a remote instance from a machine holding no server
+// config.
 func TestResolveTarget_KeypairNeedsNoConfig(t *testing.T) {
 	t.Setenv("S3O_ADMIN_ADDR", "")
-	t.Setenv("S3O_ADMIN_TOKEN", "")
 
 	got, err := resolveTarget([]string{
 		"-config", "/no/such/file.yaml",

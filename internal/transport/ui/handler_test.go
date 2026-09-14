@@ -32,9 +32,8 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
-
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
@@ -46,10 +45,17 @@ import (
 
 // The credentials every handler test signs and logs in with.
 const (
-	testAdminKey      = "test-admin"
-	testAdminSecret   = "test-secret-key"
+	testRootKey       = "AKIAUITESTROOT"
+	testRootSecret    = "test-secret-key" //nolint:gosec // G101: test credential
 	testSessionSecret = "test-session-secret"
 )
+
+// testRootAuth is the root credential the handler under test logs in against.
+func testRootAuth() config.AuthConfig {
+	return config.AuthConfig{
+		Root: config.RootCredential{AccessKeyID: testRootKey, SecretAccessKey: testRootSecret},
+	}
+}
 
 // newTestHandler constructs a new test handler.
 // testDashboard builds the aggregator the UI now reads directly, wired to the
@@ -119,15 +125,14 @@ func newTestHandlerWithMock(t *testing.T, opts ...func(*storetest.MockMetadataSt
 		RoutingStrategy: config.RoutingPack,
 		Replication:     config.ReplicationConfig{Factor: 1},
 		RateLimit:       config.RateLimitConfig{Enabled: false},
+		Auth:            testRootAuth(),
 		UI: config.UIConfig{
 			Enabled:       true,
-			AdminKey:      testAdminKey,
-			AdminSecret:   testAdminSecret,
 			SessionSecret: testSessionSecret,
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer(), Registry: registryFrom(cfg)})
 
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
@@ -143,8 +148,8 @@ func loginCookies(t *testing.T, _ *Handler, mux *http.ServeMux) (session *http.C
 	t.Helper()
 
 	form := url.Values{
-		"access_key": {testAdminKey},
-		"secret_key": {testAdminSecret},
+		"access_key": {testRootKey},
+		"secret_key": {testRootSecret},
 	}
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -317,8 +322,8 @@ func TestLogin_ValidCredentials(t *testing.T) {
 	_, mux := newTestHandler(t)
 
 	form := url.Values{
-		"access_key": {testAdminKey},
-		"secret_key": {testAdminSecret},
+		"access_key": {testRootKey},
+		"secret_key": {testRootSecret},
 	}
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -442,82 +447,6 @@ func TestLogout_ClearsCookie(t *testing.T) {
 	t.Error("logout should clear session cookie")
 }
 
-// TestCheckSecret_Plaintext verifies the check secret plaintext behaviour described by the test name.
-func TestCheckSecret_Plaintext(t *testing.T) {
-	t.Parallel()
-	if !checkSecret("mysecret", "mysecret") {
-		t.Error("identical plaintext should match")
-	}
-	if checkSecret("mysecret", "wrong") {
-		t.Error("different plaintext should not match")
-	}
-}
-
-// TestCheckSecret_Bcrypt verifies the check secret bcrypt path by exercising bcrypt.GenerateFromPassword.
-func TestCheckSecret_Bcrypt(t *testing.T) {
-	t.Parallel()
-	hash, err := bcrypt.GenerateFromPassword([]byte("bcrypt-pass"), bcrypt.MinCost)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !checkSecret(string(hash), "bcrypt-pass") {
-		t.Error("correct password should match bcrypt hash")
-	}
-	if checkSecret(string(hash), "wrong") {
-		t.Error("wrong password should not match bcrypt hash")
-	}
-}
-
-// TestLogin_BcryptSecret verifies the login bcrypt secret contract.
-// Asserts that bcrypt login: status = , want 303.
-func TestLogin_BcryptSecret(t *testing.T) {
-	t.Parallel()
-	hash, err := bcrypt.GenerateFromPassword([]byte(testAdminSecret), bcrypt.MinCost)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	mockStore := storetest.NewMockMetadataStore(gomock.NewController(t))
-	storetest.Permissive(mockStore)
-	st := proxytest.New(t, mockStore, &proxytest.StackOptions{
-		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
-			Backends: map[string]backend.ObjectBackend{},
-			Order:    []string{},
-			Metrics:  mockStore,
-		}),
-	})
-	svc := testOps(st, proxytest.BuildWorkers(st, mockStore), mockStore)
-
-	cfg := &config.Config{
-		Buckets:  []config.BucketConfig{{Name: "b"}},
-		Backends: []config.BackendConfig{{Name: "b1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s"}},
-		UI: config.UIConfig{
-			Enabled:       true,
-			AdminKey:      testAdminKey,
-			AdminSecret:   string(hash),
-			SessionSecret: testSessionSecret,
-		},
-	}
-
-	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
-	mux := http.NewServeMux()
-	h.Register(mux, "/ui")
-
-	form := url.Values{
-		"access_key": {testAdminKey},
-		"secret_key": {testAdminSecret},
-	}
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Result().StatusCode != http.StatusSeeOther {
-		t.Fatalf("bcrypt login: status = %d, want 303", w.Result().StatusCode)
-	}
-}
-
 // TestDeriveSessionKey_Deterministic verifies the derive session key deterministic path by exercising bytes.Equal.
 func TestDeriveSessionKey_Deterministic(t *testing.T) {
 	t.Parallel()
@@ -563,15 +492,12 @@ func TestCrossInstanceSession(t *testing.T) {
 	cfg := &config.Config{
 		Buckets:  []config.BucketConfig{{Name: "b"}},
 		Backends: []config.BackendConfig{{Name: "b1", Endpoint: "e", Bucket: "b", AccessKeyID: "a", SecretAccessKey: "s"}},
-		UI: config.UIConfig{
-			Enabled:     true,
-			AdminKey:    testAdminKey,
-			AdminSecret: testAdminSecret,
-		},
+		Auth:     testRootAuth(),
+		UI:       config.UIConfig{Enabled: true},
 	}
 
-	h1 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
-	h2 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h1 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer(), Registry: registryFrom(cfg)})
+	h2 := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer(), Registry: registryFrom(cfg)})
 	mux1 := http.NewServeMux()
 	mux2 := http.NewServeMux()
 	h1.Register(mux1, "/ui")
@@ -1787,8 +1713,8 @@ func TestLogin_BruteForceProtection(t *testing.T) {
 
 // BenchmarkLogin_TimingParity verifies that login attempts with an invalid
 // access key take approximately the same time as attempts with a valid key
-// but wrong secret. Both should be dominated by checkSecret (bcrypt when
-// configured). A large disparity would indicate a timing side-channel.
+// but wrong secret. Both should be dominated by the registry's constant-time
+// secret comparison. A large disparity would indicate a timing side-channel.
 // BenchmarkLogin_InvalidKey benchmarks login_invalid key.
 // BenchmarkLogin_InvalidKey benchmarks login_invalid key.
 func BenchmarkLogin_InvalidKey(b *testing.B) {
@@ -1812,7 +1738,7 @@ func BenchmarkLogin_ValidKeyWrongSecret(b *testing.B) {
 	h, mux := benchLoginHandler(b)
 	_ = h
 
-	form := url.Values{"access_key": {testAdminKey}, "secret_key": {"wrong-secret"}}
+	form := url.Values{"access_key": {testRootKey}, "secret_key": {"wrong-secret"}}
 	body := form.Encode()
 
 	b.ResetTimer()
@@ -1824,15 +1750,10 @@ func BenchmarkLogin_ValidKeyWrongSecret(b *testing.B) {
 	}
 }
 
-// benchLoginHandler builds a handler with a bcrypt-hashed admin secret for
-// login timing benchmarks.
+// benchLoginHandler builds a handler holding the root credential, for login
+// timing benchmarks.
 func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 	b.Helper()
-
-	bcryptHash, err := bcrypt.GenerateFromPassword([]byte(testAdminSecret), bcrypt.DefaultCost)
-	if err != nil {
-		b.Fatal(err)
-	}
 
 	mockStore := storetest.NewMockMetadataStore(gomock.NewController(b))
 	storetest.Permissive(mockStore)
@@ -1851,15 +1772,14 @@ func benchLoginHandler(b *testing.B) (*Handler, *http.ServeMux) {
 		RoutingStrategy: config.RoutingPack,
 		Replication:     config.ReplicationConfig{Factor: 1},
 		RateLimit:       config.RateLimitConfig{Enabled: false},
+		Auth:            testRootAuth(),
 		UI: config.UIConfig{
 			Enabled:       true,
-			AdminKey:      testAdminKey,
-			AdminSecret:   string(bcryptHash),
 			SessionSecret: testSessionSecret,
 		},
 	}
 
-	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer()})
+	h := New(&Deps{Dashboard: testDashboard(st, mockStore), Sync: testSync(st, mockStore), Objects: svc.Objects, Integrity: svc.Integrity, Replication: svc.Replication, Rebalance: svc.Rebalance, Encryption: svc.Encryption, Compression: svc.Compression, DBHealthy: func() bool { return true }, Buckets: declaredFrom(cfg), Cfg: cfg, LogBuffer: telemetry.NewLogBuffer(), Registry: registryFrom(cfg)})
 	mux := http.NewServeMux()
 	h.Register(mux, "/ui")
 
@@ -2018,7 +1938,7 @@ func TestLogin_BruteForceReset(t *testing.T) {
 	}
 
 	// Successful login resets counter
-	form := url.Values{"access_key": {testAdminKey}, "secret_key": {testAdminSecret}}
+	form := url.Values{"access_key": {testRootKey}, "secret_key": {testRootSecret}}
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.RemoteAddr = addr
@@ -2145,4 +2065,16 @@ func declaredFrom(cfg *config.Config) *provisioning.Declared {
 	d := provisioning.NewDeclared()
 	d.Set(provisioning.Merge(cfg.Buckets, config.AuthConfig{}, &provisioning.Snapshot{}).Buckets)
 	return d
+}
+
+// registryFrom builds the registry the handler logs in against, from the same
+// config it is otherwise wired with. A registry that cannot be assembled yields
+// no accessor, which is the pre-publication state a handler starts in.
+func registryFrom(cfg *config.Config) func() *auth.BucketRegistry {
+	v := provisioning.Merge(cfg.Buckets, cfg.Auth, &provisioning.Snapshot{})
+	br, err := auth.NewBucketRegistry(&v)
+	if err != nil {
+		return nil
+	}
+	return func() *auth.BucketRegistry { return br }
 }

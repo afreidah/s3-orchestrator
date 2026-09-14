@@ -34,7 +34,7 @@ func TestAuthConfig_RootCredentialIsAllOrNothing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			a := AuthConfig{Root: tc.root}
-			errs := a.setDefaultsAndValidate()
+			errs := a.setDefaultsAndValidate(false)
 			if tc.wantErr && !errors.Is(errors.Join(errs...), ErrRootCredentialIncomplete) {
 				t.Errorf("errs = %v, want ErrRootCredentialIncomplete", errs)
 			}
@@ -45,52 +45,24 @@ func TestAuthConfig_RootCredentialIsAllOrNothing(t *testing.T) {
 	}
 }
 
-// TestAuthConfig_HasRoot verifies both ways of declaring an administering
-// identity are recognised, since the merge builds the root user from either.
-func TestAuthConfig_HasRoot(t *testing.T) {
+// TestAuthConfig_RootRequiredWhereSomethingNeedsIt verifies a deployment that
+// enables the dashboard must declare a root credential.
+//
+// It is the only way in once the separate dashboard login is gone, so a config
+// without one would boot with nothing able to provision the first user.
+func TestAuthConfig_RootRequiredWhereSomethingNeedsIt(t *testing.T) {
 	t.Parallel()
 
-	for _, tc := range []struct {
-		name string
-		auth AuthConfig
-		want bool
-	}{
-		{"nothing declared", AuthConfig{}, false},
-		{"a keypair", AuthConfig{Root: RootCredential{AccessKeyID: "AK", SecretAccessKey: "SK"}}, true},
-		{"the legacy token", AuthConfig{LegacySharedToken: "tok"}, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := tc.auth.HasRoot(); got != tc.want {
-				t.Errorf("HasRoot() = %v, want %v", got, tc.want)
-			}
-		})
+	var none AuthConfig
+	if errs := none.setDefaultsAndValidate(false); len(errs) != 0 {
+		t.Errorf("errs = %v, want none when nothing requires a root credential", errs)
 	}
-}
+	if errs := none.setDefaultsAndValidate(true); !errors.Is(errors.Join(errs...), ErrRootCredentialRequired) {
+		t.Errorf("errs = %v, want ErrRootCredentialRequired", errs)
+	}
 
-// TestConfig_LegacySharedTokenFallsBackToAdminKey verifies the root identity is
-// built from admin_key when admin_token is unset, which is the fallback the
-// admin surface has always applied. Missing it would leave such a deployment
-// with a token that resolves to nobody.
-func TestConfig_LegacySharedTokenFallsBackToAdminKey(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		name string
-		ui   UIConfig
-		want string
-	}{
-		{"admin_token wins", UIConfig{AdminToken: "tok", AdminKey: "key"}, "tok"},
-		{"admin_key is the fallback", UIConfig{AdminKey: "key"}, "key"},
-		{"neither", UIConfig{}, ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			c := &Config{UI: tc.ui}
-			_ = c.SetDefaultsAndValidate()
-			if got := c.Auth.LegacySharedToken; got != tc.want {
-				t.Errorf("LegacySharedToken = %q, want %q", got, tc.want)
-			}
-		})
+	with := AuthConfig{Root: RootCredential{AccessKeyID: "AK", SecretAccessKey: "SK"}}
+	if errs := with.setDefaultsAndValidate(true); len(errs) != 0 {
+		t.Errorf("errs = %v, want none when a root credential is declared", errs)
 	}
 }

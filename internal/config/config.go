@@ -90,6 +90,14 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, wrappedPath(ErrParseConfig, path, err)
 	}
 
+	// Checked against the document rather than the parsed struct: the fields are
+	// gone, and YAML drops what it cannot map, so a removed key would otherwise
+	// be ignored and the deployment would run with authentication it thinks it
+	// configured.
+	if errs := checkRemovedKeys([]byte(expanded)); len(errs) > 0 {
+		return nil, wrappedPath(ErrInvalidConfig, path, errors.Join(errs...))
+	}
+
 	if err := cfg.SetDefaultsAndValidate(); err != nil {
 		return nil, wrappedPath(ErrInvalidConfig, path, err)
 	}
@@ -184,13 +192,11 @@ func (c *Config) validatePerTypeSections() []error {
 	errs = append(errs, c.Compression.setDefaultsAndValidate()...)
 	errs = append(errs, c.UI.setDefaultsAndValidate()...)
 	// The dashboard's token is the same authority as a root credential, so it
-	// is carried alongside one rather than consulted separately. admin_key is
-	// the fallback the admin surface has always used when admin_token is unset,
-	// and it has to be applied here too: the root identity is built from this
-	// value, so missing the fallback would leave a deployment that declares only
-	// admin_key with a token that resolves to nobody.
-	c.Auth.LegacySharedToken = cmp.Or(c.UI.AdminToken, c.UI.AdminKey)
-	errs = append(errs, c.Auth.setDefaultsAndValidate()...)
+	// The root credential is what administers a deployment, and it is now the
+	// only thing that can: without it the admin API authenticates nobody and the
+	// dashboard has no login, so a deployment enabling either would start with
+	// no way to provision its first user.
+	errs = append(errs, c.Auth.setDefaultsAndValidate(c.UI.Enabled)...)
 	errs = append(errs, c.UsageFlush.setDefaultsAndValidate()...)
 	errs = append(errs, validateLifecycleRules(c.Lifecycle.Rules)...)
 	errs = append(errs, c.Integrity.setDefaultsAndValidate()...)

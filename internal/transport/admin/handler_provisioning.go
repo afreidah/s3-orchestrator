@@ -160,10 +160,7 @@ func (h *Handler) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 	if !httputil.DecodeJSONBody(w, r, &req, provisioningBodyLimit) {
 		return
 	}
-	resource := core.Resource{Kind: core.ResourceKind(req.Kind), Name: req.Name}
-	if req.Kind == "" {
-		resource.Kind = core.ResourceBucket
-	}
+	resource := core.Resource{Kind: core.ParseResourceKind(req.Kind), Name: req.Name}
 	perms, err := core.ParsePermissions(resource.Kind, strings.Join(req.Permissions, ","))
 	if err != nil {
 		httputil.WriteJSONError(w, http.StatusBadRequest, err.Error())
@@ -187,9 +184,9 @@ func (h *Handler) handleDeleteGrant(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue(paramID)
 	resource := core.Resource{Kind: core.ResourceBucket, Name: r.PathValue(paramName)}
 	if kind := r.URL.Query().Get(paramKind); kind != "" {
-		resource.Kind = core.ResourceKind(kind)
+		resource.Kind = core.ParseResourceKind(kind)
 	}
-	if resource.Kind == core.ResourceInstance {
+	if resource.Kind == core.ResourceOrchestrator {
 		resource.Name = ""
 	}
 	if err := h.provision.DeleteGrant(r.Context(), userID, resource); err != nil {

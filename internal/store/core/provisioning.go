@@ -64,16 +64,44 @@ type Credential struct {
 // ResourceKind says what a grant names. The control plane has no bucket, so
 // draining a backend or provisioning a user needs a resource that is not one.
 //
-// ResourceInstance carries no name: there is one instance, so the name is stored
-// empty.
+// The three kinds name the three things a request can act on: the objects in a
+// bucket, one storage provider's copies of them, or the orchestrator running in
+// front of both. ResourceOrchestrator carries no name, because a deployment has
+// only one orchestrator to name.
 type ResourceKind string
 
 // The three kinds a grant may name.
 const (
-	ResourceBucket   ResourceKind = "bucket"
-	ResourceBackend  ResourceKind = "backend"
-	ResourceInstance ResourceKind = "instance"
+	ResourceBucket       ResourceKind = "bucket"
+	ResourceBackend      ResourceKind = "backend"
+	ResourceOrchestrator ResourceKind = "orchestrator"
 )
+
+// resourceKindInstance is what ResourceOrchestrator was called before it was
+// named after the component it describes. Grants written under the old spelling
+// are still read, so an upgrade does not need the migration to have run first.
+//
+// "instance" was wrong in a deployment running several processes: it reads as
+// one of them, while the grant has always covered every process, because they
+// all authorize against the same rows.
+const resourceKindInstance ResourceKind = "instance"
+
+// ParseResourceKind reads the stored or submitted spelling of a kind, accepting
+// the retired "instance" name for the orchestrator.
+//
+// An empty value is the bucket, which is what a caller naming only a resource
+// means and what every grant written before the control plane had its own
+// permissions is.
+func ParseResourceKind(s string) ResourceKind {
+	switch ResourceKind(s) {
+	case "":
+		return ResourceBucket
+	case resourceKindInstance:
+		return ResourceOrchestrator
+	default:
+		return ResourceKind(s)
+	}
+}
 
 // ResourceWildcard is the name matching every resource of a kind, including ones
 // created later. It is how an operator is granted a fleet rather than a list
@@ -84,7 +112,7 @@ const (
 const ResourceWildcard = "*"
 
 // Resource is what a grant is over: a kind and the name of one thing of that
-// kind, the wildcard for all of them, or no name for the instance.
+// kind, the wildcard for all of them, or no name for the orchestrator.
 //
 // Name may identify a bucket the config file declares rather than one the store
 // holds, which is why neither half is a foreign key.
@@ -107,7 +135,7 @@ func (r Resource) IsWildcard() bool {
 // String renders the resource the way a grant listing and an audit entry name
 // it, so the two read alike.
 func (r Resource) String() string {
-	if r.Kind == ResourceInstance {
+	if r.Kind == ResourceOrchestrator {
 		return string(r.Kind)
 	}
 	return string(r.Kind) + ":" + r.Name

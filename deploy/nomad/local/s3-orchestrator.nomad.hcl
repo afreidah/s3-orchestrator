@@ -239,18 +239,10 @@ job "s3-orchestrator" {
               access_key_id: "__ROOT_ACCESS_KEY__"
               secret_access_key: "__ROOT_SECRET_KEY__"
 
-          # admin_key and admin_secret are still required while the dashboard is
-          # enabled, so they are set to the root keypair rather than to a second
-          # credential. There is one thing to hold, and nothing to guess.
-          #
-          # The dashboard resolves a submitted keypair through the credential
-          # store, so the root keypair would log in here even if these were set
-          # to something else. They stop being required at all once the separate
-          # dashboard login is removed.
+          # The dashboard logs in against the credential store, so the root
+          # keypair above is what reaches it. There is one thing to hold.
           ui:
             enabled: true
-            admin_key: "__ROOT_ACCESS_KEY__"
-            admin_secret: "__ROOT_SECRET_KEY__"
             session_secret: "local-dev-session-key"
             # force_secure_cookies: false        # Local dev - no TLS proxy
         YAML

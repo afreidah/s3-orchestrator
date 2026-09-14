@@ -51,7 +51,7 @@ func TestCleanupDLQ_ListRendersTable(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	if code := Command("cleanup-dlq", []string{"list", "-backend", "b2"}, srv.URL, "tok", &stdout, &stderr); code != 0 {
+	if code := Command("cleanup-dlq", []string{"list", "-backend", "b2"}, srv.URL, testCreds, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d (stderr=%q)", code, stderr.String())
 	}
 	if gotPath != "/admin/api/cleanup-dlq" {
@@ -80,7 +80,7 @@ func TestCleanupDLQ_RequeueReportsCount(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	if code := Command("cleanup-dlq", []string{"requeue", "-backend", "b2"}, srv.URL, "tok", &stdout, &stderr); code != 0 {
+	if code := Command("cleanup-dlq", []string{"requeue", "-backend", "b2"}, srv.URL, testCreds, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d (stderr=%q)", code, stderr.String())
 	}
 	if gotMethod != http.MethodPost {

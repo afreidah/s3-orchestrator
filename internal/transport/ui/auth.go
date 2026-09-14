@@ -3,11 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// HMAC-signed session cookies, double-submit CSRF tokens, the bcrypt/plain
-// secret comparator, and the login/logout HTTP handlers. requireAuth is
-// the middleware every authenticated UI route is wrapped in; HTML
-// requests get redirected to the login page on auth failure, JSON
-// requests get a 401.
+// HMAC-signed session cookies, double-submit CSRF tokens, and the login/logout
+// HTTP handlers. A login is a credential the registry resolves to a user, and
+// the session carries that user. requireAuth is the middleware every
+// authenticated UI route is wrapped in; HTML requests get redirected to the
+// login page on auth failure, JSON requests get a 401.
 // -------------------------------------------------------------------------------
 
 package ui
@@ -25,25 +25,13 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
-	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
 // -------------------------------------------------------------------------
 // SESSION AUTH
 // -------------------------------------------------------------------------
-
-// checkSecret compares a provided secret against the configured value.
-// Supports both bcrypt hashes (prefix "$2") and plaintext comparison.
-func checkSecret(configured, provided string) bool {
-	if strings.HasPrefix(configured, "$2") {
-		return bcrypt.CompareHashAndPassword([]byte(configured), []byte(provided)) == nil
-	}
-	return subtle.ConstantTimeCompare([]byte(configured), []byte(provided)) == 1
-}
 
 // requireAuth wraps a handler and enforces session authentication.
 // HTML requests are redirected to the login page; API requests get 401.
@@ -251,19 +239,13 @@ func (h *Handler) processLoginAttempt(w http.ResponseWriter, r *http.Request) {
 
 // resolveLogin verifies a submitted keypair and reports the user it proves.
 //
-// The configured admin_key is tried first and resolves to the root user, which
-// is what an existing deployment's dashboard login keeps working as. Anything
-// else is a provisioned credential, verified against the registry the S3 path
-// authenticates with, so one keypair reaches the dashboard and the data.
+// The keypair is checked against the same registry the S3 path authenticates
+// with, so one credential reaches the dashboard and the data, and the root
+// credential is a credential like any other rather than a dashboard-only login.
 //
 // Both halves are always compared, so a wrong access key takes the same work as
 // a wrong secret and the response cannot be used to learn which was which.
 func (h *Handler) resolveLogin(key, secret string) (string, bool) {
-	keyMatch := subtle.ConstantTimeCompare([]byte(key), []byte(h.adminKey)) == 1
-	secretMatch := checkSecret(h.adminSecret, secret)
-	if keyMatch && secretMatch {
-		return provisioning.RootUserID, true
-	}
 	if h.registry == nil {
 		return "", false
 	}

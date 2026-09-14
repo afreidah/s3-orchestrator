@@ -103,12 +103,12 @@ openssl rand -base64 30
 - Bucket names must be unique across the config.
 - Access key IDs must be globally unique across all buckets.
 - Each bucket must have at least one credential set.
-- Each credential needs either `access_key_id` + `secret_access_key` (SigV4) or `token` (legacy).
+- Each credential needs both halves: `access_key_id` and `secret_access_key`.
 - Each CORS rule needs at least one origin and one method, methods must be ones the S3 surface implements, an origin may carry at most one `*`, and `max_age` must not be negative.
 
 Multiple credentials on the same bucket let different services share a namespace with independent keys. Every credential reaching a bucket has identical access to it - there is no read-only credential, and both keys above can list, upload, overwrite and delete everything under `app2-files`. The names say which service holds each key, not what it may do with it.
 
-What separate keys buy is independent rotation and revocation, and an audit trail that attributes an action to the service that took it. Scoping access below the whole bucket is tracked in [#356](https://github.com/afreidah/s3-orchestrator/issues/356). See [Authentication](authentication.md#several-credentials-on-one-bucket).
+What separate keys buy is independent rotation and revocation, and an audit trail that attributes an action to the service that took it. Narrowing what a credential may do is a stored grant's job, not the config file's; scoping one below the whole bucket is tracked in [#1495](https://github.com/afreidah/s3-orchestrator/issues/1495). See [Authentication](authentication.md#several-credentials-on-one-bucket).
 
 SigV4 credentials also support presigned URLs automatically. Clients can generate time-limited presigned URLs using any AWS SDK presign client - no additional configuration is needed on the orchestrator side.
 
@@ -593,35 +593,43 @@ When `trusted_proxies` is configured, the orchestrator extracts the real client 
 
 > **Multi-instance note:** Rate limits are enforced per-instance. Behind a load balancer with round-robin routing, the effective rate for a given client is `requests_per_sec * instance_count`. Divide your desired aggregate rate by the number of API instances when configuring.
 
+### auth
+
+The keypair a deployment administers itself with. It is an ordinary credential resolving to an ordinary user; what makes it root is that the user holds every permission on every resource, not a branch in the request path.
+
+```yaml
+auth:
+  root:
+    access_key_id: "${ROOT_ACCESS_KEY_ID}"
+    secret_access_key: "${ROOT_SECRET_ACCESS_KEY}"
+```
+
+Generate the pair the same way as a bucket credential:
+
+```bash
+echo "Access key: AKIA$(openssl rand -hex 8 | tr '[:lower:]' '[:upper:]')"
+echo "Secret key: $(openssl rand -base64 30)"
+```
+
+It signs admin API requests, logs into the dashboard, and reaches every bucket the deployment declares. Both halves are required together: declaring one alone is rejected at startup rather than treated as a partial configuration.
+
+Declaring it is optional. A deployment that administers itself through credentials its store already holds can leave the stanza out and run as a pure S3 endpoint. Enabling the dashboard requires it, because a deployment with no credential at all would have nothing able to log in and create the first user.
+
+Once the store holds an administering credential, narrow the root credential's use to break-glass by [granting an operator](cli.md#bucket-user-credential-and-grant) only the control-plane permissions their job needs.
+
 ### ui
 
-Built-in web dashboard for operational visibility and management. Disabled by default. Requires authentication via an admin key/secret pair - sessions are HMAC-signed cookies with a 24-hour TTL.
+Built-in web dashboard for operational visibility and management. Disabled by default. Logging in means presenting a credential the deployment holds - the root keypair, or any provisioned one - and the session that follows carries the user that credential proved. Sessions are HMAC-signed cookies with a 24-hour TTL.
 
 ```yaml
 ui:
   enabled: true
-  path: "/ui"                          # URL prefix (default: /ui)
-  admin_key: "${UI_ADMIN_KEY}"         # access key for dashboard login
-  admin_secret: "${UI_ADMIN_SECRET}"   # secret key - plaintext or bcrypt hash
-  admin_token: "${UI_ADMIN_TOKEN}"     # separate token for admin API (defaults to admin_key)
+  path: "/ui"                            # URL prefix (default: /ui)
   session_secret: "${UI_SESSION_SECRET}" # required - HMAC key for session cookies
-  force_secure_cookies: true           # always set Secure flag on cookies (for behind TLS proxy)
+  force_secure_cookies: true             # always set Secure flag on cookies (for behind TLS proxy)
 ```
 
-`admin_key`, `admin_secret`, and `session_secret` are all required when `enabled` is `true`. Generate credentials the same way as bucket credentials:
-
-```bash
-echo "Admin Key: $(openssl rand -hex 10 | tr '[:lower:]' '[:upper:]')"
-echo "Admin Secret: $(openssl rand -base64 30)"
-```
-
-**Bcrypt-hashed secrets:** For bare-metal deployments where the config file is at rest on disk, you can store `admin_secret` as a bcrypt hash instead of plaintext. The orchestrator detects bcrypt hashes automatically (they start with `$2`). Generate one with:
-
-```bash
-htpasswd -nbBC 10 "" 'your-secret' | cut -d: -f2
-```
-
-Both plaintext and bcrypt secrets are fully supported - no config migration needed.
+`session_secret` is required when `enabled` is `true`, and so is [`auth.root`](#auth): a deployment with no credential at all would have nothing able to log in.
 
 **Session secret:** Session keys are derived deterministically from `session_secret` using HMAC-SHA256, so sessions survive restarts. For multi-instance deployments behind a load balancer, all instances sharing the same `session_secret` will accept each other's sessions. Generate a value with:
 
@@ -629,7 +637,7 @@ Both plaintext and bcrypt secrets are fully supported - no config migration need
 openssl rand -hex 32
 ```
 
-`session_secret` is independent of `admin_secret` - rotating the admin password does not invalidate active sessions, and vice versa.
+`session_secret` is independent of any credential - rotating a keypair does not invalidate active sessions, and vice versa.
 
 ### usage_flush
 
@@ -878,7 +886,7 @@ The cache is **not hot-reloadable** - changing cache settings requires a restart
 
 When enabled, the dashboard is served at `{path}/` on the same port as the S3 API.
 
-All dashboard responses include security headers (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy`). The dashboard requires authentication via the configured `admin_key`/`admin_secret` - unauthenticated requests are redirected to the login page (HTML) or receive `401` (API).
+All dashboard responses include security headers (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Content-Security-Policy`). The dashboard requires a session, and a session requires a credential the deployment holds - unauthenticated requests are redirected to the login page (HTML) or receive `401` (API).
 
 
 ## Configuration hot-reload
@@ -895,6 +903,7 @@ kill -HUP $(pidof s3-orchestrator)
 | Setting | Reloadable | Notes |
 |---------|:----------:|-------|
 | `buckets` (credentials, limits) | Yes | Credentials and `max_multipart_uploads` take effect immediately |
+| `auth.root` | Yes | The registry is rebuilt from config merged with the store, so the new keypair takes effect on the next request |
 | `buckets[].cors` | Yes | The new rule set takes effect on the next request; a rule the matcher cannot read aborts the whole reload before anything is applied |
 | `rate_limit` | Yes | New visitors get updated rates; existing per-IP limiters expire naturally |
 | `backends[].quota_bytes` | Yes | Synced to database on reload |

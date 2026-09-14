@@ -352,7 +352,7 @@ func TestProvisioningInt_GrantsOnEveryResourceKind(t *testing.T) {
 	want := []core.Resource{
 		core.BucketResource("declared-in-config"),
 		{Kind: core.ResourceBackend, Name: "backend-a"},
-		{Kind: core.ResourceInstance},
+		{Kind: core.ResourceOrchestrator},
 	}
 	for _, r := range want {
 		if err := s.CreateGrant(ctx, &core.Grant{UserID: userID, Resource: r}); err != nil {

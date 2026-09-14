@@ -54,7 +54,7 @@ type User struct {
 }
 
 // Grant is one resource a user reaches and the permissions that reach carries.
-// Name is empty on an instance grant, which names no one thing.
+// Name is empty on an orchestrator grant, which names no one thing.
 type Grant struct {
 	Kind        string   `json:"kind"`
 	Name        string   `json:"name,omitempty"`
@@ -126,7 +126,7 @@ type CreateCredentialResponse struct {
 //
 // Kind defaults to "bucket", so a caller onboarding a client onto a bucket
 // names only the bucket. Name may be "*" for every resource of the kind, and is
-// omitted on an instance grant. An empty Permissions means every permission
+// omitted on an orchestrator grant. An empty Permissions means every permission
 // valid on the kind.
 type CreateGrantRequest struct {
 	UserID      string   `json:"user_id"`

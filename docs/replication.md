@@ -89,6 +89,5 @@ On-demand reconciliation is available via the admin API - useful after backend d
 s3-orchestrator admin reconcile
 
 # Reconcile a single backend
-curl -X POST -H "X-Admin-Token: $TOKEN" \
-  http://localhost:9000/admin/api/reconcile?backend=g3
+s3-orchestrator admin reconcile -backend g3
 ```

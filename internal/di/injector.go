@@ -164,7 +164,9 @@ func registerOptionalFeatures(inj do.Injector, cfg *config.Config) {
 	provideIf(inj, cfg.RateLimit.Enabled, ProvideRateLimiter)
 	provideIf(inj, cfg.UI.Enabled, ProvideLoginThrottle)
 	provideIf(inj, cfg.UI.Enabled, ProvideUIHandler)
-	provideIf(inj, cfg.UI.AdminKey != "", ProvideAdminHandler)
+	// The admin API authenticates credentials rather than a configured token, so
+	// it is served whatever the dashboard is set to.
+	do.Provide(inj, ProvideAdminHandler)
 	provideIf(inj, len(cfg.Notifications.Endpoints) > 0, ProvideNotifier)
 	provideIf(inj, cfg.Debug.FlightRecorder.Enabled, ProvideFlightRecorderService)
 }

@@ -4,8 +4,8 @@
 // Author: Alex Freidah
 //
 // Exercises apiClient.ListObjects against an httptest server: the request shape
-// (path, token, query), a decoded success response, and the transport/decoding
-// error paths.
+// (path, signature, query), a decoded success response, and the
+// transport/decoding error paths.
 // -------------------------------------------------------------------------------
 
 package tui
@@ -24,25 +24,34 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
+// testAccessKeyID is the access key these tests sign with. No server here
+// verifies a signature, so it is only ever asserted on by name.
+const testAccessKeyID = "AKIATUITEST"
+
+// testTarget points the client at addr with the test keypair.
+func testTarget(addr string) target {
+	return target{baseAddr: addr, accessKeyID: testAccessKeyID, secretKey: "tui-test-secret"}
+}
+
 // TestAPIClient_ListObjects_Success asserts the request shape and decoded page.
 func TestAPIClient_ListObjects_Success(t *testing.T) {
 	t.Parallel()
-	var gotPath, gotToken, gotQuery string
+	var gotPath, gotAuth, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath, gotToken, gotQuery = r.URL.Path, r.Header.Get("X-Admin-Token"), r.URL.RawQuery
+		gotPath, gotAuth, gotQuery = r.URL.Path, r.Header.Get("Authorization"), r.URL.RawQuery
 		_, _ = w.Write([]byte(`{"common_prefixes":["photos/"],"objects":[{"key":"a","size":7}],"truncated":true,"next":"a"}`))
 	}))
 	defer srv.Close()
 
-	page, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).ListObjects(context.Background(), "p/", "cont")
+	page, err := newAPIClient(testTarget(srv.URL)).ListObjects(context.Background(), "p/", "cont")
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
 	if gotPath != "/admin/api/objects" {
 		t.Errorf("path = %q, want /admin/api/objects", gotPath)
 	}
-	if gotToken != "tok" {
-		t.Errorf("token = %q, want tok", gotToken)
+	if !strings.Contains(gotAuth, testAccessKeyID) {
+		t.Errorf("Authorization = %q, want it to name %s", gotAuth, testAccessKeyID)
 	}
 	for _, want := range []string{"prefix=p%2F", "delimiter=%2F", "continuation=cont"} {
 		if !strings.Contains(gotQuery, want) {
@@ -71,7 +80,7 @@ func TestAPIClient_ListObjects_OmitsEmptyContinuation(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).ListObjects(context.Background(), "", ""); err != nil {
+	if _, err := newAPIClient(testTarget(srv.URL)).ListObjects(context.Background(), "", ""); err != nil {
 		t.Fatalf("ListObjects: %v", err)
 	}
 	if strings.Contains(gotQuery, "continuation=") {
@@ -83,22 +92,22 @@ func TestAPIClient_ListObjects_OmitsEmptyContinuation(t *testing.T) {
 // decoded location ledger.
 func TestAPIClient_GetObjectLocations_Success(t *testing.T) {
 	t.Parallel()
-	var gotPath, gotToken, gotQuery string
+	var gotPath, gotAuth, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath, gotToken, gotQuery = r.URL.Path, r.Header.Get("X-Admin-Token"), r.URL.RawQuery
+		gotPath, gotAuth, gotQuery = r.URL.Path, r.Header.Get("Authorization"), r.URL.RawQuery
 		_, _ = w.Write([]byte(`{"key":"photos/a","locations":[{"backend":"b1","size_bytes":9,"encrypted":true,"key_id":"kid"}]}`))
 	}))
 	defer srv.Close()
 
-	resp, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).GetObjectLocations(context.Background(), "photos/a")
+	resp, err := newAPIClient(testTarget(srv.URL)).GetObjectLocations(context.Background(), "photos/a")
 	if err != nil {
 		t.Fatalf("GetObjectLocations: %v", err)
 	}
 	if gotPath != "/admin/api/object-locations" {
 		t.Errorf("path = %q, want /admin/api/object-locations", gotPath)
 	}
-	if gotToken != "tok" {
-		t.Errorf("token = %q, want tok", gotToken)
+	if !strings.Contains(gotAuth, testAccessKeyID) {
+		t.Errorf("Authorization = %q, want it to name %s", gotAuth, testAccessKeyID)
 	}
 	if !strings.Contains(gotQuery, "key=photos%2Fa") {
 		t.Errorf("query %q missing key", gotQuery)
@@ -122,7 +131,7 @@ func TestAPIClient_ScrubKey(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	resp, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).ScrubKey(context.Background(), "photos/a")
+	resp, err := newAPIClient(testTarget(srv.URL)).ScrubKey(context.Background(), "photos/a")
 	if err != nil {
 		t.Fatalf("ScrubKey: %v", err)
 	}
@@ -141,22 +150,22 @@ func TestAPIClient_ScrubKey(t *testing.T) {
 // decoded replication snapshot.
 func TestAPIClient_GetReplicationStatus_Success(t *testing.T) {
 	t.Parallel()
-	var gotPath, gotToken string
+	var gotPath, gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath, gotToken = r.URL.Path, r.Header.Get("X-Admin-Token")
+		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
 		_, _ = w.Write([]byte(`{"factor":2,"under_replicated":143,"over_replicated":12,"computed_at":"2026-07-21T14:03:22Z"}`))
 	}))
 	defer srv.Close()
 
-	resp, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).GetReplicationStatus(context.Background())
+	resp, err := newAPIClient(testTarget(srv.URL)).GetReplicationStatus(context.Background())
 	if err != nil {
 		t.Fatalf("GetReplicationStatus: %v", err)
 	}
 	if gotPath != "/admin/api/replication" {
 		t.Errorf("path = %q, want /admin/api/replication", gotPath)
 	}
-	if gotToken != "tok" {
-		t.Errorf("token = %q, want tok", gotToken)
+	if !strings.Contains(gotAuth, testAccessKeyID) {
+		t.Errorf("Authorization = %q, want it to name %s", gotAuth, testAccessKeyID)
 	}
 	if resp.Factor != 2 || resp.UnderReplicated != 143 || resp.OverReplicated != 12 {
 		t.Errorf("resp = %+v", resp)
@@ -172,7 +181,7 @@ func TestAPIClient_ListObjects_ErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).ListObjects(context.Background(), "", "")
+	_, err := newAPIClient(testTarget(srv.URL)).ListObjects(context.Background(), "", "")
 	if err == nil || !strings.Contains(err.Error(), "403") {
 		t.Errorf("err = %v, want to mention 403", err)
 	}
@@ -186,7 +195,7 @@ func TestAPIClient_ListObjects_BadJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).ListObjects(context.Background(), "", ""); err == nil {
+	if _, err := newAPIClient(testTarget(srv.URL)).ListObjects(context.Background(), "", ""); err == nil {
 		t.Error("expected a decode error")
 	}
 }
@@ -213,7 +222,7 @@ func TestAPIClient_RunOp_Streaming(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).RunOp(context.Background(), &streamingTestAction, opsRequest{path: streamingTestAction.path})
+	s, err := newAPIClient(testTarget(srv.URL)).RunOp(context.Background(), &streamingTestAction, opsRequest{path: streamingTestAction.path})
 	if err != nil {
 		t.Fatalf("RunOp: %v", err)
 	}
@@ -248,7 +257,7 @@ func TestAPIClient_RunOp_OneShot(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).RunOp(context.Background(), &oneShotTestAction, opsRequest{path: oneShotTestAction.path})
+	s, err := newAPIClient(testTarget(srv.URL)).RunOp(context.Background(), &oneShotTestAction, opsRequest{path: oneShotTestAction.path})
 	if err != nil {
 		t.Fatalf("RunOp: %v", err)
 	}
@@ -274,7 +283,7 @@ func TestAPIClient_RunOp_ErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).RunOp(context.Background(), &streamingTestAction, opsRequest{path: streamingTestAction.path}); err == nil || !strings.Contains(err.Error(), "403") {
+	if _, err := newAPIClient(testTarget(srv.URL)).RunOp(context.Background(), &streamingTestAction, opsRequest{path: streamingTestAction.path}); err == nil || !strings.Contains(err.Error(), "403") {
 		t.Errorf("err = %v, want to mention 403", err)
 	}
 }
@@ -290,7 +299,7 @@ func TestAPIClient_GetCacheStats_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	stats, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).GetCacheStats(context.Background())
+	stats, err := newAPIClient(testTarget(srv.URL)).GetCacheStats(context.Background())
 	if err != nil {
 		t.Fatalf("GetCacheStats: %v", err)
 	}
@@ -313,7 +322,7 @@ func TestAPIClient_RequeueCleanupDLQ(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	resp, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).RequeueCleanupDLQ(context.Background(), "b1")
+	resp, err := newAPIClient(testTarget(srv.URL)).RequeueCleanupDLQ(context.Background(), "b1")
 	if err != nil {
 		t.Fatalf("RequeueCleanupDLQ: %v", err)
 	}
@@ -339,7 +348,7 @@ func TestAPIClient_RequeueCleanupDLQ_OmitsEmptyBackend(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).RequeueCleanupDLQ(context.Background(), ""); err != nil {
+	if _, err := newAPIClient(testTarget(srv.URL)).RequeueCleanupDLQ(context.Background(), ""); err != nil {
 		t.Fatalf("RequeueCleanupDLQ: %v", err)
 	}
 	if gotQuery != "" {
@@ -361,7 +370,7 @@ func TestAPIClient_DrainVerbs(t *testing.T) {
 		_, _ = w.Write([]byte(`{"backend":"minio-a","active":true,"objects_moved":4,"objects_remaining":6}`))
 	}))
 	defer srv.Close()
-	client := newAPIClient(target{baseAddr: srv.URL, token: "tok"})
+	client := newAPIClient(testTarget(srv.URL))
 
 	if _, err := client.StartDrain(context.Background(), "minio-a"); err != nil {
 		t.Fatalf("StartDrain: %v", err)
@@ -399,7 +408,7 @@ func TestAPIClient_CancelDrain_ErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).CancelDrain(context.Background(), "minio-a")
+	_, err := newAPIClient(testTarget(srv.URL)).CancelDrain(context.Background(), "minio-a")
 	if err == nil || !strings.Contains(err.Error(), "409") {
 		t.Errorf("err = %v, want the 409 surfaced", err)
 	}
@@ -416,7 +425,7 @@ func TestAPIClient_ReconcileBackend_ScopesToBackend(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	resp, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).ReconcileBackend(context.Background(), "minio-b")
+	resp, err := newAPIClient(testTarget(srv.URL)).ReconcileBackend(context.Background(), "minio-b")
 	if err != nil {
 		t.Fatalf("ReconcileBackend: %v", err)
 	}
@@ -444,7 +453,7 @@ func TestAPIClient_ListObjectsFlat_SendsEmptyDelimiter(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	page, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).ListObjectsFlat(context.Background(), "bucket/", "")
+	page, err := newAPIClient(testTarget(srv.URL)).ListObjectsFlat(context.Background(), "bucket/", "")
 	if err != nil {
 		t.Fatalf("ListObjectsFlat: %v", err)
 	}
@@ -467,7 +476,7 @@ func TestAPIClient_DownloadObject_ReturnsBodyAndSize(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	body, size, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).DownloadObject(context.Background(), "bucket/dir/file.txt")
+	body, size, err := newAPIClient(testTarget(srv.URL)).DownloadObject(context.Background(), "bucket/dir/file.txt")
 	if err != nil {
 		t.Fatalf("DownloadObject: %v", err)
 	}
@@ -491,7 +500,7 @@ func TestAPIClient_DownloadObject_ErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, _, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).DownloadObject(context.Background(), "bucket/ghost"); err == nil ||
+	if _, _, err := newAPIClient(testTarget(srv.URL)).DownloadObject(context.Background(), "bucket/ghost"); err == nil ||
 		!strings.Contains(err.Error(), "404") {
 		t.Errorf("err = %v, want the 404 surfaced", err)
 	}
@@ -513,7 +522,7 @@ func TestAPIClient_UploadObject_SendsRawBytes(t *testing.T) {
 	defer srv.Close()
 
 	payload := []byte("raw payload")
-	err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).
+	err := newAPIClient(testTarget(srv.URL)).
 		UploadObject(context.Background(), "bucket/up.bin", strings.NewReader(string(payload)), int64(len(payload)))
 	if err != nil {
 		t.Fatalf("UploadObject: %v", err)
@@ -540,7 +549,7 @@ func TestAPIClient_UploadObject_ErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).UploadObject(context.Background(), "bucket/big", strings.NewReader("x"), 1)
+	err := newAPIClient(testTarget(srv.URL)).UploadObject(context.Background(), "bucket/big", strings.NewReader("x"), 1)
 	if err == nil || !strings.Contains(err.Error(), "413") {
 		t.Errorf("err = %v, want the 413 surfaced", err)
 	}
@@ -556,7 +565,7 @@ func TestAPIClient_Deletes(t *testing.T) {
 		_, _ = w.Write([]byte(`{"deleted":7}`))
 	}))
 	defer srv.Close()
-	client := newAPIClient(target{baseAddr: srv.URL, token: "tok"})
+	client := newAPIClient(testTarget(srv.URL))
 
 	one, err := client.DeleteObject(context.Background(), "bucket/file.txt")
 	if err != nil {
@@ -587,7 +596,7 @@ func TestAPIClient_DeleteErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := newAPIClient(target{baseAddr: srv.URL, token: "tok"}).DeletePrefix(context.Background(), "bucket/"); err == nil ||
+	if _, err := newAPIClient(testTarget(srv.URL)).DeletePrefix(context.Background(), "bucket/"); err == nil ||
 		!strings.Contains(err.Error(), "500") {
 		t.Errorf("err = %v, want the 500 surfaced", err)
 	}

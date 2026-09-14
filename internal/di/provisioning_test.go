@@ -209,11 +209,15 @@ func TestAssembleBucketRegistry_RejectsAmbiguousConfig(t *testing.T) {
 
 	_, err := AssembleBucketRegistry(context.Background(), inj, &config.Config{
 		Buckets: []config.BucketConfig{
-			{Name: "a", Credentials: []config.CredentialConfig{{Token: "SAME"}}},
-			{Name: "b", Credentials: []config.CredentialConfig{{Token: "SAME"}}},
+			{Name: "a", Credentials: []config.CredentialConfig{
+				{AccessKeyID: "SAME", SecretAccessKey: "a-secret"},
+			}},
+			{Name: "b", Credentials: []config.CredentialConfig{
+				{AccessKeyID: "SAME", SecretAccessKey: "b-secret"},
+			}},
 		},
 	})
 	if err == nil {
-		t.Fatal("assembly accepted a token claimed by two buckets")
+		t.Fatal("assembly accepted an access key claimed by two buckets")
 	}
 }

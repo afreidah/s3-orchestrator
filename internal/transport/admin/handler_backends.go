@@ -181,7 +181,7 @@ func (h *Handler) streamRemovePurge(w http.ResponseWriter, r *http.Request, name
 func (h *Handler) generateRemoveToken(name string) string {
 	expiry := time.Now().Add(removeConfirmTTL).Unix()
 	payload := fmt.Sprintf("purge|%s|%d", name, expiry)
-	mac := hmac.New(sha256.New, []byte(h.token))
+	mac := hmac.New(sha256.New, h.confirmKey)
 	mac.Write([]byte(payload))
 	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sig
@@ -202,7 +202,7 @@ func (h *Handler) validRemoveToken(token, expectedName string) bool {
 		return false
 	}
 
-	mac := hmac.New(sha256.New, []byte(h.token))
+	mac := hmac.New(sha256.New, h.confirmKey)
 	mac.Write(payloadBytes)
 	if !hmac.Equal(mac.Sum(nil), sig) {
 		return false

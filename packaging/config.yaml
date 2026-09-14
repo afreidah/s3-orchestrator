@@ -279,12 +279,18 @@ backends:
 #     sample_rate: 1.0
 #     insecure: false
 
+# --- Root credential ---
+# The keypair this deployment administers itself with: it signs admin API
+# requests, logs into the dashboard, and reaches every bucket. Required when the
+# dashboard is enabled, because nothing else could log in.
+# auth:
+#   root:
+#     access_key_id: "${ROOT_ACCESS_KEY_ID}"
+#     secret_access_key: "${ROOT_SECRET_ACCESS_KEY}"
+
 # --- Web dashboard (disabled by default) ---
 # ui:
 #   enabled: false
 #   path: /ui
-#   admin_key: "${UI_ADMIN_KEY}"
-#   admin_secret: "${UI_ADMIN_SECRET}"
-#   session_secret: "${UI_SESSION_SECRET}" # Required — HMAC key for session cookies (independent of admin_secret)
-#   admin_token: "${UI_ADMIN_TOKEN}"       # Separate token for admin API (defaults to admin_key)
+#   session_secret: "${UI_SESSION_SECRET}" # Required - HMAC key for session cookies
 #   force_secure_cookies: true             # Always set Secure flag on cookies (use behind TLS proxy)

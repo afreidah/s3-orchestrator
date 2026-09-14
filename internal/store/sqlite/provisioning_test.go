@@ -496,7 +496,7 @@ func TestProvisioning_GrantsOnEveryResourceKind(t *testing.T) {
 	want := []core.Resource{
 		core.BucketResource("declared-in-config"),
 		{Kind: core.ResourceBackend, Name: "minio-a"},
-		{Kind: core.ResourceInstance},
+		{Kind: core.ResourceOrchestrator},
 	}
 	for _, r := range want {
 		if err := s.CreateGrant(ctx, &core.Grant{UserID: "u1", Resource: r}); err != nil {
@@ -588,7 +588,7 @@ func TestProvisioning_AdminGrantRoundTrips(t *testing.T) {
 	s := newTestStore(t)
 	seedUser(t, s, "u1", "ci")
 
-	instance := core.Resource{Kind: core.ResourceInstance}
+	instance := core.Resource{Kind: core.ResourceOrchestrator}
 	if err := s.CreateGrant(ctx, &core.Grant{
 		UserID:      "u1",
 		Resource:    instance,

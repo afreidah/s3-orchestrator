@@ -712,12 +712,13 @@ backends:
     bucket: bucket1
     access_key_id: ak
     secret_access_key: sk
+auth:
+  root:
+    access_key_id: "AKIAHTTPSERVERROOT"
+    secret_access_key: "sec-1234567890123456"
 ui:
   enabled: true
   path: "/ui/"
-  admin_key: "ak"
-  admin_secret: "sec-1234567890123456"
-  admin_token: "tok"
   session_secret: "12345678901234567890123456789012"
 `, port)
 

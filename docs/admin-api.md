@@ -29,22 +29,11 @@ auth:
 
 That is an ordinary identity holding every permission on every resource, not a special case in the request path. Issue narrower credentials through the provisioning API and grant them what they need.
 
-### The shared token
-
-`X-Admin-Token` still works and is still what `ui.admin_token` (falling back to `ui.admin_key`) sets:
-
-```bash
-curl -H "X-Admin-Token: YOUR_ADMIN_TOKEN" \
-  http://localhost:9000/admin/api/status
-```
-
-It now resolves onto the same root identity rather than authorizing by itself, so what it reaches is what that identity holds. Nothing that worked before stops working; a future release removes it in favour of the keypair.
-
-Requests without a valid credential get `401` with a JSON body. Request bodies are capped at 1 MB.
+Requests without a valid signature get `401` with a JSON body. Request bodies are capped at 1 MB.
 
 ## Authorization
 
-The endpoints under `/admin/api/objects` read and write object data, reaching the same service the S3 API does. They are authorized against the permissions the caller's grant carries, not against the token alone: browsing needs `list`, downloading needs `read`, uploading needs `write`, removing a key or a prefix needs `delete`, and the tag endpoints need `tags`. A caller whose grant does not carry what the operation needs gets `403`.
+The endpoints under `/admin/api/objects` read and write object data, reaching the same service the S3 API does. They are authorized against the permissions the caller's grant carries, not against having authenticated: browsing needs `list`, downloading needs `read`, uploading needs `write`, removing a key or a prefix needs `delete`, and the tag endpoints need `tags`. A caller whose grant does not carry what the operation needs gets `403`.
 
 A provisioned credential reaches those endpoints with exactly the grants it holds:
 
@@ -76,27 +65,22 @@ The permissions over a backend are the ones that name one: drain, decommission, 
 
 `admin-provision` is deliberately its own permission rather than part of `admin-config`: a grant carrying it can mint a grant carrying anything.
 
-The configured `ui.admin_token` still reaches every endpoint, because it resolves to the root identity and that identity holds everything. Using it to reach object data logs a warning naming the endpoint. Issue a provisioned credential instead, or declare `auth.root` and sign.
-
 ## Streaming progress
 
-Twelve endpoints run long enough that a single response is unhelpful: `rebalance`, `replicate`, `over-replication`, `scrub`, `backfill-checksums`, `reconcile`, `lifecycle`, `compress-existing`, `decompress-existing`, `encrypt-existing`, `decrypt-existing`, and a backend purge. They return their JSON result by default, but stream newline-delimited progress when the caller asks for it:
+Twelve endpoints run long enough that a single response is unhelpful: `rebalance`, `replicate`, `over-replication`, `scrub`, `backfill-checksums`, `reconcile`, `lifecycle`, `compress-existing`, `decompress-existing`, `encrypt-existing`, `decrypt-existing`, and a backend purge. They return their JSON result by default, but stream newline-delimited progress when the caller sends `Accept: application/x-ndjson`:
 
 ```bash
-curl -H "X-Admin-Token: $TOKEN" \
-  -H "Accept: application/x-ndjson" \
-  -X POST http://localhost:9000/admin/api/scrub
+s3-orchestrator admin scrub
 ```
 
-Each line is one self-contained JSON object with an `event` field: `start` when the operation begins, `step_start` and `step_end` per item, and a final `result` carrying the outcome. The `s3-orchestrator admin` subcommand renders these as live progress.
+Each line is one self-contained JSON object with an `event` field: `start` when the operation begins, `step_start` and `step_end` per item, and a final `result` carrying the outcome. The `s3-orchestrator admin` subcommand asks for the stream and renders it as live progress.
 
 ## Restricting a pass to one backend
 
 Six of the maintenance passes -- `scrub`, `backfill-checksums`, `encrypt-existing`, `decrypt-existing`, `compress-existing` and `decompress-existing` -- accept a `backend` parameter naming the one backend whose copies they read:
 
 ```bash
-curl -H "X-Admin-Token: $TOKEN" \
-  -X POST "http://localhost:9000/admin/api/compress-existing?backend=wasabi-eu"
+s3-orchestrator admin compress-existing -backend wasabi-eu
 ```
 
 Omitting it runs the pass against every backend, which is what these did before the parameter existed. `reconcile` and the cleanup DLQ endpoints already took the same parameter and are unchanged.
@@ -121,30 +105,13 @@ A `mismatch` is acted on, not just reported: the bad copy is discarded and repli
 
 ## Reading and writing objects
 
-`/admin/api/objects` covers the object namespace itself: browse a page of it, stream one object down, store one, or remove a key or a whole prefix. These exist so an operator on a terminal can inspect and repair data without a browser session or a second S3 client:
-
-```bash
-# Stream one object to a local file.
-curl -H "X-Admin-Token: $TOKEN" \
-  http://localhost:9000/admin/api/objects/backups/db/2026-08-15.sql -o dump.sql
-
-# Store one. The body is the object bytes; Content-Length is required.
-curl -X PUT -H "X-Admin-Token: $TOKEN" \
-  --data-binary @dump.sql \
-  http://localhost:9000/admin/api/objects/backups/db/2026-08-15.sql
-```
+`/admin/api/objects` covers the object namespace itself: `GET` browses a page of it or streams one object down, `PUT` stores one, `DELETE` removes a key or a whole prefix. These exist so an operator on a terminal can inspect and repair data without a browser session or a second S3 client, and they are what the [TUI object browser](cli.md#tui) and the dashboard drive.
 
 Every key must name a configured virtual bucket, the same requirement the dashboard enforces, so a typo cannot write outside the namespace the orchestrator serves. Uploads are capped at 512 MiB; a larger one is refused before it reaches a backend.
 
 `GET /admin/api/objects` browses hierarchically by default: omit `delimiter` and keys are grouped into directories, which is what a file browser wants. Send `delimiter=` explicitly - present but empty - and the listing is flat, every key under the prefix in one stream. That is what a caller counting or sweeping a subtree needs, and it is how the TUI knows how many objects a prefix delete is about to remove before it asks.
 
-Deletes report how many objects they removed, so a caller can tell a no-op from a mass removal:
-
-```bash
-curl -X DELETE -H "X-Admin-Token: $TOKEN" \
-  "http://localhost:9000/admin/api/objects?prefix=backups/db/2025-"
-# {"deleted":48}
-```
+Deletes report how many objects they removed in a `{"deleted":48}` body, so a caller can tell a no-op from a mass removal.
 
 A prefix delete that removes some objects and fails on others answers `500` carrying the counts it did achieve (`deleted`, `failed`, `total`), because the prefix is left half removed and the caller needs to know that rather than to retry blind.
 
@@ -154,14 +121,8 @@ A prefix delete that removes some objects and fails on others answers `500` carr
 
 ```bash
 # Read the set.
-curl -H "X-Admin-Token: $TOKEN" \
-  http://localhost:9000/admin/api/objects/tags/photos/report.pdf
+s3-orchestrator admin object-tags -key photos/report.pdf
 # {"tags":[{"key":"team","value":"infra"}]}
-
-# Replace it wholesale.
-curl -X PUT -H "X-Admin-Token: $TOKEN" \
-  -d '{"tags":[{"key":"team","value":"infra"}]}' \
-  http://localhost:9000/admin/api/objects/tags/photos/report.pdf
 ```
 
 `PUT` replaces the whole set rather than merging into it, matching `PutObjectTagging`. An empty list leaves the object untagged, which is the same outcome as `DELETE`. An untagged object reads back as `{"tags":[]}` rather than `null`.
@@ -180,15 +141,13 @@ With `purge=true` it deletes the objects too, behind a two-phase confirmation:
 
 ```bash
 # Phase 1: preview. Returns what would be destroyed, plus a token.
-curl -X DELETE -H "X-Admin-Token: $TOKEN" \
-  "http://localhost:9000/admin/api/backends/oci?purge=true"
+s3-orchestrator admin remove-backend oci --purge
 
 # Phase 2: replay the token to execute. The token expires after 60 seconds.
-curl -X DELETE -H "X-Admin-Token: $TOKEN" \
-  "http://localhost:9000/admin/api/backends/oci?purge=true&confirm=THE_TOKEN"
+s3-orchestrator admin remove-backend oci --purge --confirm
 ```
 
-The confirmation token is signed and scoped to the backend it was issued for; it cannot be reused for a different one.
+The confirmation token is signed and scoped to the backend it was issued for; it cannot be reused for a different one. It is also signed with a key minted per process, so a token does not survive a restart of the instance that issued it.
 
 ## Provisioning buckets and credentials
 
@@ -207,19 +166,13 @@ it a bucket.
 
 ```bash
 # 1. Create the identity. The response carries the generated user_id.
-curl -X POST -H "X-Admin-Token: $TOKEN" \
-  -d '{"name":"nightly-backup"}' \
-  http://localhost:9000/admin/api/provisioning/users
+s3-orchestrator admin user create -name nightly-backup
 
 # 2. Mint a keypair for it. This response is the only place the secret appears.
-curl -X POST -H "X-Admin-Token: $TOKEN" \
-  -d '{"user_id":"user-abc123","label":"backup job"}' \
-  http://localhost:9000/admin/api/provisioning/credentials
+s3-orchestrator admin credential issue -user user-abc123 -label "backup job"
 
 # 3. Grant it a bucket, from either source.
-curl -X POST -H "X-Admin-Token: $TOKEN" \
-  -d '{"user_id":"user-abc123","bucket":"backups"}' \
-  http://localhost:9000/admin/api/provisioning/grants
+s3-orchestrator admin grant add -user user-abc123 -name backups
 ```
 
 The secret is returned once, by the request that minted it, and is never read

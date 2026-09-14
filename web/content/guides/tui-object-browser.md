@@ -28,29 +28,31 @@ Browsing is read-only: the listing, inspector, and every status pane issue `GET`
 
 ## Prerequisites
 
-- A running orchestrator instance with the admin API enabled (`ui.admin_token`, or `ui.admin_key` as a fallback - see the [configuration walkthrough](../../docs/configuration/)).
-- The admin token, resolved the same way as the [`admin` subcommand](../../docs/cli/): flag, then environment, then config file.
+- A running orchestrator instance.
+- A keypair holding the control-plane permissions you want to use - the `auth.root` one, or a narrower credential the store has issued. See the [configuration walkthrough](../../docs/configuration/).
 
 ## Step 1: Point the TUI at your instance
 
-The TUI resolves the server address and admin token with the precedence **flag &rarr; environment &rarr; config file**. For a local instance the bundled `config.yaml` already carries both, so this is enough:
+The TUI signs every request, so it needs a keypair; it comes from the flags or the environment and never from the server's config file. The address resolves **flag &rarr; environment &rarr; config file**. For a local instance the bundled `config.yaml` carries the address, so only the credential has to be supplied:
 
 ```bash
+export S3O_ACCESS_KEY_ID="$(your-secret-tool get access-key)"
+export S3O_SECRET_ACCESS_KEY="$(your-secret-tool get secret-key)"
 s3-orchestrator tui
 ```
 
-To target a remote instance without a local config, set the environment variables:
+To target a remote instance without a local config, name the address too:
 
 ```bash
 export S3O_ADMIN_ADDR="https://s3.example.com"
-export S3O_ADMIN_TOKEN="$(your-secret-tool get admin-token)"
 s3-orchestrator tui
 ```
 
-Or pass them as flags:
+Or pass all three as flags:
 
 ```bash
-s3-orchestrator tui -addr https://s3.example.com -token "$ADMIN_TOKEN"
+s3-orchestrator tui -addr https://s3.example.com \
+  -access-key "$ACCESS_KEY" -secret-key "$SECRET_KEY"
 ```
 
 ## Step 2: Navigate the object namespace

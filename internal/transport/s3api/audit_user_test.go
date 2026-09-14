@@ -129,7 +129,7 @@ func TestAudit_RejectedRequestNamesNoUser(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		req.Header.Set("X-Proxy-Token", "wrong-token")
+		signRequestAs(t, req, "AKIANOTAREALKEY", "not-the-right-secret")
 		resp, err := ts.Client().Do(req) //nolint:gosec // G704: test server URL
 		if err != nil {
 			t.Fatal(err)

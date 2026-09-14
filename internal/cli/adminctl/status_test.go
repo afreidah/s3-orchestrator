@@ -42,7 +42,7 @@ func TestStatus_TextTable(t *testing.T) {
 	t.Parallel()
 	srv := statusServer(t)
 	var stdout, stderr bytes.Buffer
-	if code := Command("status", nil, srv.URL, "tok", &stdout, &stderr); code != 0 {
+	if code := Command("status", nil, srv.URL, testCreds, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d (stderr=%q)", code, stderr.String())
 	}
 	out := stdout.String()
@@ -70,7 +70,7 @@ func TestStatus_JSONMode(t *testing.T) {
 	t.Parallel()
 	srv := statusServer(t)
 	var stdout bytes.Buffer
-	if code := CommandWithFormat("status", nil, srv.URL, "tok", output.FormatJSON, &stdout, new(bytes.Buffer)); code != 0 {
+	if code := CommandWithFormat("status", nil, srv.URL, testCreds, output.FormatJSON, &stdout, new(bytes.Buffer)); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	// JSON mode preserves raw bytes (no humanizing, keys intact).
@@ -87,7 +87,7 @@ func TestStatus_FallsBackOnUnexpectedShape(t *testing.T) {
 	defer srv.Close()
 	var stdout bytes.Buffer
 	// renderStatus errors on the bad shape; the client falls back to raw JSON.
-	if code := Command("status", nil, srv.URL, "tok", &stdout, new(bytes.Buffer)); code != 0 {
+	if code := Command("status", nil, srv.URL, testCreds, &stdout, new(bytes.Buffer)); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	if !strings.Contains(stdout.String(), "not-an-array") {
