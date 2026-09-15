@@ -395,7 +395,7 @@ func TestProvisioning_CreateCredential(t *testing.T) {
 		})
 	f.expectRepublish()
 
-	got, err := f.svc.CreateCredential(context.Background(), "u1", "deploy job")
+	got, err := f.svc.CreateCredential(context.Background(), "u1", "deploy job", Keypair{})
 	if err != nil {
 		t.Fatalf("CreateCredential: %v", err)
 	}
@@ -419,11 +419,11 @@ func TestProvisioning_CreateCredentialIsUnique(t *testing.T) {
 	f.store.EXPECT().CreateCredential(gomock.Any(), gomock.Any()).Return(nil).Times(2)
 	f.registry.EXPECT().Republish(gomock.Any()).Return(nil).Times(2)
 
-	first, err := f.svc.CreateCredential(context.Background(), "u1", "")
+	first, err := f.svc.CreateCredential(context.Background(), "u1", "", Keypair{})
 	if err != nil {
 		t.Fatalf("CreateCredential: %v", err)
 	}
-	second, err := f.svc.CreateCredential(context.Background(), "u1", "")
+	second, err := f.svc.CreateCredential(context.Background(), "u1", "", Keypair{})
 	if err != nil {
 		t.Fatalf("CreateCredential: %v", err)
 	}
@@ -438,7 +438,7 @@ func TestProvisioning_CreateCredentialRequiresUser(t *testing.T) {
 	t.Parallel()
 
 	f := newProvFixture(t, nil, &provStore{})
-	if _, err := f.svc.CreateCredential(context.Background(), "", ""); !errors.Is(err, ErrUserRequired) {
+	if _, err := f.svc.CreateCredential(context.Background(), "", "", Keypair{}); !errors.Is(err, ErrUserRequired) {
 		t.Fatalf("err = %v, want ErrUserRequired", err)
 	}
 }
@@ -449,7 +449,7 @@ func TestProvisioning_CreateCredentialRejectsUnknownUser(t *testing.T) {
 	t.Parallel()
 
 	f := newProvFixture(t, nil, &provStore{})
-	if _, err := f.svc.CreateCredential(context.Background(), "u1", ""); !errors.Is(err, ErrUserNotFound) {
+	if _, err := f.svc.CreateCredential(context.Background(), "u1", "", Keypair{}); !errors.Is(err, ErrUserNotFound) {
 		t.Fatalf("err = %v, want ErrUserNotFound", err)
 	}
 }
@@ -464,7 +464,7 @@ func TestProvisioning_CreateCredentialRejectsConfigUser(t *testing.T) {
 		{Name: "photos", Credentials: []config.CredentialConfig{{AccessKeyID: "AK", SecretAccessKey: "SK"}}},
 	}, &provStore{})
 
-	_, err := f.svc.CreateCredential(context.Background(), "config:AK", "")
+	_, err := f.svc.CreateCredential(context.Background(), "config:AK", "", Keypair{})
 	if !errors.Is(err, ErrConfigDeclared) {
 		t.Fatalf("err = %v, want ErrConfigDeclared", err)
 	}
@@ -885,5 +885,389 @@ func TestProvisioning_NamedGrantStillPinsABucket(t *testing.T) {
 
 	if err := f.svc.DeleteBucket(context.Background(), "photos"); !errors.Is(err, ErrBucketGranted) {
 		t.Fatalf("err = %v, want ErrBucketGranted", err)
+	}
+}
+
+// TestProvisioning_CreateCredentialRegistersASuppliedKeypair verifies a caller
+// that already holds a keypair records that one rather than receiving a second.
+// This is what lets a declarative caller converge: it re-registers what its
+// secret store holds instead of rotating every client it manages.
+func TestProvisioning_CreateCredentialRegistersASuppliedKeypair(t *testing.T) {
+	t.Parallel()
+
+	f := newProvFixture(t, nil, &provStore{users: []core.User{{ID: "u1", Name: "ci"}}})
+	var stored core.Credential
+	f.store.EXPECT().CreateCredential(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, c *core.Credential) error {
+			stored = *c
+			return nil
+		})
+	f.expectRepublish()
+
+	supplied := Keypair{AccessKeyID: "AKIASUPPLIED", SecretAccessKey: "supplied-secret"}
+	got, err := f.svc.CreateCredential(context.Background(), "u1", "vault-managed", supplied)
+	if err != nil {
+		t.Fatalf("CreateCredential: %v", err)
+	}
+	if stored.AccessKeyID != supplied.AccessKeyID || stored.Secret != supplied.SecretAccessKey {
+		t.Errorf("stored = %+v, want the supplied keypair rather than a minted one", stored)
+	}
+	// Echoed rather than withheld, so one response shape covers both paths and
+	// the caller can confirm what was recorded against what it sent.
+	if got.AccessKeyID != supplied.AccessKeyID || got.Secret != supplied.SecretAccessKey {
+		t.Errorf("returned = %+v, want the supplied keypair echoed back", got)
+	}
+}
+
+// TestProvisioning_CreateCredentialRejectsHalfAKeypair verifies one half alone
+// is refused rather than quietly minting the other. A key with no secret cannot
+// sign and a secret with no key names nothing, so either alone is a mistake.
+func TestProvisioning_CreateCredentialRejectsHalfAKeypair(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		keys Keypair
+	}{
+		{"an access key with no secret", Keypair{AccessKeyID: "AKIAONLY"}},
+		{"a secret with no access key", Keypair{SecretAccessKey: "secret-only"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newProvFixture(t, nil, &provStore{users: []core.User{{ID: "u1", Name: "ci"}}})
+			_, err := f.svc.CreateCredential(context.Background(), "u1", "", tc.keys)
+			if !errors.Is(err, ErrKeypairIncomplete) {
+				t.Fatalf("err = %v, want ErrKeypairIncomplete", err)
+			}
+		})
+	}
+}
+
+// TestProvisioning_CreateCredentialRejectsAClaimedAccessKey verifies an access
+// key another credential already holds is refused before the insert.
+//
+// Assembly refuses a key claimed twice, so without this check the row would
+// land and the republish behind it would fail, leaving a credential nothing can
+// authenticate.
+func TestProvisioning_CreateCredentialRejectsAClaimedAccessKey(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		buckets []config.BucketConfig
+		store   *provStore
+		key     string
+	}{
+		{
+			name: "claimed by a stored credential",
+			store: &provStore{
+				users:       []core.User{{ID: "u1", Name: "ci"}},
+				credentials: []core.Credential{{AccessKeyID: "AKIATAKEN", UserID: "u1", Secret: "s"}},
+			},
+			key: "AKIATAKEN",
+		},
+		{
+			// The store holds no row for a config credential, so its unique
+			// constraint would not catch this one.
+			name: "claimed by a config credential",
+			buckets: []config.BucketConfig{
+				{Name: "photos", Credentials: []config.CredentialConfig{
+					{AccessKeyID: "AKIATAKEN", SecretAccessKey: "SK"},
+				}},
+			},
+			store: &provStore{users: []core.User{{ID: "u1", Name: "ci"}}},
+			key:   "AKIATAKEN",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newProvFixture(t, tc.buckets, tc.store)
+			_, err := f.svc.CreateCredential(context.Background(), "u1", "",
+				Keypair{AccessKeyID: tc.key, SecretAccessKey: "whatever"})
+			if !errors.Is(err, ErrCredentialExists) {
+				t.Fatalf("err = %v, want ErrCredentialExists", err)
+			}
+		})
+	}
+}
+
+// TestProvisioning_RenameUser verifies the name changes and the id does not,
+// so credentials and grants hanging off the user keep resolving.
+func TestProvisioning_RenameUser(t *testing.T) {
+	t.Parallel()
+
+	f := newProvFixture(t, nil, &provStore{users: []core.User{{ID: "u1", Name: "old"}}})
+	f.store.EXPECT().RenameUser(gomock.Any(), "u1", "new").Return(nil)
+	f.expectRepublish()
+
+	if err := f.svc.RenameUser(context.Background(), "u1", "new"); err != nil {
+		t.Fatalf("RenameUser: %v", err)
+	}
+}
+
+// TestProvisioning_RenameUserRefusals covers what a rename will not do: act on
+// an identity nothing declares, act on one the config file owns, or accept an
+// empty name that would leave the user unreadable in a listing.
+func TestProvisioning_RenameUserRefusals(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		buckets []config.BucketConfig
+		store   *provStore
+		id      string
+		newName string
+		want    error
+	}{
+		{
+			name:  "no id",
+			store: &provStore{},
+			want:  ErrUserRequired,
+		},
+		{
+			name:  "no name",
+			store: &provStore{users: []core.User{{ID: "u1", Name: "old"}}},
+			id:    "u1",
+			want:  ErrNameRequired,
+		},
+		{
+			name:    "unknown user",
+			store:   &provStore{},
+			id:      "u1",
+			newName: "new",
+			want:    ErrUserNotFound,
+		},
+		{
+			name: "a config-declared identity",
+			buckets: []config.BucketConfig{
+				{Name: "photos", Credentials: []config.CredentialConfig{{AccessKeyID: "AK", SecretAccessKey: "SK"}}},
+			},
+			store:   &provStore{},
+			id:      "config:AK",
+			newName: "new",
+			want:    ErrConfigDeclared,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newProvFixture(t, tc.buckets, tc.store)
+			if err := f.svc.RenameUser(context.Background(), tc.id, tc.newName); !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestProvisioning_SetGrantWritesWhateverIsThere verifies the upsert: the same
+// call lands whether or not the grant already exists, which is what lets a
+// caller declare access without first asking.
+func TestProvisioning_SetGrantWritesWhateverIsThere(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		store *provStore
+	}{
+		{
+			name:  "no grant yet",
+			store: &provStore{users: []core.User{{ID: "u1", Name: "ci"}}, buckets: []core.Bucket{{Name: "photos"}}},
+		},
+		{
+			name: "replacing what one carries",
+			store: &provStore{
+				users:   []core.User{{ID: "u1", Name: "ci"}},
+				buckets: []core.Bucket{{Name: "photos"}},
+				grants: []core.Grant{{
+					UserID:      "u1",
+					Resource:    core.BucketResource("photos"),
+					Permissions: core.PermAll,
+				}},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newProvFixture(t, nil, tc.store)
+			var stored core.Grant
+			f.store.EXPECT().SetGrant(gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, g *core.Grant) error {
+					stored = *g
+					return nil
+				})
+			f.expectRepublish()
+
+			want := core.PermList | core.PermRead
+			err := f.svc.SetGrant(context.Background(), "u1", core.BucketResource("photos"), want)
+			if err != nil {
+				t.Fatalf("SetGrant: %v", err)
+			}
+			if stored.Permissions != want {
+				t.Errorf("stored permissions = %q, want %q", stored.Permissions, want)
+			}
+		})
+	}
+}
+
+// TestProvisioning_SetGrantHoldsTheSameRulesAsCreate verifies the declarative
+// path is not a way around the checks the imperative one makes. Both run the
+// same validation, so a set that would write a meaningless grant is refused
+// exactly as an add would be.
+func TestProvisioning_SetGrantHoldsTheSameRulesAsCreate(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		store    *provStore
+		resource core.Resource
+		perms    core.PermissionSet
+		want     error
+	}{
+		{
+			name:     "an identity nothing declares",
+			store:    &provStore{},
+			resource: core.BucketResource("photos"),
+			perms:    core.PermRead,
+			want:     ErrUserNotFound,
+		},
+		{
+			name:     "a bucket nothing declares",
+			store:    &provStore{users: []core.User{{ID: "u1", Name: "ci"}}},
+			resource: core.BucketResource("nowhere"),
+			perms:    core.PermRead,
+			want:     ErrBucketNotFound,
+		},
+		{
+			name:     "no permissions at all",
+			store:    &provStore{users: []core.User{{ID: "u1", Name: "ci"}}, buckets: []core.Bucket{{Name: "photos"}}},
+			resource: core.BucketResource("photos"),
+			perms:    0,
+			want:     ErrNoPermissions,
+		},
+		{
+			name:     "an admin permission on a bucket",
+			store:    &provStore{users: []core.User{{ID: "u1", Name: "ci"}}, buckets: []core.Bucket{{Name: "photos"}}},
+			resource: core.BucketResource("photos"),
+			perms:    core.PermAdminDrain,
+			want:     ErrInvalidResource,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newProvFixture(t, nil, tc.store)
+			err := f.svc.SetGrant(context.Background(), "u1", tc.resource, tc.perms)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestProvisioning_UpdateSurfacesStoreFailures verifies a write the store
+// refuses reaches the caller rather than being swallowed and reported as a
+// success the registry never republished.
+func TestProvisioning_UpdateSurfacesStoreFailures(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("boom")
+	for _, tc := range []struct {
+		name  string
+		setup func(f *provFixture)
+		call  func(f *provFixture) error
+	}{
+		{
+			name: "rename",
+			setup: func(f *provFixture) {
+				f.store.EXPECT().RenameUser(gomock.Any(), "u1", "new").Return(boom)
+			},
+			call: func(f *provFixture) error {
+				return f.svc.RenameUser(context.Background(), "u1", "new")
+			},
+		},
+		{
+			name: "set grant",
+			setup: func(f *provFixture) {
+				f.store.EXPECT().SetGrant(gomock.Any(), gomock.Any()).Return(boom)
+			},
+			call: func(f *provFixture) error {
+				return f.svc.SetGrant(context.Background(), "u1", core.BucketResource("photos"), core.PermRead)
+			},
+		},
+		{
+			name: "register a credential",
+			setup: func(f *provFixture) {
+				f.store.EXPECT().CreateCredential(gomock.Any(), gomock.Any()).Return(boom)
+			},
+			call: func(f *provFixture) error {
+				_, err := f.svc.CreateCredential(context.Background(), "u1", "",
+					Keypair{AccessKeyID: "AKIANEW", SecretAccessKey: "secret"})
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newProvFixture(t, nil, &provStore{
+				users:   []core.User{{ID: "u1", Name: "ci"}},
+				buckets: []core.Bucket{{Name: "photos"}},
+			})
+			tc.setup(f)
+			// No republish is expected: a write that failed leaves the registry
+			// describing what is still true.
+			if err := tc.call(f); !errors.Is(err, boom) {
+				t.Fatalf("err = %v, want a wrap of boom", err)
+			}
+		})
+	}
+}
+
+// TestProvisioning_UpdateSurfacesListingFailures verifies a store that cannot
+// answer what exists stops the write rather than acting on a half-read view.
+func TestProvisioning_UpdateSurfacesListingFailures(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("listing unavailable")
+	for _, tc := range []struct {
+		name string
+		call func(f *provFixture) error
+	}{
+		{
+			name: "rename",
+			call: func(f *provFixture) error {
+				return f.svc.RenameUser(context.Background(), "u1", "new")
+			},
+		},
+		{
+			name: "set grant",
+			call: func(f *provFixture) error {
+				return f.svc.SetGrant(context.Background(), "u1", core.BucketResource("photos"), core.PermRead)
+			},
+		},
+		{
+			name: "register a credential",
+			call: func(f *provFixture) error {
+				_, err := f.svc.CreateCredential(context.Background(), "u1", "", Keypair{})
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctrl := gomock.NewController(t)
+			store := opstest.NewMockProvisioningStore(ctrl)
+			a := gomock.Any()
+			store.EXPECT().ListBuckets(a).Return(nil, nil).AnyTimes()
+			store.EXPECT().ListUsers(a).Return(nil, boom).AnyTimes()
+			store.EXPECT().ListCredentials(a).Return(nil, nil).AnyTimes()
+			store.EXPECT().ListGrants(a).Return(nil, nil).AnyTimes()
+
+			f := &provFixture{store: store}
+			f.svc = NewProvisioning(ProvisioningDeps{
+				Store:  store,
+				Config: NewConfigStore(&config.Config{}),
+			})
+			if err := tc.call(f); !errors.Is(err, boom) {
+				t.Fatalf("err = %v, want a wrap of boom", err)
+			}
+		})
 	}
 }

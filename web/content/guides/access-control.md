@@ -79,6 +79,15 @@ s3-orchestrator admin grant add -user user-abc123 \
 
 Capture the secret at step 2. Nothing reads it back: a client that loses it gets a replacement keypair rather than a recovery.
 
+If your secrets are generated somewhere else - Terraform, Vault, a config-management run - supply the keypair instead of taking a minted one:
+
+```bash
+s3-orchestrator admin credential issue -user user-abc123 -label "vault-managed" \
+  -access-key "$ACCESS_KEY" -secret-key "$SECRET_KEY"
+```
+
+That keeps the orchestrator out of the business of generating secrets, and makes the command safe to re-run: registering the keypair you already hold converges, where minting a second one would leave you with a credential to distribute. Both halves are required together, and an access key another credential already claims is refused rather than overwritten.
+
 The order matters only in that a credential needs its user first and a grant needs both sides. A user created but not yet granted anything authenticates successfully and reaches nothing, which is a safe intermediate state to leave it in - and a clearer answer for the client than a failed signature would be.
 
 Confirm what the job can now do:
@@ -127,13 +136,32 @@ s3-orchestrator admin grant add -user user-ops \
 `admin-provision` is worth withholding unless the role genuinely needs it. A grant carrying it can mint a grant carrying anything, which makes it equivalent to root by a short path.
 {{% /notice %}}
 
-## Step 4: Log into the dashboard
+## Step 4: Change access after the fact
+
+`grant add` gives a user access it does not have. To change access it already has, `grant set` declares what the grant carries now:
+
+```bash
+# The backup job should stop being able to write.
+s3-orchestrator admin grant set -user user-abc123 -name backups -permissions list-buckets,list
+```
+
+`set` replaces the permission set in place, so there is no moment where the client reaches nothing - which a remove followed by an add would leave. It also upserts, writing the grant when none exists, so a script or a Terraform run can state the access it wants without first checking whether it is there. Running the same command twice converges.
+
+To correct a name, `user rename` changes the label and leaves the ID its credentials and grants reference:
+
+```bash
+s3-orchestrator admin user rename -id user-abc123 -name nightly-backup-v2
+```
+
+That is the only route: `user delete` is refused while the user holds a credential or a grant, so destroy-and-recreate cannot get there.
+
+## Step 5: Log into the dashboard
 
 The dashboard takes the same credential. Log in at `{ui.path}/login` with an access key and secret - the root keypair, or any credential the store has issued - and the session carries the user that credential proved.
 
 There is no separate dashboard password to rotate, and no third place a credential can be declared.
 
-## Step 5: Rotate without downtime
+## Step 6: Rotate without downtime
 
 Several keypairs may name one user, which is what makes rotation an overlap rather than a cutover:
 
@@ -151,7 +179,7 @@ No restart and no `SIGHUP`: the registry is rebuilt before each command returns.
 
 Config-declared credentials rotate differently, because the file is their source of truth - edit it and send `SIGHUP`. The root credential rotates the same way, and takes effect on the next request.
 
-## Step 6: Tear down in reverse
+## Step 7: Tear down in reverse
 
 Removal is refused while anything still depends on what is being removed, so a script that runs these out of order stops rather than half-completing:
 

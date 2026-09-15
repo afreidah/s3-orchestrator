@@ -330,6 +330,8 @@ type ProvisioningStore interface {
 	CreateUser(ctx context.Context, u *User) error
 	CreateCredential(ctx context.Context, c *Credential) error
 	CreateGrant(ctx context.Context, g *Grant) error
+	RenameUser(ctx context.Context, id, name string) error
+	SetGrant(ctx context.Context, g *Grant) error
 	DeleteBucket(ctx context.Context, name string) error
 	DeleteUser(ctx context.Context, id string) error
 	DeleteCredential(ctx context.Context, accessKeyID string) error

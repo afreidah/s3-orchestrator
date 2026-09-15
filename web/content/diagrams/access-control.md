@@ -168,7 +168,7 @@ An access key the registry does not hold still computes a full HMAC, against a f
     DB: {
       title: 'The store',
       badge: 'storage', badgeText: 'metadata store',
-      body: '<p>Users, their credentials, and their grants as rows, created through the provisioning API or the <code>bucket</code>, <code>user</code>, <code>credential</code> and <code>grant</code> CLI commands.</p><p>A stored credential can reach several buckets, because its user can hold several grants, and a bucket can be granted to several users. That is what the config file has no syntax for.</p><p>The secret is returned once, by the request that minted it, and never read back into any listing. A client that loses it gets a replacement keypair rather than a recovery.</p><p><a href="../database-schema/">Database schema &rarr;</a></p>'
+      body: '<p>Users, their credentials, and their grants as rows, created through the provisioning API or the <code>bucket</code>, <code>user</code>, <code>credential</code> and <code>grant</code> CLI commands.</p><p>A stored credential can reach several buckets, because its user can hold several grants, and a bucket can be granted to several users. That is what the config file has no syntax for.</p><p>A minted secret is returned once and never read back into any listing, so a client that loses one gets a replacement rather than a recovery. A caller whose secrets are generated elsewhere supplies the keypair instead, and re-registers what its secret store holds rather than rotating.</p><p><a href="../database-schema/">Database schema &rarr;</a></p>'
     },
     MERGE: {
       title: 'Merge and publish',

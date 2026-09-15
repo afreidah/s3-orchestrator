@@ -86,6 +86,13 @@ func TestProvisioning_VerbsAndPaths(t *testing.T) {
 			http.MethodPost, "/admin/api/provisioning/grants"},
 		{"grant remove", []string{"grant", "remove", "-user", "user-abc", "-bucket", "photos"},
 			http.MethodDelete, "/admin/api/provisioning/grants/user-abc/photos"},
+		{"user rename", []string{"user", "rename", "-id", "user-abc", "-name", "ci"},
+			http.MethodPatch, "/admin/api/provisioning/users/user-abc"},
+		{"grant set", []string{"grant", "set", "-user", "user-abc", "-name", "photos"},
+			http.MethodPut, "/admin/api/provisioning/grants/user-abc/photos"},
+		{"grant set on the orchestrator", []string{
+			"grant", "set", "-user", "user-abc", "-kind", "orchestrator", "-permissions", "admin-read",
+		}, http.MethodPut, "/admin/api/provisioning/grants/user-abc/orchestrator"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -125,6 +132,16 @@ func TestProvisioning_RequestBodies(t *testing.T) {
 			map[string]any{"user_id": "user-abc", "kind": "orchestrator"}},
 		{"the retired instance spelling", []string{"grant", "add", "-user", "user-abc", "-kind", "instance", "-permissions", "admin-provision"},
 			map[string]any{"user_id": "user-abc", "kind": "orchestrator"}},
+		{"a supplied keypair", []string{
+			"credential", "issue", "-user", "user-abc",
+			"-access-key", "AKIASUPPLIED", "-secret-key", "supplied-secret",
+		}, map[string]any{
+			"user_id":           "user-abc",
+			"access_key_id":     "AKIASUPPLIED",
+			"secret_access_key": "supplied-secret",
+		}},
+		{"user rename", []string{"user", "rename", "-id", "user-abc", "-name", "ci"},
+			map[string]any{"name": "ci"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -159,6 +176,11 @@ func TestProvisioning_MissingRequiredFlags(t *testing.T) {
 		{"grant", "add", "-user", "u1"},
 		{"grant", "add", "-bucket", "photos"},
 		{"grant", "remove", "-user", "u1"},
+		{"user", "rename"},
+		{"user", "rename", "-id", "u1"},
+		{"user", "rename", "-name", "ci"},
+		{"grant", "set", "-user", "u1"},
+		{"grant", "set", "-name", "photos"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			t.Parallel()
@@ -378,5 +400,71 @@ func TestShorthand(t *testing.T) {
 				t.Errorf("shorthand(%v) = %q, want %q", tc.perms, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestProvisioning_IssueRefusesHalfAKeypair verifies one half alone is caught
+// before a request is issued. The server refuses it too, but a caller that
+// typed one flag deserves to be told without a round trip.
+func TestProvisioning_IssueRefusesHalfAKeypair(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{
+		{"credential", "issue", "-user", "u1", "-access-key", "AKIAONLY"},
+		{"credential", "issue", "-user", "u1", "-secret-key", "secret-only"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			t.Parallel()
+			code, got, _, stderr := runProvisioning(t, args, okReply)
+			if code == 0 {
+				t.Fatal("half a keypair was accepted")
+			}
+			if got.method != "" {
+				t.Errorf("issued %s %s despite the incomplete keypair", got.method, got.path)
+			}
+			if !strings.Contains(stderr, "both") {
+				t.Errorf("stderr = %q, want it to say both halves are needed", stderr)
+			}
+		})
+	}
+}
+
+// TestProvisioning_GrantSetCarriesPermissions verifies the declared set reaches
+// the request body, since that is the whole content of the call.
+func TestProvisioning_GrantSetCarriesPermissions(t *testing.T) {
+	t.Parallel()
+
+	_, got, _, _ := runProvisioning(t, []string{
+		"grant", "set", "-user", "u1", "-name", "photos", "-permissions", "list,read",
+	}, okReply)
+
+	var sent adminapi.SetGrantRequest
+	if err := json.Unmarshal([]byte(got.body), &sent); err != nil {
+		t.Fatalf("decode sent body: %v (body=%q)", err, got.body)
+	}
+	if len(sent.Permissions) != 2 || sent.Permissions[0] != "list" || sent.Permissions[1] != "read" {
+		t.Errorf("permissions = %v, want [list read]", sent.Permissions)
+	}
+}
+
+// TestProvisioning_GrantSetNamesTheKind verifies the kind reaches the query
+// string, which is how the server tells a bucket grant from a backend one.
+func TestProvisioning_GrantSetNamesTheKind(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("kind"); got != "backend" {
+			t.Errorf("kind = %q, want backend", got)
+		}
+		_ = json.NewEncoder(w).Encode(okReply)
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := Command("grant", []string{
+		"set", "-user", "u1", "-kind", "backend", "-name", "wasabi-eu", "-permissions", "admin-drain",
+	}, srv.URL, testCreds, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, stderr.String())
 	}
 }

@@ -665,3 +665,209 @@ func TestProvisioning_BucketGrantIsUnaffected(t *testing.T) {
 		t.Errorf("permissions = %q, want read,list", got[0].Permissions)
 	}
 }
+
+// -------------------------------------------------------------------------
+// UPDATES
+// -------------------------------------------------------------------------
+
+// TestProvisioning_RenameUser verifies the name changes and the id does not, so
+// the credentials and grants referencing it keep resolving.
+func TestProvisioning_RenameUser(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedUser(t, s, "u1", "old")
+
+	if err := s.CreateGrant(ctx, &core.Grant{UserID: "u1", Resource: core.BucketResource("photos")}); err != nil {
+		t.Fatalf("CreateGrant: %v", err)
+	}
+	if err := s.RenameUser(ctx, "u1", "new"); err != nil {
+		t.Fatalf("RenameUser: %v", err)
+	}
+
+	users, err := s.ListUsers(ctx)
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 1 || users[0].ID != "u1" || users[0].Name != "new" {
+		t.Fatalf("users = %+v, want the same id carrying the new name", users)
+	}
+	grants, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatalf("ListGrants: %v", err)
+	}
+	if len(grants) != 1 || grants[0].UserID != "u1" {
+		t.Errorf("grants = %+v, want the grant still hanging off u1", grants)
+	}
+}
+
+// TestProvisioning_RenameUserUnknownIsANoOp verifies renaming an id nothing
+// holds changes nothing and reports no error. The caller that cares whether the
+// user exists checks the view first; the statement itself matching no row is
+// not a failure the store invents.
+func TestProvisioning_RenameUserUnknownIsANoOp(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	if err := s.RenameUser(ctx, "nobody", "new"); err != nil {
+		t.Fatalf("RenameUser: %v", err)
+	}
+	users, err := s.ListUsers(ctx)
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 0 {
+		t.Errorf("users = %+v, want none invented", users)
+	}
+}
+
+// TestProvisioning_SetGrantInserts verifies the upsert writes a grant that was
+// not there, which is what lets a caller declare access without first asking
+// whether it exists.
+func TestProvisioning_SetGrantInserts(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedUser(t, s, "u1", "ci")
+
+	want := core.PermList | core.PermRead
+	grant := core.Grant{UserID: "u1", Resource: core.BucketResource("photos"), Permissions: want}
+	if err := s.SetGrant(ctx, &grant); err != nil {
+		t.Fatalf("SetGrant: %v", err)
+	}
+	got, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatalf("ListGrants: %v", err)
+	}
+	if len(got) != 1 || got[0].Permissions != want {
+		t.Fatalf("grants = %+v, want one carrying %q", got, want)
+	}
+}
+
+// TestProvisioning_SetGrantReplacesPermissions verifies a second write to the
+// same user and resource replaces the permission set rather than failing on the
+// primary key or adding a second row.
+//
+// created_at is asserted unchanged: a re-declared grant keeps the age it has
+// rather than looking newly issued every time a caller re-applies.
+func TestProvisioning_SetGrantReplacesPermissions(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedUser(t, s, "u1", "ci")
+
+	resource := core.BucketResource("photos")
+	first := core.Grant{UserID: "u1", Resource: resource, Permissions: core.PermAll}
+	if err := s.SetGrant(ctx, &first); err != nil {
+		t.Fatalf("SetGrant: %v", err)
+	}
+	before, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatalf("ListGrants: %v", err)
+	}
+
+	narrowed := core.PermListBuckets | core.PermRead
+	second := core.Grant{UserID: "u1", Resource: resource, Permissions: narrowed}
+	if err := s.SetGrant(ctx, &second); err != nil {
+		t.Fatalf("SetGrant replacing: %v", err)
+	}
+	after, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatalf("ListGrants: %v", err)
+	}
+	if len(after) != 1 {
+		t.Fatalf("grants = %+v, want the row replaced rather than a second one added", after)
+	}
+	if after[0].Permissions != narrowed {
+		t.Errorf("permissions = %q, want %q", after[0].Permissions, narrowed)
+	}
+	if !after[0].CreatedAt.Equal(before[0].CreatedAt) {
+		t.Errorf("created_at moved from %v to %v, want the grant to keep its age",
+			before[0].CreatedAt, after[0].CreatedAt)
+	}
+}
+
+// TestProvisioning_SetGrantLeavesSiblings verifies declaring one resource does
+// not disturb the same user's other grants.
+func TestProvisioning_SetGrantLeavesSiblings(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedUser(t, s, "u1", "ci")
+
+	other := core.Grant{UserID: "u1", Resource: core.BucketResource("backups"), Permissions: core.PermAll}
+	if err := s.CreateGrant(ctx, &other); err != nil {
+		t.Fatalf("CreateGrant: %v", err)
+	}
+	photos := core.Grant{UserID: "u1", Resource: core.BucketResource("photos"), Permissions: core.PermRead}
+	if err := s.SetGrant(ctx, &photos); err != nil {
+		t.Fatalf("SetGrant: %v", err)
+	}
+
+	got, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatalf("ListGrants: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("grants = %+v, want both", got)
+	}
+}
+
+// TestProvisioning_SetGrantAcrossKinds verifies the upsert keys on the resource
+// kind as well as its name, so a bucket grant and a backend grant of the same
+// name are two rows rather than one overwriting the other.
+func TestProvisioning_SetGrantAcrossKinds(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedUser(t, s, "u1", "ci")
+
+	bucket := core.Grant{
+		UserID:      "u1",
+		Resource:    core.Resource{Kind: core.ResourceBucket, Name: "shared"},
+		Permissions: core.PermRead,
+	}
+	backend := core.Grant{
+		UserID:      "u1",
+		Resource:    core.Resource{Kind: core.ResourceBackend, Name: "shared"},
+		Permissions: core.PermAdminDrain,
+	}
+	for _, g := range []core.Grant{bucket, backend} {
+		if err := s.SetGrant(ctx, &g); err != nil {
+			t.Fatalf("SetGrant %s: %v", g.Resource, err)
+		}
+	}
+
+	got, err := s.ListGrants(ctx)
+	if err != nil {
+		t.Fatalf("ListGrants: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("grants = %+v, want the two kinds kept apart", got)
+	}
+}
+
+// TestProvisioning_UpdatesSurfaceDriverErrors verifies a statement the driver
+// refuses reaches the caller naming the row it was about, rather than being
+// reported as a write that happened.
+//
+// The database is closed underneath the store, which is the one failure every
+// statement shares and the only one reachable without a fault-injecting driver.
+func TestProvisioning_UpdatesSurfaceDriverErrors(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedUser(t, s, "u1", "ci")
+	if err := s.db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	if err := s.RenameUser(ctx, "u1", "new"); err == nil {
+		t.Error("RenameUser reported success against a closed database")
+	}
+	grant := core.Grant{UserID: "u1", Resource: core.BucketResource("photos"), Permissions: core.PermRead}
+	if err := s.SetGrant(ctx, &grant); err == nil {
+		t.Error("SetGrant reported success against a closed database")
+	}
+}

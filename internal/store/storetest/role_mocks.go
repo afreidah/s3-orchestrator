@@ -1077,3 +1077,31 @@ func (mr *MockProvisioningStoreMockRecorder) ListUsers(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListUsers", reflect.TypeOf((*MockProvisioningStore)(nil).ListUsers), ctx)
 }
+
+// RenameUser mocks base method.
+func (m *MockProvisioningStore) RenameUser(ctx context.Context, id, name string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RenameUser", ctx, id, name)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RenameUser indicates an expected call of RenameUser.
+func (mr *MockProvisioningStoreMockRecorder) RenameUser(ctx, id, name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RenameUser", reflect.TypeOf((*MockProvisioningStore)(nil).RenameUser), ctx, id, name)
+}
+
+// SetGrant mocks base method.
+func (m *MockProvisioningStore) SetGrant(ctx context.Context, g *core.Grant) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetGrant", ctx, g)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetGrant indicates an expected call of SetGrant.
+func (mr *MockProvisioningStoreMockRecorder) SetGrant(ctx, g any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetGrant", reflect.TypeOf((*MockProvisioningStore)(nil).SetGrant), ctx, g)
+}
