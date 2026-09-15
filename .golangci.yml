@@ -96,6 +96,22 @@ linters:
       - common-false-positives
       - legacy
       - std-error-handling
+    rules:
+      # The Terraform plugin framework fixes the signature of every resource
+      # method, so their request parameters cannot be taken by pointer however
+      # heavy they are. hugeParam stays on everywhere else, where it catches a
+      # struct that grew past the threshold without anyone noticing.
+      - path: internal/provider/
+        linters:
+          - gocritic
+        text: hugeParam
+      # An acceptance test's fixture is a block of HCL declaring a credential
+      # resource, so gosec reads every one of them as a hardcoded credential.
+      # The keypairs in them reach a container that lives for one test binary.
+      - path: internal/provider/.*_test\.go
+        linters:
+          - gosec
+        text: G101
     paths:
       - internal/store/postgres/sqlc
       - third_party$
