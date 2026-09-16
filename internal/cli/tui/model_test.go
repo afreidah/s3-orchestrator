@@ -295,6 +295,11 @@ func TestHandleKey_TableDelegationAndUnknownMsg(t *testing.T) {
 }
 
 func TestResolveTarget(t *testing.T) {
+	// The resolver falls back to these, so a shell holding a real keypair
+	// would satisfy the half-keypair case below and hide the check.
+	t.Setenv("S3O_ACCESS_KEY_ID", "")
+	t.Setenv("S3O_SECRET_ACCESS_KEY", "")
+
 	// flags win and the address gets an http prefix
 	got, err := resolveTarget([]string{"-addr", "host:9000", "-access-key", "AK", "-secret-key", "SK"})
 	if err != nil || got.baseAddr != "http://host:9000" {
