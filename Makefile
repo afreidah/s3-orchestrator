@@ -186,6 +186,27 @@ openapi-breaking: ## Report admin API contract breaks against OASDIFF_BASE
 provider-docs: ## Regenerate the Terraform provider's registry documentation
 	cd terraform/terraform-provider-s3-orchestrator && go tool tfplugindocs generate --provider-name s3orchestrator
 
+# The registry only reads repositories named after the provider, which this one
+# is not, so the provider directory is mirrored to one that is. git subtree
+# rewrites it as that repository's whole history, and the tag pushed afterwards
+# is what the mirror's release workflow builds from.
+#
+# The tag is created through the API rather than pushed, because a local tag
+# names a commit in this repository and the mirror has no such commit.
+#
+# Documentation is regenerated first and the target stops if that changed
+# anything: the registry renders the committed docs/, so publishing a tag whose
+# documentation was never regenerated ships pages describing the last release.
+PROVIDER_PREFIX := terraform/terraform-provider-s3-orchestrator
+PROVIDER_REPO   ?= afreidah/terraform-provider-s3-orchestrator
+PROVIDER_REMOTE ?= mirror
+
+provider-publish: provider-docs ## Mirror the provider subtree and tag it, which releases it to the registry
+	@git diff --quiet -- $(PROVIDER_PREFIX)/docs || { echo "provider docs were stale; commit the regenerated docs/ first"; exit 1; }
+	@git remote get-url $(PROVIDER_REMOTE) >/dev/null 2>&1 || git remote add $(PROVIDER_REMOTE) git@github.com:$(PROVIDER_REPO).git
+	git subtree push --prefix=$(PROVIDER_PREFIX) $(PROVIDER_REMOTE) main
+	gh api repos/$(PROVIDER_REPO)/git/refs -f ref=refs/tags/$(VERSION) -f sha=$$(git ls-remote $(PROVIDER_REMOTE) refs/heads/main | cut -f1)
+
 doc-stub-check: ## Fail if tautological '// Foo foo.' doc-comment stubs reappear
 	bash scripts/check-doc-stubs.sh
 
@@ -763,5 +784,5 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint cloc govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test provider-test provider-docs dev-deps dev-clean tools prep-changelog deb deb-release deb-lint publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push worker-install worker-typecheck worker-test worker-coverage worker-check worker-deploy worker-build worker-publish clean
+.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint cloc govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test provider-test provider-docs provider-publish dev-deps dev-clean tools prep-changelog deb deb-release deb-lint publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push worker-install worker-typecheck worker-test worker-coverage worker-check worker-deploy worker-build worker-publish clean
 .DEFAULT_GOAL := help
