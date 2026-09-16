@@ -141,9 +141,10 @@ GOLANGCI := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLA
 # by the go directive in go.mod, so only this has to be bumped by hand.
 GOPLS_VERSION ?= v0.22.0
 
-# loadtest is a separate Go module, so the root ./... never reaches it and it
-# went unlinted entirely. Every module has to be named explicitly.
-GO_MODULE_DIRS := . loadtest
+# loadtest and the Terraform provider are separate Go modules, so the root ./...
+# never reaches them and they would go unlinted entirely. Every module has to be
+# named explicitly.
+GO_MODULE_DIRS := . loadtest terraform/terraform-provider-s3-orchestrator
 
 lint: ## Run Go linter
 	@for dir in $(GO_MODULE_DIRS); do \
@@ -174,6 +175,16 @@ openapi-breaking: ## Report admin API contract breaks against OASDIFF_BASE
 	@git show $(OASDIFF_BASE):docs/openapi.yaml > /tmp/openapi-base.yaml
 	@go run github.com/oasdiff/oasdiff@$(OASDIFF_VERSION) breaking \
 		/tmp/openapi-base.yaml docs/openapi.yaml -f $(OASDIFF_FORMAT)
+
+# The registry renders the provider's documentation from Markdown committed in
+# its docs/ directory, so it is generated and checked in rather than built at
+# publish time. Content comes from the schema's descriptions and the examples
+# directory, which is why both are worth writing well.
+#
+# The name is passed explicitly: it is otherwise taken from the directory, which
+# says s3-orchestrator where every resource type says s3orchestrator.
+provider-docs: ## Regenerate the Terraform provider's registry documentation
+	cd terraform/terraform-provider-s3-orchestrator && go tool tfplugindocs generate --provider-name s3orchestrator
 
 doc-stub-check: ## Fail if tautological '// Foo foo.' doc-comment stubs reappear
 	bash scripts/check-doc-stubs.sh
@@ -357,6 +368,15 @@ COMPOSE_FILE := docker-compose.test.yml
 
 integration-test: ## Run integration tests (testcontainers — no docker-compose needed)
 	go test -race -v -tags integration -count=1 ./internal/integration/ ./internal/store/postgres/
+
+# The image is built here rather than by the tests because the Dockerfile uses
+# BuildKit's platform arguments, which the Docker client library testcontainers
+# builds through does not provide. Set S3O_TEST_IMAGE to run one already built.
+ACCEPTANCE_IMAGE := $(IMAGE):acceptance
+
+provider-test: ## Run Terraform provider acceptance tests (testcontainers)
+	docker build -t $(ACCEPTANCE_IMAGE) .
+	cd terraform/terraform-provider-s3-orchestrator && TF_ACC=1 S3O_TEST_IMAGE=$(ACCEPTANCE_IMAGE) go test -v -count=1 -timeout 20m ./internal/provider/
 
 dev-deps: ## Start dev environment services (MinIO + PostgreSQL + Redis + observability)
 	docker compose -f $(COMPOSE_FILE) up -d --wait
@@ -743,5 +763,5 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint cloc govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test dev-deps dev-clean tools prep-changelog deb deb-release deb-lint publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push worker-install worker-typecheck worker-test worker-coverage worker-check worker-deploy worker-build worker-publish clean
+.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint cloc govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test provider-test provider-docs dev-deps dev-clean tools prep-changelog deb deb-release deb-lint publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push worker-install worker-typecheck worker-test worker-coverage worker-check worker-deploy worker-build worker-publish clean
 .DEFAULT_GOAL := help

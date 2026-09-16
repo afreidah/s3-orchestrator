@@ -31,6 +31,13 @@ weight: 30
       <p>Declare the administering credential, onboard a client with only the access it needs, and scope an operator to the control plane.</p>
     </div>
   </a>
+  <a class="landing-card" href="terraform-provider/">
+    <i class="fas fa-cubes landing-card-icon" style="color: #818cf8;"></i>
+    <div>
+      <strong>Provisioning with Terraform</strong>
+      <p>Declare the users, keypairs and grants a deployment serves, narrow access without a gap, and adopt identities that already exist.</p>
+    </div>
+  </a>
   <a class="landing-card" href="replication-guide/">
     <i class="fas fa-copy landing-card-icon" style="color: #67e8f9;"></i>
     <div>

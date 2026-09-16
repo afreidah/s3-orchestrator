@@ -208,6 +208,7 @@ Config credentials are the right shape for a bucket whose client is part of the 
 
 ## See also
 
+- [Provisioning with Terraform](../terraform-provider/) - the same work declaratively, for a deployment whose access belongs in version control
 - [Access control diagram](../../diagrams/access-control/) - the chain end to end, hover for detail
 - [Authentication reference](../../docs/authentication/) - credentials, signatures and presigned URLs
 - [CLI reference](../../docs/cli/#bucket-user-credential-and-grant) - every verb and flag

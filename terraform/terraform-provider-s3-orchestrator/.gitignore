@@ -1,0 +1,10 @@
+# The provider binary a development override points at. Built from source on
+# demand, so it is never committed.
+/terraform-provider-s3-orchestrator
+
+# Terraform leaves these behind wherever an example is applied.
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+*.tfvars

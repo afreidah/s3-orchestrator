@@ -155,6 +155,14 @@ jobs:
           version: v2.13.0
           working-directory: loadtest
 
+      # The Terraform provider is a separate Go module for the same reason, and
+      # is reached by neither of the steps above.
+      - name: Lint Terraform provider module
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.13.0
+          working-directory: terraform/terraform-provider-s3-orchestrator
+
   test:
     needs: [changes]
     # Run on Go-touching PRs and on every push to main: a main push always
@@ -194,6 +202,13 @@ jobs:
       - name: Run govulncheck
         run: go tool govulncheck ./...
 
+      # The Terraform provider is a separate Go module with its own dependency
+      # graph, which the root ./... above never reaches. Keep the version here
+      # matching the golang.org/x/vuln the root module pins.
+      - name: Run govulncheck on the Terraform provider module
+        working-directory: terraform/terraform-provider-s3-orchestrator
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./...
+
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -216,6 +231,44 @@ jobs:
         with:
           name: integration-coverage
           path: integration-coverage.out
+
+  # The provider's acceptance tests drive real terraform plan/apply/import
+  # against an orchestrator in a container, so they need the image built first.
+  # The image is built here rather than by the tests because the Dockerfile uses
+  # BuildKit's platform arguments, which the Docker client library
+  # testcontainers builds through does not provide.
+  provider:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [changes]
+    if: needs.changes.outputs.go == 'true' || github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6
+        with:
+          go-version-file: go.mod
+
+      # The registry reads the provider's documentation from the tagged commit,
+      # so a schema change that does not regenerate it ships wrong docs.
+      - name: Verify provider documentation is current
+        run: make provider-docs && git diff --exit-code terraform/terraform-provider-s3-orchestrator/docs
+
+      - name: Build orchestrator image
+        run: docker build -t s3-orchestrator:acceptance .
+
+      - name: Acceptance tests
+        working-directory: terraform/terraform-provider-s3-orchestrator
+        env:
+          TF_ACC: "1"
+          S3O_TEST_IMAGE: s3-orchestrator:acceptance
+        run: go test -count=1 -timeout 20m -coverprofile=provider-coverage.out -covermode=atomic -coverpkg=./... ./...
+
+      - name: Upload provider coverage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: provider-coverage
+          path: terraform/terraform-provider-s3-orchestrator/provider-coverage.out
 
   # ---------------------------------------------------------------------------
   # ADMIN API CONTRACT
@@ -302,7 +355,7 @@ jobs:
   sonarqube:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [changes, test, integration]
+    needs: [changes, test, integration, provider]
     # Run on every push to main and on every PR. The test/integration jobs
     # also run on main pushes, so coverage artifacts always exist here and the
     # scan re-analyses main (clearing fixed issues) without zeroing coverage.
@@ -323,6 +376,12 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: integration-coverage
+        continue-on-error: true
+
+      - name: Download provider coverage
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: provider-coverage
         continue-on-error: true
 
       - name: SonarQube Scan

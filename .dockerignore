@@ -4,6 +4,7 @@ benchmarks
 docs
 web
 loadtest
+terraform
 grafana
 packaging
 dist
