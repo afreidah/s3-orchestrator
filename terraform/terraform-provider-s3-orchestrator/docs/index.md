@@ -3,11 +3,14 @@
 page_title: "s3orchestrator Provider"
 description: |-
   Manages the identities, keypairs and grants a running s3-orchestrator authorizes requests against.
+  See s3-orchestrator.munchbox.cc https://s3-orchestrator.munchbox.cc for the project documentation, and the Provisioning with Terraform https://s3-orchestrator.munchbox.cc/guides/terraform-provider/ guide for a walkthrough of onboarding a client with this provider.
 ---
 
 # s3orchestrator Provider
 
 Manages the identities, keypairs and grants a running s3-orchestrator authorizes requests against.
+
+See [s3-orchestrator.munchbox.cc](https://s3-orchestrator.munchbox.cc) for the project documentation, and the [Provisioning with Terraform](https://s3-orchestrator.munchbox.cc/guides/terraform-provider/) guide for a walkthrough of onboarding a client with this provider.
 
 ## Example Usage
 
