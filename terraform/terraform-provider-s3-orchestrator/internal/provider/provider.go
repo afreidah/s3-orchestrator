@@ -97,7 +97,11 @@ func (p *s3oProvider) Schema(
 ) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages the identities, keypairs and grants a running " +
-			"s3-orchestrator authorizes requests against.",
+			"s3-orchestrator authorizes requests against.\n\n" +
+			"See [s3-orchestrator.munchbox.cc](https://s3-orchestrator.munchbox.cc) for " +
+			"the project documentation, and the [Provisioning with Terraform]" +
+			"(https://s3-orchestrator.munchbox.cc/guides/terraform-provider/) guide for " +
+			"a walkthrough of onboarding a client with this provider.",
 		Attributes: map[string]schema.Attribute{
 			"address": schema.StringAttribute{
 				Optional: true,
