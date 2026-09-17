@@ -224,7 +224,7 @@ func (h *Handler) routes() []route {
 			Params: []param{
 				{Name: paramKey, In: inPath, Required: true, Type: typeString, Description: descObjectKey},
 			},
-			Perm: core.PermTags, Resource: paramKey,
+			Perm: core.PermRead, Resource: paramKey,
 		},
 		{
 			Method: http.MethodPut, Pattern: pathObjectTags, Handler: h.handlePutObjectTags,

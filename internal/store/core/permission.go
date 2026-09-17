@@ -41,10 +41,11 @@ type PermissionSet uint64
 // ListBuckets and List are separate because they answer different questions: a
 // client may be entitled to know a bucket exists without being entitled to
 // enumerate what is in it, which is the same split AWS draws between
-// s3:ListAllMyBuckets and s3:ListBucket. Read is the object body alone.
+// s3:ListAllMyBuckets and s3:ListBucket.
 //
-// Tags covers reading and writing them in one intent, matching how object
-// metadata is granted rather than splitting a small surface three ways.
+// Read is the object and what describes it, tags included: a caller entitled to
+// the bytes learns nothing further from the labels on them, and an SDK reading
+// an object fetches both. Tags is the right to change them.
 const (
 	PermListBuckets PermissionSet = 1 << iota
 	PermList

@@ -741,7 +741,7 @@ WORKER_KEY    := s3-orchestrator/cloudflare-worker/$(VERSION)/worker.js
 S3O_ENDPOINT  ?= http://s3-orchestrator.service.consul:9000
 S3O_BUCKET    ?= artifacts
 
-worker-build: ## Bundle the edge proxy worker into a single ESM script
+worker-build: worker-install ## Bundle the edge proxy worker into a single ESM script
 	cd $(WORKER_DIR) && npm run build
 
 # The key carries the version and is never "latest", so munchbox pins what it

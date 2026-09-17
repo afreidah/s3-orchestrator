@@ -108,7 +108,7 @@ var requiredPermissions = map[Action]core.PermissionSet{
 	ActionDeleteObject:  core.PermDelete,
 	ActionDeleteObjects: core.PermDelete,
 
-	ActionGetObjectTagging:    core.PermTags,
+	ActionGetObjectTagging:    core.PermRead,
 	ActionPutObjectTagging:    core.PermTags,
 	ActionDeleteObjectTagging: core.PermTags,
 }

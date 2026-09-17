@@ -197,9 +197,10 @@ func (r *grantResource) Schema(
 				// re-grant, leaving a window where the client reaches nothing,
 				// which is the thing the upsert exists to avoid.
 				MarkdownDescription: "What the grant carries. A bucket takes `list-buckets`, " +
-					"`list`, `read`, `write`, `delete` and `tags`, or `all`. A backend or the " +
-					"orchestrator takes the `admin-` permissions, or `admin-all`. The two " +
-					"vocabularies do not mix.",
+					"`list`, `read`, `write`, `delete` and `tags`, or `all`. `read` covers an " +
+					"object's tags as well as its bytes, and `tags` is the right to change " +
+					"them. A backend or the orchestrator takes the `admin-` permissions, or " +
+					"`admin-all`. The two vocabularies do not mix.",
 			},
 		},
 	}

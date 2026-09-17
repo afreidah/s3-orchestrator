@@ -339,7 +339,7 @@ s3-orchestrator admin grant add -user user-abc123 -name backups -permissions lis
 
 `instance` is still accepted as a spelling of `orchestrator`, and grants stored under it still authorize, but it renders as `orchestrator` in every listing. It was renamed because it read as one process of a deployment running several, when the grant has always covered every process.
 
-`-permissions` is a comma-separated list, defaulting to `all`. A bucket grant takes `list-buckets`, `list`, `read`, `write`, `delete` and `tags`, or `all` for every one. A backend or instance grant takes the `admin-` permissions -- `admin-read`, `admin-logs`, `admin-maintain`, `admin-convert`, `admin-keys`, `admin-cache`, `admin-drain`, `admin-decommission`, `admin-config` and `admin-provision` -- or `admin-all`. Mixing the two in one grant is refused: a bucket cannot be drained, and the instance holds no objects.
+`-permissions` is a comma-separated list, defaulting to `all`. A bucket grant takes `list-buckets`, `list`, `read`, `write`, `delete` and `tags`, or `all` for every one. `read` covers an object's tags as well as its bytes; `tags` is the right to change them. A backend or instance grant takes the `admin-` permissions -- `admin-read`, `admin-logs`, `admin-maintain`, `admin-convert`, `admin-keys`, `admin-cache`, `admin-drain`, `admin-decommission`, `admin-config` and `admin-provision` -- or `admin-all`. Mixing the two in one grant is refused: a bucket cannot be drained, and the instance holds no objects.
 
 ```bash
 # A monitoring credential that reads status and nothing else
