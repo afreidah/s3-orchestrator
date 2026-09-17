@@ -53,9 +53,54 @@ const idParts = 3
 // names only the bucket.
 const defaultGrantKind = "bucket"
 
+// The shorthands the orchestrator accepts on the way in and expands on the way
+// out. A configuration writing one and reading back the expansion would differ
+// on every plan, so the provider expands it too.
+const (
+	permAll      = "all"
+	permAdminAll = "admin-all"
+)
+
+// permExpansions is what each shorthand stands for, in the order the
+// orchestrator returns them.
+var permExpansions = map[string][]string{
+	permAll: {"list-buckets", "list", "read", "write", "delete", "tags"},
+	permAdminAll: {
+		"admin-read", "admin-logs", "admin-maintain", "admin-convert", "admin-keys",
+		"admin-cache", "admin-drain", "admin-decommission", "admin-config",
+		"admin-provision",
+	},
+}
+
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
+
+// standsFor reports whether stored is exactly what the single shorthand in
+// held expands to, so a grant declared as one reads back as the same grant.
+//
+// The shorthand cannot be planned as its expansion instead: permissions is a
+// required attribute, and Terraform refuses a plan whose value for one differs
+// from the configuration.
+func standsFor(held, stored []string) bool {
+	if len(held) != 1 {
+		return false
+	}
+	expanded, ok := permExpansions[held[0]]
+	if !ok || len(expanded) != len(stored) {
+		return false
+	}
+	have := make(map[string]struct{}, len(stored))
+	for _, p := range stored {
+		have[p] = struct{}{}
+	}
+	for _, p := range expanded {
+		if _, found := have[p]; !found {
+			return false
+		}
+	}
+	return true
+}
 
 // grantResource manages what one user reaches on one resource.
 type grantResource struct {
@@ -219,12 +264,23 @@ func (r *grantResource) Read(
 		return
 	}
 
-	permissions, diags := types.SetValueFrom(ctx, types.StringType, grant.Permissions)
-	resp.Diagnostics.Append(diags...)
+	// The orchestrator expands all and admin-all when it stores a grant and
+	// returns the expansion here. Writing that over a state holding the
+	// shorthand would differ from the configuration on every plan, so a
+	// shorthand that still stands for what is stored is left alone.
+	var held []string
+	resp.Diagnostics.Append(state.Permissions.ElementsAs(ctx, &held, false)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	state.Permissions = permissions
+	if !standsFor(held, grant.Permissions) {
+		permissions, diags := types.SetValueFrom(ctx, types.StringType, grant.Permissions)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		state.Permissions = permissions
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 

@@ -181,3 +181,93 @@ func configure(
 	}
 	c.Configure(context.Background(), req, resp)
 }
+
+// -------------------------------------------------------------------------
+// PERMISSION SHORTHANDS
+// -------------------------------------------------------------------------
+
+// The orchestrator expands all and admin-all when it stores a grant and returns
+// the expansion when it reads one back. A state holding the shorthand is left
+// alone only when it still stands for exactly what is stored, so the cases that
+// matter are the near misses: a set that is one permission short, one that has
+// been widened out of band, and a shorthand that is not one.
+func TestStandsFor(t *testing.T) {
+	t.Parallel()
+
+	everyBucketPermission := []string{"list-buckets", "list", "read", "write", "delete", "tags"}
+
+	cases := []struct {
+		name   string
+		held   []string
+		stored []string
+		want   bool
+	}{
+		{
+			name:   "all stands for every bucket permission",
+			held:   []string{"all"},
+			stored: everyBucketPermission,
+			want:   true,
+		},
+		{
+			name:   "order does not matter, because the orchestrator holds a set",
+			held:   []string{"all"},
+			stored: []string{"tags", "delete", "write", "read", "list", "list-buckets"},
+			want:   true,
+		},
+		{
+			name: "admin-all stands for every administrative permission",
+			held: []string{"admin-all"},
+			stored: []string{
+				"admin-read", "admin-logs", "admin-maintain", "admin-convert", "admin-keys",
+				"admin-cache", "admin-drain", "admin-decommission", "admin-config",
+				"admin-provision",
+			},
+			want: true,
+		},
+		{
+			name:   "a narrowed grant is a real change, not a shorthand",
+			held:   []string{"all"},
+			stored: []string{"list", "read", "write", "delete", "tags"},
+			want:   false,
+		},
+		{
+			name:   "same size but a different permission",
+			held:   []string{"all"},
+			stored: []string{"list-buckets", "list", "read", "write", "delete", "admin-read"},
+			want:   false,
+		},
+		{
+			name:   "the wrong vocabulary's expansion",
+			held:   []string{"admin-all"},
+			stored: everyBucketPermission,
+			want:   false,
+		},
+		{
+			name:   "an explicit set is compared as written",
+			held:   []string{"list", "read"},
+			stored: []string{"list", "read"},
+			want:   false,
+		},
+		{
+			name:   "a lone permission that is not a shorthand",
+			held:   []string{"read"},
+			stored: []string{"read"},
+			want:   false,
+		},
+		{
+			name:   "nothing held, as on import",
+			held:   nil,
+			stored: everyBucketPermission,
+			want:   false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := standsFor(tc.held, tc.stored); got != tc.want {
+				t.Errorf("standsFor(%v, %v) = %v, want %v", tc.held, tc.stored, got, tc.want)
+			}
+		})
+	}
+}
