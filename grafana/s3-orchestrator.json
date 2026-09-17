@@ -5345,6 +5345,157 @@
           }
         }
       }
+    },
+    {
+      "type": "row",
+      "id": 141,
+      "title": "Fleet",
+      "gridPos": {
+        "x": 0,
+        "y": 355,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "id": 142,
+      "title": "Instances Up",
+      "description": "Scrape targets answering. Every background pass is advisory-locked, so a second instance duplicates no work; what it buys is surviving the loss of the first.",
+      "gridPos": {
+        "x": 0,
+        "y": 356,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "count(up{job=\"s3-orchestrator\"} == 1)",
+          "legendFormat": "instances"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "green",
+                "value": 2
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Request rate by instance",
+      "id": 143,
+      "description": "Whether the load balancer is spreading requests. Two instances taking an even share is the point; one taking all of them is redundancy that has never been exercised.",
+      "gridPos": {
+        "x": 4,
+        "y": 356,
+        "w": 10,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (instance) (rate(s3o_manager_requests_total[5m]))",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Worker ticks skipped (lock held elsewhere)",
+      "id": 144,
+      "description": "A tick another instance was already inside. Steady skips are the advisory locks doing their job; zero across every service while two instances run means one is not ticking at all.",
+      "gridPos": {
+        "x": 14,
+        "y": 356,
+        "w": 10,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (service) (rate(s3o_worker_ticks_total{result=\"skipped\"}[15m]))",
+          "legendFormat": "{{service}}"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
     }
   ]
 }

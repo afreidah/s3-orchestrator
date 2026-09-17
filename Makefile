@@ -753,6 +753,20 @@ worker-publish: worker-build ## Upload the bundled worker to the artifact bucket
 		s3://$(S3O_BUCKET)/$(WORKER_KEY) --content-type text/plain
 	@echo "published s3://$(S3O_BUCKET)/$(WORKER_KEY)"
 
+# The dashboard is the same shape of artifact as the worker: built here, read
+# back by whatever deploys it, and pinned by version so a republish cannot
+# change a running deployment on an unrelated apply. text/plain for the same
+# reason the worker uses it.
+GRAFANA_DASHBOARD := grafana/s3-orchestrator.json
+GRAFANA_KEY       := s3-orchestrator/grafana/$(VERSION)/s3-orchestrator.json
+
+grafana-publish: ## Upload the grafana dashboard to the artifact bucket
+	aws --endpoint-url $(S3O_ENDPOINT) s3 cp $(GRAFANA_DASHBOARD) \
+		s3://$(S3O_BUCKET)/$(GRAFANA_KEY) --content-type text/plain
+	@echo "published s3://$(S3O_BUCKET)/$(GRAFANA_KEY)"
+
+artifacts-publish: worker-publish grafana-publish ## Publish every artifact a deployment reads back
+
 ##@ Cleanup
 
 # -------------------------------------------------------------------------
@@ -784,5 +798,5 @@ clean: ## Remove build artifacts, demo environments, containers, and volumes
 	docker rmi $(FULL_TAG) 2>/dev/null || true
 	docker rmi s3-orchestrator:local 2>/dev/null || true
 
-.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint cloc govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test provider-test provider-docs provider-publish dev-deps dev-clean tools prep-changelog deb deb-release deb-lint publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push worker-install worker-typecheck worker-test worker-coverage worker-check worker-deploy worker-build worker-publish clean
+.PHONY: openapi openapi-breaking help builder build install uninstall docker push generate test vet lint cloc govulncheck coverage integration-coverage sonar-scan sonar-pr bench bench-compare run docs migration integration-test provider-test provider-docs provider-publish dev-deps dev-clean tools prep-changelog deb deb-release deb-lint publish-deb changelog release release-local loadtest-build loadtest-put loadtest-get loadtest-mixed loadtest-listobjects loadtest-multipart loadtest-burst loadtest-burst-read loadtest-k6 perf kubernetes-demo nomad-demo web-tools web-godoc web-submodules web-serve web-build web-docker web-push worker-install worker-typecheck worker-test worker-coverage worker-check worker-deploy worker-build worker-publish grafana-publish artifacts-publish clean
 .DEFAULT_GOAL := help
