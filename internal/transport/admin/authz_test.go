@@ -189,7 +189,9 @@ func TestAuthz_GrantDoesNotCarryPermission(t *testing.T) {
 		{"write without write", core.PermRead, http.MethodPut, "/admin/api/objects/photos/cat.jpg"},
 		{"delete without delete", core.PermRead, http.MethodDelete, "/admin/api/objects/photos/cat.jpg"},
 		{"delete prefix without delete", core.PermRead, http.MethodDelete, "/admin/api/objects?prefix=photos/"},
-		{"tags without tags", core.PermRead, http.MethodGet, "/admin/api/objects/tags/photos/cat.jpg"},
+		// Reading a tag set needs read, so the permission gates writing one.
+		{"write tags without tags", core.PermRead, http.MethodPut, "/admin/api/objects/tags/photos/cat.jpg"},
+		{"clear tags without tags", core.PermRead, http.MethodDelete, "/admin/api/objects/tags/photos/cat.jpg"},
 		{"list without list", core.PermRead, http.MethodGet, "/admin/api/objects?prefix=photos/"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

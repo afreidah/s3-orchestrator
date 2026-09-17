@@ -33,7 +33,7 @@ Requests without a valid signature get `401` with a JSON body. Request bodies ar
 
 ## Authorization
 
-The endpoints under `/admin/api/objects` read and write object data, reaching the same service the S3 API does. They are authorized against the permissions the caller's grant carries, not against having authenticated: browsing needs `list`, downloading needs `read`, uploading needs `write`, removing a key or a prefix needs `delete`, and the tag endpoints need `tags`. A caller whose grant does not carry what the operation needs gets `403`.
+The endpoints under `/admin/api/objects` read and write object data, reaching the same service the S3 API does. They are authorized against the permissions the caller's grant carries, not against having authenticated: browsing needs `list`, downloading needs `read`, uploading needs `write`, removing a key or a prefix needs `delete`, and changing an object's tags needs `tags`. Reading a tag set needs only `read`, the same as reading the object it describes. A caller whose grant does not carry what the operation needs gets `403`.
 
 A provisioned credential reaches those endpoints with exactly the grants it holds:
 

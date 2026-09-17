@@ -308,8 +308,12 @@ func TestRequiredPermissions(t *testing.T) {
 		{ActionPutObject, core.PermWrite},
 		{ActionDeleteObject, core.PermDelete},
 		{ActionDeleteObjects, core.PermDelete},
-		{ActionGetObjectTagging, core.PermTags},
+		// Reading an object's tags is reading the object: a caller entitled to
+		// the bytes learns nothing further from the labels, and every SDK
+		// fetches both when it reads one.
+		{ActionGetObjectTagging, core.PermRead},
 		{ActionPutObjectTagging, core.PermTags},
+		{ActionDeleteObjectTagging, core.PermTags},
 
 		// An abandoned upload is the client cleaning up after itself. A
 		// writer that cannot abort leaks parts it has no other way to remove.

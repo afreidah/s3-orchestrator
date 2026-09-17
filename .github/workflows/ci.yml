@@ -270,6 +270,38 @@ jobs:
           name: provider-coverage
           path: terraform/terraform-provider-s3-orchestrator/provider-coverage.out
 
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_wrapper: false
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive terraform/
+
+      # The module is tested against the provider built from this commit rather
+      # than the released one, so a schema change and the module that consumes
+      # it are checked together. dev_overrides means no init: terraform resolves
+      # the provider from disk, and the tests mock it from there.
+      - name: Module tests
+        working-directory: terraform/modules/s3-orchestrator
+        run: |
+          set -euo pipefail
+
+          bin="$RUNNER_TEMP/provider-bin"
+          mkdir -p "$bin"
+          (cd "$GITHUB_WORKSPACE/terraform/terraform-provider-s3-orchestrator" \
+            && go build -o "$bin/terraform-provider-s3-orchestrator" .)
+
+          cat > "$RUNNER_TEMP/dev.tfrc" <<EOF
+          provider_installation {
+            dev_overrides {
+              "afreidah/s3-orchestrator" = "$bin"
+            }
+            direct {}
+          }
+          EOF
+
+          TF_CLI_CONFIG_FILE="$RUNNER_TEMP/dev.tfrc" terraform test
+
   # ---------------------------------------------------------------------------
   # ADMIN API CONTRACT
   # ---------------------------------------------------------------------------
