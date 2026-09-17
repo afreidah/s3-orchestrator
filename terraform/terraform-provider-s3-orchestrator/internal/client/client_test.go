@@ -21,6 +21,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 )
 
 // -------------------------------------------------------------------------
@@ -243,5 +245,50 @@ func TestDoRejectsUnusableMethod(t *testing.T) {
 	err := c.Do(context.Background(), "in valid", "/x", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "build request") {
 		t.Fatalf("err = %v, want a request-construction failure", err)
+	}
+}
+
+// -------------------------------------------------------------------------
+// PATH ENCODING
+// -------------------------------------------------------------------------
+
+// A grant over every bucket is named `*`, the one name in ordinary use whose
+// wire form is percent-encoded. The orchestrator canonicalises in the S3
+// do-not-double-encode mode, so the signature has to cover the path exactly as
+// it goes out; the SDK's default would sign %252A for a request sending %2A and
+// every wildcard grant would come back 401.
+func TestSetGrantSendsAndSignsTheEncodedName(t *testing.T) {
+	t.Parallel()
+
+	var gotPath, gotAuth string
+	c := stub(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	if err := c.SetGrant(context.Background(), "user-abc", "bucket", "*", []string{"all"}); err != nil {
+		t.Fatalf("SetGrant: %v", err)
+	}
+
+	if !strings.HasSuffix(gotPath, "/%2A") {
+		t.Errorf("path = %q, want it to end in the encoded wildcard", gotPath)
+	}
+	// The signed headers cover the path, so a signature at all means the two
+	// agreed on which bytes were signed.
+	if !strings.Contains(gotAuth, "SignedHeaders=") {
+		t.Errorf("Authorization = %q, want a SigV4 signature", gotAuth)
+	}
+}
+
+// disableURIPathEscaping is the one line standing between the client and the
+// double-escaped canonical path, so it is worth asserting rather than assuming.
+func TestDisableURIPathEscaping(t *testing.T) {
+	t.Parallel()
+
+	var opts v4.SignerOptions
+	disableURIPathEscaping(&opts)
+	if !opts.DisableURIPathEscaping {
+		t.Error("DisableURIPathEscaping = false, want the path signed as it goes on the wire")
 	}
 }

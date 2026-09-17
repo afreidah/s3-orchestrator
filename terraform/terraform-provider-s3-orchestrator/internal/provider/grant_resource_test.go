@@ -149,6 +149,66 @@ resource "s3orchestrator_grant" "test" {
 `, testBucket, permissions)
 }
 
+// TestAccGrantWildcardName covers the administrator's grant, which is the one
+// that exercises both of the ways this resource can disagree with the server.
+//
+// `*` is the only name in ordinary use that needs percent-encoding, and signing
+// it is where the two sides can part company: the SDK's default escapes an
+// already-encoded path a second time, so the request signs as %252A and goes
+// out as %2A, and the orchestrator refuses a signature it cannot reproduce. A
+// name of only unreserved bytes signs identically either way and proves
+// nothing. `all` is the other half: the orchestrator stores its expansion, so a
+// state overwritten with that would differ from the configuration forever.
+//
+// No import step: an import has no shorthand to preserve and reads back the
+// expansion, which is correct and is covered by TestAccGrantBucket.
+func TestAccGrantWildcardName(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckGrantDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccGrantWildcardConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("s3orchestrator_grant.test", "name", "*"),
+					// State keeps the shorthand the configuration wrote, while
+					// the orchestrator holds what it stands for. Asserting both
+					// is what pins the round trip: either one alone passes with
+					// the other side disagreeing.
+					resource.TestCheckResourceAttr("s3orchestrator_grant.test", "permissions.#", "1"),
+					resource.TestCheckTypeSetElemAttr("s3orchestrator_grant.test", "permissions.*", "all"),
+					testAccCheckGrantPermissions("s3orchestrator_grant.test",
+						"list-buckets", "list", "read", "write", "delete", "tags"),
+				),
+			},
+			{
+				// Read signs the same path, so a mismatch that only bit the
+				// write would surface here. It is also where the expansion
+				// coming back over a stored shorthand would read as drift.
+				Config:   testAccGrantWildcardConfig,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+// testAccGrantWildcardConfig grants over every bucket, including those added
+// later, which is how an administrator is expressed.
+const testAccGrantWildcardConfig = `
+provider "s3orchestrator" {}
+
+resource "s3orchestrator_user" "test" {
+  name = "acc-grant-wildcard"
+}
+
+resource "s3orchestrator_grant" "test" {
+  user_id     = s3orchestrator_user.test.id
+  name        = "*"
+  permissions = ["all"]
+}
+`
+
 // testAccGrantOrchestratorConfig grants over the deployment itself, which takes
 // no resource name.
 const testAccGrantOrchestratorConfig = `

@@ -23,6 +23,8 @@ import (
 	"strings"
 	"testing"
 
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminstream"
 )
 
@@ -375,5 +377,19 @@ func TestGet_TransportFailure(t *testing.T) {
 	}
 	if _, ok := errors.AsType[*Error](err); ok {
 		t.Error("a transport failure must not be reported as an admin API *Error")
+	}
+}
+
+// disableURIPathEscaping is the one line standing between the CLI and a
+// double-escaped canonical path. The server canonicalises in the S3
+// do-not-double-encode mode, so a grant over `*` signs as %252A without it and
+// comes back 401.
+func TestDisableURIPathEscaping(t *testing.T) {
+	t.Parallel()
+
+	var opts v4.SignerOptions
+	disableURIPathEscaping(&opts)
+	if !opts.DisableURIPathEscaping {
+		t.Error("DisableURIPathEscaping = false, want the path signed as it goes on the wire")
 	}
 }

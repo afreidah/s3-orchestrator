@@ -243,7 +243,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	signer := v4.NewSigner()
+	signer := v4.NewSigner(disableURIPathEscaping)
 	creds := aws.Credentials{
 		AccessKeyID:     *accessKey,
 		SecretAccessKey: *secretKey,
@@ -438,9 +438,17 @@ func (c adminCredentials) complete() bool {
 // unsigned because these calls carry no body.
 func signAdminRequest(req *http.Request, creds adminCredentials) error {
 	req.Header.Set("X-Amz-Content-Sha256", unsignedPayload)
-	return v4.NewSigner().SignHTTP(req.Context(),
+	return v4.NewSigner(disableURIPathEscaping).SignHTTP(req.Context(),
 		aws.Credentials{AccessKeyID: creds.accessKey, SecretAccessKey: creds.secretKey},
 		req, unsignedPayload, "s3", creds.region, time.Now().UTC())
+}
+
+// disableURIPathEscaping signs the path exactly as it goes on the wire. The
+// SDK's default escapes an already-encoded path a second time, which the
+// orchestrator refuses: it canonicalises in the S3 do-not-double-encode mode,
+// so a key needing percent-encoding would sign as something it never sent.
+func disableURIPathEscaping(o *v4.SignerOptions) {
+	o.DisableURIPathEscaping = true
 }
 
 // parseSizes resolves the effective per-run object sizes. -sizes wins
