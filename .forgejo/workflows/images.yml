@@ -43,3 +43,14 @@ jobs:
 
           make push
           make web-push
+
+      # The edge worker's bundle and the grafana dashboard are built here and
+      # read back by whatever deploys them, under a key carrying .version. Both
+      # were published by hand until now, so the key a consumer pins only
+      # existed for versions somebody remembered to run a target for.
+      - name: Publish the artifacts a deployment reads back
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+        run: make artifacts-publish
