@@ -1213,6 +1213,20 @@ func (mr *MockProvisioningStoreMockRecorder) SetGrant(ctx, g any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetGrant", reflect.TypeOf((*MockProvisioningStore)(nil).SetGrant), ctx, g)
 }
 
+// UpdateBucket mocks base method.
+func (m *MockProvisioningStore) UpdateBucket(ctx context.Context, b *core.Bucket) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateBucket", ctx, b)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateBucket indicates an expected call of UpdateBucket.
+func (mr *MockProvisioningStoreMockRecorder) UpdateBucket(ctx, b any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateBucket", reflect.TypeOf((*MockProvisioningStore)(nil).UpdateBucket), ctx, b)
+}
+
 // MockNamespaceCounter is a mock of NamespaceCounter interface.
 type MockNamespaceCounter struct {
 	ctrl     *gomock.Controller

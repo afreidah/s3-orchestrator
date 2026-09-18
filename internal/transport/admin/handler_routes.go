@@ -540,6 +540,16 @@ func (h *Handler) routes() []route {
 			Kind:     core.ResourceOrchestrator, Perm: core.PermAdminProvision,
 		},
 		{
+			Method: http.MethodPatch, Pattern: pathProvBuckets + "/{name}", Handler: h.handleUpdateBucket,
+			Summary:  "Replace what a virtual bucket carries",
+			Request:  adminapi.UpdateBucketRequest{},
+			Response: adminapi.ProvisioningOperationResponse{},
+			Params: []param{
+				{Name: paramName, In: inPath, Required: true, Type: typeString, Description: descBucketName},
+			},
+			Kind: core.ResourceOrchestrator, Perm: core.PermAdminProvision,
+		},
+		{
 			Method: http.MethodDelete, Pattern: pathProvBuckets + "/{name}", Handler: h.handleDeleteBucket,
 			Summary:  "Remove a virtual bucket that holds no objects and no grants",
 			Response: adminapi.ProvisioningOperationResponse{},

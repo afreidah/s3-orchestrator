@@ -71,6 +71,27 @@ func (h *Handler) handleCreateBucket(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleUpdateBucket writes what a virtual bucket carries.
+func (h *Handler) handleUpdateBucket(w http.ResponseWriter, r *http.Request) {
+	var req adminapi.UpdateBucketRequest
+	if !httputil.DecodeJSONBody(w, r, &req, provisioningBodyLimit) {
+		return
+	}
+	name := r.PathValue(paramName)
+	b := core.Bucket{
+		Name:                name,
+		MaxMultipartUploads: req.MaxMultipartUploads,
+		CORS:                configCORS(req.CORS),
+	}
+	if err := h.provision.UpdateBucket(r.Context(), &b); err != nil {
+		h.provisioningError(w, r, "update bucket failed", err)
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, adminapi.ProvisioningOperationResponse{
+		Status: statusOK, Bucket: name,
+	})
+}
+
 // handleDeleteBucket removes a virtual bucket that holds nothing.
 func (h *Handler) handleDeleteBucket(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue(paramName)

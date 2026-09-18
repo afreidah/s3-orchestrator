@@ -328,3 +328,23 @@ func (q *Queries) SetGrant(ctx context.Context, arg SetGrantParams) error {
 	)
 	return err
 }
+
+const updateBucket = `-- name: UpdateBucket :exec
+UPDATE buckets
+SET max_multipart_uploads = $1, cors = $2
+WHERE name = $3
+`
+
+type UpdateBucketParams struct {
+	MaxMultipartUploads int32
+	Cors                []byte
+	Name                string
+}
+
+// The name identifies the bucket and its objects, so only what a bucket carries
+// changes here. Both columns are written on every call: the caller declares
+// whole state, and an omitted CORS set means the bucket now has none.
+func (q *Queries) UpdateBucket(ctx context.Context, arg UpdateBucketParams) error {
+	_, err := q.db.Exec(ctx, updateBucket, arg.MaxMultipartUploads, arg.Cors, arg.Name)
+	return err
+}

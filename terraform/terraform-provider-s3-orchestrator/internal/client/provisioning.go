@@ -28,6 +28,7 @@ import (
 // The provisioning routes.
 const (
 	pathProvisioning = "/admin/api/provisioning"
+	pathBuckets      = pathProvisioning + "/buckets"
 	pathUsers        = pathProvisioning + "/users"
 	pathCredentials  = pathProvisioning + "/credentials"
 	pathGrants       = pathProvisioning + "/grants"
@@ -70,11 +71,21 @@ type Credential struct {
 	Source      string `json:"source"`
 }
 
+// CORSRule mirrors the S3 CORSRule shape a bucket carries.
+type CORSRule struct {
+	AllowedOrigins []string `json:"allowed_origins"`
+	AllowedMethods []string `json:"allowed_methods"`
+	AllowedHeaders []string `json:"allowed_headers,omitempty"`
+	ExposeHeaders  []string `json:"expose_headers,omitempty"`
+	MaxAge         int      `json:"max_age,omitempty"`
+}
+
 // Bucket is a virtual bucket either source declares.
 type Bucket struct {
-	Name                string `json:"name"`
-	MaxMultipartUploads int    `json:"max_multipart_uploads"`
-	Source              string `json:"source"`
+	Name                string     `json:"name"`
+	MaxMultipartUploads int        `json:"max_multipart_uploads"`
+	CORS                []CORSRule `json:"cors,omitempty"`
+	Source              string     `json:"source"`
 }
 
 // Provisioning is everything the deployment declares, from both sources at
@@ -83,6 +94,20 @@ type Provisioning struct {
 	Buckets     []Bucket     `json:"buckets"`
 	Users       []User       `json:"users"`
 	Credentials []Credential `json:"credentials"`
+}
+
+// CreateBucketRequest declares a virtual bucket.
+type CreateBucketRequest struct {
+	Name                string     `json:"name"`
+	MaxMultipartUploads int        `json:"max_multipart_uploads,omitempty"`
+	CORS                []CORSRule `json:"cors,omitempty"`
+}
+
+// UpdateBucketRequest replaces what a bucket carries. The name is in the path,
+// and omitting CORS clears the rules rather than leaving them.
+type UpdateBucketRequest struct {
+	MaxMultipartUploads int        `json:"max_multipart_uploads,omitempty"`
+	CORS                []CORSRule `json:"cors,omitempty"`
 }
 
 // CreateUserRequest declares an identity.
@@ -122,6 +147,7 @@ type SetGrantRequest struct {
 // OperationResponse is the acknowledgement a mutation answers with.
 type OperationResponse struct {
 	Status   string `json:"status"`
+	Bucket   string `json:"bucket,omitempty"`
 	UserID   string `json:"user_id,omitempty"`
 	UserName string `json:"user_name,omitempty"`
 	Resource string `json:"resource,omitempty"`
@@ -138,6 +164,21 @@ func (c *Client) Provisioning(ctx context.Context) (*Provisioning, error) {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// Bucket finds one virtual bucket by name. The second result reports whether it
+// exists, which is what tells a Read to drop the resource rather than fail.
+func (c *Client) Bucket(ctx context.Context, name string) (Bucket, bool, error) {
+	p, err := c.Provisioning(ctx)
+	if err != nil {
+		return Bucket{}, false, err
+	}
+	for i := range p.Buckets {
+		if p.Buckets[i].Name == name {
+			return p.Buckets[i], true, nil
+		}
+	}
+	return Bucket{}, false, nil
 }
 
 // User finds one identity by id. The second result reports whether it exists,
@@ -186,6 +227,29 @@ func (c *Client) Grant(ctx context.Context, userID, kind, name string) (Grant, b
 		}
 	}
 	return Grant{}, false, nil
+}
+
+// -------------------------------------------------------------------------
+// BUCKETS
+// -------------------------------------------------------------------------
+
+// CreateBucket declares a virtual bucket.
+func (c *Client) CreateBucket(ctx context.Context, req CreateBucketRequest) (OperationResponse, error) {
+	var out OperationResponse
+	err := c.Do(ctx, http.MethodPost, pathBuckets, req, &out)
+	return out, err
+}
+
+// UpdateBucket replaces what a bucket carries, leaving its name and its objects
+// alone.
+func (c *Client) UpdateBucket(ctx context.Context, name string, req UpdateBucketRequest) error {
+	return c.Do(ctx, http.MethodPatch, pathBuckets+"/"+url.PathEscape(name), req, nil)
+}
+
+// DeleteBucket removes a virtual bucket. Refused while it holds an object or is
+// named by a grant, so emptying it stays a deliberate act.
+func (c *Client) DeleteBucket(ctx context.Context, name string) error {
+	return c.Do(ctx, http.MethodDelete, pathBuckets+"/"+url.PathEscape(name), nil, nil)
 }
 
 // -------------------------------------------------------------------------

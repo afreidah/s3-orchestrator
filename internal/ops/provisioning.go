@@ -109,6 +109,11 @@ func (p *Provisioning) View(ctx context.Context) (provisioning.View, error) {
 // deployment writes to, and what credentials reach them, is the operator's to
 // configure. This declares the namespace the orchestrator will accept writes
 // under.
+//
+// A name the config file already declares is allowed, and the new row sits
+// dormant behind it. That is how a bucket moves out of the config file without
+// a gap: write the row, then remove the config entry, and the row takes over
+// the moment it stops being shadowed. Only a second store row is refused.
 func (p *Provisioning) CreateBucket(ctx context.Context, b *core.Bucket) error {
 	if b.Name == "" {
 		return ErrNameRequired
@@ -117,7 +122,7 @@ func (p *Provisioning) CreateBucket(ctx context.Context, b *core.Bucket) error {
 	if err != nil {
 		return err
 	}
-	if _, ok := findBucket(view.Buckets, b.Name); ok {
+	if _, ok := findStoredBucket(&view, b.Name); ok {
 		return fmt.Errorf("%w: %q", ErrBucketExists, b.Name)
 	}
 	// Rejected here rather than at assembly: a rule the matcher cannot read
@@ -130,6 +135,39 @@ func (p *Provisioning) CreateBucket(ctx context.Context, b *core.Bucket) error {
 		return err
 	}
 	audit.Log(ctx, "provisioning.BucketCreated", slog.String("bucket", b.Name))
+	return p.republish(ctx)
+}
+
+// UpdateBucket writes what a bucket carries, leaving the name and the objects
+// stored under it alone.
+//
+// The bucket is replaced rather than merged into: what the caller sends is what
+// the bucket ends up holding, so an empty CORS set removes the rules it had.
+// Anything driving this declaratively sends whole state, and a merge would let
+// a bucket keep a rule no declaration names.
+func (p *Provisioning) UpdateBucket(ctx context.Context, b *core.Bucket) error {
+	if b.Name == "" {
+		return ErrNameRequired
+	}
+	view, err := p.View(ctx)
+	if err != nil {
+		return err
+	}
+	if _, ok := findStoredBucket(&view, b.Name); !ok {
+		if _, declared := findBucket(view.Buckets, b.Name); declared {
+			return fmt.Errorf("%w: bucket %q", ErrConfigDeclared, b.Name)
+		}
+		return fmt.Errorf("%w: %q", ErrBucketNotFound, b.Name)
+	}
+	// Rejected for the same reason create rejects it: a rule the matcher cannot
+	// read stores cleanly and then fails every registry rebuild afterwards.
+	if errs := config.ValidateCORS(b.CORS); len(errs) > 0 {
+		return fmt.Errorf("%w: %w", ErrInvalidCORS, errors.Join(errs...))
+	}
+	if err := p.store.UpdateBucket(ctx, b); err != nil {
+		return err
+	}
+	audit.Log(ctx, "provisioning.BucketUpdated", slog.String("bucket", b.Name))
 	return p.republish(ctx)
 }
 
@@ -146,15 +184,20 @@ func (p *Provisioning) DeleteBucket(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	b, ok := findBucket(view.Buckets, name)
-	if !ok {
+	if _, ok := findStoredBucket(&view, name); !ok {
+		if _, declared := findBucket(view.Buckets, name); declared {
+			return fmt.Errorf("%w: bucket %q", ErrConfigDeclared, name)
+		}
 		return fmt.Errorf("%w: %q", ErrBucketNotFound, name)
 	}
-	if b.Source == provisioning.SourceConfig {
-		return fmt.Errorf("%w: bucket %q", ErrConfigDeclared, name)
-	}
-	if err := p.refuseIfBucketInUse(ctx, name); err != nil {
-		return err
+	// A shadowed row serves nothing, so removing it takes nothing away: the
+	// objects and grants belong to the config bucket standing in front of it,
+	// and that bucket stays. Refusing here would strand an operator who laid a
+	// row down and then thought better of it.
+	if _, shadowed := findBucket(view.Shadowed, name); !shadowed {
+		if err := p.refuseIfBucketInUse(ctx, name); err != nil {
+			return err
+		}
 	}
 	if err := p.store.DeleteBucket(ctx, name); err != nil {
 		return err
@@ -556,6 +599,19 @@ func findBucket(buckets []provisioning.Bucket, name string) (provisioning.Bucket
 		}
 	}
 	return provisioning.Bucket{}, false
+}
+
+// findStoredBucket returns the store's row for a name, whether or not a config
+// bucket is currently shadowing it.
+//
+// The three mutations work on store rows, and a shadowed row is still a row
+// they own. Looking only at the merged buckets would hide it, and a caller that
+// wrote the row would be told it does not exist.
+func findStoredBucket(v *provisioning.View, name string) (provisioning.Bucket, bool) {
+	if b, ok := findBucket(v.Buckets, name); ok && b.Source == provisioning.SourceStore {
+		return b, true
+	}
+	return findBucket(v.Shadowed, name)
 }
 
 // findUser returns the merged user with an id.

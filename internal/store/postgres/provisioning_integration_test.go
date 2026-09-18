@@ -118,6 +118,47 @@ func TestProvisioningInt_BucketRoundTrip(t *testing.T) {
 	}
 }
 
+// TestProvisioningInt_UpdateBucket verifies a rewrite replaces what the bucket
+// carries and leaves its identity alone. Clearing the rules has to reach the
+// jsonb column, or an update would only ever add.
+func TestProvisioningInt_UpdateBucket(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	name := uniqueKey(t, "bucket")
+
+	initial := core.Bucket{
+		Name:                name,
+		MaxMultipartUploads: 2,
+		CORS: []config.CORSRule{{
+			AllowedOrigins: []string{"https://example.test"},
+			AllowedMethods: []string{"GET"},
+		}},
+	}
+	if err := s.CreateBucket(ctx, &initial); err != nil {
+		t.Fatalf("CreateBucket: %v", err)
+	}
+	t.Cleanup(func() { _ = s.DeleteBucket(context.Background(), name) })
+
+	if err := s.UpdateBucket(ctx, &core.Bucket{Name: name, MaxMultipartUploads: 9}); err != nil {
+		t.Fatalf("UpdateBucket: %v", err)
+	}
+
+	all, err := s.ListBuckets(ctx)
+	if err != nil {
+		t.Fatalf("ListBuckets: %v", err)
+	}
+	got, ok := findProvisionedBucket(all, name)
+	if !ok {
+		t.Fatalf("bucket %q missing from the listing", name)
+	}
+	if got.MaxMultipartUploads != 9 {
+		t.Errorf("limit = %d, want 9", got.MaxMultipartUploads)
+	}
+	if got.CORS != nil {
+		t.Errorf("cors = %+v, want the rules cleared", got.CORS)
+	}
+}
+
 // TestProvisioningInt_BucketWithoutCORS verifies a bucket carrying no rules
 // reads back with none rather than an empty set.
 func TestProvisioningInt_BucketWithoutCORS(t *testing.T) {
