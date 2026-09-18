@@ -54,6 +54,14 @@ VALUES (@access_key_id, @user_id, @secret, @label, @disabled);
 INSERT INTO grants (user_id, resource_kind, resource_name, permissions)
 VALUES (@user_id, @resource_kind, @resource_name, @permissions);
 
+-- name: UpdateBucket :exec
+-- The name identifies the bucket and its objects, so only what a bucket carries
+-- changes here. Both columns are written on every call: the caller declares
+-- whole state, and an omitted CORS set means the bucket now has none.
+UPDATE buckets
+SET max_multipart_uploads = @max_multipart_uploads, cors = @cors
+WHERE name = @name;
+
 -- name: RenameUser :exec
 -- The id is what credentials and grants reference, so only the name an operator
 -- reads changes.

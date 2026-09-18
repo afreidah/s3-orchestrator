@@ -138,6 +138,23 @@ func (s *Store) CreateGrant(ctx context.Context, g *core.Grant) error {
 	return nil
 }
 
+// UpdateBucket writes what a bucket carries. The name identifies it and its
+// objects, so it is the lookup rather than something this can change.
+func (s *Store) UpdateBucket(ctx context.Context, b *core.Bucket) error {
+	cors, err := marshalCORS(b.CORS)
+	if err != nil {
+		return err
+	}
+	if err := s.queries.UpdateBucket(ctx, db.UpdateBucketParams{
+		Name:                b.Name,
+		MaxMultipartUploads: int32(b.MaxMultipartUploads), //nolint:gosec // G115: bounded by config validation
+		Cors:                cors,
+	}); err != nil {
+		return fmt.Errorf("update bucket %s: %w", b.Name, err)
+	}
+	return nil
+}
+
 // RenameUser changes the name an operator reads a user by. The id is what
 // credentials and grants reference and does not move.
 func (s *Store) RenameUser(ctx context.Context, id, name string) error {

@@ -1573,6 +1573,20 @@ func (mr *MockMetadataStoreMockRecorder) SyncQuotaLimits(ctx, backends any) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SyncQuotaLimits", reflect.TypeOf((*MockMetadataStore)(nil).SyncQuotaLimits), ctx, backends)
 }
 
+// UpdateBucket mocks base method.
+func (m *MockMetadataStore) UpdateBucket(ctx context.Context, b *core.Bucket) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateBucket", ctx, b)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateBucket indicates an expected call of UpdateBucket.
+func (mr *MockMetadataStoreMockRecorder) UpdateBucket(ctx, b any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateBucket", reflect.TypeOf((*MockMetadataStore)(nil).UpdateBucket), ctx, b)
+}
+
 // UpdateContentHash mocks base method.
 func (m *MockMetadataStore) UpdateContentHash(ctx context.Context, key, backendName, hash string) error {
 	m.ctrl.T.Helper()

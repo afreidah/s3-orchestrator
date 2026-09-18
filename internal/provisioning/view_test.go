@@ -125,6 +125,36 @@ func TestMerge_ConfigWinsNameCollision(t *testing.T) {
 	if n := countNotices(v.Notices, NoticeBucketShadowed); n != 1 {
 		t.Errorf("shadowing notices = %d, want 1", n)
 	}
+	if len(v.Shadowed) != 1 || v.Shadowed[0].Name != "photos" {
+		t.Fatalf("shadowed = %v, want the stored row reported", v.Shadowed)
+	}
+	if v.Shadowed[0].MaxMultipartUploads != 99 {
+		t.Errorf("shadowed limit = %d, want the stored row's 99",
+			v.Shadowed[0].MaxMultipartUploads)
+	}
+	if v.Shadowed[0].Source != SourceStore {
+		t.Errorf("shadowed source = %q, want %q", v.Shadowed[0].Source, SourceStore)
+	}
+}
+
+// TestMerge_UnshadowedBucketIsNotReportedTwice verifies a stored bucket no
+// config bucket collides with is merged normally and stays out of Shadowed,
+// which is what makes Shadowed mean "inert" rather than "stored".
+func TestMerge_UnshadowedBucketIsNotReportedTwice(t *testing.T) {
+	t.Parallel()
+
+	v := Merge(
+		[]config.BucketConfig{{Name: "photos"}},
+		config.AuthConfig{},
+		&Snapshot{Buckets: []core.Bucket{{Name: "backups"}}},
+	)
+
+	if len(v.Shadowed) != 0 {
+		t.Errorf("shadowed = %v, want none", v.Shadowed)
+	}
+	if got := bucketNames(v.Buckets); len(got) != 2 {
+		t.Errorf("merged buckets = %v, want both", got)
+	}
 }
 
 // TestMerge_BucketCORSCarriesAcross verifies a bucket's CORS rules survive the

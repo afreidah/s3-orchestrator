@@ -131,6 +131,7 @@ func Permissive(m *MockMetadataStore) {
 	r.CreateUser(a, a).Return(nil).AnyTimes()
 	r.CreateCredential(a, a).Return(nil).AnyTimes()
 	r.CreateGrant(a, a).Return(nil).AnyTimes()
+	r.UpdateBucket(a, a).Return(nil).AnyTimes()
 	r.RenameUser(a, a, a).Return(nil).AnyTimes()
 	r.SetGrant(a, a).Return(nil).AnyTimes()
 	r.DeleteBucket(a, a).Return(nil).AnyTimes()

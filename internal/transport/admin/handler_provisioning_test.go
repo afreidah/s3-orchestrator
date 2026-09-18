@@ -238,6 +238,93 @@ func TestHandleCreateBucket_MalformedBodyIs400(t *testing.T) {
 	}
 }
 
+// TestHandleUpdateBucket verifies the bucket is rewritten with what the request
+// stated, and that the name comes from the path rather than the body.
+func TestHandleUpdateBucket(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	store := provisioningWith(t, h, nil, &provRows{buckets: []core.Bucket{{Name: "photos"}}})
+
+	var stored core.Bucket
+	store.EXPECT().UpdateBucket(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, b *core.Bucket) error {
+			stored = *b
+			return nil
+		})
+
+	req := jsonRequest(t, http.MethodPatch, "/admin/api/provisioning/buckets/photos",
+		adminapi.UpdateBucketRequest{
+			MaxMultipartUploads: 7,
+			CORS: []adminapi.CORSRule{{
+				AllowedOrigins: []string{"https://example.com"},
+				AllowedMethods: []string{"GET"},
+			}},
+		})
+	req.SetPathValue(paramName, "photos")
+	w := httptest.NewRecorder()
+	h.handleUpdateBucket(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if stored.Name != "photos" || stored.MaxMultipartUploads != 7 {
+		t.Errorf("stored bucket = %+v, want the submitted settings", stored)
+	}
+	if len(stored.CORS) != 1 {
+		t.Errorf("stored CORS = %+v, want the submitted rule", stored.CORS)
+	}
+}
+
+// TestHandleUpdateBucket_ClearsOmittedCORS verifies an omitted rule set reaches
+// the store as none, which is what makes the call a replacement rather than a
+// merge into what the bucket already held.
+func TestHandleUpdateBucket_ClearsOmittedCORS(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	held := []core.Bucket{{
+		Name: "photos",
+		CORS: []config.CORSRule{{AllowedOrigins: []string{"*"}, AllowedMethods: []string{"GET"}}},
+	}}
+	store := provisioningWith(t, h, nil, &provRows{buckets: held})
+
+	var stored core.Bucket
+	store.EXPECT().UpdateBucket(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, b *core.Bucket) error {
+			stored = *b
+			return nil
+		})
+
+	req := jsonRequest(t, http.MethodPatch, "/admin/api/provisioning/buckets/photos",
+		adminapi.UpdateBucketRequest{})
+	req.SetPathValue(paramName, "photos")
+	w := httptest.NewRecorder()
+	h.handleUpdateBucket(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if len(stored.CORS) != 0 {
+		t.Errorf("stored CORS = %+v, want the rules cleared", stored.CORS)
+	}
+}
+
+// TestHandleUpdateBucket_MalformedBodyIs400 verifies a body that will not parse
+// is the caller's fault rather than a fault.
+func TestHandleUpdateBucket_MalformedBodyIs400(t *testing.T) {
+	t.Parallel()
+	h := newCoverageHandler(t)
+	provisioningWith(t, h, nil, &provRows{})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch,
+		"/admin/api/provisioning/buckets/photos", strings.NewReader("{"))
+	req.SetPathValue(paramName, "photos")
+	w := httptest.NewRecorder()
+	h.handleUpdateBucket(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
 // TestHandleDeleteBucket verifies removal names the bucket it removed.
 func TestHandleDeleteBucket(t *testing.T) {
 	t.Parallel()

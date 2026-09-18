@@ -163,6 +163,7 @@ func TestOptionalString(t *testing.T) {
 // name a subtest reports under.
 func configurableResources() map[string]resource.Resource {
 	return map[string]resource.Resource{
+		"bucket":     NewBucketResource(),
 		"user":       NewUserResource(),
 		"credential": NewCredentialResource(),
 		"grant":      NewGrantResource(),

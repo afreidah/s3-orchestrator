@@ -772,6 +772,31 @@ paths:
                                 $ref: '#/components/schemas/ProvisioningOperationResponse'
                 "401":
                     description: Missing or invalid admin token
+        patch:
+            summary: Replace what a virtual bucket carries
+            operationId: patchProvisioningBucketsName
+            parameters:
+                - name: name
+                  in: path
+                  description: Virtual bucket name
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/UpdateBucketRequest'
+            responses:
+                "200":
+                    description: Success
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ProvisioningOperationResponse'
+                "401":
+                    description: Missing or invalid admin token
     /admin/api/provisioning/credentials:
         post:
             summary: Register a keypair for a user, minting one when none is supplied
@@ -2190,6 +2215,16 @@ components:
                 - usage_period
                 - backends
                 - integrity
+            type: object
+        UpdateBucketRequest:
+            properties:
+                cors:
+                    items:
+                        $ref: '#/components/schemas/CORSRule'
+                    type: array
+                max_multipart_uploads:
+                    format: int64
+                    type: integer
             type: object
         UsageFlushResponse:
             properties:

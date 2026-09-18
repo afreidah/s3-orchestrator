@@ -165,8 +165,8 @@ func TestProvisioning_CreateBucketRejectsEmptyName(t *testing.T) {
 	}
 }
 
-// TestProvisioning_CreateBucketRejectsExisting verifies a name either source
-// already declares is refused rather than duplicated.
+// TestProvisioning_CreateBucketRejectsExisting verifies a second store row is
+// refused, whether or not a config bucket is shadowing the first.
 func TestProvisioning_CreateBucketRejectsExisting(t *testing.T) {
 	t.Parallel()
 
@@ -175,8 +175,12 @@ func TestProvisioning_CreateBucketRejectsExisting(t *testing.T) {
 		cfg  []config.BucketConfig
 		rows provStore
 	}{
-		{"config", []config.BucketConfig{{Name: "photos"}}, provStore{}},
 		{"store", nil, provStore{buckets: []core.Bucket{{Name: "photos"}}}},
+		{
+			"a shadowed store row is still a row",
+			[]config.BucketConfig{{Name: "photos"}},
+			provStore{buckets: []core.Bucket{{Name: "photos"}}},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -186,6 +190,170 @@ func TestProvisioning_CreateBucketRejectsExisting(t *testing.T) {
 				t.Fatalf("err = %v, want ErrBucketExists", err)
 			}
 		})
+	}
+}
+
+// TestProvisioning_CreateBucketAdoptsConfigName verifies a name only the config
+// file declares is allowed. The row lands dormant behind it, which is what lets
+// a bucket move out of the config file without a window where neither source
+// declares it.
+func TestProvisioning_CreateBucketAdoptsConfigName(t *testing.T) {
+	t.Parallel()
+
+	f := newProvFixture(t, []config.BucketConfig{{Name: "photos"}}, &provStore{})
+	f.store.EXPECT().CreateBucket(gomock.Any(), gomock.Any()).Return(nil)
+	f.expectRepublish()
+
+	if err := f.svc.CreateBucket(context.Background(), &core.Bucket{Name: "photos"}); err != nil {
+		t.Fatalf("CreateBucket: %v", err)
+	}
+}
+
+// TestProvisioning_UpdateBucket verifies a stored bucket is rewritten and the
+// registry rebuilt.
+func TestProvisioning_UpdateBucket(t *testing.T) {
+	t.Parallel()
+
+	f := newProvFixture(t, nil, &provStore{buckets: []core.Bucket{{Name: "photos"}}})
+	f.store.EXPECT().UpdateBucket(gomock.Any(), gomock.Any()).Return(nil)
+	f.expectRepublish()
+
+	b := core.Bucket{Name: "photos", MaxMultipartUploads: 4}
+	if err := f.svc.UpdateBucket(context.Background(), &b); err != nil {
+		t.Fatalf("UpdateBucket: %v", err)
+	}
+}
+
+// TestProvisioning_UpdateBucketReplaces verifies the bucket ends up holding
+// exactly what the caller sent, so dropping a rule removes it rather than
+// leaving it behind.
+func TestProvisioning_UpdateBucketReplaces(t *testing.T) {
+	t.Parallel()
+
+	held := []core.Bucket{{
+		Name: "photos",
+		CORS: []config.CORSRule{{AllowedOrigins: []string{"*"}, AllowedMethods: []string{"GET"}}},
+	}}
+	f := newProvFixture(t, nil, &provStore{buckets: held})
+
+	var written *core.Bucket
+	f.store.EXPECT().UpdateBucket(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, b *core.Bucket) error {
+			written = b
+			return nil
+		})
+	f.expectRepublish()
+
+	if err := f.svc.UpdateBucket(context.Background(), &core.Bucket{Name: "photos"}); err != nil {
+		t.Fatalf("UpdateBucket: %v", err)
+	}
+	if len(written.CORS) != 0 {
+		t.Fatalf("CORS = %v, want the rules cleared", written.CORS)
+	}
+}
+
+// TestProvisioning_UpdateBucketRejectsEmptyName verifies a bucket with no name
+// never reaches the store.
+func TestProvisioning_UpdateBucketRejectsEmptyName(t *testing.T) {
+	t.Parallel()
+
+	f := newProvFixture(t, nil, &provStore{})
+	if err := f.svc.UpdateBucket(context.Background(), &core.Bucket{}); !errors.Is(err, ErrNameRequired) {
+		t.Fatalf("err = %v, want ErrNameRequired", err)
+	}
+}
+
+// TestProvisioning_UpdateBucketRejectsUnknown verifies a name nothing declares
+// is reported as missing rather than quietly creating one.
+func TestProvisioning_UpdateBucketRejectsUnknown(t *testing.T) {
+	t.Parallel()
+
+	f := newProvFixture(t, nil, &provStore{})
+	err := f.svc.UpdateBucket(context.Background(), &core.Bucket{Name: "gone"})
+	if !errors.Is(err, ErrBucketNotFound) {
+		t.Fatalf("err = %v, want ErrBucketNotFound", err)
+	}
+}
+
+// TestProvisioning_UpdateBucketRejectsConfigDeclared verifies the API refuses to
+// rewrite something the config file declares, so an operator reading that file
+// can trust what it says.
+func TestProvisioning_UpdateBucketRejectsConfigDeclared(t *testing.T) {
+	t.Parallel()
+
+	f := newProvFixture(t, []config.BucketConfig{{Name: "photos"}}, &provStore{})
+	err := f.svc.UpdateBucket(context.Background(), &core.Bucket{Name: "photos"})
+	if !errors.Is(err, ErrConfigDeclared) {
+		t.Fatalf("err = %v, want ErrConfigDeclared", err)
+	}
+}
+
+// TestProvisioning_UpdateBucketReachesShadowedRow verifies a row a config
+// bucket is shadowing can still be rewritten. Whatever manages store rows owns
+// this one, and it has to be able to keep it in step before the config entry
+// goes away.
+func TestProvisioning_UpdateBucketReachesShadowedRow(t *testing.T) {
+	t.Parallel()
+
+	f := newProvFixture(t,
+		[]config.BucketConfig{{Name: "photos"}},
+		&provStore{buckets: []core.Bucket{{Name: "photos"}}})
+	f.store.EXPECT().UpdateBucket(gomock.Any(), gomock.Any()).Return(nil)
+	f.expectRepublish()
+
+	b := core.Bucket{Name: "photos", MaxMultipartUploads: 3}
+	if err := f.svc.UpdateBucket(context.Background(), &b); err != nil {
+		t.Fatalf("UpdateBucket: %v", err)
+	}
+}
+
+// TestProvisioning_DeleteBucketReachesShadowedRow verifies a shadowed row is
+// removed without the in-use checks. It serves nothing while the config bucket
+// stands in front of it, so the objects and grants it would be refused over
+// belong to that bucket and stay with it.
+func TestProvisioning_DeleteBucketReachesShadowedRow(t *testing.T) {
+	t.Parallel()
+
+	f := newProvFixture(t,
+		[]config.BucketConfig{{Name: "photos"}},
+		&provStore{buckets: []core.Bucket{{Name: "photos"}}})
+	f.store.EXPECT().DeleteBucket(gomock.Any(), "photos").Return(nil)
+	f.expectRepublish()
+
+	// No CountObjectsByPrefix expectation: reaching for one is the failure.
+	if err := f.svc.DeleteBucket(context.Background(), "photos"); err != nil {
+		t.Fatalf("DeleteBucket: %v", err)
+	}
+}
+
+// TestProvisioning_UpdateBucketRejectsInvalidCORS verifies a rule the matcher
+// cannot read is refused here rather than stored and left to fail every later
+// registry rebuild.
+func TestProvisioning_UpdateBucketRejectsInvalidCORS(t *testing.T) {
+	t.Parallel()
+
+	f := newProvFixture(t, nil, &provStore{buckets: []core.Bucket{{Name: "photos"}}})
+	b := core.Bucket{
+		Name: "photos",
+		CORS: []config.CORSRule{{AllowedMethods: []string{"GET"}}},
+	}
+	if err := f.svc.UpdateBucket(context.Background(), &b); !errors.Is(err, ErrInvalidCORS) {
+		t.Fatalf("err = %v, want ErrInvalidCORS", err)
+	}
+}
+
+// TestProvisioning_UpdateBucketWriteFailurePropagates verifies a store that
+// cannot be written reports rather than claiming the change landed.
+func TestProvisioning_UpdateBucketWriteFailurePropagates(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("boom")
+	f := newProvFixture(t, nil, &provStore{buckets: []core.Bucket{{Name: "photos"}}})
+	f.store.EXPECT().UpdateBucket(gomock.Any(), gomock.Any()).Return(boom)
+
+	err := f.svc.UpdateBucket(context.Background(), &core.Bucket{Name: "photos"})
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want a wrap of boom", err)
 	}
 }
 

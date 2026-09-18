@@ -180,11 +180,12 @@ func (p *s3oProvider) Configure(
 
 // Resources lists what the provider manages.
 //
-// Buckets are absent deliberately: the ones a deployment runs on are usually
-// declared in its configuration file, which the API will not change, so a
-// resource for them would refuse most of the buckets an operator has.
+// A bucket the configuration file declares stays read-only, as every other
+// config-declared entry does; the resource reports that rather than failing as
+// though the credential were at fault.
 func (p *s3oProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
+		NewBucketResource,
 		NewUserResource,
 		NewCredentialResource,
 		NewGrantResource,
@@ -192,8 +193,15 @@ func (p *s3oProvider) Resources(_ context.Context) []func() resource.Resource {
 }
 
 // DataSources lists what the provider reads.
+//
+// Backend state is absent deliberately: what the API reports about a backend is
+// health, drain state and usage counters, which change between every plan. That
+// is monitoring data, and holding a snapshot of it in Terraform state would
+// describe a moment that has already passed.
 func (p *s3oProvider) DataSources(_ context.Context) []func() datasource.DataSource {
-	return nil
+	return []func() datasource.DataSource{
+		NewBucketDataSource,
+	}
 }
 
 // -------------------------------------------------------------------------

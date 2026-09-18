@@ -109,6 +109,24 @@ func (s *Store) CreateBucket(ctx context.Context, b *core.Bucket) error {
 	return nil
 }
 
+// UpdateBucket writes what a bucket carries. The name identifies it and its
+// objects, so it is the lookup rather than something this can change.
+//
+// created_at is left alone: a bucket whose limit changed is the same bucket.
+func (s *Store) UpdateBucket(ctx context.Context, b *core.Bucket) error {
+	cors, err := marshalCORS(b.CORS)
+	if err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE buckets SET max_multipart_uploads = ?, cors = ? WHERE name = ?`,
+		b.MaxMultipartUploads, cors, b.Name,
+	); err != nil {
+		return fmt.Errorf("update bucket %s: %w", b.Name, err)
+	}
+	return nil
+}
+
 // CreateUser inserts a user.
 func (s *Store) CreateUser(ctx context.Context, u *core.User) error {
 	if _, err := s.db.ExecContext(ctx,

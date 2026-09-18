@@ -94,6 +94,36 @@ func TestProvisioningFetchesEverything(t *testing.T) {
 	}
 }
 
+func TestBucketLookup(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		bucket     string
+		wantFound  bool
+		wantSource string
+	}{
+		{"an existing bucket is found", "photos", true, "config"},
+		{"a missing bucket is absent rather than an error", "gone", false, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c, _ := recorder(t)
+
+			b, found, err := c.Bucket(context.Background(), tc.bucket)
+			if err != nil {
+				t.Fatalf("Bucket: %v", err)
+			}
+			if found != tc.wantFound {
+				t.Fatalf("found = %v, want %v", found, tc.wantFound)
+			}
+			if b.Source != tc.wantSource {
+				t.Errorf("source = %q, want %q", b.Source, tc.wantSource)
+			}
+		})
+	}
+}
+
 func TestUserLookup(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -194,6 +224,57 @@ func TestGrantLookup(t *testing.T) {
 // -------------------------------------------------------------------------
 // MUTATIONS
 // -------------------------------------------------------------------------
+
+func TestCreateBucket(t *testing.T) {
+	t.Parallel()
+	c, got := recorder(t)
+
+	_, err := c.CreateBucket(context.Background(), CreateBucketRequest{
+		Name: "photos", MaxMultipartUploads: 4,
+	})
+	if err != nil {
+		t.Fatalf("CreateBucket: %v", err)
+	}
+	assertRequest(t, got, http.MethodPost, pathBuckets,
+		`{"name":"photos","max_multipart_uploads":4}`)
+}
+
+func TestUpdateBucket(t *testing.T) {
+	t.Parallel()
+	c, got := recorder(t)
+
+	req := UpdateBucketRequest{
+		CORS: []CORSRule{{AllowedOrigins: []string{"*"}, AllowedMethods: []string{"GET"}}},
+	}
+	if err := c.UpdateBucket(context.Background(), "photos", req); err != nil {
+		t.Fatalf("UpdateBucket: %v", err)
+	}
+	assertRequest(t, got, http.MethodPatch, pathBuckets+"/photos",
+		`{"cors":[{"allowed_origins":["*"],"allowed_methods":["GET"]}]}`)
+}
+
+// TestUpdateBucketClearsCORS verifies an empty rule set goes out as a body the
+// orchestrator reads as "no rules" rather than being dropped, which is what
+// makes an update a replacement.
+func TestUpdateBucketClearsCORS(t *testing.T) {
+	t.Parallel()
+	c, got := recorder(t)
+
+	if err := c.UpdateBucket(context.Background(), "photos", UpdateBucketRequest{}); err != nil {
+		t.Fatalf("UpdateBucket: %v", err)
+	}
+	assertRequest(t, got, http.MethodPatch, pathBuckets+"/photos", `{}`)
+}
+
+func TestDeleteBucket(t *testing.T) {
+	t.Parallel()
+	c, got := recorder(t)
+
+	if err := c.DeleteBucket(context.Background(), "photos"); err != nil {
+		t.Fatalf("DeleteBucket: %v", err)
+	}
+	assertRequest(t, got, http.MethodDelete, pathBuckets+"/photos", "")
+}
 
 func TestCreateUser(t *testing.T) {
 	t.Parallel()

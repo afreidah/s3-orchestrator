@@ -76,6 +76,72 @@ func TestProvisioning_BucketRoundTrip(t *testing.T) {
 	}
 }
 
+// TestProvisioning_UpdateBucket verifies a rewrite replaces what the bucket
+// carries and leaves its identity alone. Clearing the rules has to reach the
+// column, or an update would only ever add.
+func TestProvisioning_UpdateBucket(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	initial := core.Bucket{
+		Name:                "photos",
+		MaxMultipartUploads: 2,
+		CORS: []config.CORSRule{{
+			AllowedOrigins: []string{"https://example.test"},
+			AllowedMethods: []string{"GET"},
+		}},
+	}
+	if err := s.CreateBucket(ctx, &initial); err != nil {
+		t.Fatalf("CreateBucket: %v", err)
+	}
+	before, err := s.ListBuckets(ctx)
+	if err != nil {
+		t.Fatalf("ListBuckets: %v", err)
+	}
+
+	if err := s.UpdateBucket(ctx, &core.Bucket{Name: "photos", MaxMultipartUploads: 9}); err != nil {
+		t.Fatalf("UpdateBucket: %v", err)
+	}
+
+	got, err := s.ListBuckets(ctx)
+	if err != nil {
+		t.Fatalf("ListBuckets: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ListBuckets returned %d rows, want 1", len(got))
+	}
+	if got[0].MaxMultipartUploads != 9 {
+		t.Errorf("limit = %d, want 9", got[0].MaxMultipartUploads)
+	}
+	if got[0].CORS != nil {
+		t.Errorf("cors = %+v, want the rules cleared", got[0].CORS)
+	}
+	if !got[0].CreatedAt.Equal(before[0].CreatedAt) {
+		t.Errorf("created_at moved to %v, want it left at %v", got[0].CreatedAt, before[0].CreatedAt)
+	}
+}
+
+// TestProvisioning_UpdateBucketUnknownIsNoOp verifies rewriting a name no row
+// carries changes nothing. Whether that is an error is the caller's to decide,
+// and ops answers it before reaching the store.
+func TestProvisioning_UpdateBucketUnknownIsNoOp(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	if err := s.UpdateBucket(ctx, &core.Bucket{Name: "gone"}); err != nil {
+		t.Fatalf("UpdateBucket: %v", err)
+	}
+	got, err := s.ListBuckets(ctx)
+	if err != nil {
+		t.Fatalf("ListBuckets: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("ListBuckets returned %d rows, want none", len(got))
+	}
+}
+
 // TestProvisioning_BucketWithoutCORS verifies a bucket carrying no rules reads
 // back with none rather than an empty set, so "no CORS configured" is one value
 // in the column rather than two.

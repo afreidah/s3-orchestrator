@@ -101,8 +101,18 @@ type Credential struct {
 }
 
 // View is the whole of what a deployment has declared, from both sources.
+//
+// Shadowed holds stored buckets that config declares too. Config wins, so these
+// are left out of Buckets, and nothing authorizes or routes against them. They
+// are still reported, so that whatever manages store rows can see the row it
+// wrote.
+//
+// That is what lets a bucket move out of the config file without a gap: write
+// the store row first and it sits here doing nothing, then remove the config
+// entry and the row takes over.
 type View struct {
 	Buckets     []Bucket
+	Shadowed    []Bucket
 	Users       []User
 	Credentials []Credential
 	Notices     []Notice
@@ -167,7 +177,7 @@ func mergeRootUser(v *View, auth config.AuthConfig, declared map[string]struct{}
 
 // mergeBuckets appends both sources' buckets, config first, and returns the set
 // of names either one declares. A stored bucket whose name config also carries
-// is dropped and reported rather than merged.
+// is reported and set aside in Shadowed rather than merged.
 func mergeBuckets(v *View, cfgBuckets []config.BucketConfig, stored []core.Bucket) map[string]struct{} {
 	declared := make(map[string]struct{}, len(cfgBuckets)+len(stored))
 	for i := range cfgBuckets {
@@ -186,6 +196,12 @@ func mergeBuckets(v *View, cfgBuckets []config.BucketConfig, stored []core.Bucke
 			v.Notices = append(v.Notices, Notice{
 				Kind:   NoticeBucketShadowed,
 				Detail: fmt.Sprintf("stored bucket %q is shadowed by a config bucket", b.Name),
+			})
+			v.Shadowed = append(v.Shadowed, Bucket{
+				Name:                b.Name,
+				MaxMultipartUploads: b.MaxMultipartUploads,
+				CORS:                b.CORS,
+				Source:              SourceStore,
 			})
 			continue
 		}
