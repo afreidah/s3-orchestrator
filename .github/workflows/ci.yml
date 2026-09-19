@@ -388,11 +388,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [changes, test, integration, provider]
-    # Run on every push to main and on every PR. The test/integration jobs
-    # also run on main pushes, so coverage artifacts always exist here and the
-    # scan re-analyses main (clearing fixed issues) without zeroing coverage.
-    # PRs with no Go change still run (their gate has no coverage condition).
-    if: always() && github.actor != 'dependabot[bot]' && needs.test.result != 'failure' && needs.test.result != 'cancelled' && (github.event_name == 'pull_request' || github.event_name == 'push')
+    # Run on every push to main and on every PR. The test, integration and
+    # provider jobs also run on main pushes, so coverage artifacts always exist
+    # here and the scan re-analyses main (clearing fixed issues) without zeroing
+    # coverage. A job that failed uploaded no coverage, and scanning without it
+    # reports a drop that is really a missing file. A skipped job is fine: a PR
+    # with no Go change has no coverage to lose.
+    if: >-
+      always()
+      && github.actor != 'dependabot[bot]'
+      && (github.event_name == 'pull_request' || github.event_name == 'push')
+      && !contains(fromJSON('["failure", "cancelled"]'), needs.test.result)
+      && !contains(fromJSON('["failure", "cancelled"]'), needs.integration.result)
+      && !contains(fromJSON('["failure", "cancelled"]'), needs.provider.result)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
