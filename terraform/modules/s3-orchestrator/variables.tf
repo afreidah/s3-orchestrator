@@ -2,6 +2,51 @@
 # S3-Orchestrator Module Variables
 # -----------------------------------------------------------------------------
 
+variable "buckets" {
+  description = "Map of bucket name to what it carries. A name the config file also declares is allowed: the row lands dormant behind it and takes over when that entry is removed"
+
+  type = map(object({
+    max_multipart_uploads = optional(number)
+    cors = optional(list(object({
+      allowed_origins = list(string)
+      allowed_methods = list(string)
+      allowed_headers = optional(list(string))
+      expose_headers  = optional(list(string))
+      max_age         = optional(number)
+    })), [])
+  }))
+
+  default = {}
+
+  validation {
+    condition     = alltrue([for name, _ in var.buckets : can(regex("^[a-z0-9][a-z0-9.-]*$", name))])
+    error_message = "Bucket names are lowercase alphanumeric with . - and cannot start with a separator."
+  }
+
+  validation {
+    condition     = alltrue([for b in var.buckets : b.max_multipart_uploads == null || b.max_multipart_uploads >= 0])
+    error_message = "A negative multipart limit is not a limit; omit it or use 0 for unlimited."
+  }
+
+  # --- the deployment refuses a rule that cannot match anything, so catching
+  #     it here names the bucket rather than failing mid-apply ---
+  validation {
+    condition = alltrue(flatten([
+      for b in var.buckets : [for r in b.cors : length(r.allowed_origins) > 0 && length(r.allowed_methods) > 0]
+    ]))
+    error_message = "A CORS rule names at least one origin and one method."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for b in var.buckets : [
+        for r in b.cors : [for o in r.allowed_origins : length(regexall("\\*", o)) <= 1]
+      ]
+    ]))
+    error_message = "A CORS origin carries at most one wildcard."
+  }
+}
+
 variable "identities" {
   description = "Map of identity name to its keypair and the resources it reaches; supply both keypair halves to register one held elsewhere, or neither to have it minted"
 

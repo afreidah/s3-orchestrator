@@ -791,19 +791,17 @@ func TestConfigValidation_MultiBackendNoReplicationWarns(t *testing.T) {
 // BUCKET VALIDATION TESTS
 // -------------------------------------------------------------------------
 
-// TestConfigValidation_NoBuckets verifies the config validation no buckets contract.
-// Asserts that error should mention missing buckets, got:.
+// TestConfigValidation_NoBuckets verifies a config declaring no buckets is
+// accepted. The store declares buckets too, so a deployment that keeps them all
+// there has nothing to put here, and a new one boots with none and provisions
+// them through the admin API.
 func TestConfigValidation_NoBuckets(t *testing.T) {
 	t.Parallel()
 	cfg := validBaseConfig()
 	cfg.Buckets = nil
 
-	err := cfg.SetDefaultsAndValidate()
-	if err == nil {
-		t.Error("no buckets should fail validation")
-	}
-	if !strings.Contains(err.Error(), "at least one bucket") {
-		t.Errorf("error should mention missing buckets, got: %v", err)
+	if err := cfg.SetDefaultsAndValidate(); err != nil {
+		t.Errorf("declaring no buckets should validate, got: %v", err)
 	}
 }
 

@@ -1,6 +1,6 @@
 ---
 title: "Provisioning with Terraform"
-description: "Declare the users, keypairs and grants a deployment serves, onboard a client from one map entry, narrow access without a gap, and adopt identities that already exist."
+description: "Declare the buckets, users, keypairs and grants a deployment serves, onboard a client from one map entry, narrow access without a gap, and move a bucket out of the configuration file without downtime."
 weight: 4
 ---
 
@@ -9,20 +9,32 @@ The [access control guide](../access-control/) onboards a client by hand, one ad
 
 ## What it manages, and what it does not
 
-The provider manages exactly what the admin API manages: **users**, the **credentials** that prove them, and the **grants** that say what they reach.
+The provider manages exactly what the admin API manages: the **buckets** a deployment serves, the **users** that reach them, the **credentials** that prove those users, and the **grants** that say what each one may do.
 
-Buckets are deliberately absent. The buckets a deployment serves are declared in its configuration file, and the admin API refuses to change those, so a bucket resource would fail on most of the buckets an operator actually has. The same applies to any user or credential the configuration file declares - `s3o admin user list` shows those with a `config` source. They are visible through the API and never writable through it, so the provider refuses to import or manage one and says why, rather than letting the failure read as a credential problem.
+Backends are absent, and deliberately so. There is no endpoint that creates one, and a backend's structural fields are read once at startup, so a resource whose apply silently required a process restart would be worse than no resource. Backends stay with whatever templates the configuration file. The same reasoning covers configuration generally: Terraform models declarative state a running process can adopt, and most of that file is read once at boot.
+
+Anything the configuration file declares is read-only through the API - `s3o admin bucket list` and `s3o admin user list` show those with a `config` source. The provider refuses to manage or import one and says which it is, rather than letting the refusal read as a credential problem. For buckets that is a starting point rather than a dead end; [moving a bucket out of the configuration file](#moving-a-bucket-out-of-the-configuration-file) below does it without downtime.
 
 ## Installing the provider
 
-The provider is not published to the Terraform Registry yet, so it is consumed through a development override. Build it from the repository:
+The provider is published as `afreidah/s3-orchestrator` to both the [Terraform Registry](https://registry.terraform.io/providers/afreidah/s3-orchestrator/latest/docs) and the [OpenTofu Registry](https://search.opentofu.org/provider/afreidah/s3-orchestrator/latest), so `terraform init` or `tofu init` finds it with no further setup. Either link carries the generated reference for every resource and data source, argument by argument. Pin it the way you pin any provider:
 
-```bash
-cd terraform/terraform-provider-s3-orchestrator
-go build .
+```hcl
+terraform {
+  required_providers {
+    s3orchestrator = {
+      source  = "afreidah/s3-orchestrator"
+      version = "~> 0.147"
+    }
+  }
+}
 ```
 
-Then point Terraform at the directory holding the binary, in `~/.terraformrc` or a file named by `TF_CLI_CONFIG_FILE`:
+The provider shares the orchestrator's version numbering - both come from one repository - but it is published only when it changes, so its versions are a subset of the orchestrator's releases. Pin it to the version that introduced what you use rather than to whatever the deployment runs.
+
+That distinction matters when a resource is newer than the deployment it talks to. `s3orchestrator_bucket` needs 0.147 or later on both sides; against an older deployment the provider calls an endpoint that is not there and gets a 404 rather than a message about versions.
+
+To work against an unreleased build instead, point Terraform at a locally built binary through a development override in `~/.terraformrc` or a file named by `TF_CLI_CONFIG_FILE`:
 
 ```hcl
 provider_installation {
@@ -50,19 +62,44 @@ Each attribute falls back to the environment variable the admin CLI already read
 Naming the address in the block instead pins a configuration to one deployment, which is worth doing for anything that must never reach production by accident. Leave the keypair in the environment either way - a literal secret in a `.tf` file is a secret in version control.
 
 ```hcl
-terraform {
-  required_providers {
-    s3orchestrator = {
-      source  = "afreidah/s3-orchestrator"
-      version = ">= 0.1"
-    }
-  }
-}
-
 provider "s3orchestrator" {
   address = "https://s3.example.com"
 }
 ```
+
+## Declaring a bucket
+
+A bucket is the namespace the orchestrator accepts writes under. Declaring one does not create a bucket on any backend; which backends a deployment writes to, and what credentials reach them, stays configuration.
+
+```hcl
+resource "s3orchestrator_bucket" "photos" {
+  name                  = "photos"
+  max_multipart_uploads = 4
+}
+```
+
+`max_multipart_uploads` caps how many multipart uploads may be in flight against the bucket at once; zero, the default, is unlimited. Browser access takes repeated `cors_rule` blocks:
+
+```hcl
+resource "s3orchestrator_bucket" "photos" {
+  name = "photos"
+
+  cors_rule {
+    allowed_origins = ["https://app.example.com"]
+    allowed_methods = ["GET", "HEAD"]
+    expose_headers  = ["ETag"]
+    max_age         = 600
+  }
+}
+```
+
+The rules are validated by the deployment rather than by the provider, so a rule that cannot match anything - no origin, no method, two wildcards in one origin - is refused at apply with the reason. A rule that stored cleanly and then failed every later reload would take the fleet's reloads down with it.
+
+Changing the limit or the rules is an update in place. Changing the name replaces the bucket, because the name identifies every object stored beneath it. That asymmetry is deliberate: the orchestrator refuses to delete a bucket holding objects or named by a grant, so a limit modelled as a replacement would fail on every bucket worth having.
+
+Dropping a `cors_rule` block removes that rule. The configuration is the whole of what the bucket carries, not a set of additions to it.
+
+Deleting the resource removes the bucket, and is refused while anything is stored under it. Emptying a bucket stays a deliberate act rather than something an apply does on your behalf.
 
 ## Onboarding one client
 
@@ -116,6 +153,11 @@ Repeating those three resources per client gets tedious quickly. The repository 
 module "identities" {
   source = "github.com/afreidah/s3-orchestrator//terraform/modules/s3-orchestrator"
 
+  buckets = {
+    "unified"   = {}
+    "artifacts" = {}
+  }
+
   identities = {
     "temporal-backup-job" = {
       label = "temporal backups"
@@ -138,7 +180,9 @@ output "keypairs" {
 }
 ```
 
-Adding a client becomes one map entry rather than a deploy. The module also outputs `user_ids` and `access_key_ids` keyed by identity name, so a downstream resource can write each keypair into whatever secret store the client reads from.
+Adding a client becomes one map entry rather than a deploy, and so does adding a bucket. The module orders the two, because a grant naming a bucket nothing declares is refused and the name in a grant is a literal rather than a reference.
+
+It also outputs `user_ids` and `access_key_ids` keyed by identity name, so a downstream resource can write each keypair into whatever secret store the client reads from, and `buckets` listing the names it declares.
 
 ## Narrowing access without a gap
 
@@ -167,6 +211,64 @@ resource "s3orchestrator_user" "backup" {
 ```
 
 The generated id does not move, so every credential and grant referencing it keeps working. A provider that replaced the user instead would revoke every keypair proving it, which is exactly what you do not want a rename to do.
+
+## Moving a bucket out of the configuration file
+
+A bucket the configuration file declares cannot be imported, because the API will not manage it. It can still be moved, and without taking the bucket offline to do it.
+
+The orchestrator gives the configuration file precedence. When both sources declare the same name, the configuration entry is what serves the bucket and the stored row is set aside and reported as shadowed. That is the whole mechanism: a stored row can be put in place while the configuration entry is still there, doing nothing, waiting.
+
+Declare it alongside the existing entry, matching what that entry carries:
+
+```hcl
+resource "s3orchestrator_bucket" "photos" {
+  name = "photos"
+}
+```
+
+Apply. Nothing changes for clients, and the bucket reports as shadowed:
+
+```console
+$ s3o admin bucket list
+Bucket   Multipart  Source
+------   ---------  ------
+photos   unlimited  config
+
+notice: bucket_shadowed: stored bucket "photos" is shadowed by a config bucket
+```
+
+Now remove the bucket from the `buckets:` block of the configuration file and reload. The row stops being shadowed and takes over:
+
+```console
+$ s3o admin bucket list
+Bucket   Multipart  Source
+------   ---------  ------
+photos   unlimited  store
+```
+
+At no instant is the bucket undeclared - the configuration serves it until the reload, the stored row serves it afterwards. Putting the configuration entry back reverses it just as cleanly, which makes this safe to do one bucket at a time on a deployment carrying live traffic.
+
+Two things are worth checking before removing an entry. A configuration-declared bucket carries credentials, and removing the bucket removes the identity those credentials prove, so confirm nothing still authenticates with them. And match the settings when you declare the resource: a difference in the multipart limit or the CORS rules takes effect at the handover rather than at a time you chose.
+
+From orchestrator 0.148 a configuration file may declare no buckets at all, so the last one can leave too and the `buckets:` block can go entirely. Before that a deployment had to keep one there, whether it wanted it or not.
+
+## Referencing a bucket you do not manage
+
+A grant has to name a bucket that exists, and a bucket the configuration file declares is one the provider will not manage. The data source reads it either way:
+
+```hcl
+data "s3orchestrator_bucket" "photos" {
+  name = "photos"
+}
+
+resource "s3orchestrator_grant" "backup" {
+  user_id     = s3orchestrator_user.backup.id
+  name        = data.s3orchestrator_bucket.photos.name
+  permissions = ["list", "read"]
+}
+```
+
+That fails the plan when the bucket does not exist, rather than failing the apply when the grant is refused. It also reports `source`, which is how a configuration tells whether a given bucket is one it may manage.
 
 ## Adopting what already exists
 

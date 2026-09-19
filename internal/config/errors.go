@@ -62,7 +62,6 @@ var (
 // request is authorized against: sharing one would resolve to whichever bucket
 // the registry happened to store last.
 var (
-	ErrNoBuckets           = errors.New("at least one bucket is required")
 	ErrBucketNameRequired  = errors.New("bucket name is required")
 	ErrBucketNameHasSlash  = errors.New("bucket name must not contain '/'")
 	ErrDuplicateBucketName = errors.New("duplicate bucket name")

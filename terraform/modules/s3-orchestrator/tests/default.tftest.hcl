@@ -6,12 +6,25 @@
 # Asserts that one map entry onboards one client, that the grant list under
 # each identity flattens to a stable "identity/kind/name" key, that a grant
 # naming no kind lands on bucket, that an orchestrator grant keys with an
-# empty name segment, and that an empty map builds nothing.
+# empty name segment, that a bucket entry becomes a bucket carrying its rules,
+# and that an empty map builds nothing.
 # -----------------------------------------------------------------------------
 
 mock_provider "s3orchestrator" {}
 
 variables {
+  buckets = {
+    "unified" = {}
+    "photos" = {
+      max_multipart_uploads = 4
+      cors = [{
+        allowed_origins = ["https://app.example.com"]
+        allowed_methods = ["GET", "HEAD"]
+        max_age         = 600
+      }]
+    }
+  }
+
   identities = {
     "temporal-backup-job" = {
       label = "temporal backups"
@@ -139,6 +152,46 @@ run "outputs_keyed_by_identity" {
 }
 
 # -------------------------------------------------------------------------
+# Buckets: one resource per map entry, carrying what the entry declares
+# -------------------------------------------------------------------------
+
+run "buckets_for_each" {
+  command = plan
+
+  assert {
+    condition     = toset(keys(s3orchestrator_bucket.this)) == toset(["unified", "photos"])
+    error_message = "one bucket resource per map entry, keyed by name"
+  }
+
+  # --- an entry declaring nothing still builds a bucket ---
+  assert {
+    condition     = s3orchestrator_bucket.this["unified"].name == "unified"
+    error_message = "a bucket declaring no settings still carries its name"
+  }
+
+  assert {
+    condition     = s3orchestrator_bucket.this["photos"].max_multipart_uploads == 4
+    error_message = "the multipart limit reaches the bucket"
+  }
+
+  # --- the rules arrive as blocks rather than as one list attribute ---
+  assert {
+    condition     = length(s3orchestrator_bucket.this["photos"].cors_rule) == 1
+    error_message = "a declared CORS rule becomes a cors_rule block"
+  }
+
+  assert {
+    condition     = length(s3orchestrator_bucket.this["unified"].cors_rule) == 0
+    error_message = "a bucket declaring no rules carries none"
+  }
+
+  assert {
+    condition     = toset(output.buckets) == toset(["photos", "unified"])
+    error_message = "the buckets output lists every declared name"
+  }
+}
+
+# -------------------------------------------------------------------------
 # An empty map builds nothing, so the module is safe to always call
 # -------------------------------------------------------------------------
 
@@ -146,15 +199,17 @@ run "empty_identities" {
   command = plan
 
   variables {
+    buckets    = {}
     identities = {}
   }
 
   assert {
     condition = alltrue([
+      length(s3orchestrator_bucket.this) == 0,
       length(s3orchestrator_user.this) == 0,
       length(s3orchestrator_credential.this) == 0,
       length(s3orchestrator_grant.this) == 0,
     ])
-    error_message = "an empty identities map -> zero resources"
+    error_message = "empty maps -> zero resources"
   }
 }
