@@ -1,6 +1,6 @@
 ---
 title: "Maximizing Free Tiers"
-description: "Combine the free tiers of several S3-compatible providers into one endpoint: account setup, per-backend quotas, and replication across them."
+description: "Combine the free tiers of several S3-compatible providers into one endpoint: account setup, per-backend quotas, replication across them, and a Cloudflare edge proxy that stops alliance providers billing egress at all."
 weight: 3
 ---
 
@@ -497,6 +497,54 @@ The cost is that both copies are uploaded during the write rather than spread ov
 {{% notice tip %}}
 Both settings compound: compression shrinks the object, and the write then places the compressed copies without reading anything back. Together they cut what replication costs you on every metered dimension a provider bills.
 {{% /notice %}}
+
+### Cloudflare Bandwidth Alliance: egress the provider stops billing
+
+The two settings above reduce how many bytes you move. This one changes who pays for them.
+
+Backblaze B2, IBM Cloud Object Storage and Oracle Cloud are members of the [Cloudflare Bandwidth Alliance](https://www.cloudflare.com/bandwidth-alliance/), along with Wasabi, DigitalOcean Spaces, Linode, Vultr, Scaleway, Alibaba Cloud OSS and Tencent Cloud COS. Members waive the transfer fee on traffic leaving to Cloudflare. Put a Cloudflare Worker in front of the bucket and every read egresses to Cloudflare rather than to the caller, so the provider bills nothing for it — which turns a metered backend into an unmetered one without changing how the orchestrator addresses it.
+
+On one deployment, routing B2 through a worker moved 1,679 MB out of the backend in a day, of which Backblaze counted 42 MB against the account's egress cap. Without it that single day would have exceeded the free tier's 1 GB/day allowance.
+
+This does nothing for a provider outside the alliance, and nothing for Cloudflare R2, whose egress is already free. It is worth doing on exactly the backends whose egress allowance is the thing that runs out first.
+
+#### Why a CNAME is not enough
+
+Pointing a proxied DNS record at an object store does not work. Cloudflare forwards the caller's `Host`, so the origin sees the proxy hostname instead of its own endpoint — which breaks bucket routing, and because `host` is a signed header under SigV4, invalidates the signature with it. Every request comes back `SignatureDoesNotMatch`.
+
+The worker in [`deploy/cloudflare-worker/`](https://github.com/afreidah/s3-orchestrator/tree/main/deploy/cloudflare-worker) terminates the request instead: it verifies the caller's signature, rewrites `Host` to the native endpoint, and re-signs with the account credential before forwarding.
+
+That means two keypairs, deliberately distinct. The orchestrator holds a **proxy** credential and presents it to the worker. The worker holds the **account** credential and it never leaves the edge. So the orchestrator never stores the real backend keys, and anyone who obtains the proxy credential still cannot reach the bucket directly.
+
+#### Configuring a proxied backend
+
+The backend entry points at the worker hostname and carries the proxy keypair:
+
+```yaml
+backends:
+  - name: "b2"
+    endpoint: "https://b2-proxy.example.com"
+    region: "us-west-004"
+    bucket: "example-bucket"
+    access_key_id: "<PROXY_ACCESS_KEY_ID>"
+    secret_access_key: "<PROXY_SECRET_ACCESS_KEY>"
+    force_path_style: true
+    unsigned_payload: true
+    strip_sdk_headers: true
+
+    quota_bytes: 10737418240
+    api_request_limit: 2500
+```
+
+`strip_sdk_headers: true` is required rather than optional. The Go SDK signs `accept-encoding`, Cloudflare rewrites it in transit, and the worker verifies against what actually arrived — without this every request fails `SignatureDoesNotMatch`.
+
+`unsigned_payload: true` matters for the same class of reason. A client using chunked payload signatures embeds per-chunk signatures derived from its own key, which cannot be re-signed without buffering the whole body, so the worker answers those with `501 Not Implemented` rather than forwarding something the origin will reject. Presigned URLs carry their signature in the query string and take a different verification path; the worker rejects those explicitly too.
+
+{{% notice tip %}}
+Relax the egress budget on a proxied backend, not the request budget. The alliance waives egress and only egress — every GET still counts as a Class B transaction against whatever request allowance the provider gives you. `egress_byte_limit` can come up or come off; `api_request_limit` stays exactly where it was.
+{{% /notice %}}
+
+One worker fronts one backend, so a pool spanning three alliance providers deploys the same script three times under distinct names and routes. Cloudflare's free and Pro plans cap the request body at 100 MB, so keep multipart part size below that.
 
 ## Step 5: Create a Virtual Bucket and Client Credentials
 
