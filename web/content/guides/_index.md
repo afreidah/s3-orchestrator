@@ -21,7 +21,7 @@ weight: 30
     <i class="fas fa-coins landing-card-icon" style="color: #6ee7b7;"></i>
     <div>
       <strong>Maximizing Free Tiers</strong>
-      <p>Combine free-tier storage from multiple cloud providers into a single pool without exceeding any provider's limits.</p>
+      <p>Combine free-tier storage from multiple cloud providers into a single pool without exceeding any provider's limits, and stop Bandwidth Alliance providers billing egress at all.</p>
     </div>
   </a>
   <a class="landing-card" href="access-control/">
