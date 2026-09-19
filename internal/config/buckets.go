@@ -73,16 +73,17 @@ type BucketConfig struct {
 	CORS                []CORSRule         `yaml:"cors"`
 }
 
-// validateBuckets enforces that at least one virtual bucket is
-// configured, every bucket has a unique name, and every bucket carries
-// at least one credential pair so SigV4 resolution has something to
-// match. Errors aggregate so operators see all problems in one pass.
+// validateBuckets enforces that every bucket has a unique name and carries at
+// least one credential pair so SigV4 resolution has something to match. Errors
+// aggregate so operators see all problems in one pass.
+//
+// Declaring none is allowed. The store declares buckets too, and a deployment
+// that keeps them all there has nothing to put here; requiring one would force
+// it to leave a bucket behind purely to satisfy this. It also leaves somewhere
+// to start from: a new deployment boots with none and provisions them through
+// the admin API.
 func validateBuckets(buckets []BucketConfig) []error {
 	var errs []error
-
-	if len(buckets) == 0 {
-		errs = append(errs, ErrNoBuckets)
-	}
 
 	seen := newSeenCredentials()
 	for i := range buckets {
