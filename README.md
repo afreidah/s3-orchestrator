@@ -78,6 +78,7 @@ Full credentials and troubleshooting: [docs/quickstart.md](docs/quickstart.md).
 | Debian / Ubuntu | `.deb` from [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases) |
 | Static binary | Linux / macOS / Windows from [GitHub Releases](https://github.com/afreidah/s3-orchestrator/releases) |
 | From source | `git clone && make build` |
+| Terraform provider | [`afreidah/s3-orchestrator`](https://registry.terraform.io/providers/afreidah/s3-orchestrator/latest/docs) on the Terraform Registry, or the [OpenTofu Registry](https://search.opentofu.org/provider/afreidah/s3-orchestrator/latest) |
 
 **Database:** SQLite is embedded — no external dependencies for single-instance use. PostgreSQL 14+ is also an option and is required for multi-instance deployments (`database.driver: postgres`); the schema migrates on boot.
 
@@ -142,6 +143,7 @@ Deeper details: [docs/architecture.md](docs/architecture.md).
 | Background services reference | [docs/background-services.md](docs/background-services.md) |
 | Webhook notifications | [docs/notifications.md](docs/notifications.md) |
 | CLI subcommands | [docs/cli.md](docs/cli.md) |
+| Provisioning buckets and identities with Terraform | [Guide](https://s3-orchestrator.munchbox.cc/guides/terraform-provider/) · [Terraform Registry](https://registry.terraform.io/providers/afreidah/s3-orchestrator/latest/docs) · [OpenTofu Registry](https://search.opentofu.org/provider/afreidah/s3-orchestrator/latest) |
 | UI + Admin API JSON endpoints | [docs/api-reference.md](docs/api-reference.md) |
 | Deployment (Nomad, Kubernetes, Docker) | [docs/deployment.md](docs/deployment.md) |
 | Security hardening | [docs/security-hardening.md](docs/security-hardening.md) |
