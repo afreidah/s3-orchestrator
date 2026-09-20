@@ -97,6 +97,7 @@ func existingCopiesFromRows(rows []db.GetExistingCopiesForUpdateRow) []core.Exis
 func existingCopyFromRow(r *db.GetExistingCopiesForUpdateRow) core.ExistingCopy {
 	return core.ExistingCopy{
 		BackendName: r.BackendName,
+		StorageKey:  r.StorageKey,
 		SizeBytes:   r.SizeBytes,
 		CreatedAt:   r.CreatedAt.Time,
 		Encrypted:   r.Encrypted,
@@ -114,6 +115,7 @@ func objectInsertParams(loc *core.ObjectLocation) db.InsertObjectLocationParams 
 	params := db.InsertObjectLocationParams{
 		ObjectKey:   loc.ObjectKey,
 		BackendName: loc.BackendName,
+		StorageKey:  core.StoragePath(loc.ObjectKey, loc.StorageKey),
 		SizeBytes:   loc.SizeBytes,
 	}
 	if loc.Encrypted {
@@ -151,6 +153,7 @@ func objectInsertIfNotExistsParams(loc *core.ObjectLocation) db.InsertObjectLoca
 	return db.InsertObjectLocationIfNotExistsParams{
 		ObjectKey:                p.ObjectKey,
 		BackendName:              p.BackendName,
+		StorageKey:               p.StorageKey,
 		SizeBytes:                p.SizeBytes,
 		Encrypted:                p.Encrypted,
 		EncryptionKey:            p.EncryptionKey,

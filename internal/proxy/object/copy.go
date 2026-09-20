@@ -56,7 +56,7 @@ func (o *Manager) headSourceForCopy(
 		if !ok {
 			continue
 		}
-		headResult, err := o.core.HeadWithTimeout(ctx, be, sourceKey)
+		headResult, err := o.core.HeadWithTimeout(ctx, be, storagePath(sourceKey, &locations[i]))
 		if err != nil {
 			continue
 		}
@@ -147,7 +147,9 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 			span:            span,
 			destBackend:     destBackend,
 			sourceKey:       sourceKey,
+			srcStorageKey:   sameBackendStoragePath(locations, destBackendName, sourceKey),
 			destKey:         destKey,
+			destStorageKey:  intent.StorageKey,
 			destBackendName: destBackendName,
 			size:            size,
 			contentType:     contentType,
@@ -177,7 +179,7 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 	// backend_timeout.
 	wctx, wcancel := o.core.WithTimeout(ctx)
 	defer wcancel()
-	etag, err := destBackend.PutObject(wctx, destKey, src.body, size, contentType, metadata)
+	etag, err := destBackend.PutObject(wctx, intent.StorageKey, src.body, size, contentType, metadata)
 	if err != nil {
 		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to write destination: %w", err)
@@ -188,6 +190,7 @@ func (o *Manager) CopyObject(ctx context.Context, req *CopyObjectRequest) (strin
 		destBackend:     destBackend,
 		sourceKey:       sourceKey,
 		destKey:         destKey,
+		destStorageKey:  intent.StorageKey,
 		srcBackendName:  src.sourceBackend,
 		destBackendName: destBackendName,
 		size:            size,
@@ -220,6 +223,21 @@ func copyIdentity(locations []core.ObjectLocation, contentType string, metadata 
 		ContentType:  contentType,
 		UserMetadata: metadata,
 	}
+}
+
+// sameBackendStoragePath names the path the source copy on destBackendName
+// occupies, which is what a server-side copy reads: the backend can only reach
+// an object in its own bucket, so the fast path is the one case where the
+// source's path is addressable from the destination. Falls back to the source
+// key when no such copy is recorded, which sameBackendCopyEligible has already
+// ruled out at every call site.
+func sameBackendStoragePath(locations []core.ObjectLocation, destBackendName, sourceKey string) string {
+	for i := range locations {
+		if locations[i].BackendName == destBackendName {
+			return storagePath(sourceKey, &locations[i])
+		}
+	}
+	return sourceKey
 }
 
 // sameBackendCopyEligible reports whether the source has at least one
@@ -277,6 +295,8 @@ func (o *Manager) resolveCopyTags(ctx context.Context, req *CopyObjectRequest) (
 // Bundled for the same reason as nativeCopyContext: the positional form had
 // reached eleven arguments with four adjacent strings among them.
 type materializedCopyContext struct {
+	destStorageKey string
+
 	span            trace.Span
 	destBackend     s3be.ObjectBackend
 	sourceKey       string
@@ -292,6 +312,9 @@ type materializedCopyContext struct {
 }
 
 type nativeCopyContext struct {
+	srcStorageKey  string
+	destStorageKey string
+
 	span            trace.Span
 	destBackend     s3be.ObjectBackend
 	sourceKey       string
@@ -331,7 +354,7 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyContext) (st
 	}
 	cctx, ccancel := o.core.WithTimeout(ctx)
 	defer ccancel()
-	etag, err := copier.CopyObject(cctx, req.sourceKey, req.destKey, req.contentType, req.metadata)
+	etag, err := copier.CopyObject(cctx, req.srcStorageKey, req.destStorageKey, req.contentType, req.metadata)
 	if err == nil {
 		return o.finalizeNativeCopy(ctx, req, etag)
 	}
@@ -359,7 +382,7 @@ func (o *Manager) tryNativeCopy(ctx context.Context, req *nativeCopyContext) (st
 // signal; any other HEAD error is also a fallback but is logged as a
 // warn so operators see the probe failure mode.
 func (o *Manager) probeDestAfterAmbiguousCopy(ctx context.Context, req *nativeCopyContext, origErr error) (string, bool) {
-	head, headErr := o.core.HeadWithTimeout(ctx, req.destBackend, req.destKey)
+	head, headErr := o.core.HeadWithTimeout(ctx, req.destBackend, req.destStorageKey)
 	base := []any{
 		"source_key", req.sourceKey,
 		"dest_key", req.destKey,

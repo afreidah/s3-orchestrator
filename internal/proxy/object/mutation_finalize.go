@@ -60,7 +60,7 @@ func (o *Manager) finalizeMaterializedCopy(ctx context.Context, req *materialize
 	const operation = s3op.CopyObject
 	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, &core.RecordObjectRequest{
 		Key: req.destKey, Size: req.size, Form: req.srcForm, Identity: req.identity, Tags: req.tags,
-		Copies: []core.ObjectCopy{{Backend: req.destBackendName, IntentID: req.intentID}},
+		Copies: []core.ObjectCopy{{Backend: req.destBackendName, IntentID: req.intentID, StorageKey: req.destStorageKey}},
 	}); err != nil {
 		return "", err
 	}
@@ -85,7 +85,7 @@ func (o *Manager) finalizeNativeCopy(ctx context.Context, req *nativeCopyContext
 	const operation = s3op.CopyObject
 	if err := o.coord.RecordObjectOrCleanup(ctx, req.span, req.destBackend, &core.RecordObjectRequest{
 		Key: req.destKey, Size: req.size, Form: req.srcForm, Identity: req.identity, Tags: req.tags,
-		Copies: []core.ObjectCopy{{Backend: req.destBackendName, IntentID: req.intentID}},
+		Copies: []core.ObjectCopy{{Backend: req.destBackendName, IntentID: req.intentID, StorageKey: req.destStorageKey}},
 	}); err != nil {
 		return "", true, err
 	}

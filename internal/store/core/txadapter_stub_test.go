@@ -61,6 +61,10 @@ func (*noopTxAdapter) CheckObjectExistsOnBackend(context.Context, string, string
 	return false, nil
 }
 
+func (*noopTxAdapter) CopyExistsAtPath(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (*noopTxAdapter) LockObjectOnBackend(context.Context, string, string) (*ObjectLocation, bool, error) {
 	return nil, false, nil
 }
@@ -73,7 +77,7 @@ func (*noopTxAdapter) InsertObjectLocationIfNotExists(context.Context, *ObjectLo
 	return false, nil
 }
 
-func (*noopTxAdapter) InsertReplicaConditional(context.Context, string, string, string) (int64, bool, error) {
+func (*noopTxAdapter) InsertReplicaConditional(context.Context, *ReplicaInsert) (int64, bool, error) {
 	return 0, false, nil
 }
 

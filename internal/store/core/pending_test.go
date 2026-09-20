@@ -592,13 +592,15 @@ func TestCommitCompanionCopy_AddsTheCopy(t *testing.T) {
 }
 
 // TestCommitCompanionCopy_DiscardsWhenTheIntentIsGone verifies a copy whose
-// intent a newer write cleared is not recorded. Its bytes went down at a path
-// that write may also have written, in an order nothing here can establish, so
-// the copy is handed back for removal instead.
+// intent a newer write cleared is not recorded, and that the bytes handed back
+// for removal are the ones this upload wrote, named by its own path.
 func TestCommitCompanionCopy_DiscardsWhenTheIntentIsGone(t *testing.T) {
 	t.Parallel()
 	stub := &companionTxStub{claimed: false}
-	p := &PendingObject{IntentID: "i-2", ObjectKey: "k", BackendName: "b2", SizeBytes: 100, Role: PendingRoleCompanion}
+	p := &PendingObject{
+		IntentID: "i-2", ObjectKey: "k", StorageKey: "k!i-2",
+		BackendName: "b2", SizeBytes: 100, Role: PendingRoleCompanion,
+	}
 
 	result, displaced, _, err := CommitCompanionCopy(context.Background(), &stubRunner{tx: stub}, p)
 	if err != nil {
@@ -614,35 +616,54 @@ func TestCommitCompanionCopy_DiscardsWhenTheIntentIsGone(t *testing.T) {
 		displaced[0].Reason != CleanupReasonCompanionUntrusted {
 		t.Fatalf("displaced = %+v, want b2 labelled companion_untrusted", displaced)
 	}
+	if displaced[0].StorageKey != "k!i-2" {
+		t.Errorf("displaced path = %q, want the discarded upload's own %q",
+			displaced[0].StorageKey, "k!i-2")
+	}
 	if displaced[0].SizeBytes != 100 {
-		t.Errorf("displaced size = %d, want the intent's 100 when no row existed", displaced[0].SizeBytes)
+		t.Errorf("displaced size = %d, want the intent's 100", displaced[0].SizeBytes)
 	}
 }
 
-// TestCommitCompanionCopy_DropsTheRowItCannotVouchFor verifies the discard also
-// removes a recorded copy on that backend. The row describes the same path, so
-// it is no safer than the bytes: replication rebuilds the copy from one the
-// client was told about.
-func TestCommitCompanionCopy_DropsTheRowItCannotVouchFor(t *testing.T) {
+// TestCommitCompanionCopy_LeavesTheWinnersRowAlone is issue #1527 stated as a
+// unit: the losing companion resolves while the key already holds a copy on the
+// same backend, recorded by the write that overtook it.
+//
+// The discard must leave that row and its bytes untouched and remove only its
+// own path. This used to delete the row and queue a delete of the shared path,
+// which took the winner's bytes out from under a freshly committed row - the
+// ledger then claimed a copy that did not exist, and nothing but a scrub cycle
+// could notice.
+func TestCommitCompanionCopy_LeavesTheWinnersRowAlone(t *testing.T) {
 	t.Parallel()
 	stub := &companionTxStub{
 		claimed:    false,
-		lockedCopy: &ObjectLocation{ObjectKey: "k", BackendName: "b2", SizeBytes: 250},
+		lockedCopy: &ObjectLocation{ObjectKey: "k", BackendName: "b2", StorageKey: "k!winner", SizeBytes: 250},
 	}
-	p := &PendingObject{IntentID: "i-2", ObjectKey: "k", BackendName: "b2", SizeBytes: 100, Role: PendingRoleCompanion}
+	p := &PendingObject{
+		IntentID: "i-2", ObjectKey: "k", StorageKey: "k!loser",
+		BackendName: "b2", SizeBytes: 100, Role: PendingRoleCompanion,
+	}
 
 	_, displaced, deltas, err := CommitCompanionCopy(context.Background(), &stubRunner{tx: stub}, p)
 	if err != nil {
 		t.Fatalf("CommitCompanionCopy: %v", err)
 	}
-	if !slices.Equal(stub.rowsPulled, []string{"b2"}) {
-		t.Errorf("rows removed = %v, want b2's", stub.rowsPulled)
+	if len(stub.rowsPulled) != 0 {
+		t.Errorf("rows removed = %v, want the winner's row left alone", stub.rowsPulled)
 	}
-	if deltas["b2"] != -250 {
-		t.Errorf("delta for b2 = %d, want the row's 250 credited back", deltas["b2"])
+	if len(deltas) != 0 {
+		t.Errorf("deltas = %+v, want nothing charged for bytes never recorded", deltas)
 	}
-	if len(displaced) != 1 || displaced[0].SizeBytes != 250 {
-		t.Fatalf("displaced = %+v, want the recorded copy's size", displaced)
+	if len(displaced) != 1 {
+		t.Fatalf("displaced = %+v, want exactly the discarded upload's bytes", displaced)
+	}
+	if displaced[0].StorageKey != "k!loser" {
+		t.Errorf("displaced path = %q, want the loser's own %q; %q is the committed copy",
+			displaced[0].StorageKey, "k!loser", "k!winner")
+	}
+	if displaced[0].SizeBytes != 100 {
+		t.Errorf("displaced size = %d, want the intent's 100", displaced[0].SizeBytes)
 	}
 }
 
@@ -730,11 +751,6 @@ func TestCommitCompanionCopy_RollsBackOnAFailedStep(t *testing.T) {
 		"key lock":       {keyLockErr: errors.New("lock timeout")},
 		"insert":         {claimed: true, insertErr: errors.New("insert failed")},
 		"intent removal": {claimed: true, deleteErr: errors.New("delete failed")},
-		"row removal": {
-			lockedCopy: &ObjectLocation{ObjectKey: "k", BackendName: "b2", SizeBytes: 250},
-			pullErr:    errors.New("row delete failed"),
-		},
-		"landing check": {landingErr: errors.New("clear failed")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

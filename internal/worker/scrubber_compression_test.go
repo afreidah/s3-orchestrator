@@ -103,7 +103,7 @@ func TestScrub_CompressedObjectVerifies(t *testing.T) {
 	}, func() {}, nil)
 	// No DeleteOrEnqueue expectation: a verified copy must not be touched, and
 	// the mock fails the test if one arrives.
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	sum := s.Scrub(context.Background(), 10, "", nil)
 	if sum.Attempted != 1 {
@@ -163,7 +163,7 @@ func TestScrub_CompressedWithoutCodecDoesNotJudge(t *testing.T) {
 		Body: io.NopCloser(bytes.NewReader(stored)),
 		Size: int64(len(stored)),
 	}, func() {}, nil)
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	// Skipped rather than failed is the whole point: the scrubber deletes what
 	// it judges corrupt, and a copy it could not decode has not been judged.
@@ -199,7 +199,7 @@ func TestScrub_UndecodableCopyIsNotCorrupt(t *testing.T) {
 		Body: io.NopCloser(bytes.NewReader(make([]byte, 64))),
 		Size: 64,
 	}, func() {}, nil)
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	sum := s.Scrub(context.Background(), 10, "", nil)
 	if sum.Skipped != 1 {
@@ -229,7 +229,7 @@ func TestScrub_CompressedConfigDisabledStillVerifies(t *testing.T) {
 		Body: io.NopCloser(bytes.NewReader(stored)),
 		Size: int64(len(stored)),
 	}, func() {}, nil)
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	if sum := s.Scrub(context.Background(), 10, "", nil); sum.Failed != 0 {
 		t.Errorf("failed = %d, want 0", sum.Failed)

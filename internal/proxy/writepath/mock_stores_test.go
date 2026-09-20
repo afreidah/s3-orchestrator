@@ -238,17 +238,17 @@ func (mr *MockCoordinatorStoresMockRecorder) DeletePendingByBackend(ctx, backend
 }
 
 // EnqueueCleanup mocks base method.
-func (m *MockCoordinatorStores) EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) error {
+func (m *MockCoordinatorStores) EnqueueCleanup(ctx context.Context, c *core.CleanupRequest) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "EnqueueCleanup", ctx, backendName, objectKey, reason, sizeBytes)
+	ret := m.ctrl.Call(m, "EnqueueCleanup", ctx, c)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // EnqueueCleanup indicates an expected call of EnqueueCleanup.
-func (mr *MockCoordinatorStoresMockRecorder) EnqueueCleanup(ctx, backendName, objectKey, reason, sizeBytes any) *gomock.Call {
+func (mr *MockCoordinatorStoresMockRecorder) EnqueueCleanup(ctx, c any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnqueueCleanup", reflect.TypeOf((*MockCoordinatorStores)(nil).EnqueueCleanup), ctx, backendName, objectKey, reason, sizeBytes)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnqueueCleanup", reflect.TypeOf((*MockCoordinatorStores)(nil).EnqueueCleanup), ctx, c)
 }
 
 // GetAllObjectLocations mocks base method.
@@ -476,18 +476,18 @@ func (mr *MockCoordinatorStoresMockRecorder) MoveCleanupToDLQ(ctx, id, lastError
 }
 
 // MoveObjectLocation mocks base method.
-func (m *MockCoordinatorStores) MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MoveObjectLocation", ctx, key, fromBackend, toBackend)
+func (m_2 *MockCoordinatorStores) MoveObjectLocation(ctx context.Context, m *core.MoveLocation) (int64, error) {
+	m_2.ctrl.T.Helper()
+	ret := m_2.ctrl.Call(m_2, "MoveObjectLocation", ctx, m)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // MoveObjectLocation indicates an expected call of MoveObjectLocation.
-func (mr *MockCoordinatorStoresMockRecorder) MoveObjectLocation(ctx, key, fromBackend, toBackend any) *gomock.Call {
+func (mr *MockCoordinatorStoresMockRecorder) MoveObjectLocation(ctx, m any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObjectLocation", reflect.TypeOf((*MockCoordinatorStores)(nil).MoveObjectLocation), ctx, key, fromBackend, toBackend)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObjectLocation", reflect.TypeOf((*MockCoordinatorStores)(nil).MoveObjectLocation), ctx, m)
 }
 
 // PendingDepth mocks base method.
@@ -597,16 +597,16 @@ func (mr *MockCoordinatorStoresMockRecorder) RetryCleanupItem(ctx, id, backoff, 
 }
 
 // SweepStaleCleanupQueueRows mocks base method.
-func (m *MockCoordinatorStores) SweepStaleCleanupQueueRows(ctx context.Context, key, backend string) (int64, error) {
+func (m *MockCoordinatorStores) SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SweepStaleCleanupQueueRows", ctx, key, backend)
+	ret := m.ctrl.Call(m, "SweepStaleCleanupQueueRows", ctx, storageKey, backend)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // SweepStaleCleanupQueueRows indicates an expected call of SweepStaleCleanupQueueRows.
-func (mr *MockCoordinatorStoresMockRecorder) SweepStaleCleanupQueueRows(ctx, key, backend any) *gomock.Call {
+func (mr *MockCoordinatorStoresMockRecorder) SweepStaleCleanupQueueRows(ctx, storageKey, backend any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SweepStaleCleanupQueueRows", reflect.TypeOf((*MockCoordinatorStores)(nil).SweepStaleCleanupQueueRows), ctx, key, backend)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SweepStaleCleanupQueueRows", reflect.TypeOf((*MockCoordinatorStores)(nil).SweepStaleCleanupQueueRows), ctx, storageKey, backend)
 }

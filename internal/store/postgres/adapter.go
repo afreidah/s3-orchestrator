@@ -160,6 +160,7 @@ func (a *pgTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, backen
 	loc := &core.ObjectLocation{
 		ObjectKey:                objectKey,
 		BackendName:              backend,
+		StorageKey:               row.StorageKey,
 		SizeBytes:                row.SizeBytes,
 		Encrypted:                row.Encrypted,
 		EncryptionKey:            row.EncryptionKey,
@@ -177,6 +178,19 @@ func (a *pgTxAdapter) LockObjectOnBackend(ctx context.Context, objectKey, backen
 	// bytes, so the client-facing answer does not change with their address.
 	loc.Identity, _ = core.IdentityFromColumns(derefStr(row.Etag), derefStr(row.ContentType), row.UserMetadata)
 	return loc, true, nil
+}
+
+// CopyExistsAtPath reports whether the backend already holds a recorded copy
+// at storageKey, whichever object it belongs to.
+func (a *pgTxAdapter) CopyExistsAtPath(ctx context.Context, backend, storageKey string) (bool, error) {
+	exists, err := a.q.CopyExistsAtPath(ctx, db.CopyExistsAtPathParams{
+		BackendName: backend,
+		StorageKey:  storageKey,
+	})
+	if err != nil {
+		return false, fmt.Errorf("check copy at path: %w", err)
+	}
+	return exists, nil
 }
 
 // DeleteObjectFromBackend removes the single (objectKey, backend)
@@ -270,6 +284,7 @@ func keyedExistingCopyFromRow(r *db.GetCopiesForKeysForUpdateRow) core.KeyedExis
 	return core.KeyedExistingCopy{
 		ObjectKey:   r.ObjectKey,
 		BackendName: r.BackendName,
+		StorageKey:  r.StorageKey,
 		SizeBytes:   r.SizeBytes,
 	}
 }
@@ -291,11 +306,12 @@ func (a *pgTxAdapter) DeleteObjectsByKeys(ctx context.Context, keys []string) er
 // source row in the same statement) on success, or (0, false, nil)
 // when the source copy is gone - a benign race the caller treats as
 // nothing-to-do.
-func (a *pgTxAdapter) InsertReplicaConditional(ctx context.Context, objectKey, targetBackend, sourceBackend string) (int64, bool, error) {
+func (a *pgTxAdapter) InsertReplicaConditional(ctx context.Context, r *core.ReplicaInsert) (int64, bool, error) {
 	size, err := a.q.InsertReplicaConditional(ctx, db.InsertReplicaConditionalParams{
-		ObjectKey:     objectKey,
-		TargetBackend: targetBackend,
-		SourceBackend: sourceBackend,
+		ObjectKey:     r.ObjectKey,
+		TargetBackend: r.TargetBackend,
+		SourceBackend: r.SourceBackend,
+		StorageKey:    r.StorageKey,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, false, nil
@@ -311,11 +327,11 @@ func (a *pgTxAdapter) InsertReplicaConditional(ctx context.Context, objectKey, t
 // -------------------------------------------------------------------------
 
 // SumAndDeleteCleanupQueueRows deletes every cleanup_queue row for the
-// (objectKey, backend) pair and returns the count and total size of the
+// (storageKey, backend) pair and returns the count and total size of the
 // rows that existed prior to the delete.
-func (a *pgTxAdapter) SumAndDeleteCleanupQueueRows(ctx context.Context, objectKey, backend string) (int64, int64, error) {
+func (a *pgTxAdapter) SumAndDeleteCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, int64, error) {
 	sum, err := a.q.SumCleanupQueueSizeByKey(ctx, db.SumCleanupQueueSizeByKeyParams{
-		ObjectKey:   objectKey,
+		StorageKey:  storageKey,
 		BackendName: backend,
 	})
 	if err != nil {
@@ -325,7 +341,7 @@ func (a *pgTxAdapter) SumAndDeleteCleanupQueueRows(ctx context.Context, objectKe
 		return 0, 0, nil
 	}
 	if _, err := a.q.DeleteCleanupQueueByKey(ctx, db.DeleteCleanupQueueByKeyParams{
-		ObjectKey:   objectKey,
+		StorageKey:  storageKey,
 		BackendName: backend,
 	}); err != nil {
 		return 0, 0, fmt.Errorf("delete cleanup queue rows: %w", err)
@@ -348,6 +364,7 @@ func (a *pgTxAdapter) GetCleanupQueueRow(ctx context.Context, id int64) (core.Cl
 		ID:          row.ID,
 		BackendName: row.BackendName,
 		ObjectKey:   row.ObjectKey,
+		StorageKey:  row.StorageKey,
 		Reason:      row.Reason,
 		SizeBytes:   row.SizeBytes,
 		Attempts:    row.Attempts,
@@ -372,6 +389,7 @@ func (a *pgTxAdapter) InsertCleanupDLQ(ctx context.Context, row *core.CleanupQue
 		OriginalID:      row.ID,
 		BackendName:     row.BackendName,
 		ObjectKey:       row.ObjectKey,
+		StorageKey:      row.StorageKey,
 		Reason:          row.Reason,
 		SizeBytes:       row.SizeBytes,
 		Attempts:        row.Attempts,
@@ -393,11 +411,11 @@ func (a *pgTxAdapter) DeleteCleanupItem(ctx context.Context, id int64) error {
 	return nil
 }
 
-// HasPendingCleanup reports whether a delete for (objectKey, backend) is still
+// HasPendingCleanup reports whether a delete for (storageKey, backend) is still
 // outstanding in either the retry queue or the dead-letter table.
-func (a *pgTxAdapter) HasPendingCleanup(ctx context.Context, objectKey, backend string) (bool, error) {
+func (a *pgTxAdapter) HasPendingCleanup(ctx context.Context, storageKey, backend string) (bool, error) {
 	pending, err := a.q.HasPendingCleanup(ctx, db.HasPendingCleanupParams{
-		ObjectKey:   objectKey,
+		StorageKey:  storageKey,
 		BackendName: backend,
 	})
 	if err != nil {

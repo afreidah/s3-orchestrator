@@ -93,7 +93,12 @@ func probedSource() *ObjectLocation {
 
 // runMove invokes MoveObjectLocation against the stub.
 func runMove(stub *moveTxStub) (int64, error) {
-	return MoveObjectLocation(context.Background(), &stubRunner{tx: stub}, "k", "b1", "b2")
+	return MoveObjectLocation(context.Background(), &stubRunner{tx: stub}, &MoveLocation{
+		ObjectKey:   "k",
+		FromBackend: "b1",
+		ToBackend:   "b2",
+		StorageKey:  "k!dest",
+	})
 }
 
 // -------------------------------------------------------------------------

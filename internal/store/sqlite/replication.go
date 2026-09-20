@@ -45,7 +45,7 @@ import (
 // clears it.
 func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted,
+		`SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.encrypted,
 		        ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash,
 		        ol.compression_algorithm, ol.compression_level, ol.compression_format_version,
 		        ol.logical_size, ol.created_at
@@ -96,7 +96,7 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 	}
 
 	const query = `
-		SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted,
+		SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.encrypted,
 		       ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash,
 		       ol.compression_algorithm, ol.compression_level, ol.compression_format_version,
 		       ol.logical_size, ol.created_at
@@ -134,7 +134,7 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 // score each copy and decide which to remove.
 func (s *Store) GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted,
+		`SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.encrypted,
 		        ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash,
 		        ol.compression_algorithm, ol.compression_level, ol.compression_format_version,
 		        ol.logical_size, ol.created_at
@@ -191,7 +191,7 @@ func scanObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
 			createdAt     string
 		)
 		if err := rows.Scan(
-			&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &loc.Encrypted,
+			&loc.ObjectKey, &loc.BackendName, &loc.StorageKey, &loc.SizeBytes, &loc.Encrypted,
 			&loc.EncryptionKey, &keyID, &ptSize, &contentHash,
 			&compAlgorithm, &compLevel, &compVersion, &logicalSize, &createdAt,
 		); err != nil {

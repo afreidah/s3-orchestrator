@@ -53,7 +53,7 @@ type ObjectStore interface {
 	ListObjectsDelimited(ctx context.Context, prefix, delimiter, startAfter string, maxKeys int) (*ListDelimitedResult, error)
 	ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]ObjectLocation, error)
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]ObjectLocation, error)
-	MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error)
+	MoveObjectLocation(ctx context.Context, m *MoveLocation) (int64, error)
 	ImportObject(ctx context.Context, req *ImportObjectRequest) (ImportOutcome, error)
 	DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error)
 	RecordObjectIdentity(ctx context.Context, key string, id *ObjectIdentity) error
@@ -127,10 +127,10 @@ type CreateMultipartUploadParams struct {
 type ReplicationStore interface {
 	GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
 	GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, limit int, excludedBackends []string) ([]ObjectLocation, error)
-	RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string) (size int64, inserted bool, err error)
+	RecordReplica(ctx context.Context, r *ReplicaInsert) (size int64, inserted bool, err error)
 	GetOverReplicatedObjects(ctx context.Context, factor, limit int) ([]ObjectLocation, error)
 	CountOverReplicatedObjects(ctx context.Context, factor int) (int64, error)
-	RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (size int64, removed bool, err error)
+	RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (RemovedCopy, error)
 }
 
 // CleanupStore defines cleanup queue and orphan byte tracking operations.
@@ -157,7 +157,7 @@ type ReplicationStore interface {
 // backend recovers, and orphan_bytes then drains naturally as those retries
 // complete. Both DLQ listings take an empty backend to mean every backend.
 type CleanupStore interface {
-	EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) error
+	EnqueueCleanup(ctx context.Context, c *CleanupRequest) error
 	GetPendingCleanups(ctx context.Context, limit int) ([]CleanupItem, error)
 	ClaimPendingCleanups(ctx context.Context, limit int, instanceID string, graceCutoff time.Time) ([]CleanupItem, error)
 	CompleteCleanupItem(ctx context.Context, id int64) error
@@ -165,7 +165,7 @@ type CleanupStore interface {
 	CleanupQueueDepth(ctx context.Context) (int64, error)
 	IncrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
 	DecrementOrphanBytes(ctx context.Context, backendName string, amount int64) error
-	SweepStaleCleanupQueueRows(ctx context.Context, key, backend string) (int64, error)
+	SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, error)
 
 	MoveCleanupToDLQ(ctx context.Context, id int64, lastError string) (bool, error)
 	CleanupDLQDepth(ctx context.Context) (int64, error)                                      // also refreshes the cleanup_dlq_depth gauge

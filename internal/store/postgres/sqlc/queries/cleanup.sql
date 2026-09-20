@@ -11,15 +11,19 @@
 -- -----------------------------------------------------------------------------
 
 -- name: EnqueueCleanup :exec
-INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes)
-VALUES ($1, $2, $3, $4);
+-- storage_key is what the worker deletes; object_key rides along so an operator
+-- reading the queue still sees which object the orphan belongs to. They differ
+-- for every row written since per-write storage keys, and a row queued before
+-- them holds the same value in both.
+INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes)
+VALUES ($1, $2, $3, $4, $5);
 
 -- name: GetPendingCleanups :many
 -- Read-only listing for the admin endpoint and operator visibility. The
 -- worker uses ClaimPendingCleanups instead, which also stamps the row.
 -- claimed_at and claimed_by are projected so the admin view can render
 -- which rows are currently held by a worker.
-SELECT id, backend_name, object_key, reason, attempts, size_bytes,
+SELECT id, backend_name, object_key, storage_key, reason, attempts, size_bytes,
        claimed_at, claimed_by
 FROM cleanup_queue
 WHERE next_retry <= NOW() AND attempts < 10
@@ -50,9 +54,9 @@ claimed AS (
         claimed_by = @claimed_by::text
     FROM candidate c
     WHERE cq.id = c.id
-    RETURNING cq.id, cq.backend_name, cq.object_key, cq.reason, cq.attempts, cq.size_bytes
+    RETURNING cq.id, cq.backend_name, cq.object_key, cq.storage_key, cq.reason, cq.attempts, cq.size_bytes
 )
-SELECT cl.id, cl.backend_name, cl.object_key, cl.reason, cl.attempts, cl.size_bytes,
+SELECT cl.id, cl.backend_name, cl.object_key, cl.storage_key, cl.reason, cl.attempts, cl.size_bytes,
        c.reclaimed
 FROM claimed cl
 JOIN candidate c ON cl.id = c.id
@@ -102,12 +106,17 @@ DELETE FROM cleanup_queue WHERE backend_name = $1;
 
 -- name: SumCleanupQueueSizeByKey :one
 -- Returns the sum of size_bytes for every cleanup_queue row matching the
--- given (object_key, backend_name) pair. Used by the reconciler-driven
+-- given (storage_key, backend_name) pair. Used by the reconciler-driven
 -- sweep so orphan_bytes can be decremented in step with the row delete.
+--
+-- Matched on the path rather than the object, because the row being swept is a
+-- queued deletion of particular bytes and the reconcile that triggers it has
+-- established that those bytes are gone. Sweeping by object would also drop the
+-- queued deletions of the key's other writes, whose bytes are still there.
 SELECT COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes,
        COUNT(*)::bigint AS row_count
 FROM cleanup_queue
-WHERE object_key = $1 AND backend_name = $2;
+WHERE storage_key = $1 AND backend_name = $2;
 
 -- name: HasPendingCleanup :one
 -- Reports whether a delete for (object_key, backend_name) is still
@@ -118,25 +127,25 @@ WHERE object_key = $1 AND backend_name = $2;
 -- was withdrawn.
 SELECT EXISTS (
     SELECT 1 FROM cleanup_queue q
-     WHERE q.object_key = @object_key AND q.backend_name = @backend_name
+     WHERE q.storage_key = @storage_key AND q.backend_name = @backend_name
     UNION ALL
     SELECT 1 FROM cleanup_dlq d
-     WHERE d.object_key = @object_key AND d.backend_name = @backend_name
+     WHERE d.storage_key = @storage_key AND d.backend_name = @backend_name
 ) AS pending;
 
 -- name: DeleteCleanupQueueByKey :execrows
--- Removes every cleanup_queue row matching the given (object_key,
+-- Removes every cleanup_queue row matching the given (storage_key,
 -- backend_name) pair. Returns the number of rows deleted so the caller
 -- can confirm the sum-then-delete pair stayed consistent.
 DELETE FROM cleanup_queue
-WHERE object_key = $1 AND backend_name = $2;
+WHERE storage_key = $1 AND backend_name = $2;
 
 -- name: GetCleanupQueueRow :one
 -- Fetches a single cleanup_queue row by id along with the columns the
 -- DLQ insert needs (backend, key, reason, size, attempts, created_at,
 -- last_error). Used inside MoveCleanupToDLQ so the row contents survive
 -- the queue->DLQ move.
-SELECT id, backend_name, object_key, reason, size_bytes,
+SELECT id, backend_name, object_key, storage_key, reason, size_bytes,
        attempts, created_at, last_error
 FROM cleanup_queue
 WHERE id = $1;
@@ -147,9 +156,9 @@ WHERE id = $1;
 -- first_enqueued_at carries the original created_at so the DLQ entry
 -- remembers how long the cleanup was outstanding.
 INSERT INTO cleanup_dlq (
-    original_id, backend_name, object_key, reason, size_bytes,
+    original_id, backend_name, object_key, storage_key, reason, size_bytes,
     attempts, first_enqueued_at, last_error
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
 
 -- name: CountCleanupDLQ :one
 -- Returns the current depth of the cleanup_dlq table for the dashboard
@@ -160,7 +169,7 @@ SELECT COUNT(*) FROM cleanup_dlq;
 -- Read-only listing of dead-lettered cleanups for the admin cleanup-dlq
 -- view. An empty backend argument returns every backend; otherwise the
 -- listing is scoped to one. Newest graduations first.
-SELECT backend_name, object_key, reason, size_bytes,
+SELECT backend_name, object_key, storage_key, reason, size_bytes,
        attempts, first_enqueued_at, moved_at, last_error
 FROM cleanup_dlq
 WHERE (sqlc.arg(backend)::text = '' OR backend_name = sqlc.arg(backend))
@@ -179,7 +188,7 @@ LIMIT sqlc.arg(row_limit);
 WITH moved AS (
     DELETE FROM cleanup_dlq
     WHERE (sqlc.arg(backend)::text = '' OR backend_name = sqlc.arg(backend))
-    RETURNING backend_name, object_key, reason, size_bytes
+    RETURNING backend_name, object_key, storage_key, reason, size_bytes
 )
-INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes)
-SELECT backend_name, object_key, reason, size_bytes FROM moved;
+INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes)
+SELECT backend_name, object_key, storage_key, reason, size_bytes FROM moved;

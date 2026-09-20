@@ -107,12 +107,13 @@ func stubRecordObject(c *multipartCalls, err error) func(context.Context, *core.
 	}
 }
 
-func stubMultipartEnqueue(c *multipartCalls) func(context.Context, string, string, string, int64) error {
-	return func(_ context.Context, backend, key, reason string, size int64) error {
+func stubMultipartEnqueue(c *multipartCalls) func(context.Context, *core.CleanupRequest) error {
+	return func(_ context.Context, req *core.CleanupRequest) error {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.enqueue = append(c.enqueue, core.CleanupItem{
-			BackendName: backend, ObjectKey: key, Reason: reason, SizeBytes: size,
+			BackendName: req.BackendName, ObjectKey: req.ObjectKey, StorageKey: req.StorageKey,
+			Reason: req.Reason, SizeBytes: req.SizeBytes,
 		})
 		return nil
 	}
@@ -142,7 +143,7 @@ func multipartStubs(t *testing.T, store *storetest.MockMetadataStore) *multipart
 		DoAndReturn(stubRecordPart(c, nil)).AnyTimes()
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubRecordObject(c, nil)).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubMultipartEnqueue(c)).AnyTimes()
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubIncrementOrphan(c)).AnyTimes()
@@ -207,7 +208,7 @@ func TestCompleteMultipartUpload_NoSpaceForAssembledObject(t *testing.T) {
 	if _, err := mgr.CompleteMultipartUpload(ctx, "multi", "key", "upload-1", partsOf(1)); !errors.Is(err, core.ErrNoSpaceAvailable) {
 		t.Fatalf("expected core.ErrNoSpaceAvailable, got %v", err)
 	}
-	if be.Has("multi/key") {
+	if be.HasCopyOf("multi/key") {
 		t.Error("assembled object was written to a backend that declined it")
 	}
 }
@@ -234,7 +235,7 @@ func TestUploadPart_Success(t *testing.T) {
 	if etag == "" {
 		t.Error("expected non-empty etag")
 	}
-	if !be.Has("__multipart/upload-1/1") {
+	if !be.HasCopyOf("__multipart/upload-1/1") {
 		t.Error("part not found on be")
 	}
 }
@@ -314,10 +315,10 @@ func TestCompleteMultipartUpload_Success(t *testing.T) {
 	if etag == "" {
 		t.Error("expected non-empty etag")
 	}
-	if !be.Has("multi/key") {
+	if !be.HasCopyOf("multi/key") {
 		t.Error("final object not found on be")
 	}
-	if be.Has("__multipart/upload-1/1") || be.Has("__multipart/upload-1/2") {
+	if be.HasCopyOf("__multipart/upload-1/1") || be.HasCopyOf("__multipart/upload-1/2") {
 		t.Error("part temp keys should be deleted")
 	}
 	if len(c.recordObject) != 1 {
@@ -431,7 +432,7 @@ func TestAbortMultipartUpload_Success(t *testing.T) {
 	if err := mgr.AbortMultipartUpload(ctx, "multi", "key", "upload-1"); err != nil {
 		t.Fatalf("AbortMultipartUpload: %v", err)
 	}
-	if be.Has("__multipart/upload-1/1") {
+	if be.HasCopyOf("__multipart/upload-1/1") {
 		t.Error("part temp key should be deleted")
 	}
 	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
@@ -524,7 +525,7 @@ func TestCompleteMultipartUpload_PartSubset(t *testing.T) {
 	if etag == "" {
 		t.Error("expected non-empty etag")
 	}
-	if !be.Has("multi/key") {
+	if !be.HasCopyOf("multi/key") {
 		t.Fatal("final object not found on be")
 	}
 	if len(c.recordObject) != 1 {
@@ -614,13 +615,13 @@ func TestCompleteMultipartUpload_AssemblyFails_PreservesParts(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected CompleteMultipartUpload to fail")
 	}
-	if !be.Has("__multipart/upload-1/1") || !be.Has("__multipart/upload-1/2") {
+	if !be.HasCopyOf("__multipart/upload-1/1") || !be.HasCopyOf("__multipart/upload-1/2") {
 		t.Error("parts must survive a failed assembly so the completion can be retried")
 	}
 	if c.deleteMultipartHit {
 		t.Error("the upload row must survive a failed assembly")
 	}
-	if be.Has("multi/key") {
+	if be.HasCopyOf("multi/key") {
 		t.Error("assembled key should not exist when assembly PUT failed")
 	}
 }
@@ -750,7 +751,7 @@ func TestUploadPart_RecordPartFails_CleansUpPartObject(t *testing.T) {
 	if _, err := mgr.UploadPart(context.Background(), "multi", "key", "upload-1", 1, bytes.NewReader([]byte("data")), 4); err == nil {
 		t.Fatal("expected error from RecordPart failure")
 	}
-	if be.Has("__multipart/upload-1/1") {
+	if be.HasCopyOf("__multipart/upload-1/1") {
 		t.Error("orphaned part should be deleted from be")
 	}
 	if got := mgr.Runtime.Usage().Backend().Load("b1", counter.FieldAPIRequests); got != 2 {
@@ -772,7 +773,7 @@ func TestUploadPart_RecordPartFails_DeleteFails_EnqueuesCleanup(t *testing.T) {
 		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).AnyTimes()
 	store.EXPECT().RecordPart(gomock.Any(), gomock.Any()).
 		Return(errors.New("db error")).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubMultipartEnqueue(c)).AnyTimes()
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubIncrementOrphan(c)).AnyTimes()
@@ -883,7 +884,7 @@ func TestCleanupStaleMultipartUploads_AbortsStaleUploads(t *testing.T) {
 
 	mgr.CleanupStaleMultipartUploads(ctx, time.Hour)
 
-	if be.Has("__multipart/stale-1/1") {
+	if be.HasCopyOf("__multipart/stale-1/1") {
 		t.Error("stale part should be cleaned up")
 	}
 }
@@ -1021,7 +1022,7 @@ func TestAbortMultipartUploadsOnBackend_AbortsMatchingBackend(t *testing.T) {
 
 	mgr.AbortMultipartUploadsOnBackend(ctx, "b1")
 
-	if be.Has("__multipart/up-1/1") {
+	if be.HasCopyOf("__multipart/up-1/1") {
 		t.Error("stale part should be cleaned up")
 	}
 }
@@ -1474,7 +1475,7 @@ func twoPartUpload(t *testing.T) (*backendtest.InMemory, []core.MultipartPart) {
 // upload row survived, which is the precondition for a client retry.
 func assertUploadRetryable(t *testing.T, be *backendtest.InMemory, c *multipartCalls) {
 	t.Helper()
-	if !be.Has("__multipart/upload-1/1") || !be.Has("__multipart/upload-1/2") {
+	if !be.HasCopyOf("__multipart/upload-1/1") || !be.HasCopyOf("__multipart/upload-1/2") {
 		t.Error("parts were destroyed; the completion is no longer retryable")
 	}
 	if c.deleteMultipartHit {
@@ -1550,14 +1551,14 @@ func TestCompleteMultipartUpload_RetryAfterTransientFailure(t *testing.T) {
 	if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", partsOf(1, 2)); err != nil {
 		t.Fatalf("retry after a transient failure should succeed: %v", err)
 	}
-	if !be.Has("multi/key") {
+	if !be.HasCopyOf("multi/key") {
 		t.Error("assembled object missing after a successful retry")
 	}
 	if len(c.recordObject) != 1 {
 		t.Errorf("RecordObject calls = %d, want 1", len(c.recordObject))
 	}
 	// Only the successful attempt retires the parts.
-	if be.Has("__multipart/upload-1/1") || be.Has("__multipart/upload-1/2") {
+	if be.HasCopyOf("__multipart/upload-1/1") || be.HasCopyOf("__multipart/upload-1/2") {
 		t.Error("parts should be dropped once the object is durably committed")
 	}
 	if !c.deleteMultipartHit {
@@ -1590,7 +1591,7 @@ func TestCompleteMultipartUpload_InvalidManifest_PreservesParts(t *testing.T) {
 			if _, err := mgr.CompleteMultipartUpload(context.Background(), "multi", "key", "upload-1", c.manifest); err == nil {
 				t.Fatal("expected the completion to be rejected")
 			}
-			if be.Has("multi/key") {
+			if be.HasCopyOf("multi/key") {
 				t.Error("no assembly should start for a rejected manifest")
 			}
 			if len(calls.recordObject) != 0 {

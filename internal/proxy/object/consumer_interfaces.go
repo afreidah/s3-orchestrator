@@ -120,8 +120,8 @@ type PendingWriter interface {
 // attemptPutOnBackend (when the post-PUT IsDraining re-check fires).
 type CleanupWriter interface {
 	RecordObjectOrCleanup(ctx context.Context, span trace.Span, be backend.ObjectBackend, req *core.RecordObjectRequest) error
-	RecoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, backendName, key, cleanupReason string, size int64)
-	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
+	RecoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, c *core.CleanupRequest)
+	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, c *core.CleanupRequest)
 }
 
 // DetachedRegistry is what the write path needs from the tracker of copies

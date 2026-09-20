@@ -326,6 +326,10 @@ func (r *rewriteRow) rewriteKey() string { return r.ObjectKey }
 // rewriteBackend returns the backend the row currently lives on.
 func (r *rewriteRow) rewriteBackend() string { return r.BackendName }
 
+// rewriteStorageKey returns the path this copy's bytes occupy on its backend,
+// which is what the rewrite reads and writes.
+func (r *rewriteRow) rewriteStorageKey() string { return r.StorageKey }
+
 // rewriteSize returns the row's stored size, used for quota accounting.
 func (r *rewriteRow) rewriteSize() int64 { return r.SizeBytes }
 

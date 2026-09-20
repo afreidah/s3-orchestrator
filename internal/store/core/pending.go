@@ -74,11 +74,11 @@ func promotePendingTx(ctx context.Context, tx TxAdapter, p *PendingObject) (prom
 // caller to apply.
 func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existing []ExistingCopy) (promoteOutcome, error) {
 	deltas := make(QuotaDeltas, len(existing)+1)
-	displaced, err := clearExistingCopies(ctx, tx, p.ObjectKey, []string{p.BackendName}, existing, deltas)
+	displaced, err := clearExistingCopies(ctx, tx, p.ObjectKey, existing, deltas)
 	if err != nil {
 		return promoteOutcome{}, err
 	}
-	loc := objectFromStoredForm(p.ObjectKey, p.BackendName, p.SizeBytes, pendingStoredForm(p), p.Identity)
+	loc := objectFromStoredForm(p.ObjectKey, p.BackendName, p.StorageKey, p.SizeBytes, pendingStoredForm(p), p.Identity)
 	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
 		return promoteOutcome{}, fmt.Errorf("insert promoted location: %w", err)
 	}
@@ -95,57 +95,35 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 // resolveCompanion settles an intent for one of the further copies a write was
 // placing, left behind by a process that died before it could clean up.
 //
-// It never promotes. The bytes on that backend cannot be told apart from an
-// older object at the same path, and there is a copy we can vouch for - the
-// client was told the write succeeded, which only happens once a copy commits -
-// so rebuilding from that copy is cheaper than being wrong. The replication
-// worker sees the shortfall and fills it on its next pass.
+// It never promotes. The upload was still running when its process died, so
+// nothing here knows whether the bytes at that path are whole; there is a copy
+// we can vouch for - the client was told the write succeeded, which only
+// happens once a copy commits - so rebuilding from that copy is cheaper than
+// being wrong. The replication worker sees the shortfall and fills it on its
+// next pass.
 //
-// Two cases leave the backend alone: a copy already recorded there, because
-// those bytes are that copy rather than the intent's, and another intent still
-// live for the path, which discardedCompanionBytes leaves the path to.
+// The one case that leaves the backend alone is a recorded copy at this
+// intent's own path, which means a commit got there first and the bytes belong
+// to it. A copy recorded on the same backend at a different path belongs to a
+// different write, and deleting this intent's bytes does not touch it.
 func resolveCompanion(ctx context.Context, tx TxAdapter, p *PendingObject, existing []ExistingCopy) (promoteOutcome, error) {
 	if err := tx.DeletePending(ctx, p.IntentID); err != nil {
 		return promoteOutcome{}, fmt.Errorf("delete companion pending row: %w", err)
 	}
 	for _, ec := range existing {
-		if ec.BackendName == p.BackendName {
+		if ec.BackendName == p.BackendName && ec.StorageKey == p.StorageKey {
 			return promoteOutcome{result: PendingPromoteCompanionKept}, nil
 		}
 	}
-	displaced, err := discardedCompanionBytes(ctx, tx, p, p.SizeBytes, CleanupReasonCompanionDiscarded)
-	if err != nil {
-		return promoteOutcome{}, err
-	}
-	return promoteOutcome{result: PendingPromoteCompanionDiscarded, displaced: displaced}, nil
-}
-
-// discardedCompanionBytes names the bytes a discarded copy leaves on its
-// backend for the caller to remove, unless another intent for the same key
-// and backend is still live.
-//
-// A delete goes by key and backend, so it removes whatever is at the path when
-// it arrives. While another intent for that path is live, that is the other
-// upload's bytes once they land, and its commit would then record a row for a
-// copy that is gone. So the path is left to that intent, untouched. Every
-// resolution of a key runs under the key lock, so the intents for a path
-// resolve one at a time, and the last one to resolve finds no other and
-// deletes the path: if the other upload commits, the path holds its copy; if
-// it fails or its process dies, the intent is still there for the reaper,
-// which deletes the path the same way.
-//
-// The intent is not cancelled, because it is the only promise that the path
-// gets cleaned up when its upload does not commit. Deleting it would leave
-// the bytes with no row, no intent and no cleanup entry.
-func discardedCompanionBytes(ctx context.Context, tx TxAdapter, p *PendingObject, size int64, reason string) ([]DeletedCopy, error) {
-	live, err := tx.CountPendingOnBackend(ctx, p.ObjectKey, p.BackendName)
-	if err != nil {
-		return nil, fmt.Errorf("count intents live for the path: %w", err)
-	}
-	if live > 0 {
-		return nil, nil
-	}
-	return []DeletedCopy{{BackendName: p.BackendName, SizeBytes: size, Reason: reason}}, nil
+	return promoteOutcome{
+		result: PendingPromoteCompanionDiscarded,
+		displaced: []DeletedCopy{{
+			BackendName: p.BackendName,
+			StorageKey:  p.StorageKey,
+			SizeBytes:   p.SizeBytes,
+			Reason:      CleanupReasonCompanionDiscarded,
+		}},
+	}, nil
 }
 
 // -------------------------------------------------------------------------
@@ -177,9 +155,9 @@ func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (com
 		return companionOutcome{}, err
 	}
 	if !claimed {
-		return discardUntrustedCopy(ctx, tx, p)
+		return discardUntrustedCopy(p), nil
 	}
-	loc := objectFromStoredForm(p.ObjectKey, p.BackendName, p.SizeBytes, pendingStoredForm(p), p.Identity)
+	loc := objectFromStoredForm(p.ObjectKey, p.BackendName, p.StorageKey, p.SizeBytes, pendingStoredForm(p), p.Identity)
 	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
 		return companionOutcome{}, fmt.Errorf("insert companion location: %w", err)
 	}
@@ -193,69 +171,67 @@ func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (com
 	return companionOutcome{result: CompanionCopyCommitted, deltas: deltas}, nil
 }
 
-// discardUntrustedCopy resolves an upload whose write has been overtaken.
+// discardUntrustedCopy resolves an upload whose write has been overtaken: the
+// intent is gone, so a newer write took the key while these bytes were still
+// going up, and they describe an object that is no longer the object.
 //
-// Its bytes went down at a path a newer write may also have written, in an
-// order nothing here can establish, so the object sitting there is either
-// version and reads served from it would be silently wrong. A row already
-// claiming a copy on that backend describes the same path and is no safer, so
-// it goes too: replication rebuilds the copy from one the client was told
-// about, which costs a rebuild in the case where these bytes never landed on
-// top of anything. The bytes themselves are left to any other intent still
-// live for the path, for the reason discardedCompanionBytes gives.
-func discardUntrustedCopy(ctx context.Context, tx TxAdapter, p *PendingObject) (companionOutcome, error) {
-	orphaned := p.SizeBytes
-	deltas := QuotaDeltas{}
-	loc, ok, err := tx.LockObjectOnBackend(ctx, p.ObjectKey, p.BackendName)
-	if err != nil {
-		return companionOutcome{}, err
+// It removes those bytes and nothing else. They sit at this write's own path,
+// which no other write shares, so whatever the key holds on this backend now
+// is untouched by deleting them, and the row describing it stays.
+//
+// Nothing is charged against the counter here. These bytes were never recorded,
+// so the backend's total never included them, and the intent that was holding
+// them against its headroom is already gone.
+func discardUntrustedCopy(p *PendingObject) companionOutcome {
+	return companionOutcome{
+		result: CompanionCopyUntrusted,
+		displaced: []DeletedCopy{{
+			BackendName: p.BackendName,
+			StorageKey:  p.StorageKey,
+			SizeBytes:   p.SizeBytes,
+			Reason:      CleanupReasonCompanionUntrusted,
+		}},
 	}
-	if ok {
-		if err := tx.DeleteObjectFromBackend(ctx, p.ObjectKey, p.BackendName); err != nil {
-			return companionOutcome{}, fmt.Errorf("delete untrusted copy: %w", err)
-		}
-		orphaned = loc.SizeBytes
-		deltas.Add(p.BackendName, -loc.SizeBytes)
-		if err := chargeStripes(ctx, tx, p.ObjectKey, deltas); err != nil {
-			return companionOutcome{}, err
-		}
-	}
-	displaced, err := discardedCompanionBytes(ctx, tx, p, orphaned, CleanupReasonCompanionUntrusted)
-	if err != nil {
-		return companionOutcome{}, err
-	}
-	return companionOutcome{result: CompanionCopyUntrusted, displaced: displaced, deltas: deltas}, nil
 }
 
-// clearSupersededIntents removes every intent for the key and reports the ones
-// whose bytes now need deleting off their backend.
+// clearSupersededIntents removes every intent for the key and reports the bytes
+// each one was placing, which now need deleting off their backend.
 //
 // Every intent for a key is resolved by a write to it: the ones this write is
 // committing are claims it has just honoured, and the rest describe an object it
 // has replaced. Clearing them here is what leaves the reaper with only the
 // intents of a process that died.
 //
-// landedOn names the backends this write placed a copy on. An intent naming one
-// of them is dropped without touching the backend, because the object sitting
-// at that path is this write's copy - the same reason an overwrite does not
-// treat the backend it landed on as displaced.
+// committing names the intents this write is honouring here. They are cleared
+// like the rest - the copies they describe are recorded now, so the intents have
+// served their purpose - but their bytes are the object and must not be reported
+// as stale.
+//
+// Every other cleared intent's bytes are stale, whichever backend they are on.
+// An intent naming a backend this write also landed on used to be dropped
+// without touching it, on the grounds that the object at that path was this
+// write's own copy; each write now has a path of its own, so that intent's bytes
+// are somewhere else entirely and leaving them leaks on exactly the backend the
+// object is most likely to be on. The upload may still be running, in which case
+// the deletion finds nothing and the copy's own commit discards it again.
 //
 // keep names the intents of this same write still uploading. They are the one
 // kind a commit leaves behind, because the write they belong to is the write
 // doing the clearing; the row is what their commit later reads as proof that
 // nothing newer has touched the key.
-func clearSupersededIntents(ctx context.Context, tx TxAdapter, key string, landedOn, keep []string) ([]DeletedCopy, error) {
+func clearSupersededIntents(ctx context.Context, tx TxAdapter, key string, keep, committing []string) ([]DeletedCopy, error) {
 	cleared, err := tx.ClearPendingForKey(ctx, key, keep)
 	if err != nil {
 		return nil, fmt.Errorf("clear superseded intents: %w", err)
 	}
-	var stale []DeletedCopy
+	stale := make([]DeletedCopy, 0, len(cleared))
 	for _, si := range cleared {
-		if slices.Contains(landedOn, si.BackendName) {
+		if slices.Contains(committing, si.IntentID) {
 			continue
 		}
 		stale = append(stale, DeletedCopy{
 			BackendName: si.BackendName,
+			StorageKey:  si.StorageKey,
 			SizeBytes:   si.SizeBytes,
 			Reason:      CleanupReasonSupersededIntent,
 		})
@@ -265,14 +241,10 @@ func clearSupersededIntents(ctx context.Context, tx TxAdapter, key string, lande
 
 // clearExistingCopies deletes every prior copy of the key and accumulates
 // per-backend negative deltas in the supplied map, which the caller applies to
-// the byte counter once the transaction has committed. Copies on backends the
-// write is not landing on are returned as DeletedCopy entries so the caller can
-// enqueue them for physical orphan cleanup.
-//
-// newBackends is the whole set the write places, not just one: a write landing
-// on two backends that reported only the first would hand its own second copy
-// to orphan cleanup.
-func clearExistingCopies(ctx context.Context, tx TxAdapter, key string, newBackends []string, existing []ExistingCopy, deltas QuotaDeltas) ([]DeletedCopy, error) {
+// the byte counter once the transaction has committed. Every copy is returned
+// as a DeletedCopy so the caller can enqueue its bytes for physical cleanup,
+// each one naming the path it occupies.
+func clearExistingCopies(ctx context.Context, tx TxAdapter, key string, existing []ExistingCopy, deltas QuotaDeltas) ([]DeletedCopy, error) {
 	if len(existing) == 0 {
 		return nil, nil
 	}
@@ -282,5 +254,5 @@ func clearExistingCopies(ctx context.Context, tx TxAdapter, key string, newBacke
 	for _, ec := range existing {
 		deltas.Add(ec.BackendName, -ec.SizeBytes)
 	}
-	return displacedFromExisting(existing, newBackends), nil
+	return displacedFromExisting(existing), nil
 }

@@ -68,19 +68,26 @@ func TestDeleteObject_IntentClearFailureAborts(t *testing.T) {
 }
 
 // TestRecordObject_ClearsSupersededIntents verifies a write removes the key's
-// other intents and hands back the bytes of the ones it did not land on, so
-// they are cleaned off their backends instead of waiting for the reaper.
+// other intents and hands back the bytes of every one of them, each at its own
+// path, so they are cleaned off their backends instead of waiting for the
+// reaper.
+//
+// Including the intent on a backend this write also landed on. That one used to
+// be skipped, on the grounds that the object at the shared path was this
+// write's own copy; each write now has a path of its own, so those bytes are
+// somewhere else and skipping them leaks on the backend the object is most
+// likely to be on.
 func TestRecordObject_ClearsSupersededIntents(t *testing.T) {
 	t.Parallel()
 	stub := &intentClearingTxStub{
 		quotaTxStub: &quotaTxStub{},
 		pending: []SupersededIntent{
-			{IntentID: "mine", BackendName: "b1", SizeBytes: 100},
-			{IntentID: "stale", BackendName: "b2", SizeBytes: 70},
+			{IntentID: "older-on-b1", BackendName: "b1", StorageKey: "k!older", SizeBytes: 100},
+			{IntentID: "stale", BackendName: "b2", StorageKey: "k!stale", SizeBytes: 70},
 		},
 	}
 	displaced, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
-		Key: "k", Size: 100, Copies: []ObjectCopy{{Backend: "b1", IntentID: "mine"}},
+		Key: "k", Size: 100, Copies: []ObjectCopy{{Backend: "b1", IntentID: "mine", StorageKey: "k!mine"}},
 	})
 	if err != nil {
 		t.Fatalf("RecordObject: %v", err)
@@ -88,14 +95,21 @@ func TestRecordObject_ClearsSupersededIntents(t *testing.T) {
 	if !stub.cleared {
 		t.Fatal("expected the write to clear the key's intents")
 	}
-	if len(displaced) != 1 {
-		t.Fatalf("expected only the stale intent's bytes, got %+v", displaced)
+	if len(displaced) != 2 {
+		t.Fatalf("expected both cleared intents' bytes, got %+v", displaced)
 	}
-	if displaced[0].BackendName != "b2" || displaced[0].SizeBytes != 70 {
-		t.Errorf("displaced = %+v, want b2/70", displaced[0])
+	byBackend := map[string]DeletedCopy{}
+	for _, dc := range displaced {
+		byBackend[dc.BackendName] = dc
+		if dc.Reason != CleanupReasonSupersededIntent {
+			t.Errorf("reason = %q, want %q", dc.Reason, CleanupReasonSupersededIntent)
+		}
 	}
-	if displaced[0].Reason != CleanupReasonSupersededIntent {
-		t.Errorf("reason = %q, want %q", displaced[0].Reason, CleanupReasonSupersededIntent)
+	if got := byBackend["b1"]; got.StorageKey != "k!older" || got.SizeBytes != 100 {
+		t.Errorf("b1 displaced as %+v, want the older write's own path and size", got)
+	}
+	if got := byBackend["b2"]; got.StorageKey != "k!stale" || got.SizeBytes != 70 {
+		t.Errorf("b2 displaced as %+v, want the stale intent's path and size", got)
 	}
 }
 
@@ -186,51 +200,59 @@ func TestRecordObject_CommitsEveryCopy(t *testing.T) {
 	}
 }
 
-// TestRecordObject_DisplacesOnlyBackendsItLeaves verifies a multi-copy write
-// hands back for cleanup only the prior copies it is not landing on. Reporting
-// by a single backend would send the write's own second copy to be deleted.
-func TestRecordObject_DisplacesOnlyBackendsItLeaves(t *testing.T) {
+// TestRecordObject_DisplacesEveryPriorCopy verifies a multi-copy write hands
+// back every prior copy for cleanup, at the path each one occupies - including
+// the copies on the backends it is landing on, whose bytes are at paths this
+// write does not touch.
+func TestRecordObject_DisplacesEveryPriorCopy(t *testing.T) {
 	t.Parallel()
 	stub := newMultiCopyStub([]ExistingCopy{
-		{BackendName: "b1", SizeBytes: 10},
-		{BackendName: "b2", SizeBytes: 20},
-		{BackendName: "b3", SizeBytes: 30},
+		{BackendName: "b1", StorageKey: "k!old1", SizeBytes: 10},
+		{BackendName: "b2", StorageKey: "k!old2", SizeBytes: 20},
+		{BackendName: "b3", StorageKey: "k!old3", SizeBytes: 30},
 	})
 	displaced, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
 		Key: "k", Size: 100,
-		Copies: []ObjectCopy{{Backend: "b1"}, {Backend: "b2"}},
+		Copies: []ObjectCopy{
+			{Backend: "b1", StorageKey: "k!new1"},
+			{Backend: "b2", StorageKey: "k!new2"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if len(displaced) != 1 || displaced[0].BackendName != "b3" {
-		t.Errorf("expected only b3 displaced, got %+v", displaced)
+	if len(displaced) != 3 {
+		t.Fatalf("expected all three prior copies displaced, got %+v", displaced)
+	}
+	for _, dc := range displaced {
+		if dc.StorageKey == "k!new1" || dc.StorageKey == "k!new2" {
+			t.Errorf("a path this write just wrote was handed to cleanup: %+v", dc)
+		}
 	}
 }
 
-// TestRecordObject_SparesTheBackendsItIsStillPlacingOn verifies a commit does
-// not displace a prior copy from a backend the same write is still uploading
-// to. Those bytes sit at the path the new copy is landing on, so deleting them
-// as displaced deletes the copy this write is placing and leaves the row its
-// commit writes describing an object that is gone - which only a read of that
-// one copy would ever notice.
-func TestRecordObject_SparesTheBackendsItIsStillPlacingOn(t *testing.T) {
+// TestRecordObject_KeepsTheIntentsItIsStillPlacing verifies a commit leaves the
+// intents of its own uploads in place while clearing every other intent for the
+// key. Their bytes need no such protection - each is at its own intent's path,
+// so displacing the prior copy on a backend this write is still uploading to
+// cannot touch what is landing there.
+func TestRecordObject_KeepsTheIntentsItIsStillPlacing(t *testing.T) {
 	t.Parallel()
 	stub := newMultiCopyStub([]ExistingCopy{
-		{BackendName: "b1", SizeBytes: 10},
-		{BackendName: "b2", SizeBytes: 20},
-		{BackendName: "b3", SizeBytes: 30},
+		{BackendName: "b1", StorageKey: "k!old1", SizeBytes: 10},
+		{BackendName: "b2", StorageKey: "k!old2", SizeBytes: 20},
+		{BackendName: "b3", StorageKey: "k!old3", SizeBytes: 30},
 	})
 	displaced, _, err := RecordObject(context.Background(), &stubRunner{tx: stub}, &RecordObjectRequest{
 		Key: "k", Size: 100,
-		Copies:  []ObjectCopy{{Backend: "b1", IntentID: "i-1"}},
-		Placing: []ObjectCopy{{Backend: "b2", IntentID: "i-2"}},
+		Copies:  []ObjectCopy{{Backend: "b1", IntentID: "i-1", StorageKey: "k!new1"}},
+		Placing: []ObjectCopy{{Backend: "b2", IntentID: "i-2", StorageKey: "k!new2"}},
 	})
 	if err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if len(displaced) != 1 || displaced[0].BackendName != "b3" {
-		t.Fatalf("expected only b3 displaced, got %+v", displaced)
+	if len(displaced) != 3 {
+		t.Fatalf("expected all three prior copies displaced, got %+v", displaced)
 	}
 	if !slices.Contains(stub.kept, "i-2") {
 		t.Errorf("the intent of the copy still uploading was not kept: %v", stub.kept)

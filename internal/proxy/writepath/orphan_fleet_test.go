@@ -56,12 +56,13 @@ type orphanBytesEntry struct {
 // -------------------------------------------------------------------------
 
 // stubOrphanEnqueue captures EnqueueCleanup args.
-func stubOrphanEnqueue(c *orphanCalls, err error) func(context.Context, string, string, string, int64) error {
-	return func(_ context.Context, backend, key, reason string, size int64) error {
+func stubOrphanEnqueue(c *orphanCalls, err error) func(context.Context, *core.CleanupRequest) error {
+	return func(_ context.Context, req *core.CleanupRequest) error {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.enqueue = append(c.enqueue, core.CleanupItem{
-			BackendName: backend, ObjectKey: key, Reason: reason, SizeBytes: size,
+			BackendName: req.BackendName, ObjectKey: req.ObjectKey, StorageKey: req.StorageKey,
+			Reason: req.Reason, SizeBytes: req.SizeBytes,
 		})
 		return err
 	}
@@ -88,14 +89,16 @@ func TestEnqueueCleanup_IncrementsOrphanBytes(t *testing.T) {
 	c := &orphanCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
 	storetest.Permissive(store)
 
 	coord, _ := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
-	coord.EnqueueCleanup(context.Background(), "b1", "orphan.txt", "delete_failed", 4096)
+	coord.EnqueueCleanup(context.Background(), &core.CleanupRequest{
+		BackendName: "b1", ObjectKey: "orphan.txt", StorageKey: "orphan.txt", Reason: "delete_failed", SizeBytes: 4096,
+	})
 
 	if len(c.increment) != 1 {
 		t.Fatalf("expected 1 IncrementOrphanBytes call, got %d", len(c.increment))
@@ -112,14 +115,16 @@ func TestEnqueueCleanup_ZeroSize_SkipsOrphanIncrement(t *testing.T) {
 	c := &orphanCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
 	storetest.Permissive(store)
 
 	coord, _ := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
-	coord.EnqueueCleanup(context.Background(), "b1", "orphan.txt", "delete_failed", 0)
+	coord.EnqueueCleanup(context.Background(), &core.CleanupRequest{
+		BackendName: "b1", ObjectKey: "orphan.txt", StorageKey: "orphan.txt", Reason: "delete_failed", SizeBytes: 0,
+	})
 
 	if len(c.increment) != 0 {
 		t.Errorf("expected 0 IncrementOrphanBytes calls for zero-size, got %d", len(c.increment))
@@ -133,14 +138,16 @@ func TestEnqueueCleanup_EnqueueFails_SkipsOrphanIncrement(t *testing.T) {
 	c := &orphanCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanEnqueue(c, errors.New("db down"))).AnyTimes()
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
 	storetest.Permissive(store)
 
 	coord, _ := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
-	coord.EnqueueCleanup(context.Background(), "b1", "orphan.txt", "delete_failed", 4096)
+	coord.EnqueueCleanup(context.Background(), &core.CleanupRequest{
+		BackendName: "b1", ObjectKey: "orphan.txt", StorageKey: "orphan.txt", Reason: "delete_failed", SizeBytes: 4096,
+	})
 
 	if len(c.increment) != 0 {
 		t.Errorf("expected 0 IncrementOrphanBytes calls when enqueue fails, got %d", len(c.increment))
@@ -154,14 +161,16 @@ func TestEnqueueCleanup_IncrementOrphanBytesFails(t *testing.T) {
 	c := &orphanCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanIncrement(c, errors.New("db error"))).AnyTimes()
 	storetest.Permissive(store)
 
 	coord, _ := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
-	coord.EnqueueCleanup(context.Background(), "b1", "key", "reason", 1024)
+	coord.EnqueueCleanup(context.Background(), &core.CleanupRequest{
+		BackendName: "b1", ObjectKey: "key", StorageKey: "key", Reason: "reason", SizeBytes: 1024,
+	})
 
 	if len(c.enqueue) != 1 {
 		t.Errorf("expected 1 enqueue call, got %d", len(c.enqueue))
@@ -181,12 +190,13 @@ type cleanupCalls struct {
 
 // stubEnqueue captures EnqueueCleanup calls into c.enqueue and returns
 // the supplied error so tests can drive both happy and DB-outage paths.
-func stubEnqueue(c *cleanupCalls, err error) func(context.Context, string, string, string, int64) error {
-	return func(_ context.Context, backend, key, reason string, size int64) error {
+func stubEnqueue(c *cleanupCalls, err error) func(context.Context, *core.CleanupRequest) error {
+	return func(_ context.Context, req *core.CleanupRequest) error {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.enqueue = append(c.enqueue, core.CleanupItem{
-			BackendName: backend, ObjectKey: key, Reason: reason, SizeBytes: size,
+			BackendName: req.BackendName, ObjectKey: req.ObjectKey, StorageKey: req.StorageKey,
+			Reason: req.Reason, SizeBytes: req.SizeBytes,
 		})
 		return err
 	}
@@ -198,14 +208,16 @@ func TestEnqueueCleanup_Success(t *testing.T) {
 	calls := &cleanupCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubEnqueue(calls, nil)).
 		AnyTimes()
 	storetest.Permissive(store)
 
 	coord, _ := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
 
-	coord.EnqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
+	coord.EnqueueCleanup(context.Background(), &core.CleanupRequest{
+		BackendName: "b1", ObjectKey: "orphan.txt", StorageKey: "orphan.txt", Reason: "orphan_put", SizeBytes: 1024,
+	})
 
 	if len(calls.enqueue) != 1 {
 		t.Fatalf("expected 1 enqueue call, got %d", len(calls.enqueue))
@@ -223,13 +235,15 @@ func TestEnqueueCleanup_DBError_LogsOnly(t *testing.T) {
 	calls := &cleanupCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubEnqueue(calls, errors.New("db down"))).
 		AnyTimes()
 	storetest.Permissive(store)
 
 	coord, _ := newFleet(t, store, map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, nil)
-	coord.EnqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
+	coord.EnqueueCleanup(context.Background(), &core.CleanupRequest{
+		BackendName: "b1", ObjectKey: "orphan.txt", StorageKey: "orphan.txt", Reason: "orphan_put", SizeBytes: 1024,
+	})
 
 	if len(calls.enqueue) != 1 {
 		t.Fatalf("expected 1 enqueue call, got %d", len(calls.enqueue))
@@ -251,7 +265,7 @@ func TestEnqueueCleanup_EnqueueFailure_RecordsMetricAndAudit(t *testing.T) {
 	calls := &cleanupCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubEnqueue(calls, errors.New("db down"))).
 		AnyTimes()
 	storetest.Permissive(store)
@@ -264,7 +278,9 @@ func TestEnqueueCleanup_EnqueueFailure_RecordsMetricAndAudit(t *testing.T) {
 	t.Cleanup(func() { audit.SetOnEvent(nil) })
 
 	before := promtest.ToFloat64(telemetry.CleanupEnqueueFailuresTotal.WithLabelValues("b1", "orphan_put", "enqueue"))
-	coord.EnqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
+	coord.EnqueueCleanup(context.Background(), &core.CleanupRequest{
+		BackendName: "b1", ObjectKey: "orphan.txt", StorageKey: "orphan.txt", Reason: "orphan_put", SizeBytes: 1024,
+	})
 	after := promtest.ToFloat64(telemetry.CleanupEnqueueFailuresTotal.WithLabelValues("b1", "orphan_put", "enqueue"))
 
 	if after-before != 1 {
@@ -287,7 +303,7 @@ func TestEnqueueCleanup_OrphanBytesFailure_RecordsMetricAndAudit(t *testing.T) {
 	calls := &cleanupCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubEnqueue(calls, nil)).AnyTimes()
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.New("db down")).AnyTimes()
@@ -301,7 +317,9 @@ func TestEnqueueCleanup_OrphanBytesFailure_RecordsMetricAndAudit(t *testing.T) {
 	t.Cleanup(func() { audit.SetOnEvent(nil) })
 
 	before := promtest.ToFloat64(telemetry.CleanupEnqueueFailuresTotal.WithLabelValues("b1", "orphan_put", "orphan_bytes"))
-	coord.EnqueueCleanup(context.Background(), "b1", "orphan.txt", "orphan_put", 1024)
+	coord.EnqueueCleanup(context.Background(), &core.CleanupRequest{
+		BackendName: "b1", ObjectKey: "orphan.txt", StorageKey: "orphan.txt", Reason: "orphan_put", SizeBytes: 1024,
+	})
 	after := promtest.ToFloat64(telemetry.CleanupEnqueueFailuresTotal.WithLabelValues("b1", "orphan_put", "orphan_bytes"))
 
 	if after-before != 1 {

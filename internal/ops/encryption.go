@@ -268,6 +268,10 @@ func (r *encryptRow) rewriteKey() string { return r.ObjectKey }
 // rewriteBackend returns the backend the row currently lives on.
 func (r *encryptRow) rewriteBackend() string { return r.BackendName }
 
+// rewriteStorageKey returns the path this copy's bytes occupy on its backend,
+// which is what the rewrite reads and writes.
+func (r *encryptRow) rewriteStorageKey() string { return r.StorageKey }
+
 // rewriteSize returns the row's stored size, used for quota accounting.
 func (r *encryptRow) rewriteSize() int64 { return r.SizeBytes }
 
@@ -284,6 +288,10 @@ func (r *decryptRow) rewriteKey() string { return r.ObjectKey }
 
 // rewriteBackend returns the backend the row currently lives on.
 func (r *decryptRow) rewriteBackend() string { return r.BackendName }
+
+// rewriteStorageKey returns the path this copy's bytes occupy on its backend,
+// which is what the rewrite reads and writes.
+func (r *decryptRow) rewriteStorageKey() string { return r.StorageKey }
 
 // rewriteSize returns the row's stored size, used for quota accounting.
 func (r *decryptRow) rewriteSize() int64 { return r.SizeBytes }

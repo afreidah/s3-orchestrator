@@ -118,11 +118,16 @@ func schemaRewindSteps(t *testing.T, s *Store) []schemaRewindStep {
 		}
 	}
 	return []schemaRewindStep{
-		// The view goes first: it reads the quota and pending tables that
-		// older steps rebuild, and SQLite refuses to alter a table a view
-		// depends on.
-		{19, func() {
+		// The view goes before the storage-key columns: it reads the pending
+		// table, and SQLite refuses to alter a table a view depends on.
+		{20, func() {
 			exec("drop backend_capacity", `DROP VIEW IF EXISTS backend_capacity`)
+			exec("drop the storage-key index", `DROP INDEX IF EXISTS idx_object_locations_backend_storage_key`)
+			for _, table := range []string{"object_locations", "pending_objects", "cleanup_queue", "cleanup_dlq"} {
+				dropColumns(t, s, table, "storage_key")
+			}
+		}},
+		{19, func() {
 			exec("drop backend_drains", `DROP TABLE IF EXISTS backend_drains`)
 		}},
 		// Rebuilt rather than column-dropped: the primary key moved onto the
@@ -230,7 +235,7 @@ func mustCreateUpload(t *testing.T, s *Store, uploadID, key, backend string) {
 // keeps it so call sites continue to document expected size at a glance.
 func mustRecordReplica(t *testing.T, s *Store, key, target, source string, _ int64) {
 	t.Helper()
-	if _, _, err := s.RecordReplica(context.Background(), key, target, source); err != nil {
+	if _, _, err := s.RecordReplica(context.Background(), &core.ReplicaInsert{ObjectKey: key, TargetBackend: target, SourceBackend: source, StorageKey: key + "!r-" + target}); err != nil {
 		t.Fatalf("RecordReplica(%s, %s): %v", key, target, err)
 	}
 }
@@ -238,7 +243,9 @@ func mustRecordReplica(t *testing.T, s *Store, key, target, source string, _ int
 // mustEnqueueCleanup enqueues a cleanup item, failing the test on error.
 func mustEnqueueCleanup(t *testing.T, s *Store, backend, key string) {
 	t.Helper()
-	if err := s.EnqueueCleanup(context.Background(), backend, key, "test", 256); err != nil {
+	if err := s.EnqueueCleanup(context.Background(), &core.CleanupRequest{
+		BackendName: backend, ObjectKey: key, StorageKey: key, Reason: "test", SizeBytes: 256,
+	}); err != nil {
 		t.Fatalf("EnqueueCleanup(%s): %v", key, err)
 	}
 }
@@ -592,7 +599,7 @@ func TestImportObject_SuppressedByPendingCleanup(t *testing.T) {
 		backend = "backend-a"
 	)
 
-	if err := s.EnqueueCleanup(ctx, backend, key, "delete_failed", 500); err != nil {
+	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: backend, ObjectKey: key, StorageKey: key, Reason: "delete_failed", SizeBytes: 500}); err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 
@@ -623,7 +630,7 @@ func TestImportObject_SuppressedByDeadLetteredCleanup(t *testing.T) {
 		backend = "backend-a"
 	)
 
-	if err := s.EnqueueCleanup(ctx, backend, key, "delete_failed", 500); err != nil {
+	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: backend, ObjectKey: key, StorageKey: key, Reason: "delete_failed", SizeBytes: 500}); err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 	items, err := s.GetPendingCleanups(ctx, 10)
@@ -654,7 +661,7 @@ func TestImportObject_OtherBackendUnaffected(t *testing.T) {
 
 	const key = "bucket/partial"
 
-	if err := s.EnqueueCleanup(ctx, "backend-a", key, "delete_failed", 500); err != nil {
+	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: key, StorageKey: key, Reason: "delete_failed", SizeBytes: 500}); err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 
@@ -676,7 +683,7 @@ func TestMoveObjectLocation(t *testing.T) {
 
 	mustRecordObject(t, s, "bucket/key1", "backend-a", 1024)
 
-	moved, err := s.MoveObjectLocation(ctx, "bucket/key1", "backend-a", "backend-b")
+	moved, err := s.MoveObjectLocation(ctx, &core.MoveLocation{ObjectKey: "bucket/key1", FromBackend: "backend-a", ToBackend: "backend-b", StorageKey: "bucket/key1" + "!m-" + "backend-b"})
 	if err != nil {
 		t.Fatalf("MoveObjectLocation: %v", err)
 	}
@@ -701,7 +708,7 @@ func TestMoveObjectLocation_TargetAlreadyHasCopy(t *testing.T) {
 	mustRecordObject(t, s, "bucket/dup", "backend-a", 100)
 	mustRecordReplica(t, s, "bucket/dup", "backend-b", "backend-a", 100)
 
-	moved, err := s.MoveObjectLocation(ctx, "bucket/dup", "backend-a", "backend-b")
+	moved, err := s.MoveObjectLocation(ctx, &core.MoveLocation{ObjectKey: "bucket/dup", FromBackend: "backend-a", ToBackend: "backend-b", StorageKey: "bucket/dup" + "!m-" + "backend-b"})
 	if err != nil {
 		t.Fatalf("MoveObjectLocation: %v", err)
 	}
@@ -718,7 +725,7 @@ func TestMoveObjectLocation_SourceGone(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	moved, err := s.MoveObjectLocation(ctx, "bucket/missing", "backend-a", "backend-b")
+	moved, err := s.MoveObjectLocation(ctx, &core.MoveLocation{ObjectKey: "bucket/missing", FromBackend: "backend-a", ToBackend: "backend-b", StorageKey: "bucket/missing" + "!m-" + "backend-b"})
 	if err != nil {
 		t.Fatalf("MoveObjectLocation: %v", err)
 	}
@@ -727,23 +734,36 @@ func TestMoveObjectLocation_SourceGone(t *testing.T) {
 	}
 }
 
-// TestRecordObject_Overwrite_SameBackend covers the branch in
-// clearDisplacedCopies where the prior copy lives on the new target
-// backend  -  no DeletedCopy should be returned because the PutObject will
-// overwrite in place.
+// TestRecordObject_Overwrite_SameBackend covers an overwrite landing on the
+// backend that already holds the object. The prior copy is displaced, at its
+// own path: a write no longer replaces anything in place, so those bytes are
+// still sitting where the last write put them and only an explicit cleanup
+// reclaims them.
 func TestRecordObject_Overwrite_SameBackend(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	mustRecordObject(t, s, "bucket/k", "backend-a", 500)
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: "bucket/k", Size: 500,
+		Copies: []core.ObjectCopy{{Backend: "backend-a", StorageKey: "bucket/k!first"}},
+	}); err != nil {
+		t.Fatalf("first RecordObject: %v", err)
+	}
 
-	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/k", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 700})
+	displaced, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: "bucket/k", Size: 700,
+		Copies: []core.ObjectCopy{{Backend: "backend-a", StorageKey: "bucket/k!second"}},
+	})
 	if err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if len(displaced) != 0 {
-		t.Errorf("expected 0 displaced (same backend), got %d: %+v", len(displaced), displaced)
+	if len(displaced) != 1 {
+		t.Fatalf("expected the prior copy displaced, got %+v", displaced)
+	}
+	if displaced[0].StorageKey != "bucket/k!first" {
+		t.Errorf("displaced path = %q, want the first write's own; %q is what this write just stored",
+			displaced[0].StorageKey, "bucket/k!second")
 	}
 }
 
@@ -1303,7 +1323,7 @@ func TestReplication_UnderAndOver(t *testing.T) {
 	}
 
 	// Record replica
-	size, inserted, err := s.RecordReplica(ctx, "bucket/key1", "backend-b", "backend-a")
+	size, inserted, err := s.RecordReplica(ctx, &core.ReplicaInsert{ObjectKey: "bucket/key1", TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: "bucket/key1" + "!r-" + "backend-b"})
 	if err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
@@ -1391,7 +1411,7 @@ func TestRecordReplica_Duplicate(t *testing.T) {
 	mustRecordReplica(t, s, "bucket/key1", "backend-b", "backend-a", 1024)
 
 	// Duplicate replica should return false
-	size, inserted, err := s.RecordReplica(ctx, "bucket/key1", "backend-b", "backend-a")
+	size, inserted, err := s.RecordReplica(ctx, &core.ReplicaInsert{ObjectKey: "bucket/key1", TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: "bucket/key1" + "!r-" + "backend-b"})
 	if err != nil {
 		t.Fatalf("RecordReplica duplicate: %v", err)
 	}
@@ -1413,12 +1433,12 @@ func TestRemoveExcessCopy(t *testing.T) {
 	mustRecordObject(t, s, "bucket/key1", "backend-a", 1024)
 	mustRecordReplica(t, s, "bucket/key1", "backend-b", "backend-a", 1024)
 
-	_, removed, err := s.RemoveExcessCopy(ctx, "bucket/key1", "backend-b", 1)
+	dropped, err := s.RemoveExcessCopy(ctx, "bucket/key1", "backend-b", 1)
 	if err != nil {
 		t.Fatalf("RemoveExcessCopy: %v", err)
 	}
-	if !removed {
-		t.Fatalf("expected removed=true with 2 copies and factor=1")
+	if !dropped.Removed {
+		t.Fatalf("expected Removed=true with 2 copies and factor=1")
 	}
 
 	locs, _ := s.GetAllObjectLocations(ctx, "bucket/key1")
@@ -1440,12 +1460,12 @@ func TestRemoveExcessCopy_NoOpWhenAtFactor(t *testing.T) {
 
 	mustRecordObject(t, s, "bucket/k-atfactor", "backend-a", 1024)
 
-	_, removed, err := s.RemoveExcessCopy(ctx, "bucket/k-atfactor", "backend-a", 1)
+	dropped, err := s.RemoveExcessCopy(ctx, "bucket/k-atfactor", "backend-a", 1)
 	if err != nil {
 		t.Fatalf("RemoveExcessCopy: %v", err)
 	}
-	if removed {
-		t.Fatalf("expected removed=false when count==factor; would under-replicate")
+	if dropped.Removed {
+		t.Fatalf("expected Removed=false when count==factor; would under-replicate")
 	}
 
 	locs, _ := s.GetAllObjectLocations(ctx, "bucket/k-atfactor")
@@ -1473,12 +1493,12 @@ func TestRemoveExcessCopy_NoOpWhenVictimGone(t *testing.T) {
 		t.Fatalf("setup DeleteObjectLocation: %v", err)
 	}
 
-	_, removed, err := s.RemoveExcessCopy(ctx, "bucket/k-vgone", "backend-b", 1)
+	dropped, err := s.RemoveExcessCopy(ctx, "bucket/k-vgone", "backend-b", 1)
 	if err != nil {
 		t.Fatalf("RemoveExcessCopy: %v", err)
 	}
-	if removed {
-		t.Fatalf("expected removed=false when victim already gone")
+	if dropped.Removed {
+		t.Fatalf("expected Removed=false when victim already gone")
 	}
 
 	locs, _ := s.GetAllObjectLocations(ctx, "bucket/k-vgone")
@@ -1539,7 +1559,7 @@ func TestCleanupQueue_Lifecycle(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if err := s.EnqueueCleanup(ctx, "backend-a", "bucket/orphan", "test", 512); err != nil {
+	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: "bucket/orphan", StorageKey: "bucket/orphan", Reason: "test", SizeBytes: 512}); err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 
@@ -1604,13 +1624,13 @@ func TestSweepStaleCleanupQueueRows_RemovesMatchAndDecrementsOrphan(t *testing.T
 	// (the production code does that at the call sites that enqueue), so
 	// we set it directly to simulate the steady state the sweep should
 	// undo.
-	if err := s.EnqueueCleanup(ctx, "backend-a", "bucket/k", "test", 100); err != nil {
+	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: "bucket/k", StorageKey: "bucket/k", Reason: "test", SizeBytes: 100}); err != nil {
 		t.Fatalf("EnqueueCleanup #1: %v", err)
 	}
-	if err := s.EnqueueCleanup(ctx, "backend-a", "bucket/k", "retry", 200); err != nil {
+	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: "bucket/k", StorageKey: "bucket/k", Reason: "retry", SizeBytes: 200}); err != nil {
 		t.Fatalf("EnqueueCleanup #2: %v", err)
 	}
-	if err := s.EnqueueCleanup(ctx, "backend-a", "bucket/other", "test", 50); err != nil {
+	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: "bucket/other", StorageKey: "bucket/other", Reason: "test", SizeBytes: 50}); err != nil {
 		t.Fatalf("EnqueueCleanup #3: %v", err)
 	}
 	if err := s.IncrementOrphanBytes(ctx, "backend-a", 350); err != nil {
@@ -1673,10 +1693,10 @@ func TestSweepStaleCleanupQueueRows_OnlyOtherBackend(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if err := s.EnqueueCleanup(ctx, "backend-a", "bucket/k", "test", 100); err != nil {
+	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: "bucket/k", StorageKey: "bucket/k", Reason: "test", SizeBytes: 100}); err != nil {
 		t.Fatalf("EnqueueCleanup a: %v", err)
 	}
-	if err := s.EnqueueCleanup(ctx, "backend-b", "bucket/k", "test", 200); err != nil {
+	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-b", ObjectKey: "bucket/k", StorageKey: "bucket/k", Reason: "test", SizeBytes: 200}); err != nil {
 		t.Fatalf("EnqueueCleanup b: %v", err)
 	}
 
@@ -3872,7 +3892,7 @@ func TestGetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 
 	const key = "bucket/replicated"
 	mustRecordObject(t, s, key, "backend-a", 100)
-	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
+	if _, _, err := s.RecordReplica(ctx, &core.ReplicaInsert{ObjectKey: key, TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: key + "!r-" + "backend-b"}); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 	// Hashed at write rather than by backfill, which stamps: the point here is

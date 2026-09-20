@@ -46,17 +46,17 @@ func (s *Store) InsertPendingIfFits(ctx context.Context, p *core.PendingObject) 
 		// default renders milliseconds while every other write renders
 		// nanoseconds, and the reaper's min-age check compares the two as text.
 		`INSERT INTO pending_objects
-		   (intent_id, object_key, backend_name, size_bytes,
+		   (intent_id, object_key, storage_key, backend_name, size_bytes,
 		    encrypted, encryption_key, key_id, plaintext_size, content_hash,
 		    compression_algorithm, compression_level, compression_format_version, logical_size,
 		    etag, content_type, user_metadata,
 		    created_at, role)
-		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		 FROM backend_capacity c
 		 WHERE c.backend_name = ?
 		   AND c.accepting_writes
 		   AND (c.available_bytes IS NULL OR c.available_bytes >= ?)`,
-		p.IntentID, p.ObjectKey, p.BackendName, p.SizeBytes,
+		p.IntentID, p.ObjectKey, core.StoragePath(p.ObjectKey, p.StorageKey), p.BackendName, p.SizeBytes,
 		encrypted, p.EncryptionKey, keyID, plaintextSize, contentHash,
 		nullableString(p.CompressionAlgorithm), nullableString(p.CompressionLevel),
 		nullableInt64(int64(p.CompressionFormatVersion)), nullableInt64(p.LogicalSize),
@@ -89,7 +89,7 @@ func (s *Store) DeletePending(ctx context.Context, intentID string) error {
 func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit int) ([]core.PendingObject, error) {
 	cutoff := formatTime(olderThan)
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT intent_id, object_key, backend_name, size_bytes,
+		`SELECT intent_id, object_key, storage_key, backend_name, size_bytes,
 		        encrypted, encryption_key, key_id, plaintext_size,
 		        content_hash, compression_algorithm, compression_level,
 		        compression_format_version, logical_size, created_at,
@@ -121,7 +121,7 @@ func (s *Store) GetStalePending(ctx context.Context, olderThan time.Time, limit 
 			userMetadata  sql.NullString
 			role          string
 		)
-		if err := rows.Scan(&p.IntentID, &p.ObjectKey, &p.BackendName, &p.SizeBytes,
+		if err := rows.Scan(&p.IntentID, &p.ObjectKey, &p.StorageKey, &p.BackendName, &p.SizeBytes,
 			&encrypted, &encKey, &keyID, &plaintextSize, &contentHash,
 			&compAlgorithm, &compLevel, &compVersion, &logicalSize, &createdAt,
 			&etag, &contentType, &userMetadata, &role,

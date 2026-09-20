@@ -24,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe"
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
@@ -227,7 +228,13 @@ func (w *Coordinator) RecordObjectOrCleanup(ctx context.Context, span trace.Span
 	if err != nil {
 		w.log.ErrorContext(ctx, "recordObject failed, cleaning up orphan",
 			"key", req.Key, "backend", backendName, "error", err)
-		w.RecoverFromRecordFailure(ctx, be, backendName, req.Key, "orphan_record_failed", req.Size)
+		w.RecoverFromRecordFailure(ctx, be, &core.CleanupRequest{
+			BackendName: backendName,
+			ObjectKey:   req.Key,
+			StorageKey:  req.Copies[0].StorageKey,
+			Reason:      "orphan_record_failed",
+			SizeBytes:   req.Size,
+		})
 		observe.RecordSpanError(span, err)
 		return fmt.Errorf("failed to record object: %w", err)
 	}
@@ -263,10 +270,14 @@ const reasonOverwriteDisplaced = "overwrite_displaced"
 // success and skips the enqueue so the cleanup queue does not collect
 // phantom rows for objects already gone. Callers own the failure log
 // message and span status before/after this call.
-func (w *Coordinator) RecoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, backendName, key, cleanupReason string, size int64) {
-	w.core.Acct().APICall(s3op.PutObject, backendName) // PUT that succeeded
-	delErr := w.core.DeleteWithTimeout(ctx, be, key)
-	w.core.Acct().APICall(s3op.DeleteObject, backendName) // cleanup DELETE
+//
+// What it deletes is the storage key on the request, which is the path this
+// write uploaded to. It is never another write's, so a commit failure here
+// cannot take a concurrent write's bytes with it.
+func (w *Coordinator) RecoverFromRecordFailure(ctx context.Context, be backend.ObjectBackend, c *core.CleanupRequest) {
+	w.core.Acct().APICall(s3op.PutObject, c.BackendName) // PUT that succeeded
+	delErr := w.core.DeleteWithTimeout(ctx, be, core.StoragePath(c.ObjectKey, c.StorageKey))
+	w.core.Acct().APICall(s3op.DeleteObject, c.BackendName) // cleanup DELETE
 	if delErr == nil {
 		return
 	}
@@ -276,12 +287,12 @@ func (w *Coordinator) RecoverFromRecordFailure(ctx context.Context, be backend.O
 	// recognise as no-ops.
 	if backend.IsNotFound(delErr) {
 		w.log.InfoContext(ctx, "orphan cleanup target already absent on backend",
-			"key", key, "backend", backendName, "reason", cleanupReason)
+			"key", c.ObjectKey, "storage_key", c.StorageKey, "backend", c.BackendName, "reason", c.Reason)
 		return
 	}
 	w.log.ErrorContext(ctx, "failed to clean up orphaned object",
-		"key", key, "backend", backendName, "error", delErr)
-	w.EnqueueCleanup(ctx, backendName, key, cleanupReason, size)
+		"key", c.ObjectKey, "storage_key", c.StorageKey, "backend", c.BackendName, "error", delErr)
+	w.EnqueueCleanup(ctx, c)
 }
 
 // NewPendingIntent builds the intent a write will be admitted on. The backend
@@ -298,6 +309,12 @@ func (w *Coordinator) RecoverFromRecordFailure(ctx context.Context, be backend.O
 // against if this intent is recovered rather than committed. id is what the
 // client will be told the object is; carrying it here is what lets a
 // reaper-promoted object answer a HEAD without re-learning it.
+//
+// The intent also decides where the bytes go. Its id names a path under the
+// object's key, so one intent is one set of bytes at one path that nothing else
+// writes - which is what makes every later cleanup unambiguous. A write placing
+// several copies at once mints an intent per copy and therefore a path per
+// copy, so discarding one of them cannot touch its siblings.
 func NewPendingIntent(key string, size int64, form *core.StoredForm, id *core.ObjectIdentity) *core.PendingObject {
 	p := &core.PendingObject{
 		IntentID:  audit.NewID(),
@@ -305,8 +322,18 @@ func NewPendingIntent(key string, size int64, form *core.StoredForm, id *core.Ob
 		SizeBytes: size,
 		Identity:  id,
 	}
+	p.StorageKey = internalkey.StorageKey(key, p.IntentID)
 	p.ApplyStoredForm(form)
 	return p
+}
+
+// NewStorageKey mints a path for a write that places bytes without claiming a
+// pending intent first: a replica, a rebalance or drain move, or a copy the
+// assembly paths write directly. They have no intent id to name the path after,
+// so they take a fresh id of their own - the property that matters is that no
+// two writes ever share a path, not where the id came from.
+func NewStorageKey(objectKey string) string {
+	return internalkey.StorageKey(objectKey, audit.NewID())
 }
 
 // RecordObjectAndPromoteIntent commits the object location, updates
@@ -402,9 +429,9 @@ const (
 	WriteCopyFailed    = "failed"
 )
 
-// cleanupDisplacedCopies removes stale copies on other backends displaced
-// by an overwrite. Shared between RecordObjectOrCleanup and
-// RecordObjectAndPromoteIntent (the original code duplicated this loop).
+// cleanupDisplacedCopies removes the copies an overwrite displaced. Shared
+// between RecordObjectOrCleanup and RecordObjectAndPromoteIntent (the original
+// code duplicated this loop).
 func (w *Coordinator) cleanupDisplacedCopies(ctx context.Context, key, newBackend string, displaced []core.DeletedCopy) {
 	w.deleteDisplaced(ctx, key, displaced)
 
@@ -417,9 +444,15 @@ func (w *Coordinator) cleanupDisplacedCopies(ctx context.Context, key, newBacken
 	}
 }
 
-// deleteDisplaced removes each copy's bytes from the backend that holds them.
-// Shared with the companion-copy path, which discards a copy without any
-// overwrite having displaced it and so has nothing to audit.
+// deleteDisplaced removes each copy's bytes from the backend that holds them,
+// at the path that copy's own row or intent named. Shared with the
+// companion-copy path, which discards a copy without any overwrite having
+// displaced it and so has nothing to audit.
+//
+// Deleting per copy rather than per key is the point. Two writes of one key on
+// one backend hold two paths, so the cleanup that follows either of them names
+// the bytes it is for and leaves the other write's alone - the failure in
+// issue #1527, where the loser's cleanup deleted the winner's object.
 func (w *Coordinator) deleteDisplaced(ctx context.Context, key string, displaced []core.DeletedCopy) {
 	for _, dc := range displaced {
 		dcBackend, ok := w.core.Backends()[dc.BackendName]
@@ -435,26 +468,37 @@ func (w *Coordinator) deleteDisplaced(ctx context.Context, key string, displaced
 		if reason == "" {
 			reason = reasonOverwriteDisplaced
 		}
-		w.DeleteOrEnqueue(ctx, dcBackend, dc.BackendName, key, reason, dc.SizeBytes)
+		w.DeleteOrEnqueue(ctx, dcBackend, &core.CleanupRequest{
+			BackendName: dc.BackendName,
+			ObjectKey:   key,
+			StorageKey:  dc.StorageKey,
+			Reason:      reason,
+			SizeBytes:   dc.SizeBytes,
+		})
 	}
 }
 
-// DeleteOrEnqueue attempts to delete an object from a backend. On
-// failure it logs a warning and enqueues the key for background retry.
+// DeleteOrEnqueue attempts to delete the bytes at a backend path. On
+// failure it logs a warning and enqueues the path for background retry.
 // The standard "best-effort orphan cleanup" primitive used throughout the
 // manager: rebalancer, replicator, multipart cleanup, and delete paths.
-// sizeBytes is tracked as orphan bytes when the delete is enqueued.
+// SizeBytes is tracked as orphan bytes when the delete is enqueued.
 // Always accounts for the cleanup DELETE as one API call against the
 // backend's usage counter, regardless of success or failure (the HTTP
 // call to the backend was made either way).
-func (w *Coordinator) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
+//
+// It deletes the request's storage key, which names one write's bytes. A caller
+// deleting an object's copy takes that path off the row or intent that recorded
+// it, so the deletion cannot reach a copy some other write placed under the
+// same key.
+func (w *Coordinator) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, c *core.CleanupRequest) {
 	// Deliberately not gated on usage limits. A delete is the one operation
 	// that reduces what a backend holds, so refusing it over budget would
 	// leave an operator unable to get back under one, and a client DELETE
 	// that returns without removing the object is simply wrong. The API call
 	// is still charged below.
-	err := w.core.DeleteWithTimeout(ctx, be, key)
-	w.core.Acct().APICall(s3op.DeleteObject, backendName)
+	err := w.core.DeleteWithTimeout(ctx, be, core.StoragePath(c.ObjectKey, c.StorageKey))
+	w.core.Acct().APICall(s3op.DeleteObject, c.BackendName)
 	if err == nil {
 		return
 	}
@@ -464,12 +508,12 @@ func (w *Coordinator) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBack
 	// recognise as no-ops.
 	if backend.IsNotFound(err) {
 		w.log.InfoContext(ctx, "delete target already absent on backend, skipping cleanup enqueue",
-			"backend", backendName, "key", key, "reason", reason)
+			"backend", c.BackendName, "key", c.ObjectKey, "storage_key", c.StorageKey, "reason", c.Reason)
 		return
 	}
 	w.log.WarnContext(ctx, "failed to delete object, enqueuing cleanup",
-		"backend", backendName, "key", key, "reason", reason, "error", err)
-	w.EnqueueCleanup(ctx, backendName, key, reason, sizeBytes)
+		"backend", c.BackendName, "key", c.ObjectKey, "storage_key", c.StorageKey, "reason", c.Reason, "error", err)
+	w.EnqueueCleanup(ctx, c)
 }
 
 // EnqueueCleanup adds a failed cleanup operation to the retry queue and
@@ -486,17 +530,17 @@ func (w *Coordinator) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBack
 // "metric incremented" to the exact backend/key/size, then run
 // POST /admin/api/reconcile to recover untracked orphans once DB
 // connectivity is restored. See docs/cleanup-and-lifecycle.md for the runbook.
-func (w *Coordinator) EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) {
-	if err := w.stores.EnqueueCleanup(ctx, backendName, objectKey, reason, sizeBytes); err != nil {
-		w.recordEnqueueFailure(ctx, backendName, objectKey, reason, sizeBytes, "enqueue", err)
+func (w *Coordinator) EnqueueCleanup(ctx context.Context, c *core.CleanupRequest) {
+	if err := w.stores.EnqueueCleanup(ctx, c); err != nil {
+		w.recordEnqueueFailure(ctx, c, "enqueue", err)
 		return
 	}
-	if sizeBytes > 0 {
-		if err := w.stores.IncrementOrphanBytes(ctx, backendName, sizeBytes); err != nil {
-			w.recordEnqueueFailure(ctx, backendName, objectKey, reason, sizeBytes, "orphan_bytes", err)
+	if c.SizeBytes > 0 {
+		if err := w.stores.IncrementOrphanBytes(ctx, c.BackendName, c.SizeBytes); err != nil {
+			w.recordEnqueueFailure(ctx, c, "orphan_bytes", err)
 		}
 	}
-	telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(reason).Inc()
+	telemetry.CleanupQueueEnqueuedTotal.WithLabelValues(c.Reason).Inc()
 }
 
 // recordEnqueueFailure increments the failure counter, emits an audit
@@ -504,18 +548,20 @@ func (w *Coordinator) EnqueueCleanup(ctx context.Context, backendName, objectKey
 // and logs an error. Hoisted so the two failure stages (enqueue vs
 // orphan_bytes) share one observability path  -  a future spool
 // integration plugs in here.
-func (w *Coordinator) recordEnqueueFailure(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64, stage string, err error) {
-	telemetry.CleanupEnqueueFailuresTotal.WithLabelValues(backendName, reason, stage).Inc()
+func (w *Coordinator) recordEnqueueFailure(ctx context.Context, c *core.CleanupRequest, stage string, err error) {
+	telemetry.CleanupEnqueueFailuresTotal.WithLabelValues(c.BackendName, c.Reason, stage).Inc()
 	audit.Log(ctx, "storage.OrphanEnqueueFailed",
-		slog.String("backend", backendName),
-		slog.String("key", objectKey),
-		slog.String("reason", reason),
+		slog.String("backend", c.BackendName),
+		slog.String("key", c.ObjectKey),
+		slog.String("storage_key", c.StorageKey),
+		slog.String("reason", c.Reason),
 		slog.String("stage", stage),
-		slog.Int64("size", sizeBytes),
+		slog.Int64("size", c.SizeBytes),
 		slog.String("error", err.Error()),
 	)
 	w.log.ErrorContext(ctx, "orphan cleanup enqueue failed (best-effort)",
-		"backend", backendName, "key", objectKey, "reason", reason, "stage", stage, "error", err)
+		"backend", c.BackendName, "key", c.ObjectKey, "storage_key", c.StorageKey,
+		"reason", c.Reason, "stage", stage, "error", err)
 }
 
 // -------------------------------------------------------------------------
@@ -546,6 +592,14 @@ type MoveRequest struct {
 	SrcName     string
 	DestBackend backend.ObjectBackend
 	DestName    string
+
+	// SrcStorageKey is where the source copy's bytes are, read off its row.
+	// DestStorageKey is where this move is putting them, minted for the move
+	// rather than inherited: the move is a write, so it gets a path naming
+	// itself, and each of the three cleanup paths below then deletes exactly
+	// the bytes it is responsible for.
+	SrcStorageKey  string
+	DestStorageKey string
 
 	Reasons MoveReasonProfile
 }
@@ -578,6 +632,20 @@ var (
 	}
 )
 
+// destCleanup describes the bytes this move put on the destination, for the two
+// paths that have to take them back off again. The size is the caller's
+// estimate, which is all either path has: neither of them completed a metadata
+// commit, so no authoritative size was ever settled.
+func (r *MoveRequest) destCleanup(reason string) *core.CleanupRequest {
+	return &core.CleanupRequest{
+		BackendName: r.DestName,
+		ObjectKey:   r.Key,
+		StorageKey:  r.DestStorageKey,
+		Reason:      reason,
+		SizeBytes:   r.SizeBytes,
+	}
+}
+
 // MoveObject performs a single src -> dest object move with cleanup
 // semantics that drain and rebalance share: StreamCopy the source body
 // to dest, atomic MoveObjectLocation CAS, orphan cleanup on dest if
@@ -597,22 +665,27 @@ var (
 func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, error) {
 	src := backend.CopyEndpoint{Name: req.SrcName, Backend: req.SrcBackend}
 	dst := backend.CopyEndpoint{Name: req.DestName, Backend: req.DestBackend}
-	if _, err := w.core.StreamCopy(ctx, src, dst, req.Key, req.SizeBytes); err != nil {
+	if _, err := w.core.StreamCopy(ctx, src, dst, req.SrcStorageKey, req.DestStorageKey, req.SizeBytes); err != nil {
 		return 0, fmt.Errorf("stream copy %s -> %s: %w", req.SrcName, req.DestName, err)
 	}
 
-	movedSize, err := w.stores.MoveObjectLocation(ctx, req.Key, req.SrcName, req.DestName)
+	movedSize, err := w.stores.MoveObjectLocation(ctx, &core.MoveLocation{
+		ObjectKey:   req.Key,
+		FromBackend: req.SrcName,
+		ToBackend:   req.DestName,
+		StorageKey:  req.DestStorageKey,
+	})
 	if err != nil {
 		// Destination has the bytes but the metadata CAS failed;
 		// enqueue the orphan so the cleanup worker collects it.
-		w.DeleteOrEnqueue(ctx, req.DestBackend, req.DestName, req.Key, req.Reasons.Orphan, req.SizeBytes)
+		w.DeleteOrEnqueue(ctx, req.DestBackend, req.destCleanup(req.Reasons.Orphan))
 		return 0, fmt.Errorf("move object location %s -> %s: %w", req.SrcName, req.DestName, err)
 	}
 	if movedSize == 0 {
 		// Raced: another process moved or deleted the row. The
 		// destination bytes are orphaned; enqueue them so the cleanup
 		// worker collects them.
-		w.DeleteOrEnqueue(ctx, req.DestBackend, req.DestName, req.Key, req.Reasons.StaleOrphan, req.SizeBytes)
+		w.DeleteOrEnqueue(ctx, req.DestBackend, req.destCleanup(req.Reasons.StaleOrphan))
 		return 0, ErrMoveStale
 	}
 
@@ -621,7 +694,13 @@ func (w *Coordinator) MoveObject(ctx context.Context, req *MoveRequest) (int64, 
 	// and Ingress include their own single API-call tick (one for the source
 	// GET, one for the dest PUT); DeleteOrEnqueue includes the source DELETE
 	// tick. No additional Acct().APICall calls.
-	w.DeleteOrEnqueue(ctx, req.SrcBackend, req.SrcName, req.Key, req.Reasons.SourceDelete, movedSize)
+	w.DeleteOrEnqueue(ctx, req.SrcBackend, &core.CleanupRequest{
+		BackendName: req.SrcName,
+		ObjectKey:   req.Key,
+		StorageKey:  req.SrcStorageKey,
+		Reason:      req.Reasons.SourceDelete,
+		SizeBytes:   movedSize,
+	})
 	w.core.Acct().Egress(s3op.GetObject, req.SrcName, movedSize)
 	w.core.Acct().Ingress(s3op.PutObject, req.DestName, movedSize)
 	// Both ends moved at the size the CAS committed, charged by the move's own

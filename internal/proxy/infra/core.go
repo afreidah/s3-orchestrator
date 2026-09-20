@@ -257,10 +257,11 @@ func (c *BackendRuntime) WithTimeout(ctx context.Context) (context.Context, cont
 	return c.timeouts.WithTimeout(ctx)
 }
 
-// DeleteWithTimeout deletes an object from a backend using the
-// configured backend timeout.
-func (c *BackendRuntime) DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error {
-	return c.timeouts.DeleteWithTimeout(ctx, be, key)
+// DeleteWithTimeout deletes the object at storageKey on a backend using the
+// configured backend timeout. The path, not the object's key: those stopped
+// being the same string when writes started storing their bytes per write.
+func (c *BackendRuntime) DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, storageKey string) error {
+	return c.timeouts.DeleteWithTimeout(ctx, be, storageKey)
 }
 
 // StreamCopy reads an object from src and writes it to dst with timeouts
@@ -279,7 +280,12 @@ func (c *BackendRuntime) DeleteWithTimeout(ctx context.Context, be backend.Objec
 // metadata commit settled on rather than the size that crossed the wire, and
 // the two disagree only when an overwrite lands mid-copy, which each of them
 // reports in its own terms. sizeEstimate is what admission is judged on.
-func (c *BackendRuntime) StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, key string, sizeEstimate int64) (int64, error) {
+//
+// srcKey and dstKey are the paths on each side. They differ: the copy is a new
+// write on the destination, so it is stored under a path naming itself, and a
+// cleanup that follows it deletes those bytes rather than whatever else the
+// object has on that backend.
+func (c *BackendRuntime) StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, srcKey, dstKey string, sizeEstimate int64) (int64, error) {
 	// Refusals are tagged with the leg that had no headroom, so callers get
 	// the same structural retry answer they already act on for I/O failures:
 	// another source may have egress left, but a destination that is full
@@ -296,7 +302,7 @@ func (c *BackendRuntime) StreamCopy(ctx context.Context, src, dst backend.CopyEn
 			Err:   fmt.Errorf("destination %s: %w", dst.Name, core.ErrUsageLimitExceeded),
 		}
 	}
-	return c.timeouts.StreamCopy(ctx, src.Backend, dst.Backend, key)
+	return c.timeouts.StreamCopy(ctx, src.Backend, dst.Backend, srcKey, dstKey)
 }
 
 // GetWithTimeout issues a GET against be using the configured backend

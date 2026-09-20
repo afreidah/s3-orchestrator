@@ -221,7 +221,7 @@ func TestRecordReplica_PreservesRepresentation(t *testing.T) {
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: "bucket/replicated", Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1024, Form: form}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, inserted, err := s.RecordReplica(ctx, "bucket/replicated", "backend-b", "backend-a"); err != nil || !inserted {
+	if _, inserted, err := s.RecordReplica(ctx, &core.ReplicaInsert{ObjectKey: "bucket/replicated", TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: "bucket/replicated" + "!r-" + "backend-b"}); err != nil || !inserted {
 		t.Fatalf("RecordReplica: inserted=%v err=%v", inserted, err)
 	}
 

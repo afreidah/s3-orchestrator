@@ -14,7 +14,10 @@
 SELECT pg_advisory_xact_lock(hashtext($1));
 
 -- name: GetExistingCopiesForUpdate :many
-SELECT backend_name, size_bytes, created_at, encrypted,
+-- storage_key comes along because the caller that deletes these rows is also
+-- the caller that deletes their bytes, and after per-write storage keys the
+-- path is no longer derivable from the object key.
+SELECT backend_name, storage_key, size_bytes, created_at, encrypted,
        (encryption_key IS NOT NULL AND length(encryption_key) > 0) AS has_dek
 FROM object_locations
 WHERE object_key = $1
@@ -25,41 +28,58 @@ DELETE FROM object_locations
 WHERE object_key = $1;
 
 -- name: InsertObjectLocation :exec
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW());
+INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW());
 
 -- ListObjectsByBackend backs the rebalance, placement and drain candidate
 -- scans, so it returns managed rows only. Objects outside every configured
 -- bucket prefix are tracked for accounting but are not the orchestrator's to
 -- move.
 -- name: ListObjectsByBackend :many
-SELECT object_key, backend_name, size_bytes, created_at
+SELECT object_key, backend_name, storage_key, size_bytes, created_at
 FROM object_locations
 WHERE backend_name = $1 AND managed
 ORDER BY size_bytes ASC
 LIMIT $2;
 
--- ListObjectsByBackendKeyAsc returns rows for a backend in ascending object_key
--- order, starting strictly after the supplied cursor. Used by ReconcileBackend
--- to drive a bounded-memory sorted-merge join against an S3 ListObjects walk.
--- Pass '' as the cursor on the first call.
+-- ListObjectsByBackendKeyAsc returns rows for a backend in ascending
+-- storage_key order, starting strictly after the supplied cursor. Used by
+-- ReconcileBackend to drive a bounded-memory sorted-merge join against an S3
+-- ListObjects walk. Pass '' as the cursor on the first call.
+--
+-- storage_key rather than object_key because that is what the other side of the
+-- merge returns: a backend lists the paths it holds, and after per-write
+-- storage keys a path is no longer the object's key. Walking by object_key
+-- would pair every row against the wrong listing entry, which the merge reports
+-- as one import and one delete per object, forever.
 --
 -- COLLATE "C" is required: the merge join compares keys in byte order (Go string
 -- comparison) against S3 ListObjectsV2, which is UTF-8 byte ordered. Without it,
--- a locale-collated object_key column orders the cursor differently, the merge
--- mis-pairs keys, and reconcile oscillates (false imports/removes that never
--- converge). The cursor predicate and ORDER BY must use the same collation.
+-- a locale-collated column orders the cursor differently, the merge mis-pairs
+-- keys, and reconcile oscillates (false imports/removes that never converge).
+-- The cursor predicate and ORDER BY must use the same collation.
 -- name: ListObjectsByBackendKeyAsc :many
-SELECT object_key, backend_name, size_bytes, created_at
+SELECT object_key, backend_name, storage_key, size_bytes, created_at
 FROM object_locations
-WHERE backend_name = $1 AND object_key COLLATE "C" > $2
-ORDER BY object_key COLLATE "C" ASC
+WHERE backend_name = $1 AND storage_key COLLATE "C" > $2
+ORDER BY storage_key COLLATE "C" ASC
 LIMIT $3;
 
 -- name: CheckObjectExistsOnBackend :one
 SELECT EXISTS(
     SELECT 1 FROM object_locations
     WHERE object_key = $1 AND backend_name = $2
+) AS exists;
+
+-- name: CopyExistsAtPath :one
+-- Whether the backend already has a copy recorded at this path, whatever
+-- object it belongs to. Import asks before adopting bytes it found, because
+-- the object key it would record them under is the path itself, which says
+-- nothing about the row an orchestrator-written path already has under the
+-- real object's key.
+SELECT EXISTS(
+    SELECT 1 FROM object_locations
+    WHERE backend_name = $1 AND storage_key = $2
 ) AS exists;
 
 -- name: LockObjectOnBackend :one
@@ -72,7 +92,7 @@ SELECT EXISTS(
 -- bytes, so what the encoder measured about them still holds. Dropping them
 -- would have the next pass download and encode the copy again to learn what
 -- this row already knows.
-SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash,
+SELECT storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash,
        compression_algorithm, compression_level, compression_format_version, logical_size,
        compression_probe_size, compression_probe_level, etag, content_type, user_metadata
 FROM object_locations
@@ -90,7 +110,7 @@ WHERE object_key = $1 AND backend_name = $2;
 -- splitting them would page a byte-ordered scan with a locale-ordered cursor and
 -- skip or repeat keys. DISTINCT ON must carry it too, or Postgres rejects the
 -- query for not matching the leading ORDER BY expression.
-SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name,
+SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, storage_key,
        (CASE
            WHEN compression_algorithm IS NOT NULL THEN COALESCE(logical_size, size_bytes)
            WHEN encrypted THEN COALESCE(plaintext_size, size_bytes)
@@ -113,14 +133,14 @@ FROM object_locations
 WHERE object_key LIKE @prefix::text || '%' ESCAPE '\';
 
 -- name: GetAllObjectLocations :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at, last_scrubbed_at
+SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at, last_scrubbed_at
 FROM object_locations
 WHERE object_key = $1
 ORDER BY created_at ASC;
 
 -- name: InsertObjectLocationIfNotExists :one
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, managed, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, managed, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING true AS inserted;
 
@@ -163,7 +183,7 @@ ORDER BY is_dir DESC, name ASC;
 -- Requiring the count to equal tag_count is what makes several tags an AND.
 -- The primary key allows one row per (object_key, tag_key), so a count equal to
 -- the number of pairs asked for means every one of them matched.
-SELECT DISTINCT ON (ol.object_key COLLATE "C") ol.object_key, ol.backend_name, ol.size_bytes, ol.created_at
+SELECT DISTINCT ON (ol.object_key COLLATE "C") ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.created_at
 FROM object_locations ol
 WHERE ol.object_key LIKE @prefix::text || '%' ESCAPE '\'
   AND ol.created_at < @cutoff
@@ -228,7 +248,7 @@ GROUP BY backend_name;
 -- An empty backend_filter selects every backend, which is what a pass over the
 -- whole fleet asks for. Filtering here rather than after the page is read is
 -- what keeps the row_limit spent on candidates the pass will act on.
-SELECT object_key, backend_name, size_bytes, etag
+SELECT object_key, backend_name, storage_key, size_bytes, etag
 FROM object_locations
 WHERE encrypted = FALSE
   AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
@@ -255,7 +275,7 @@ WHERE object_key = $1 AND backend_name = $2
 -- name: ListAllEncryptedLocations :many
 -- Cursor-paged for the same reason as ListUnencryptedLocations: decrypting a
 -- copy removes it from this set mid-walk.
-SELECT object_key, backend_name, size_bytes, encryption_key, key_id, plaintext_size, etag
+SELECT object_key, backend_name, storage_key, size_bytes, encryption_key, key_id, plaintext_size, etag
 FROM object_locations
 WHERE encrypted = TRUE
   AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
@@ -288,7 +308,7 @@ LIMIT sqlc.arg(row_limit);
 -- The size floor is applied here for the same reason, one the row can answer:
 -- a copy below it is never a candidate, so listing it only to decline it costs
 -- a page slot on every pass forever.
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
+SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id,
        plaintext_size, compression_algorithm, compression_level,
        compression_format_version, logical_size, etag
 FROM object_locations
@@ -309,7 +329,7 @@ LIMIT sqlc.arg(row_limit);
 -- decompress-existing rewrites. Cursor-paged for the same reason, and the case
 -- that makes it matter most: every object this pass succeeds on leaves the
 -- predicate, so an offset walk would skip whole pages and stop early.
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
+SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id,
        plaintext_size, compression_algorithm, compression_level,
        compression_format_version, logical_size, etag
 FROM object_locations
@@ -393,7 +413,7 @@ WHERE object_key = $1 AND backend_name = $2
 -- egress scales with how often the scrubber runs rather than with how stale the
 -- data is. The cutoff arrives as a timestamp rather than an interval so the
 -- comparison stays sargable against the ordering expression.
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at, last_scrubbed_at
+SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at, last_scrubbed_at
 FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
   AND backend_name = ANY(@backend_names::text[])
@@ -452,7 +472,7 @@ WHERE content_hash IS NOT NULL AND managed;
 -- Return object locations that have no content hash, for backfill. Hashing
 -- reads the whole body, so unmanaged rows are left alone rather than spending
 -- egress on data the orchestrator does not manage.
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at
+SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at
 FROM object_locations
 WHERE content_hash IS NULL AND managed
   AND (sqlc.arg(backend_filter)::text = '' OR backend_name = sqlc.arg(backend_filter)::text)
@@ -489,7 +509,7 @@ WHERE object_key = $1;
 -- can delete the rows and decrement the corresponding backend quotas
 -- atomically. Used by the batch-delete path so an N-key request is one
 -- transaction instead of N.
-SELECT object_key, backend_name, size_bytes
+SELECT object_key, backend_name, storage_key, size_bytes
 FROM object_locations
 WHERE object_key = ANY(@object_keys::text[])
 FOR UPDATE;

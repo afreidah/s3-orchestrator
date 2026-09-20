@@ -118,6 +118,7 @@ func rewritableFromRow(r *rewritableRow) core.RewritableLocation {
 	return core.RewritableLocation{
 		ObjectKey:                r.ObjectKey,
 		BackendName:              r.BackendName,
+		StorageKey:               r.StorageKey,
 		SizeBytes:                r.SizeBytes,
 		Encrypted:                r.Encrypted,
 		EncryptionKey:            r.EncryptionKey,

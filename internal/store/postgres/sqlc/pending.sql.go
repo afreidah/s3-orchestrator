@@ -15,7 +15,7 @@ const clearPendingForKey = `-- name: ClearPendingForKey :many
 DELETE FROM pending_objects
 WHERE object_key = $1
   AND intent_id <> ALL($2::text[])
-RETURNING intent_id, backend_name, size_bytes
+RETURNING intent_id, backend_name, storage_key, size_bytes
 `
 
 type ClearPendingForKeyParams struct {
@@ -26,6 +26,7 @@ type ClearPendingForKeyParams struct {
 type ClearPendingForKeyRow struct {
 	IntentID    string
 	BackendName string
+	StorageKey  string
 	SizeBytes   int64
 }
 
@@ -46,7 +47,12 @@ func (q *Queries) ClearPendingForKey(ctx context.Context, arg ClearPendingForKey
 	items := []ClearPendingForKeyRow{}
 	for rows.Next() {
 		var i ClearPendingForKeyRow
-		if err := rows.Scan(&i.IntentID, &i.BackendName, &i.SizeBytes); err != nil {
+		if err := rows.Scan(
+			&i.IntentID,
+			&i.BackendName,
+			&i.StorageKey,
+			&i.SizeBytes,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -114,7 +120,7 @@ const getStalePendingObjects = `-- name: GetStalePendingObjects :many
 SELECT intent_id, object_key, backend_name, size_bytes,
        encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at,
        compression_algorithm, compression_level, compression_format_version, logical_size,
-       etag, content_type, user_metadata, role
+       etag, content_type, user_metadata, role, storage_key
 FROM pending_objects
 WHERE created_at <= $1
 ORDER BY created_at ASC
@@ -128,6 +134,9 @@ type GetStalePendingObjectsParams struct {
 
 // Return pending intents older than @older_than for reaper resolution.
 // Bounded by @max_keys per call so a backlog cannot starve other queries.
+// Column order follows the table so sqlc projects the row onto the shared
+// pending_objects model rather than minting a query-specific struct; storage_key
+// is last because that is where the migration added it.
 func (q *Queries) GetStalePendingObjects(ctx context.Context, arg GetStalePendingObjectsParams) ([]PendingObject, error) {
 	rows, err := q.db.Query(ctx, getStalePendingObjects, arg.OlderThan, arg.MaxKeys)
 	if err != nil {
@@ -156,6 +165,7 @@ func (q *Queries) GetStalePendingObjects(ctx context.Context, arg GetStalePendin
 			&i.ContentType,
 			&i.UserMetadata,
 			&i.Role,
+			&i.StorageKey,
 		); err != nil {
 			return nil, err
 		}
@@ -170,24 +180,25 @@ func (q *Queries) GetStalePendingObjects(ctx context.Context, arg GetStalePendin
 const insertPendingObjectIfFits = `-- name: InsertPendingObjectIfFits :execrows
 
 INSERT INTO pending_objects (
-    intent_id, object_key, backend_name, size_bytes,
+    intent_id, object_key, storage_key, backend_name, size_bytes,
     encrypted, encryption_key, key_id, plaintext_size, content_hash,
     compression_algorithm, compression_level, compression_format_version, logical_size,
     etag, content_type, user_metadata, role
 )
-SELECT $1, $2, $3::text, $4::bigint,
-       $5, $6, $7, $8, $9,
-       $10, $11, $12, $13,
-       $14, $15, $16, $17
+SELECT $1, $2, $3, $4::text, $5::bigint,
+       $6, $7, $8, $9, $10,
+       $11, $12, $13, $14,
+       $15, $16, $17, $18
 FROM backend_capacity c
-WHERE c.backend_name = $3::text
+WHERE c.backend_name = $4::text
   AND c.accepting_writes
-  AND (c.available_bytes IS NULL OR c.available_bytes >= $4::bigint)
+  AND (c.available_bytes IS NULL OR c.available_bytes >= $5::bigint)
 `
 
 type InsertPendingObjectIfFitsParams struct {
 	IntentID                 string
 	ObjectKey                string
+	StorageKey               string
 	BackendName              string
 	SizeBytes                int64
 	Encrypted                bool
@@ -234,6 +245,7 @@ func (q *Queries) InsertPendingObjectIfFits(ctx context.Context, arg InsertPendi
 	result, err := q.db.Exec(ctx, insertPendingObjectIfFits,
 		arg.IntentID,
 		arg.ObjectKey,
+		arg.StorageKey,
 		arg.BackendName,
 		arg.SizeBytes,
 		arg.Encrypted,
@@ -260,7 +272,7 @@ const lockPendingForUpdate = `-- name: LockPendingForUpdate :one
 SELECT intent_id, object_key, backend_name, size_bytes,
        encrypted, encryption_key, key_id, plaintext_size, content_hash, created_at,
        compression_algorithm, compression_level, compression_format_version, logical_size,
-       etag, content_type, user_metadata, role
+       etag, content_type, user_metadata, role, storage_key
 FROM pending_objects
 WHERE intent_id = $1
 FOR UPDATE
@@ -270,6 +282,9 @@ FOR UPDATE
 // both attempt to promote the same intent. pgx.ErrNoRows means another
 // instance already resolved this intent (deleted the row); the caller
 // treats that as a benign no-op.
+// Column order follows the table so sqlc projects the row onto the shared
+// pending_objects model rather than minting a query-specific struct; storage_key
+// is last because that is where the migration added it.
 func (q *Queries) LockPendingForUpdate(ctx context.Context, intentID string) (PendingObject, error) {
 	row := q.db.QueryRow(ctx, lockPendingForUpdate, intentID)
 	var i PendingObject
@@ -292,6 +307,7 @@ func (q *Queries) LockPendingForUpdate(ctx context.Context, intentID string) (Pe
 		&i.ContentType,
 		&i.UserMetadata,
 		&i.Role,
+		&i.StorageKey,
 	)
 	return i, err
 }

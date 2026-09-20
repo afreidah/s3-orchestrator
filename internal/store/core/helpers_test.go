@@ -28,11 +28,11 @@ import (
 // field.
 func TestObjectFromStoredForm_NilForm(t *testing.T) {
 	t.Parallel()
-	loc := objectFromStoredForm("k", "b1", 100, nil, nil)
+	loc := objectFromStoredForm("k", "b1", "k!w1", 100, nil, nil)
 	if loc == nil {
 		t.Fatal("expected non-nil ObjectLocation")
 	}
-	if loc.ObjectKey != "k" || loc.BackendName != "b1" || loc.SizeBytes != 100 {
+	if loc.ObjectKey != "k" || loc.BackendName != "b1" || loc.StorageKey != "k!w1" || loc.SizeBytes != 100 {
 		t.Errorf("required fields not preserved: %+v", loc)
 	}
 	if loc.Encrypted || loc.EncryptionKey != nil || loc.KeyID != "" || loc.PlaintextSize != 0 || loc.ContentHash != "" {
@@ -51,7 +51,7 @@ func TestObjectFromStoredForm_EncryptedFields(t *testing.T) {
 		PlaintextSize: 90,
 		ContentHash:   "abc",
 	}
-	loc := objectFromStoredForm("k", "b1", 100, form, nil)
+	loc := objectFromStoredForm("k", "b1", "k!w1", 100, form, nil)
 	if !loc.Encrypted || loc.KeyID != "kid-1" || loc.PlaintextSize != 90 || loc.ContentHash != "abc" {
 		t.Errorf("encryption fields not preserved: %+v", loc)
 	}
@@ -65,7 +65,7 @@ func TestObjectFromStoredForm_EncryptedFields(t *testing.T) {
 func TestObjectFromStoredForm_HashOnly(t *testing.T) {
 	t.Parallel()
 	form := &StoredForm{ContentHash: "abc123"}
-	loc := objectFromStoredForm("k", "b1", 100, form, nil)
+	loc := objectFromStoredForm("k", "b1", "k!w1", 100, form, nil)
 	if loc.Encrypted {
 		t.Error("Encrypted = true, want false")
 	}
@@ -79,7 +79,7 @@ func TestObjectFromStoredForm_HashOnly(t *testing.T) {
 // produces the same shape as a nil StoredForm.
 func TestObjectFromStoredForm_PlaintextFormWithoutEncryption(t *testing.T) {
 	t.Parallel()
-	loc := objectFromStoredForm("k", "b1", 100, &StoredForm{}, nil)
+	loc := objectFromStoredForm("k", "b1", "k!w1", 100, &StoredForm{}, nil)
 	if loc.Encrypted || loc.EncryptionKey != nil || loc.ContentHash != "" {
 		t.Errorf("plaintext form did not yield zero encryption fields: %+v", loc)
 	}
@@ -93,69 +93,65 @@ func TestObjectFromStoredForm_PlaintextFormWithoutEncryption(t *testing.T) {
 // returns nil rather than an allocated zero-length slice.
 func TestDisplacedFromExisting_EmptyInput(t *testing.T) {
 	t.Parallel()
-	got := displacedFromExisting(nil, []string{"b1"})
+	got := displacedFromExisting(nil)
 	if got != nil {
 		t.Errorf("expected nil for empty input, got %+v", got)
 	}
-	got = displacedFromExisting([]ExistingCopy{}, []string{"b1"})
+	got = displacedFromExisting([]ExistingCopy{})
 	if got != nil {
 		t.Errorf("expected nil for empty slice, got %+v", got)
 	}
 }
 
-// TestDisplacedFromExisting_AllOnNewBackend verifies that when every
-// existing copy is on the new target backend, no copies are
-// "displaced" - the in-place overwrite consumes them.
-func TestDisplacedFromExisting_AllOnNewBackend(t *testing.T) {
+// TestDisplacedFromExisting_SameBackendStillDisplaced verifies that a copy on a
+// backend the new write also lands on is displaced. It used to be excluded,
+// because a PUT overwrote it in place; a write now stores its bytes at a path
+// of its own, so the old copy is still sitting at the old path and leaving it
+// would leak the bytes.
+func TestDisplacedFromExisting_SameBackendStillDisplaced(t *testing.T) {
 	t.Parallel()
 	existing := []ExistingCopy{
-		{BackendName: "b1", SizeBytes: 100},
+		{BackendName: "b1", StorageKey: "k!old", SizeBytes: 100},
 	}
-	got := displacedFromExisting(existing, []string{"b1"})
-	if got != nil {
-		t.Errorf("expected nil when every copy is on the target backend, got %+v", got)
+	got := displacedFromExisting(existing)
+	if len(got) != 1 {
+		t.Fatalf("expected the prior copy to be displaced, got %+v", got)
+	}
+	if got[0].BackendName != "b1" || got[0].StorageKey != "k!old" || got[0].SizeBytes != 100 {
+		t.Errorf("displaced copy wrong: %+v", got[0])
 	}
 }
 
-// TestDisplacedFromExisting_SeveralNewBackends verifies that a write landing on
-// more than one backend excludes every one of them, so its own copies are not
-// reported as displaced by each other.
-func TestDisplacedFromExisting_SeveralNewBackends(t *testing.T) {
+// TestDisplacedFromExisting_CarriesEveryPath verifies that every copy comes
+// back naming its own path, which is what the cleanup deletes.
+func TestDisplacedFromExisting_CarriesEveryPath(t *testing.T) {
 	t.Parallel()
 	existing := []ExistingCopy{
-		{BackendName: "b1", SizeBytes: 100},
-		{BackendName: "b2", SizeBytes: 200},
-		{BackendName: "b3", SizeBytes: 300},
+		{BackendName: "b1", StorageKey: "k!a", SizeBytes: 100},
+		{BackendName: "b2", StorageKey: "k!b", SizeBytes: 200},
+		{BackendName: "b3", StorageKey: "k!c", SizeBytes: 300},
 	}
-	got := displacedFromExisting(existing, []string{"b1", "b2"})
-	if len(got) != 1 || got[0].BackendName != "b3" {
-		t.Errorf("expected only b3 displaced, got %+v", got)
+	got := displacedFromExisting(existing)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 displaced copies, got %d", len(got))
 	}
-}
-
-// TestDisplacedFromExisting_OtherBackends verifies that copies on
-// backends other than the new target are returned for cleanup,
-// while a copy on the target is excluded.
-func TestDisplacedFromExisting_OtherBackends(t *testing.T) {
-	t.Parallel()
-	existing := []ExistingCopy{
-		{BackendName: "b1", SizeBytes: 100}, // overwritten in place
-		{BackendName: "b2", SizeBytes: 200}, // becomes orphan
-		{BackendName: "b3", SizeBytes: 300}, // becomes orphan
-	}
-	got := displacedFromExisting(existing, []string{"b1"})
-	if len(got) != 2 {
-		t.Fatalf("expected 2 displaced copies, got %d", len(got))
-	}
-	seen := map[string]int64{}
+	seen := map[string]DeletedCopy{}
 	for _, dc := range got {
-		seen[dc.BackendName] = dc.SizeBytes
+		seen[dc.BackendName] = dc
 	}
-	if seen["b2"] != 200 || seen["b3"] != 300 {
-		t.Errorf("displaced copies wrong: %+v", got)
-	}
-	if _, ok := seen["b1"]; ok {
-		t.Errorf("b1 must not be displaced (in-place overwrite); got %+v", got)
+	for _, want := range []struct {
+		backend    string
+		storageKey string
+		size       int64
+	}{{"b1", "k!a", 100}, {"b2", "k!b", 200}, {"b3", "k!c", 300}} {
+		dc, ok := seen[want.backend]
+		if !ok {
+			t.Fatalf("%s missing from displaced set: %+v", want.backend, got)
+		}
+		if dc.StorageKey != want.storageKey || dc.SizeBytes != want.size {
+			t.Errorf("%s displaced as %+v, want path %q size %d",
+				want.backend, dc, want.storageKey, want.size)
+		}
 	}
 }
 

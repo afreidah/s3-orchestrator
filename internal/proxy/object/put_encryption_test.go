@@ -99,7 +99,7 @@ func TestPutObject_EncryptsOnceAcrossFailover(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	stored, ok := b3.Get("enc-key")
+	stored, ok := b3.CopyOf("enc-key")
 	if !ok {
 		t.Fatal("object should be on the backend that accepted it")
 	}
@@ -143,7 +143,7 @@ func TestPutObject_EncryptFailureRejectsTheWrite(t *testing.T) {
 	if !errors.Is(err, cp.wrapErr) {
 		t.Errorf("error chain does not contain the provider error: %v", err)
 	}
-	if be.Has("enc-key") {
+	if be.HasCopyOf("enc-key") {
 		t.Error("nothing should have reached the backend")
 	}
 	if len(c.recordObject) != 0 {
@@ -187,7 +187,7 @@ func TestPutObject_RecordedEnvelopeDescribesStoredBytes(t *testing.T) {
 		t.Fatalf("unpack key data: %v", err)
 	}
 
-	stored, ok := b2.Get("enc-key")
+	stored, ok := b2.CopyOf("enc-key")
 	if !ok {
 		t.Fatal("object should be on the backend that accepted it")
 	}

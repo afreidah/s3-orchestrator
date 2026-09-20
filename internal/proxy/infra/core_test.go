@@ -250,7 +250,7 @@ func TestCore_StreamCopy_ReadSuccessThenWriteSuccess(t *testing.T) {
 	src := &readableBackend{payload: []byte("hello")}
 	dst := &recordingBackend{}
 	c := newTestCore(t)
-	if _, err := c.StreamCopy(context.Background(), ep("src", src), ep("dst", dst), "k", 0); err != nil {
+	if _, err := c.StreamCopy(context.Background(), ep("src", src), ep("dst", dst), "k", "k!dst", 0); err != nil {
 		t.Fatalf("StreamCopy: %v", err)
 	}
 	if dst.putBodyLen != 5 {
@@ -263,7 +263,7 @@ func TestCore_StreamCopy_TagsReadPhaseOnGetError(t *testing.T) {
 	src := &readableBackend{getErr: errors.New("upstream gone")}
 	dst := &recordingBackend{}
 	c := newTestCore(t)
-	_, err := c.StreamCopy(context.Background(), ep("src", src), ep("dst", dst), "k", 0)
+	_, err := c.StreamCopy(context.Background(), ep("src", src), ep("dst", dst), "k", "k!dst", 0)
 	ce, ok := errors.AsType[*backend.CopyError](err)
 	if !ok {
 		t.Fatalf("err = %v, want *backend.CopyError", err)
@@ -334,7 +334,7 @@ func TestCore_StreamCopy_SourceStallTaggedReadPhase(t *testing.T) {
 	src := &stallingSourceBackend{err: context.DeadlineExceeded}
 	dst := propagatingDstBackend{}
 	c := newTestCore(t)
-	_, err := c.StreamCopy(context.Background(), ep("src", src), ep("dst", dst), "k", 0)
+	_, err := c.StreamCopy(context.Background(), ep("src", src), ep("dst", dst), "k", "k!dst", 0)
 	ce, ok := errors.AsType[*backend.CopyError](err)
 	if !ok {
 		t.Fatalf("err = %v, want *backend.CopyError", err)
@@ -353,7 +353,7 @@ func TestCore_StreamCopy_GenuineWriteErrorTaggedWritePhase(t *testing.T) {
 	src := &readableBackend{payload: []byte("hello")}
 	dst := writeRejectingBackend{}
 	c := newTestCore(t)
-	_, err := c.StreamCopy(context.Background(), ep("src", src), ep("dst", dst), "k", 0)
+	_, err := c.StreamCopy(context.Background(), ep("src", src), ep("dst", dst), "k", "k!dst", 0)
 	ce, ok := errors.AsType[*backend.CopyError](err)
 	if !ok {
 		t.Fatalf("err = %v, want *backend.CopyError", err)
@@ -401,7 +401,7 @@ func TestCore_StreamCopy_RefusesSourceOutOfEgress(t *testing.T) {
 		map[string]core.UsageLimits{"b1": {EgressByteLimit: 100}},
 		map[string]core.UsageStat{"b1": {EgressBytes: 99}})
 
-	_, err := c.StreamCopy(context.Background(), ep("b1", src), ep("b2", dst), "k", 50)
+	_, err := c.StreamCopy(context.Background(), ep("b1", src), ep("b2", dst), "k", "k!dst", 50)
 	if !errors.Is(err, core.ErrUsageLimitExceeded) {
 		t.Fatalf("err = %v, want core.ErrUsageLimitExceeded", err)
 	}
@@ -429,7 +429,7 @@ func TestCore_StreamCopy_RefusesDestinationOutOfIngress(t *testing.T) {
 		map[string]core.UsageLimits{"b2": {IngressByteLimit: 100}},
 		map[string]core.UsageStat{"b2": {IngressBytes: 99}})
 
-	_, err := c.StreamCopy(context.Background(), ep("b1", src), ep("b2", dst), "k", 50)
+	_, err := c.StreamCopy(context.Background(), ep("b1", src), ep("b2", dst), "k", "k!dst", 50)
 	if !errors.Is(err, core.ErrUsageLimitExceeded) {
 		t.Fatalf("err = %v, want core.ErrUsageLimitExceeded", err)
 	}
@@ -454,7 +454,7 @@ func TestCore_StreamCopy_AdmitsWithinLimits(t *testing.T) {
 			"b2": {IngressByteLimit: 1 << 20},
 		}, nil)
 
-	moved, err := c.StreamCopy(context.Background(), ep("b1", src), ep("b2", dst), "k", 5)
+	moved, err := c.StreamCopy(context.Background(), ep("b1", src), ep("b2", dst), "k", "k!dst", 5)
 	if err != nil {
 		t.Fatalf("StreamCopy: %v", err)
 	}

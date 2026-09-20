@@ -28,9 +28,9 @@ claimed AS (
         claimed_by = $3::text
     FROM candidate c
     WHERE cq.id = c.id
-    RETURNING cq.id, cq.backend_name, cq.object_key, cq.reason, cq.attempts, cq.size_bytes
+    RETURNING cq.id, cq.backend_name, cq.object_key, cq.storage_key, cq.reason, cq.attempts, cq.size_bytes
 )
-SELECT cl.id, cl.backend_name, cl.object_key, cl.reason, cl.attempts, cl.size_bytes,
+SELECT cl.id, cl.backend_name, cl.object_key, cl.storage_key, cl.reason, cl.attempts, cl.size_bytes,
        c.reclaimed
 FROM claimed cl
 JOIN candidate c ON cl.id = c.id
@@ -47,6 +47,7 @@ type ClaimPendingCleanupsRow struct {
 	ID          int64
 	BackendName string
 	ObjectKey   string
+	StorageKey  string
 	Reason      string
 	Attempts    int32
 	SizeBytes   int64
@@ -73,6 +74,7 @@ func (q *Queries) ClaimPendingCleanups(ctx context.Context, arg ClaimPendingClea
 			&i.ID,
 			&i.BackendName,
 			&i.ObjectKey,
+			&i.StorageKey,
 			&i.Reason,
 			&i.Attempts,
 			&i.SizeBytes,
@@ -158,19 +160,19 @@ func (q *Queries) DeleteCleanupQueueByBackend(ctx context.Context, backendName s
 
 const deleteCleanupQueueByKey = `-- name: DeleteCleanupQueueByKey :execrows
 DELETE FROM cleanup_queue
-WHERE object_key = $1 AND backend_name = $2
+WHERE storage_key = $1 AND backend_name = $2
 `
 
 type DeleteCleanupQueueByKeyParams struct {
-	ObjectKey   string
+	StorageKey  string
 	BackendName string
 }
 
-// Removes every cleanup_queue row matching the given (object_key,
+// Removes every cleanup_queue row matching the given (storage_key,
 // backend_name) pair. Returns the number of rows deleted so the caller
 // can confirm the sum-then-delete pair stayed consistent.
 func (q *Queries) DeleteCleanupQueueByKey(ctx context.Context, arg DeleteCleanupQueueByKeyParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteCleanupQueueByKey, arg.ObjectKey, arg.BackendName)
+	result, err := q.db.Exec(ctx, deleteCleanupQueueByKey, arg.StorageKey, arg.BackendName)
 	if err != nil {
 		return 0, err
 	}
@@ -179,13 +181,14 @@ func (q *Queries) DeleteCleanupQueueByKey(ctx context.Context, arg DeleteCleanup
 
 const enqueueCleanup = `-- name: EnqueueCleanup :exec
 
-INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes)
-VALUES ($1, $2, $3, $4)
+INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes)
+VALUES ($1, $2, $3, $4, $5)
 `
 
 type EnqueueCleanupParams struct {
 	BackendName string
 	ObjectKey   string
+	StorageKey  string
 	Reason      string
 	SizeBytes   int64
 }
@@ -201,10 +204,15 @@ type EnqueueCleanupParams struct {
 // atomic stale-row sweep that keeps orphan_bytes in lockstep with row
 // delete.
 // -----------------------------------------------------------------------------
+// storage_key is what the worker deletes; object_key rides along so an operator
+// reading the queue still sees which object the orphan belongs to. They differ
+// for every row written since per-write storage keys, and a row queued before
+// them holds the same value in both.
 func (q *Queries) EnqueueCleanup(ctx context.Context, arg EnqueueCleanupParams) error {
 	_, err := q.db.Exec(ctx, enqueueCleanup,
 		arg.BackendName,
 		arg.ObjectKey,
+		arg.StorageKey,
 		arg.Reason,
 		arg.SizeBytes,
 	)
@@ -212,7 +220,7 @@ func (q *Queries) EnqueueCleanup(ctx context.Context, arg EnqueueCleanupParams) 
 }
 
 const getCleanupQueueRow = `-- name: GetCleanupQueueRow :one
-SELECT id, backend_name, object_key, reason, size_bytes,
+SELECT id, backend_name, object_key, storage_key, reason, size_bytes,
        attempts, created_at, last_error
 FROM cleanup_queue
 WHERE id = $1
@@ -222,6 +230,7 @@ type GetCleanupQueueRowRow struct {
 	ID          int64
 	BackendName string
 	ObjectKey   string
+	StorageKey  string
 	Reason      string
 	SizeBytes   int64
 	Attempts    int32
@@ -240,6 +249,7 @@ func (q *Queries) GetCleanupQueueRow(ctx context.Context, id int64) (GetCleanupQ
 		&i.ID,
 		&i.BackendName,
 		&i.ObjectKey,
+		&i.StorageKey,
 		&i.Reason,
 		&i.SizeBytes,
 		&i.Attempts,
@@ -250,7 +260,7 @@ func (q *Queries) GetCleanupQueueRow(ctx context.Context, id int64) (GetCleanupQ
 }
 
 const getPendingCleanups = `-- name: GetPendingCleanups :many
-SELECT id, backend_name, object_key, reason, attempts, size_bytes,
+SELECT id, backend_name, object_key, storage_key, reason, attempts, size_bytes,
        claimed_at, claimed_by
 FROM cleanup_queue
 WHERE next_retry <= NOW() AND attempts < 10
@@ -262,6 +272,7 @@ type GetPendingCleanupsRow struct {
 	ID          int64
 	BackendName string
 	ObjectKey   string
+	StorageKey  string
 	Reason      string
 	Attempts    int32
 	SizeBytes   int64
@@ -286,6 +297,7 @@ func (q *Queries) GetPendingCleanups(ctx context.Context, limit int32) ([]GetPen
 			&i.ID,
 			&i.BackendName,
 			&i.ObjectKey,
+			&i.StorageKey,
 			&i.Reason,
 			&i.Attempts,
 			&i.SizeBytes,
@@ -305,15 +317,15 @@ func (q *Queries) GetPendingCleanups(ctx context.Context, limit int32) ([]GetPen
 const hasPendingCleanup = `-- name: HasPendingCleanup :one
 SELECT EXISTS (
     SELECT 1 FROM cleanup_queue q
-     WHERE q.object_key = $1 AND q.backend_name = $2
+     WHERE q.storage_key = $1 AND q.backend_name = $2
     UNION ALL
     SELECT 1 FROM cleanup_dlq d
-     WHERE d.object_key = $1 AND d.backend_name = $2
+     WHERE d.storage_key = $1 AND d.backend_name = $2
 ) AS pending
 `
 
 type HasPendingCleanupParams struct {
-	ObjectKey   string
+	StorageKey  string
 	BackendName string
 }
 
@@ -324,7 +336,7 @@ type HasPendingCleanupParams struct {
 // back. Dead-lettered counts because retrying stopped, not because the delete
 // was withdrawn.
 func (q *Queries) HasPendingCleanup(ctx context.Context, arg HasPendingCleanupParams) (bool, error) {
-	row := q.db.QueryRow(ctx, hasPendingCleanup, arg.ObjectKey, arg.BackendName)
+	row := q.db.QueryRow(ctx, hasPendingCleanup, arg.StorageKey, arg.BackendName)
 	var pending bool
 	err := row.Scan(&pending)
 	return pending, err
@@ -332,15 +344,16 @@ func (q *Queries) HasPendingCleanup(ctx context.Context, arg HasPendingCleanupPa
 
 const insertCleanupDLQ = `-- name: InsertCleanupDLQ :exec
 INSERT INTO cleanup_dlq (
-    original_id, backend_name, object_key, reason, size_bytes,
+    original_id, backend_name, object_key, storage_key, reason, size_bytes,
     attempts, first_enqueued_at, last_error
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 `
 
 type InsertCleanupDLQParams struct {
 	OriginalID      int64
 	BackendName     string
 	ObjectKey       string
+	StorageKey      string
 	Reason          string
 	SizeBytes       int64
 	Attempts        int32
@@ -357,6 +370,7 @@ func (q *Queries) InsertCleanupDLQ(ctx context.Context, arg InsertCleanupDLQPara
 		arg.OriginalID,
 		arg.BackendName,
 		arg.ObjectKey,
+		arg.StorageKey,
 		arg.Reason,
 		arg.SizeBytes,
 		arg.Attempts,
@@ -367,7 +381,7 @@ func (q *Queries) InsertCleanupDLQ(ctx context.Context, arg InsertCleanupDLQPara
 }
 
 const listCleanupDLQ = `-- name: ListCleanupDLQ :many
-SELECT backend_name, object_key, reason, size_bytes,
+SELECT backend_name, object_key, storage_key, reason, size_bytes,
        attempts, first_enqueued_at, moved_at, last_error
 FROM cleanup_dlq
 WHERE ($1::text = '' OR backend_name = $1)
@@ -383,6 +397,7 @@ type ListCleanupDLQParams struct {
 type ListCleanupDLQRow struct {
 	BackendName     string
 	ObjectKey       string
+	StorageKey      string
 	Reason          string
 	SizeBytes       int64
 	Attempts        int32
@@ -406,6 +421,7 @@ func (q *Queries) ListCleanupDLQ(ctx context.Context, arg ListCleanupDLQParams) 
 		if err := rows.Scan(
 			&i.BackendName,
 			&i.ObjectKey,
+			&i.StorageKey,
 			&i.Reason,
 			&i.SizeBytes,
 			&i.Attempts,
@@ -427,10 +443,10 @@ const requeueCleanupDLQ = `-- name: RequeueCleanupDLQ :execrows
 WITH moved AS (
     DELETE FROM cleanup_dlq
     WHERE ($1::text = '' OR backend_name = $1)
-    RETURNING backend_name, object_key, reason, size_bytes
+    RETURNING backend_name, object_key, storage_key, reason, size_bytes
 )
-INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes)
-SELECT backend_name, object_key, reason, size_bytes FROM moved
+INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes)
+SELECT backend_name, object_key, storage_key, reason, size_bytes FROM moved
 `
 
 // Atomically moves dead-lettered rows back into cleanup_queue so the
@@ -453,11 +469,11 @@ const sumCleanupQueueSizeByKey = `-- name: SumCleanupQueueSizeByKey :one
 SELECT COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes,
        COUNT(*)::bigint AS row_count
 FROM cleanup_queue
-WHERE object_key = $1 AND backend_name = $2
+WHERE storage_key = $1 AND backend_name = $2
 `
 
 type SumCleanupQueueSizeByKeyParams struct {
-	ObjectKey   string
+	StorageKey  string
 	BackendName string
 }
 
@@ -467,10 +483,15 @@ type SumCleanupQueueSizeByKeyRow struct {
 }
 
 // Returns the sum of size_bytes for every cleanup_queue row matching the
-// given (object_key, backend_name) pair. Used by the reconciler-driven
+// given (storage_key, backend_name) pair. Used by the reconciler-driven
 // sweep so orphan_bytes can be decremented in step with the row delete.
+//
+// Matched on the path rather than the object, because the row being swept is a
+// queued deletion of particular bytes and the reconcile that triggers it has
+// established that those bytes are gone. Sweeping by object would also drop the
+// queued deletions of the key's other writes, whose bytes are still there.
 func (q *Queries) SumCleanupQueueSizeByKey(ctx context.Context, arg SumCleanupQueueSizeByKeyParams) (SumCleanupQueueSizeByKeyRow, error) {
-	row := q.db.QueryRow(ctx, sumCleanupQueueSizeByKey, arg.ObjectKey, arg.BackendName)
+	row := q.db.QueryRow(ctx, sumCleanupQueueSizeByKey, arg.StorageKey, arg.BackendName)
 	var i SumCleanupQueueSizeByKeyRow
 	err := row.Scan(&i.TotalBytes, &i.RowCount)
 	return i, err

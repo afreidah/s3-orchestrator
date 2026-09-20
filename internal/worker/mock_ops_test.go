@@ -18,6 +18,7 @@ import (
 	accounting "github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	reconcile "github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
 	writepath "github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
+	core "github.com/afreidah/s3-orchestrator/internal/store/core"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -216,18 +217,18 @@ func (mr *MockOpsMockRecorder) ReleaseAdmission() *gomock.Call {
 }
 
 // StreamCopy mocks base method.
-func (m *MockOps) StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, key string, sizeEstimate int64) (int64, error) {
+func (m *MockOps) StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, srcKey, dstKey string, sizeEstimate int64) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "StreamCopy", ctx, src, dst, key, sizeEstimate)
+	ret := m.ctrl.Call(m, "StreamCopy", ctx, src, dst, srcKey, dstKey, sizeEstimate)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // StreamCopy indicates an expected call of StreamCopy.
-func (mr *MockOpsMockRecorder) StreamCopy(ctx, src, dst, key, sizeEstimate any) *gomock.Call {
+func (mr *MockOpsMockRecorder) StreamCopy(ctx, src, dst, srcKey, dstKey, sizeEstimate any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StreamCopy", reflect.TypeOf((*MockOps)(nil).StreamCopy), ctx, src, dst, key, sizeEstimate)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StreamCopy", reflect.TypeOf((*MockOps)(nil).StreamCopy), ctx, src, dst, srcKey, dstKey, sizeEstimate)
 }
 
 // Usage mocks base method.
@@ -398,18 +399,18 @@ func (mr *MockCleanupOpsMockRecorder) ReleaseAdmission() *gomock.Call {
 }
 
 // StreamCopy mocks base method.
-func (m *MockCleanupOps) StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, key string, sizeEstimate int64) (int64, error) {
+func (m *MockCleanupOps) StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, srcKey, dstKey string, sizeEstimate int64) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "StreamCopy", ctx, src, dst, key, sizeEstimate)
+	ret := m.ctrl.Call(m, "StreamCopy", ctx, src, dst, srcKey, dstKey, sizeEstimate)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // StreamCopy indicates an expected call of StreamCopy.
-func (mr *MockCleanupOpsMockRecorder) StreamCopy(ctx, src, dst, key, sizeEstimate any) *gomock.Call {
+func (mr *MockCleanupOpsMockRecorder) StreamCopy(ctx, src, dst, srcKey, dstKey, sizeEstimate any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StreamCopy", reflect.TypeOf((*MockCleanupOps)(nil).StreamCopy), ctx, src, dst, key, sizeEstimate)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StreamCopy", reflect.TypeOf((*MockCleanupOps)(nil).StreamCopy), ctx, src, dst, srcKey, dstKey, sizeEstimate)
 }
 
 // Usage mocks base method.
@@ -610,18 +611,18 @@ func (mr *MockScrubberOpsMockRecorder) Quota() *gomock.Call {
 }
 
 // StreamCopy mocks base method.
-func (m *MockScrubberOps) StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, key string, sizeEstimate int64) (int64, error) {
+func (m *MockScrubberOps) StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, srcKey, dstKey string, sizeEstimate int64) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "StreamCopy", ctx, src, dst, key, sizeEstimate)
+	ret := m.ctrl.Call(m, "StreamCopy", ctx, src, dst, srcKey, dstKey, sizeEstimate)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // StreamCopy indicates an expected call of StreamCopy.
-func (mr *MockScrubberOpsMockRecorder) StreamCopy(ctx, src, dst, key, sizeEstimate any) *gomock.Call {
+func (mr *MockScrubberOpsMockRecorder) StreamCopy(ctx, src, dst, srcKey, dstKey, sizeEstimate any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StreamCopy", reflect.TypeOf((*MockScrubberOps)(nil).StreamCopy), ctx, src, dst, key, sizeEstimate)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StreamCopy", reflect.TypeOf((*MockScrubberOps)(nil).StreamCopy), ctx, src, dst, srcKey, dstKey, sizeEstimate)
 }
 
 // Usage mocks base method.
@@ -678,15 +679,15 @@ func (m *MockPlacement) EXPECT() *MockPlacementMockRecorder {
 }
 
 // DeleteOrEnqueue mocks base method.
-func (m *MockPlacement) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64) {
+func (m *MockPlacement) DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, c *core.CleanupRequest) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "DeleteOrEnqueue", ctx, be, backendName, key, reason, sizeBytes)
+	m.ctrl.Call(m, "DeleteOrEnqueue", ctx, be, c)
 }
 
 // DeleteOrEnqueue indicates an expected call of DeleteOrEnqueue.
-func (mr *MockPlacementMockRecorder) DeleteOrEnqueue(ctx, be, backendName, key, reason, sizeBytes any) *gomock.Call {
+func (mr *MockPlacementMockRecorder) DeleteOrEnqueue(ctx, be, c any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteOrEnqueue", reflect.TypeOf((*MockPlacement)(nil).DeleteOrEnqueue), ctx, be, backendName, key, reason, sizeBytes)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteOrEnqueue", reflect.TypeOf((*MockPlacement)(nil).DeleteOrEnqueue), ctx, be, c)
 }
 
 // MoveObject mocks base method.

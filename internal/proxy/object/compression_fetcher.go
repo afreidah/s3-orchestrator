@@ -43,21 +43,22 @@ import (
 // avoids paying for a HEAD to learn them. Guarded because the seekable reader
 // may fetch frames concurrently.
 type storedRangeFetcher struct {
-	rt     RangeFetchRuntime
-	be     s3be.ObjectBackend
-	enc    *encryption.Encryptor
-	loc    *core.ObjectLocation
-	key    string
-	beName string
+	rt         RangeFetchRuntime
+	be         s3be.ObjectBackend
+	enc        *encryption.Encryptor
+	loc        *core.ObjectLocation
+	storageKey string
+	beName     string
 
 	mu    sync.Mutex
 	attrs *s3be.GetObjectResult
 }
 
 // newStoredRangeFetcher builds a fetcher for one copy. enc may be nil only when
-// the copy is not encrypted; loc is required.
-func newStoredRangeFetcher(rt RangeFetchRuntime, be s3be.ObjectBackend, enc *encryption.Encryptor, loc *core.ObjectLocation, key, beName string) *storedRangeFetcher {
-	return &storedRangeFetcher{rt: rt, be: be, enc: enc, loc: loc, key: key, beName: beName}
+// the copy is not encrypted; loc is required. storageKey is the path the copy
+// occupies on its backend, which every frame fetch is issued against.
+func newStoredRangeFetcher(rt RangeFetchRuntime, be s3be.ObjectBackend, enc *encryption.Encryptor, loc *core.ObjectLocation, storageKey, beName string) *storedRangeFetcher {
+	return &storedRangeFetcher{rt: rt, be: be, enc: enc, loc: loc, storageKey: storageKey, beName: beName}
 }
 
 // compressedSize reports the size of the compressed stream this fetcher serves.
@@ -88,7 +89,7 @@ func (f *storedRangeFetcher) FetchRange(ctx context.Context, start, end int64) (
 		return nil, fmt.Errorf("backend %s: %w", f.beName, readpath.ErrUsageLimitSkip)
 	}
 
-	r, cancel, err := f.rt.GetWithTimeout(ctx, f.be, f.key, header)
+	r, cancel, err := f.rt.GetWithTimeout(ctx, f.be, f.storageKey, header)
 	if err != nil {
 		f.rt.Acct().APICall(s3op.GetObject, f.beName)
 		return nil, fmt.Errorf("backend %s: fetch %s: %w", f.beName, header, err)

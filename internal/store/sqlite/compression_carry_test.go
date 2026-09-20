@@ -120,7 +120,7 @@ func TestMoveObjectLocation_CarriesRepresentation(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	if _, err := s.MoveObjectLocation(ctx, "bucket/moved", "backend-a", "backend-b"); err != nil {
+	if _, err := s.MoveObjectLocation(ctx, &core.MoveLocation{ObjectKey: "bucket/moved", FromBackend: "backend-a", ToBackend: "backend-b", StorageKey: "bucket/moved" + "!m-" + "backend-b"}); err != nil {
 		t.Fatalf("MoveObjectLocation: %v", err)
 	}
 
@@ -205,7 +205,7 @@ func TestRecordReplica_CarriesRepresentation(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	if _, _, err := s.RecordReplica(ctx, "bucket/replicated", "backend-b", "backend-a"); err != nil {
+	if _, _, err := s.RecordReplica(ctx, &core.ReplicaInsert{ObjectKey: "bucket/replicated", TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: "bucket/replicated" + "!r-" + "backend-b"}); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 
@@ -271,7 +271,7 @@ func TestMoveObjectLocation_CarriesCompressionProbe(t *testing.T) {
 		t.Fatalf("RecordCompressionProbe: %v", err)
 	}
 
-	if _, err := s.MoveObjectLocation(ctx, "bucket/random.bin", "backend-a", "backend-b"); err != nil {
+	if _, err := s.MoveObjectLocation(ctx, &core.MoveLocation{ObjectKey: "bucket/random.bin", FromBackend: "backend-a", ToBackend: "backend-b", StorageKey: "bucket/random.bin" + "!m-" + "backend-b"}); err != nil {
 		t.Fatalf("MoveObjectLocation: %v", err)
 	}
 

@@ -43,7 +43,7 @@ type Stores interface {
 	GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error)
 	DeleteObjectLocation(ctx context.Context, key, backendName string) (int64, error)
 	ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error)
-	SweepStaleCleanupQueueRows(ctx context.Context, key, backendName string) (int64, error)
+	SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backendName string) (int64, error)
 }
 
 // BackendResolver looks up a configured backend by name.
@@ -339,15 +339,20 @@ func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, know
 // failed sweep leaves queue rows that the next pass will retry rather than a
 // reason to fail the reconcile.
 func (m *Manager) deleter() DeleterFn {
-	return func(ctx context.Context, key, backendName string) error {
+	return func(ctx context.Context, key, storageKey, backendName string) error {
 		// The delete credits the backend's stripes in its own transaction, so
 		// there is nothing to tell the routing snapshot; it reloads on its tick.
 		if _, err := m.stores.DeleteObjectLocation(ctx, key, backendName); err != nil {
 			return err
 		}
-		if _, err := m.stores.SweepStaleCleanupQueueRows(ctx, key, backendName); err != nil {
-			m.logger().WarnContext(ctx, "failed to sweep cleanup_queue rows for stale key",
-				slog.String("key", key), slog.String("backend", backendName), "error", err)
+		// Swept by path: what this pass established is that these particular
+		// bytes are absent, so only the deletions queued against them are moot.
+		// Any queued against the key's other writes name bytes still on the
+		// backend.
+		if _, err := m.stores.SweepStaleCleanupQueueRows(ctx, storageKey, backendName); err != nil {
+			m.logger().WarnContext(ctx, "failed to sweep cleanup_queue rows for stale copy",
+				slog.String("key", key), slog.String("storage_key", storageKey),
+				slog.String("backend", backendName), "error", err)
 		}
 		return nil
 	}

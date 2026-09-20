@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 )
 
 // -------------------------------------------------------------------------
@@ -70,6 +71,10 @@ type InMemory struct {
 	mu sync.Mutex
 
 	Objects map[string]Object
+
+	// CopyLandsBeforeErr makes a failing CopyObject write the destination
+	// anyway, modelling a server-side copy whose response was lost.
+	CopyLandsBeforeErr bool
 
 	PutErr        error
 	GetErr        error
@@ -296,12 +301,19 @@ func (m *InMemory) CopyObject(_ context.Context, srcKey, dstKey, _ string, _ map
 		return "", backend.ErrCopyNotSupported
 	}
 	m.CopyCalls++
-	if m.CopyErr != nil {
-		return "", m.CopyErr
-	}
 	src, ok := m.Objects[srcKey]
 	if !ok {
 		return "", &notFoundError{key: srcKey}
+	}
+	if m.CopyErr != nil {
+		// The ambiguous failure the HEAD probe exists for: the backend
+		// completed the copy and then lost the response. Performing it before
+		// reporting the error is what makes that case reachable now that the
+		// destination path is minted inside the copy and no test can seed it.
+		if m.CopyLandsBeforeErr {
+			m.Objects[dstKey] = src
+		}
+		return "", m.CopyErr
 	}
 	m.Objects[dstKey] = src
 	return src.ETag, nil
@@ -314,6 +326,67 @@ func (m *InMemory) Has(key string) bool {
 	defer m.mu.Unlock()
 	_, ok := m.Objects[key]
 	return ok
+}
+
+// HasCopyOf reports whether the backend holds bytes belonging to objectKey,
+// wherever they are: at the key itself, or under one of the per-write paths a
+// write stores its bytes at.
+//
+// Tests need this because a write no longer stores at the object's key and the
+// path it does use names the write - a fresh id no caller can predict. Asking
+// whether the object arrived is a different question from asking for its exact
+// path, and this is the first one.
+func (m *InMemory) HasCopyOf(objectKey string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := internalkey.StorageKey(objectKey, "")
+	for key := range m.Objects {
+		if key == objectKey || strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// CopyOf returns the object the backend holds for objectKey, wherever it is:
+// at the key itself, or under the per-write path a write stored it at. The
+// companion to HasCopyOf, for the assertions that are about the bytes rather
+// than about the object's presence.
+//
+// A key with more than one copy on the backend - an overwrite whose predecessor
+// has not been cleaned up yet - returns an arbitrary one, so a test that cares
+// which should assert on the path it expects instead.
+func (m *InMemory) CopyOf(objectKey string) (Object, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if obj, ok := m.Objects[objectKey]; ok {
+		return obj, true
+	}
+	prefix := internalkey.StorageKey(objectKey, "")
+	for key, obj := range m.Objects {
+		if strings.HasPrefix(key, prefix) {
+			return obj, true
+		}
+	}
+	return Object{}, false
+}
+
+// PathOf reports where the backend holds objectKey, which a test needs when it
+// has to name the path - to build a ledger row for it, say. Empty when the
+// backend holds nothing for the key.
+func (m *InMemory) PathOf(objectKey string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.Objects[objectKey]; ok {
+		return objectKey
+	}
+	prefix := internalkey.StorageKey(objectKey, "")
+	for key := range m.Objects {
+		if strings.HasPrefix(key, prefix) {
+			return key
+		}
+	}
+	return ""
 }
 
 // SetPutErr swaps the injected PutObject failure under the lock, for a test

@@ -100,11 +100,20 @@ func newCoordinatorWith2Backends(srcName string, src s3be.ObjectBackend, destNam
 // expectStreamCopyOK wires the happy StreamCopy: read 4 bytes from src, write
 // them to dest.
 func expectStreamCopyOK(src, dest *backendtest.MockObjectBackend) {
-	src.EXPECT().GetObject(gomock.Any(), "k", "").
+	src.EXPECT().GetObject(gomock.Any(), srcPath, "").
 		Return(&s3be.GetObjectResult{Body: io.NopCloser(strings.NewReader("data")), Size: 4}, nil)
-	dest.EXPECT().PutObject(gomock.Any(), "k", gomock.Any(), int64(4), gomock.Any(), gomock.Any()).
+	dest.EXPECT().PutObject(gomock.Any(), destPath, gomock.Any(), int64(4), gomock.Any(), gomock.Any()).
 		Return("etag", nil)
 }
+
+// The two paths one move addresses: where the source copy sits, and where this
+// move wrote its own. They are different strings on purpose - a move is a write
+// and names its destination after itself, which is what lets each of the three
+// cleanup paths below delete exactly the bytes it is responsible for.
+const (
+	srcPath  = "k!src-copy"
+	destPath = "k!this-move"
+)
 
 // -------------------------------------------------------------------------
 // PUBLIC API
@@ -120,11 +129,13 @@ func TestMoveObject_CASError_OrphansDestWithProfileReason(t *testing.T) {
 	dest := backendtest.NewMockObjectBackend(ctrl)
 	expectStreamCopyOK(src, dest)
 	// CAS errors -> orphan cleanup on dest; force the enqueue by failing the delete.
-	dest.EXPECT().DeleteObject(gomock.Any(), "k").Return(errors.New("delete failed"))
+	dest.EXPECT().DeleteObject(gomock.Any(), destPath).Return(errors.New("delete failed"))
 
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().MoveObjectLocation(gomock.Any(), "k", "src", "dest").Return(int64(0), errors.New("cas failed"))
-	store.EXPECT().EnqueueCleanup(gomock.Any(), "dest", "k", RebalanceMoveReasons.Orphan, int64(4)).Return(nil).Times(1)
+	store.EXPECT().MoveObjectLocation(gomock.Any(), moveTo("k", "src", destName, destPath)).
+		Return(int64(0), errors.New("cas failed"))
+	store.EXPECT().EnqueueCleanup(gomock.Any(),
+		cleanupOf(destName, destPath, RebalanceMoveReasons.Orphan, 4)).Return(nil).Times(1)
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "dest", int64(4)).Return(nil).Times(1)
 
 	coord := newCoordinatorWith2Backends("src", src, "dest", dest, store)
@@ -142,11 +153,12 @@ func TestMoveObject_Stale_StaleOrphansDestWithProfileReason(t *testing.T) {
 	src := backendtest.NewMockObjectBackend(ctrl)
 	dest := backendtest.NewMockObjectBackend(ctrl)
 	expectStreamCopyOK(src, dest)
-	dest.EXPECT().DeleteObject(gomock.Any(), "k").Return(errors.New("delete failed"))
+	dest.EXPECT().DeleteObject(gomock.Any(), destPath).Return(errors.New("delete failed"))
 
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().MoveObjectLocation(gomock.Any(), "k", "src", "dest").Return(int64(0), nil)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), "dest", "k", RebalanceMoveReasons.StaleOrphan, int64(4)).Return(nil).Times(1)
+	store.EXPECT().MoveObjectLocation(gomock.Any(), moveTo("k", "src", destName, destPath)).Return(int64(0), nil)
+	store.EXPECT().EnqueueCleanup(gomock.Any(),
+		cleanupOf(destName, destPath, RebalanceMoveReasons.StaleOrphan, 4)).Return(nil).Times(1)
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "dest", int64(4)).Return(nil).Times(1)
 
 	coord := newCoordinatorWith2Backends("src", src, "dest", dest, store)
@@ -166,11 +178,12 @@ func TestMoveObject_Success_SourceDeleteWithProfileReason(t *testing.T) {
 	expectStreamCopyOK(src, dest)
 	// Success -> source delete; force the enqueue by failing the delete so the
 	// SourceDelete reason is observable on EnqueueCleanup.
-	src.EXPECT().DeleteObject(gomock.Any(), "k").Return(errors.New("delete failed"))
+	src.EXPECT().DeleteObject(gomock.Any(), srcPath).Return(errors.New("delete failed"))
 
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().MoveObjectLocation(gomock.Any(), "k", "src", "dest").Return(int64(4), nil)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), "src", "k", RebalanceMoveReasons.SourceDelete, int64(4)).Return(nil).Times(1)
+	store.EXPECT().MoveObjectLocation(gomock.Any(), moveTo("k", "src", destName, destPath)).Return(int64(4), nil)
+	store.EXPECT().EnqueueCleanup(gomock.Any(),
+		cleanupOf("src", srcPath, RebalanceMoveReasons.SourceDelete, 4)).Return(nil).Times(1)
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "src", int64(4)).Return(nil).Times(1)
 
 	coord := newCoordinatorWith2Backends("src", src, "dest", dest, store)
@@ -186,14 +199,38 @@ func TestMoveObject_Success_SourceDeleteWithProfileReason(t *testing.T) {
 // moveReq builds the standard rebalance MoveRequest the MoveObject tests share.
 func moveReq(src, dest s3be.ObjectBackend) *MoveRequest {
 	return &MoveRequest{
-		Key:         "k",
-		SizeBytes:   4,
-		SrcBackend:  src,
-		SrcName:     "src",
-		DestBackend: dest,
-		DestName:    "dest",
-		Reasons:     RebalanceMoveReasons,
+		Key:            "k",
+		SizeBytes:      4,
+		SrcBackend:     src,
+		SrcName:        "src",
+		DestBackend:    dest,
+		DestName:       destName,
+		SrcStorageKey:  srcPath,
+		DestStorageKey: destPath,
+		Reasons:        RebalanceMoveReasons,
 	}
+}
+
+// destName is the backend the move writes to, named once so the expectations
+// and the request cannot drift apart.
+const destName = "dest"
+
+// cleanupOf matches an enqueued cleanup by the fields each move test is about:
+// the backend, the path being deleted, the reason and the size.
+func cleanupOf(backendName, storageKey, reason string, size int64) gomock.Matcher {
+	return gomock.Cond(func(c *core.CleanupRequest) bool {
+		return c.BackendName == backendName && c.StorageKey == storageKey &&
+			c.Reason == reason && c.SizeBytes == size
+	})
+}
+
+// moveTo matches the metadata CAS a move performs, including the path it is
+// repointing the row at.
+func moveTo(key, from, to, storageKey string) gomock.Matcher {
+	return gomock.Cond(func(m *core.MoveLocation) bool {
+		return m.ObjectKey == key && m.FromBackend == from &&
+			m.ToBackend == to && m.StorageKey == storageKey
+	})
 }
 
 // TestNewPendingIntent_CopiesStoredForm drives the form != nil branch so the
@@ -349,10 +386,13 @@ func TestDeleteOrEnqueue_NotFound_SkipsEnqueue(t *testing.T) {
 
 	store := NewMockCoordinatorStores(ctrl)
 	// The whole point of the fix: EnqueueCleanup must NOT be called.
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).Times(0)
 
 	coord := newCoordinatorWithBackend("b1", be, store)
-	coord.DeleteOrEnqueue(context.Background(), be, "b1", "phantom.txt", "overwrite_displaced", 128)
+	coord.DeleteOrEnqueue(context.Background(), be, &core.CleanupRequest{
+		BackendName: "b1", ObjectKey: "phantom.txt", StorageKey: "phantom.txt",
+		Reason: "overwrite_displaced", SizeBytes: 128,
+	})
 }
 
 // TestDeleteOrEnqueue_GenericError_Enqueues asserts the regression
@@ -365,12 +405,15 @@ func TestDeleteOrEnqueue_GenericError_Enqueues(t *testing.T) {
 	be.EXPECT().DeleteObject(gomock.Any(), "real.txt").Return(errors.New("connection refused"))
 
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), "b1", "real.txt", "overwrite_displaced", int64(256)).
-		Return(nil).Times(1)
+	store.EXPECT().EnqueueCleanup(gomock.Any(),
+		cleanupOf("b1", "real.txt", "overwrite_displaced", 256)).Return(nil).Times(1)
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "b1", int64(256)).Return(nil).Times(1)
 
 	coord := newCoordinatorWithBackend("b1", be, store)
-	coord.DeleteOrEnqueue(context.Background(), be, "b1", "real.txt", "overwrite_displaced", 256)
+	coord.DeleteOrEnqueue(context.Background(), be, &core.CleanupRequest{
+		BackendName: "b1", ObjectKey: "real.txt", StorageKey: "real.txt",
+		Reason: "overwrite_displaced", SizeBytes: 256,
+	})
 }
 
 // TestRecoverFromRecordFailure_DeleteReturns404_SkipsEnqueue covers
@@ -387,10 +430,13 @@ func TestRecoverFromRecordFailure_DeleteReturns404_SkipsEnqueue(t *testing.T) {
 
 	store := NewMockCoordinatorStores(ctrl)
 	// The whole point of the fix: EnqueueCleanup must NOT be called.
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).Times(0)
 
 	coord := newCoordinatorWithBackend("b1", be, store)
-	coord.RecoverFromRecordFailure(context.Background(), be, "b1", "phantom.txt", "record_failure", 128)
+	coord.RecoverFromRecordFailure(context.Background(), be, &core.CleanupRequest{
+		BackendName: "b1", ObjectKey: "phantom.txt", StorageKey: "phantom.txt",
+		Reason: "record_failure", SizeBytes: 128,
+	})
 }
 
 // TestRecoverFromRecordFailure_GenericError_Enqueues pins the
@@ -403,29 +449,34 @@ func TestRecoverFromRecordFailure_GenericError_Enqueues(t *testing.T) {
 	be.EXPECT().DeleteObject(gomock.Any(), "real.txt").Return(errors.New("connection refused"))
 
 	store := NewMockCoordinatorStores(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), "b1", "real.txt", "record_failure", int64(256)).
-		Return(nil).Times(1)
+	store.EXPECT().EnqueueCleanup(gomock.Any(),
+		cleanupOf("b1", "real.txt", "record_failure", 256)).Return(nil).Times(1)
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), "b1", int64(256)).Return(nil).Times(1)
 
 	coord := newCoordinatorWithBackend("b1", be, store)
-	coord.RecoverFromRecordFailure(context.Background(), be, "b1", "real.txt", "record_failure", 256)
+	coord.RecoverFromRecordFailure(context.Background(), be, &core.CleanupRequest{
+		BackendName: "b1", ObjectKey: "real.txt", StorageKey: "real.txt",
+		Reason: "record_failure", SizeBytes: 256,
+	})
 }
 
 // TestRecordObjectAndPromoteIntent_CleansUpWhatTheCommitDisplaced verifies the
 // two kinds of bytes a commit hands back are deleted under their own cleanup
-// reason: a copy the write replaced, and an intent it superseded.
+// reason, and at their own paths: a copy the write replaced, and an intent it
+// superseded. Each names where its bytes are, which is not the object's key and
+// not what this write just stored.
 func TestRecordObjectAndPromoteIntent_CleansUpWhatTheCommitDisplaced(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	old := backendtest.NewMockObjectBackend(ctrl)
 	stale := backendtest.NewMockObjectBackend(ctrl)
-	old.EXPECT().DeleteObject(gomock.Any(), "k").Return(nil)
-	stale.EXPECT().DeleteObject(gomock.Any(), "k").Return(nil)
+	old.EXPECT().DeleteObject(gomock.Any(), "k!replaced").Return(nil)
+	stale.EXPECT().DeleteObject(gomock.Any(), "k!superseded").Return(nil)
 
 	store := NewMockCoordinatorStores(ctrl)
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).Return([]core.DeletedCopy{
-		{BackendName: "old", SizeBytes: 50},
-		{BackendName: "stale", SizeBytes: 70, Reason: core.CleanupReasonSupersededIntent},
+		{BackendName: "old", StorageKey: "k!replaced", SizeBytes: 50},
+		{BackendName: "stale", StorageKey: "k!superseded", SizeBytes: 70, Reason: core.CleanupReasonSupersededIntent},
 	}, nil, nil)
 
 	coord := newCoordinatorWith2Backends("old", old, "stale", stale, store)
@@ -435,7 +486,8 @@ func TestRecordObjectAndPromoteIntent_CleansUpWhatTheCommitDisplaced(t *testing.
 	defer sp.End()
 
 	err := coord.RecordObjectAndPromoteIntent(context.Background(), sp, &core.RecordObjectRequest{
-		Key: "k", Size: 100, Copies: []core.ObjectCopy{{Backend: "new", IntentID: "i-1"}},
+		Key: "k", Size: 100,
+		Copies: []core.ObjectCopy{{Backend: "new", IntentID: "i-1", StorageKey: "k!new"}},
 	})
 	if err != nil {
 		t.Fatalf("RecordObjectAndPromoteIntent: %v", err)

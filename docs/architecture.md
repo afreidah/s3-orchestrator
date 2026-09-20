@@ -25,7 +25,9 @@ weight: 20
 
 PostgreSQL (or embedded SQLite) stores:
 
-- **`object_locations`** - every object's exact backend placement + content hash + per-copy size, plus a `managed` flag marking objects that count toward quota but that the workers do not act on, and the client-facing identity (ETag, content type, user metadata) that lets a HEAD answer without a backend request
+- **`object_locations`** - every object's exact backend placement + the path it occupies there + content hash + per-copy size, plus a `managed` flag marking objects that count toward quota but that the workers do not act on, and the client-facing identity (ETag, content type, user metadata) that lets a HEAD answer without a backend request
+
+  `storage_key` is that path, and it is not the object's key - see [Stored form](#stored-form). Every read, rewrite and deletion of the bytes addresses them by it, and `(backend_name, storage_key)` is unique: one backend holds one object at one path.
 
   `created_at` is the **object's write time, not the copy's**, and every copy of a key carries the same value. A replica inherits it from the source rather than being stamped when it was made, and a discovered object takes whatever modification time the backend reported, falling back to the moment of discovery when the backend reports none. It is what reads return as `Last-Modified`, in preference to whatever the serving backend says, so an unmodified object reports the same time no matter which copy answered - the same reason ETag is stored per object rather than read from the backend. Note that this makes `created_at` unsuitable as a per-copy age: the scrub queue tracks that separately in `last_scrubbed_at`.
 - **`backend_quotas`** - per-backend ceiling + orphan-bytes tracking
@@ -66,6 +68,12 @@ What a backend holds is not always the object the client wrote. Two optional lay
 - **Encryption** - envelope encryption with chunked AES-256-GCM, a fresh data key per object wrapped by the configured key source.
 
 They compose in one order only. Compression runs first, because ciphertext does not compress, which makes the compressed stream the encryptor's input. A read runs it backwards: decrypt, then decompress, then slice.
+
+Where those bytes sit is the third thing a row records, and it is not the object's key. A write stores its bytes under the key, a `!`, and the id of the pending intent covering that copy - `photos/2026/img.jpg!5f3c...` - so no two writes of a key ever share a path. `!` is in S3's own safe-character set, so it needs no encoding in a request path and no escaping in a listing, and it sorts below every alphanumeric, which keeps a key's objects together in a raw bucket listing.
+
+Writing per write rather than per key is what makes every cleanup unambiguous. A discarded upload, a displaced copy, a queued deletion the worker runs minutes later: each names the bytes it is for, so none of them can delete a copy some other write committed at the same key. It also means an overwrite adds rather than replaces - a read in progress sees a whole object either way - and that the old copy's space returns when its deletion lands rather than at the moment of the write. [Issue #1527](https://github.com/afreidah/s3-orchestrator/issues/1527) is what a shared path costs; [replication.md](replication.md#overwrite-semantics) has the failure in full.
+
+Rows written before storage keys existed hold `storage_key = object_key`, which is where their bytes are. Nothing reading them has to recognise the case: the path comes off the row either way. A replica, a rebalance or drain move, and a multipart completion each mint a path of their own the same way a PUT does; an object discovered by reconcile takes the path it was found at.
 
 That ordering is why a row carries more than one size. `size_bytes` is what the backend holds and what quota and the usage counters are charged; `plaintext_size` is the encryptor's input; `logical_size` is the object the client wrote. An object with neither layer applied has one size and the rest are unset.
 

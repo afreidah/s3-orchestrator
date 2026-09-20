@@ -48,11 +48,13 @@ type recordReplicaTracker struct {
 }
 
 // stubRecordReplica returns a DoAndReturn capturing into rt.
-func stubRecordReplica(rt *recordReplicaTracker) func(context.Context, string, string, string) (int64, bool, error) {
-	return func(_ context.Context, key, target, source string) (int64, bool, error) {
+func stubRecordReplica(rt *recordReplicaTracker) func(context.Context, *core.ReplicaInsert) (int64, bool, error) {
+	return func(_ context.Context, r *core.ReplicaInsert) (int64, bool, error) {
 		rt.mu.Lock()
 		defer rt.mu.Unlock()
-		rt.calls = append(rt.calls, recordReplicaRecord{key: key, targetBackend: target, sourceBackend: source})
+		rt.calls = append(rt.calls, recordReplicaRecord{
+			key: r.ObjectKey, targetBackend: r.TargetBackend, sourceBackend: r.SourceBackend,
+		})
 		return rt.size, rt.inserted, rt.err
 	}
 }
@@ -65,12 +67,13 @@ type replicatorEnqueueTracker struct {
 }
 
 // stubReplicatorEnqueue returns a DoAndReturn for EnqueueCleanup.
-func stubReplicatorEnqueue(et *replicatorEnqueueTracker) func(context.Context, string, string, string, int64) error {
-	return func(_ context.Context, backend, key, reason string, size int64) error {
+func stubReplicatorEnqueue(et *replicatorEnqueueTracker) func(context.Context, *core.CleanupRequest) error {
+	return func(_ context.Context, req *core.CleanupRequest) error {
 		et.mu.Lock()
 		defer et.mu.Unlock()
 		et.calls = append(et.calls, core.CleanupItem{
-			BackendName: backend, ObjectKey: key, Reason: reason, SizeBytes: size,
+			BackendName: req.BackendName, ObjectKey: req.ObjectKey, StorageKey: req.StorageKey,
+			Reason: req.Reason, SizeBytes: req.SizeBytes,
 		})
 		return nil
 	}
@@ -153,7 +156,7 @@ func replicateSuccessStubs(store *storetest.MockMetadataStore, locations []core.
 		Return(locations, nil).AnyTimes()
 	store.EXPECT().GetUnderReplicatedObjectsExcluding(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(locations, nil).AnyTimes()
-	store.EXPECT().RecordReplica(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordReplica(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubRecordReplica(rt)).AnyTimes()
 }
 
@@ -184,7 +187,7 @@ func TestReplicate_Success(t *testing.T) {
 	if sum.CopiesCreated != 1 {
 		t.Errorf("expected 1 created, got %d", sum.CopiesCreated)
 	}
-	if !b2.Has("key1") {
+	if !b2.HasCopyOf("key1") {
 		t.Error("expected key1 on b2 after replication")
 	}
 }
@@ -220,7 +223,7 @@ func TestReplicate_FullTargetRecordsNoCopy(t *testing.T) {
 	store.EXPECT().GetUnderReplicatedObjects(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return([]core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 50}}, nil).AnyTimes()
 	// Every target declines, which is how a full backend reports itself.
-	store.EXPECT().RecordReplica(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().RecordReplica(gomock.Any(), gomock.Any()).
 		Return(int64(0), false, nil).AnyTimes()
 	storetest.Permissive(store)
 
@@ -256,14 +259,14 @@ func TestCopyToReplica_FailoverToSecondCopy(t *testing.T) {
 		{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4},
 		{ObjectKey: "key1", BackendName: "b2", SizeBytes: 4},
 	}
-	source, err := w.CopyToReplica(context.Background(), "key1", copies, "b3")
+	source, err := w.CopyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b3")
 	if err != nil {
 		t.Fatalf("copyToReplica should failover: %v", err)
 	}
 	if source.BackendName != "b2" {
 		t.Errorf("expected source=b2 (failover), got %q", source.BackendName)
 	}
-	if !b3.Has("key1") {
+	if !b3.HasCopyOf("key1") {
 		t.Error("expected key1 on target b3")
 	}
 }
@@ -291,7 +294,7 @@ func TestCopyToReplica_DoesNotMutateInputSlice(t *testing.T) {
 	}
 	before := []string{copies[0].BackendName, copies[1].BackendName}
 
-	if _, err := w.CopyToReplica(context.Background(), "key1", copies, "b3"); err != nil {
+	if _, err := w.CopyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b3"); err != nil {
 		t.Fatalf("CopyToReplica: %v", err)
 	}
 
@@ -309,8 +312,8 @@ func TestCleanupOrphan_Success(t *testing.T) {
 
 	w := newReplicatorFor(t, newPermissiveStore(t), map[string]backend.ObjectBackend{"b1": b1}, &fleetOpts{})
 
-	w.CleanupOrphan(context.Background(), "b1", "orphan", 1)
-	if b1.Has("orphan") {
+	w.CleanupOrphan(context.Background(), "b1", "orphan", "orphan", 1)
+	if b1.HasCopyOf("orphan") {
 		t.Error("expected orphan to be deleted")
 	}
 }
@@ -321,7 +324,7 @@ func TestCleanupOrphan_BackendNotFound(t *testing.T) {
 	t.Parallel()
 	w := newReplicatorFor(t, newPermissiveStore(t), map[string]backend.ObjectBackend{"b1": backendtest.NewInMemory()}, &fleetOpts{})
 
-	w.CleanupOrphan(context.Background(), "unknown", "orphan", 1)
+	w.CleanupOrphan(context.Background(), "unknown", "orphan", "orphan", 1)
 }
 
 // TestCleanupOrphan_DeleteFailure_EnqueuesCleanup asserts a backend
@@ -334,13 +337,13 @@ func TestCleanupOrphan_DeleteFailure_EnqueuesCleanup(t *testing.T) {
 	et := &replicatorEnqueueTracker{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubReplicatorEnqueue(et)).AnyTimes()
 	storetest.Permissive(store)
 
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1}, &fleetOpts{})
 
-	w.CleanupOrphan(context.Background(), "b1", "orphan", 1)
+	w.CleanupOrphan(context.Background(), "b1", "orphan", "orphan", 1)
 
 	if len(et.calls) != 1 {
 		t.Fatalf("expected 1 enqueue call, got %d", len(et.calls))
@@ -378,7 +381,7 @@ func TestReplicate_RecordReplicaFails_CleansUpOrphan(t *testing.T) {
 	if sum.CopiesCreated != 0 {
 		t.Errorf("expected 0 created (record failed), got %d", sum.CopiesCreated)
 	}
-	if b2.Has("key1") {
+	if b2.HasCopyOf("key1") {
 		t.Error("orphan should have been cleaned up from b2")
 	}
 }
@@ -393,7 +396,7 @@ func TestCopyToReplica_TargetBackendNotFound(t *testing.T) {
 	w := newReplicatorFor(t, newPermissiveStore(t), map[string]backend.ObjectBackend{"b1": b1}, &fleetOpts{})
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	if _, err := w.CopyToReplica(context.Background(), "key1", copies, "nonexistent"); err == nil {
+	if _, err := w.CopyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "nonexistent"); err == nil {
 		t.Fatal("expected error when target backend not found")
 	}
 }
@@ -411,7 +414,7 @@ func TestCopyToReplica_TargetWriteFails(t *testing.T) {
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1, "b2": b2}, &fleetOpts{Order: []string{"b1", "b2"}})
 
 	copies := []core.ObjectLocation{{ObjectKey: "key1", BackendName: "b1", SizeBytes: 4}}
-	if _, err := w.CopyToReplica(context.Background(), "key1", copies, "b2"); err == nil {
+	if _, err := w.CopyToReplica(context.Background(), "key1", "key1"+"!replica", copies, "b2"); err == nil {
 		t.Fatal("expected error when target PutObject fails")
 	}
 }
@@ -473,7 +476,7 @@ func TestReplicate_SourceGoneDuringReplication(t *testing.T) {
 	if sum.CopiesCreated != 0 {
 		t.Errorf("expected 0 created (source gone), got %d", sum.CopiesCreated)
 	}
-	if b2.Has("key1") {
+	if b2.HasCopyOf("key1") {
 		t.Error("orphan should have been cleaned up from b2")
 	}
 }
@@ -517,10 +520,10 @@ func TestReplicate_HealthAware_SkipsUnhealthyTarget(t *testing.T) {
 	if sum.CopiesCreated != 1 {
 		t.Errorf("expected 1 created, got %d", sum.CopiesCreated)
 	}
-	if b2.Has("key1") {
+	if b2.HasCopyOf("key1") {
 		t.Error("unhealthy b2 should not have received a replica")
 	}
-	if !b3.Has("key1") {
+	if !b3.HasCopyOf("key1") {
 		t.Error("expected key1 on healthy b3")
 	}
 }

@@ -28,7 +28,7 @@ import (
 // -------------------------------------------------------------------------
 
 // rewritableColumns is the projection both compression listings read.
-const rewritableColumns = `object_key, backend_name, size_bytes, encrypted, encryption_key,
+const rewritableColumns = `object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
 	key_id, plaintext_size, compression_algorithm, compression_level,
 	compression_format_version, logical_size, etag`
 
@@ -123,7 +123,7 @@ func scanRewritable(rows *sql.Rows) (core.RewritableLocation, error) {
 		etag          sql.NullString
 	)
 	if err := rows.Scan(
-		&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &loc.Encrypted, &loc.EncryptionKey,
+		&loc.ObjectKey, &loc.BackendName, &loc.StorageKey, &loc.SizeBytes, &loc.Encrypted, &loc.EncryptionKey,
 		&keyID, &plaintextSize, &algorithm, &level, &formatVersion, &logicalSize, &etag,
 	); err != nil {
 		return core.RewritableLocation{}, fmt.Errorf("scan rewritable location: %w", err)

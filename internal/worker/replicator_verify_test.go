@@ -58,22 +58,29 @@ func verifyingReplicator(t *testing.T, cfg *config.IntegrityConfig) (*Replicator
 	return r, ops, pl, ms
 }
 
-// sourceRow is the ledger row of the copy being replicated from.
+// sourceRow is the ledger row of the copy being replicated from, at the path it
+// occupies on its own backend.
 func sourceRow(hash string) *core.ObjectLocation {
 	return &core.ObjectLocation{
 		ObjectKey:   "bucket/key1",
+		StorageKey:  "bucket/key1!source",
 		BackendName: "b1",
 		SizeBytes:   int64(len(verifyOnBody)),
 		ContentHash: hash,
 	}
 }
 
+// replicaPath is where the copy under verification was written on the target.
+// It is not the source's path and not the object's key: the read-back has to
+// address the bytes this replication attempt actually placed.
+const replicaPath = "bucket/key1!replica"
+
 // expectReadBack stubs the target-side GET that verification performs, serving
 // body as the stored bytes.
 func expectReadBack(ops *MockOps, target string, body []byte) {
 	be := backendtest.NewMockObjectBackend(gomock.NewController(&testing.T{}))
 	ops.EXPECT().GetBackend(target).Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), be, "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().GetWithTimeout(gomock.Any(), be, replicaPath, "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(body)),
 		Size: int64(len(body)),
 	}, func() {}, nil)
@@ -106,7 +113,7 @@ func TestVerifyReplica_GateTable(t *testing.T) {
 			ops.EXPECT().GetBackend(gomock.Any()).Times(0)
 			ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-			got := r.verifyReplica(context.Background(), "b2", sourceRow(hashString(verifyOnBody)))
+			got := r.verifyReplica(context.Background(), "b2", replicaPath, sourceRow(hashString(verifyOnBody)))
 			if got != replicaNotChecked {
 				t.Errorf("verdict = %v, want replicaNotChecked", got)
 			}
@@ -125,7 +132,7 @@ func TestVerifyReplica_MatchingDigestVerifies(t *testing.T) {
 	r, ops, _, _ := verifyingReplicator(t, &config.IntegrityConfig{Enabled: true, VerifyOnReplicate: true})
 	expectReadBack(ops, "b2", []byte(verifyOnBody))
 
-	got := r.verifyReplica(context.Background(), "b2", sourceRow(hashString(verifyOnBody)))
+	got := r.verifyReplica(context.Background(), "b2", replicaPath, sourceRow(hashString(verifyOnBody)))
 	if got != replicaVerified {
 		t.Errorf("verdict = %v, want replicaVerified", got)
 	}
@@ -141,7 +148,7 @@ func TestVerifyReplica_DisagreeingDigestRejects(t *testing.T) {
 	expectReadBack(ops, "b2", []byte("corrupted on arrival"))
 
 	before := promtest.ToFloat64(telemetry.IntegrityErrorsTotal.WithLabelValues(integrityOpReplicate))
-	got := r.verifyReplica(context.Background(), "b2", sourceRow(hashString(verifyOnBody)))
+	got := r.verifyReplica(context.Background(), "b2", replicaPath, sourceRow(hashString(verifyOnBody)))
 	if got != replicaMismatch {
 		t.Fatalf("verdict = %v, want replicaMismatch", got)
 	}
@@ -162,7 +169,7 @@ func TestVerifyReplica_NoStoredHashKeepsTheCopy(t *testing.T) {
 	ops.EXPECT().GetBackend(gomock.Any()).Times(0)
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-	got := r.verifyReplica(context.Background(), "b2", sourceRow(""))
+	got := r.verifyReplica(context.Background(), "b2", replicaPath, sourceRow(""))
 	if got != replicaUnverified {
 		t.Errorf("verdict = %v, want replicaUnverified", got)
 	}
@@ -177,10 +184,10 @@ func TestVerifyReplica_UnreadableCopyIsKept(t *testing.T) {
 	r, ops, _, _ := verifyingReplicator(t, &config.IntegrityConfig{Enabled: true, VerifyOnReplicate: true})
 	be := backendtest.NewMockObjectBackend(gomock.NewController(t))
 	ops.EXPECT().GetBackend("b2").Return(be, nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), be, "bucket/key1", "").
+	ops.EXPECT().GetWithTimeout(gomock.Any(), be, replicaPath, "").
 		Return(nil, nil, errors.New("not found yet"))
 
-	got := r.verifyReplica(context.Background(), "b2", sourceRow(hashString(verifyOnBody)))
+	got := r.verifyReplica(context.Background(), "b2", replicaPath, sourceRow(hashString(verifyOnBody)))
 	if got != replicaUnverified {
 		t.Errorf("verdict = %v, want replicaUnverified", got)
 	}
@@ -209,7 +216,7 @@ func TestVerifyReplica_DeclinedByUsageLimitsKeepsTheCopy(t *testing.T) {
 	r.SetIntegrityConfig(&config.IntegrityConfig{Enabled: true, VerifyOnReplicate: true})
 
 	before := promtest.ToFloat64(telemetry.IntegrityUsageDeclinedTotal)
-	got := r.verifyReplica(context.Background(), "b2", sourceRow(hashString(verifyOnBody)))
+	got := r.verifyReplica(context.Background(), "b2", replicaPath, sourceRow(hashString(verifyOnBody)))
 	if got != replicaUnverified {
 		t.Fatalf("verdict = %v, want replicaUnverified", got)
 	}
@@ -244,7 +251,7 @@ func TestVerifyReplica_CompressedCopyIsDecodedFirst(t *testing.T) {
 	source := compressedRow(hashString(string(plain)), len(stored))
 	expectReadBack(ops, "b2", stored)
 
-	if got := r.verifyReplica(context.Background(), "b2", &source); got != replicaVerified {
+	if got := r.verifyReplica(context.Background(), "b2", replicaPath, &source); got != replicaVerified {
 		t.Errorf("verdict = %v, want replicaVerified", got)
 	}
 }
@@ -299,7 +306,7 @@ func TestVerifyReplica_EncryptedCopyIsDecryptedFirst(t *testing.T) {
 	}
 	expectReadBack(ops, "b2", ciphertext)
 
-	if got := r.verifyReplica(context.Background(), "b2", source); got != replicaVerified {
+	if got := r.verifyReplica(context.Background(), "b2", replicaPath, source); got != replicaVerified {
 		t.Errorf("verdict = %v, want replicaVerified", got)
 	}
 }
@@ -329,7 +336,7 @@ func TestVerifyReplica_CompressedCopyWithoutCodecIsKept(t *testing.T) {
 	source := compressedRow(hashString(verifyOnBody), len(verifyOnBody))
 	expectReadBack(ops, "b2", []byte(verifyOnBody))
 
-	if got := r.verifyReplica(context.Background(), "b2", &source); got != replicaUnverified {
+	if got := r.verifyReplica(context.Background(), "b2", replicaPath, &source); got != replicaUnverified {
 		t.Errorf("verdict = %v, want replicaUnverified", got)
 	}
 }
@@ -349,9 +356,9 @@ func replicateOneWithVerification(t *testing.T, target string, readBack []byte, 
 	dstBe := backendtest.NewMockObjectBackend(gomock.NewController(t))
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, target: dstBe}).AnyTimes()
 	ops.EXPECT().GetBackend(target).Return(dstBe, nil).AnyTimes()
-	ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", gomock.Any()).
+	ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1!source", gomock.Any(), gomock.Any()).
 		Return(int64(0), nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), dstBe, "bucket/key1", "").Return(&backend.GetObjectResult{
+	ops.EXPECT().GetWithTimeout(gomock.Any(), dstBe, gomock.Any(), "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(bytes.NewReader(readBack)),
 		Size: int64(len(readBack)),
 	}, func() {}, nil)
@@ -392,19 +399,27 @@ func TestReplicateObject_MismatchedCopyIsDiscardedNotRecorded(t *testing.T) {
 	dstBe := backendtest.NewMockObjectBackend(gomock.NewController(t))
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil).AnyTimes()
-	ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", gomock.Any()).
-		Return(int64(0), nil)
-	ops.EXPECT().GetWithTimeout(gomock.Any(), dstBe, "bucket/key1", "").Return(&backend.GetObjectResult{
-		Body: io.NopCloser(bytes.NewReader([]byte("wrong bytes"))),
-		Size: 11,
-	}, func() {}, nil)
+	// The replica's path is minted per attempt, so the expectations take it as
+	// it comes and pin only that the read-back addresses the path the copy was
+	// written to rather than the object's key.
+	var wrote string
+	ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1!source", gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ backend.CopyEndpoint, _, dstKey string, _ int64) (int64, error) {
+			wrote = dstKey
+			return 0, nil
+		})
+	ops.EXPECT().GetWithTimeout(gomock.Any(), dstBe, gomock.Cond(func(key string) bool { return key == wrote }), "").
+		Return(&backend.GetObjectResult{
+			Body: io.NopCloser(bytes.NewReader([]byte("wrong bytes"))),
+			Size: 11,
+		}, func() {}, nil)
 
 	// Only one target exists, so the retry loop runs out rather than succeeding
 	// elsewhere.
 	pl.EXPECT().RankReplicaTargets(gomock.Any(), gomock.Any()).Return([]string{"b2"})
 	pl.EXPECT().RankReplicaTargets(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	// The bytes that failed the check are removed from the target.
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), dstBe, "b2", "bucket/key1", "replication_orphan", gomock.Any())
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), dstBe, cleanupOn("b2", "bucket/key1"))
 
 	copies := []core.ObjectLocation{*sourceRow(hashString(verifyOnBody))}
 	out := r.ReplicateObject(context.Background(), "bucket/key1", copies, 1)
@@ -434,7 +449,7 @@ func TestReplicateObject_UncheckedCopyIsStillRecorded(t *testing.T) {
 	srcBe := backendtest.NewMockObjectBackend(gomock.NewController(t))
 	dstBe := backendtest.NewMockObjectBackend(gomock.NewController(t))
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": srcBe, "b2": dstBe}).AnyTimes()
-	ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1", gomock.Any()).
+	ops.EXPECT().StreamCopy(gomock.Any(), gomock.Any(), gomock.Any(), "bucket/key1!source", gomock.Any(), gomock.Any()).
 		Return(int64(0), nil)
 	ops.EXPECT().GetBackend("b2").Return(dstBe, nil).AnyTimes()
 	pl.EXPECT().RankReplicaTargets(gomock.Any(), gomock.Any()).Return([]string{"b2"})

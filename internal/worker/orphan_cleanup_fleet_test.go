@@ -54,12 +54,13 @@ type orphanBytesEntry struct {
 // -------------------------------------------------------------------------
 
 // stubOrphanEnqueue captures EnqueueCleanup args.
-func stubOrphanEnqueue(c *orphanCalls, err error) func(context.Context, string, string, string, int64) error {
-	return func(_ context.Context, backend, key, reason string, size int64) error {
+func stubOrphanEnqueue(c *orphanCalls, err error) func(context.Context, *core.CleanupRequest) error {
+	return func(_ context.Context, req *core.CleanupRequest) error {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.enqueue = append(c.enqueue, core.CleanupItem{
-			BackendName: backend, ObjectKey: key, Reason: reason, SizeBytes: size,
+			BackendName: req.BackendName, ObjectKey: req.ObjectKey, StorageKey: req.StorageKey,
+			Reason: req.Reason, SizeBytes: req.SizeBytes,
 		})
 		return err
 	}
@@ -239,7 +240,7 @@ func TestCleanupOrphan_PassesSizeToEnqueue(t *testing.T) {
 	c := &orphanCalls{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
@@ -247,7 +248,7 @@ func TestCleanupOrphan_PassesSizeToEnqueue(t *testing.T) {
 
 	w := newReplicatorFor(t, store, map[string]backend.ObjectBackend{"b1": b1}, nil)
 
-	w.CleanupOrphan(context.Background(), "b1", "orphan-key", 7777)
+	w.CleanupOrphan(context.Background(), "b1", "orphan-key", "orphan-key", 7777)
 
 	if len(c.enqueue) != 1 {
 		t.Fatalf("expected 1 enqueue call, got %d", len(c.enqueue))
@@ -710,7 +711,7 @@ func TestOrphanBytes_FullLifecycle(t *testing.T) {
 	claimed := map[int64]core.CleanupItem{}
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
@@ -754,7 +755,9 @@ func TestOrphanBytes_FullLifecycle(t *testing.T) {
 	})
 
 	be.SetDeleteErr(errors.New("timeout"))
-	coord.DeleteOrEnqueue(context.Background(), be, "b1", "file.txt", "delete_failed", 1024)
+	coord.DeleteOrEnqueue(context.Background(), be, &core.CleanupRequest{
+		BackendName: "b1", ObjectKey: "file.txt", StorageKey: "file.txt", Reason: "delete_failed", SizeBytes: 1024,
+	})
 
 	if len(c.increment) != 1 {
 		t.Fatalf("step 1: expected 1 IncrementOrphanBytes, got %d", len(c.increment))

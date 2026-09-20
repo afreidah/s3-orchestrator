@@ -292,7 +292,7 @@ func (mp *Manager) UploadPart(ctx context.Context, bucket, key, uploadID string,
 	}); err != nil {
 		mp.log.ErrorContext(ctx, "recordPart failed, cleaning up part object",
 			"upload_id", uploadID, "part", partNumber, "error", err)
-		mp.coord.RecoverFromRecordFailure(ctx, be, mu.BackendName, partKey, "orphan_part_record_failed", uploadSize)
+		mp.coord.RecoverFromRecordFailure(ctx, be, partCleanup(mu.BackendName, partKey, "orphan_part_record_failed", uploadSize))
 		observe.RecordSpanError(span, err)
 		return "", fmt.Errorf("failed to record part: %w", err)
 	}
@@ -482,6 +482,20 @@ func (mp *Manager) prepareUploadPartBody(ctx context.Context, mu *core.Multipart
 	return out, ciphertextSize, form, nil
 }
 
+// partCleanup describes one part object for the cleanup paths. A part is
+// already stored under a path unique to its upload and number, so it is its own
+// storage key and needs no per-write suffix; the object key is the same string
+// because a part is not an object any client can name.
+func partCleanup(backendName, partKey, reason string, size int64) *core.CleanupRequest {
+	return &core.CleanupRequest{
+		BackendName: backendName,
+		ObjectKey:   partKey,
+		StorageKey:  partKey,
+		Reason:      reason,
+		SizeBytes:   size,
+	}
+}
+
 // multipartPartKey returns the temporary object key for a multipart part.
 func multipartPartKey(uploadID string, partNumber int) string {
 	return "__multipart/" + uploadID + "/" + strconv.Itoa(partNumber)
@@ -616,7 +630,7 @@ func (mp *Manager) abortByMultipartRow(ctx context.Context, mu *core.MultipartUp
 
 	for i := range parts {
 		partKey := multipartPartKey(uploadID, parts[i].PartNumber)
-		mp.coord.DeleteOrEnqueue(ctx, be, mu.BackendName, partKey, "abort_part_cleanup", parts[i].SizeBytes)
+		mp.coord.DeleteOrEnqueue(ctx, be, partCleanup(mu.BackendName, partKey, "abort_part_cleanup", parts[i].SizeBytes))
 	}
 
 	if err := mp.stores.DeleteMultipartUpload(ctx, uploadID); err != nil {
@@ -854,9 +868,15 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// request) still wins.
 	wctx, wcancel := mp.core.WithTimeout(ctx)
 	defer wcancel()
+	// Assembled under the intent's own storage key, like any other write: the
+	// completion of an upload is a write of the object, so a client that
+	// completes twice, or completes while another write takes the key, leaves
+	// two distinct objects on the backend rather than two writers racing at one
+	// path.
+	//
 	// The backend's ETag for the assembled object describes the bytes as
 	// stored and is discarded; the client is given the composite built above.
-	_, err = be.PutObject(wctx, mu.ObjectKey, uploadBody, uploadSize, mu.ContentType, mu.Metadata)
+	_, err = be.PutObject(wctx, intent.StorageKey, uploadBody, uploadSize, mu.ContentType, mu.Metadata)
 	if err != nil {
 		pipeCancel()
 		pr.Close()
@@ -880,7 +900,7 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// the ledger recorded.
 	if err := mp.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
 		Key: mu.ObjectKey, Size: uploadSize, Form: form, Identity: identity, Tags: mu.Tags,
-		Copies: []core.ObjectCopy{{Backend: mu.BackendName, IntentID: intentID}},
+		Copies: []core.ObjectCopy{{Backend: mu.BackendName, IntentID: intentID, StorageKey: intent.StorageKey}},
 	}); err != nil {
 		return "", err
 	}
@@ -955,7 +975,7 @@ func assembledIdentity(mu *core.MultipartUpload, parts []core.MultipartPart) (*c
 func (mp *Manager) cleanupCompletedUpload(ctx context.Context, span trace.Span, be s3be.ObjectBackend, mu *core.MultipartUpload, uploadID string, parts []core.MultipartPart) {
 	for i := range parts {
 		partKey := multipartPartKey(uploadID, parts[i].PartNumber)
-		mp.coord.DeleteOrEnqueue(ctx, be, mu.BackendName, partKey, "complete_part_cleanup", parts[i].SizeBytes)
+		mp.coord.DeleteOrEnqueue(ctx, be, partCleanup(mu.BackendName, partKey, "complete_part_cleanup", parts[i].SizeBytes))
 	}
 	if err := mp.stores.DeleteMultipartUpload(ctx, uploadID); err != nil {
 		span.RecordError(err)

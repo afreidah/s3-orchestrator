@@ -24,13 +24,20 @@ import (
 // RECORD OBJECT
 // -------------------------------------------------------------------------
 
-// ObjectCopy names one backend a write landed on and the pending intent it
-// resolves there. Everything describing the bytes lives on the request instead,
-// because every copy of a key holds the same ones: replication moves them
-// verbatim, so a copy that differed could not be made by any other path.
+// ObjectCopy names one backend a write landed on, the pending intent it
+// resolves there, and the path its bytes occupy. Everything describing the
+// bytes lives on the request instead, because every copy of a key holds the
+// same ones: replication moves them verbatim, so a copy that differed could not
+// be made by any other path.
+//
+// The path is per copy rather than per request. A write placing several copies
+// at once holds an intent per copy, and each copy's bytes go down under that
+// intent's id - so a copy that is later discarded, displaced or rebuilt is
+// addressable on its own.
 type ObjectCopy struct {
-	Backend  string
-	IntentID string
+	Backend    string
+	IntentID   string
+	StorageKey string
 }
 
 // RecordObjectRequest is one committed write: where the object landed, how its
@@ -50,10 +57,10 @@ type ObjectCopy struct {
 // key describes an object this write has replaced, and leaving a stranger's
 // would let it commit a copy of what was just replaced.
 //
-// Their backends are also held back from physical cleanup. A prior copy on a
-// backend this write is still uploading to sits at the path those bytes are
-// landing on, so deleting it as displaced deletes this write's own copy and
-// leaves a row describing bytes that are gone.
+// They are held back from clearing only. Their bytes are not: a copy this write
+// is still uploading goes down at its own intent's path, so a prior copy on
+// that same backend is at a different path and deleting it cannot touch what
+// this write is placing.
 type RecordObjectRequest struct {
 	Key      string
 	Size     int64
@@ -64,26 +71,23 @@ type RecordObjectRequest struct {
 	Placing  []ObjectCopy
 }
 
-// occupiedBackends lists every backend this write puts bytes on, whether the
-// copy is being committed now or is still uploading. It is what displacement
-// and intent clearing measure "somewhere else" against.
-func (r *RecordObjectRequest) occupiedBackends() []string {
-	names := make([]string, 0, len(r.Copies)+len(r.Placing))
-	for i := range r.Copies {
-		names = append(names, r.Copies[i].Backend)
-	}
-	for i := range r.Placing {
-		names = append(names, r.Placing[i].Backend)
-	}
-	return names
-}
-
 // keepIntents names the intents the commit must not clear: the ones belonging
 // to this write's own uploads still in flight.
 func (r *RecordObjectRequest) keepIntents() []string {
 	ids := make([]string, 0, len(r.Placing))
 	for i := range r.Placing {
 		ids = append(ids, r.Placing[i].IntentID)
+	}
+	return ids
+}
+
+// committedIntents names the intents this write is honouring: one per copy it
+// is recording. They are cleared with the rest, having served their purpose,
+// but their bytes are the object and must not be handed to orphan cleanup.
+func (r *RecordObjectRequest) committedIntents() []string {
+	ids := make([]string, 0, len(r.Copies))
+	for i := range r.Copies {
+		ids = append(ids, r.Copies[i].IntentID)
 	}
 	return ids
 }
@@ -144,7 +148,7 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 		return mutationResult{}, err
 	}
 	deltas := make(QuotaDeltas, len(existing)+len(req.Copies))
-	displaced, err := clearExistingCopies(ctx, tx, req.Key, req.occupiedBackends(), existing, deltas)
+	displaced, err := clearExistingCopies(ctx, tx, req.Key, existing, deltas)
 	if err != nil {
 		return mutationResult{}, err
 	}
@@ -161,7 +165,7 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 		return mutationResult{}, err
 	}
 	for _, c := range req.Copies {
-		if err := tx.InsertObjectLocation(ctx, objectFromStoredForm(req.Key, c.Backend, req.Size, req.Form, req.Identity)); err != nil {
+		if err := tx.InsertObjectLocation(ctx, objectFromStoredForm(req.Key, c.Backend, c.StorageKey, req.Size, req.Form, req.Identity)); err != nil {
 			return mutationResult{}, fmt.Errorf("insert object location on %s: %w", c.Backend, err)
 		}
 		deltas.Add(c.Backend, req.Size)
@@ -169,7 +173,7 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 	if err := chargeStripes(ctx, tx, req.Key, deltas); err != nil {
 		return mutationResult{}, err
 	}
-	superseded, err := clearSupersededIntents(ctx, tx, req.Key, req.occupiedBackends(), req.keepIntents())
+	superseded, err := clearSupersededIntents(ctx, tx, req.Key, req.keepIntents(), req.committedIntents())
 	if err != nil {
 		return mutationResult{}, err
 	}
@@ -235,7 +239,7 @@ func debitExistingCopies(existing []ExistingCopy) ([]DeletedCopy, QuotaDeltas) {
 	copies := make([]DeletedCopy, len(existing))
 	deltas := make(QuotaDeltas, len(existing))
 	for i, ec := range existing {
-		copies[i] = DeletedCopy{BackendName: ec.BackendName, SizeBytes: ec.SizeBytes}
+		copies[i] = DeletedCopy{BackendName: ec.BackendName, StorageKey: ec.StorageKey, SizeBytes: ec.SizeBytes}
 		deltas.Add(ec.BackendName, -ec.SizeBytes)
 	}
 	return copies, deltas
@@ -293,6 +297,7 @@ func splitRemovedCopies(rows []KeyedExistingCopy, keyCount int) (map[string][]De
 	for _, r := range rows {
 		copies[r.ObjectKey] = append(copies[r.ObjectKey], DeletedCopy{
 			BackendName: r.BackendName,
+			StorageKey:  r.StorageKey,
 			SizeBytes:   r.SizeBytes,
 		})
 		deltas.Add(r.BackendName, -r.SizeBytes)
@@ -346,7 +351,7 @@ func DeleteObjectLocation(ctx context.Context, runner Runner, key, backendName s
 		if err != nil {
 			return 0, err
 		}
-		size, found := copySizeForBackend(existing, backendName)
+		held, found := copyOnBackend(existing, backendName)
 		if !found {
 			return 0, nil
 		}
@@ -363,16 +368,30 @@ func DeleteObjectLocation(ctx context.Context, runner Runner, key, backendName s
 				return 0, err
 			}
 		}
-		if err := chargeStripes(ctx, tx, key, QuotaDeltas{backendName: -size}); err != nil {
+		if err := chargeStripes(ctx, tx, key, QuotaDeltas{backendName: -held.SizeBytes}); err != nil {
 			return 0, err
 		}
-		return size, nil
+		return held.SizeBytes, nil
 	})
 }
 
 // -------------------------------------------------------------------------
 // MOVE OBJECT LOCATION
 // -------------------------------------------------------------------------
+
+// MoveLocation is one src -> dest repointing of a copy: which object, the two
+// backends, and the path the bytes were written to on the destination.
+//
+// StorageKey is the caller's because the caller is what wrote those bytes. A
+// move is a write like any other - it puts a new object on a backend - so it
+// names its own path rather than reusing the source's, and the orphan cleanup
+// on a move that loses its race then deletes exactly what that move uploaded.
+type MoveLocation struct {
+	ObjectKey   string
+	FromBackend string
+	ToBackend   string
+	StorageKey  string
+}
 
 // MoveObjectLocation atomically moves a copy of an object from one
 // backend to another. Uses row-level locks to prevent races. Returns
@@ -382,7 +401,8 @@ func DeleteObjectLocation(ctx context.Context, runner Runner, key, backendName s
 // The bytes moved are returned rather than debited and credited here, because
 // the caller already knows both ends of the move and applies the pair to the
 // in-memory counter.
-func MoveObjectLocation(ctx context.Context, runner Runner, key, fromBackend, toBackend string) (int64, error) {
+func MoveObjectLocation(ctx context.Context, runner Runner, m *MoveLocation) (int64, error) {
+	key, fromBackend, toBackend := m.ObjectKey, m.FromBackend, m.ToBackend
 	return WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (int64, error) {
 		targetHasCopy, err := tx.CheckObjectExistsOnBackend(ctx, key, toBackend)
 		if err != nil {
@@ -403,7 +423,7 @@ func MoveObjectLocation(ctx context.Context, runner Runner, key, fromBackend, to
 		// hand-listed subset of the source row's fields. A field omitted here is
 		// a column describing bytes the moved copy then contradicts, which is
 		// how this path came to drop the compression columns.
-		dest := objectFromStoredForm(key, toBackend, src.SizeBytes, StoredFormFromLocation(src), src.Identity)
+		dest := objectFromStoredForm(key, toBackend, m.StorageKey, src.SizeBytes, StoredFormFromLocation(src), src.Identity)
 		if err := tx.InsertObjectLocation(ctx, dest); err != nil {
 			return 0, err
 		}
@@ -511,7 +531,24 @@ func ImportObject(ctx context.Context, runner Runner, req *ImportObjectRequest) 
 		// copy. The first read that has to ask the backend records what it got
 		// for every copy, so the value settles on first use instead of being
 		// guessed at import.
-		loc := objectFromStoredForm(req.Key, req.Backend, req.Size, req.Form, nil)
+		// Bytes already recorded at this path belong to a copy the ledger knows
+		// about, and the row naming them is filed under the real object's key -
+		// which a path the orchestrator wrote is not. Without this, a bulk sync
+		// would adopt every per-write path on the backend a second time, as an
+		// object whose name is the path.
+		recorded, err := tx.CopyExistsAtPath(ctx, req.Backend, req.Key)
+		if err != nil {
+			return ImportSkippedExisting, err
+		}
+		if recorded {
+			return ImportSkippedExisting, nil
+		}
+
+		// The storage key is the key: a discovered object is at the path the
+		// listing found it at, and that path is what the row has to address it
+		// by. An object the orchestrator wrote and lost the row for comes back
+		// under its own per-write path, which is exactly where its bytes are.
+		loc := objectFromStoredForm(req.Key, req.Backend, req.Key, req.Size, req.Form, nil)
 		loc.Unmanaged = req.Unmanaged
 		loc.CreatedAt = cmp.Or(req.WrittenAt, time.Now())
 		inserted, err := tx.InsertObjectLocationIfNotExists(ctx, loc)

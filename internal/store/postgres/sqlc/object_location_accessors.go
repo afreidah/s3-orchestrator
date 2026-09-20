@@ -30,6 +30,7 @@ import "github.com/jackc/pgx/v5/pgtype"
 // ListObjectsByBackendRow
 
 func (r ListObjectsByBackendRow) GetObjectKey() string             { return r.ObjectKey }
+func (r ListObjectsByBackendRow) GetStorageKey() string            { return r.StorageKey }
 func (r ListObjectsByBackendRow) GetBackendName() string           { return r.BackendName }
 func (r ListObjectsByBackendRow) GetSizeBytes() int64              { return r.SizeBytes }
 func (r ListObjectsByBackendRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
@@ -37,6 +38,7 @@ func (r ListObjectsByBackendRow) GetCreatedAt() pgtype.Timestamptz { return r.Cr
 // ListObjectsByPrefixRow
 
 func (r ListObjectsByPrefixRow) GetObjectKey() string             { return r.ObjectKey }
+func (r ListObjectsByPrefixRow) GetStorageKey() string            { return r.StorageKey }
 func (r ListObjectsByPrefixRow) GetBackendName() string           { return r.BackendName }
 func (r ListObjectsByPrefixRow) GetSizeBytes() int64              { return r.SizeBytes }
 func (r ListObjectsByPrefixRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
@@ -44,6 +46,7 @@ func (r ListObjectsByPrefixRow) GetCreatedAt() pgtype.Timestamptz { return r.Cre
 // ListExpiredObjectsRow
 
 func (r ListExpiredObjectsRow) GetObjectKey() string             { return r.ObjectKey }
+func (r ListExpiredObjectsRow) GetStorageKey() string            { return r.StorageKey }
 func (r ListExpiredObjectsRow) GetBackendName() string           { return r.BackendName }
 func (r ListExpiredObjectsRow) GetSizeBytes() int64              { return r.SizeBytes }
 func (r ListExpiredObjectsRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
@@ -55,6 +58,7 @@ func (r ListExpiredObjectsRow) GetCreatedAt() pgtype.Timestamptz { return r.Crea
 // ListObjectsByBackendKeyAscRow
 
 func (r ListObjectsByBackendKeyAscRow) GetObjectKey() string             { return r.ObjectKey }
+func (r ListObjectsByBackendKeyAscRow) GetStorageKey() string            { return r.StorageKey }
 func (r ListObjectsByBackendKeyAscRow) GetBackendName() string           { return r.BackendName }
 func (r ListObjectsByBackendKeyAscRow) GetSizeBytes() int64              { return r.SizeBytes }
 func (r ListObjectsByBackendKeyAscRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
@@ -66,6 +70,7 @@ func (r ListObjectsByBackendKeyAscRow) GetCreatedAt() pgtype.Timestamptz { retur
 // GetAllObjectLocationsRow
 
 func (r GetAllObjectLocationsRow) GetObjectKey() string             { return r.ObjectKey }
+func (r GetAllObjectLocationsRow) GetStorageKey() string            { return r.StorageKey }
 func (r GetAllObjectLocationsRow) GetBackendName() string           { return r.BackendName }
 func (r GetAllObjectLocationsRow) GetSizeBytes() int64              { return r.SizeBytes }
 func (r GetAllObjectLocationsRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
@@ -90,6 +95,7 @@ func (r GetAllObjectLocationsRow) GetUserMetadata() []byte { return r.UserMetada
 // GetUnderReplicatedObjectsRow
 
 func (r GetUnderReplicatedObjectsRow) GetObjectKey() string             { return r.ObjectKey }
+func (r GetUnderReplicatedObjectsRow) GetStorageKey() string            { return r.StorageKey }
 func (r GetUnderReplicatedObjectsRow) GetBackendName() string           { return r.BackendName }
 func (r GetUnderReplicatedObjectsRow) GetSizeBytes() int64              { return r.SizeBytes }
 func (r GetUnderReplicatedObjectsRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
@@ -110,6 +116,7 @@ func (r GetUnderReplicatedObjectsRow) GetCompressionFormatVersion() *int16 {
 // GetUnderReplicatedObjectsExcludingRow
 
 func (r GetUnderReplicatedObjectsExcludingRow) GetObjectKey() string             { return r.ObjectKey }
+func (r GetUnderReplicatedObjectsExcludingRow) GetStorageKey() string            { return r.StorageKey }
 func (r GetUnderReplicatedObjectsExcludingRow) GetBackendName() string           { return r.BackendName }
 func (r GetUnderReplicatedObjectsExcludingRow) GetSizeBytes() int64              { return r.SizeBytes }
 func (r GetUnderReplicatedObjectsExcludingRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
@@ -132,6 +139,7 @@ func (r GetUnderReplicatedObjectsExcludingRow) GetCompressionFormatVersion() *in
 // GetOverReplicatedObjectsRow
 
 func (r GetOverReplicatedObjectsRow) GetObjectKey() string             { return r.ObjectKey }
+func (r GetOverReplicatedObjectsRow) GetStorageKey() string            { return r.StorageKey }
 func (r GetOverReplicatedObjectsRow) GetBackendName() string           { return r.BackendName }
 func (r GetOverReplicatedObjectsRow) GetSizeBytes() int64              { return r.SizeBytes }
 func (r GetOverReplicatedObjectsRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
@@ -150,6 +158,7 @@ func (r GetOverReplicatedObjectsRow) GetCompressionFormatVersion() *int16 {
 // GetLeastRecentlyScrubbedObjectsRow
 
 func (r GetLeastRecentlyScrubbedObjectsRow) GetObjectKey() string             { return r.ObjectKey }
+func (r GetLeastRecentlyScrubbedObjectsRow) GetStorageKey() string            { return r.StorageKey }
 func (r GetLeastRecentlyScrubbedObjectsRow) GetBackendName() string           { return r.BackendName }
 func (r GetLeastRecentlyScrubbedObjectsRow) GetSizeBytes() int64              { return r.SizeBytes }
 func (r GetLeastRecentlyScrubbedObjectsRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }
@@ -173,6 +182,7 @@ func (r GetLeastRecentlyScrubbedObjectsRow) GetLastScrubbedAt() pgtype.Timestamp
 // GetObjectsWithoutHashRow
 
 func (r GetObjectsWithoutHashRow) GetObjectKey() string             { return r.ObjectKey }
+func (r GetObjectsWithoutHashRow) GetStorageKey() string            { return r.StorageKey }
 func (r GetObjectsWithoutHashRow) GetBackendName() string           { return r.BackendName }
 func (r GetObjectsWithoutHashRow) GetSizeBytes() int64              { return r.SizeBytes }
 func (r GetObjectsWithoutHashRow) GetCreatedAt() pgtype.Timestamptz { return r.CreatedAt }

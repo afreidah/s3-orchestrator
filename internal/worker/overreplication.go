@@ -294,7 +294,7 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 		// cleanup queue handles the orphan. removed=false is the benign
 		// race outcome: a parallel client delete or earlier tick already
 		// absorbed the excess, so this victim no longer needs touching.
-		_, didRemove, err := c.store.RemoveExcessCopy(ctx, key, victim.BackendName, factor)
+		dropped, err := c.store.RemoveExcessCopy(ctx, key, victim.BackendName, factor)
 		switch {
 		case errors.Is(err, core.ErrCopyHoldsOnlyDEK):
 			// The copy set disagrees about encryption and this victim is the
@@ -317,7 +317,7 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 			failures++
 			continue
 		}
-		if !didRemove {
+		if !dropped.Removed {
 			continue
 		}
 		be, err := c.ops.GetBackend(victim.BackendName)
@@ -329,7 +329,17 @@ func (c *OverReplicationCleaner) cleanObject(ctx context.Context, key string, co
 			continue
 		}
 
-		c.placement.DeleteOrEnqueue(ctx, be, victim.BackendName, key, "over_replication", victim.SizeBytes)
+		// The path comes from the transaction that dropped the row, not from
+		// the scan: a copy the cleaner selected minutes ago may have been
+		// replaced by a newer write since, and deleting the scan's path would
+		// then take that write's bytes.
+		c.placement.DeleteOrEnqueue(ctx, be, &core.CleanupRequest{
+			BackendName: victim.BackendName,
+			ObjectKey:   key,
+			StorageKey:  core.StoragePath(key, dropped.StorageKey),
+			Reason:      "over_replication",
+			SizeBytes:   dropped.SizeBytes,
+		})
 
 		audit.Log(ctx, "over_replication.remove",
 			slog.String("key", key),

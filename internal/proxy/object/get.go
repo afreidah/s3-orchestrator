@@ -164,7 +164,7 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 	}
 	actualRange := br.header
 
-	r, cancel, err := o.core.GetWithTimeout(ctx, backend, key, actualRange)
+	r, cancel, err := o.core.GetWithTimeout(ctx, backend, storagePath(key, loc), actualRange)
 	if err != nil {
 		o.core.Acct().APICall(s3op.GetObject, beName)
 		return fail, 0, err
@@ -298,7 +298,13 @@ func (o *Manager) maybeWrapIntegrityReader(
 			"key", key, "backend", beName,
 			"expected_hash", expected, "actual_hash", actual)
 		telemetry.IntegrityErrorsTotal.WithLabelValues("read").Inc()
-		o.coord.DeleteOrEnqueue(ctx, backend, beName, key, "integrity_failed", r.Size)
+		o.coord.DeleteOrEnqueue(ctx, backend, &core.CleanupRequest{
+			BackendName: beName,
+			ObjectKey:   key,
+			StorageKey:  storagePath(key, loc),
+			Reason:      "integrity_failed",
+			SizeBytes:   r.Size,
+		})
 		o.dropCorruptedLocation(ctx, key, beName)
 	})
 	r.Body = vr

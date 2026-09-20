@@ -66,8 +66,8 @@ func newExcessStub(s *excessTxStub) *excessTxStub {
 // runRemoveExcess invokes RemoveExcessCopy against the stub, reporting only
 // whether a copy went; the byte count has its own assertions.
 func runRemoveExcess(stub *excessTxStub, key, backend string, factor int) (bool, error) {
-	_, removed, err := RemoveExcessCopy(context.Background(), &stubRunner{tx: stub}, key, backend, factor)
-	return removed, err
+	dropped, err := RemoveExcessCopy(context.Background(), &stubRunner{tx: stub}, key, backend, factor)
+	return dropped.Removed, err
 }
 
 // TestRemoveExcessCopy_LockError verifies a failure to take the key lock
@@ -141,28 +141,32 @@ func TestRemoveExcessCopy_DeleteError(t *testing.T) {
 }
 
 // TestRemoveExcessCopy_RemovesVictimWithLockedSize verifies the success
-// path: the victim row is deleted and the bytes reported are the ones on the
-// locked row, not a caller-supplied value, so the caller debits the backend by
-// what actually went.
+// path: the victim row is deleted, and the bytes and the path reported are the
+// ones on the locked row rather than caller-supplied values - so the caller
+// debits the backend by what actually went and deletes the bytes the
+// transaction actually dropped.
 func TestRemoveExcessCopy_RemovesVictimWithLockedSize(t *testing.T) {
 	t.Parallel()
 	stub := newExcessStub(&excessTxStub{existing: []ExistingCopy{
-		{BackendName: "b1", SizeBytes: 100},
-		{BackendName: "b2", SizeBytes: 200},
-		{BackendName: "b3", SizeBytes: 300},
+		{BackendName: "b1", StorageKey: "k!a", SizeBytes: 100},
+		{BackendName: "b2", StorageKey: "k!b", SizeBytes: 200},
+		{BackendName: "b3", StorageKey: "k!c", SizeBytes: 300},
 	}})
-	size, removed, err := RemoveExcessCopy(context.Background(), &stubRunner{tx: stub}, "k", "b1", 2)
+	dropped, err := RemoveExcessCopy(context.Background(), &stubRunner{tx: stub}, "k", "b1", 2)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !removed {
-		t.Fatal("expected removed=true when over factor and victim present")
+	if !dropped.Removed {
+		t.Fatal("expected Removed=true when over factor and victim present")
 	}
 	if len(stub.deleted) != 1 || stub.deleted[0] != "b1" {
 		t.Errorf("expected b1 deleted, got %v", stub.deleted)
 	}
-	if size != 100 {
-		t.Errorf("size = %d, want 100 (the locked row's size)", size)
+	if dropped.SizeBytes != 100 {
+		t.Errorf("SizeBytes = %d, want 100 (the locked row's size)", dropped.SizeBytes)
+	}
+	if dropped.StorageKey != "k!a" {
+		t.Errorf("StorageKey = %q, want %q (the locked row's path)", dropped.StorageKey, "k!a")
 	}
 }
 

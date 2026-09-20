@@ -28,12 +28,13 @@ import (
 // -------------------------------------------------------------------------
 
 // EnqueueCleanup adds a failed cleanup operation to the retry queue.
-func (s *Store) EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) error {
+func (s *Store) EnqueueCleanup(ctx context.Context, c *core.CleanupRequest) error {
 	err := s.queries.EnqueueCleanup(ctx, db.EnqueueCleanupParams{
-		BackendName: backendName,
-		ObjectKey:   objectKey,
-		Reason:      reason,
-		SizeBytes:   sizeBytes,
+		BackendName: c.BackendName,
+		ObjectKey:   c.ObjectKey,
+		StorageKey:  core.StoragePath(c.ObjectKey, c.StorageKey),
+		Reason:      c.Reason,
+		SizeBytes:   c.SizeBytes,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to enqueue cleanup: %w", err)
@@ -60,6 +61,7 @@ func cleanupItemFromRow(r *db.GetPendingCleanupsRow) core.CleanupItem {
 		ID:          r.ID,
 		BackendName: r.BackendName,
 		ObjectKey:   r.ObjectKey,
+		StorageKey:  r.StorageKey,
 		Reason:      r.Reason,
 		Attempts:    r.Attempts,
 		SizeBytes:   r.SizeBytes,
@@ -76,6 +78,7 @@ func claimedItemFromRow(r *db.ClaimPendingCleanupsRow) core.CleanupItem {
 		ID:          r.ID,
 		BackendName: r.BackendName,
 		ObjectKey:   r.ObjectKey,
+		StorageKey:  r.StorageKey,
 		Reason:      r.Reason,
 		Attempts:    r.Attempts,
 		SizeBytes:   r.SizeBytes,
@@ -229,6 +232,7 @@ func cleanupDLQItemFromRow(r *db.ListCleanupDLQRow) core.CleanupDLQItem {
 	return core.CleanupDLQItem{
 		BackendName:   r.BackendName,
 		ObjectKey:     r.ObjectKey,
+		StorageKey:    r.StorageKey,
 		Reason:        r.Reason,
 		SizeBytes:     r.SizeBytes,
 		Attempts:      r.Attempts,

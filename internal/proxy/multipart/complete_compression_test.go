@@ -127,7 +127,7 @@ func completeWithParts(t *testing.T, opts *fleetOpts, bodies [][]byte) assembled
 	if len(calls.recordObject) != 1 {
 		t.Fatalf("recorded %d rows, want 1", len(calls.recordObject))
 	}
-	obj, ok := be.Get(mpObjectKey)
+	obj, ok := be.CopyOf(mpObjectKey)
 	if !ok {
 		t.Fatal("assembled object not found on the backend")
 	}
@@ -329,10 +329,10 @@ func TestComplete_EncodeFailureLeavesUploadRetryable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the completion to fail when the encoder does")
 	}
-	if be.Has(mpObjectKey) {
+	if be.HasCopyOf(mpObjectKey) {
 		t.Error("assembled object was written despite the encode failing")
 	}
-	if !be.Has(partKey) {
+	if !be.HasCopyOf(partKey) {
 		t.Error("part was deleted after a failed completion; the retry has nothing to read")
 	}
 	if len(calls.recordObject) != 0 {

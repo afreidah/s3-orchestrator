@@ -423,7 +423,7 @@ func TestObjectTags_ReplicaRemovalKeepsTags(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	seedObject(t, s, "bucket/replicated", "backend-a")
-	if _, err := s.MoveObjectLocation(ctx, "bucket/replicated", "backend-a", "backend-b"); err != nil {
+	if _, err := s.MoveObjectLocation(ctx, &core.MoveLocation{ObjectKey: "bucket/replicated", FromBackend: "backend-a", ToBackend: "backend-b", StorageKey: "bucket/replicated" + "!m-" + "backend-b"}); err != nil {
 		t.Fatalf("MoveObjectLocation: %v", err)
 	}
 	seedObject(t, s, "bucket/replicated", "backend-a")

@@ -84,6 +84,7 @@ type PendingTxAdapter interface {
 type KeyedExistingCopy struct {
 	ObjectKey   string
 	BackendName string
+	StorageKey  string
 	SizeBytes   int64
 }
 
@@ -99,7 +100,9 @@ type KeyedExistingCopy struct {
 //
 // InsertReplicaConditional reads the source row's size inside the insert and
 // returns it, so the caller credits the destination quota with the size the
-// ledger actually recorded rather than one measured separately.
+// ledger actually recorded rather than one measured separately. The storage key
+// it writes is the caller's, not the source row's: the replica is a fresh set
+// of bytes at a path of its own, named after the copy that placed it.
 //
 // RecordCompressionProbe stores what the encoder measured for a copy it
 // declined to store compressed, so a verbatim move can carry the measurement
@@ -114,13 +117,14 @@ type ObjectsTxAdapter interface {
 	DeleteObjectsByKeys(ctx context.Context, keys []string) error // rows must already be locked
 
 	CheckObjectExistsOnBackend(ctx context.Context, objectKey, backend string) (bool, error)
+	CopyExistsAtPath(ctx context.Context, backend, storageKey string) (bool, error)                               // whatever object it belongs to
 	LockObjectOnBackend(ctx context.Context, objectKey, backend string) (loc *ObjectLocation, ok bool, err error) // ok=false: row gone, a benign race
 	DeleteObjectFromBackend(ctx context.Context, objectKey, backend string) error
 	GetCopySizeBytes(ctx context.Context, objectKey, backendName string) (int64, error)
 
 	RecordCompressionProbe(ctx context.Context, probe *CompressionProbe) error
 	InsertObjectLocationIfNotExists(ctx context.Context, loc *ObjectLocation) (inserted bool, err error) // import-side, preserves an existing row
-	InsertReplicaConditional(ctx context.Context, objectKey, targetBackend, sourceBackend string) (size int64, inserted bool, err error)
+	InsertReplicaConditional(ctx context.Context, p *ReplicaInsert) (size int64, inserted bool, err error)
 
 	UpdateCompressedForm(ctx context.Context, u *CompressedUpdate) error
 	MarkCopyEncrypted(ctx context.Context, u *EncryptedUpdate) error
@@ -142,13 +146,15 @@ type ObjectsTxAdapter interface {
 // operator later tells how long the cleanup was outstanding.
 //
 // HasPendingCleanup is read inside the import transaction so a cleanup
-// finishing concurrently cannot slip between the check and the insert.
+// finishing concurrently cannot slip between the check and the insert. It asks
+// about a path rather than an object: a queued deletion names particular bytes,
+// and the import that consults it is adopting the bytes it found at that path.
 type CleanupTxAdapter interface {
-	SumAndDeleteCleanupQueueRows(ctx context.Context, objectKey, backend string) (deleted int64, totalBytes int64, err error)
+	SumAndDeleteCleanupQueueRows(ctx context.Context, storageKey, backend string) (deleted int64, totalBytes int64, err error)
 	GetCleanupQueueRow(ctx context.Context, id int64) (CleanupQueueRow, error)
 	InsertCleanupDLQ(ctx context.Context, row *CleanupQueueRow) error // pointer: the row payload is 112 bytes
 	DeleteCleanupItem(ctx context.Context, id int64) error
-	HasPendingCleanup(ctx context.Context, objectKey, backend string) (bool, error)
+	HasPendingCleanup(ctx context.Context, storageKey, backend string) (bool, error)
 }
 
 // -------------------------------------------------------------------------

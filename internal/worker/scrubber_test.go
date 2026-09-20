@@ -110,7 +110,7 @@ func TestScrub_HashMismatch(t *testing.T) {
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, "b1", "bucket/key1", "integrity_scrub_failed", int64(11))
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, cleanupOf("b1", "bucket/key1", "integrity_scrub_failed", int64(11)))
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader("hello world")),
 		Size: 11,
@@ -515,7 +515,7 @@ func TestScrub_DiscardedCopyDropsItsLocation(t *testing.T) {
 	}
 	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, "b1", "bucket/key1", "integrity_scrub_failed", int64(11))
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, cleanupOf("b1", "bucket/key1", "integrity_scrub_failed", int64(11)))
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader("different bytes")),
 		Size: 11,
@@ -590,7 +590,7 @@ func TestScrub_SurvivesBookkeepingFailures(t *testing.T) {
 
 	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, "b1", "bucket/key1", "integrity_scrub_failed", int64(11))
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, cleanupOf("b1", "bucket/key1", "integrity_scrub_failed", int64(11)))
 	ops.EXPECT().GetWithTimeout(gomock.Any(), gomock.Any(), "bucket/key1", "").Return(&backend.GetObjectResult{
 		Body: io.NopCloser(strings.NewReader("different bytes")),
 		Size: 11,
@@ -668,7 +668,7 @@ func TestScrub_MismatchStaysDistinctFromUnreadable(t *testing.T) {
 			Body: io.NopCloser(strings.NewReader("hello")),
 			Size: 5,
 		}, func() {}, nil)
-	placement.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), "b1", "bucket/rotted", gomock.Any(), gomock.Any()).AnyTimes()
+	placement.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), cleanupOn("b1", "bucket/rotted")).AnyTimes()
 
 	var statuses []string
 	sum := s.Scrub(context.Background(), 10, "", func(step progress.Step) {
@@ -903,7 +903,7 @@ func TestScrubKey_ReportsEachCopySeparately(t *testing.T) {
 				Size: 11,
 			}, context.CancelFunc(func() {}), nil
 		}).AnyTimes()
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), "b2", "bucket/k", gomock.Any(), gomock.Any()).AnyTimes()
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), cleanupOn("b2", "bucket/k")).AnyTimes()
 
 	results, err := s.ScrubKey(context.Background(), "bucket/k")
 	if err != nil {

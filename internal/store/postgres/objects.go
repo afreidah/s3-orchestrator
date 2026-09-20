@@ -42,14 +42,18 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 }
 
 // ListObjectsByBackendKeyAsc returns rows for a backend in ascending
-// object_key order, starting strictly after the supplied cursor. The empty
+// storage_key order, starting strictly after the supplied cursor. The empty
 // string returns the first page. Used by ReconcileBackend to drive a
 // bounded-memory sorted-merge join against an S3 ListObjects walk; both
 // sides are in lex order so the merge is O(n) memory bounded by limit.
-func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error) {
+//
+// By storage_key because that is what the backend listing on the other side of
+// the merge returns - the path the bytes occupy, which is no longer the
+// object's key.
+func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterStorageKey string, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.queries.ListObjectsByBackendKeyAsc(ctx, db.ListObjectsByBackendKeyAscParams{
 		BackendName: backendName,
-		ObjectKey:   afterKey,
+		StorageKey:  afterStorageKey,
 		Limit:       int32(limit), //nolint:gosec // G115: limit is a small caller-controlled batch size
 	})
 	if err != nil {

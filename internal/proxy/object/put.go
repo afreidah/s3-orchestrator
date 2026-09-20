@@ -424,9 +424,14 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	}
 
 	bctx, bcancel := o.core.WithTimeout(ctx)
+	// Written at the intent's own path, never at the object's key. That is what
+	// makes an overwrite an addition rather than an in-place mutation: a reader
+	// mid-write still sees the whole previous object, and the cleanup that
+	// follows either write can only reach its own bytes.
+	//
 	// The backend's ETag is discarded: it describes the bytes as stored, which
 	// are ciphertext or compressed frames whenever either feature is on.
-	_, err = be.PutObject(bctx, key, uploadBody, uploadSize, req.ContentType, req.Metadata)
+	_, err = be.PutObject(bctx, intent.StorageKey, uploadBody, uploadSize, req.ContentType, req.Metadata)
 	bcancel()
 	if err != nil {
 		o.core.Acct().APICall(s3op.PutObject, backendName)
@@ -449,13 +454,19 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 		o.log.WarnContext(ctx, "drain started mid-write; aborting commit on draining backend",
 			"key", key, "backend", backendName)
 		telemetry.DrainRaceAbortedTotal.Inc()
-		o.coord.RecoverFromRecordFailure(ctx, be, backendName, key, "drain_race_aborted", uploadSize)
+		o.coord.RecoverFromRecordFailure(ctx, be, &core.CleanupRequest{
+			BackendName: backendName,
+			ObjectKey:   key,
+			StorageKey:  intent.StorageKey,
+			Reason:      "drain_race_aborted",
+			SizeBytes:   uploadSize,
+		})
 		return putAttemptResult{backend: backendName, putErr: errDrainRaceAborted}
 	}
 
 	if err := o.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
 		Key: key, Size: uploadSize, Form: form, Identity: identity, Tags: req.Tags,
-		Copies: []core.ObjectCopy{{Backend: backendName, IntentID: intentID}},
+		Copies: []core.ObjectCopy{{Backend: backendName, IntentID: intentID, StorageKey: intent.StorageKey}},
 	}); err != nil {
 		// Classified like the placement failure above: with placement decided in
 		// memory, the commit is now where a database outage first shows up, and

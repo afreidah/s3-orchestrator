@@ -51,10 +51,10 @@ const (
 // admitVerifiedReplica applies the verify-on-replicate verdict to a copy that
 // has just landed, tallying it on out. Returns false when the copy was rejected
 // and its bytes discarded, in which case the caller must try another target.
-func (r *Replicator) admitVerifiedReplica(ctx context.Context, key, target string, source *core.ObjectLocation, out *ReplicationOutcome) bool {
-	switch r.verifyReplica(ctx, target, source) {
+func (r *Replicator) admitVerifiedReplica(ctx context.Context, key, target, targetStorageKey string, source *core.ObjectLocation, out *ReplicationOutcome) bool {
+	switch r.verifyReplica(ctx, target, targetStorageKey, source) {
 	case replicaMismatch:
-		r.CleanupOrphan(ctx, target, key, source.SizeBytes)
+		r.CleanupOrphan(ctx, target, key, targetStorageKey, source.SizeBytes)
 		out.VerifyMismatch++
 		return false
 	case replicaUnverified:
@@ -73,7 +73,7 @@ func (r *Replicator) admitVerifiedReplica(ctx context.Context, key, target strin
 // under-replicated to punish a backend for being slow or a hash for being
 // absent. Backends that are not read-after-write consistent make that failure
 // mode routine rather than theoretical.
-func (r *Replicator) verifyReplica(ctx context.Context, target string, source *core.ObjectLocation) replicaVerdict {
+func (r *Replicator) verifyReplica(ctx context.Context, target, targetStorageKey string, source *core.ObjectLocation) replicaVerdict {
 	icfg := r.integrity.Load()
 	if icfg == nil || !icfg.ShouldVerifyOnReplicate() {
 		return replicaNotChecked
@@ -88,9 +88,13 @@ func (r *Replicator) verifyReplica(ctx context.Context, target string, source *c
 	}
 
 	// StreamCopy moves the stored bytes verbatim, so the source row describes
-	// the new copy exactly once the backend name is swapped.
+	// the new copy exactly once the backend name and the path are swapped. The
+	// path has to be swapped: the copy was written under a name of its own on
+	// the target, and reading back the source's would either 404 or - worse, on
+	// a backend that happens to hold the key - hash a different object.
 	replica := *source
 	replica.BackendName = target
+	replica.StorageKey = targetStorageKey
 
 	if !r.ops.Usage().WithinLimits(target, getObjectOp, replica.SizeBytes, 0) {
 		telemetry.IntegrityUsageDeclinedTotal.Inc()

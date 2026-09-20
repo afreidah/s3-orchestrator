@@ -41,7 +41,7 @@ under_replicated AS (
     HAVING COUNT(*) + COALESCE(i.copies, 0) < @factor::bigint
     LIMIT @max_keys
 )
-SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
+SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
 FROM object_locations ol
 JOIN under_replicated ur ON ol.object_key = ur.object_key
 ORDER BY ol.object_key ASC, ol.created_at ASC;
@@ -65,7 +65,7 @@ under_replicated AS (
     HAVING COUNT(*) + COALESCE(i.copies, 0) < @factor::bigint
     LIMIT @max_keys
 )
-SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
+SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
 FROM object_locations ol
 JOIN under_replicated ur ON ol.object_key = ur.object_key
 ORDER BY ol.object_key ASC, ol.created_at ASC;
@@ -79,7 +79,7 @@ WITH over_replicated AS (
     HAVING COUNT(*) > @factor::bigint
     LIMIT @max_keys
 )
-SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
+SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.created_at
 FROM object_locations ol
 JOIN over_replicated orep ON ol.object_key = orep.object_key
 ORDER BY ol.object_key ASC, ol.created_at ASC;
@@ -113,11 +113,17 @@ FROM (
 -- per copy makes an unmodified object report a different time depending on
 -- which replica answered, and moves that time again whenever the oldest copy
 -- is rebalanced away.
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at)
+INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at)
 -- Cast for the reason the pending claim casts: these parameters appear both in
 -- this SELECT list, where a bare parameter takes no type from the INSERT
 -- target, and in the predicates below.
-SELECT @object_key::text, @target_backend::text, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.etag, ol.content_type, ol.user_metadata, ol.created_at
+--
+-- storage_key is the caller's, not the source row's: the replica is a new set
+-- of bytes at a path of its own, so it is named after the write that placed it
+-- the same way a PUT's copy is. Carrying the source's path would put two rows
+-- on two backends at one name again, and a cleanup for either would then have
+-- to guess which bytes it meant.
+SELECT @object_key::text, @target_backend::text, @storage_key::text, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.etag, ol.content_type, ol.user_metadata, ol.created_at
 FROM object_locations ol
 JOIN backend_capacity c ON c.backend_name = @target_backend::text
 WHERE ol.object_key = @object_key::text AND ol.backend_name = @source_backend

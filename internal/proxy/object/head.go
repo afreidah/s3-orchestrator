@@ -55,7 +55,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 				return fail, fmt.Errorf("backend %s: %w", beName, err)
 			}
 
-			r, err := o.core.HeadWithTimeout(ctx, backend, key)
+			r, err := o.core.HeadWithTimeout(ctx, backend, storagePath(key, loc))
 			if err != nil {
 				o.core.Acct().APICall(s3op.HeadObject, beName) // API call was made even on failure
 				return fail, err

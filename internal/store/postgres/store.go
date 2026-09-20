@@ -158,7 +158,7 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 
 // ExpectedSchemaVersion is the migration version this binary expects.
 // Updated when new migration files are added.
-const ExpectedSchemaVersion = 31
+const ExpectedSchemaVersion = 33
 
 // VerifySchemaVersion checks that the database schema version matches
 // what this binary expects. Returns an error if the schema is older
@@ -232,6 +232,7 @@ var _ = core.AssertEngine[*Store]
 type slimObjectRow interface {
 	GetObjectKey() string
 	GetBackendName() string
+	GetStorageKey() string
 	GetSizeBytes() int64
 	GetCreatedAt() pgtype.Timestamptz
 }
@@ -278,6 +279,7 @@ func toSlimObjectLocations[T slimObjectRow](rows []T) []core.ObjectLocation {
 		out[i] = core.ObjectLocation{
 			ObjectKey:   r.GetObjectKey(),
 			BackendName: r.GetBackendName(),
+			StorageKey:  r.GetStorageKey(),
 			SizeBytes:   r.GetSizeBytes(),
 			CreatedAt:   r.GetCreatedAt().Time,
 		}
@@ -294,6 +296,7 @@ func toFatObjectLocations[T fatObjectRow](rows []T) []core.ObjectLocation {
 		loc := core.ObjectLocation{
 			ObjectKey:     r.GetObjectKey(),
 			BackendName:   r.GetBackendName(),
+			StorageKey:    r.GetStorageKey(),
 			SizeBytes:     r.GetSizeBytes(),
 			CreatedAt:     r.GetCreatedAt().Time,
 			Encrypted:     r.GetEncrypted(),

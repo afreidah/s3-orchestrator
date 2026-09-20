@@ -106,10 +106,15 @@ func (p *timeoutPolicy) HeadWithTimeout(ctx context.Context, be backend.ObjectBa
 // charges against both backends' usage. It is the source's declared size
 // rather than the caller's estimate, since an overwrite can land between the
 // two.
-func (p *timeoutPolicy) StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, key string) (int64, error) {
+//
+// The two keys are the paths the bytes occupy on each backend, and they are not
+// the same string: the copy is a new write on the destination and gets a path
+// of its own there, which is what lets its orphan cleanup name exactly what it
+// uploaded.
+func (p *timeoutPolicy) StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, srcKey, dstKey string) (int64, error) {
 	rctx, rcancel := p.WithTimeout(ctx)
 	defer rcancel()
-	result, err := src.GetObject(rctx, key, "")
+	result, err := src.GetObject(rctx, srcKey, "")
 	if err != nil {
 		return 0, &backend.CopyError{Phase: backend.CopyPhaseRead, Err: err}
 	}
@@ -118,7 +123,7 @@ func (p *timeoutPolicy) StreamCopy(ctx context.Context, src, dst backend.ObjectB
 	wctx, wcancel := p.WithTimeout(ctx)
 	defer wcancel()
 	tracked := &readTracker{r: result.Body}
-	_, err = dst.PutObject(wctx, key, tracked, result.Size, result.ContentType, result.Metadata)
+	_, err = dst.PutObject(wctx, dstKey, tracked, result.Size, result.ContentType, result.Metadata)
 	if err != nil {
 		phase := backend.CopyPhaseWrite
 		if tracked.readErr != nil {

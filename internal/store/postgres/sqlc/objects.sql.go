@@ -94,6 +94,30 @@ func (q *Queries) CompressionStats(ctx context.Context) ([]CompressionStatsRow, 
 	return items, nil
 }
 
+const copyExistsAtPath = `-- name: CopyExistsAtPath :one
+SELECT EXISTS(
+    SELECT 1 FROM object_locations
+    WHERE backend_name = $1 AND storage_key = $2
+) AS exists
+`
+
+type CopyExistsAtPathParams struct {
+	BackendName string
+	StorageKey  string
+}
+
+// Whether the backend already has a copy recorded at this path, whatever
+// object it belongs to. Import asks before adopting bytes it found, because
+// the object key it would record them under is the path itself, which says
+// nothing about the row an orchestrator-written path already has under the
+// real object's key.
+func (q *Queries) CopyExistsAtPath(ctx context.Context, arg CopyExistsAtPathParams) (bool, error) {
+	row := q.db.QueryRow(ctx, copyExistsAtPath, arg.BackendName, arg.StorageKey)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const countObjectsByPrefix = `-- name: CountObjectsByPrefix :one
 SELECT count(DISTINCT object_key)
 FROM object_locations
@@ -199,7 +223,7 @@ func (q *Queries) DeleteObjectsByKeys(ctx context.Context, objectKeys []string) 
 }
 
 const getAllObjectLocations = `-- name: GetAllObjectLocations :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at, last_scrubbed_at
+SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at, last_scrubbed_at
 FROM object_locations
 WHERE object_key = $1
 ORDER BY created_at ASC
@@ -208,6 +232,7 @@ ORDER BY created_at ASC
 type GetAllObjectLocationsRow struct {
 	ObjectKey                string
 	BackendName              string
+	StorageKey               string
 	SizeBytes                int64
 	Encrypted                bool
 	EncryptionKey            []byte
@@ -237,6 +262,7 @@ func (q *Queries) GetAllObjectLocations(ctx context.Context, objectKey string) (
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
+			&i.StorageKey,
 			&i.SizeBytes,
 			&i.Encrypted,
 			&i.EncryptionKey,
@@ -264,7 +290,7 @@ func (q *Queries) GetAllObjectLocations(ctx context.Context, objectKey string) (
 }
 
 const getCopiesForKeysForUpdate = `-- name: GetCopiesForKeysForUpdate :many
-SELECT object_key, backend_name, size_bytes
+SELECT object_key, backend_name, storage_key, size_bytes
 FROM object_locations
 WHERE object_key = ANY($1::text[])
 FOR UPDATE
@@ -273,6 +299,7 @@ FOR UPDATE
 type GetCopiesForKeysForUpdateRow struct {
 	ObjectKey   string
 	BackendName string
+	StorageKey  string
 	SizeBytes   int64
 }
 
@@ -290,7 +317,12 @@ func (q *Queries) GetCopiesForKeysForUpdate(ctx context.Context, objectKeys []st
 	items := []GetCopiesForKeysForUpdateRow{}
 	for rows.Next() {
 		var i GetCopiesForKeysForUpdateRow
-		if err := rows.Scan(&i.ObjectKey, &i.BackendName, &i.SizeBytes); err != nil {
+		if err := rows.Scan(
+			&i.ObjectKey,
+			&i.BackendName,
+			&i.StorageKey,
+			&i.SizeBytes,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -366,7 +398,7 @@ func (q *Queries) GetDirectoryStats(ctx context.Context, arg GetDirectoryStatsPa
 }
 
 const getExistingCopiesForUpdate = `-- name: GetExistingCopiesForUpdate :many
-SELECT backend_name, size_bytes, created_at, encrypted,
+SELECT backend_name, storage_key, size_bytes, created_at, encrypted,
        (encryption_key IS NOT NULL AND length(encryption_key) > 0) AS has_dek
 FROM object_locations
 WHERE object_key = $1
@@ -375,12 +407,16 @@ FOR UPDATE
 
 type GetExistingCopiesForUpdateRow struct {
 	BackendName string
+	StorageKey  string
 	SizeBytes   int64
 	CreatedAt   pgtype.Timestamptz
 	Encrypted   bool
 	HasDek      *bool
 }
 
+// storage_key comes along because the caller that deletes these rows is also
+// the caller that deletes their bytes, and after per-write storage keys the
+// path is no longer derivable from the object key.
 func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKey string) ([]GetExistingCopiesForUpdateRow, error) {
 	rows, err := q.db.Query(ctx, getExistingCopiesForUpdate, objectKey)
 	if err != nil {
@@ -392,6 +428,7 @@ func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKey stri
 		var i GetExistingCopiesForUpdateRow
 		if err := rows.Scan(
 			&i.BackendName,
+			&i.StorageKey,
 			&i.SizeBytes,
 			&i.CreatedAt,
 			&i.Encrypted,
@@ -408,7 +445,7 @@ func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKey stri
 }
 
 const getLeastRecentlyScrubbedObjects = `-- name: GetLeastRecentlyScrubbedObjects :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at, last_scrubbed_at
+SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at, last_scrubbed_at
 FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
   AND backend_name = ANY($1::text[])
@@ -426,6 +463,7 @@ type GetLeastRecentlyScrubbedObjectsParams struct {
 type GetLeastRecentlyScrubbedObjectsRow struct {
 	ObjectKey                string
 	BackendName              string
+	StorageKey               string
 	SizeBytes                int64
 	Encrypted                bool
 	EncryptionKey            []byte
@@ -472,6 +510,7 @@ func (q *Queries) GetLeastRecentlyScrubbedObjects(ctx context.Context, arg GetLe
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
+			&i.StorageKey,
 			&i.SizeBytes,
 			&i.Encrypted,
 			&i.EncryptionKey,
@@ -531,7 +570,7 @@ func (q *Queries) GetObjectBackendsForKeys(ctx context.Context, objectKeys []str
 }
 
 const getObjectsWithoutHash = `-- name: GetObjectsWithoutHash :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at
+SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at
 FROM object_locations
 WHERE content_hash IS NULL AND managed
   AND ($1::text = '' OR backend_name = $1::text)
@@ -548,6 +587,7 @@ type GetObjectsWithoutHashParams struct {
 type GetObjectsWithoutHashRow struct {
 	ObjectKey                string
 	BackendName              string
+	StorageKey               string
 	SizeBytes                int64
 	Encrypted                bool
 	EncryptionKey            []byte
@@ -576,6 +616,7 @@ func (q *Queries) GetObjectsWithoutHash(ctx context.Context, arg GetObjectsWitho
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
+			&i.StorageKey,
 			&i.SizeBytes,
 			&i.Encrypted,
 			&i.EncryptionKey,
@@ -599,13 +640,14 @@ func (q *Queries) GetObjectsWithoutHash(ctx context.Context, arg GetObjectsWitho
 }
 
 const insertObjectLocation = `-- name: InsertObjectLocation :exec
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
+INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
 `
 
 type InsertObjectLocationParams struct {
 	ObjectKey                string
 	BackendName              string
+	StorageKey               string
 	SizeBytes                int64
 	Encrypted                bool
 	EncryptionKey            []byte
@@ -625,6 +667,7 @@ func (q *Queries) InsertObjectLocation(ctx context.Context, arg InsertObjectLoca
 	_, err := q.db.Exec(ctx, insertObjectLocation,
 		arg.ObjectKey,
 		arg.BackendName,
+		arg.StorageKey,
 		arg.SizeBytes,
 		arg.Encrypted,
 		arg.EncryptionKey,
@@ -643,8 +686,8 @@ func (q *Queries) InsertObjectLocation(ctx context.Context, arg InsertObjectLoca
 }
 
 const insertObjectLocationIfNotExists = `-- name: InsertObjectLocationIfNotExists :one
-INSERT INTO object_locations (object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, managed, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, etag, content_type, user_metadata, managed, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 ON CONFLICT (object_key, backend_name) DO NOTHING
 RETURNING true AS inserted
 `
@@ -652,6 +695,7 @@ RETURNING true AS inserted
 type InsertObjectLocationIfNotExistsParams struct {
 	ObjectKey                string
 	BackendName              string
+	StorageKey               string
 	SizeBytes                int64
 	Encrypted                bool
 	EncryptionKey            []byte
@@ -673,6 +717,7 @@ func (q *Queries) InsertObjectLocationIfNotExists(ctx context.Context, arg Inser
 	row := q.db.QueryRow(ctx, insertObjectLocationIfNotExists,
 		arg.ObjectKey,
 		arg.BackendName,
+		arg.StorageKey,
 		arg.SizeBytes,
 		arg.Encrypted,
 		arg.EncryptionKey,
@@ -735,7 +780,7 @@ func (q *Queries) IntegrityCoverage(ctx context.Context, reachableBackends []str
 }
 
 const listAllEncryptedLocations = `-- name: ListAllEncryptedLocations :many
-SELECT object_key, backend_name, size_bytes, encryption_key, key_id, plaintext_size, etag
+SELECT object_key, backend_name, storage_key, size_bytes, encryption_key, key_id, plaintext_size, etag
 FROM object_locations
 WHERE encrypted = TRUE
   AND ($1::text = '' OR backend_name = $1::text)
@@ -754,6 +799,7 @@ type ListAllEncryptedLocationsParams struct {
 type ListAllEncryptedLocationsRow struct {
 	ObjectKey     string
 	BackendName   string
+	StorageKey    string
 	SizeBytes     int64
 	EncryptionKey []byte
 	KeyID         *string
@@ -780,6 +826,7 @@ func (q *Queries) ListAllEncryptedLocations(ctx context.Context, arg ListAllEncr
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
+			&i.StorageKey,
 			&i.SizeBytes,
 			&i.EncryptionKey,
 			&i.KeyID,
@@ -797,7 +844,7 @@ func (q *Queries) ListAllEncryptedLocations(ctx context.Context, arg ListAllEncr
 }
 
 const listCompressedLocations = `-- name: ListCompressedLocations :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
+SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id,
        plaintext_size, compression_algorithm, compression_level,
        compression_format_version, logical_size, etag
 FROM object_locations
@@ -818,6 +865,7 @@ type ListCompressedLocationsParams struct {
 type ListCompressedLocationsRow struct {
 	ObjectKey                string
 	BackendName              string
+	StorageKey               string
 	SizeBytes                int64
 	Encrypted                bool
 	EncryptionKey            []byte
@@ -851,6 +899,7 @@ func (q *Queries) ListCompressedLocations(ctx context.Context, arg ListCompresse
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
+			&i.StorageKey,
 			&i.SizeBytes,
 			&i.Encrypted,
 			&i.EncryptionKey,
@@ -976,7 +1025,7 @@ func (q *Queries) ListEncryptedLocations(ctx context.Context, arg ListEncryptedL
 }
 
 const listExpiredObjects = `-- name: ListExpiredObjects :many
-SELECT DISTINCT ON (ol.object_key COLLATE "C") ol.object_key, ol.backend_name, ol.size_bytes, ol.created_at
+SELECT DISTINCT ON (ol.object_key COLLATE "C") ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.created_at
 FROM object_locations ol
 WHERE ol.object_key LIKE $1::text || '%' ESCAPE '\'
   AND ol.created_at < $2
@@ -1005,6 +1054,7 @@ type ListExpiredObjectsParams struct {
 type ListExpiredObjectsRow struct {
 	ObjectKey   string
 	BackendName string
+	StorageKey  string
 	SizeBytes   int64
 	CreatedAt   pgtype.Timestamptz
 }
@@ -1039,6 +1089,7 @@ func (q *Queries) ListExpiredObjects(ctx context.Context, arg ListExpiredObjects
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
+			&i.StorageKey,
 			&i.SizeBytes,
 			&i.CreatedAt,
 		); err != nil {
@@ -1053,7 +1104,7 @@ func (q *Queries) ListExpiredObjects(ctx context.Context, arg ListExpiredObjects
 }
 
 const listObjectsByBackend = `-- name: ListObjectsByBackend :many
-SELECT object_key, backend_name, size_bytes, created_at
+SELECT object_key, backend_name, storage_key, size_bytes, created_at
 FROM object_locations
 WHERE backend_name = $1 AND managed
 ORDER BY size_bytes ASC
@@ -1068,6 +1119,7 @@ type ListObjectsByBackendParams struct {
 type ListObjectsByBackendRow struct {
 	ObjectKey   string
 	BackendName string
+	StorageKey  string
 	SizeBytes   int64
 	CreatedAt   pgtype.Timestamptz
 }
@@ -1088,6 +1140,7 @@ func (q *Queries) ListObjectsByBackend(ctx context.Context, arg ListObjectsByBac
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
+			&i.StorageKey,
 			&i.SizeBytes,
 			&i.CreatedAt,
 		); err != nil {
@@ -1102,38 +1155,45 @@ func (q *Queries) ListObjectsByBackend(ctx context.Context, arg ListObjectsByBac
 }
 
 const listObjectsByBackendKeyAsc = `-- name: ListObjectsByBackendKeyAsc :many
-SELECT object_key, backend_name, size_bytes, created_at
+SELECT object_key, backend_name, storage_key, size_bytes, created_at
 FROM object_locations
-WHERE backend_name = $1 AND object_key COLLATE "C" > $2
-ORDER BY object_key COLLATE "C" ASC
+WHERE backend_name = $1 AND storage_key COLLATE "C" > $2
+ORDER BY storage_key COLLATE "C" ASC
 LIMIT $3
 `
 
 type ListObjectsByBackendKeyAscParams struct {
 	BackendName string
-	ObjectKey   string
+	StorageKey  string
 	Limit       int32
 }
 
 type ListObjectsByBackendKeyAscRow struct {
 	ObjectKey   string
 	BackendName string
+	StorageKey  string
 	SizeBytes   int64
 	CreatedAt   pgtype.Timestamptz
 }
 
-// ListObjectsByBackendKeyAsc returns rows for a backend in ascending object_key
-// order, starting strictly after the supplied cursor. Used by ReconcileBackend
-// to drive a bounded-memory sorted-merge join against an S3 ListObjects walk.
-// Pass ” as the cursor on the first call.
+// ListObjectsByBackendKeyAsc returns rows for a backend in ascending
+// storage_key order, starting strictly after the supplied cursor. Used by
+// ReconcileBackend to drive a bounded-memory sorted-merge join against an S3
+// ListObjects walk. Pass ” as the cursor on the first call.
+//
+// storage_key rather than object_key because that is what the other side of the
+// merge returns: a backend lists the paths it holds, and after per-write
+// storage keys a path is no longer the object's key. Walking by object_key
+// would pair every row against the wrong listing entry, which the merge reports
+// as one import and one delete per object, forever.
 //
 // COLLATE "C" is required: the merge join compares keys in byte order (Go string
 // comparison) against S3 ListObjectsV2, which is UTF-8 byte ordered. Without it,
-// a locale-collated object_key column orders the cursor differently, the merge
-// mis-pairs keys, and reconcile oscillates (false imports/removes that never
-// converge). The cursor predicate and ORDER BY must use the same collation.
+// a locale-collated column orders the cursor differently, the merge mis-pairs
+// keys, and reconcile oscillates (false imports/removes that never converge).
+// The cursor predicate and ORDER BY must use the same collation.
 func (q *Queries) ListObjectsByBackendKeyAsc(ctx context.Context, arg ListObjectsByBackendKeyAscParams) ([]ListObjectsByBackendKeyAscRow, error) {
-	rows, err := q.db.Query(ctx, listObjectsByBackendKeyAsc, arg.BackendName, arg.ObjectKey, arg.Limit)
+	rows, err := q.db.Query(ctx, listObjectsByBackendKeyAsc, arg.BackendName, arg.StorageKey, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1144,6 +1204,7 @@ func (q *Queries) ListObjectsByBackendKeyAsc(ctx context.Context, arg ListObject
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
+			&i.StorageKey,
 			&i.SizeBytes,
 			&i.CreatedAt,
 		); err != nil {
@@ -1158,7 +1219,7 @@ func (q *Queries) ListObjectsByBackendKeyAsc(ctx context.Context, arg ListObject
 }
 
 const listObjectsByPrefix = `-- name: ListObjectsByPrefix :many
-SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name,
+SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, storage_key,
        (CASE
            WHEN compression_algorithm IS NOT NULL THEN COALESCE(logical_size, size_bytes)
            WHEN encrypted THEN COALESCE(plaintext_size, size_bytes)
@@ -1181,6 +1242,7 @@ type ListObjectsByPrefixParams struct {
 type ListObjectsByPrefixRow struct {
 	ObjectKey   string
 	BackendName string
+	StorageKey  string
 	SizeBytes   int64
 	Etag        *string
 	CreatedAt   pgtype.Timestamptz
@@ -1204,6 +1266,7 @@ func (q *Queries) ListObjectsByPrefix(ctx context.Context, arg ListObjectsByPref
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
+			&i.StorageKey,
 			&i.SizeBytes,
 			&i.Etag,
 			&i.CreatedAt,
@@ -1335,7 +1398,7 @@ func (q *Queries) ListObjectsDelimited(ctx context.Context, arg ListObjectsDelim
 }
 
 const listUncompressedLocations = `-- name: ListUncompressedLocations :many
-SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id,
+SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key, key_id,
        plaintext_size, compression_algorithm, compression_level,
        compression_format_version, logical_size, etag
 FROM object_locations
@@ -1365,6 +1428,7 @@ type ListUncompressedLocationsParams struct {
 type ListUncompressedLocationsRow struct {
 	ObjectKey                string
 	BackendName              string
+	StorageKey               string
 	SizeBytes                int64
 	Encrypted                bool
 	EncryptionKey            []byte
@@ -1421,6 +1485,7 @@ func (q *Queries) ListUncompressedLocations(ctx context.Context, arg ListUncompr
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
+			&i.StorageKey,
 			&i.SizeBytes,
 			&i.Encrypted,
 			&i.EncryptionKey,
@@ -1443,7 +1508,7 @@ func (q *Queries) ListUncompressedLocations(ctx context.Context, arg ListUncompr
 }
 
 const listUnencryptedLocations = `-- name: ListUnencryptedLocations :many
-SELECT object_key, backend_name, size_bytes, etag
+SELECT object_key, backend_name, storage_key, size_bytes, etag
 FROM object_locations
 WHERE encrypted = FALSE
   AND ($1::text = '' OR backend_name = $1::text)
@@ -1462,6 +1527,7 @@ type ListUnencryptedLocationsParams struct {
 type ListUnencryptedLocationsRow struct {
 	ObjectKey   string
 	BackendName string
+	StorageKey  string
 	SizeBytes   int64
 	Etag        *string
 }
@@ -1490,6 +1556,7 @@ func (q *Queries) ListUnencryptedLocations(ctx context.Context, arg ListUnencryp
 		if err := rows.Scan(
 			&i.ObjectKey,
 			&i.BackendName,
+			&i.StorageKey,
 			&i.SizeBytes,
 			&i.Etag,
 		); err != nil {
@@ -1525,7 +1592,7 @@ func (q *Queries) LockObjectKeyForWrite(ctx context.Context, hashtext string) er
 }
 
 const lockObjectOnBackend = `-- name: LockObjectOnBackend :one
-SELECT size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash,
+SELECT storage_key, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash,
        compression_algorithm, compression_level, compression_format_version, logical_size,
        compression_probe_size, compression_probe_level, etag, content_type, user_metadata
 FROM object_locations
@@ -1539,6 +1606,7 @@ type LockObjectOnBackendParams struct {
 }
 
 type LockObjectOnBackendRow struct {
+	StorageKey               string
 	SizeBytes                int64
 	Encrypted                bool
 	EncryptionKey            []byte
@@ -1569,6 +1637,7 @@ func (q *Queries) LockObjectOnBackend(ctx context.Context, arg LockObjectOnBacke
 	row := q.db.QueryRow(ctx, lockObjectOnBackend, arg.ObjectKey, arg.BackendName)
 	var i LockObjectOnBackendRow
 	err := row.Scan(
+		&i.StorageKey,
 		&i.SizeBytes,
 		&i.Encrypted,
 		&i.EncryptionKey,

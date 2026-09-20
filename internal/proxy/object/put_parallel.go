@@ -182,7 +182,7 @@ func (o *Manager) uploadCopy(ctx context.Context, req *PutObjectRequest, plan *p
 		return err
 	}
 	bctx, bcancel := o.core.WithTimeout(ctx)
-	_, err = be.PutObject(bctx, req.Key, body, plan.uploadSize, req.ContentType, req.Metadata)
+	_, err = be.PutObject(bctx, p.StorageKey, body, plan.uploadSize, req.ContentType, req.Metadata)
 	bcancel()
 	if err != nil {
 		o.core.Acct().APICall(s3op.PutObject, p.BackendName)
@@ -190,7 +190,13 @@ func (o *Manager) uploadCopy(ctx context.Context, req *PutObjectRequest, plan *p
 	}
 	if o.core.IsDraining(p.BackendName) {
 		telemetry.DrainRaceAbortedTotal.Inc()
-		o.coord.RecoverFromRecordFailure(ctx, be, p.BackendName, req.Key, "drain_race_aborted", plan.uploadSize)
+		o.coord.RecoverFromRecordFailure(ctx, be, &core.CleanupRequest{
+			BackendName: p.BackendName,
+			ObjectKey:   req.Key,
+			StorageKey:  p.StorageKey,
+			Reason:      "drain_race_aborted",
+			SizeBytes:   plan.uploadSize,
+		})
 		return errDrainRaceAborted
 	}
 	return nil
@@ -253,11 +259,11 @@ func (f *copyFanout) commitAsTheyLand(ctx context.Context, span trace.Span) {
 // commitFirstCopy records the object from the copy that landed first and
 // answers the client with it.
 //
-// The copies still uploading ride along as Placing. That keeps their intents,
-// which every other intent for the key does not get, and it keeps their
-// backends out of the displacement this commit performs: an overwrite deleting
-// the previous copy from a backend this write is still uploading to would
-// delete the bytes landing there.
+// The copies still uploading ride along as Placing, which is what keeps their
+// intents where every other intent for the key is cleared. Their bytes need no
+// protection from the displacement this commit performs: each is at its own
+// intent's path, so deleting the previous copy from a backend this write is
+// still uploading to cannot touch what is landing there.
 func (f *copyFanout) commitFirstCopy(ctx context.Context, span trace.Span, p *core.PendingObject, live map[string]*core.PendingObject) error {
 	err := f.mgr.coord.RecordObjectAndPromoteIntent(ctx, span, &core.RecordObjectRequest{
 		Key:      f.req.Key,
@@ -265,7 +271,7 @@ func (f *copyFanout) commitFirstCopy(ctx context.Context, span trace.Span, p *co
 		Form:     f.plan.form,
 		Identity: p.Identity,
 		Tags:     f.req.Tags,
-		Copies:   []core.ObjectCopy{{Backend: p.BackendName, IntentID: p.IntentID}},
+		Copies:   []core.ObjectCopy{{Backend: p.BackendName, IntentID: p.IntentID, StorageKey: p.StorageKey}},
 		Placing:  placingCopies(live),
 	})
 	if err != nil {
@@ -321,7 +327,7 @@ func (f *copyFanout) liveIntents() map[string]*core.PendingObject {
 func placingCopies(live map[string]*core.PendingObject) []core.ObjectCopy {
 	copies := make([]core.ObjectCopy, 0, len(live))
 	for _, p := range live {
-		copies = append(copies, core.ObjectCopy{Backend: p.BackendName, IntentID: p.IntentID})
+		copies = append(copies, core.ObjectCopy{Backend: p.BackendName, IntentID: p.IntentID, StorageKey: p.StorageKey})
 	}
 	return copies
 }

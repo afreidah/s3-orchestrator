@@ -25,12 +25,12 @@ import (
 // -------------------------------------------------------------------------
 
 // EnqueueCleanup adds a failed cleanup operation to the retry queue.
-func (s *Store) EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) error {
+func (s *Store) EnqueueCleanup(ctx context.Context, c *core.CleanupRequest) error {
 	now := now()
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes, created_at, next_retry)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		backendName, objectKey, reason, sizeBytes, now, now,
+		`INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes, created_at, next_retry)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		c.BackendName, c.ObjectKey, core.StoragePath(c.ObjectKey, c.StorageKey), c.Reason, c.SizeBytes, now, now,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to enqueue cleanup: %w", err)
@@ -45,7 +45,7 @@ func (s *Store) EnqueueCleanup(ctx context.Context, backendName, objectKey, reas
 func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]core.CleanupItem, error) {
 	now := now()
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, backend_name, object_key, reason, attempts, size_bytes,
+		`SELECT id, backend_name, object_key, storage_key, reason, attempts, size_bytes,
 		        claimed_at, claimed_by
 		 FROM cleanup_queue
 		 WHERE next_retry <= ? AND attempts < 10
@@ -62,7 +62,7 @@ func (s *Store) GetPendingCleanups(ctx context.Context, limit int) ([]core.Clean
 			claimedAt sql.NullString
 			claimedBy sql.NullString
 		)
-		if err := rows.Scan(&item.ID, &item.BackendName, &item.ObjectKey, &item.Reason, &item.Attempts, &item.SizeBytes, &claimedAt, &claimedBy); err != nil {
+		if err := rows.Scan(&item.ID, &item.BackendName, &item.ObjectKey, &item.StorageKey, &item.Reason, &item.Attempts, &item.SizeBytes, &claimedAt, &claimedBy); err != nil {
 			return core.CleanupItem{}, fmt.Errorf("failed to scan cleanup item: %w", err)
 		}
 		item.ClaimedAt = parseNullableTime(claimedAt)
@@ -107,7 +107,7 @@ func (s *Store) ClaimPendingCleanups(ctx context.Context, limit int, instanceID 
 // that satisfy ClaimPendingCleanups' eligibility predicates.
 func selectClaimableRows(ctx context.Context, tx *sql.Tx, now, cutoff string, limit int) ([]core.CleanupItem, error) {
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id, backend_name, object_key, reason, attempts, size_bytes,
+		`SELECT id, backend_name, object_key, storage_key, reason, attempts, size_bytes,
 		        (claimed_at IS NOT NULL) AS reclaimed
 		 FROM cleanup_queue
 		 WHERE next_retry <= ?
@@ -122,7 +122,7 @@ func selectClaimableRows(ctx context.Context, tx *sql.Tx, now, cutoff string, li
 	}
 	return collectRows(rows, "cleanup candidates", func(rows *sql.Rows) (core.CleanupItem, error) {
 		var item core.CleanupItem
-		if err := rows.Scan(&item.ID, &item.BackendName, &item.ObjectKey, &item.Reason, &item.Attempts, &item.SizeBytes, &item.Reclaimed); err != nil {
+		if err := rows.Scan(&item.ID, &item.BackendName, &item.ObjectKey, &item.StorageKey, &item.Reason, &item.Attempts, &item.SizeBytes, &item.Reclaimed); err != nil {
 			return core.CleanupItem{}, fmt.Errorf("scan cleanup candidate: %w", err)
 		}
 		return item, nil
@@ -229,7 +229,7 @@ func (s *Store) CleanupDLQDepth(ctx context.Context) (int64, error) {
 // newest graduation first. An empty backend lists every backend.
 func (s *Store) ListCleanupDLQ(ctx context.Context, backend string, limit int) ([]core.CleanupDLQItem, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT backend_name, object_key, reason, size_bytes, attempts,
+		SELECT backend_name, object_key, storage_key, reason, size_bytes, attempts,
 		       first_enqueued_at, moved_at, last_error
 		FROM cleanup_dlq
 		WHERE (? = '' OR backend_name = ?)
@@ -244,7 +244,7 @@ func (s *Store) ListCleanupDLQ(ctx context.Context, backend string, limit int) (
 			firstEnq, moved string
 			lastErr         sql.NullString
 		)
-		if err := rows.Scan(&it.BackendName, &it.ObjectKey, &it.Reason, &it.SizeBytes,
+		if err := rows.Scan(&it.BackendName, &it.ObjectKey, &it.StorageKey, &it.Reason, &it.SizeBytes,
 			&it.Attempts, &firstEnq, &moved, &lastErr); err != nil {
 			return core.CleanupDLQItem{}, fmt.Errorf("scan cleanup dlq row: %w", err)
 		}
@@ -268,8 +268,8 @@ func (s *Store) RequeueCleanupDLQ(ctx context.Context, backend string) (int64, e
 	var n int64
 	err := cbWithTx(ctx, s.rawDB, s.cb, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `
-			INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes, created_at, next_retry)
-			SELECT backend_name, object_key, reason, size_bytes, ?, ?
+			INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes, created_at, next_retry)
+			SELECT backend_name, object_key, storage_key, reason, size_bytes, ?, ?
 			FROM cleanup_dlq
 			WHERE (? = '' OR backend_name = ?)`, now, now, backend, backend)
 		if err != nil {

@@ -379,7 +379,7 @@ func TestRebalance_UnknownStrategy(t *testing.T) {
 // only meaningful as the object plus where it travelled between.
 func TestRebalanceMove_ProgressLabel(t *testing.T) {
 	t.Parallel()
-	mv := RebalanceMove{ObjectKey: "photos/a.jpg", FromBackend: "oci", ToBackend: "e2", SizeBytes: 4096}
+	mv := RebalanceMove{ObjectKey: "photos/a.jpg", SrcStorageKey: "photos/a.jpg", FromBackend: "oci", ToBackend: "e2", SizeBytes: 4096}
 	if got, want := mv.progressLabel(), "photos/a.jpg  oci -> e2"; got != want {
 		t.Errorf("progressLabel() = %q, want %q", got, want)
 	}

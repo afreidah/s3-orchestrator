@@ -4,9 +4,11 @@
 // Author: Alex Freidah
 //
 // Diffs the live key set on a backend against the metadata store using a
-// streaming sorted-merge. Both inputs are walked in byte (C-collation) key
-// order (S3 ListObjectsV2 is spec-mandated UTF-8 byte ordered; the DB cursor
-// uses ORDER BY object_key COLLATE "C" ASC to match) so the merge runs in
+// streaming sorted-merge. Both sides compare paths on the backend rather than
+// object keys, which after per-write storage keys are different strings. Both
+// inputs are walked in byte (C-collation) order (S3 ListObjectsV2 is
+// spec-mandated UTF-8 byte ordered; the DB cursor uses ORDER BY storage_key
+// COLLATE "C" ASC to match) so the merge runs in
 // O(page_size) memory regardless of backend object count. The byte-order match
 // is load-bearing: a locale-collated cursor mis-orders against the byte-order
 // merge comparison and reconcile oscillates. Replaces the previous "materialise
@@ -28,13 +30,24 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
-// Entry is the unit consumed by the merge: a backend key exactly as it is
+// Entry is the unit consumed by the merge: a backend path exactly as it is
 // stored, its size on whichever side produced it, and whether it falls inside
 // a configured virtual bucket. Keys are never rewritten -- the merge compares
 // them in byte order, and prepending a prefix to only some of them would break
 // the ordering the whole design rests on.
+//
+// key is what both sides agree on: the path the bytes occupy. On the backend
+// side that is what the listing returned; on the ledger side it is the row's
+// storage_key, which is no longer the object's key now that each write stores
+// its bytes under a path of its own.
+//
+// objectKey is set on ledger entries only, and is what the row is addressed by
+// when the merge decides to delete it. A backend entry has none: the import it
+// drives records the discovered path as the object's key too, because a stray
+// object is only nameable by where it was found.
 type Entry struct {
 	key          string
+	objectKey    string
 	size         int64
 	unmanaged    bool
 	lastModified time.Time
@@ -67,7 +80,7 @@ func Sorted(
 	ctx context.Context,
 	s3, dbIter keySource,
 	onImport func(ctx context.Context, e Entry) error,
-	onDelete func(ctx context.Context, key string) error,
+	onDelete func(ctx context.Context, e Entry) error,
 ) error {
 	s := &mergeState{
 		s3:       cursor{src: s3, side: sideBackend},
@@ -122,7 +135,7 @@ func (c *cursor) advance(ctx context.Context) error {
 type mergeState struct {
 	s3, db   cursor
 	onImport func(ctx context.Context, e Entry) error
-	onDelete func(ctx context.Context, key string) error
+	onDelete func(ctx context.Context, e Entry) error
 }
 
 // done reports whether both streams are exhausted.
@@ -155,7 +168,7 @@ func (s *mergeState) importStep(ctx context.Context) error {
 // row. Used when the S3 stream is exhausted or the DB key sorts before
 // the S3 key.
 func (s *mergeState) deleteStep(ctx context.Context) error {
-	if err := s.onDelete(ctx, s.db.cur.key); err != nil {
+	if err := s.onDelete(ctx, s.db.cur); err != nil {
 		return err
 	}
 	return s.db.advance(ctx)
@@ -362,7 +375,8 @@ type DBKeyLister interface {
 }
 
 // DBCursorStream walks store.ListObjectsByBackendKeyAsc one bounded page at a
-// time, yielding every row recorded for the backend. Reconcile is scoped to a
+// time, yielding every row recorded for the backend in storage-key order, which
+// is the order the backend's own listing arrives in. Reconcile is scoped to a
 // backend rather than to one virtual bucket, so nothing is filtered out here:
 // a row the cursor skipped would look backend-only to the merge and be
 // re-imported on every pass.
@@ -400,8 +414,8 @@ func (d *DBCursorStream) Next(ctx context.Context) (Entry, bool, error) {
 		if d.idx < len(d.page) {
 			row := d.page[d.idx]
 			d.idx++
-			d.cursor = row.ObjectKey
-			return Entry{key: row.ObjectKey, size: row.SizeBytes}, true, nil
+			d.cursor = row.StorageKey
+			return Entry{key: row.StorageKey, objectKey: row.ObjectKey, size: row.SizeBytes}, true, nil
 		}
 		if d.exhausted {
 			return Entry{}, false, nil
@@ -465,13 +479,20 @@ func ImportHandler(log *slog.Logger, backendName string, importer ImporterFn, re
 
 // DeleteHandler returns the onDelete callback used by the merge. Failures
 // are logged but do not abort the pass.
-func DeleteHandler(log *slog.Logger, backendName string, deleter DeleterFn, result *Result) func(context.Context, string) error {
-	return func(ctx context.Context, key string) error {
-		if err := deleter(ctx, key, backendName); err != nil {
-			log.WarnContext(ctx, "stale entry removal failed", "key", key, "backend", backendName, "error", err)
+//
+// The entry carries both names because the two halves of the removal need
+// different ones: the row is addressed by the object's key, and the queued
+// cleanups swept alongside it are addressed by the path whose bytes the
+// backend has just been shown not to hold.
+func DeleteHandler(log *slog.Logger, backendName string, deleter DeleterFn, result *Result) func(context.Context, Entry) error {
+	return func(ctx context.Context, e Entry) error {
+		if err := deleter(ctx, e.objectKey, e.key, backendName); err != nil {
+			log.WarnContext(ctx, "stale entry removal failed",
+				"key", e.objectKey, "storage_key", e.key, "backend", backendName, "error", err)
 			return nil
 		}
-		log.InfoContext(ctx, "stale entry removed", "key", key, "backend", backendName)
+		log.InfoContext(ctx, "stale entry removed",
+			"key", e.objectKey, "storage_key", e.key, "backend", backendName)
 		result.Removed++
 		return nil
 	}
@@ -492,6 +513,8 @@ type Result struct {
 // tests can substitute a fake importer.
 type ImporterFn func(ctx context.Context, req *core.ImportObjectRequest) (core.ImportOutcome, error)
 
-// DeleterFn removes a metadata row whose backend confirmed it does not
-// hold the key. Carrier type so tests can substitute a fake deleter.
-type DeleterFn func(ctx context.Context, key, backendName string) error
+// DeleterFn removes a metadata row whose backend confirmed it does not hold
+// the copy's bytes, and sweeps any deletion still queued against them. The key
+// addresses the row and the storage key addresses the bytes. Carrier type so
+// tests can substitute a fake deleter.
+type DeleterFn func(ctx context.Context, key, storageKey, backendName string) error

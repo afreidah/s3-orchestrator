@@ -36,6 +36,25 @@ func isCompressed(loc *core.ObjectLocation) bool {
 	return loc != nil && loc.CompressionAlgorithm != ""
 }
 
+// storagePath names the bytes a copy holds on its backend: the path its row
+// records, or the object's key when there is no row to read one from.
+//
+// A read addresses the path, never the key. A write stores its bytes under the
+// key plus its own intent id, so an overwrite in progress and the object it is
+// replacing occupy different paths and a reader sees one or the other whole.
+//
+// The fallback is for the degraded broadcast, which runs with the database
+// unreachable and so has no row at all. It is the only answer available there,
+// and it is the right one for every object written before per-write storage
+// keys, whose bytes are at the key. An object written since is not readable in
+// that mode - a read that fails rather than one that returns other bytes.
+func storagePath(key string, loc *core.ObjectLocation) string {
+	if loc == nil {
+		return key
+	}
+	return core.StoragePath(key, loc.StorageKey)
+}
+
 // resolveLastModified reports the Last-Modified a read should answer with,
 // given what the backend said and the row for the copy that served it.
 //
@@ -104,7 +123,7 @@ func (o *Manager) compressedGetAttempt(ctx context.Context, key, rangeHeader, be
 		return fail, fmt.Errorf("backend %s: %w", beName, err)
 	}
 
-	fetcher := newStoredRangeFetcher(o.core, backend, o.encryptor, loc, key, beName)
+	fetcher := newStoredRangeFetcher(o.core, backend, o.encryptor, loc, storagePath(key, loc), beName)
 	reader, err := o.codec.DecompressRanged(ctx, fetcher, fetcher.compressedSize())
 	if err != nil {
 		telemetry.CompressionErrorsTotal.WithLabelValues(telemetry.CompressionOpDecode).Inc()

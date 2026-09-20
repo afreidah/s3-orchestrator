@@ -130,7 +130,9 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
-	ms := &mockMetadataStore{}
+	// The cleanup is enqueued at the size and path the removal transaction
+	// reported, not at the caller's scan values, so the stub has to report them.
+	ms := &mockMetadataStore{removedCopySize: 100}
 
 	be1 := backendtest.NewMockObjectBackend(ctrl)
 	be2 := backendtest.NewMockObjectBackend(ctrl)
@@ -140,7 +142,7 @@ func TestCleanObject_RemovesLowestScored(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	// b1 is more utilized (lower score -> removed first)
 	ops.EXPECT().GetBackend("b1").Return(be1, nil)
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be1, "b1", "key1", "over_replication", int64(100))
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be1, cleanupOf("b1", "key1", "over_replication", int64(100)))
 
 	c := NewOverReplicationCleaner(ops, pl, ms)
 	copies := []core.ObjectLocation{
@@ -171,7 +173,9 @@ func TestCleanObject_DoesNotDoubleCountAPICalls(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	ops := newMockOps(ctrl)
 	pl := NewMockPlacement(ctrl)
-	ms := &mockMetadataStore{}
+	// The cleanup is enqueued at the size and path the removal transaction
+	// reported, not at the caller's scan values, so the stub has to report them.
+	ms := &mockMetadataStore{removedCopySize: 100}
 
 	be1 := backendtest.NewMockObjectBackend(ctrl)
 	be2 := backendtest.NewMockObjectBackend(ctrl)
@@ -180,7 +184,7 @@ func TestCleanObject_DoesNotDoubleCountAPICalls(t *testing.T) {
 	ops.EXPECT().Backends().Return(map[string]backend.ObjectBackend{"b1": be1, "b2": be2}).AnyTimes()
 	ops.EXPECT().Acct().Times(0)
 	ops.EXPECT().GetBackend("b1").Return(be1, nil)
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be1, "b1", "key1", "over_replication", int64(100))
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be1, cleanupOf("b1", "key1", "over_replication", int64(100)))
 
 	c := NewOverReplicationCleaner(ops, pl, ms)
 	copies := []core.ObjectLocation{

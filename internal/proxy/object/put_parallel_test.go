@@ -58,7 +58,7 @@ func TestPutObject_ParallelCopies_PlacesEveryCopy(t *testing.T) {
 	}
 
 	for name, be := range map[string]*backendtest.InMemory{"b1": b1, "b2": b2, "b3": b3} {
-		testx.Eventually(t, settleWindow, func() bool { return be.Has("key") },
+		testx.Eventually(t, settleWindow, func() bool { return be.HasCopyOf("key") },
 			"backend %s never received its copy", name)
 	}
 
@@ -73,7 +73,7 @@ func TestPutObject_ParallelCopies_PlacesEveryCopy(t *testing.T) {
 	}
 	// Every copy's bytes go on every backend, so each one reads back whole.
 	for name, be := range map[string]*backendtest.InMemory{"b1": b1, "b2": b2, "b3": b3} {
-		obj, _ := be.Get("key")
+		obj, _ := be.CopyOf("key")
 		if !bytes.Equal(obj.Data, payload) {
 			t.Errorf("backend %s holds %d bytes, want %d", name, len(obj.Data), len(payload))
 		}
@@ -197,12 +197,12 @@ func TestPutObject_ParallelCopies_AnswersOnTheFirstCopy(t *testing.T) {
 	if elapsed := time.Since(start); elapsed >= slowUpload {
 		t.Errorf("PutObject took %s, which is the slow backend's %s: it waited for every copy", elapsed, slowUpload)
 	}
-	if !fast.Has("key") {
+	if !fast.HasCopyOf("key") {
 		t.Error("the copy that answered the client is not on its backend")
 	}
 
 	// The slow copy still lands: the response detached it, it did not cancel it.
-	testx.Eventually(t, settleWindow, func() bool { return slow.Has("key") },
+	testx.Eventually(t, settleWindow, func() bool { return slow.HasCopyOf("key") },
 		"the copy still uploading at response time never finished")
 }
 
@@ -226,10 +226,10 @@ func TestPutObject_ParallelCopies_ShortfallIsNotAFailure(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
-	if !b1.Has("key") {
+	if !b1.HasCopyOf("key") {
 		t.Error("the copy that could be placed is missing")
 	}
-	if b2.Has("key") {
+	if b2.HasCopyOf("key") {
 		t.Error("a backend that declined the claim was written to anyway")
 	}
 	recorded, _, _ := c.snapshot()
@@ -306,7 +306,7 @@ func TestPutObject_ParallelCopies_FallsBackWhenNoSlotIsFree(t *testing.T) {
 	if got := testutil.ToFloat64(telemetry.ReplicationWriteFanoutSkippedTotal) - before; got != 1 {
 		t.Errorf("skip counter moved by %v, want 1: the operator's only signal for this", got)
 	}
-	if !b1.Has("key") {
+	if !b1.HasCopyOf("key") {
 		t.Error("the copy the fallback placed is missing")
 	}
 }
@@ -381,7 +381,7 @@ func TestPutObject_ParallelCopies_CommitFailureAbandonsTheRest(t *testing.T) {
 
 	// The slow copy lands on its backend and is then abandoned: its intent is
 	// left for the reaper, which discards an extra copy rather than promoting.
-	testx.Eventually(t, settleWindow, func() bool { return slow.Has("key") },
+	testx.Eventually(t, settleWindow, func() bool { return slow.HasCopyOf("key") },
 		"the copy still uploading never finished")
 	testx.Eventually(t, settleWindow, func() bool {
 		_, companions, _ := c.snapshot()
@@ -446,9 +446,9 @@ func TestPutObject_ParallelCopies_SurvivesAnUploadThatOutlivesTheRequest(t *test
 	}
 	cancel()
 
-	testx.Eventually(t, settleWindow, func() bool { return slow.Has("key") },
+	testx.Eventually(t, settleWindow, func() bool { return slow.HasCopyOf("key") },
 		"cancelling the request killed a copy the client was already told about")
-	obj, _ := slow.Get("key")
+	obj, _ := slow.CopyOf("key")
 	if !bytes.Equal(obj.Data, payload) {
 		t.Errorf("the detached copy holds %d bytes, want %d", len(obj.Data), len(payload))
 	}

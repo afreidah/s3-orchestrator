@@ -25,6 +25,81 @@ import (
 )
 
 // -------------------------------------------------------------------------
+// FIXTURE NORMALISATION
+// -------------------------------------------------------------------------
+
+// A fixture that names no storage key describes the legacy form: bytes at the
+// object's own key, which is what the migration backfilled onto every row
+// written before per-write paths and what an imported object carries. Filling
+// it in on the way out of the stub is what keeps each test's fixture about its
+// own subject instead of restating the path three times.
+
+// withPaths fills in the storage key of every row that left it unset.
+func withPaths(rows []core.ObjectLocation) []core.ObjectLocation {
+	out := make([]core.ObjectLocation, len(rows))
+	for i, r := range rows {
+		r.StorageKey = core.StoragePath(r.ObjectKey, r.StorageKey)
+		out[i] = r
+	}
+	return out
+}
+
+// withIntentPaths does the same for pending intents.
+func withIntentPaths(rows []core.PendingObject) []core.PendingObject {
+	out := make([]core.PendingObject, len(rows))
+	for i, r := range rows {
+		r.StorageKey = core.StoragePath(r.ObjectKey, r.StorageKey)
+		out[i] = r
+	}
+	return out
+}
+
+// withCleanupPaths does the same for queued cleanups.
+func withCleanupPaths(rows []core.CleanupItem) []core.CleanupItem {
+	out := make([]core.CleanupItem, len(rows))
+	for i, r := range rows {
+		r.StorageKey = core.StoragePath(r.ObjectKey, r.StorageKey)
+		out[i] = r
+	}
+	return out
+}
+
+// -------------------------------------------------------------------------
+// MATCHERS
+// -------------------------------------------------------------------------
+
+// cleanupOf matches an enqueued cleanup by everything a worker test asserts on:
+// which backend holds the bytes, which object they belonged to, why they are
+// going and how many of them there are.
+//
+// The path is not among them because most of these workers mint it - a replica
+// or a move names its destination after itself - so a test that pinned it would
+// be pinning a random id. cleanupAt is for the cases where the path is the
+// point.
+func cleanupOf(backendName, objectKey, reason string, size int64) gomock.Matcher {
+	return gomock.Cond(func(c *core.CleanupRequest) bool {
+		return c.BackendName == backendName && c.ObjectKey == objectKey &&
+			c.Reason == reason && c.SizeBytes == size
+	})
+}
+
+// cleanupOn matches an enqueued cleanup by backend and object alone, for tests
+// whose subject is that a cleanup happened at all.
+func cleanupOn(backendName, objectKey string) gomock.Matcher {
+	return gomock.Cond(func(c *core.CleanupRequest) bool {
+		return c.BackendName == backendName && c.ObjectKey == objectKey
+	})
+}
+
+// cleanupAt matches an enqueued cleanup by the path it deletes, which is what a
+// test about deleting the right bytes is asserting.
+func cleanupAt(backendName, storageKey string) gomock.Matcher {
+	return gomock.Cond(func(c *core.CleanupRequest) bool {
+		return c.BackendName == backendName && c.StorageKey == storageKey
+	})
+}
+
+// -------------------------------------------------------------------------
 // CONSTRUCTOR
 // -------------------------------------------------------------------------
 
@@ -164,14 +239,14 @@ type mockMetadataStore struct {
 // GetPendingCleanups is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
 func (m *mockMetadataStore) GetPendingCleanups(_ context.Context, _ int) ([]core.CleanupItem, error) {
-	return m.pendingCleanups, nil
+	return withCleanupPaths(m.pendingCleanups), nil
 }
 
 // ClaimPendingCleanups is a stub on mockMetadataStore; mirrors
 // GetPendingCleanups so existing fixtures exercise the worker's claim path
 // without per-test plumbing.
 func (m *mockMetadataStore) ClaimPendingCleanups(_ context.Context, _ int, _ string, _ time.Time) ([]core.CleanupItem, error) {
-	return m.pendingCleanups, nil
+	return withCleanupPaths(m.pendingCleanups), nil
 }
 
 // CompleteCleanupItem is a stub on mockMetadataStore; returns either the test-set
@@ -233,7 +308,7 @@ func (m *mockMetadataStore) CleanupDLQDepth(_ context.Context) (int64, error) {
 func (m *mockMetadataStore) GetLeastRecentlyScrubbedObjects(_ context.Context, _ int, backends []string, scrubbedBefore time.Time) ([]core.ObjectLocation, error) {
 	m.scrubSelectedBackends = backends
 	m.scrubBatchCutoff = scrubbedBefore
-	return m.randomHashedObjects, nil
+	return withPaths(m.randomHashedObjects), nil
 }
 
 // CountScrubCandidatesOnBackends is a stub on mockMetadataStore; records the
@@ -267,9 +342,9 @@ func (m *mockMetadataStore) IntegrityCoverage(_ context.Context, reachable []str
 // fixture field or the zero value.
 func (m *mockMetadataStore) GetObjectsWithoutHash(_ context.Context, limit, _ int, _ string) ([]core.ObjectLocation, error) {
 	if limit > len(m.objectsWithoutHash) {
-		return m.objectsWithoutHash, nil
+		return withPaths(m.objectsWithoutHash), nil
 	}
-	return m.objectsWithoutHash[:limit], nil
+	return withPaths(m.objectsWithoutHash[:limit]), nil
 }
 
 // UpdateContentHash is a stub on mockMetadataStore; returns either the test-set
@@ -311,13 +386,13 @@ func newTestRecorder() *accounting.Recorder {
 // GetUnderReplicatedObjects is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
 func (m *mockMetadataStore) GetUnderReplicatedObjects(_ context.Context, _, _ int) ([]core.ObjectLocation, error) {
-	return m.underReplicated, m.underReplicatedErr
+	return withPaths(m.underReplicated), m.underReplicatedErr
 }
 
 // GetUnderReplicatedObjectsExcluding is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
 func (m *mockMetadataStore) GetUnderReplicatedObjectsExcluding(_ context.Context, _, _ int, _ []string) ([]core.ObjectLocation, error) {
-	return m.underReplicated, m.underReplicatedErr
+	return withPaths(m.underReplicated), m.underReplicatedErr
 }
 
 // GetQuotaStats is a stub on mockMetadataStore; returns either the test-set
@@ -328,7 +403,7 @@ func (m *mockMetadataStore) GetQuotaStats(_ context.Context) (map[string]core.Qu
 
 // RecordReplica is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
-func (m *mockMetadataStore) RecordReplica(_ context.Context, _, _, _ string) (int64, bool, error) {
+func (m *mockMetadataStore) RecordReplica(_ context.Context, _ *core.ReplicaInsert) (int64, bool, error) {
 	m.replicaRecorded++
 	if m.recordReplicaErr != nil {
 		return 0, false, m.recordReplicaErr
@@ -339,7 +414,7 @@ func (m *mockMetadataStore) RecordReplica(_ context.Context, _, _, _ string) (in
 // GetOverReplicatedObjects is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
 func (m *mockMetadataStore) GetOverReplicatedObjects(_ context.Context, _, _ int) ([]core.ObjectLocation, error) {
-	return m.overReplicated, m.overReplicatedErr
+	return withPaths(m.overReplicated), m.overReplicatedErr
 }
 
 // CountOverReplicatedObjects is a stub on mockMetadataStore; returns either the test-set
@@ -352,33 +427,33 @@ func (m *mockMetadataStore) CountOverReplicatedObjects(_ context.Context, _ int)
 // removal so the cleaner counts it, a benign no-op (removed=false) when
 // removeExcessNoOp is set, mimicking a race that already absorbed the excess,
 // or the seeded removeExcessErr when the test drives a refusal.
-func (m *mockMetadataStore) RemoveExcessCopy(_ context.Context, _, _ string, _ int) (int64, bool, error) {
+func (m *mockMetadataStore) RemoveExcessCopy(_ context.Context, key, _ string, _ int) (core.RemovedCopy, error) {
 	if m.removeExcessErr != nil {
-		return 0, false, m.removeExcessErr
+		return core.RemovedCopy{}, m.removeExcessErr
 	}
 	if m.removeExcessNoOp {
-		return 0, false, nil
+		return core.RemovedCopy{}, nil
 	}
 	m.removedCopies++
-	return m.removedCopySize, true, nil
+	return core.RemovedCopy{StorageKey: key, SizeBytes: m.removedCopySize, Removed: true}, nil
 }
 
 // ListObjectsByBackend is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
 func (m *mockMetadataStore) ListObjectsByBackend(_ context.Context, name string, _ int) ([]core.ObjectLocation, error) {
-	return m.objectsByBackend[name], nil
+	return withPaths(m.objectsByBackend[name]), nil
 }
 
 // MoveObjectLocation is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
-func (m *mockMetadataStore) MoveObjectLocation(_ context.Context, _, _, _ string) (int64, error) {
+func (m *mockMetadataStore) MoveObjectLocation(_ context.Context, _ *core.MoveLocation) (int64, error) {
 	return m.moveSize, nil
 }
 
 // GetAllObjectLocations is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
 func (m *mockMetadataStore) GetAllObjectLocations(_ context.Context, _ string) ([]core.ObjectLocation, error) {
-	return m.allLocations, m.allLocationsErr
+	return withPaths(m.allLocations), m.allLocationsErr
 }
 
 // GetObjectBackendsForKeys is a stub on mockMetadataStore; returns either the test-set
@@ -415,7 +490,7 @@ func (m *mockMetadataStore) DeleteObjectLocation(_ context.Context, key, backend
 // than is a stub on mockMetadataStore; returns either the test-set
 // fixture field or the zero value.
 func (m *mockMetadataStore) GetStalePending(_ context.Context, _ time.Time, _ int) ([]core.PendingObject, error) {
-	return m.stalePending, nil
+	return withIntentPaths(m.stalePending), nil
 }
 
 // DeletePending records the intent ID so tests can assert reaper deletions.

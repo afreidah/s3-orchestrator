@@ -79,8 +79,8 @@ func runMerge(t *testing.T, s3, dbIter keySource) (imports []Entry, deletes []st
 			imports = append(imports, ent)
 			return nil
 		},
-		func(_ context.Context, key string) error {
-			deletes = append(deletes, key)
+		func(_ context.Context, ent Entry) error {
+			deletes = append(deletes, ent.key)
 			return nil
 		},
 	)
@@ -248,7 +248,7 @@ func TestReconcileSorted_DeleteHandlerErrorAborts(t *testing.T) {
 	called := 0
 	err := Sorted(context.Background(), &sliceKeySource{}, dbIter,
 		func(_ context.Context, _ Entry) error { return nil },
-		func(_ context.Context, _ string) error {
+		func(_ context.Context, _ Entry) error {
 			called++
 			return want
 		},
@@ -290,7 +290,7 @@ func TestReconcileSorted_HandlerErrorAborts(t *testing.T) {
 			called++
 			return want
 		},
-		func(_ context.Context, _ string) error { return nil },
+		func(_ context.Context, _ Entry) error { return nil },
 	)
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
@@ -315,8 +315,12 @@ type fakeLister struct {
 	errAt int
 }
 
-// ListObjectsByBackendKeyAsc lists objects by backend key asc.
-func (f *fakeLister) ListObjectsByBackendKeyAsc(_ context.Context, _, afterKey string, limit int) ([]core.ObjectLocation, error) {
+// ListObjectsByBackendKeyAsc lists objects by backend storage key asc.
+//
+// A page row left without a storage key takes its object key, which is what a
+// row written before per-write storage keys holds and what an imported object
+// gets. The cursor is a storage key, so the comparison is against that column.
+func (f *fakeLister) ListObjectsByBackendKeyAsc(_ context.Context, _, afterStorageKey string, limit int) ([]core.ObjectLocation, error) {
 	if f.err != nil && f.calls == f.errAt {
 		f.calls++
 		return nil, f.err
@@ -329,8 +333,12 @@ func (f *fakeLister) ListObjectsByBackendKeyAsc(_ context.Context, _, afterKey s
 	f.pages = f.pages[1:]
 	out := make([]core.ObjectLocation, 0, len(page))
 	for i := range page {
-		if page[i].ObjectKey > afterKey {
-			out = append(out, page[i])
+		row := page[i]
+		if row.StorageKey == "" {
+			row.StorageKey = row.ObjectKey
+		}
+		if row.StorageKey > afterStorageKey {
+			out = append(out, row)
 			if len(out) >= limit {
 				break
 			}
@@ -667,7 +675,7 @@ func TestImportHandler_SwallowsErrorButContinues(t *testing.T) {
 func TestDeleteHandler_CountsAndContinues(t *testing.T) {
 	res := &Result{}
 	var calls int
-	deleter := func(_ context.Context, _, _ string) error {
+	deleter := func(_ context.Context, _, _, _ string) error {
 		calls++
 		if calls == 1 {
 			return errors.New("transient")
@@ -677,13 +685,13 @@ func TestDeleteHandler_CountsAndContinues(t *testing.T) {
 	h := DeleteHandler(slog.Default(), "b1", deleter, res)
 
 	// First call: error swallowed, counter not bumped.
-	_ = h(context.Background(), "vb/x")
+	_ = h(context.Background(), Entry{objectKey: "vb/x", key: "vb/x!w1"})
 	if res.Removed != 0 {
 		t.Errorf("removed = %d after error, want 0", res.Removed)
 	}
 
 	// Second call: success, counter bumps.
-	_ = h(context.Background(), "vb/y")
+	_ = h(context.Background(), Entry{objectKey: "vb/y", key: "vb/y!w1"})
 	if res.Removed != 1 {
 		t.Errorf("removed = %d after success, want 1", res.Removed)
 	}
@@ -752,5 +760,5 @@ func TestSorted_RejectsRepeatedKey(t *testing.T) {
 
 // noopImport and noopDelete let the order guard be exercised without asserting
 // on the callbacks.
-func noopImport(context.Context, Entry) error  { return nil }
-func noopDelete(context.Context, string) error { return nil }
+func noopImport(context.Context, Entry) error { return nil }
+func noopDelete(context.Context, Entry) error { return nil }

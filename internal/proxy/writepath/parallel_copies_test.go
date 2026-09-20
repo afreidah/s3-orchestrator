@@ -220,33 +220,48 @@ func TestCommitCompanionCopy_RecordsTheCopy(t *testing.T) {
 }
 
 // TestCommitCompanionCopy_DiscardsAnUntrustedCopy asserts a copy the store
-// could not vouch for has its bytes removed from the backend. A newer write
-// took the key while this upload ran, so what sits at that path is either
-// version and a read of it would be silently wrong.
+// could not vouch for has its own bytes removed from the backend - and only
+// those. A newer write took the key while this upload ran, so this upload's
+// bytes describe an object that is no longer the object; the copy that write
+// committed sits at a different path and must survive untouched.
+//
+// This is issue #1527 at the coordinator: the discard used to delete "the
+// object at the key", which on a backend the winner had also landed on was the
+// winner's bytes, under a row that had just committed.
 func TestCommitCompanionCopy_DiscardsAnUntrustedCopy(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	store := NewMockCoordinatorStores(ctrl)
 	store.EXPECT().CommitCompanionCopy(gomock.Any(), gomock.Any()).
 		Return(core.CompanionCopyUntrusted,
-			[]core.DeletedCopy{{BackendName: "b2", SizeBytes: 4096, Reason: core.CleanupReasonCompanionUntrusted}},
+			[]core.DeletedCopy{{
+				BackendName: "b2", StorageKey: "k!loser",
+				SizeBytes: 4096, Reason: core.CleanupReasonCompanionUntrusted,
+			}},
 			nil, nil)
 
 	be := backendtest.NewInMemory()
-	if _, err := be.PutObject(context.Background(), "k", strings.NewReader("bytes"), 5, "text/plain", nil); err != nil {
-		t.Fatalf("seed backend: %v", err)
+	for _, path := range []string{"k!loser", "k!winner"} {
+		if _, err := be.PutObject(context.Background(), path, strings.NewReader("bytes"), 5, "text/plain", nil); err != nil {
+			t.Fatalf("seed backend at %s: %v", path, err)
+		}
 	}
 	coord := newCoordinatorWithBackend("b2", be, store)
 
-	recorded, err := coord.CommitCompanionCopy(context.Background(), companionIntent("b2"))
+	intent := companionIntent("b2")
+	intent.StorageKey = "k!loser"
+	recorded, err := coord.CommitCompanionCopy(context.Background(), intent)
 	if err != nil {
 		t.Fatalf("CommitCompanionCopy: %v", err)
 	}
 	if recorded {
 		t.Error("a discarded copy was reported as recorded, which would count it toward the factor")
 	}
-	if be.Has("k") {
+	if be.HasCopyOf("k!loser") {
 		t.Error("the untrusted copy's bytes are still on the backend")
+	}
+	if !be.HasCopyOf("k!winner") {
+		t.Error("the discard deleted the committed copy's bytes, which is issue #1527")
 	}
 }
 
@@ -269,7 +284,7 @@ func TestCommitCompanionCopy_StoreErrorLeavesTheIntent(t *testing.T) {
 	if _, err := coord.CommitCompanionCopy(context.Background(), companionIntent("b2")); err == nil {
 		t.Fatal("expected the commit failure to surface")
 	}
-	if !be.Has("k") {
+	if !be.HasCopyOf("k") {
 		t.Error("a database error took the copy's bytes with it")
 	}
 }

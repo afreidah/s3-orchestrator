@@ -70,7 +70,13 @@ func (o *Manager) DeleteObject(ctx context.Context, key string) error {
 				"backend", cp.BackendName, "key", key)
 			return
 		}
-		o.coord.DeleteOrEnqueue(ctx, backend, cp.BackendName, key, "delete_failed", cp.SizeBytes)
+		o.coord.DeleteOrEnqueue(ctx, backend, &core.CleanupRequest{
+			BackendName: cp.BackendName,
+			ObjectKey:   key,
+			StorageKey:  cp.StorageKey,
+			Reason:      "delete_failed",
+			SizeBytes:   cp.SizeBytes,
+		})
 	})
 
 	o.finalizeDelete(ctx, span, key, copies, start)
@@ -96,10 +102,11 @@ type DeleteObjectResult struct {
 // batchDeleteItem is one (key, backend) pair fanned out to the worker
 // pool during DeleteObjects.
 type batchDeleteItem struct {
-	key       string
-	backend   s3be.ObjectBackend
-	beName    string
-	sizeBytes int64
+	key        string
+	storageKey string
+	backend    s3be.ObjectBackend
+	beName     string
+	sizeBytes  int64
 }
 
 // -------------------------------------------------------------------------
@@ -142,7 +149,13 @@ func (o *Manager) DeleteObjects(ctx context.Context, keys []string) []DeleteObje
 
 	deleteItems := o.flattenBatchDeletes(ctx, copiesByKey)
 	workerpool.Run(ctx, defaultBatchDeleteConcurrency, deleteItems, func(ctx context.Context, item batchDeleteItem) {
-		o.coord.DeleteOrEnqueue(ctx, item.backend, item.beName, item.key, "batch_delete_failed", item.sizeBytes)
+		o.coord.DeleteOrEnqueue(ctx, item.backend, &core.CleanupRequest{
+			BackendName: item.beName,
+			ObjectKey:   item.key,
+			StorageKey:  item.storageKey,
+			Reason:      "batch_delete_failed",
+			SizeBytes:   item.sizeBytes,
+		})
 	})
 
 	o.finalizeBatchDelete(ctx, span, len(keys), results, start)
@@ -169,7 +182,8 @@ func (o *Manager) flattenBatchDeletes(ctx context.Context, copiesByKey map[strin
 				continue
 			}
 			items = append(items, batchDeleteItem{
-				key: key, backend: backend, beName: cp.BackendName, sizeBytes: cp.SizeBytes,
+				key: key, storageKey: cp.StorageKey, backend: backend,
+				beName: cp.BackendName, sizeBytes: cp.SizeBytes,
 			})
 		}
 	}

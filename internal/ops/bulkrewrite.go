@@ -79,6 +79,7 @@ type BulkRewriteResult struct {
 type bulkRewriteRow interface {
 	rewriteKey() string
 	rewriteBackend() string
+	rewriteStorageKey() string
 	rewriteSize() int64
 	rewriteEtag() string
 }
@@ -276,6 +277,11 @@ func bulkRewritePageSize(maxRewrites, rewritten int) int {
 // as it goes: a run that fits when it starts can stop fitting halfway through.
 func (op bulkRewriteOp[L]) processLocation(ctx context.Context, env bulkRewriteEnv, loc L) rewriteOutcome {
 	key, backendName, sizeBytes := loc.rewriteKey(), loc.rewriteBackend(), loc.rewriteSize()
+	// Read and written at the copy's own path, which is also why the rewrite is
+	// safe in place: the path names this copy, so a client overwriting the key
+	// while the pass runs writes somewhere else entirely and the etag CAS below
+	// is what stops this pass describing bytes that are no longer the object's.
+	storageKey := core.StoragePath(key, loc.rewriteStorageKey())
 
 	if op.declines != nil && op.declines(loc) {
 		op.counter.WithLabelValues("skipped").Inc()
@@ -302,7 +308,7 @@ func (op bulkRewriteOp[L]) processLocation(ctx context.Context, env bulkRewriteE
 		return op.failed(ctx, env, "backend not found", key, backendName, err)
 	}
 
-	src, err := be.GetObject(ctx, key, "")
+	src, err := be.GetObject(ctx, storageKey, "")
 	if err != nil {
 		env.usage.RecordAll(backendName, readOp, 0, 0)
 		return op.failed(ctx, env, "download failed", key, backendName, err)
@@ -322,7 +328,7 @@ func (op bulkRewriteOp[L]) processLocation(ctx context.Context, env bulkRewriteE
 		defer out.release()
 	}
 
-	_, err = be.PutObject(ctx, key, out.body, out.size, src.ContentType, src.Metadata)
+	_, err = be.PutObject(ctx, storageKey, out.body, out.size, src.ContentType, src.Metadata)
 	src.Body.Close()
 	if err != nil {
 		env.usage.RecordAll(backendName, writeOp, 0, 0)

@@ -101,6 +101,18 @@ type putResult struct {
 
 // putThroughFleet runs one PUT against a single in-memory backend and returns
 // the stored bytes with the row that describes them.
+// copyData returns the bytes a backend holds for an object, wherever the write
+// stored them. A write names its path after itself, so a test cannot index the
+// backend by the client's key any more.
+func copyData(t *testing.T, be *backendtest.InMemory, objectKey string) []byte {
+	t.Helper()
+	obj, ok := be.CopyOf(objectKey)
+	if !ok {
+		t.Fatalf("backend holds no copy of %q", objectKey)
+	}
+	return obj.Data
+}
+
 func putThroughFleet(t *testing.T, opts *fleetOpts, key string, body []byte) putResult {
 	t.Helper()
 	be := backendtest.NewInMemory()
@@ -120,7 +132,7 @@ func putThroughFleet(t *testing.T, opts *fleetOpts, key string, body []byte) put
 		t.Fatalf("recorded %d rows, want 1", len(calls.recordObject))
 	}
 	rec := calls.recordObject[0]
-	return putResult{be: be, stored: be.Objects[key].Data, size: rec.Size, form: rec.Form}
+	return putResult{be: be, stored: copyData(t, be, key), size: rec.Size, form: rec.Form}
 }
 
 // -------------------------------------------------------------------------
@@ -273,7 +285,7 @@ func TestPut_PendingIntentSizedByStoredBytes(t *testing.T) {
 		t.Fatalf("inserted %d intents, want 1", len(intents))
 	}
 
-	stored := be.Objects["key"].Data
+	stored := copyData(t, be, "key")
 	if len(stored) >= len(src) {
 		t.Fatalf("stored %d bytes for a %d byte object; compression did not apply", len(stored), len(src))
 	}
@@ -408,7 +420,7 @@ func TestPut_CompressFailureAbortsWrite(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("PutObject err = %v, want %v", err, boom)
 	}
-	if be.Has("boom") {
+	if be.HasCopyOf("boom") {
 		t.Error("bytes were stored despite the encode failing")
 	}
 }

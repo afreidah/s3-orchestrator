@@ -50,12 +50,13 @@ type orphanBytesEntry struct {
 // -------------------------------------------------------------------------
 
 // stubOrphanEnqueue captures EnqueueCleanup args.
-func stubOrphanEnqueue(c *orphanCalls, err error) func(context.Context, string, string, string, int64) error {
-	return func(_ context.Context, backend, key, reason string, size int64) error {
+func stubOrphanEnqueue(c *orphanCalls, err error) func(context.Context, *core.CleanupRequest) error {
+	return func(_ context.Context, req *core.CleanupRequest) error {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.enqueue = append(c.enqueue, core.CleanupItem{
-			BackendName: backend, ObjectKey: key, Reason: reason, SizeBytes: size,
+			BackendName: req.BackendName, ObjectKey: req.ObjectKey, StorageKey: req.StorageKey,
+			Reason: req.Reason, SizeBytes: req.SizeBytes,
 		})
 		return err
 	}
@@ -89,7 +90,7 @@ func TestPutObject_Overwrite_EnqueuesDisplacedCopiesWithSize(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		Return([]core.DeletedCopy{{BackendName: "b2", SizeBytes: 500}}, nil, nil).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
@@ -130,7 +131,7 @@ func TestDeleteObject_BackendFails_EnqueuesWithSize(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
 		Return([]core.DeletedCopy{{BackendName: "b1", SizeBytes: 2048}}, nil, nil).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
@@ -164,7 +165,7 @@ func TestRecordObjectOrCleanup_DisplacedCopyBackendNotFound(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		Return([]core.DeletedCopy{{BackendName: "gone", SizeBytes: 300}}, nil, nil).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
 	storetest.Permissive(store)
 
@@ -191,7 +192,7 @@ func TestRecordObjectOrCleanup_DisplacedCopyDeleteSucceeds(t *testing.T) {
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		Return([]core.DeletedCopy{{BackendName: "b2", SizeBytes: 3}}, nil, nil).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanEnqueue(c, nil)).AnyTimes()
 	store.EXPECT().IncrementOrphanBytes(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(stubOrphanIncrement(c, nil)).AnyTimes()
@@ -222,12 +223,13 @@ type cleanupCalls struct {
 
 // stubEnqueue captures EnqueueCleanup calls into c.enqueue and returns
 // the supplied error so tests can drive both happy and DB-outage paths.
-func stubEnqueue(c *cleanupCalls, err error) func(context.Context, string, string, string, int64) error {
-	return func(_ context.Context, backend, key, reason string, size int64) error {
+func stubEnqueue(c *cleanupCalls, err error) func(context.Context, *core.CleanupRequest) error {
+	return func(_ context.Context, req *core.CleanupRequest) error {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.enqueue = append(c.enqueue, core.CleanupItem{
-			BackendName: backend, ObjectKey: key, Reason: reason, SizeBytes: size,
+			BackendName: req.BackendName, ObjectKey: req.ObjectKey, StorageKey: req.StorageKey,
+			Reason: req.Reason, SizeBytes: req.SizeBytes,
 		})
 		return err
 	}
@@ -246,7 +248,7 @@ func TestDeleteObject_BackendDeleteFails_EnqueuesCleanup(t *testing.T) {
 	store.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).
 		Return([]core.DeletedCopy{{BackendName: "b1", SizeBytes: 100}}, nil, nil).
 		AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubEnqueue(calls, nil)).
 		AnyTimes()
 	storetest.Permissive(store)
@@ -289,7 +291,7 @@ func TestPutObject_RecordFails_DoesNotEnqueueOrphanCleanup(t *testing.T) {
 			return true, nil
 		}).
 		AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubEnqueue(calls, nil)).
 		AnyTimes()
 	storetest.Permissive(store)

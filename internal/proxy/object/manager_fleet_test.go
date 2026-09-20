@@ -119,12 +119,13 @@ func stubObjInsertPending(c *objectsCalls, err error) func(context.Context, *cor
 	}
 }
 
-func stubObjEnqueue(c *objectsCalls) func(context.Context, string, string, string, int64) error {
-	return func(_ context.Context, backend, key, reason string, size int64) error {
+func stubObjEnqueue(c *objectsCalls) func(context.Context, *core.CleanupRequest) error {
+	return func(_ context.Context, req *core.CleanupRequest) error {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.enqueueCleanup = append(c.enqueueCleanup, core.CleanupItem{
-			BackendName: backend, ObjectKey: key, Reason: reason, SizeBytes: size,
+			BackendName: req.BackendName, ObjectKey: req.ObjectKey, StorageKey: req.StorageKey,
+			Reason: req.Reason, SizeBytes: req.SizeBytes,
 		})
 		return nil
 	}
@@ -140,7 +141,7 @@ func objectsStubs(store *storetest.MockMetadataStore) *objectsCalls {
 		DoAndReturn(stubObjInsertPending(c, nil)).AnyTimes()
 	store.EXPECT().CommitCompanionCopy(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjCommitCompanion(c)).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjEnqueue(c)).AnyTimes()
 	return c
 }
@@ -227,7 +228,7 @@ func TestPutObject_Success(t *testing.T) {
 	if etag == "" {
 		t.Error("expected non-empty etag")
 	}
-	if !be.Has("mykey") {
+	if !be.HasCopyOf("mykey") {
 		t.Error("object not found on be")
 	}
 	if len(c.recordObject) != 1 {
@@ -293,10 +294,10 @@ func TestPutObject_DrainRace_AbortsAndFailsOver(t *testing.T) {
 	if etag == "" {
 		t.Error("expected non-empty etag from the failover backend")
 	}
-	if drained.Has("mykey") {
+	if drained.HasCopyOf("mykey") {
 		t.Error("draining backend still holds the orphaned bytes; RecoverFromRecordFailure did not delete")
 	}
-	if !healthy.Has("mykey") {
+	if !healthy.HasCopyOf("mykey") {
 		t.Error("healthy backend did not receive the failed-over write")
 	}
 	if got := testutil.ToFloat64(telemetry.DrainRaceAbortedTotal); got != before+1 {
@@ -323,7 +324,7 @@ func TestPutObject_DrainRace_AllBackendsDraining(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when every backend flipped to draining mid-write")
 	}
-	if drainedA.Has("mykey") || drainedB.Has("mykey") {
+	if drainedA.HasCopyOf("mykey") || drainedB.HasCopyOf("mykey") {
 		t.Error("orphaned bytes left on a draining backend; RecoverFromRecordFailure did not delete")
 	}
 }
@@ -365,10 +366,10 @@ func TestPutObject_PackStrategy_FillsTheFirstBackend(t *testing.T) {
 	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "pack-key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
-	if !first.Has("pack-key") {
+	if !first.HasCopyOf("pack-key") {
 		t.Error("pack routing should fill the first backend in order")
 	}
-	if second.Has("pack-key") {
+	if second.HasCopyOf("pack-key") {
 		t.Error("pack routing moved on while the first backend still had room")
 	}
 }
@@ -393,7 +394,7 @@ func TestPutObject_SpreadStrategy_PicksTheEmptiest(t *testing.T) {
 	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "spread-key", Body: bytes.NewReader([]byte("data")), Size: 4, ContentType: "text/plain"}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
-	if !second.Has("spread-key") {
+	if !second.HasCopyOf("spread-key") {
 		t.Error("spread routing should land on the least utilized backend")
 	}
 }
@@ -564,7 +565,7 @@ func TestPutObject_RecordFailure_LeavesBackendBytesAndPendingIntent(t *testing.T
 		DoAndReturn(stubObjRecord(c, errors.New("db write failed"))).AnyTimes()
 	store.EXPECT().InsertPendingIfFits(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjInsertPending(c, nil)).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjEnqueue(c)).AnyTimes()
 	storetest.Permissive(store)
 
@@ -573,7 +574,7 @@ func TestPutObject_RecordFailure_LeavesBackendBytesAndPendingIntent(t *testing.T
 	if _, err := mgr.PutObject(context.Background(), &PutObjectRequest{Key: "cleanup-key", Body: bytes.NewReader([]byte("data")), Size: 4}); err == nil {
 		t.Fatal("expected error from RecordObjectAndClearPending failure")
 	}
-	if !be.Has("cleanup-key") {
+	if !be.HasCopyOf("cleanup-key") {
 		t.Error("be bytes should be retained for the pending reaper to resolve")
 	}
 	if len(c.insertPending) != 1 {
@@ -612,10 +613,10 @@ func TestPutObject_WriteFailover_Success(t *testing.T) {
 	if etag == "" {
 		t.Error("expected non-empty etag")
 	}
-	if b1.Has("failover-key") {
+	if b1.HasCopyOf("failover-key") {
 		t.Error("object should NOT be on failed backend b1")
 	}
-	if !b2.Has("failover-key") {
+	if !b2.HasCopyOf("failover-key") {
 		t.Error("object should be on failover backend b2")
 	}
 	if len(c.recordObject) != 1 {
@@ -671,7 +672,7 @@ func TestPutObject_WriteFailover_SkipsMultipleFailedBackends(t *testing.T) {
 	if etag == "" {
 		t.Error("expected non-empty etag")
 	}
-	if !b3.Has("key") {
+	if !b3.HasCopyOf("key") {
 		t.Error("object should be on b3")
 	}
 	// Every attempt claims its own candidate, so failover leaves one intent per
@@ -754,7 +755,7 @@ func TestPutObject_WriteFailover_DataIntegrity(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	obj, _ := b2.Get("key")
+	obj, _ := b2.CopyOf("key")
 
 	if !bytes.Equal(obj.Data, payload) {
 		t.Errorf("data mismatch: got %d bytes, want %d bytes", len(obj.Data), len(payload))
@@ -836,10 +837,10 @@ func TestPutObject_WriteFailover_WithEncryption(t *testing.T) {
 	if etag == "" {
 		t.Error("expected non-empty etag")
 	}
-	if b1.Has("enc-key") {
+	if b1.HasCopyOf("enc-key") {
 		t.Error("object should NOT be on failed backend b1")
 	}
-	if !b2.Has("enc-key") {
+	if !b2.HasCopyOf("enc-key") {
 		t.Error("object should be on failover backend b2")
 	}
 	if len(c.recordObject) != 1 {
@@ -849,7 +850,7 @@ func TestPutObject_WriteFailover_WithEncryption(t *testing.T) {
 		t.Errorf("RecordObject backend = %s, want b2", c.recordObject[0].Backend)
 	}
 
-	ciphertextLenObj, _ := b2.Get("enc-key")
+	ciphertextLenObj, _ := b2.CopyOf("enc-key")
 	ciphertextLen := len(ciphertextLenObj.Data)
 	if ciphertextLen <= len(payload) {
 		t.Errorf("ciphertext len %d should be > plaintext len %d", ciphertextLen, len(payload))
@@ -904,12 +905,18 @@ func TestHeadObject_WithEncryption(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The row is read back at call time so it names the path the PUT below
+	// actually stored the copy at: that path carries the write's own id, which
+	// nothing can predict before the write runs.
 	ctrl := gomock.NewController(t)
 	store := storetest.NewMockMetadataStore(ctrl)
 	store.EXPECT().GetAllObjectLocations(gomock.Any(), gomock.Any()).
-		Return([]core.ObjectLocation{
-			{ObjectKey: "enc-key", BackendName: "b1", SizeBytes: 100, Encrypted: true, PlaintextSize: 25, EncryptionKey: []byte("wrapped-dek")},
-		}, nil).AnyTimes()
+		DoAndReturn(func(context.Context, string) ([]core.ObjectLocation, error) {
+			return []core.ObjectLocation{{
+				ObjectKey: "enc-key", BackendName: "b1", StorageKey: b1.PathOf("enc-key"),
+				SizeBytes: 100, Encrypted: true, PlaintextSize: 25, EncryptionKey: []byte("wrapped-dek"),
+			}}, nil
+		}).AnyTimes()
 	objectsStubs(store)
 	storetest.Permissive(store)
 
@@ -1215,7 +1222,7 @@ func TestDeleteObject_Success(t *testing.T) {
 	if err := mgr.DeleteObject(context.Background(), "del-key"); err != nil {
 		t.Fatalf("DeleteObject: %v", err)
 	}
-	if be.Has("del-key") {
+	if be.HasCopyOf("del-key") {
 		t.Error("object should be deleted from be")
 	}
 }
@@ -1290,7 +1297,7 @@ func TestDeleteObjects_AllSuccess(t *testing.T) {
 		}
 	}
 	for _, k := range []string{"a", "b", "c"} {
-		if be.Has(k) {
+		if be.HasCopyOf(k) {
 			t.Errorf("object %q should be deleted from be", k)
 		}
 	}
@@ -1545,7 +1552,7 @@ func TestCopyObject_HeadSourceForCopy_SkipsUnknownBackend(t *testing.T) {
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err != nil {
 		t.Fatalf("CopyObject: %v", err)
 	}
-	if !be.Has("dst") {
+	if !be.HasCopyOf("dst") {
 		t.Error("destination object not found after unknown-be skip")
 	}
 }
@@ -1572,7 +1579,7 @@ func TestCopyObject_RecordFailureSurfaces(t *testing.T) {
 	// RecordObject returns an error -> RecordObjectOrCleanup wraps + recovers + returns.
 	store.EXPECT().RecordObject(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjRecord(c, errors.New("commit failed"))).AnyTimes()
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
 		DoAndReturn(stubObjEnqueue(c)).AnyTimes()
 	storetest.Permissive(store)
 
@@ -1600,7 +1607,7 @@ func TestCopyObject_Success(t *testing.T) {
 	if etag == "" {
 		t.Error("expected non-empty etag")
 	}
-	if !be.Has("dst") {
+	if !be.HasCopyOf("dst") {
 		t.Error("destination object not found")
 	}
 	// Regression pin for #815: the body handed to the destination
@@ -1635,7 +1642,7 @@ func TestCopyObject_SameBackendFastPath_UsesNativeCopy(t *testing.T) {
 	if etag == "" {
 		t.Error("expected non-empty etag")
 	}
-	if !be.Has("dst") {
+	if !be.HasCopyOf("dst") {
 		t.Error("destination object not found")
 	}
 	calls := be.CopyCallCount()
@@ -1667,7 +1674,7 @@ func TestCopyObject_FastPathFallsBackOnNativeError(t *testing.T) {
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err != nil {
 		t.Fatalf("CopyObject (fallback path): %v", err)
 	}
-	if !be.Has("dst") {
+	if !be.HasCopyOf("dst") {
 		t.Error("destination object not found after fallback")
 	}
 	puttedBody := be.PutBodyWasSeekable()
@@ -1688,10 +1695,11 @@ func TestCopyObject_AmbiguousNativeFailure_HeadConfirmsTreatsAsSuccess(t *testin
 	be := backendtest.NewInMemory()
 	be.CopyEnabled = true
 	be.CopyErr = errors.New("simulated response timeout")
+	// The ambiguous case: the backend populated the destination server-side and
+	// then lost the response. The destination path is minted inside the copy,
+	// so the backend has to land it rather than the test seeding it.
+	be.CopyLandsBeforeErr = true
 	_, _ = be.PutObject(context.Background(), "src", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
-	// Simulate the ambiguous case: the be already populated the
-	// destination server-side before the response was lost.
-	_, _ = be.PutObject(context.Background(), "dst", bytes.NewReader([]byte("copy-me")), 7, "text/plain", nil)
 	// Reset the seekable flag so a materialized PUT would flip it true.
 	be.LastPutBodySeekable = false
 
@@ -1733,7 +1741,7 @@ func TestCopyObject_AmbiguousNativeFailure_HeadMissingFallsBack(t *testing.T) {
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); err != nil {
 		t.Fatalf("CopyObject: %v", err)
 	}
-	if !be.Has("dst") {
+	if !be.HasCopyOf("dst") {
 		t.Error("destination object not found after materialized fallback")
 	}
 	puttedBody := be.PutBodyWasSeekable()
@@ -1800,7 +1808,7 @@ func TestCopyObject_FastPathSkippedCrossBackend(t *testing.T) {
 	if calls != 0 {
 		t.Errorf("native copyCalls = %d, want 0 (cross-backend must materialize)", calls)
 	}
-	if !dst.Has("dst") {
+	if !dst.HasCopyOf("dst") {
 		t.Error("destination object not found after cross-backend copy")
 	}
 }
@@ -2149,10 +2157,10 @@ func TestPutObject_UsageLimitOverflow(t *testing.T) {
 	if etag == "" {
 		t.Error("expected non-empty etag")
 	}
-	if b1.Has("key") {
+	if b1.HasCopyOf("key") {
 		t.Error("object should NOT be on b1 (over limit)")
 	}
-	if !b2.Has("key") {
+	if !b2.HasCopyOf("key") {
 		t.Error("object should be on b2 (overflow)")
 	}
 }
@@ -2227,7 +2235,7 @@ func TestDeleteObject_AlwaysAllowed(t *testing.T) {
 	if err := mgr.DeleteObject(context.Background(), "del-key"); err != nil {
 		t.Fatalf("DeleteObject should always succeed regardless of limits: %v", err)
 	}
-	if be.Has("del-key") {
+	if be.HasCopyOf("del-key") {
 		t.Error("object should be deleted from be")
 	}
 }
@@ -2635,7 +2643,7 @@ func TestDeleteObject_BackendNotFound_ContinuesOtherCopies(t *testing.T) {
 	if err := mgr.DeleteObject(context.Background(), "key"); err != nil {
 		t.Fatalf("DeleteObject should succeed even with missing backend: %v", err)
 	}
-	if b1.Has("key") {
+	if b1.HasCopyOf("key") {
 		t.Error("expected b1 copy to be deleted")
 	}
 }
@@ -2696,7 +2704,7 @@ func TestCopyObject_ExcludesDrainingBackend(t *testing.T) {
 	if _, err := mgr.CopyObject(context.Background(), &CopyObjectRequest{SourceKey: "src", DestKey: "dst"}); !errors.Is(err, core.ErrInsufficientStorage) {
 		t.Fatalf("expected st.ErrInsufficientStorage when all backends are draining, got %v", err)
 	}
-	if dst.Has("dst") {
+	if dst.HasCopyOf("dst") {
 		t.Error("object should not have been copied to draining backend")
 	}
 }

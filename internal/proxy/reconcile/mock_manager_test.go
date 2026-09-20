@@ -104,18 +104,18 @@ func (mr *MockStoresMockRecorder) ListObjectsByBackendKeyAsc(ctx, backendName, a
 }
 
 // SweepStaleCleanupQueueRows mocks base method.
-func (m *MockStores) SweepStaleCleanupQueueRows(ctx context.Context, key, backendName string) (int64, error) {
+func (m *MockStores) SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backendName string) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SweepStaleCleanupQueueRows", ctx, key, backendName)
+	ret := m.ctrl.Call(m, "SweepStaleCleanupQueueRows", ctx, storageKey, backendName)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // SweepStaleCleanupQueueRows indicates an expected call of SweepStaleCleanupQueueRows.
-func (mr *MockStoresMockRecorder) SweepStaleCleanupQueueRows(ctx, key, backendName any) *gomock.Call {
+func (mr *MockStoresMockRecorder) SweepStaleCleanupQueueRows(ctx, storageKey, backendName any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SweepStaleCleanupQueueRows", reflect.TypeOf((*MockStores)(nil).SweepStaleCleanupQueueRows), ctx, key, backendName)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SweepStaleCleanupQueueRows", reflect.TypeOf((*MockStores)(nil).SweepStaleCleanupQueueRows), ctx, storageKey, backendName)
 }
 
 // MockBackendResolver is a mock of BackendResolver interface.

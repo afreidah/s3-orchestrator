@@ -22,6 +22,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // Single-operation admission sets shared by the background workers.
@@ -52,7 +53,7 @@ type DataMover interface {
 	WithTimeout(ctx context.Context) (context.Context, context.CancelFunc)
 	GetWithTimeout(ctx context.Context, be backend.ObjectBackend, key, rangeHeader string) (*backend.GetObjectResult, context.CancelFunc, error)
 	HeadWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) (*backend.HeadObjectResult, error)
-	StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, key string, sizeEstimate int64) (int64, error)
+	StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, srcKey, dstKey string, sizeEstimate int64) (int64, error)
 	DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, key string) error
 }
 
@@ -62,7 +63,7 @@ type DataMover interface {
 type Placement interface {
 	RankReplicaTargets(size int64, exclusion map[string]bool) []string
 	MoveObject(ctx context.Context, req *writepath.MoveRequest) (int64, error)
-	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, backendName, key, reason string, sizeBytes int64)
+	DeleteOrEnqueue(ctx context.Context, be backend.ObjectBackend, c *core.CleanupRequest)
 }
 
 // UsageAccessor provides usage tracking.

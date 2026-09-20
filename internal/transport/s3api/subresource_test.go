@@ -120,7 +120,7 @@ func assertSubresourceRefused(t *testing.T, sub string) {
 
 	// Whatever the status codes said, the object is what matters: it must
 	// still be exactly what was written.
-	obj, ok := backend.Get(key)
+	obj, ok := backend.CopyOf(key)
 	if !ok {
 		t.Fatalf("object was removed by ?%s", sub)
 	}

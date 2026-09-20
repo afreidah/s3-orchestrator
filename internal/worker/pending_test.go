@@ -44,11 +44,15 @@ func setupReaper(t *testing.T) (*PendingReaper, *MockCleanupOps, *MockPlacement,
 	return r, ops, pl, be, ms
 }
 
-// pendingFixture returns a PendingObject for the reaper test rows.
+// pendingFixture returns a PendingObject for the reaper test rows. Its storage
+// key is the object's own, the legacy form every intent written before
+// per-write paths carries, so the probe and the cleanup address the same string
+// the fixtures' backends are seeded at.
 func pendingFixture(intentID, key, backendName string) core.PendingObject {
 	return core.PendingObject{
 		IntentID:    intentID,
 		ObjectKey:   key,
+		StorageKey:  key,
 		BackendName: backendName,
 		SizeBytes:   100,
 	}
@@ -191,7 +195,7 @@ func TestProcessPendingQueue_CompanionKeptLeavesBytes(t *testing.T) {
 	ops.EXPECT().GetBackend("b1").Return(be, nil)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	pendSum := r.ProcessPendingQueue(context.Background())
 	if pendSum.Succeeded != 1 || pendSum.Failed != 0 {
@@ -217,7 +221,8 @@ func TestProcessPendingQueue_CompanionDiscardedRemovesBytes(t *testing.T) {
 	ops.EXPECT().GetBackend("b1").Return(be, nil).Times(2)
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be, "b1", "bucket/k", core.CleanupReasonCompanionDiscarded, int64(100))
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be,
+		cleanupOf("b1", "bucket/k", core.CleanupReasonCompanionDiscarded, 100))
 
 	pendSum := r.ProcessPendingQueue(context.Background())
 	if pendSum.Succeeded != 1 || pendSum.Failed != 0 {
@@ -353,7 +358,7 @@ func TestProcessPendingQueue_PromoteWithDisplacedEnqueues(t *testing.T) {
 	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
 	ops.EXPECT().HeadWithTimeout(gomock.Any(), gomock.Any(), "bucket/k").Return(&backend.HeadObjectResult{Size: 100}, nil)
 	ops.EXPECT().GetBackend("b2").Return(be2, nil)
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be2, "b2", "bucket/k", "overwrite_displaced", int64(200))
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be2, cleanupOf("b2", "bucket/k", "overwrite_displaced", int64(200)))
 
 	pendSum := r.ProcessPendingQueue(context.Background())
 	resolved, _ := pendSum.Succeeded, pendSum.Failed
@@ -546,7 +551,7 @@ func TestOnPromoteCommitted_FansOutDisplacedCleanup(t *testing.T) {
 	be2 := backendtest.NewMockObjectBackend(gomock.NewController(t))
 
 	ops.EXPECT().GetBackend("b2").Return(be2, nil)
-	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be2, "b2", "bucket/k", "overwrite_displaced", int64(200))
+	pl.EXPECT().DeleteOrEnqueue(gomock.Any(), be2, cleanupOf("b2", "bucket/k", "overwrite_displaced", int64(200)))
 
 	displaced := []core.DeletedCopy{{BackendName: "b2", SizeBytes: 200}}
 	r.onPromoteCommitted(context.Background(), &p, displaced)

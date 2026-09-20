@@ -73,14 +73,14 @@ func (o TxOps) ImportObject(ctx context.Context, req *ImportObjectRequest) (Impo
 
 // MoveObjectLocation repoints a copy at a different backend and moves the
 // bytes between the two quotas.
-func (o TxOps) MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error) {
-	return MoveObjectLocation(ctx, o.runner, key, fromBackend, toBackend)
+func (o TxOps) MoveObjectLocation(ctx context.Context, m *MoveLocation) (int64, error) {
+	return MoveObjectLocation(ctx, o.runner, m)
 }
 
-// SweepStaleCleanupQueueRows drops queued cleanups for a key that has been
-// rewritten on the same backend.
-func (o TxOps) SweepStaleCleanupQueueRows(ctx context.Context, key, backend string) (int64, error) {
-	return SweepStaleCleanupQueueRows(ctx, o.runner, key, backend)
+// SweepStaleCleanupQueueRows drops queued cleanups for bytes reconcile has
+// established are no longer on the backend.
+func (o TxOps) SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, error) {
+	return SweepStaleCleanupQueueRows(ctx, o.runner, storageKey, backend)
 }
 
 // MoveCleanupToDLQ graduates an exhausted cleanup row to the dead-letter
@@ -91,13 +91,14 @@ func (o TxOps) MoveCleanupToDLQ(ctx context.Context, id int64, lastError string)
 
 // RecordReplica records a new copy on a target backend and reports the bytes
 // it wrote so the caller can charge them.
-func (o TxOps) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string) (int64, bool, error) {
-	return RecordReplica(ctx, o.runner, key, targetBackend, sourceBackend)
+func (o TxOps) RecordReplica(ctx context.Context, r *ReplicaInsert) (int64, bool, error) {
+	return RecordReplica(ctx, o.runner, r)
 }
 
 // RemoveExcessCopy drops one copy of an over-replicated object, refusing the
-// copy that would leave the object unreadable. Reports the bytes removed.
-func (o TxOps) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (int64, bool, error) {
+// copy that would leave the object unreadable. Reports the bytes removed and
+// the path they occupy.
+func (o TxOps) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (RemovedCopy, error) {
 	return RemoveExcessCopy(ctx, o.runner, key, backendName, factor)
 }
 

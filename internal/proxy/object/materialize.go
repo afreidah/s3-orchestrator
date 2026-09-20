@@ -74,7 +74,7 @@ func (o *Manager) materializeCopySource(
 ) (*materializedSource, error) {
 	var lastErr error
 	for i := range locations {
-		ms, err := o.tryMaterializeFromLocation(ctx, sourceKey, size, locations[i].BackendName)
+		ms, err := o.tryMaterializeFromLocation(ctx, storagePath(sourceKey, &locations[i]), size, locations[i].BackendName)
 		if err != nil {
 			lastErr = err
 			continue
@@ -89,15 +89,15 @@ func (o *Manager) materializeCopySource(
 	return nil, fmt.Errorf("failed to read source from any copy")
 }
 
-// tryMaterializeFromLocation attempts to download sourceKey from one backend
-// into a fresh seekable buffer. (ms, nil) on success. (nil, nil) means the
+// tryMaterializeFromLocation attempts to download one copy, at the path that
+// copy occupies on its backend, into a fresh seekable buffer. (ms, nil) on success. (nil, nil) means the
 // replica was skipped without a hard error (usage limits hit, backend not
 // registered) — caller moves on. (nil, err) is a real failure (backend GET
 // errored or materialization failed). Errors are aggregated by the caller so
 // the last underlying failure surfaces when no replica succeeds.
 func (o *Manager) tryMaterializeFromLocation(
 	ctx context.Context,
-	sourceKey string,
+	storageKey string,
 	size int64,
 	backendName string,
 ) (*materializedSource, error) {
@@ -112,7 +112,7 @@ func (o *Manager) tryMaterializeFromLocation(
 	// The backend timeout covers the body drain inside materialize.New too:
 	// cancel only fires on function return, by which point the body has been
 	// fully materialized.
-	result, cancel, err := o.core.GetWithTimeout(ctx, be, sourceKey, "")
+	result, cancel, err := o.core.GetWithTimeout(ctx, be, storageKey, "")
 	if err != nil {
 		return nil, err
 	}

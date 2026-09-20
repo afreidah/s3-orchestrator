@@ -17,6 +17,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
 // TestSqlite_ClaimPendingCleanups_StampsClaim asserts a fresh claim returns
@@ -27,7 +29,7 @@ func TestSqlite_ClaimPendingCleanups_StampsClaim(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if err := s.EnqueueCleanup(ctx, "backend-a", "k1", "test", 256); err != nil {
+	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: "k1", StorageKey: "k1", Reason: "test", SizeBytes: 256}); err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 
@@ -64,7 +66,7 @@ func TestSqlite_ClaimPendingCleanups_ReclaimAfterGrace(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if err := s.EnqueueCleanup(ctx, "backend-a", "k1", "test", 256); err != nil {
+	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: "k1", StorageKey: "k1", Reason: "test", SizeBytes: 256}); err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 	first, err := s.ClaimPendingCleanups(ctx, 10, "A", time.Now().Add(-time.Hour))
@@ -124,7 +126,7 @@ func TestSqlite_CompleteCleanupItem_AtomicDecrement(t *testing.T) {
 	}
 	before := readOrphanBytesSqlite(t, s, "backend-a")
 
-	if err := s.EnqueueCleanup(ctx, "backend-a", "k1", "test", size); err != nil {
+	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: "k1", StorageKey: "k1", Reason: "test", SizeBytes: size}); err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 	pending, err := s.GetPendingCleanups(ctx, 10)
@@ -161,7 +163,7 @@ func TestSqlite_CompleteCleanupItem_ClampsAtZero(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if err := s.EnqueueCleanup(ctx, "backend-a", "k1", "test", 10_000); err != nil {
+	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: "k1", StorageKey: "k1", Reason: "test", SizeBytes: 10_000}); err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 	pending, err := s.GetPendingCleanups(ctx, 10)
@@ -183,7 +185,7 @@ func TestSqlite_RetryCleanupItem_ClearsClaim(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	if err := s.EnqueueCleanup(ctx, "backend-a", "k1", "test", 256); err != nil {
+	if err := s.EnqueueCleanup(ctx, &core.CleanupRequest{BackendName: "backend-a", ObjectKey: "k1", StorageKey: "k1", Reason: "test", SizeBytes: 256}); err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 	claimed, err := s.ClaimPendingCleanups(ctx, 10, "A", time.Now().Add(-time.Hour))

@@ -292,7 +292,7 @@ func TestGet_RangedReadDoesNotVerifyOrDestroyCopy(t *testing.T) {
 	if !bytes.Equal(got, full[:10]) {
 		t.Errorf("ranged GET returned %q, want %q", got, full[:10])
 	}
-	if !be.Has(key) {
+	if !be.HasCopyOf(key) {
 		t.Error("a healthy ranged GET deleted the object from the backend")
 	}
 }

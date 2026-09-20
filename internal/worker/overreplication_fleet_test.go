@@ -53,18 +53,19 @@ type removeExcessTracker struct {
 
 // stubRemoveExcessCopy returns a DoAndReturn that captures into rt, reporting
 // removedCopyBytes as the bytes the dropped row freed.
-func stubRemoveExcessCopy(rt *removeExcessTracker) func(context.Context, string, string, int) (int64, bool, error) {
-	return func(_ context.Context, key, backend string, factor int) (int64, bool, error) {
+func stubRemoveExcessCopy(rt *removeExcessTracker) func(context.Context, string, string, int) (core.RemovedCopy, error) {
+	return func(_ context.Context, key, backend string, factor int) (core.RemovedCopy, error) {
 		rt.mu.Lock()
 		defer rt.mu.Unlock()
 		rt.calls = append(rt.calls, removeExcessRecord{key: key, backend: backend, factor: factor})
 		if rt.err != nil {
-			return 0, false, rt.err
+			return core.RemovedCopy{}, rt.err
 		}
+		dropped := core.RemovedCopy{StorageKey: key, SizeBytes: removedCopyBytes, Removed: true}
 		if rt.removed != nil {
-			return removedCopyBytes, *rt.removed, nil
+			dropped.Removed = *rt.removed
 		}
-		return removedCopyBytes, true, nil
+		return dropped, nil
 	}
 }
 

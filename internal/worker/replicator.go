@@ -30,6 +30,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/writepath"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
@@ -339,7 +340,12 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 		// what occupies the target, and it is only written if the target still
 		// has room at that moment. An attempt that leaves no row behind
 		// therefore has nothing to give back.
-		sourceLoc, err := r.CopyToReplica(ctx, key, existingCopies, target)
+		// The path the copy is written to on the target, minted before the
+		// transfer so the verify read, the record and every cleanup below all
+		// address the same bytes. A replica is a write like any other and gets
+		// a name no other write shares.
+		targetStorageKey := writepath.NewStorageKey(key)
+		sourceLoc, err := r.CopyToReplica(ctx, key, targetStorageKey, existingCopies, target)
 		if err != nil {
 			r.log.WarnContext(ctx, "failed to copy object data",
 				"key", key, "target", target, "error", err)
@@ -352,16 +358,21 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 
 		// Checked before the row exists, so a copy that disagrees with its
 		// source never counts toward the replication factor.
-		if !r.admitVerifiedReplica(ctx, key, target, sourceLoc, &out) {
+		if !r.admitVerifiedReplica(ctx, key, target, targetStorageKey, sourceLoc, &out) {
 			exclusion[target] = true
 			continue
 		}
 
-		recordedSize, inserted, err := r.store.RecordReplica(ctx, key, target, source)
+		recordedSize, inserted, err := r.store.RecordReplica(ctx, &core.ReplicaInsert{
+			ObjectKey:     key,
+			TargetBackend: target,
+			SourceBackend: source,
+			StorageKey:    targetStorageKey,
+		})
 		if err != nil {
 			r.log.ErrorContext(ctx, "failed to record replica",
 				"key", key, "target", target, "error", err)
-			r.CleanupOrphan(ctx, target, key, transferredSize)
+			r.CleanupOrphan(ctx, target, key, targetStorageKey, transferredSize)
 			telemetry.ReplicationErrorsTotal.Inc()
 			exclusion[target] = true
 			out.RecordErrors++
@@ -375,7 +386,7 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 			// orphan and this target is out of the running.
 			r.log.InfoContext(ctx, "replica not recorded, cleaning up orphan",
 				"key", key, "target", target)
-			r.CleanupOrphan(ctx, target, key, transferredSize)
+			r.CleanupOrphan(ctx, target, key, targetStorageKey, transferredSize)
 			exclusion[target] = true
 			out.Superseded++
 			continue
@@ -461,14 +472,16 @@ func (r *Replicator) FindReplicaTarget(ctx context.Context, key string, size int
 }
 
 // CopyToReplica reads the object from an existing copy and writes it to the
-// target backend. Tries each existing copy in order for failover. Returns the
+// target backend at targetStorageKey, a path minted for this copy so the
+// bytes it places are addressable on their own. Tries each existing copy in
+// order for failover. Returns the
 // source row it read from: its BackendName is the source that answered, its
 // SizeBytes the bytes actually transferred, and its stored-form columns
 // describe the target too, because StreamCopy moves the bytes verbatim. The
 // input slice is cloned before sorting so callers retain their original
 // ordering — without the clone, sort.Slice reorders the caller's slice in
 // place and the caller's later reads see a different element at each index.
-func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []core.ObjectLocation, target string) (*core.ObjectLocation, error) {
+func (r *Replicator) CopyToReplica(ctx context.Context, key, targetStorageKey string, copies []core.ObjectLocation, target string) (*core.ObjectLocation, error) {
 	targetBackend, err := r.ops.GetBackend(target)
 	if err != nil {
 		return nil, err
@@ -504,7 +517,7 @@ func (r *Replicator) CopyToReplica(ctx context.Context, key string, copies []cor
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		source, terminal, err := r.tryCopyFrom(ctx, key, target, targetBackend, &candidates[i])
+		source, terminal, err := r.tryCopyFrom(ctx, key, targetStorageKey, target, targetBackend, &candidates[i])
 		if terminal {
 			return source, err
 		}
@@ -534,7 +547,7 @@ func cmpHealthFirst(aOK, bOK bool) int {
 // structural: a *backend.CopyError with CopyPhaseWrite is terminal,
 // anything else (CopyPhaseRead or an untyped error) retries the next
 // source.
-func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, targetBackend backend.ObjectBackend, loc *core.ObjectLocation) (*core.ObjectLocation, bool, error) {
+func (r *Replicator) tryCopyFrom(ctx context.Context, key, targetStorageKey, target string, targetBackend backend.ObjectBackend, loc *core.ObjectLocation) (*core.ObjectLocation, bool, error) {
 	srcBackend, ok := r.ops.Backends()[loc.BackendName]
 	if !ok {
 		return nil, false, nil
@@ -545,7 +558,11 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, target string, target
 	// refusal with the leg that had no headroom, so a source out of egress
 	// falls through to the next candidate and a full destination is terminal,
 	// exactly as an I/O failure on either leg would be.
-	_, err := r.ops.StreamCopy(ctx, src, dst, key, loc.SizeBytes)
+	// Read at the source copy's own path and write at the one minted for this
+	// replica: the object's key names neither of them. A source row carrying no
+	// path of its own predates them, and its bytes are at the key.
+	_, err := r.ops.StreamCopy(ctx, src, dst,
+		core.StoragePath(key, loc.StorageKey), targetStorageKey, loc.SizeBytes)
 	if err == nil {
 		return loc, true, nil
 	}
@@ -575,16 +592,24 @@ func (r *Replicator) pruneStaleSource(ctx context.Context, key, backendName stri
 		"key", key, "backend", backendName)
 }
 
-// CleanupOrphan deletes an object from a backend when the DB record was not
-// created (e.g. source was deleted during replication). Looks up the
+// CleanupOrphan deletes the bytes this replication attempt wrote when the DB
+// record was not created (e.g. source was deleted during replication). It
+// deletes them at the path the attempt wrote them to, so a target that already
+// held a copy of the key keeps it. Looks up the
 // backend by name and dispatches to DeleteOrEnqueue, which handles its
 // own API accounting and orphan-byte tracking.
-func (r *Replicator) CleanupOrphan(ctx context.Context, backendName, key string, sizeBytes int64) {
+func (r *Replicator) CleanupOrphan(ctx context.Context, backendName, key, storageKey string, sizeBytes int64) {
 	be, ok := r.ops.Backends()[backendName]
 	if !ok {
 		return
 	}
-	r.placement.DeleteOrEnqueue(ctx, be, backendName, key, "replication_orphan", sizeBytes)
+	r.placement.DeleteOrEnqueue(ctx, be, &core.CleanupRequest{
+		BackendName: backendName,
+		ObjectKey:   key,
+		StorageKey:  storageKey,
+		Reason:      "replication_orphan",
+		SizeBytes:   sizeBytes,
+	})
 }
 
 // UnhealthyBackends returns backend names whose circuit breakers have been

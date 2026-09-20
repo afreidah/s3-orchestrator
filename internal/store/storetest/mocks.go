@@ -568,17 +568,17 @@ func (mr *MockMetadataStoreMockRecorder) DeleteUser(ctx, id any) *gomock.Call {
 }
 
 // EnqueueCleanup mocks base method.
-func (m *MockMetadataStore) EnqueueCleanup(ctx context.Context, backendName, objectKey, reason string, sizeBytes int64) error {
+func (m *MockMetadataStore) EnqueueCleanup(ctx context.Context, c *core.CleanupRequest) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "EnqueueCleanup", ctx, backendName, objectKey, reason, sizeBytes)
+	ret := m.ctrl.Call(m, "EnqueueCleanup", ctx, c)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // EnqueueCleanup indicates an expected call of EnqueueCleanup.
-func (mr *MockMetadataStoreMockRecorder) EnqueueCleanup(ctx, backendName, objectKey, reason, sizeBytes any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) EnqueueCleanup(ctx, c any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnqueueCleanup", reflect.TypeOf((*MockMetadataStore)(nil).EnqueueCleanup), ctx, backendName, objectKey, reason, sizeBytes)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnqueueCleanup", reflect.TypeOf((*MockMetadataStore)(nil).EnqueueCleanup), ctx, c)
 }
 
 // FlushPoolDeltas mocks base method.
@@ -1383,18 +1383,18 @@ func (mr *MockMetadataStoreMockRecorder) MoveCleanupToDLQ(ctx, id, lastError any
 }
 
 // MoveObjectLocation mocks base method.
-func (m *MockMetadataStore) MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MoveObjectLocation", ctx, key, fromBackend, toBackend)
+func (m_2 *MockMetadataStore) MoveObjectLocation(ctx context.Context, m *core.MoveLocation) (int64, error) {
+	m_2.ctrl.T.Helper()
+	ret := m_2.ctrl.Call(m_2, "MoveObjectLocation", ctx, m)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // MoveObjectLocation indicates an expected call of MoveObjectLocation.
-func (mr *MockMetadataStoreMockRecorder) MoveObjectLocation(ctx, key, fromBackend, toBackend any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) MoveObjectLocation(ctx, m any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObjectLocation", reflect.TypeOf((*MockMetadataStore)(nil).MoveObjectLocation), ctx, key, fromBackend, toBackend)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObjectLocation", reflect.TypeOf((*MockMetadataStore)(nil).MoveObjectLocation), ctx, m)
 }
 
 // NotificationQueueDepth mocks base method.
@@ -1518,9 +1518,9 @@ func (mr *MockMetadataStoreMockRecorder) RecordPart(ctx, p any) *gomock.Call {
 }
 
 // RecordReplica mocks base method.
-func (m *MockMetadataStore) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string) (int64, bool, error) {
+func (m *MockMetadataStore) RecordReplica(ctx context.Context, r *core.ReplicaInsert) (int64, bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordReplica", ctx, key, targetBackend, sourceBackend)
+	ret := m.ctrl.Call(m, "RecordReplica", ctx, r)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(bool)
 	ret2, _ := ret[2].(error)
@@ -1528,19 +1528,18 @@ func (m *MockMetadataStore) RecordReplica(ctx context.Context, key, targetBacken
 }
 
 // RecordReplica indicates an expected call of RecordReplica.
-func (mr *MockMetadataStoreMockRecorder) RecordReplica(ctx, key, targetBackend, sourceBackend any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) RecordReplica(ctx, r any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordReplica", reflect.TypeOf((*MockMetadataStore)(nil).RecordReplica), ctx, key, targetBackend, sourceBackend)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordReplica", reflect.TypeOf((*MockMetadataStore)(nil).RecordReplica), ctx, r)
 }
 
 // RemoveExcessCopy mocks base method.
-func (m *MockMetadataStore) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (int64, bool, error) {
+func (m *MockMetadataStore) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (core.RemovedCopy, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RemoveExcessCopy", ctx, key, backendName, factor)
-	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(bool)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
+	ret0, _ := ret[0].(core.RemovedCopy)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // RemoveExcessCopy indicates an expected call of RemoveExcessCopy.
@@ -1664,18 +1663,18 @@ func (mr *MockMetadataStoreMockRecorder) StartDrain(ctx, backendName any) *gomoc
 }
 
 // SweepStaleCleanupQueueRows mocks base method.
-func (m *MockMetadataStore) SweepStaleCleanupQueueRows(ctx context.Context, key, backend string) (int64, error) {
+func (m *MockMetadataStore) SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SweepStaleCleanupQueueRows", ctx, key, backend)
+	ret := m.ctrl.Call(m, "SweepStaleCleanupQueueRows", ctx, storageKey, backend)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // SweepStaleCleanupQueueRows indicates an expected call of SweepStaleCleanupQueueRows.
-func (mr *MockMetadataStoreMockRecorder) SweepStaleCleanupQueueRows(ctx, key, backend any) *gomock.Call {
+func (mr *MockMetadataStoreMockRecorder) SweepStaleCleanupQueueRows(ctx, storageKey, backend any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SweepStaleCleanupQueueRows", reflect.TypeOf((*MockMetadataStore)(nil).SweepStaleCleanupQueueRows), ctx, key, backend)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SweepStaleCleanupQueueRows", reflect.TypeOf((*MockMetadataStore)(nil).SweepStaleCleanupQueueRows), ctx, storageKey, backend)
 }
 
 // SyncQuotaLimits mocks base method.

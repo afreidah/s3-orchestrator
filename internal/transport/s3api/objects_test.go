@@ -142,7 +142,7 @@ func TestPut_Success(t *testing.T) {
 	if resp.Header.Get("ETag") == "" {
 		t.Error("expected ETag header")
 	}
-	if _, ok := backend.Objects["mybucket/testkey"]; !ok {
+	if _, ok := backend.CopyOf("mybucket/testkey"); !ok {
 		t.Error("object not stored on backend")
 	}
 }
@@ -236,7 +236,7 @@ func TestPut_IfNoneMatchStarRejectsExistingKey(t *testing.T) {
 	if resp.StatusCode != http.StatusPreconditionFailed {
 		t.Fatalf("status = %d, want 412", resp.StatusCode)
 	}
-	if _, ok := backend.Objects["mybucket/testkey"]; ok {
+	if _, ok := backend.CopyOf("mybucket/testkey"); ok {
 		t.Error("backend should not have stored bytes when precondition fails")
 	}
 }
@@ -264,7 +264,7 @@ func TestPut_IfNoneMatchStarAllowsNewKey(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	if _, ok := backend.Objects["mybucket/newkey"]; !ok {
+	if _, ok := backend.CopyOf("mybucket/newkey"); !ok {
 		t.Error("object not stored on backend")
 	}
 }
@@ -296,7 +296,7 @@ func TestPut_IfNoneMatchSpecificETagIgnored(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (specific etag form ignored on PUT)", resp.StatusCode)
 	}
-	if _, ok := backend.Objects["mybucket/testkey"]; !ok {
+	if _, ok := backend.CopyOf("mybucket/testkey"); !ok {
 		t.Error("object not stored on backend")
 	}
 }
@@ -735,7 +735,7 @@ func TestPut_MetadataStored(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	obj, ok := backend.Objects["mybucket/metakey"]
+	obj, ok := backend.CopyOf("mybucket/metakey")
 	if !ok {
 		t.Fatal("object not stored")
 	}

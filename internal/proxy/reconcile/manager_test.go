@@ -109,10 +109,21 @@ func importOf(key, backendName string, size int64, unmanaged bool) gomock.Matche
 
 // ledgerRows returns a ListObjectsByBackendKeyAsc stub yielding one page then
 // exhaustion, which is how the DB cursor signals the end of the walk.
+//
+// A row left without a storage key takes its object key, which is what every
+// row written before per-write storage keys holds and what an imported object
+// gets. The cursor walks storage keys, so the field cannot be left empty.
 func ledgerRows(rows ...core.ObjectLocation) func(context.Context, string, string, int) ([]core.ObjectLocation, error) {
-	return func(_ context.Context, _, afterKey string, _ int) ([]core.ObjectLocation, error) {
-		if afterKey == "" {
-			return rows, nil
+	page := make([]core.ObjectLocation, len(rows))
+	for i, r := range rows {
+		if r.StorageKey == "" {
+			r.StorageKey = r.ObjectKey
+		}
+		page[i] = r
+	}
+	return func(_ context.Context, _, afterStorageKey string, _ int) ([]core.ObjectLocation, error) {
+		if afterStorageKey == "" {
+			return page, nil
 		}
 		return nil, nil
 	}
@@ -123,18 +134,19 @@ func ledgerRows(rows ...core.ObjectLocation) func(context.Context, string, strin
 // -------------------------------------------------------------------------
 
 // TestDeleter_SweepsCleanupQueue asserts a stale-row delete is followed by the
-// cleanup-queue sweep for the same key. Without the sweep, queue rows for a
-// key the backend no longer holds keep retrying a delete that 404s until they
-// exhaust their attempts.
+// cleanup-queue sweep for the copy's path. Without the sweep, queue rows for
+// bytes the backend no longer holds keep retrying a delete that 404s until
+// they exhaust their attempts. The row is addressed by the object's key and
+// the sweep by the path, which are no longer the same string.
 func TestDeleter_SweepsCleanupQueue(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	m, stores, _, _ := newTestManager(t, ctrl)
 
 	stores.EXPECT().DeleteObjectLocation(gomock.Any(), "bucket/k1", "b1").Return(int64(512), nil).Times(1)
-	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), "bucket/k1", "b1").Return(int64(0), nil).Times(1)
+	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), "bucket/k1!w1", "b1").Return(int64(0), nil).Times(1)
 
-	if err := m.deleter()(t.Context(), "bucket/k1", "b1"); err != nil {
+	if err := m.deleter()(t.Context(), "bucket/k1", "bucket/k1!w1", "b1"); err != nil {
 		t.Fatalf("deleter: %v", err)
 	}
 }
@@ -150,7 +162,7 @@ func TestDeleter_SweepFailureNotPropagated(t *testing.T) {
 	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(int64(0), errors.New("sweep boom"))
 
-	if err := m.deleter()(t.Context(), "bucket/k1", "b1"); err != nil {
+	if err := m.deleter()(t.Context(), "bucket/k1", "bucket/k1!w1", "b1"); err != nil {
 		t.Errorf("sweep failure must not propagate, got %v", err)
 	}
 }
@@ -166,7 +178,7 @@ func TestDeleter_DeleteFailurePropagates(t *testing.T) {
 	stores.EXPECT().DeleteObjectLocation(gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), want)
 	stores.EXPECT().SweepStaleCleanupQueueRows(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-	if err := m.deleter()(t.Context(), "bucket/k1", "b1"); !errors.Is(err, want) {
+	if err := m.deleter()(t.Context(), "bucket/k1", "bucket/k1!w1", "b1"); !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
 	}
 }

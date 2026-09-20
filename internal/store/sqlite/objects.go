@@ -87,7 +87,7 @@ type keyBackend struct {
 // ascending (oldest/primary first). Used for read failover.
 func (s *Store) GetAllObjectLocations(ctx context.Context, key string) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT object_key, backend_name, size_bytes, encrypted, encryption_key,
+		SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
 		       key_id, plaintext_size, content_hash,
 		       compression_algorithm, compression_level, compression_format_version, logical_size,
 		       created_at, last_scrubbed_at, etag, content_type, user_metadata
@@ -124,7 +124,7 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 
 	// Subquery with GROUP BY + MIN(rowid) replaces DISTINCT ON (object_key).
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT ol.object_key, ol.backend_name,
+		SELECT ol.object_key, ol.backend_name, ol.storage_key,
 		       CASE
 		           WHEN ol.compression_algorithm IS NOT NULL THEN COALESCE(ol.logical_size, ol.size_bytes)
 		           WHEN ol.encrypted THEN COALESCE(ol.plaintext_size, ol.size_bytes)
@@ -310,7 +310,7 @@ func (s *Store) ListExpiredObjects(ctx context.Context, q core.ExpiredObjectsQue
 
 	// Subquery with GROUP BY + MIN(rowid) replaces DISTINCT ON (object_key).
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.created_at
+		SELECT ol.object_key, ol.backend_name, ol.storage_key, ol.size_bytes, ol.created_at
 		FROM object_locations ol
 		INNER JOIN (
 			SELECT object_key, MIN(rowid) AS min_rowid
@@ -346,7 +346,7 @@ func sortedTagKeys(tags map[string]string) []string {
 // candidate scans, so it returns managed rows only.
 func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT object_key, backend_name, size_bytes, created_at
+		SELECT object_key, backend_name, storage_key, size_bytes, created_at
 		FROM object_locations
 		WHERE backend_name = ? AND managed
 		ORDER BY size_bytes ASC
@@ -360,17 +360,21 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 }
 
 // ListObjectsByBackendKeyAsc returns rows for a backend in ascending
-// object_key order, starting strictly after afterKey. The empty string
+// storage_key order, starting strictly after afterStorageKey. The empty string
 // returns the first page. Used by ReconcileBackend's bounded-memory
 // sorted-merge join against an S3 ListObjects walk; both sides are in lex
 // order so the merge is O(limit) memory bounded.
-func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterKey string, limit int) ([]core.ObjectLocation, error) {
+//
+// By storage_key because that is what the backend listing on the other side of
+// the merge returns - the path the bytes occupy, which is no longer the
+// object's key.
+func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterStorageKey string, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT object_key, backend_name, size_bytes, created_at
+		SELECT object_key, backend_name, storage_key, size_bytes, created_at
 		FROM object_locations
-		WHERE backend_name = ? AND object_key > ?
-		ORDER BY object_key ASC
-		LIMIT ?`, backendName, afterKey, limit)
+		WHERE backend_name = ? AND storage_key > ?
+		ORDER BY storage_key ASC
+		LIMIT ?`, backendName, afterStorageKey, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to page objects by backend: %w", err)
 	}
@@ -390,7 +394,7 @@ func scanListedObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
 			createdAt string
 			etag      sql.NullString
 		)
-		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &createdAt, &etag); err != nil {
+		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.StorageKey, &loc.SizeBytes, &createdAt, &etag); err != nil {
 			return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
 		}
 		var parseErr error
@@ -413,7 +417,7 @@ func listedIdentity(etag sql.NullString) *core.ObjectIdentity {
 }
 
 // scanSlimObjectLocations consumes a *sql.Rows holding the slim
-// (object_key, backend_name, size_bytes, created_at) projection used by
+// (object_key, backend_name, storage_key, size_bytes, created_at) projection used by
 // ListObjectsByBackend and its key-ordered twin. Centralizes the per-row scan
 // and timestamp parse so those callers don't carry parallel loop bodies.
 func scanSlimObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
@@ -422,7 +426,7 @@ func scanSlimObjectLocations(rows *sql.Rows) ([]core.ObjectLocation, error) {
 			loc       core.ObjectLocation
 			createdAt string
 		)
-		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes, &createdAt); err != nil {
+		if err := rows.Scan(&loc.ObjectKey, &loc.BackendName, &loc.StorageKey, &loc.SizeBytes, &createdAt); err != nil {
 			return core.ObjectLocation{}, fmt.Errorf("failed to scan object location: %w", err)
 		}
 		var parseErr error
@@ -489,7 +493,7 @@ func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, 
 		return nil, fmt.Errorf("encode scrub backend list: %w", err)
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT object_key, backend_name, size_bytes, encrypted, encryption_key,
+		SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
 		       key_id, plaintext_size, content_hash,
 		       compression_algorithm, compression_level, compression_format_version, logical_size,
 		       created_at, last_scrubbed_at
@@ -590,7 +594,7 @@ func (s *Store) IntegrityCoverage(ctx context.Context, reachable []string) (core
 // asks for.
 func (s *Store) GetObjectsWithoutHash(ctx context.Context, limit, offset int, backend string) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT object_key, backend_name, size_bytes, encrypted, encryption_key,
+		SELECT object_key, backend_name, storage_key, size_bytes, encrypted, encryption_key,
 		       key_id, plaintext_size, content_hash,
 		       compression_algorithm, compression_level, compression_format_version, logical_size,
 		       created_at, last_scrubbed_at
@@ -684,7 +688,7 @@ type scannedObjectColumns struct {
 // selects them.
 func (c *scannedObjectColumns) scanDest(loc *core.ObjectLocation) []any {
 	return []any{
-		&loc.ObjectKey, &loc.BackendName, &loc.SizeBytes,
+		&loc.ObjectKey, &loc.BackendName, &loc.StorageKey, &loc.SizeBytes,
 		&loc.Encrypted, &loc.EncryptionKey,
 		&c.keyID, &c.plaintextSize, &c.contentHash,
 		&c.compAlgorithm, &c.compLevel, &c.compVersion, &c.logicalSize,

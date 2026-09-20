@@ -417,8 +417,13 @@ func (s *Scrubber) verifyObject(ctx context.Context, loc *core.ObjectLocation) (
 			"size_bytes":    loc.SizeBytes,
 		})
 		if be != nil {
-			s.placement.DeleteOrEnqueue(ctx, be, loc.BackendName, loc.ObjectKey,
-				"integrity_scrub_failed", loc.SizeBytes)
+			s.placement.DeleteOrEnqueue(ctx, be, &core.CleanupRequest{
+				BackendName: loc.BackendName,
+				ObjectKey:   loc.ObjectKey,
+				StorageKey:  core.StoragePath(loc.ObjectKey, loc.StorageKey),
+				Reason:      "integrity_scrub_failed",
+				SizeBytes:   loc.SizeBytes,
+			})
 		}
 		s.dropCorruptedLocation(ctx, loc)
 		return false, nil
