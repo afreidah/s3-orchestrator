@@ -17,6 +17,17 @@ Most applications talk to one S3 backend, which ties them to that provider's upt
 
 Clients see one endpoint and one namespace. The backends never learn the orchestrator exists — they see ordinary S3 calls, so any provider the AWS SDK can talk to works.
 
+<p align="center">
+  <img src="docs/images/tui-backends.png" alt="The terminal browser's Backends view: twelve backends listed with health, quota used against limit, object count, API requests, ingress, egress and bytes saved by compression" width="900">
+</p>
+
+<details>
+<summary><strong>The web dashboard</strong> — storage summary, integrity and compression coverage, monthly usage against each provider's limits, object browser and live logs</summary>
+
+<img src="docs/images/admin-ui.png" alt="The web dashboard, showing total used against capacity, a per-backend table of quota and usage, integrity coverage with the oldest unverified copy, encryption and compression coverage, monthly usage against each backend's request and transfer budgets, the object browser, the effective configuration, and a live log tail" width="900">
+
+</details>
+
 ## Who this is for
 
 | Audience | Use case |
@@ -28,11 +39,14 @@ Clients see one endpoint and one namespace. The backends never learn the orchest
 
 ## What it does
 
-- **Stacks providers into one namespace.** Cap each backend at a byte limit and writes overflow to the next when it fills, so a 20 GB allocation here and a 10 GB one there become one 30 GB bucket without surprise bills. Monthly API-request, egress and ingress caps work the same way.
-- **Keeps the copies it promised.** Set a replication factor and every object lands on that many distinct backends — placed by the write itself, or by a background replicator. Reads fail over to a surviving copy, a scrubber checks stored bytes against recorded hashes, and an over-replication worker trims the set when a recovered backend brings its copies back.
-- **Runs at the size you need.** Standalone on embedded SQLite with no external dependencies, single-node on PostgreSQL, or many instances with Redis-backed shared counters so quotas hold globally without the nodes coordinating directly.
-- **Gives operators primitives instead of scripts.** Online drain, rebalance, import of a bucket you already have, integrity scrub, a cleanup queue with a dead-letter table, hot-reloadable config, an admin API, a web dashboard, and a terminal object browser.
-- **Optional at-rest layers.** Envelope encryption (AES-256-GCM, with the master key inline, in a file, or in Vault Transit) and chunked zstd compression, both transparent to clients. With both on, compression runs first, because ciphertext does not compress.
+- **Backend quotas.** Each backend carries a byte limit and writes overflow to the next when it fills, so a 20 GB allocation and a 10 GB one become one 30 GB bucket. Monthly API-request, egress and ingress caps work the same way.
+- **Replication.** Set a factor and every object lands on that many distinct backends. A background replicator makes the copies, or `write_path.parallel_copies` has the write claim its targets and upload to all of them at once, answering the client on the first copy committed — which spares the replicator a full GET of the object and the source backend's egress for every copy it would have made. Reads fail over to a surviving copy, a scrubber checks stored bytes against recorded hashes, and an over-replication worker trims the set when a recovered backend brings its copies back.
+- **Access control.** A credential resolves to a user, and that user holds a grant on each resource it may reach: a virtual bucket for object access, a backend or the instance itself for the control plane. SigV4 and presigned URLs.
+- **Object tagging.** Key/value labels stored with the object, always on. Inline on `PutObject` and `CreateMultipartUpload`, the three `?tagging` operations, and `x-amz-tagging-directive` on a server-side copy. Lifecycle rules can filter on a tag.
+- **Encryption and compression.** Envelope encryption (AES-256-GCM; master key inline, in a file, or in Vault Transit) and chunked zstd compression. Both optional and transparent to clients; sizes, ETags and content hashes stay those of the object the client wrote. With both on, compression runs first, because ciphertext does not compress.
+- **Terraform provider.** Published to the [Terraform](https://registry.terraform.io/providers/afreidah/s3-orchestrator/latest/docs) and [OpenTofu](https://search.opentofu.org/provider/afreidah/s3-orchestrator/latest) registries. Manages the buckets, users, credentials and grants a deployment serves.
+- **Database.** Embedded SQLite with no external dependencies, single-node PostgreSQL, or many instances with Redis-backed shared counters so quotas hold across the fleet.
+- **Operator tooling.** Online drain, rebalance, import of an existing bucket, integrity scrub, a cleanup queue with a dead-letter table, hot config reload, an admin API, a web dashboard and a terminal object browser.
 
 ## Moving providers without downtime
 
