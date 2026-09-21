@@ -10,6 +10,9 @@
 REGISTRY   ?= $(or $(DOCKER_REGISTRY),registry.example.com)
 IMAGE      := s3-orchestrator
 VERSION    ?= $(shell cat .version)
+# Debian versions carry no leading v, and goreleaser's snapshot template reads
+# this rather than deriving a version from the newest git tag.
+DEB_VERSION := $(patsubst v%,%,$(VERSION))
 
 FULL_TAG   := $(REGISTRY)/$(IMAGE):$(VERSION)
 PLATFORMS  := linux/amd64,linux/arm64
@@ -428,7 +431,7 @@ prep-changelog: ## Compress changelog for Debian packaging
 	@gzip -9 -n -c packaging/changelog > packaging/changelog.gz
 
 deb: prep-changelog ## Build .deb packages via GoReleaser snapshot
-	goreleaser release --snapshot --clean --skip=publish,sign
+	DEB_VERSION=$(DEB_VERSION) goreleaser release --snapshot --clean --skip=publish,sign
 
 # Versions from the tag rather than the snapshot template, for publishing a
 # release. --skip=publish is explicit here because, unlike snapshot mode,
@@ -515,7 +518,7 @@ release: ## Tag and push to trigger a GitHub Release (reads .version)
 	git push origin $(VERSION)
 
 release-local: prep-changelog ## Dry-run GoReleaser locally (no publish)
-	goreleaser release --snapshot --clean --skip=sign
+	DEB_VERSION=$(DEB_VERSION) goreleaser release --snapshot --clean --skip=sign
 
 ##@ Load Testing
 

@@ -8,6 +8,13 @@
 
 version: 2
 
+# A snapshot build takes its version from the newest reachable git tag, so on a
+# merge to main it carries whatever was last released rather than what is being
+# built. The Makefile passes .version instead, which is what the container
+# images are tagged from.
+snapshot:
+  version_template: "{{ .Env.DEB_VERSION }}"
+
 builds:
   - main: ./cmd/s3-orchestrator
     binary: s3-orchestrator
