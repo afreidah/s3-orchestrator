@@ -54,3 +54,14 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: us-east-1
         run: make artifacts-publish
+
+      # The GitHub release attaches the .deb to a release page, which the apt
+      # repository cannot read: it is reachable from the cluster only. So the
+      # package is built and published here, versioned from .version like the
+      # images above rather than from the newest git tag.
+      - name: Build and publish the Debian package
+        env:
+          APTLY_PASS: ${{ secrets.APTLY_PASS }}
+        run: |
+          make deb
+          make publish-deb
