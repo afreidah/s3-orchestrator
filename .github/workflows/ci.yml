@@ -447,24 +447,17 @@ jobs:
       - name: Prep changelog
         run: make prep-changelog
 
-      - name: Install syft (SBOM generation)
-        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
-
-      # The snapshot template versions the package from .version rather than
-      # from the newest git tag, so this job has to supply it the same way the
-      # deb target does.
-      - name: Resolve the package version
-        run: echo "DEB_VERSION=$(sed 's/^v//' .version)" >> "$GITHUB_ENV"
-
-      - name: Build debs
+      - name: Install goreleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
         with:
           version: "~> v2"
-          args: release --snapshot --clean --skip=publish,sign
+          install-only: true
 
-      - name: Lint debs
-        run: |
-          for f in dist/*.deb; do echo "--- $f ---"; lintian --tag-display-limit 0 "$f"; done
+      # Through the target rather than calling goreleaser directly, so this job
+      # and the Forgejo one that publishes to apt build the package the same
+      # way. Invoking it here separately is what let the two drift apart.
+      - name: Build and lint debs
+        run: make deb-lint
 
   # ---------------------------------------------------------------------------
   # DOCKER IMAGES (push to main only)

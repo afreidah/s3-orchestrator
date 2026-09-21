@@ -430,8 +430,11 @@ tools: ## Install build and packaging dependencies
 prep-changelog: ## Compress changelog for Debian packaging
 	@gzip -9 -n -c packaging/changelog > packaging/changelog.gz
 
+# SBOMs describe the release archives, which a snapshot does not publish, and
+# generating them needs syft on the builder. Skipped here; the tagged release
+# still produces them.
 deb: prep-changelog ## Build .deb packages via GoReleaser snapshot
-	DEB_VERSION=$(DEB_VERSION) goreleaser release --snapshot --clean --skip=publish,sign
+	DEB_VERSION=$(DEB_VERSION) goreleaser release --snapshot --clean --skip=publish,sign,sbom
 
 # Versions from the tag rather than the snapshot template, for publishing a
 # release. --skip=publish is explicit here because, unlike snapshot mode,
