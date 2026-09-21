@@ -3,10 +3,186 @@
 All notable changes to this project are documented in this file.
 
 
+## [0.148.4] - 2026-09-21
+
+### Added
+- feat(auth)!: remove the proxy token, the admin token and the dashboard login (#1485) (#1498)
+
+### Fixed
+- fix(auth): sign the path as it goes on the wire (#1510)
+- fix(terraform): cover the registry manifest in the release checksums (#1507)
+- fix(ops): stop a fleet conversion describing bytes a client replaced (#1478)
+- fix(web): emit the Cloudflare Web Analytics beacon from the site itself (#1448)
+- fix stale write-path claims, phantom metric names, and the free-tier guide (#1444)
+- fix(quota): stripe the byte counter and admit writes against shared rows (#1388) (#1397)
+- fix(s3api): implement UploadPartCopy and guard bucket subresources (#1369) (#1370) (#1387)
+
+### Refactored
+- refactor(s3api): name the operation before dispatching it (#1457)
+- refactor(objects): encrypt a write once so every copy of a key is byte-identical (#1402) (#1409)
+- refactor(store): commit an object's copies as a set in one transaction (#1400) (#1407)
+
+### Improved
+- update CHANGELOG.md for v0.121.0 (#1380)
+
+### Dependencies
+- chore(deps): bump the aws-sdk group with 4 updates (#1518)
+- chore(deps): bump the actions group with 5 updates (#1517)
+- chore(deps): bump github.com/exaring/otelpgx (#1519)
+- chore(deps): bump the aws-sdk group with 4 updates (#1461)
+- chore(deps): bump the minor-and-patch group with 7 updates (#1462)
+- chore(deps): bump actions/setup-node in the actions group (#1460)
+- chore(deps): bump the aws-sdk group across 1 directory with 4 updates (#1392)
+- chore(deps): bump the actions group with 4 updates (#1391)
+- chore(deps): bump the otel group with 4 updates (#1393)
+- chore(deps): bump the minor-and-patch group with 2 updates (#1394)
+
+### Other
+- skip SBOM generation in the snapshot deb build (#1529)
+- build and publish the Debian package from Forgejo (#1528)
+- skip the sonar scan when a coverage job failed (#1526)
+- docs(web): cover the Cloudflare edge proxy in the free-tiers guide (#1525)
+- let a deployment declare its buckets in the store alone (#1522)
+- manage buckets from Terraform (#1521)
+- publish the artifacts a deployment reads back (#1516)
+- reading an object's tags is reading the object (#1515)
+- build(terraform): take the provider's dependency bumps upstream (#1508)
+- docs(terraform): license the provider and point the registry at the docs site (#1506)
+- build(terraform): mirror and tag the provider from one target (#1505)
+- build(terraform): publish the provider to the Terraform Registry from a tag (#1504)
+- manage users, credentials and grants from Terraform (#1501) (#1502)
+- register a supplied keypair, rename a user, declare a grant (#1499) (#1500)
+- docs(web): keep the generated Go API reference out of search results (#1496) (#1497)
+- one credential type across the admin API and the dashboard (#1484) (#1494)
+- perf(web): defer the search index and cut the logo down to size (#1492) (#1493)
+- docs(web): give every page a unique title and description (#1490) (#1491)
+- grant the control plane, one permission per operator intent (#1483) (#1489)
+- build: add deb-release for building packages at the checked-out tag (#1488)
+- build and push images from Forgejo on merge to main (#1487)
+- let a grant name a resource rather than only a bucket (#1486)
+- worker: scope the artifact key to this project (#1473)
+- worker: bundle and publish the edge proxy as a deployable artifact (#1471)
+- restrict the maintenance passes to one backend (#1467)
+- authorize object endpoints against the grant, not the token (#1466)
+- give every grant the permissions it carries (#1459)
+- name the identity behind every authenticated request (#1456)
+- describe the credential-to-user-to-grant chain and the provisioning commands (#1455)
+- provision buckets and credentials from the CLI, and make stored buckets whole (#1454)
+- provision buckets, users, credentials and grants over the API (#1452)
+- style(web): give the diagram pages a shared look and fix the detail panel (#1453)
+- perf(web): replace the landing page mermaid diagrams with SVG (#1451)
+- back buckets and credentials with tables, resolving a key to a user (#1377) (#1449)
+- perf(web): re-encode the documentation screenshots (#1450)
+- cloudflare edge proxy worker for bandwidth alliance backends (#1447)
+- docs(objects): document and measure write fan-out (#1405) (#1442)
+- track the copies a write leaves running, and drain them on shutdown (#1404) (#1429)
+- opt-in write that places an object's copies itself (#1403) (#1411)
+- let a write clear the intents it supersedes, and give intents a role (#1401) (#1408)
+- test(quota): benchmark the striped counter and the write-path claim (#1398) (#1399)
+- docs(web): give every page a meta description (#1396)
+- perf(quota): batch backend byte deltas in memory and flush on an interval (#1395)
+- docs(web): address pages by directory so og:url matches the canonical (#1390)
+- docs(web): trim the sitemap, the search index, and the landing page's images (#1385)
+- per-bucket browser CORS rules and preflight handling (#1371) (#1384)
+- docs(web): fix the site's search metadata and refresh every screenshot (#1381)
+
 ## [0.121.0] - 2026-09-03
 
 ### Added
 - add workers, cleanup queue, and cache stats panes (#1162)
+- add s3o_list_pages_capped_total counter (#764)
+- add package-level doc comments to every Go package (#697)
+- add FailableBackend, sentinel config errors, and edge-case integration scenarios (#591)
+- add on-demand reconciliation admin endpoint (#557) (#562)
+- add g3 backend to free-tier guide, enlarge admin UI logo (#537) (#538)
+- add new benchmark test results
+- add timeouts, release preflight integration tests, Dependabot grouping, linters, SBOM (#456) (#478)
+- add edge case coverage for lifecycle, config, auth cache, admission (#450) (#477)
+- add missing indexes, replace random() scrubber query, harden lifecycle (#435, #451, #453) (#463)
+- add generic AtomicConfig[T] and TTLCache[K,V] to eliminate boilerplate (#457) (#459)
+- add presigned URL support (#353) (#418)
+- add read burst loadtest, cache Grafana panels, fix loadtest build (#417)
+- add optional in-memory object data cache (#403) (#416)
+- add decrypt-existing admin API, migrate integration tests to testcontainers (#408) (#409)
+- add Helm chart, replace raw Kubernetes manifests (#382) (#406)
+- add compatibility matrix and upgrade checklist (#379) (#397)
+- add Getting Started section to README (#374) (#394)
+- add rebalance pending gauge and encryption unknown-keyID counter (#316) (#327)
+- add goleak goroutine leak detection and fix flaky timing tests (#315) (#324)
+- add unit tests for chunk encryption, location cache, aggregator, and cleanup queue (#312) (#323)
+- add orphan reconciler and update documentation for v0.18.x changes (#289) (#295)
+- add replication internals guide and fix encryption claims in architecture diagram (#284)
+- Add container tuning, GOMEMLIMIT, and default max_concurrent_requests (#255) (#282)
+- Add interactive Mermaid.js architecture and flow diagrams to documentation site (#273)
+- Add over-replication detection and cleanup with integration tests (#260) (#263)
+- Add burst resilience: Retry-After, early rejection, split admission, load shedding, admission wait (#262)
+- Add generic worker pool and parallelize sequential hot paths (#253)
+- Add orphan_bytes tracking to prevent quota drift on failed deletes (#250)
+- Add Tempo, Loki, and Alloy integration for Nomad and Kubernetes demos (#247)
+- Add trace-to-log correlation via slog TraceHandler (#242)
+- add strip_sdk_headers option for GCS S3 compatibility (#229)
+- add per-backend disable_checksum option for GCS compatibility (#225)
+- Add DB query tracing, background worker spans, audit logging gaps, and Grafana dashboard coverage (#222)
+- Add git-cliff changelog generation with commit categorization (#219)
+- Add file download to admin web UI dashboard (#195)
+- add website to readme (#193)
+- Add optional server-side Redis shared counters for multi-instance usage tracking (#170) (#186)
+- add readme to available documentation on hugo website (#183) (#185)
+- add readme to available documentation on hugo website (#183)
+- Add health-aware replication: replace copies on circuit-broken backends (#171) (#172)
+- Add project website, fix usage tracking gaps, and add Vault Transit TLS support (#168) (#169)
+- Add optional server-side encryption with envelope encryption and chun… (#167)
+- Add per-backend circuit breakers, drain fixes, and production hardening (#161) (#162)
+- Add metadata passthrough, govulncheck CI, and production hardening (#159) (#160)
+- Add GitHub community files and repo configuration for open-source readiness (#153)
+- Add folder delete from web UI with batch prefix deletion (#151)
+- Add Prometheus and Grafana to local demo scripts (#148) (#149)
+- Add backend drain and remove operations (#146) (#147)
+- Add in-memory log ring buffer with dashboard UI (#143)
+- Add server-level admission control for concurrent request limiting (#141)
+- Add explicit permissions to CI workflow jobs (#136) (#139)
+- Add benchmarks, fuzz tests, and e2e tests (#126) (#134)
+- add contributing, DR, security, performance, API, and migration guides (#124) (#132)
+- add admin CLI, runtime log level control, and fix Trivy CI (#123) (#131)
+- add --mode flag for api/worker/all instance roles (#121) (#129) (#130)
+- add --mode flag for api/worker/all instance roles (#121) (#129)
+- add readiness probe, JSON health responses, and pre-stop drain (#120) (#128)
+- Add configurable HTTP server timeouts and ReadHeaderTimeout (#127)
+- add LIKE ESCAPE clause and quota guard to SQL queries (#109)
+- Add ListObjectsV1 and ListMultipartUploads endpoints (#60)
+- add HeadBucket, GetBucketLocation, and ListBuckets stubs (#50) (#59)
+- add Nomad and Kubernetes deployment examples with local demo scripts (#58)
+- add structured circuit breaker transition logging (#57)
+- add table of contents to README.md
+- add validate and version subcommands, improve developer quickstart (#56)
+- add dashboard auth, file management, rebalance and sync to web UI (#49)
+- add comprehensive Grafana dashboard covering all emitted metrics (#48)
+- add screenshot of dashboard to readme
+- add token usage for codecov
+- add GoReleaser releases, Codecov, Dependabot, and CI badges
+- add lifecycle rules for automatic object expiration
+- add advisory locks and adaptive usage flushing for multi-instance safety
+- add S3 DeleteObjects batch API
+- add persistent retry queue for failed backend cleanup deletions
+- add TLS/mTLS support with certificate hot-reload
+- add Debian packaging with nfpm and systemd service
+- add Debian packaging with nfpm and systemd service
+- add structured audit logging with request ID tracing
+- add service lifecycle manager with panic recovery and auto-restart
+- add storage summary section to dashboard, bump to v0.5.1
+- add lazy-loaded directory tree, tests, and v0.5.0 docs
+- add SIGHUP config hot-reload with tests and documentation
+- add spread routing tests, update docs, fix godoc compliance
+- add spread write routing strategy and dashboard favicon
+- add web UI documentation, fix OTel service name
+- add object listing to dashboard and fix table alignment
+- add operator/admin guide for deploying and operating the orchestrator
+- add per-backend monthly usage limit enforcement
+- add per-backend API request and data transfer tracking
+- add GitHub Actions workflow and linter config
+- add auth, sync pipeline, and store-level integration tests
+- add comprehensive unit tests for manager business logic and fix integration tests
+- add database circuit breaker with self-healing degraded mode
 
 ### Fixed
 - fix(integrity): scope coverage to the copies the scrubber can reach (#1367) (#1368)
@@ -45,6 +221,92 @@ All notable changes to this project are documented in this file.
 - fix(deps): bump google.golang.org/grpc to v1.82.1 for GHSA-hrxh-6v49-42gf (#1112)
 - fix(backend): materialize non-seekable signed-payload bodies instead of ReadAll (#1097)
 - fix(store): debit bytes_used when DeleteObjectLocation removes a row (#1094)
+- fix(ui): clear SonarCloud dashboard reliability & maintainability issues (#1070)
+- fix(loadtest): pin k6 multipart creds so it ignores ambient AWS_* env (#1067)
+- fix(readpath): bound degraded-broadcast loser-drain to stop goroutine leak (closes #971) (#1048)
+- fix(dashboard): list directory children under underscore-named prefixes (closes #1045) (#1047)
+- fix(replication): stop unreachable backends cascading breaker trips (closes #1029) (#1038)
+- fix(ci): treat cosign Rekor 409 as already-signed (#1032)
+- fix(reconcile): byte-order cursor to stop sorted-merge oscillation (#1031)
+- fix(ci,deps): patch webpage base image CVEs + bump pgx to v5.10.0 (#1027)
+- fixup: web godoc updates
+- fixup: added updated web godoc
+- fixup: added web godocs that were missing
+- fixup: adjust nomad-demo resource allocations
+- fix(proxy): materialize CopyObject source to a seekable body (#816)
+- fix(s3api): include ETag and StorageClass in ListObjects responses (#814)
+- fix(sqlite): route tx.Commit failure through breaker PostCheck (#775) (#786)
+- fix(proxy,release): cache streaming admission + cosign bundle filename (#761)
+- fix(release): switch cosign signing to --bundle (#756) (#757)
+- fix(postgres): keep backend_quotas.bytes_used in step with encrypt/decrypt rewrites (#742) (#743)
+- fix(breaker): clean Open->Closed recovery via new Recover() method (#739) (#741)
+- fix(auth): SigV4 verifier honours wire-form path encoding (#737) (#738)
+- fix(s3api): scope multipart endpoints to URL bucket to close cross-bucket IDOR (#735) (#736)
+- fix(cleanup): per-row claim pattern eliminates double-processing race (#733) (#734)
+- fix(ui/logs): stringify error attrs in ring buffer + click-to-expand rows (#720)
+- fix(proxy/multipart): per-uploadID advisory lock + cleanup on failure (#715)
+- fix(store): apply backend_quotas deltas in stable order to prevent deadlock (#687) (#688)
+- fix(replicator): consistent size between row and quota; pass actual source size (#652) (#686)
+- fix(proxy): single-tx batch DeleteObjects (#677)
+- fix(rebalancer): batch backend lookup per source instead of per object (#675)
+- fix(proxy): advance ListObjects continuation token past emitted CommonPrefix (#672)
+- fix(proxy): release per-call timeout on broadcast-read winner (#671)
+- fix(test): TestCircuitBreaker_DegradedDurationIsPositive flake (#670)
+- fix(test): TestCircuitBreaker_DegradedDurationIsPositive flake
+- fix(store/sqlite): clear S2077 hotspots via json_each IN expansion (#644)
+- fix(proxy): paginate ReconcileBackend with bounded-memory sorted-merge (closes #614) (#642)
+- fix(ui): use String.replaceAll() to trim slashes in upload path (#638)
+- fix(ui): make cookie Secure flag follow trusted-proxy X-Forwarded-Proto (#635)
+- fix(docs): use <br> for Mermaid line breaks in diagrams (#625)
+- fix(test): serialize TransitionLogs_HalfOpenToClosed to prevent captureLogs race (#603)
+- fixup: bump version
+- fix!: require session_secret when UI is enabled, remove admin_secret fallback (#442) (#476)
+- fixup: add new benchmark file
+- fixup: adding benchmarks
+- fix lint exclusion path, add concurrency cancel, harden supply chain (#454, #455) (#469)
+- fix min_conns default, document new features, update metrics table (#466, #467) (#468)
+- fixup: fix website badge
+- fixup: force new version of logo everywhere with version tag
+- fixup: bust cache on logo so cloudflare doesn't serve the old one, update image push tasks in makefile
+- fix multi-instance usage accounting and shared admission control (#289) (#294)
+- fix log-trace correlation, add span kinds, rename s3proxy telemetry namespace (#286) (#288)
+- Fix circuit breaker deadlock when all backends trip simultaneously (#271)
+- Fix: updated nomad/kubernetes demos to protect the nomad and kubectl commands to protect if the user has en environment already pointing at real clusters
+- Fix: accidentally committed benchmark test results
+- Fix: pre-allocate headerlines slice (#259)
+- Fix - expand free tier page with images and more detailed content
+- Fix: The PAT fix ensures CI triggers on the bot's PR. The CODEOWNERS exemption prevents the review request from cluttering it. Together, the release flow should be: tag push → GoReleaser → changelog PR created → CI runs → checks pass → (#244)
+- Fix: let release pipeline create a PR at the end and auto-merge it to have the changelog update (#238)
+- Fix: re-order pre-changelog, goreleaser, and git-cliff (#237)
+- Fix: the changelog step was breaking goreleaser on 'make release' (#236)
+- Fix: when a backend is unhealthy, routing still needs to allow half-open through so probes can heal the backend (#227)
+- Fix cfg data race in SIGHUP handler by wrapping with atomic.Pointer[config.Config] (#210)
+- Fix ListObjectsV2 pagination bug — when the store returned exactly maxKeys objects with more data available, the manager never set IsTruncated=true, so clients like aws s3 cp --recursive stopped after the first 1000 keys. Added (#200)
+- Fix ListObjectsV2 pagination dropping results after exactly maxKeys entries (#198)
+- forgot to add log message to new admin ui download functionality (#196)
+- Fix unsafe integer conversion in RecordPart (#135) (#137)
+- Fix code correctness bugs in SQL, auth, XML responses, and concurrency (#114)
+- prevent cleanupBackoff overflow on large attempt values (#112)
+
+### Hardened
+- security: validate streaming SigV4 chunk signatures end-to-end (#730)
+- security hardening — Redis counter race, tree API auth, SigV4 edge cases (#488) (#491)
+- security: fix signing key cache DoS, CSRF entropy, error enumeration, timer leak (#419, #431, #432, #445) (#464)
+- security: verify vault token file permissions before reading (#428) (#461)
+- security: limit active multipart uploads per bucket (#369) (#402)
+- security: add two-phase confirmation for remove-backend --purge (#368) (#401)
+- security: add CSRF token protection for UI state-changing operations (#371) (#399)
+- security: document nonce derivation safety invariant (#372) (#396)
+- security: separate metrics listener and strip instance ID from health (#370) (#395)
+- security: add Vault token renewal, fix SigV4 timing leak, warn on cert/key expiry (#290) (#292)
+- Harden defaults: increase DB pool size and add location cache TTL jitter (#215)
+- Security hardening and error handling consistency (#209)
+- Harden auth, add request body limits, and fix dashboard CB panel (#164) (#165)
+- Harden dashboard JS against XSS and add log pagination (#155) (#157)
+- Harden auth and sanitize API error messages (#156)
+- Harden security for error messages, config validation, and map access (#115)
+- harden SigV4 and token authentication (#107)
+- harden security, correctness, and observability for v0.5.2
 
 ### Refactored
 - refactor(ops): unify the bulk-rewrite passes and adopt observe.Run (#1343)
@@ -63,12 +325,114 @@ All notable changes to this project are documented in this file.
 - refactor(admin): type the rebalance endpoint response (#1139)
 - refactor(di): batch dependency resolution across remaining providers (#1127)
 - refactor(di): collapse alias wrappers and composite-provider err plumbing (#1123)
+- refactor(encryption): centralize stored-object decrypt + read-path plaintext pipeline (refs #1050) (#1062)
+- refactor(backend): GetWithTimeout/HeadWithTimeout lifecycle helpers (refs #1050) (#1057)
+- refactor(worker): batch runner + uniform WorkSummary results (refs #1050) (#1056)
+- refactor(rebalancer): PlacementSet + candidate cache for planning (refs #1050) (#1055)
+- refactor(readpath): extract ProbeScheduler from the Broadcaster (refs #1050) (#1053)
+- refactor(readpath): return an explicit ProbeResult instead of smuggling the winner via sync.Once (refs #1050) (#1052)
+- refactor(readpath): extract degraded-mode broadcast into a Broadcaster (#1044)
+- refactor(proxy): rename per-package Stores interfaces to disambiguate (closes #1006) (#1041)
+- refactor(proxy): decouple BackendRuntime from BackendManager (#1004, #990) (#1040)
+- refactor(proxy): rename infra.Core to BackendRuntime (closes #988) (#1039)
+- refactor(proxy): extract read-failover orchestration into internal/proxy/readpath (#849) (#855)
+- refactor(proxy): decompose internal/proxy into focused subpackages (#841) (#845)
+- refactor(proxy): consolidate proxy package files (22 → 10) (#844)
+- refactor(di): centralize worker provider dependency resolution (#839)
+- refactor(proxy): drop worker fields from BackendManager and validate constructor inputs (#838)
+- refactor(worker): extract replicator planner and outcome struct (#811)
+- refactor(logging): handler-enforced error rendering + component scoping (#809)
+- refactor(di): explicit Optional[T] resolution distinguishing missing vs failed providers (#807)
+- refactor(reload): generation-aware coordinator with structured outcomes (#790) (#802)
+- refactor(backend): typed CopyError for stream-copy phase classification (#793) (#801)
+- refactor(worker): drop dead quotaStats from replication path (#792) (#800)
+- refactor(cli/serve): decompose god object into runtime/httpserver/reload (#788) (#789)
+- refactor(store): use mapping helpers for nullable fields (#774) (#787)
+- refactor(ioutilx): extract read-closer helpers from proxy (#776) (#785)
+- refactor(observe): unify span error recording across managers (#773) (#784)
+- refactor(transport): extract shared HTTP JSON helpers (#772) (#783)
+- refactor(ui): split handler.go into focused transport modules (#771) (#782)
+- refactor(di): explicit manager wiring via di.WireManager (#777) (#781)
+- refactor(proxy): split multipart.go into focused files (#770) (#780)
+- refactor(proxy): remove parent back-pointers from ObjectManager and MultipartManager (#769) (#779)
+- refactor(di): split di.go into focused provider files (#768) (#778)
+- refactor(proxy): cleanup-DELETE accounting + read-path location plumbing (#758) (#759)
+- refactor(di): drop redundant adapters, bag structs, side-effect registration (#753)
+- refactor(store): collapse narrow store-role interfaces (#747) (#751)
+- refactor(store): move CB into driver-level DBTX wrapper, delete decorator layer (#750)
+- refactor(test): consolidate three handwritten mockStore implementations onto mockgen (#749)
+- refactor(observability): standardize structured logging conventions (#718)
+- refactor(lifecycle): rename Service/Stoppable to Runner/Stopper (#710)
+- refactor(integration): drop S3776 cognitive complexity in test fixtures (#699)
+- refactor(proxy): lift workers out of BackendManager (#676 B) (#685)
+- refactor(proxy): slim backendCore (#676 C) (#684)
+- refactor(proxy): extract metrics, drain, dashboard subpackages (676D partial) (#682)
+- refactor(store): drop alias layer + split AdminStore into narrow roles (#681)
+- refactor(store): drop postgres re-exports (676A) (#680)
+- refactor(store): extract engine-agnostic core, thin per-engine adapters (#674)
+- refactor(breaker, telemetry): decouple breaker from observability; split metrics (#640)
+- refactor(store): collapse 11-case toObjectLocation switch via accessors (#639)
+- refactor(transport): handlers depend on narrow Deps, not *BackendManager (closes #613) (#636)
+- refactor(s3api): extract enforceContentLength helper (closes #632) (#633)
+- refactor(cmd): thin cmd/ via internal/cli + breaker.Registry; atomic SIGHUP (#630)
+- refactor(observe): collapse span+metrics+status boilerplate (#621)
+- refactor(store): retire MetadataStore union, narrow roles everywhere (#617)
+- decompose MetadataStore into narrow per-worker store interfaces (#566) (#579)
+- Decompose BackendManager into focused component structs (#208)
+- Refactoring release that reduces code duplication without changing behavior. Admin API handlers now use Go 1.22+ method routing instead of manual method checks. A streamCopy helper consolidates the repeated (#204)
+- Refactor internal code for clarity and reduced duplication (#145)
+- rename s3-proxy to s3-orchestrator
+- rename Go module to github.com/afreidah/s3-proxy
 
 ### Improved
 - update CHANGELOG.md for v0.62.28 (#1077)
+- update CHANGELOG.md for v0.62.27 (#1068)
+- update CHANGELOG.md for v0.60.40 (#1001)
+- update CHANGELOG.md for v0.46.20 (#762)
+- replace do.MustInvoke with explicit error handling in DI resolution (#564) (#589)
+- update CHANGELOG.md for v0.40.1 (#563)
+- update CHANGELOG.md for v0.39.21 (#555)
+- update CHANGELOG.md for v0.39.19 (#552)
+- update CHANGELOG.md for v0.39.18 (#550)
+- update CHANGELOG.md for v0.38.2 (#504)
+- update CHANGELOG.md for v0.37.2 (#486)
+- update CHANGELOG.md for v0.37.1 (#484)
+- update CHANGELOG.md for v0.37.0 (#483)
+- update CHANGELOG.md for v0.33.0 (#473)
+- update CHANGELOG.md for v0.20.3 (#407)
+- Update README.md (#400)
+- update documentation for v0.19.x changes (#328)
+- update CHANGELOG.md for v0.19.1 (#307)
+- updates to meet style guide
+- update CHANGELOG.md for v0.19.0 (#306)
+- update CHANGELOG.md for v0.18.3 (#296)
+- update CHANGELOG.md for v0.17.9 (#274)
+- update CHANGELOG.md for v0.17.8 (#272)
+- update CHANGELOG.md for v0.17.5 (#264)
+- update CHANGELOG.md for v0.17.01 (#256)
+- update CHANGELOG.md for v0.17.00 (#252)
+- update CHANGELOG.md for v0.16.25 (#248)
+- update CHANGELOG.md for v0.16.23 (#245)
+- Expand fuzz testing with new targets, fix CI flakiness, and add file headers (#213)
+- Update lint in ci to be faster (#190)
+- update alpine version (#188)
+- Improve packaging, deployment, and build consolidation (#117)
+- Improve CI/CD pipeline with sqlc verification, release gates, and scanning (#116)
+- replace destructive down migration with no-op (#113)
+- updates to local image pushing to be faster, dockerfile/build tweaks,… (#47)
+- update tests for better coverage (#43)
+- updated version to be set in .version and docs to use x.x.x
+- replace NewBackendManager positional params with config struct
+- replace goto with structured control flow in ListObjects
+- update README and config example to reflect current features
 
 ### Documentation
 - document the tui subcommand and fix the object-locations response (#1087)
+- document docker-compose volume cleanup and add troubleshooting (#375) (#393)
+- document database connection pool sizing for production (#351) (#391)
+- documentation update I forgot
+- documentation tweaks
+- document usage limits, new metrics, and usage_deltas table
 
 ### Dependencies
 - chore(deps): bump github.com/moby/go-archive from 0.2.0 to 0.3.0 (#1351)
@@ -96,6 +460,81 @@ All notable changes to this project are documented in this file.
 - chore(deps): bump the aws-sdk group across 1 directory with 3 updates (#1082)
 - chore(deps): bump docker/login-action in the actions group (#1081)
 - chore(deps): bump golang.org/x/crypto (#1083)
+- chore(deps): bump github.com/pressly/goose/v3 (#1076)
+- chore(deps): bump the aws-sdk group with 4 updates (#1074)
+- chore(deps): bump the actions group with 6 updates (#1073)
+- chore(deps): bump golang.org/x/net (#1072)
+- chore(deps): bump the minor-and-patch group with 6 updates (#1069)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 from 1.103.3 to 1.104.0 in the aws-sdk group (#1060)
+- chore(deps): bump actions/checkout from 6 to 7 in the actions group (#1059)
+- chore(deps): bump github.com/aws/smithy-go in the minor-and-patch group (#1061)
+- chore(deps): bump the minor-and-patch group with 4 updates (#1037)
+- chore(deps): bump the aws-sdk group with 4 updates (#1036)
+- chore(deps): bump SonarSource/sonarqube-scan-action in the actions group (#1035)
+- chore(deps): bump the aws-sdk group with 4 updates (#1016)
+- chore(deps): bump the aws-sdk group across 1 directory with 4 updates (#954)
+- chore(deps): bump the actions group with 2 updates (#953)
+- chore(deps): bump the otel group across 1 directory with 4 updates (#955)
+- chore(deps): bump the minor-and-patch group with 3 updates (#956)
+- chore(deps): bump the actions group with 4 updates (#932)
+- chore(deps): bump the minor-and-patch group with 2 updates (#931)
+- chore(deps): bump the minor-and-patch group with 2 updates (#837)
+- chore(deps): bump the actions group with 2 updates (#726)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#727)
+- chore(deps): bump github.com/redis/go-redis/v9 (#668)
+- chore(deps): bump the aws-sdk group with 3 updates (#667)
+- chore(deps): bump SonarSource/sonarqube-scan-action in the actions group (#666)
+- chore(deps): bump the minor-and-patch group across 1 directory with 3 updates (#624)
+- chore(deps): bump the aws-sdk group with 3 updates (#619)
+- chore(deps): bump the actions group with 4 updates (#618)
+- chore(deps): bump github.com/jackc/pgx/v5 from 5.9.1 to 5.9.2 (#596)
+- chore(deps): bump the minor-and-patch group across 1 directory with 2 updates (#576)
+- chore(deps): bump go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc (#573)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#572)
+- chore(deps): bump the minor-and-patch group with 7 updates (#544)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#542)
+- chore(deps): bump the otel group with 4 updates (#543)
+- chore(deps): bump actions/github-script from 8 to 9 in the actions group (#541)
+- chore(deps): bump the aws-sdk group with 2 updates (#528)
+- chore(deps): bump actions/upload-artifact in the actions group (#527)
+- chore(deps): bump github.com/aws/smithy-go in the minor-and-patch group (#529)
+- chore(deps): bump github.com/go-jose/go-jose/v4 from 4.1.3 to 4.1.4 (#530)
+- chore(deps): bump aquasecurity/trivy-action (#470)
+- chore(deps): bump codecov/codecov-action from 5 to 6 (#410)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/credentials (#411)
+- chore(deps): bump github.com/jackc/pgx/v5 from 5.8.0 to 5.9.1 (#412)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2 from 1.41.4 to 1.41.5 (#413)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#414)
+- chore(deps): bump github.com/hashicorp/vault/api from 1.22.0 to 1.23.0 (#415)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#297)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2 from 1.41.3 to 1.41.4 (#298)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/credentials (#299)
+- chore(deps): bump google.golang.org/grpc (#287)
+- chore(deps): bump golang.org/x/time from 0.14.0 to 0.15.0 (#279)
+- chore(deps): bump golangci/golangci-lint-action from 7 to 9 (#275)
+- chore(deps): bump dorny/paths-filter from 3 to 4 (#276)
+- chore(deps): bump go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc (#277)
+- chore(deps): bump go.opentelemetry.io/otel/sdk from 1.40.0 to 1.42.0 (#278)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#280)
+- chore(deps): bump golang.org/x/crypto from 0.48.0 to 0.49.0 (#281)
+- chore(deps): bump golang.org/x/net (#267)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#181)
+- chore(deps): bump go.opentelemetry.io/otel from 1.40.0 to 1.41.0 (#180)
+- chore(deps): bump go.opentelemetry.io/otel/trace from 1.40.0 to 1.41.0 (#179)
+- chore(deps): bump github.com/aws/smithy-go from 1.24.1 to 1.24.2 (#178)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2 from 1.41.2 to 1.41.3 (#177)
+- chore(deps): bump docker/setup-buildx-action from 3 to 4 (#173)
+- chore(deps): bump actions/github-script from 7 to 8 (#174)
+- chore(deps): bump docker/build-push-action from 6 to 7 (#175)
+- chore(deps): bump docker/login-action from 3 to 4 (#176)
+- chore(deps): bump actions/checkout from 4 to 6 (#32)
+- chore(deps): bump goreleaser/goreleaser-action from 6 to 7 (#33)
+- chore(deps): bump actions/setup-go from 5 to 6 (#34)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#36)
+- chore(deps): bump go.opentelemetry.io/otel/sdk from 1.32.0 to 1.40.0 (#38)
+- chore(deps): bump github.com/aws/aws-sdk-go-v2 from 1.32.7 to 1.41.2 (#35)
+- chore(deps): bump go.opentelemetry.io/otel/trace from 1.32.0 to 1.40.0 (#39)
+- chore(deps): bump go.opentelemetry.io/otel from 1.32.0 to 1.40.0
 
 ### Other
 - comment and section structure cleanup (#1364) (#1366)
@@ -171,150 +610,21 @@ All notable changes to this project are documented in this file.
 - human-readable sizes, in-prefix filter, and column sorting (#1089)
 - object inspector pane with per-backend replica placement (#1085)
 - full-screen object browser + admin objects endpoint (#1079)
-
-## [0.62.28] - 2026-07-04
-
-### Fixed
-- fix(ui): clear SonarCloud dashboard reliability & maintainability issues (#1070)
-
-### Improved
-- update CHANGELOG.md for v0.62.27 (#1068)
-
-### Dependencies
-- chore(deps): bump github.com/pressly/goose/v3 (#1076)
-- chore(deps): bump the aws-sdk group with 4 updates (#1074)
-- chore(deps): bump the actions group with 6 updates (#1073)
-- chore(deps): bump golang.org/x/net (#1072)
-- chore(deps): bump the minor-and-patch group with 6 updates (#1069)
-
-### Other
 - ci(sonar): re-analyse main on every push, not just Go changes (#1071)
-
-## [0.62.27] - 2026-06-25
-
-### Fixed
-- fix(loadtest): pin k6 multipart creds so it ignores ambient AWS_* env (#1067)
-
-## [0.62.26] - 2026-06-21
-
-### Other
 - perf(list): push delimiter CommonPrefix collapse into SQL via loose index scan (closes #1065) (#1066)
-
-## [0.62.25] - 2026-06-20
-
-### Fixed
-- fix(readpath): bound degraded-broadcast loser-drain to stop goroutine leak (closes #971) (#1048)
-- fix(dashboard): list directory children under underscore-named prefixes (closes #1045) (#1047)
-- fix(replication): stop unreachable backends cascading breaker trips (closes #1029) (#1038)
-- fix(ci): treat cosign Rekor 409 as already-signed (#1032)
-- fix(reconcile): byte-order cursor to stop sorted-merge oscillation (#1031)
-
-### Refactored
-- refactor(encryption): centralize stored-object decrypt + read-path plaintext pipeline (refs #1050) (#1062)
-- refactor(backend): GetWithTimeout/HeadWithTimeout lifecycle helpers (refs #1050) (#1057)
-- refactor(worker): batch runner + uniform WorkSummary results (refs #1050) (#1056)
-- refactor(rebalancer): PlacementSet + candidate cache for planning (refs #1050) (#1055)
-- refactor(readpath): extract ProbeScheduler from the Broadcaster (refs #1050) (#1053)
-- refactor(readpath): return an explicit ProbeResult instead of smuggling the winner via sync.Once (refs #1050) (#1052)
-- refactor(readpath): extract degraded-mode broadcast into a Broadcaster (#1044)
-- refactor(proxy): rename per-package Stores interfaces to disambiguate (closes #1006) (#1041)
-- refactor(proxy): decouple BackendRuntime from BackendManager (#1004, #990) (#1040)
-- refactor(proxy): rename infra.Core to BackendRuntime (closes #988) (#1039)
-
-### Dependencies
-- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 from 1.103.3 to 1.104.0 in the aws-sdk group (#1060)
-- chore(deps): bump actions/checkout from 6 to 7 in the actions group (#1059)
-- chore(deps): bump github.com/aws/smithy-go in the minor-and-patch group (#1061)
-- chore(deps): bump the minor-and-patch group with 4 updates (#1037)
-- chore(deps): bump the aws-sdk group with 4 updates (#1036)
-- chore(deps): bump SonarSource/sonarqube-scan-action in the actions group (#1035)
-
-### Other
 - perf(list): skip past emitted CommonPrefix groups during delimiter listing (closes #1063) (#1064)
 - typed move-reason profiles and provideIf DI helper (refs #1050) (#1054)
 - test(perf): make get-cold measure cold reads and fail loudly on flush errors (closes #1049) (#1051)
 - take Deps/Config structs for constructors with >=4 params (#1042)
 - reach parity with the dashboard (refs #1033) (#1034)
 - GH_ISSUE_1009: move validate logic into internal/cli/validatecmd (#1028)
-
-## [0.62.1] - 2026-06-11
-
-### Fixed
-- fix(ci,deps): patch webpage base image CVEs + bump pgx to v5.10.0 (#1027)
-
-### Other
 - GH_ISSUE_1025: human-readable CLI output + per-item progress streaming (#1026)
 - GH_ISSUE_1023: bound + rate-limit backfill-checksums; add make install (#1024)
-
-## [0.61.1] - 2026-06-08
-
-### Other
 - GH_ISSUE_1021: target a remote instance via admin flags/env, no full config (#1022)
-
-## [0.61.0] - 2026-06-08
-
-### Improved
-- update CHANGELOG.md for v0.60.40 (#1001)
-
-### Dependencies
-- chore(deps): bump the aws-sdk group with 4 updates (#1016)
-
-### Other
 - docs(web): reflect usage reconciliation in godoc + background-services diagram (#1020)
 - GH_ISSUE_1018: add usage reconciliation to correct bytes_used drift (#1019)
 - GH_ISSUE_1011: ride out transient MinIO 502s in concurrent put/delete test (#1015)
 - GH_ISSUE_1002: route over-replication cleaner through the TxAdapter lock seam (#1010)
-
-## [0.60.40] - 2026-06-02
-
-### Added
-- add s3o_list_pages_capped_total counter (#764)
-
-### Fixed
-- fixup: web godoc updates
-- fixup: added updated web godoc
-- fixup: added web godocs that were missing
-- fixup: adjust nomad-demo resource allocations
-- fix(proxy): materialize CopyObject source to a seekable body (#816)
-- fix(s3api): include ETag and StorageClass in ListObjects responses (#814)
-- fix(sqlite): route tx.Commit failure through breaker PostCheck (#775) (#786)
-
-### Refactored
-- refactor(proxy): extract read-failover orchestration into internal/proxy/readpath (#849) (#855)
-- refactor(proxy): decompose internal/proxy into focused subpackages (#841) (#845)
-- refactor(proxy): consolidate proxy package files (22 → 10) (#844)
-- refactor(di): centralize worker provider dependency resolution (#839)
-- refactor(proxy): drop worker fields from BackendManager and validate constructor inputs (#838)
-- refactor(worker): extract replicator planner and outcome struct (#811)
-- refactor(logging): handler-enforced error rendering + component scoping (#809)
-- refactor(di): explicit Optional[T] resolution distinguishing missing vs failed providers (#807)
-- refactor(reload): generation-aware coordinator with structured outcomes (#790) (#802)
-- refactor(backend): typed CopyError for stream-copy phase classification (#793) (#801)
-- refactor(worker): drop dead quotaStats from replication path (#792) (#800)
-- refactor(cli/serve): decompose god object into runtime/httpserver/reload (#788) (#789)
-- refactor(store): use mapping helpers for nullable fields (#774) (#787)
-- refactor(ioutilx): extract read-closer helpers from proxy (#776) (#785)
-- refactor(observe): unify span error recording across managers (#773) (#784)
-- refactor(transport): extract shared HTTP JSON helpers (#772) (#783)
-- refactor(ui): split handler.go into focused transport modules (#771) (#782)
-- refactor(di): explicit manager wiring via di.WireManager (#777) (#781)
-- refactor(proxy): split multipart.go into focused files (#770) (#780)
-- refactor(proxy): remove parent back-pointers from ObjectManager and MultipartManager (#769) (#779)
-- refactor(di): split di.go into focused provider files (#768) (#778)
-
-### Improved
-- update CHANGELOG.md for v0.46.20 (#762)
-
-### Dependencies
-- chore(deps): bump the aws-sdk group across 1 directory with 4 updates (#954)
-- chore(deps): bump the actions group with 2 updates (#953)
-- chore(deps): bump the otel group across 1 directory with 4 updates (#955)
-- chore(deps): bump the minor-and-patch group with 3 updates (#956)
-- chore(deps): bump the actions group with 4 updates (#932)
-- chore(deps): bump the minor-and-patch group with 2 updates (#931)
-- chore(deps): bump the minor-and-patch group with 2 updates (#837)
-
-### Other
 - GH_ISSUE_974: split NewInjector into grouped helpers + typed config.Mode (#1000)
 - Revise README for clarity and project comparisons (#999)
 - GH_ISSUE_973: drop issue refs and lint-threshold rationale from source comments (#998)
@@ -397,88 +707,6 @@ All notable changes to this project are documented in this file.
 - docs(store): mechanical-checks contributing page + depguard boundary rule (#810)
 - remove multipart DEK backfill worker (#766) (#767)
 - perf envelope tooling + cache-flush admin API (#367) (#765)
-
-## [0.46.20] - 2026-05-10
-
-### Fixed
-- fix(proxy,release): cache streaming admission + cosign bundle filename (#761)
-
-## [0.46.19] - 2026-05-10
-
-### Added
-- add package-level doc comments to every Go package (#697)
-- add FailableBackend, sentinel config errors, and edge-case integration scenarios (#591)
-
-### Fixed
-- fix(release): switch cosign signing to --bundle (#756) (#757)
-- fix(postgres): keep backend_quotas.bytes_used in step with encrypt/decrypt rewrites (#742) (#743)
-- fix(breaker): clean Open->Closed recovery via new Recover() method (#739) (#741)
-- fix(auth): SigV4 verifier honours wire-form path encoding (#737) (#738)
-- fix(s3api): scope multipart endpoints to URL bucket to close cross-bucket IDOR (#735) (#736)
-- fix(cleanup): per-row claim pattern eliminates double-processing race (#733) (#734)
-- fix(ui/logs): stringify error attrs in ring buffer + click-to-expand rows (#720)
-- fix(proxy/multipart): per-uploadID advisory lock + cleanup on failure (#715)
-- fix(store): apply backend_quotas deltas in stable order to prevent deadlock (#687) (#688)
-- fix(replicator): consistent size between row and quota; pass actual source size (#652) (#686)
-- fix(proxy): single-tx batch DeleteObjects (#677)
-- fix(rebalancer): batch backend lookup per source instead of per object (#675)
-- fix(proxy): advance ListObjects continuation token past emitted CommonPrefix (#672)
-- fix(proxy): release per-call timeout on broadcast-read winner (#671)
-- fix(test): TestCircuitBreaker_DegradedDurationIsPositive flake (#670)
-- fix(test): TestCircuitBreaker_DegradedDurationIsPositive flake
-- fix(store/sqlite): clear S2077 hotspots via json_each IN expansion (#644)
-- fix(proxy): paginate ReconcileBackend with bounded-memory sorted-merge (closes #614) (#642)
-- fix(ui): use String.replaceAll() to trim slashes in upload path (#638)
-- fix(ui): make cookie Secure flag follow trusted-proxy X-Forwarded-Proto (#635)
-- fix(docs): use <br> for Mermaid line breaks in diagrams (#625)
-- fix(test): serialize TransitionLogs_HalfOpenToClosed to prevent captureLogs race (#603)
-
-### Hardened
-- security: validate streaming SigV4 chunk signatures end-to-end (#730)
-
-### Refactored
-- refactor(proxy): cleanup-DELETE accounting + read-path location plumbing (#758) (#759)
-- refactor(di): drop redundant adapters, bag structs, side-effect registration (#753)
-- refactor(store): collapse narrow store-role interfaces (#747) (#751)
-- refactor(store): move CB into driver-level DBTX wrapper, delete decorator layer (#750)
-- refactor(test): consolidate three handwritten mockStore implementations onto mockgen (#749)
-- refactor(observability): standardize structured logging conventions (#718)
-- refactor(lifecycle): rename Service/Stoppable to Runner/Stopper (#710)
-- refactor(integration): drop S3776 cognitive complexity in test fixtures (#699)
-- refactor(proxy): lift workers out of BackendManager (#676 B) (#685)
-- refactor(proxy): slim backendCore (#676 C) (#684)
-- refactor(proxy): extract metrics, drain, dashboard subpackages (676D partial) (#682)
-- refactor(store): drop alias layer + split AdminStore into narrow roles (#681)
-- refactor(store): drop postgres re-exports (676A) (#680)
-- refactor(store): extract engine-agnostic core, thin per-engine adapters (#674)
-- refactor(breaker, telemetry): decouple breaker from observability; split metrics (#640)
-- refactor(store): collapse 11-case toObjectLocation switch via accessors (#639)
-- refactor(transport): handlers depend on narrow Deps, not *BackendManager (closes #613) (#636)
-- refactor(s3api): extract enforceContentLength helper (closes #632) (#633)
-- refactor(cmd): thin cmd/ via internal/cli + breaker.Registry; atomic SIGHUP (#630)
-- refactor(observe): collapse span+metrics+status boilerplate (#621)
-- refactor(store): retire MetadataStore union, narrow roles everywhere (#617)
-- decompose MetadataStore into narrow per-worker store interfaces (#566) (#579)
-
-### Improved
-- replace do.MustInvoke with explicit error handling in DI resolution (#564) (#589)
-- update CHANGELOG.md for v0.40.1 (#563)
-
-### Dependencies
-- chore(deps): bump the actions group with 2 updates (#726)
-- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#727)
-- chore(deps): bump github.com/redis/go-redis/v9 (#668)
-- chore(deps): bump the aws-sdk group with 3 updates (#667)
-- chore(deps): bump SonarSource/sonarqube-scan-action in the actions group (#666)
-- chore(deps): bump the minor-and-patch group across 1 directory with 3 updates (#624)
-- chore(deps): bump the aws-sdk group with 3 updates (#619)
-- chore(deps): bump the actions group with 4 updates (#618)
-- chore(deps): bump github.com/jackc/pgx/v5 from 5.9.1 to 5.9.2 (#596)
-- chore(deps): bump the minor-and-patch group across 1 directory with 2 updates (#576)
-- chore(deps): bump go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc (#573)
-- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#572)
-
-### Other
 - FIX: new benchmark and tweaks to nomad resources to use less cpu since performance improved greatly on cpu
 - cross-cutting cleanup (#754) (#755)
 - delete verified-dead helpers and methods (#748)
@@ -515,64 +743,11 @@ All notable changes to this project are documented in this file.
 - extract string constants and encryption helpers, add SonarQube (#580, #581) (#587)
 - rebalancer skips moves where target already has a copy (#577) (#578)
 - split store.go (1625 lines) into domain-focused files (#565) (#575)
-
-## [0.40.1] - 2026-04-16
-
-### Added
-- add on-demand reconciliation admin endpoint (#557) (#562)
-
-### Improved
-- update CHANGELOG.md for v0.39.21 (#555)
-
-### Other
 - per-backend max_object_size to skip oversized writes (#560) (#561)
 - pending gauges decrement per task for live progress (#558) (#559)
-
-## [0.39.21] - 2026-04-15
-
-### Improved
-- update CHANGELOG.md for v0.39.19 (#552)
-
-### Other
 - exclude failed targets from replication target selection (#553) (#554)
-
-## [0.39.19] - 2026-04-13
-
-### Improved
-- update CHANGELOG.md for v0.39.18 (#550)
-
-### Dependencies
-- chore(deps): bump the minor-and-patch group with 7 updates (#544)
-
-### Other
 - adapt Port API for moby/moby v1.54 and update otel dependencies (#551)
-
-## [0.39.18] - 2026-04-12
-
-### Dependencies
-- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#542)
-- chore(deps): bump the otel group with 4 updates (#543)
-
-### Other
 - fail startup when encryption is enabled but encryptor init fails (#548) (#549)
-
-## [0.39.16] - 2026-04-11
-
-### Added
-- add g3 backend to free-tier guide, enlarge admin UI logo (#537) (#538)
-- add new benchmark test results
-
-### Improved
-- update CHANGELOG.md for v0.38.2 (#504)
-
-### Dependencies
-- chore(deps): bump actions/github-script from 8 to 9 in the actions group (#541)
-- chore(deps): bump the aws-sdk group with 2 updates (#528)
-- chore(deps): bump actions/upload-artifact in the actions group (#527)
-- chore(deps): bump github.com/aws/smithy-go in the minor-and-patch group (#529)
-- chore(deps): bump github.com/go-jose/go-jose/v4 from 4.1.3 to 4.1.4 (#530)
-
-### Other
 - run rebalance and cleanup async to prevent client-side cancellation (#546) (#547)
 - pin mermaid CDN to 11.8.0 to restore diagram tooltips (#545)
 - Replicator cleans up stale metadata on source 404 (#539)
@@ -589,16 +764,6 @@ All notable changes to this project are documented in this file.
 - panic recovery in pipe goroutines, worker ordering fixes (#508, #509) (#517)
 - concurrency and robustness fixes (#506, #510, #511, #512) (#516)
 - embedded SQLite backend, init CLI, zero-dependency deployments (#505)
-
-## [0.38.2] - 2026-03-30
-
-### Hardened
-- security hardening — Redis counter race, tree API auth, SigV4 edge cases (#488) (#491)
-
-### Improved
-- update CHANGELOG.md for v0.37.2 (#486)
-
-### Other
 - strip whitespace from SigV4 header names, add fuzz-import tooling (#498) (#503)
 - close onboarding gaps for replication with encryption (#501) (#502)
 - fuzz-found bugs in SigV4 canonical request and encryption header parsing (#495, #496) (#497)
@@ -606,111 +771,15 @@ All notable changes to this project are documented in this file.
 - shutdown correctness, worker observability, and operational robustness (#490) (#493)
 - config validation gaps that defer errors to runtime (#489) (#492)
 - deduplicate Grafana dashboard panels on redeploy (#485) (#487)
-
-## [0.37.2] - 2026-03-29
-
-### Improved
-- update CHANGELOG.md for v0.37.1 (#484)
-
-## [0.37.1] - 2026-03-29
-
-### Fixed
-- fixup: bump version
-
-### Improved
-- update CHANGELOG.md for v0.37.0 (#483)
-
-## [0.37.0] - 2026-03-29
-
-### Added
-- add timeouts, release preflight integration tests, Dependabot grouping, linters, SBOM (#456) (#478)
-- add edge case coverage for lifecycle, config, auth cache, admission (#450) (#477)
-
-### Fixed
-- fix!: require session_secret when UI is enabled, remove admin_secret fallback (#442) (#476)
-- fixup: add new benchmark file
-
-### Improved
-- update CHANGELOG.md for v0.33.0 (#473)
-
-### Dependencies
-- chore(deps): bump aquasecurity/trivy-action (#470)
-
-### Other
 - web Dockerfile build context blocked by root .dockerignore
 - event notifications, DI refactor, package restructuring (#360) (#481)
 - configurable multipart timeout, capacity warning, production docs (#480)
 - added latest bench test
 - cache read error, download Content-Type, unknown keyID, range clamp (#439, #440, #441, #444) (#475)
 - testing: improve fuzz targets and benchmark coverage (#472) (#474)
-
-## [0.33.0] - 2026-03-28
-
-### Added
-- add missing indexes, replace random() scrubber query, harden lifecycle (#435, #451, #453) (#463)
-- add generic AtomicConfig[T] and TTLCache[K,V] to eliminate boilerplate (#457) (#459)
-- add presigned URL support (#353) (#418)
-- add read burst loadtest, cache Grafana panels, fix loadtest build (#417)
-- add optional in-memory object data cache (#403) (#416)
-- add decrypt-existing admin API, migrate integration tests to testcontainers (#408) (#409)
-
-### Fixed
-- fixup: adding benchmarks
-- fix lint exclusion path, add concurrency cancel, harden supply chain (#454, #455) (#469)
-- fix min_conns default, document new features, update metrics table (#466, #467) (#468)
-- fixup: fix website badge
-
-### Hardened
-- security: fix signing key cache DoS, CSRF entropy, error enumeration, timer leak (#419, #431, #432, #445) (#464)
-- security: verify vault token file permissions before reading (#428) (#461)
-
-### Improved
-- update CHANGELOG.md for v0.20.3 (#407)
-
-### Dependencies
-- chore(deps): bump codecov/codecov-action from 5 to 6 (#410)
-- chore(deps): bump github.com/aws/aws-sdk-go-v2/credentials (#411)
-- chore(deps): bump github.com/jackc/pgx/v5 from 5.8.0 to 5.9.1 (#412)
-- chore(deps): bump github.com/aws/aws-sdk-go-v2 from 1.41.4 to 1.41.5 (#413)
-- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#414)
-- chore(deps): bump github.com/hashicorp/vault/api from 1.22.0 to 1.23.0 (#415)
-
-### Other
 - reject encrypted reads during DB outage, fix vault renewal mutex (#429, #433) (#465)
 - metrics shutdown, circuit breaker stale probe, load shedding threshold (#420, #424, #437) (#462)
 - extract selectWriteTarget, add typed RoutingStrategy, rename shadowed vars (#452, #458) (#460)
-
-## [0.20.3] - 2026-03-23
-
-### Added
-- add Helm chart, replace raw Kubernetes manifests (#382) (#406)
-- add compatibility matrix and upgrade checklist (#379) (#397)
-- add Getting Started section to README (#374) (#394)
-- add rebalance pending gauge and encryption unknown-keyID counter (#316) (#327)
-- add goleak goroutine leak detection and fix flaky timing tests (#315) (#324)
-- add unit tests for chunk encryption, location cache, aggregator, and cleanup queue (#312) (#323)
-
-### Fixed
-- fixup: force new version of logo everywhere with version tag
-- fixup: bust cache on logo so cloudflare doesn't serve the old one, update image push tasks in makefile
-
-### Hardened
-- security: limit active multipart uploads per bucket (#369) (#402)
-- security: add two-phase confirmation for remove-backend --purge (#368) (#401)
-- security: add CSRF token protection for UI state-changing operations (#371) (#399)
-- security: document nonce derivation safety invariant (#372) (#396)
-- security: separate metrics listener and strip instance ID from health (#370) (#395)
-
-### Improved
-- Update README.md (#400)
-- update documentation for v0.19.x changes (#328)
-- update CHANGELOG.md for v0.19.1 (#307)
-
-### Documentation
-- document docker-compose volume cleanup and add troubleshooting (#375) (#393)
-- document database connection pool sizing for production (#351) (#391)
-
-### Other
 - logging tweak and version bump
 - object integrity verification with SHA-256 content hashing (#404)
 - enhancement: add schema version validation at startup, update logo (#387) (#398)
@@ -733,307 +802,25 @@ All notable changes to this project are documented in this file.
 - make Close() idempotent on RedisCounterBackend, RateLimiter, and LoginThrottle (#310) (#321)
 - remove implicit stripPort from LoginThrottle, require caller-resolved IPs (#309) (#320)
 - close timing side-channels in UI login and admin token auth (#308) (#319)
-
-## [0.19.1] - 2026-03-20
-
-### Improved
-- updates to meet style guide
-- update CHANGELOG.md for v0.19.0 (#306)
-
-## [0.19.0] - 2026-03-20
-
-### Improved
-- update CHANGELOG.md for v0.18.3 (#296)
-
-### Dependencies
-- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#297)
-- chore(deps): bump github.com/aws/aws-sdk-go-v2 from 1.41.3 to 1.41.4 (#298)
-- chore(deps): bump github.com/aws/aws-sdk-go-v2/credentials (#299)
-
-### Other
 - restructure storage/ into breaker/, backend/, store/, counter/, proxy/, worker/ (#304) (#305)
 - invert audit→telemetry dependency and narrow MetadataStore interfaces (#301) (#303)
 - split config validation into domain files and extract server middleware (#300) (#302)
-
-## [0.18.3] - 2026-03-20
-
-### Added
-- add orphan reconciler and update documentation for v0.18.x changes (#289) (#295)
-- add replication internals guide and fix encryption claims in architecture diagram (#284)
-- Add container tuning, GOMEMLIMIT, and default max_concurrent_requests (#255) (#282)
-
-### Fixed
-- fix multi-instance usage accounting and shared admission control (#289) (#294)
-- fix log-trace correlation, add span kinds, rename s3proxy telemetry namespace (#286) (#288)
-
-### Hardened
-- security: add Vault token renewal, fix SigV4 timing leak, warn on cert/key expiry (#290) (#292)
-
-### Improved
-- update CHANGELOG.md for v0.17.9 (#274)
-
-### Dependencies
-- chore(deps): bump google.golang.org/grpc (#287)
-- chore(deps): bump golang.org/x/time from 0.14.0 to 0.15.0 (#279)
-- chore(deps): bump golangci/golangci-lint-action from 7 to 9 (#275)
-- chore(deps): bump dorny/paths-filter from 3 to 4 (#276)
-- chore(deps): bump go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc (#277)
-- chore(deps): bump go.opentelemetry.io/otel/sdk from 1.40.0 to 1.42.0 (#278)
-- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#280)
-- chore(deps): bump golang.org/x/crypto from 0.48.0 to 0.49.0 (#281)
-
-### Other
 - resilience: fix timeout cascading, bound connection pools, add jitter, reorder readiness (#291) (#293)
 - have sitemap setup (#285)
-
-## [0.17.9] - 2026-03-13
-
-### Added
-- Add interactive Mermaid.js architecture and flow diagrams to documentation site (#273)
-
-### Improved
-- update CHANGELOG.md for v0.17.8 (#272)
-
-## [0.17.8] - 2026-03-12
-
-### Fixed
-- Fix circuit breaker deadlock when all backends trip simultaneously (#271)
-
-### Improved
-- update CHANGELOG.md for v0.17.5 (#264)
-
-### Dependencies
-- chore(deps): bump golang.org/x/net (#267)
-
-### Other
 - Reduce per-request CPU and allocation overhead in hot path (#269)
-
-## [0.17.5] - 2026-03-12
-
-### Added
-- Add over-replication detection and cleanup with integration tests (#260) (#263)
-- Add burst resilience: Retry-After, early rejection, split admission, load shedding, admission wait (#262)
-
-### Fixed
-- Fix: updated nomad/kubernetes demos to protect the nomad and kubectl commands to protect if the user has en environment already pointing at real clusters
-- Fix: accidentally committed benchmark test results
-- Fix: pre-allocate headerlines slice (#259)
-
-### Improved
-- update CHANGELOG.md for v0.17.01 (#256)
-
-### Other
 - adding documentation for previous graceful degradation branch
 - Tune HTTP transport, DNS resolution, and buffer pooling for backend clients (#254) (#261)
-
-## [0.17.01] - 2026-03-10
-
-### Added
-- Add generic worker pool and parallelize sequential hot paths (#253)
-
-### Improved
-- update CHANGELOG.md for v0.17.00 (#252)
-
-## [0.17.00] - 2026-03-10
-
-### Added
-- Add orphan_bytes tracking to prevent quota drift on failed deletes (#250)
-
-### Improved
-- update CHANGELOG.md for v0.16.25 (#248)
-
-## [0.16.25] - 2026-03-10
-
-### Added
-- Add Tempo, Loki, and Alloy integration for Nomad and Kubernetes demos (#247)
-
-### Fixed
-- Fix - expand free tier page with images and more detailed content
-
-### Improved
-- update CHANGELOG.md for v0.16.23 (#245)
-
-## [0.16.23] - 2026-03-09
-
-### Fixed
-- Fix: The PAT fix ensures CI triggers on the bot's PR. The CODEOWNERS exemption prevents the review request from cluttering it. Together, the release flow should be: tag push → GoReleaser → changelog PR created → CI runs → checks pass → (#244)
-
-## [0.16.22] - 2026-03-09
-
-### Added
-- Add trace-to-log correlation via slog TraceHandler (#242)
-
-## [0.16.21] - 2026-03-09
-
-### Other
 - Test: bumping version to test release functionality
-
-## [0.16.20] - 2026-03-09
-
-### Fixed
-- Fix: let release pipeline create a PR at the end and auto-merge it to have the changelog update (#238)
-
-## [0.16.19] - 2026-03-09
-
-### Fixed
-- Fix: re-order pre-changelog, goreleaser, and git-cliff (#237)
-
-## [0.16.18] - 2026-03-09
-
-### Fixed
-- Fix: the changelog step was breaking goreleaser on 'make release' (#236)
-
-## [0.16.17] - 2026-03-09
-
-### Other
 - write failover for PutObject across eligible backends (#234)
-
-## [0.16.15] - 2026-03-09
-
-### Added
-- add strip_sdk_headers option for GCS S3 compatibility (#229)
-- add per-backend disable_checksum option for GCS compatibility (#225)
-- Add DB query tracing, background worker spans, audit logging gaps, and Grafana dashboard coverage (#222)
-- Add git-cliff changelog generation with commit categorization (#219)
-
-### Fixed
-- Fix: when a backend is unhealthy, routing still needs to allow half-open through so probes can heal the backend (#227)
-
-### Hardened
-- Harden defaults: increase DB pool size and add location cache TTL jitter (#215)
-
-### Documentation
-- documentation update I forgot
-
-### Other
 - exclude circuit-broken backends from write routing (#226)
-
-## [0.16.4] - 2026-03-08
-
-### Added
-- Add file download to admin web UI dashboard (#195)
-- add website to readme (#193)
-
-### Fixed
-- Fix cfg data race in SIGHUP handler by wrapping with atomic.Pointer[config.Config] (#210)
-- Fix ListObjectsV2 pagination bug — when the store returned exactly maxKeys objects with more data available, the manager never set IsTruncated=true, so clients like aws s3 cp --recursive stopped after the first 1000 keys. Added (#200)
-- Fix ListObjectsV2 pagination dropping results after exactly maxKeys entries (#198)
-- forgot to add log message to new admin ui download functionality (#196)
-
-### Hardened
-- Security hardening and error handling consistency (#209)
-
-### Refactored
-- Decompose BackendManager into focused component structs (#208)
-- Refactoring release that reduces code duplication without changing behavior. Admin API handlers now use Go 1.22+ method routing instead of manual method checks. A streamCopy helper consolidates the repeated (#204)
-
-### Improved
-- Expand fuzz testing with new targets, fix CI flakiness, and add file headers (#213)
-
-### Other
 - Addbenchmarksuiteforhot-pathoperationsandbenchmarkingdocs (#211)
 - if replication factor is 1 (no replication) it should short-circuit before Replicate() is called since it will just find no available targets and log an error. Closes #191 (#192)
-
-## [0.14.4] - 2026-03-06
-
-### Added
-- Add optional server-side Redis shared counters for multi-instance usage tracking (#170) (#186)
-- add readme to available documentation on hugo website (#183) (#185)
-- add readme to available documentation on hugo website (#183)
-- Add health-aware replication: replace copies on circuit-broken backends (#171) (#172)
-
-### Improved
-- Update lint in ci to be faster (#190)
-- update alpine version (#188)
-
-### Dependencies
-- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#181)
-- chore(deps): bump go.opentelemetry.io/otel from 1.40.0 to 1.41.0 (#180)
-- chore(deps): bump go.opentelemetry.io/otel/trace from 1.40.0 to 1.41.0 (#179)
-- chore(deps): bump github.com/aws/smithy-go from 1.24.1 to 1.24.2 (#178)
-- chore(deps): bump github.com/aws/aws-sdk-go-v2 from 1.41.2 to 1.41.3 (#177)
-- chore(deps): bump docker/setup-buildx-action from 3 to 4 (#173)
-- chore(deps): bump actions/github-script from 7 to 8 (#174)
-- chore(deps): bump docker/build-push-action from 6 to 7 (#175)
-- chore(deps): bump docker/login-action from 3 to 4 (#176)
-
-### Other
 - use lint image instead of installing it from scratch every time which takes forever (#189)
 - always pull latest version of docker iamges (#187)
 - Triggers on push to main (same as the app image) (#182)
-
-## [0.13.0] - 2026-03-05
-
-### Added
-- Add project website, fix usage tracking gaps, and add Vault Transit TLS support (#168) (#169)
-- Add optional server-side encryption with envelope encryption and chun… (#167)
-- Add per-backend circuit breakers, drain fixes, and production hardening (#161) (#162)
-- Add metadata passthrough, govulncheck CI, and production hardening (#159) (#160)
-
-### Hardened
-- Harden auth, add request body limits, and fix dashboard CB panel (#164) (#165)
-- Harden dashboard JS against XSS and add log pagination (#155) (#157)
-- Harden auth and sanitize API error messages (#156)
-
-### Documentation
-- documentation tweaks
-
-### Other
 - README.md update on double encryption
-
-## [0.11.2] - 2026-03-03
-
-### Added
-- Add GitHub community files and repo configuration for open-source readiness (#153)
-- Add folder delete from web UI with batch prefix deletion (#151)
-- Add Prometheus and Grafana to local demo scripts (#148) (#149)
-- Add backend drain and remove operations (#146) (#147)
-- Add in-memory log ring buffer with dashboard UI (#143)
-- Add server-level admission control for concurrent request limiting (#141)
-
-### Refactored
-- Refactor internal code for clarity and reduced duplication (#145)
-
-### Other
 - if go or sqlc code changes and the version hasn't been bumped reject the PR
-
-## [0.8.28] - 2026-03-02
-
-### Added
-- Add explicit permissions to CI workflow jobs (#136) (#139)
-- Add benchmarks, fuzz tests, and e2e tests (#126) (#134)
-- add contributing, DR, security, performance, API, and migration guides (#124) (#132)
-
-### Fixed
-- Fix unsafe integer conversion in RecordPart (#135) (#137)
-
-### Other
 - support bcrypt-hashed admin_secret and deterministic session keys (#133)
-
-## [0.8.23] - 2026-03-02
-
-### Added
-- add admin CLI, runtime log level control, and fix Trivy CI (#123) (#131)
-- add --mode flag for api/worker/all instance roles (#121) (#129) (#130)
-- add --mode flag for api/worker/all instance roles (#121) (#129)
-- add readiness probe, JSON health responses, and pre-stop drain (#120) (#128)
-- Add configurable HTTP server timeouts and ReadHeaderTimeout (#127)
-- add LIKE ESCAPE clause and quota guard to SQL queries (#109)
-
-### Fixed
-- Fix code correctness bugs in SQL, auth, XML responses, and concurrency (#114)
-- prevent cleanupBackoff overflow on large attempt values (#112)
-
-### Hardened
-- Harden security for error messages, config validation, and map access (#115)
-- harden SigV4 and token authentication (#107)
-
-### Improved
-- Improve packaging, deployment, and build consolidation (#117)
-- Improve CI/CD pipeline with sqlc verification, release gates, and scanning (#116)
-- replace destructive down migration with no-op (#113)
-
-### Other
 - code cleanup and consistency improvements (#81, #84, #87, #93, #94, #96, #97, #101, #102) (#118)
 - use detached context for advisory lock unlock (#111)
 - enforce MaxObjectSize on multipart uploads and fix ListObjects pagination (#110)
@@ -1041,102 +828,10 @@ All notable changes to this project are documented in this file.
 - defer read context cancellation until body is consumed (#106)
 - validate client-supplied X-Request-Id to prevent log injection (#105)
 - Clarify storage backend quota enforcement details
-
-## [0.8.6] - 2026-03-01
-
-### Other
 - a few integration test additions
-
-## [0.8.5] - 2026-03-01
-
-### Added
-- Add ListObjectsV1 and ListMultipartUploads endpoints (#60)
-- add HeadBucket, GetBucketLocation, and ListBuckets stubs (#50) (#59)
-- add Nomad and Kubernetes deployment examples with local demo scripts (#58)
-- add structured circuit breaker transition logging (#57)
-- add table of contents to README.md
-- add validate and version subcommands, improve developer quickstart (#56)
-
-### Other
 - adopt goose for versioned database migrations (#61)
-
-## [0.8.0] - 2026-02-28
-
-### Added
-- add dashboard auth, file management, rebalance and sync to web UI (#49)
-- add comprehensive Grafana dashboard covering all emitted metrics (#48)
-- add screenshot of dashboard to readme
-
-## [0.7.2] - 2026-02-28
-
-### Improved
-- updates to local image pushing to be faster, dockerfile/build tweaks,… (#47)
-- update tests for better coverage (#43)
-- updated version to be set in .version and docs to use x.x.x
-
-### Dependencies
-- chore(deps): bump actions/checkout from 4 to 6 (#32)
-- chore(deps): bump goreleaser/goreleaser-action from 6 to 7 (#33)
-- chore(deps): bump actions/setup-go from 5 to 6 (#34)
-- chore(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (#36)
-- chore(deps): bump go.opentelemetry.io/otel/sdk from 1.32.0 to 1.40.0 (#38)
-- chore(deps): bump github.com/aws/aws-sdk-go-v2 from 1.32.7 to 1.41.2 (#35)
-- chore(deps): bump go.opentelemetry.io/otel/trace from 1.32.0 to 1.40.0 (#39)
-- chore(deps): bump go.opentelemetry.io/otel from 1.32.0 to 1.40.0
-
-### Other
 - push docker image to ghcr on merge to main (#45)
-
-## [0.7.0] - 2026-02-27
-
-### Other
 - make documents compatible with the style guide and all go code godoc compliant
-
-## [0.6.4] - 2026-02-27
-
-### Added
-- add token usage for codecov
-- add GoReleaser releases, Codecov, Dependabot, and CI badges
-- add lifecycle rules for automatic object expiration
-- add advisory locks and adaptive usage flushing for multi-instance safety
-- add S3 DeleteObjects batch API
-- add persistent retry queue for failed backend cleanup deletions
-- add TLS/mTLS support with certificate hot-reload
-- add Debian packaging with nfpm and systemd service
-- add Debian packaging with nfpm and systemd service
-- add structured audit logging with request ID tracing
-- add service lifecycle manager with panic recovery and auto-restart
-- add storage summary section to dashboard, bump to v0.5.1
-- add lazy-loaded directory tree, tests, and v0.5.0 docs
-- add SIGHUP config hot-reload with tests and documentation
-- add spread routing tests, update docs, fix godoc compliance
-- add spread write routing strategy and dashboard favicon
-- add web UI documentation, fix OTel service name
-- add object listing to dashboard and fix table alignment
-- add operator/admin guide for deploying and operating the orchestrator
-- add per-backend monthly usage limit enforcement
-- add per-backend API request and data transfer tracking
-- add GitHub Actions workflow and linter config
-- add auth, sync pipeline, and store-level integration tests
-- add comprehensive unit tests for manager business logic and fix integration tests
-- add database circuit breaker with self-healing degraded mode
-
-### Hardened
-- harden security, correctness, and observability for v0.5.2
-
-### Refactored
-- rename s3-proxy to s3-orchestrator
-- rename Go module to github.com/afreidah/s3-proxy
-
-### Improved
-- replace NewBackendManager positional params with config struct
-- replace goto with structured control flow in ListObjects
-- update README and config example to reflect current features
-
-### Documentation
-- document usage limits, new metrics, and usage_deltas table
-
-### Other
 - optional parallel broadcast reads in degraded mode
 - parallel rebalance move execution
 - updating docs for .deb packaging info
