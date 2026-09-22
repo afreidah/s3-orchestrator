@@ -354,6 +354,63 @@ func TestListObjects(t *testing.T) {
 	}
 }
 
+// TestListObjects_ReportsLogicalSizes verifies S3-facing listings expose the
+// client-visible object length rather than the physical encoded/encrypted byte
+// count used for backend quota accounting.
+func TestListObjects_ReportsLogicalSizes(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	record := func(key string, storedSize int64, form *core.StoredForm) {
+		t.Helper()
+		if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+			Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: storedSize, Form: form,
+		}); err != nil {
+			t.Fatalf("RecordObject(%s): %v", key, err)
+		}
+	}
+
+	record("bucket/plain", 80, nil)
+	record("bucket/encrypted", 120, &core.StoredForm{
+		Encrypted: true, PlaintextSize: 100, EncryptionKey: []byte{1}, KeyID: "k1",
+	})
+	record("bucket/compressed", 40, &core.StoredForm{
+		CompressionAlgorithm: "zstd-seekable", LogicalSize: 100,
+	})
+	record("bucket/both", 70, &core.StoredForm{
+		Encrypted: true, PlaintextSize: 40, EncryptionKey: []byte{1}, KeyID: "k1",
+		CompressionAlgorithm: "zstd-seekable", LogicalSize: 100,
+	})
+
+	assertSizes := func(t *testing.T, objects []core.ObjectLocation) {
+		t.Helper()
+		got := make(map[string]int64, len(objects))
+		for _, obj := range objects {
+			got[obj.ObjectKey] = obj.SizeBytes
+		}
+		want := map[string]int64{
+			"bucket/plain": 80, "bucket/encrypted": 100,
+			"bucket/compressed": 100, "bucket/both": 100,
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("listed sizes = %#v, want %#v", got, want)
+		}
+	}
+
+	flat, err := s.ListObjects(ctx, "bucket/", "", 10)
+	if err != nil {
+		t.Fatalf("ListObjects: %v", err)
+	}
+	assertSizes(t, flat.Objects)
+
+	delimited, err := s.ListObjectsDelimited(ctx, "bucket/", "/", "", 10)
+	if err != nil {
+		t.Fatalf("ListObjectsDelimited: %v", err)
+	}
+	assertSizes(t, delimited.Objects)
+}
+
 // TestListObjects_Pagination verifies continuation-token based pagination.
 func TestListObjects_Pagination(t *testing.T) {
 	t.Parallel()

@@ -90,7 +90,13 @@ WHERE object_key = $1 AND backend_name = $2;
 -- splitting them would page a byte-ordered scan with a locale-ordered cursor and
 -- skip or repeat keys. DISTINCT ON must carry it too, or Postgres rejects the
 -- query for not matching the leading ORDER BY expression.
-SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name, size_bytes, etag, created_at
+SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name,
+       CASE
+           WHEN compression_algorithm IS NOT NULL THEN COALESCE(logical_size, size_bytes)
+           WHEN encrypted THEN COALESCE(plaintext_size, size_bytes)
+           ELSE size_bytes
+       END AS size_bytes,
+       etag, created_at
 FROM object_locations
 WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
   AND object_key COLLATE "C" > @start_after
@@ -548,12 +554,18 @@ SELECT
             || chr(ascii(substr(w.k, length(@prefix::text) + position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) + length(@delim::text) - 1, 1)) + 1)
         ELSE w.k END)::text AS skip_bound,
     COALESCE(leaf.backend_name, '')::text AS backend_name,
-    COALESCE(leaf.size_bytes, 0)::bigint AS size_bytes,
+    COALESCE(leaf.client_size, 0)::bigint AS size_bytes,
     COALESCE(leaf.etag, '')::text AS etag,
     COALESCE(leaf.created_at, to_timestamp(0)) AS created_at
 FROM walk w
 LEFT JOIN LATERAL (
-    SELECT backend_name, size_bytes, etag, created_at
+    SELECT backend_name,
+           CASE
+               WHEN compression_algorithm IS NOT NULL THEN COALESCE(logical_size, size_bytes)
+               WHEN encrypted THEN COALESCE(plaintext_size, size_bytes)
+               ELSE size_bytes
+           END AS client_size,
+           etag, created_at
       FROM object_locations o2
      WHERE o2.object_key = w.k
        AND position(@delim::text IN substr(w.k, length(@prefix::text) + 1)) = 0

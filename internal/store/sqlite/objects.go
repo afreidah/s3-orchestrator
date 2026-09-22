@@ -124,7 +124,13 @@ func (s *Store) ListObjects(ctx context.Context, prefix, startAfter string, maxK
 
 	// Subquery with GROUP BY + MIN(rowid) replaces DISTINCT ON (object_key).
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.created_at, ol.etag
+		SELECT ol.object_key, ol.backend_name,
+		       CASE
+		           WHEN ol.compression_algorithm IS NOT NULL THEN COALESCE(ol.logical_size, ol.size_bytes)
+		           WHEN ol.encrypted THEN COALESCE(ol.plaintext_size, ol.size_bytes)
+		           ELSE ol.size_bytes
+		       END AS size_bytes,
+		       ol.created_at, ol.etag
 		FROM object_locations ol
 		INNER JOIN (
 			SELECT object_key, MIN(rowid) AS min_rowid
@@ -213,7 +219,13 @@ func (s *Store) ListObjectsDelimited(ctx context.Context, prefix, delimiter, sta
 					|| char(unicode(substr(w.k, length(:prefix) + instr(substr(w.k, length(:prefix) + 1), :delim) + length(:delim) - 1, 1)) + 1)
 				ELSE w.k
 			END AS skip_bound,
-			ol.backend_name, ol.size_bytes, ol.created_at, ol.etag
+			ol.backend_name,
+			CASE
+				WHEN ol.compression_algorithm IS NOT NULL THEN COALESCE(ol.logical_size, ol.size_bytes)
+				WHEN ol.encrypted THEN COALESCE(ol.plaintext_size, ol.size_bytes)
+				ELSE ol.size_bytes
+			END AS size_bytes,
+			ol.created_at, ol.etag
 		FROM walk w
 		LEFT JOIN object_locations ol ON ol.rowid = (
 			SELECT MIN(rowid) FROM object_locations o2

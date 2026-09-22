@@ -71,12 +71,13 @@ type copyPartResult struct {
 
 // listPartsResult is the XML response for ListParts.
 type listPartsResult struct {
-	XMLName  xml.Name   `xml:"ListPartsResult"`
-	Xmlns    string     `xml:"xmlns,attr"`
-	Bucket   string     `xml:"Bucket"`
-	Key      string     `xml:"Key"`
-	UploadId string     `xml:"UploadId"`
-	Parts    []partInfo `xml:"Part"`
+	XMLName     xml.Name   `xml:"ListPartsResult"`
+	Xmlns       string     `xml:"xmlns,attr"`
+	Bucket      string     `xml:"Bucket"`
+	Key         string     `xml:"Key"`
+	UploadId    string     `xml:"UploadId"`
+	IsTruncated bool       `xml:"IsTruncated"`
+	Parts       []partInfo `xml:"Part"`
 }
 
 // partInfo holds part metadata for the ListParts response.
