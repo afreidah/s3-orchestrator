@@ -1141,11 +1141,11 @@ func (q *Queries) ListObjectsByBackendKeyAsc(ctx context.Context, arg ListObject
 
 const listObjectsByPrefix = `-- name: ListObjectsByPrefix :many
 SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name,
-       CASE
+       (CASE
            WHEN compression_algorithm IS NOT NULL THEN COALESCE(logical_size, size_bytes)
            WHEN encrypted THEN COALESCE(plaintext_size, size_bytes)
            ELSE size_bytes
-       END AS size_bytes,
+       END)::bigint AS size_bytes,
        etag, created_at
 FROM object_locations
 WHERE object_key LIKE $1::text || '%' ESCAPE '\'
