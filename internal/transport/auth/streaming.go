@@ -29,7 +29,7 @@ import (
 	"bytes"
 	"cmp"
 	"crypto/hmac"
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // S3 checksum algorithm, not authentication
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -280,14 +280,14 @@ func NewChunkReader(body io.ReadCloser, mat *StreamingMaterial) io.ReadCloser {
 // Signature verification happens when the chunk has been fully read from
 // the wire and before any byte is delivered to the caller.
 type chunkReader struct {
-	src           *bufio.Reader
-	closer        io.Closer
-	variant       StreamingVariant
-	prevSig       string
-	signingKey    []byte
-	credScope     string
-	amzDate       string
-	decodedTarget int64
+	src              *bufio.Reader
+	closer           io.Closer
+	variant          StreamingVariant
+	prevSig          string
+	signingKey       []byte
+	credScope        string
+	amzDate          string
+	decodedTarget    int64
 	trailerNames     []string
 	trailerChecksums map[string]trailerChecksum
 	checksumInitErr  error
@@ -455,46 +455,72 @@ func (r *chunkReader) computeChunkSig(body []byte) string {
 // variants it parses and validates the trailer block. In all paths it
 // asserts that the running decoded length equals the declared length.
 func (r *chunkReader) finalize(finalChunkSig string) error {
-	signed := r.variant == StreamingSigned || r.variant == StreamingSignedTrailer
-	if signed {
-		expected := r.computeChunkSig(nil)
-		if !hmac.Equal([]byte(expected), []byte(finalChunkSig)) {
-			return ErrChunkSignatureMismatch
-		}
-		r.prevSig = expected
-	}
-
+	var err error
 	switch r.variant {
-	case StreamingSignedTrailer:
-		headers, providedSig, err := r.readTrailerBlock(true)
-		if err != nil {
-			return err
-		}
-		expected := r.computeTrailerSig(canonicalizeTrailers(headers))
-		if !hmac.Equal([]byte(expected), []byte(providedSig)) {
-			return ErrTrailerSignatureMismatch
-		}
-	case StreamingUnsignedTrailer:
-		if r.checksumInitErr != nil {
-			return r.checksumInitErr
-		}
-		headers, _, err := r.readTrailerBlock(false)
-		if err != nil {
-			return err
-		}
-		if err := r.verifyUnsignedTrailerChecksums(headers); err != nil {
-			return err
-		}
 	case StreamingSigned:
-		if err := r.expectCRLF(); err != nil {
-			return err
-		}
+		err = r.finalizeSigned(finalChunkSig)
+	case StreamingSignedTrailer:
+		err = r.finalizeSignedTrailer(finalChunkSig)
+	case StreamingUnsignedTrailer:
+		err = r.finalizeUnsignedTrailer()
 	}
-
+	if err != nil {
+		return err
+	}
 	if r.decoded != r.decodedTarget {
 		return ErrDecodedLengthMismatch
 	}
 	r.eof = true
+	return nil
+}
+
+// finalizeSigned verifies the terminating empty chunk and consumes the final
+// empty line for the signed streaming form that does not carry trailers.
+func (r *chunkReader) finalizeSigned(finalChunkSig string) error {
+	if err := r.verifyFinalChunkSignature(finalChunkSig); err != nil {
+		return err
+	}
+	return r.expectCRLF()
+}
+
+// finalizeSignedTrailer verifies the terminating chunk followed by the
+// SigV4-authenticated trailer block.
+func (r *chunkReader) finalizeSignedTrailer(finalChunkSig string) error {
+	if err := r.verifyFinalChunkSignature(finalChunkSig); err != nil {
+		return err
+	}
+	headers, providedSig, err := r.readTrailerBlock(true)
+	if err != nil {
+		return err
+	}
+	expected := r.computeTrailerSig(canonicalizeTrailers(headers))
+	if !hmac.Equal([]byte(expected), []byte(providedSig)) {
+		return ErrTrailerSignatureMismatch
+	}
+	return nil
+}
+
+// finalizeUnsignedTrailer validates the AWS unsigned trailer framing and
+// verifies every checksum declared by x-amz-trailer.
+func (r *chunkReader) finalizeUnsignedTrailer() error {
+	if r.checksumInitErr != nil {
+		return r.checksumInitErr
+	}
+	headers, _, err := r.readTrailerBlock(false)
+	if err != nil {
+		return err
+	}
+	return r.verifyUnsignedTrailerChecksums(headers)
+}
+
+// verifyFinalChunkSignature authenticates the zero-size terminating chunk and
+// advances the signature chain for the signed streaming variants.
+func (r *chunkReader) verifyFinalChunkSignature(finalChunkSig string) error {
+	expected := r.computeChunkSig(nil)
+	if !hmac.Equal([]byte(expected), []byte(finalChunkSig)) {
+		return ErrChunkSignatureMismatch
+	}
+	r.prevSig = expected
 	return nil
 }
 
