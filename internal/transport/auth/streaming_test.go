@@ -121,14 +121,18 @@ func (f *fixture) writeChunk(b *bytes.Buffer, chunk []byte, prevSig *string) {
 	}
 }
 
-// writeTrailer writes the trailer block plus its signature line.
+// writeTrailer writes the declared trailer headers. AWS unsigned-trailer
+// framing ends after the checksum block; only the SigV4 signed-trailer variant
+// appends x-amz-trailer-signature.
 func (f *fixture) writeTrailer(b *bytes.Buffer, prevSig string) {
-	canonical := canonicalTrailers(f.trailers)
-	sig := computeTrailerSigForTest(f.signingKey, f.amzDate, f.credScope, prevSig, canonical)
 	for _, name := range f.trailerNames {
 		fmt.Fprintf(b, "%s:%s\r\n", name, f.trailers[name])
 	}
-	fmt.Fprintf(b, "%s:%s\r\n", trailerSignatureHeader, sig)
+	if f.variant == StreamingSignedTrailer {
+		canonical := canonicalTrailers(f.trailers)
+		sig := computeTrailerSigForTest(f.signingKey, f.amzDate, f.credScope, prevSig, canonical)
+		fmt.Fprintf(b, "%s:%s\r\n", trailerSignatureHeader, sig)
+	}
 	b.WriteString("\r\n")
 }
 
@@ -244,13 +248,14 @@ func TestChunkReader_SignedTrailer_HappyPath(t *testing.T) {
 	}
 }
 
-// TestChunkReader_UnsignedTrailer_HappyPath round-trips an unsigned body
-// with a signed trailer.
+// TestChunkReader_UnsignedTrailer_HappyPath round-trips the AWS unsigned
+// payload form: unsigned chunks followed by a checksum trailer and no
+// x-amz-trailer-signature.
 func TestChunkReader_UnsignedTrailer_HappyPath(t *testing.T) {
 	t.Parallel()
 	payload := []byte("the quick brown fox jumps over the lazy dog")
 	f := newFixture(StreamingUnsignedTrailer).withTrailers(map[string]string{
-		"x-amz-checksum-crc32c": "ZZZZZZ==",
+		"x-amz-checksum-crc32": "zgxRFA==",
 	})
 	body := f.buildBody(payload, 16)
 	got, err := readAllFromBytes(t, body, f.material(int64(len(payload))))
@@ -259,6 +264,33 @@ func TestChunkReader_UnsignedTrailer_HappyPath(t *testing.T) {
 	}
 	if !bytes.Equal(got, payload) {
 		t.Errorf("payload mismatch:\nwant %q\ngot  %q", payload, got)
+	}
+}
+
+// TestUnsignedTrailerChecksumAlgorithms pins the checksum encodings accepted
+// for STREAMING-UNSIGNED-PAYLOAD-TRAILER against standard "123456789"
+// vectors. S3 trailer values are base64 of the big-endian checksum bytes.
+func TestUnsignedTrailerChecksumAlgorithms(t *testing.T) {
+	t.Parallel()
+	const payload = "123456789"
+	cases := map[string]string{
+		"x-amz-checksum-crc32":     "y/Q5Jg==",
+		"x-amz-checksum-crc32c":    "4waSgw==",
+		"x-amz-checksum-crc64nvme": "rosUhgp5mIg=",
+		"x-amz-checksum-sha1":      "98O8HYCOBHMq32eZZczDTKeuNEE=",
+		"x-amz-checksum-sha256":    "FeKw08M4keuw8e9gnsQZQgwg4yDOlMZfvIwzEkSOsiU=",
+	}
+	for name, want := range cases {
+		t.Run(name, func(t *testing.T) {
+			checksums, err := newTrailerChecksums([]string{name})
+			if err != nil {
+				t.Fatalf("newTrailerChecksums: %v", err)
+			}
+			checksums[name].Write([]byte(payload))
+			if got := checksums[name].SumBase64(); got != want {
+				t.Errorf("checksum = %q, want %q", got, want)
+			}
+		})
 	}
 }
 
@@ -280,23 +312,19 @@ func TestChunkReader_Signed_TamperedChunk(t *testing.T) {
 	}
 }
 
-// TestChunkReader_UnsignedTrailer_TamperedSignature flips a byte in the
-// trailer signature and asserts the trailer check fails.
-func TestChunkReader_UnsignedTrailer_TamperedSignature(t *testing.T) {
+// TestChunkReader_UnsignedTrailer_TamperedChecksum asserts the unsigned
+// trailer protects transport integrity with the declared checksum even though
+// AWS does not append x-amz-trailer-signature for this variant.
+func TestChunkReader_UnsignedTrailer_TamperedChecksum(t *testing.T) {
 	t.Parallel()
-	payload := []byte("payload bytes")
+	payload := []byte("the quick brown fox jumps over the lazy dog")
 	f := newFixture(StreamingUnsignedTrailer).withTrailers(map[string]string{
 		"x-amz-checksum-crc32": "AAAAAA==",
 	})
 	body := f.buildBody(payload, 64)
-	idx := bytes.LastIndex(body, []byte(trailerSignatureHeader+":"))
-	if idx < 0 {
-		t.Fatalf("could not locate trailer signature in fixture")
-	}
-	body[idx+len(trailerSignatureHeader)+2] ^= 0x01
 	_, err := readAllFromBytes(t, body, f.material(int64(len(payload))))
-	if !errors.Is(err, ErrTrailerSignatureMismatch) {
-		t.Errorf("err = %v, want ErrTrailerSignatureMismatch", err)
+	if !errors.Is(err, ErrTrailerChecksumMismatch) {
+		t.Errorf("err = %v, want ErrTrailerChecksumMismatch", err)
 	}
 }
 
@@ -634,7 +662,7 @@ func TestIsHex(t *testing.T) {
 // signature line and asserts ErrTrailerMalformed.
 func TestChunkReader_TrailerVariants_RejectMissingSignature(t *testing.T) {
 	t.Parallel()
-	f := newFixture(StreamingUnsignedTrailer).withTrailers(map[string]string{
+	f := newFixture(StreamingSignedTrailer).withTrailers(map[string]string{
 		"x-amz-checksum-crc32": "AAAAAA==",
 	})
 	body := f.buildBody([]byte("xx"), 8)
@@ -642,6 +670,33 @@ func TestChunkReader_TrailerVariants_RejectMissingSignature(t *testing.T) {
 	_, err := readAllFromBytes(t, body, f.material(2))
 	if !errors.Is(err, ErrTrailerMalformed) {
 		t.Errorf("err = %v, want ErrTrailerMalformed", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "missing x-amz-trailer-signature") {
+		t.Errorf("err = %v, want safe missing-signature diagnostic", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "AAAAAA==") {
+		t.Errorf("diagnostic leaked trailer value: %v", err)
+	}
+}
+
+// TestChunkReader_TrailerDiagnosticsMissingDeclaredHeader verifies malformed
+// trailer diagnostics identify names only, while preserving ErrTrailerMalformed.
+func TestChunkReader_TrailerDiagnosticsMissingDeclaredHeader(t *testing.T) {
+	t.Parallel()
+	f := newFixture(StreamingUnsignedTrailer).withTrailers(map[string]string{
+		"x-amz-checksum-crc32": "AAAAAA==",
+	})
+	body := f.buildBody([]byte("xx"), 8)
+	body = removeTrailerHeader(t, body, "x-amz-checksum-crc32")
+	_, err := readAllFromBytes(t, body, f.material(2))
+	if !errors.Is(err, ErrTrailerMalformed) {
+		t.Errorf("err = %v, want ErrTrailerMalformed", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "missing=[x-amz-checksum-crc32]") {
+		t.Errorf("err = %v, want missing trailer name diagnostic", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "AAAAAA==") {
+		t.Errorf("diagnostic leaked trailer value: %v", err)
 	}
 }
 
@@ -679,6 +734,22 @@ func removeTrailerSignature(t *testing.T, body []byte) []byte {
 	end := bytes.Index(body[start:], []byte("\r\n"))
 	if end < 0 {
 		t.Fatalf("removeTrailerSignature: line terminator not found")
+	}
+	return append(body[:start], body[start+end+2:]...)
+}
+
+// removeTrailerHeader strips one named trailer line while leaving the trailer
+// signature in place, so readTrailerBlock reaches declared-header validation.
+func removeTrailerHeader(t *testing.T, body []byte, name string) []byte {
+	t.Helper()
+	marker := []byte(strings.ToLower(name) + ":")
+	start := bytes.Index(body, marker)
+	if start < 0 {
+		t.Fatalf("removeTrailerHeader: marker %q not found", name)
+	}
+	end := bytes.Index(body[start:], []byte("\r\n"))
+	if end < 0 {
+		t.Fatalf("removeTrailerHeader: line terminator not found")
 	}
 	return append(body[:start], body[start+end+2:]...)
 }

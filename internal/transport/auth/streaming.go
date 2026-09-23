@@ -29,10 +29,16 @@ import (
 	"bytes"
 	"cmp"
 	"crypto/hmac"
+	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
+	"hash/crc32"
+	"hash/crc64"
 	"io"
 	"net/http"
 	"slices"
@@ -69,6 +75,10 @@ const emptyStringSHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca4959
 // trailer signature in trailer variants.
 const trailerSignatureHeader = "x-amz-trailer-signature"
 
+// crc64NVMEReversed is the reflected CRC-64/NVME polynomial expected by
+// hash/crc64.
+const crc64NVMEReversed = 0x9a6c9329ac4bc9b5
+
 // -------------------------------------------------------------------------
 // TYPES
 // -------------------------------------------------------------------------
@@ -85,7 +95,7 @@ const (
 	StreamingNone            StreamingVariant = iota // not streaming; the regular payload hash applies
 	StreamingSigned                                  // STREAMING-AWS4-HMAC-SHA256-PAYLOAD, no trailer
 	StreamingSignedTrailer                           // ...-PAYLOAD-TRAILER, signed chunks and a signed trailer
-	StreamingUnsignedTrailer                         // STREAMING-UNSIGNED-PAYLOAD-TRAILER, only the trailer is signed
+	StreamingUnsignedTrailer                         // STREAMING-UNSIGNED-PAYLOAD-TRAILER, unsigned chunks + checksum trailer
 )
 
 // StreamingMaterial is the data the chunk reader needs to verify the
@@ -148,6 +158,10 @@ var ErrDecodedLengthMismatch = errors.New("decoded length does not match declare
 // declared trailer header, missing trailer signature, oversized block.
 // Maps to S3 InvalidRequest.
 var ErrTrailerMalformed = errors.New("malformed trailer block")
+
+// ErrTrailerChecksumMismatch indicates a checksum trailer did not match the
+// decoded payload. Amazon S3 reports checksum mismatches as BadDigest.
+var ErrTrailerChecksumMismatch = errors.New("trailer checksum mismatch")
 
 // -------------------------------------------------------------------------
 // PUBLIC API
@@ -241,7 +255,7 @@ func parseTrailerNames(value string) []string {
 // the chain, including the trailer block where applicable. mat is taken
 // by pointer to avoid copying the embedded signing key on every request.
 func NewChunkReader(body io.ReadCloser, mat *StreamingMaterial) io.ReadCloser {
-	return &chunkReader{
+	r := &chunkReader{
 		src:           bufio.NewReaderSize(body, 64*1024),
 		closer:        body,
 		variant:       mat.Variant,
@@ -252,6 +266,10 @@ func NewChunkReader(body io.ReadCloser, mat *StreamingMaterial) io.ReadCloser {
 		decodedTarget: mat.DecodedLen,
 		trailerNames:  mat.TrailerNames,
 	}
+	if mat.Variant == StreamingUnsignedTrailer {
+		r.trailerChecksums, r.checksumInitErr = newTrailerChecksums(mat.TrailerNames)
+	}
+	return r
 }
 
 // -------------------------------------------------------------------------
@@ -270,7 +288,9 @@ type chunkReader struct {
 	credScope     string
 	amzDate       string
 	decodedTarget int64
-	trailerNames  []string
+	trailerNames     []string
+	trailerChecksums map[string]trailerChecksum
+	checksumInitErr  error
 
 	buf     []byte // verified bytes pending delivery
 	decoded int64
@@ -344,6 +364,14 @@ func (r *chunkReader) advance() error {
 			return ErrChunkSignatureMismatch
 		}
 		r.prevSig = expected
+	}
+	if r.variant == StreamingUnsignedTrailer {
+		if r.checksumInitErr != nil {
+			return r.checksumInitErr
+		}
+		for _, checksum := range r.trailerChecksums {
+			checksum.Write(body)
+		}
 	}
 
 	r.buf = body
@@ -437,14 +465,25 @@ func (r *chunkReader) finalize(finalChunkSig string) error {
 	}
 
 	switch r.variant {
-	case StreamingSignedTrailer, StreamingUnsignedTrailer:
-		canonical, providedSig, err := r.readTrailerBlock()
+	case StreamingSignedTrailer:
+		headers, providedSig, err := r.readTrailerBlock(true)
 		if err != nil {
 			return err
 		}
-		expected := r.computeTrailerSig(canonical)
+		expected := r.computeTrailerSig(canonicalizeTrailers(headers))
 		if !hmac.Equal([]byte(expected), []byte(providedSig)) {
 			return ErrTrailerSignatureMismatch
+		}
+	case StreamingUnsignedTrailer:
+		if r.checksumInitErr != nil {
+			return r.checksumInitErr
+		}
+		headers, _, err := r.readTrailerBlock(false)
+		if err != nil {
+			return err
+		}
+		if err := r.verifyUnsignedTrailerChecksums(headers); err != nil {
+			return err
 		}
 	case StreamingSigned:
 		if err := r.expectCRLF(); err != nil {
@@ -467,18 +506,31 @@ type trailerKV struct{ name, value string }
 // trimmed values, joined as "name:value\n") and the trailer signature.
 // Header lines for x-amz-trailer-signature do not appear in the canonical
 // form because they carry the signature output, not an input.
-func (r *chunkReader) readTrailerBlock() (string, string, error) {
+func (r *chunkReader) readTrailerBlock(requireSignature bool) ([]trailerKV, string, error) {
 	headers, trailerSig, err := r.parseTrailerLines()
 	if err != nil {
-		return "", "", err
+		return nil, "", err
 	}
-	if trailerSig == "" {
-		return "", "", ErrTrailerMalformed
+	parsedNames := trailerHeaderNames(headers)
+	if requireSignature && trailerSig == "" {
+		return nil, "", trailerMalformed(
+			"missing %s; declared=%v parsed=%v",
+			trailerSignatureHeader, r.trailerNames, parsedNames,
+		)
 	}
-	if !declaredTrailersPresent(r.trailerNames, headers) {
-		return "", "", ErrTrailerMalformed
+	if !requireSignature && trailerSig != "" {
+		return nil, "", trailerMalformed(
+			"unexpected %s on unsigned trailer; declared=%v parsed=%v",
+			trailerSignatureHeader, r.trailerNames, parsedNames,
+		)
 	}
-	return canonicalizeTrailers(headers), trailerSig, nil
+	if missing := missingDeclaredTrailers(r.trailerNames, headers); len(missing) > 0 {
+		return nil, "", trailerMalformed(
+			"declared trailer headers missing; declared=%v parsed=%v missing=%v",
+			r.trailerNames, parsedNames, missing,
+		)
+	}
+	return headers, trailerSig, nil
 }
 
 // parseTrailerLines reads CRLF-terminated header lines until the
@@ -491,11 +543,14 @@ func (r *chunkReader) parseTrailerLines() ([]trailerKV, string, error) {
 	for {
 		line, err := readBoundedLine(r.src, maxHeaderLineBytes)
 		if err != nil {
-			return nil, "", ErrTrailerMalformed
+			return nil, "", trailerMalformed("failed reading trailer line: %v", err)
 		}
 		consumed += len(line) + 2 // +2 for CRLF
 		if consumed > maxTrailerBlockBytes {
-			return nil, "", ErrTrailerMalformed
+			return nil, "", trailerMalformed(
+				"trailer block exceeds %d bytes; parsed=%v",
+				maxTrailerBlockBytes, trailerHeaderNames(headers),
+			)
 		}
 		if line == "" {
 			return headers, trailerSig, nil
@@ -503,7 +558,10 @@ func (r *chunkReader) parseTrailerLines() ([]trailerKV, string, error) {
 		var ok bool
 		headers, trailerSig, ok = appendTrailerLine(line, headers, trailerSig)
 		if !ok {
-			return nil, "", ErrTrailerMalformed
+			return nil, "", trailerMalformed(
+				"invalid trailer header framing; parsed=%v",
+				trailerHeaderNames(headers),
+			)
 		}
 	}
 }
@@ -540,9 +598,27 @@ func splitTrailerLine(line string) (name, value string, ok bool) {
 	return strings.ToLower(strings.TrimSpace(rawName)), strings.TrimSpace(rawValue), true
 }
 
-// declaredTrailersPresent reports whether every trailer name announced
-// by the request's x-amz-trailer header arrived in the trailer block.
-func declaredTrailersPresent(declared []string, headers []trailerKV) bool {
+// trailerMalformed keeps ErrTrailerMalformed discoverable via errors.Is while
+// adding only framing metadata safe for operational logs. It deliberately
+// excludes trailer values, signatures, payload bytes, and request credentials.
+func trailerMalformed(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrTrailerMalformed, fmt.Sprintf(format, args...))
+}
+
+// trailerHeaderNames returns only parsed trailer names. Values can contain
+// checksums and signatures, so diagnostics must never include them.
+func trailerHeaderNames(headers []trailerKV) []string {
+	names := make([]string, 0, len(headers))
+	for _, h := range headers {
+		names = append(names, h.name)
+	}
+	return names
+}
+
+// missingDeclaredTrailers returns the names announced by x-amz-trailer that
+// were absent from the body trailer block.
+func missingDeclaredTrailers(declared []string, headers []trailerKV) []string {
+	var missing []string
 	for _, name := range declared {
 		found := false
 		for _, h := range headers {
@@ -552,10 +628,72 @@ func declaredTrailersPresent(declared []string, headers []trailerKV) bool {
 			}
 		}
 		if !found {
-			return false
+			missing = append(missing, name)
 		}
 	}
-	return true
+	return missing
+}
+
+// trailerChecksum incrementally computes one checksum declared through
+// x-amz-trailer. SumBase64 returns the big-endian checksum representation S3
+// uses on the wire.
+type trailerChecksum interface {
+	Write([]byte)
+	SumBase64() string
+}
+
+type hashTrailerChecksum struct{ h hash.Hash }
+
+func (c *hashTrailerChecksum) Write(p []byte) { _, _ = c.h.Write(p) }
+func (c *hashTrailerChecksum) SumBase64() string {
+	return base64.StdEncoding.EncodeToString(c.h.Sum(nil))
+}
+
+type crc32TrailerChecksum struct{ h hash.Hash32 }
+
+func (c *crc32TrailerChecksum) Write(p []byte) { _, _ = c.h.Write(p) }
+func (c *crc32TrailerChecksum) SumBase64() string {
+	var out [4]byte
+	binary.BigEndian.PutUint32(out[:], c.h.Sum32())
+	return base64.StdEncoding.EncodeToString(out[:])
+}
+
+func newTrailerChecksums(names []string) (map[string]trailerChecksum, error) {
+	checksums := make(map[string]trailerChecksum, len(names))
+	for _, name := range names {
+		var checksum trailerChecksum
+		switch name {
+		case "x-amz-checksum-crc32":
+			checksum = &crc32TrailerChecksum{h: crc32.NewIEEE()}
+		case "x-amz-checksum-crc32c":
+			checksum = &crc32TrailerChecksum{h: crc32.New(crc32.MakeTable(crc32.Castagnoli))}
+		case "x-amz-checksum-crc64nvme":
+			checksum = &hashTrailerChecksum{h: crc64.New(crc64.MakeTable(crc64NVMEReversed))}
+		case "x-amz-checksum-sha1":
+			checksum = &hashTrailerChecksum{h: sha1.New()} //nolint:gosec // S3 checksum algorithm, not authentication
+		case "x-amz-checksum-sha256":
+			checksum = &hashTrailerChecksum{h: sha256.New()}
+		default:
+			return nil, trailerMalformed("unsupported unsigned trailer checksum %q", name)
+		}
+		checksums[name] = checksum
+	}
+	return checksums, nil
+}
+
+func (r *chunkReader) verifyUnsignedTrailerChecksums(headers []trailerKV) error {
+	values := make(map[string]string, len(headers))
+	for _, h := range headers {
+		values[h.name] = h.value
+	}
+	for name, checksum := range r.trailerChecksums {
+		provided := values[name]
+		expected := checksum.SumBase64()
+		if !hmac.Equal([]byte(expected), []byte(provided)) {
+			return fmt.Errorf("%w: %s", ErrTrailerChecksumMismatch, name)
+		}
+	}
+	return nil
 }
 
 // canonicalizeTrailers sorts headers by name and renders them as
