@@ -12,6 +12,7 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
@@ -514,6 +515,40 @@ func TestListParts_EmptyParts(t *testing.T) {
 	}
 	if len(result.Parts) != 0 {
 		t.Errorf("expected 0 parts, got %d", len(result.Parts))
+	}
+}
+
+// TestListParts_EmitsIsTruncatedFalse verifies the wire response includes
+// IsTruncated even when there are no parts. AWS SDK v1 represents an omitted
+// boolean as nil, and Harbor's distribution S3 driver dereferences that field
+// while resuming uploads.
+func TestListParts_EmitsIsTruncatedFalse(t *testing.T) {
+	t.Parallel()
+	ts, _, _ := newTestServer(t, func(m *storetest.MockMetadataStore) {
+		m.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
+			Return(&core.MultipartUpload{
+				UploadID:    "upload-1",
+				ObjectKey:   "mybucket/testkey",
+				BackendName: "b1",
+			}, nil).AnyTimes()
+		m.EXPECT().GetParts(gomock.Any(), gomock.Any()).
+			Return(nil, nil).AnyTimes()
+	})
+
+	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/testkey?uploadId=upload-1", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200. body: %s", resp.StatusCode, body)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(body, []byte("<IsTruncated>false</IsTruncated>")) {
+		t.Fatalf("ListParts response missing IsTruncated=false: %s", body)
 	}
 }
 
