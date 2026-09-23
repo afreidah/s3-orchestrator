@@ -91,11 +91,11 @@ WHERE object_key = $1 AND backend_name = $2;
 -- skip or repeat keys. DISTINCT ON must carry it too, or Postgres rejects the
 -- query for not matching the leading ORDER BY expression.
 SELECT DISTINCT ON (object_key COLLATE "C") object_key, backend_name,
-       CASE
+       (CASE
            WHEN compression_algorithm IS NOT NULL THEN COALESCE(logical_size, size_bytes)
            WHEN encrypted THEN COALESCE(plaintext_size, size_bytes)
            ELSE size_bytes
-       END AS size_bytes,
+       END)::bigint AS size_bytes,
        etag, created_at
 FROM object_locations
 WHERE object_key LIKE @prefix::text || '%' ESCAPE '\'
