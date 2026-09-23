@@ -50,6 +50,10 @@ func streamingErrorResponse(err error) (status int, code, msg, reason string, ok
 		return http.StatusForbidden, "SignatureDoesNotMatch",
 			"The trailer signature does not match the signature derived from the request.",
 			"trailer_signature_mismatch", true
+	case errors.Is(err, auth.ErrTrailerChecksumMismatch):
+		return http.StatusBadRequest, "BadDigest",
+			"The checksum you specified did not match what was received.",
+			"trailer_checksum_mismatch", true
 	case errors.Is(err, auth.ErrDecodedLengthMismatch):
 		return http.StatusBadRequest, "IncompleteBody",
 			"The decoded body length does not match x-amz-decoded-content-length.",

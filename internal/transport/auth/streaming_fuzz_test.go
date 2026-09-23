@@ -29,7 +29,7 @@ func FuzzChunkReader(f *testing.F) {
 	f.Add(signedSeed)
 
 	unsignedTrailer := newFixture(StreamingUnsignedTrailer).withTrailers(map[string]string{
-		"x-amz-checksum-crc32": "AAAAAA==",
+		"x-amz-checksum-crc32": "xKSRJQ==",
 	})
 	unsignedSeed := unsignedTrailer.buildBody([]byte("trailer fuzz"), 16)
 	f.Add(unsignedSeed)
@@ -75,6 +75,7 @@ func isTypedStreamingError(err error) bool {
 	switch {
 	case errors.Is(err, ErrChunkSignatureMismatch),
 		errors.Is(err, ErrTrailerSignatureMismatch),
+		errors.Is(err, ErrTrailerChecksumMismatch),
 		errors.Is(err, ErrChunkMalformed),
 		errors.Is(err, ErrChunkTooLarge),
 		errors.Is(err, ErrDecodedLengthMismatch),
