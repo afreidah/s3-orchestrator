@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"testing"
 	"time"
 
@@ -60,6 +61,48 @@ type acquiringLocker struct{}
 func (acquiringLocker) WithAdvisoryLock(ctx context.Context, _ int64, fn func(ctx context.Context) error) (bool, error) {
 	return true, fn(ctx)
 }
+
+// recordingFlusher is a usageFlushOps that appends each flush call to calls,
+// shared with recordingFleet so a test sees the whole tick in order.
+type recordingFlusher struct {
+	redis bool
+	err   error
+	calls *[]string
+}
+
+func (recordingFlusher) Config() *config.UsageFlushConfig { return nil }
+func (r recordingFlusher) RedisCounterConfigured() bool   { return r.redis }
+
+func (r recordingFlusher) FlushUsage(_ context.Context) error {
+	*r.calls = append(*r.calls, "FlushUsage")
+	return r.err
+}
+
+func (r recordingFlusher) FlushQuota(_ context.Context) error {
+	*r.calls = append(*r.calls, "FlushQuota")
+	return r.err
+}
+
+// recordingFleet is a quotaMetricsRefresher that appends each refresh to calls.
+type recordingFleet struct {
+	err   error
+	calls *[]string
+}
+
+func (r recordingFleet) UpdateFleetMetrics(_ context.Context) error {
+	*r.calls = append(*r.calls, "UpdateFleetMetrics")
+	return r.err
+}
+
+func (r recordingFleet) RefreshUsageBaselines(_ context.Context) error {
+	*r.calls = append(*r.calls, "RefreshUsageBaselines")
+	return r.err
+}
+
+// neverNearLimit keeps the adaptive interval out of flush-tick tests.
+type neverNearLimit struct{}
+
+func (neverNearLimit) NearLimit(_ float64) bool { return false }
 
 // flushDeps builds the usage-flush service's dependency bag from the fixture,
 // so the tests that drive one differ only in the locker they hand it.
@@ -208,19 +251,47 @@ func TestServiceWorkClosures_RunOnceCovers(t *testing.T) {
 	}
 }
 
-// TestUsageFlushService_DoFlushCoversBothCalls exercises the doFlush
-// helper directly against the fixture stack, covering both the
-// FlushUsage call and the UpdateQuotaMetrics call. The fixture stack
-// has no backends so both calls return nil, but the closure body and
-// the error-attr guards execute. The Redis branch in flushTick is
-// driven through the same path because RedisCounterConfigured returns
-// false for the LocalCounterBackend the fixture uses.
-func TestUsageFlushService_DoFlushCoversBothCalls(t *testing.T) {
+// TestUsageFlushService_FlushTick pins which steps a tick runs and in what
+// order. An instance that loses the lock must still refresh its usage
+// baselines, or its limit checks run against a stale baseline indefinitely.
+// Without Redis the losing locker proves no lock is taken, since the flush
+// would otherwise be skipped. Store errors are logged and never cut the tick
+// short.
+func TestUsageFlushService_FlushTick(t *testing.T) {
 	t.Parallel()
-	f := newServicesFixture(t)
-	svc := NewUsageFlushService(f.flushDeps(fakeLocker{})).(*usageFlushService)
-	svc.doFlush(context.Background())   // must not panic
-	svc.flushTick(context.Background()) // hits the no-Redis branch
+	storeErr := errors.New("store down")
+	shared := []string{"FlushQuota", "FlushUsage", "UpdateFleetMetrics", "RefreshUsageBaselines"}
+
+	tests := []struct {
+		name   string
+		redis  bool
+		locker tickrunner.AdvisoryLocker
+		err    error
+		want   []string
+	}{
+		{"redis lock lost", true, fakeLocker{}, nil, []string{"FlushQuota", "RefreshUsageBaselines"}},
+		{"redis lock won", true, acquiringLocker{}, nil, shared},
+		{"no redis takes no lock", false, fakeLocker{}, nil, shared},
+		{"errors do not stop the tick", true, acquiringLocker{}, storeErr, shared},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var calls []string
+			svc := NewUsageFlushService(&UsageFlushDeps{
+				Flusher: recordingFlusher{redis: tt.redis, err: tt.err, calls: &calls},
+				Tracker: neverNearLimit{},
+				Fleet:   recordingFleet{err: tt.err, calls: &calls},
+				Locker:  tt.locker,
+			}).(*usageFlushService)
+
+			svc.flushTick(context.Background())
+
+			if !slices.Equal(calls, tt.want) {
+				t.Errorf("calls = %v, want %v", calls, tt.want)
+			}
+		})
+	}
 }
 
 // TestServiceConstructors_AllReturnNonNil asserts each factory produces a
@@ -490,12 +561,9 @@ func TestUsageFlushService_RunTicksOnce(t *testing.T) {
 	_ = svc.Run(ctx)
 }
 
-// TestUsageFlushService_FlushTickWithRedisPath covers the Redis-configured
-// branch of flushTick by forcing RedisCounterConfigured to return true via
-// a UsageFlushConfig with AdaptiveEnabled set  -  exercises the advisory
-// lock sidechannel.
-// TestUsageFlushService_FlushTickWithAdaptiveSwitch verifies usage flush service_flush tick with adaptive switch.
-// TestUsageFlushService_FlushTickWithAdaptiveSwitch verifies usage flush service_flush tick with adaptive switch.
+// TestUsageFlushService_FlushTickWithAdaptiveSwitch runs the service with an
+// adaptive threshold of zero, so every tick switches the ticker to
+// FastInterval.
 func TestUsageFlushService_FlushTickWithAdaptiveSwitch(t *testing.T) {
 	t.Parallel()
 	f := newServicesFixture(t)
@@ -511,21 +579,14 @@ func TestUsageFlushService_FlushTickWithAdaptiveSwitch(t *testing.T) {
 	_ = svc.Run(ctx)
 }
 
-// TestUsageFlushService_DoFlushHandlesUpdateError forces UpdateQuotaMetrics
-// to error so doFlush's second guarded log path runs. The mock returns nil
-// for ListObjectsByBackend etc., but UpdateQuotaMetrics ultimately calls
-// MetricsCollector.UpdateQuotaMetrics, which needs DashboardStore methods
-//   - those are stubbed by MockStore. So the happy path is fully covered;
-//
-// this test re-runs doFlush with a cancelled ctx which short-circuits
-// FlushUsage and exercises the post-error continuation.
-// TestUsageFlushService_DoFlushOnCancelledCtx verifies usage flush service_do flush on cancelled ctx.
-// TestUsageFlushService_DoFlushOnCancelledCtx verifies usage flush service_do flush on cancelled ctx.
-func TestUsageFlushService_DoFlushOnCancelledCtx(t *testing.T) {
+// TestUsageFlushService_FlushTickOnCancelledCtx runs a tick against the real
+// stack with a cancelled context, so every step fails and is logged without
+// the tick panicking.
+func TestUsageFlushService_FlushTickOnCancelledCtx(t *testing.T) {
 	t.Parallel()
 	f := newServicesFixture(t)
 	svc := NewUsageFlushService(f.flushDeps(fakeLocker{})).(*usageFlushService)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	svc.doFlush(ctx) // must not panic on cancelled ctx
+	svc.flushTick(ctx)
 }

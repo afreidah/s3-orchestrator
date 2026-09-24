@@ -109,21 +109,51 @@ func (mc *Collector) RecordOperation(operation, backend string, start time.Time,
 // PERIODIC REFRESH
 // -------------------------------------------------------------------------
 
-// UpdateQuotaMetrics fetches quota stats, object counts, active multipart
-// upload counts, and monthly usage, then updates the corresponding
-// Prometheus gauges and caches usage baselines for limit enforcement.
+// UpdateQuotaMetrics runs a full refresh: the fleet gauges and this
+// instance's usage baselines.
 func (mc *Collector) UpdateQuotaMetrics(ctx context.Context) error {
 	stats, err := mc.store.GetQuotaStats(ctx)
 	if err != nil {
 		return err
 	}
+	mc.updateFleetGauges(ctx, stats)
+	mc.updateUsageGauges(ctx, stats)
+	return nil
+}
+
+// UpdateFleetMetrics refreshes the gauges that describe the whole fleet:
+// quota bytes, object and multipart counts, replication state and plaintext
+// copies. Every instance reads the same values from the store, so with
+// several instances only one needs to run it.
+func (mc *Collector) UpdateFleetMetrics(ctx context.Context) error {
+	stats, err := mc.store.GetQuotaStats(ctx)
+	if err != nil {
+		return err
+	}
+	mc.updateFleetGauges(ctx, stats)
+	return nil
+}
+
+// RefreshUsageBaselines reloads this period's usage from the store into the
+// tracker's baselines and republishes the usage gauges. Limit checks compare
+// against these baselines, so every instance must run it, whether or not it
+// flushed the counters itself.
+func (mc *Collector) RefreshUsageBaselines(ctx context.Context) error {
+	stats, err := mc.store.GetQuotaStats(ctx)
+	if err != nil {
+		return err
+	}
+	mc.updateUsageGauges(ctx, stats)
+	return nil
+}
+
+// updateFleetGauges publishes every gauge derived from fleet-wide store state.
+func (mc *Collector) updateFleetGauges(ctx context.Context, stats map[string]core.QuotaStat) {
 	mc.updateQuotaGauges(ctx, stats)
 	mc.updateObjectCountGauges(ctx, stats)
 	mc.updateMultipartCountGauges(ctx, stats)
-	mc.updateUsageGauges(ctx, stats)
 	mc.updateReplicationPending(ctx)
 	mc.updatePlaintextCopies(ctx)
-	return nil
 }
 
 // updatePlaintextCopies publishes how many copies are still unencrypted.
