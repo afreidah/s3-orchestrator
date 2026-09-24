@@ -58,7 +58,7 @@ Requests are signed with SigV4, so the credential needs the admin permissions fo
 | `s3orchestrator_credential` | One keypair proving one user | The access key |
 | `s3orchestrator_grant` | What one user reaches on one resource | `user_id/kind/name` |
 
-A few behaviours are worth knowing before writing a configuration against them.
+These resources behave as follows when a configuration changes.
 
 A **user rename** is an update rather than a replacement. The id does not move, so the credentials and grants referencing it keep working.
 

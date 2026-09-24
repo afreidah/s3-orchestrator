@@ -386,10 +386,18 @@ WHERE object_key = $1 AND backend_name = $2
 -- a backend is over its usage limit: a copy the scrubber would decline never
 -- occupies a slot, so it is neither stamped as examined nor left at the head of
 -- the queue to be re-selected every cycle.
+--
+-- scrubbed_before is the re-verification floor: a copy touched at or after it
+-- is too recently verified to be worth another read. Without it a backend
+-- holding fewer copies than the batch size is read in full on every pass, so
+-- egress scales with how often the scrubber runs rather than with how stale the
+-- data is. The cutoff arrives as a timestamp rather than an interval so the
+-- comparison stays sargable against the ordering expression.
 SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, plaintext_size, content_hash, compression_algorithm, compression_level, compression_format_version, logical_size, created_at, last_scrubbed_at
 FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
   AND backend_name = ANY(@backend_names::text[])
+  AND COALESCE(last_scrubbed_at, created_at) < @scrubbed_before::timestamptz
 ORDER BY COALESCE(last_scrubbed_at, created_at) ASC, object_key ASC
 LIMIT @row_limit;
 
@@ -397,10 +405,14 @@ LIMIT @row_limit;
 -- Copies eligible for scrubbing that live on the named backends. Used to report
 -- how much of the queue a cycle declined to read, which a sampled count of the
 -- batch cannot show.
+--
+-- Carries the same floor as the batch query so the deferred count describes
+-- work the cycle would have done, not copies that were never due.
 SELECT count(*)
 FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
-  AND backend_name = ANY(@backend_names::text[]);
+  AND backend_name = ANY(@backend_names::text[])
+  AND COALESCE(last_scrubbed_at, created_at) < @scrubbed_before::timestamptz;
 
 -- name: MarkObjectScrubbed :exec
 -- Stamp a copy the scrubber just examined. Applied to every attempted copy,

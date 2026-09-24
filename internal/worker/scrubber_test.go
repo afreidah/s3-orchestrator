@@ -302,6 +302,92 @@ func TestBackfill_EmptyBatch(t *testing.T) {
 	}
 }
 
+// TestScrub_AppliesConfiguredFloor asserts the cycle derives its cutoff from
+// the configured floor.
+func TestScrub_AppliesConfiguredFloor(t *testing.T) {
+	t.Parallel()
+	s, _, _, _, ms := setupScrubber(t)
+	ms.randomHashedObjects = nil
+	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10, ScrubberMinAge: 6 * time.Hour})
+
+	before := time.Now()
+	s.Scrub(context.Background(), 10, "", nil)
+
+	assertCutoffNear(t, "batch", ms.scrubBatchCutoff, before.Add(-6*time.Hour))
+}
+
+// TestScrub_FloorIsSharedByBothQueries asserts the batch and the deferred count
+// are taken against one cutoff. Two cutoffs would describe two populations, so
+// the deferred gauge would not report the work this cycle actually skipped.
+func TestScrub_FloorIsSharedByBothQueries(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := newMockScrubberOps(ctrl)
+	ms := &mockMetadataStore{deferredCandidates: 12}
+
+	ops.EXPECT().BackendOrder().Return([]string{"b1", "b2"}).AnyTimes()
+	ops.EXPECT().Usage().Return(limitedUsage(t)).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+
+	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms})
+	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 100, ScrubberMinAge: 6 * time.Hour})
+
+	s.Scrub(context.Background(), 10, "", nil)
+
+	if !ms.scrubDeferredCutoff.Equal(ms.scrubBatchCutoff) {
+		t.Errorf("deferred cutoff %v differs from batch cutoff %v", ms.scrubDeferredCutoff, ms.scrubBatchCutoff)
+	}
+}
+
+// TestScrub_FallsBackToDefaultFloor asserts a config carrying no floor still
+// gets one. A zero value reaches the scrubber from any config built without
+// validation, and treating it as no floor would make every pass a full re-read
+// of each affordable backend.
+func TestScrub_FallsBackToDefaultFloor(t *testing.T) {
+	t.Parallel()
+	s, _, _, _, ms := setupScrubber(t)
+	ms.randomHashedObjects = nil
+	s.SetConfig(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 10})
+
+	before := time.Now()
+	s.Scrub(context.Background(), 10, "", nil)
+
+	assertCutoffNear(t, "batch", ms.scrubBatchCutoff, before.Add(-config.DefaultScrubberMinAge))
+}
+
+// TestScrub_FloorWithoutConfig asserts a cycle that runs before any config has
+// been pushed still applies a floor, since the tick and the admin path can both
+// reach the scrubber during startup.
+func TestScrub_FloorWithoutConfig(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	ops := newMockScrubberOps(ctrl)
+	ms := &mockMetadataStore{}
+
+	ops.EXPECT().BackendOrder().Return([]string{"b1"}).AnyTimes()
+	ops.EXPECT().Usage().Return(limitedUsage(t)).AnyTimes()
+	ops.EXPECT().Acct().Return(newTestRecorder()).AnyTimes()
+
+	s := NewScrubber(ScrubberDeps{Ops: ops, Placement: NewMockPlacement(ctrl), Store: ms})
+	if s.Config() != nil {
+		t.Fatal("expected nil config before SetConfig")
+	}
+
+	before := time.Now()
+	s.Scrub(context.Background(), 10, "", nil)
+
+	assertCutoffNear(t, "batch", ms.scrubBatchCutoff, before.Add(-config.DefaultScrubberMinAge))
+}
+
+// assertCutoffNear compares a cutoff against the expected one with a minute of
+// slack, since the cycle reads the clock itself.
+func assertCutoffNear(t *testing.T, label string, got, want time.Time) {
+	t.Helper()
+	if got.Before(want.Add(-time.Minute)) || got.After(want.Add(time.Minute)) {
+		t.Errorf("%s cutoff = %v, want about %v", label, got, want)
+	}
+}
+
 // TestScrubber_SetConfig verifies the scrubber set config contract.
 // Asserts that expected batch size 50, got.
 func TestScrubber_SetConfig(t *testing.T) {

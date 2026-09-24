@@ -115,6 +115,7 @@ func setupEncryptionEnv(t *testing.T) *encryptionTestEnv {
 		Store:        testStore,
 		Encryptor:    enc,
 		EncStore:     testStore,
+		Locker:       testStore,
 		Runtime:      st.Runtime,
 		Usage:        st.Runtime.Usage(),
 		IntegrityCfg: st.IntegrityCfg,

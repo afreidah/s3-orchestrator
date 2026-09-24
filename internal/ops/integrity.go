@@ -18,6 +18,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/must"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
@@ -55,6 +56,7 @@ type BackfillResult struct {
 type IntegrityDeps struct {
 	Scrubber     ScrubberOps
 	IntegrityCfg IntegrityConfigLoader
+	Locker       AdvisoryLocker
 }
 
 // Integrity serves the verification operations shared by the admin API and
@@ -63,16 +65,19 @@ type Integrity struct {
 	log          *slog.Logger
 	scrubber     ScrubberOps
 	integrityCfg IntegrityConfigLoader
+	locker       AdvisoryLocker
 }
 
 // NewIntegrity is the explicit-deps constructor.
 func NewIntegrity(d IntegrityDeps) *Integrity {
 	must.NotNil("d.Scrubber", d.Scrubber)
 	must.NotNil("d.IntegrityCfg", d.IntegrityCfg)
+	must.NotNil("d.Locker", d.Locker)
 	return &Integrity{
 		log:          slog.Default().With(logfmt.Component("ops")),
 		scrubber:     d.Scrubber,
 		integrityCfg: d.IntegrityCfg,
+		locker:       d.Locker,
 	}
 }
 
@@ -84,6 +89,13 @@ func NewIntegrity(d IntegrityDeps) *Integrity {
 // <= 0 uses the configured ScrubberBatchSize. An empty backend verifies copies
 // on every backend the read budget allows. observer, when non-nil, receives a
 // start and end step per copy verified.
+//
+// Held under the same advisory lock as the scheduled sweep, so an operator run
+// and a tick cannot read the fleet twice over. The lock lives here rather than
+// in each transport because the dashboard, the admin CLI and the TUI all reach
+// the scrubber through this method, and a guard in one of them leaves the other
+// two unprotected. A pass that cannot take the lock reports ErrScrubInProgress
+// rather than waiting, so the caller gets an answer instead of an open request.
 func (i *Integrity) Scrub(ctx context.Context, batchSize int, backend string, observer progress.Observer) (ScrubResult, error) {
 	icfg := i.integrityCfg.Load()
 	if icfg == nil || !icfg.Enabled {
@@ -93,7 +105,18 @@ func (i *Integrity) Scrub(ctx context.Context, batchSize int, backend string, ob
 		batchSize = icfg.ScrubberBatchSize
 	}
 
-	sum := i.scrubber.Scrub(ctx, batchSize, backend, observer)
+	var sum worker.WorkSummary
+	acquired, err := i.locker.WithAdvisoryLock(ctx, core.LockScrubber, func(lockCtx context.Context) error {
+		sum = i.scrubber.Scrub(lockCtx, batchSize, backend, observer)
+		return nil
+	})
+	if err != nil {
+		return ScrubResult{}, err
+	}
+	if !acquired {
+		return ScrubResult{}, ErrScrubInProgress
+	}
+
 	return ScrubResult{
 		Checked:    sum.Attempted,
 		Failed:     sum.Failed,

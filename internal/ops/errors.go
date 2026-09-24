@@ -44,6 +44,7 @@ var (
 	ErrEncryptionDisabled    = &SkipError{Reason: "encryption not enabled"}
 	ErrRebalancerUnavailable = &SkipError{Reason: "rebalancer not available"}
 	ErrLifecycleUnavailable  = &SkipError{Reason: "lifecycle manager not available"}
+	ErrScrubInProgress       = &SkipError{Reason: "another instance is already scrubbing"}
 
 	ErrCompressionUnavailable = &SkipError{Reason: "compression codec not available"}
 )

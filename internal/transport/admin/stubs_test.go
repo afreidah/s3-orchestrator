@@ -94,6 +94,7 @@ func integrityWith(t *testing.T, h *Handler, be backendOpsStub, sc *scrubberStub
 	h.integrity = ops.NewIntegrity(ops.IntegrityDeps{
 		Scrubber:     newScrubber(t, sc),
 		IntegrityCfg: newOpsIntegrityCfg(t, be),
+		Locker:       newGrantingLocker(t),
 	})
 }
 
@@ -264,6 +265,19 @@ type scrubberStub struct {
 	backfillProcessed int
 	backfillMore      bool
 	backfillCalls     int
+}
+
+// newGrantingLocker builds an advisory locker that always takes the lock and
+// runs the work, which is what every handler test that is not about lock
+// contention wants.
+func newGrantingLocker(t *testing.T) *opstest.MockAdvisoryLocker {
+	t.Helper()
+	m := opstest.NewMockAdvisoryLocker(gomock.NewController(t))
+	m.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, _ int64, fn func(context.Context) error) (bool, error) {
+			return true, fn(ctx)
+		}).AnyTimes()
+	return m
 }
 
 // newScrubber builds a ScrubberOps mock from cfg.

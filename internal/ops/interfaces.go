@@ -192,6 +192,13 @@ type ScrubberOps interface {
 	Backfill(ctx context.Context, batchSize, offset int, backend string, observer progress.Observer) (worker.WorkSummary, int)
 }
 
+// AdvisoryLocker is the cluster-wide mutual exclusion an operator-triggered
+// pass needs so it cannot run alongside the scheduled sweep or a pass on
+// another instance. Reports whether the lock was taken rather than blocking.
+type AdvisoryLocker interface {
+	WithAdvisoryLock(ctx context.Context, lockID int64, fn func(ctx context.Context) error) (bool, error)
+}
+
 // -------------------------------------------------------------------------
 // ASSERTIONS
 // -------------------------------------------------------------------------

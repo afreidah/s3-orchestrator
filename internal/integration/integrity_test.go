@@ -327,6 +327,7 @@ func TestIntegrity_ScrubberDetectsCorruptedCopy(t *testing.T) {
 	// copy. This is precisely why corruption needs a background detector.
 	assertProxyServes(t, ctx, client, key, body, "after corruption")
 
+	backdateObjectLocations(t, testDB, key)
 	scrubSum := testWorkers.Scrubber.Scrub(ctx, 100, "", nil)
 	if scrubSum.Failed != 1 {
 		t.Errorf("scrub reported %d mismatches, want 1 (%+v)", scrubSum.Failed, scrubSum)
@@ -375,10 +376,16 @@ func TestIntegrity_ScrubberAcceptsHealthyCopies(t *testing.T) {
 		t.Fatalf("backfill stored no hashes: %+v", sum)
 	}
 
+	// Copies written moments ago sit inside the re-verification floor.
+	if sum := testWorkers.Scrubber.Scrub(ctx, 100, "", nil); sum.Attempted != 0 {
+		t.Errorf("scrub read %d fresh copies, want 0 (%+v)", sum.Attempted, sum)
+	}
+
+	backdateObjectLocations(t, testDB, key)
 	scrubSum := testWorkers.Scrubber.Scrub(ctx, 100, "", nil)
-	if scrubSum.Failed != 0 {
-		t.Errorf("scrub reported %d mismatches on healthy copies, want 0 (%+v)",
-			scrubSum.Failed, scrubSum)
+	if scrubSum.Succeeded != 2 || scrubSum.Failed != 0 {
+		t.Errorf("scrub verified %d copies with %d mismatches, want 2 and 0 (%+v)",
+			scrubSum.Succeeded, scrubSum.Failed, scrubSum)
 	}
 	assertObjectIntact(t, ctx, client, key, body, "after clean scrub")
 }

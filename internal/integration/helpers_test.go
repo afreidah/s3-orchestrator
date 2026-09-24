@@ -114,14 +114,10 @@ func mustStartPostgres(ctx context.Context) *tcpostgres.PostgresContainer {
 
 // minioImage is the image the fleet's backends run.
 //
-// Pulled from quay.io rather than Docker Hub, where minio/minio stopped serving
-// anonymous pulls: a machine with the image already cached kept working while
-// every clean runner failed to start the suite at all.
-//
-// Pinned rather than tracking latest, which is what let that break arrive
-// silently, and what would otherwise let the backends' behaviour change under
-// the suite between one run and the next.
-const minioImage = "quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z"
+// It is a project-owned GHCR mirror of a pinned upstream release, because
+// neither Docker Hub nor quay.io serves MinIO to anonymous pulls. The pin
+// keeps the backends' behaviour fixed between runs.
+const minioImage = "ghcr.io/afreidah/minio:RELEASE.2025-04-22T22-12-26Z"
 
 // mustStartMinios launches the three MinIO testcontainers the suite
 // uses to model a multi-backend fleet, sets MINIO{N}_ENDPOINT env vars
@@ -728,6 +724,18 @@ func queryObjectCopies(t *testing.T, key string) int {
 		t.Fatalf("queryObjectCopies(%q): %v", key, err)
 	}
 	return count
+}
+
+// backdateObjectLocations pushes every copy of key past the scrubber's
+// re-verification floor so the next scrub selects it.
+func backdateObjectLocations(t *testing.T, db *sql.DB, key string) {
+	t.Helper()
+	if _, err := db.Exec(
+		"UPDATE object_locations SET created_at = NOW() - INTERVAL '48 hours', last_scrubbed_at = NULL WHERE object_key = $1",
+		internalKey(key),
+	); err != nil {
+		t.Fatalf("backdateObjectLocations(%q): %v", key, err)
+	}
 }
 
 // queryObjectBackends returns all backend names storing copies of the given key.

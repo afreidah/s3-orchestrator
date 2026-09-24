@@ -168,5 +168,5 @@ Two rules may share a prefix as long as their tags differ, since they then selec
 
 The cutoff compares against the object's creation time, not the time a tag was applied - the same as S3. Tagging an object that is already older than a rule's window therefore makes it eligible on the next sweep, so a rule expiring `retain=30d` after 30 days will delete a two-year-old object shortly after you tag it.
 
-That is the intended behaviour, but it makes tagging an existing object a deletion decision rather than a scheduling one. Worth knowing before retagging in bulk.
+That is the intended behaviour, but it makes tagging an existing object a deletion decision rather than a scheduling one. Check the rule's window before retagging in bulk.
 

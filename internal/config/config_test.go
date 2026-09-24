@@ -1582,6 +1582,57 @@ func TestNonReloadableFieldsChanged_MultipleChanges(t *testing.T) {
 // USAGE FLUSH CONFIG TESTS
 // -------------------------------------------------------------------------
 
+// TestIntegrityConfig_ScrubberMinAgeDefault asserts an enabled integrity block
+// that names no floor gets the default rather than none. A zero floor would
+// re-read every backend smaller than the batch size on every pass.
+func TestIntegrityConfig_ScrubberMinAgeDefault(t *testing.T) {
+	t.Parallel()
+	ic := IntegrityConfig{Enabled: true}
+	if errs := ic.setDefaultsAndValidate(); len(errs) != 0 {
+		t.Fatalf("setDefaultsAndValidate: %v", errs)
+	}
+	if ic.ScrubberMinAge != DefaultScrubberMinAge {
+		t.Errorf("ScrubberMinAge = %v, want %v", ic.ScrubberMinAge, DefaultScrubberMinAge)
+	}
+}
+
+// TestIntegrityConfig_ScrubberMinAgeRejectsNegative asserts a negative floor is
+// a config error rather than a cutoff in the future that selects everything.
+func TestIntegrityConfig_ScrubberMinAgeRejectsNegative(t *testing.T) {
+	t.Parallel()
+	ic := IntegrityConfig{Enabled: true, ScrubberMinAge: -time.Hour}
+	if errs := ic.setDefaultsAndValidate(); len(errs) == 0 {
+		t.Error("a negative scrubber_min_age should be rejected")
+	}
+}
+
+// TestIntegrityConfig_ScrubbedBefore asserts the cutoff is the floor subtracted
+// from the reference time, which is what makes a recently verified copy
+// ineligible. An unset or negative floor resolves to the default rather than to
+// a cutoff of now, which would select every copy on every pass.
+func TestIntegrityConfig_ScrubbedBefore(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.September, 24, 12, 0, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name   string
+		minAge time.Duration
+		want   time.Duration
+	}{
+		{"configured", 6 * time.Hour, 6 * time.Hour},
+		{"unset", 0, DefaultScrubberMinAge},
+		{"negative", -time.Hour, DefaultScrubberMinAge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ic := IntegrityConfig{Enabled: true, ScrubberMinAge: tc.minAge}
+			if got, want := ic.ScrubbedBefore(now), now.Add(-tc.want); !got.Equal(want) {
+				t.Errorf("ScrubbedBefore = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
 // TestUsageFlushConfig_Defaults verifies the usage flush config defaults contract.
 // Asserts that valid config should pass:.
 func TestUsageFlushConfig_Defaults(t *testing.T) {

@@ -30,7 +30,7 @@ import (
 // errOpaque is the kind of error that pre-logfmt code path serialised as
 // {} via the JSON handler. The struct has no exported fields and no
 // MarshalJSON so encoding/json produces an empty object  -  exactly the
-// downstream "[object Object]" footgun that motivated the helper.
+// downstream "[object Object]" rendering that motivated the helper.
 type errOpaque struct{ inner string }
 
 // -------------------------------------------------------------------------

@@ -116,13 +116,22 @@ SELECT count(*)
 FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
   AND backend_name = ANY($1::text[])
+  AND COALESCE(last_scrubbed_at, created_at) < $2::timestamptz
 `
+
+type CountScrubCandidatesOnBackendsParams struct {
+	BackendNames   []string
+	ScrubbedBefore pgtype.Timestamptz
+}
 
 // Copies eligible for scrubbing that live on the named backends. Used to report
 // how much of the queue a cycle declined to read, which a sampled count of the
 // batch cannot show.
-func (q *Queries) CountScrubCandidatesOnBackends(ctx context.Context, backendNames []string) (int64, error) {
-	row := q.db.QueryRow(ctx, countScrubCandidatesOnBackends, backendNames)
+//
+// Carries the same floor as the batch query so the deferred count describes
+// work the cycle would have done, not copies that were never due.
+func (q *Queries) CountScrubCandidatesOnBackends(ctx context.Context, arg CountScrubCandidatesOnBackendsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countScrubCandidatesOnBackends, arg.BackendNames, arg.ScrubbedBefore)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -403,13 +412,15 @@ SELECT object_key, backend_name, size_bytes, encrypted, encryption_key, key_id, 
 FROM object_locations
 WHERE content_hash IS NOT NULL AND managed
   AND backend_name = ANY($1::text[])
+  AND COALESCE(last_scrubbed_at, created_at) < $2::timestamptz
 ORDER BY COALESCE(last_scrubbed_at, created_at) ASC, object_key ASC
-LIMIT $2
+LIMIT $3
 `
 
 type GetLeastRecentlyScrubbedObjectsParams struct {
-	BackendNames []string
-	RowLimit     int32
+	BackendNames   []string
+	ScrubbedBefore pgtype.Timestamptz
+	RowLimit       int32
 }
 
 type GetLeastRecentlyScrubbedObjectsRow struct {
@@ -442,8 +453,15 @@ type GetLeastRecentlyScrubbedObjectsRow struct {
 // a backend is over its usage limit: a copy the scrubber would decline never
 // occupies a slot, so it is neither stamped as examined nor left at the head of
 // the queue to be re-selected every cycle.
+//
+// scrubbed_before is the re-verification floor: a copy touched at or after it
+// is too recently verified to be worth another read. Without it a backend
+// holding fewer copies than the batch size is read in full on every pass, so
+// egress scales with how often the scrubber runs rather than with how stale the
+// data is. The cutoff arrives as a timestamp rather than an interval so the
+// comparison stays sargable against the ordering expression.
 func (q *Queries) GetLeastRecentlyScrubbedObjects(ctx context.Context, arg GetLeastRecentlyScrubbedObjectsParams) ([]GetLeastRecentlyScrubbedObjectsRow, error) {
-	rows, err := q.db.Query(ctx, getLeastRecentlyScrubbedObjects, arg.BackendNames, arg.RowLimit)
+	rows, err := q.db.Query(ctx, getLeastRecentlyScrubbedObjects, arg.BackendNames, arg.ScrubbedBefore, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}

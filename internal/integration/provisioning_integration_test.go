@@ -108,6 +108,7 @@ func setupProvEnv(t *testing.T) *provEnv {
 		Store:        testStore,
 		EncStore:     testStore,
 		CompStore:    testStore,
+		Locker:       testStore,
 		Runtime:      st.Runtime,
 		Usage:        st.Runtime.Usage(),
 		IntegrityCfg: st.IntegrityCfg,

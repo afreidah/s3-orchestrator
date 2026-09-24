@@ -40,6 +40,7 @@ type Deps struct {
 	Rebalancer   RebalancerOps
 	Expiry       LifecycleOps
 	Scrubber     ScrubberOps
+	Locker       AdvisoryLocker
 	Provisioning ProvisioningStore
 	Registry     RegistryPublisher
 	Declared     BucketMatcher
@@ -77,6 +78,7 @@ func New(d *Deps) *Services {
 		Integrity: NewIntegrity(IntegrityDeps{
 			Scrubber:     d.Scrubber,
 			IntegrityCfg: d.IntegrityCfg,
+			Locker:       d.Locker,
 		}),
 		Replication: NewReplication(ReplicationDeps{
 			Replicator: d.Replicator,

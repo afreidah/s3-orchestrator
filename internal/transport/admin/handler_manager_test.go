@@ -114,6 +114,7 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 		Store:        store,
 		Encryptor:    enc,
 		EncStore:     store,
+		Locker:       store,
 		Runtime:      st.Runtime,
 		Usage:        st.Runtime.Usage(),
 		IntegrityCfg: st.IntegrityCfg,

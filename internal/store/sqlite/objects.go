@@ -480,7 +480,7 @@ func (s *Store) DeleteBackendData(ctx context.Context, backendName string) error
 // backends restricts the batch to copies the scrubber can afford to read. An
 // empty slice selects nothing: the caller has established that no backend can
 // be read right now, and returning the whole queue would ignore it.
-func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string) ([]core.ObjectLocation, error) {
+func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string, scrubbedBefore time.Time) ([]core.ObjectLocation, error) {
 	if len(backends) == 0 {
 		return nil, nil
 	}
@@ -496,8 +496,9 @@ func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, 
 		FROM object_locations
 		WHERE content_hash IS NOT NULL AND managed
 		  AND backend_name IN (SELECT value FROM json_each(?))
+		  AND COALESCE(last_scrubbed_at, created_at) < ?
 		ORDER BY COALESCE(last_scrubbed_at, created_at) ASC, object_key ASC
-		LIMIT ?`, string(backendsJSON), limit)
+		LIMIT ?`, string(backendsJSON), formatTime(scrubbedBefore), limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get least recently scrubbed objects: %w", err)
 	}
@@ -506,7 +507,7 @@ func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, 
 
 // CountScrubCandidatesOnBackends reports how many scrubbable copies live on the
 // named backends, so a cycle can say how much of the queue it declined to read.
-func (s *Store) CountScrubCandidatesOnBackends(ctx context.Context, backends []string) (int64, error) {
+func (s *Store) CountScrubCandidatesOnBackends(ctx context.Context, backends []string, scrubbedBefore time.Time) (int64, error) {
 	if len(backends) == 0 {
 		return 0, nil
 	}
@@ -518,7 +519,8 @@ func (s *Store) CountScrubCandidatesOnBackends(ctx context.Context, backends []s
 		SELECT count(*)
 		FROM object_locations
 		WHERE content_hash IS NOT NULL AND managed
-		  AND backend_name IN (SELECT value FROM json_each(?))`, string(backendsJSON))
+		  AND backend_name IN (SELECT value FROM json_each(?))
+		  AND COALESCE(last_scrubbed_at, created_at) < ?`, string(backendsJSON), formatTime(scrubbedBefore))
 }
 
 // MarkObjectScrubbed records that a copy was examined, which is what advances

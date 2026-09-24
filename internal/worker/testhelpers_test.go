@@ -108,6 +108,8 @@ type mockMetadataStore struct {
 
 	scrubSelectedBackends []string
 	scrubDeclinedBackends []string
+	scrubBatchCutoff      time.Time
+	scrubDeferredCutoff   time.Time
 	deferredCandidates    int64
 	deferredCandidatesErr error
 
@@ -225,17 +227,21 @@ func (m *mockMetadataStore) CleanupDLQDepth(_ context.Context) (int64, error) {
 }
 
 // GetLeastRecentlyScrubbedObjects is a stub on mockMetadataStore; returns either the test-set
-// fixture field or the zero value. Records the backend filter so tests can
-// assert the scrubber only asked for backends it can afford to read.
-func (m *mockMetadataStore) GetLeastRecentlyScrubbedObjects(_ context.Context, _ int, backends []string) ([]core.ObjectLocation, error) {
+// fixture field or the zero value. Records the backend filter and the
+// re-verification cutoff so tests can assert the scrubber only asked for
+// backends it can afford to read, and only for copies that are due.
+func (m *mockMetadataStore) GetLeastRecentlyScrubbedObjects(_ context.Context, _ int, backends []string, scrubbedBefore time.Time) ([]core.ObjectLocation, error) {
 	m.scrubSelectedBackends = backends
+	m.scrubBatchCutoff = scrubbedBefore
 	return m.randomHashedObjects, nil
 }
 
 // CountScrubCandidatesOnBackends is a stub on mockMetadataStore; records the
-// backends a cycle declined and returns the test-set fixture count.
-func (m *mockMetadataStore) CountScrubCandidatesOnBackends(_ context.Context, backends []string) (int64, error) {
+// backends a cycle declined and the cutoff it counted against, and returns the
+// test-set fixture count.
+func (m *mockMetadataStore) CountScrubCandidatesOnBackends(_ context.Context, backends []string, scrubbedBefore time.Time) (int64, error) {
 	m.scrubDeclinedBackends = backends
+	m.scrubDeferredCutoff = scrubbedBefore
 	return m.deferredCandidates, m.deferredCandidatesErr
 }
 
