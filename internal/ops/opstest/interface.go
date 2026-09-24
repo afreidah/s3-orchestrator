@@ -11,4 +11,4 @@
 
 package opstest
 
-//go:generate mockgen -destination=mocks.go -package=opstest github.com/afreidah/s3-orchestrator/internal/ops ObjectAPI,ObjectStore,UsageGate,IntegrityConfigLoader,RuntimeOps,ReplicatorOps,RebalancerOps,OverReplicationOps,ScrubberOps,EncryptionStore,CompressionStore,ProvisioningStore,NamespaceCounter,RegistryPublisher
+//go:generate mockgen -destination=mocks.go -package=opstest github.com/afreidah/s3-orchestrator/internal/ops ObjectAPI,ObjectStore,UsageGate,IntegrityConfigLoader,RuntimeOps,ReplicatorOps,RebalancerOps,OverReplicationOps,ScrubberOps,AdvisoryLocker,EncryptionStore,CompressionStore,ProvisioningStore,NamespaceCounter,RegistryPublisher

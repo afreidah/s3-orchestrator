@@ -200,6 +200,7 @@ func testServices(t *testing.T, backends map[string]s3be.ObjectBackend, enc *enc
 		OverRep:      workers.OverReplicationCleaner,
 		Rebalancer:   workers.Rebalancer,
 		Scrubber:     workers.Scrubber,
+		Locker:       mock,
 		Declared:     declaredBuckets(testBucket),
 		Cfg:          &config.Config{Buckets: []config.BucketConfig{{Name: testBucket}}},
 	})
@@ -403,6 +404,98 @@ func TestScrub_EmptyStore(t *testing.T) {
 	}
 	if res.Checked != 0 || res.Failed != 0 {
 		t.Errorf("Checked=%d Failed=%d, want both 0", res.Checked, res.Failed)
+	}
+}
+
+// TestScrub_SkippedWhenLockHeldElsewhere asserts an operator-triggered pass
+// declines instead of reading the fleet a second time when the scheduled sweep
+// or another instance already holds the lock. Without this a second operator
+// run pays full egress for copies that are being verified right now.
+func TestScrub_SkippedWhenLockHeldElsewhere(t *testing.T) {
+	t.Parallel()
+	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
+	scrubber.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	icfg := opstest.NewMockIntegrityConfigLoader(gomock.NewController(t))
+	icfg.EXPECT().Load().
+		Return(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}).AnyTimes()
+
+	locker := opstest.NewMockAdvisoryLocker(gomock.NewController(t))
+	locker.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(false, nil)
+
+	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, IntegrityCfg: icfg, Locker: locker})
+
+	res, err := svc.Scrub(context.Background(), 0, "", nil)
+	if !errors.Is(err, ErrScrubInProgress) {
+		t.Fatalf("Scrub error = %v, want ErrScrubInProgress", err)
+	}
+	assertSkipped(t, err)
+	if res.Checked != 0 {
+		t.Errorf("Checked = %d, want 0 when the pass never ran", res.Checked)
+	}
+}
+
+// TestScrub_LockErrorSurfaces asserts a lock that fails outright is reported as
+// an error rather than as a skip: an operator retrying a declined pass is fine,
+// but a database that cannot answer is not the same answer.
+func TestScrub_LockErrorSurfaces(t *testing.T) {
+	t.Parallel()
+	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
+	scrubber.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	icfg := opstest.NewMockIntegrityConfigLoader(gomock.NewController(t))
+	icfg.EXPECT().Load().
+		Return(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}).AnyTimes()
+
+	wantErr := errors.New("lock unavailable")
+	locker := opstest.NewMockAdvisoryLocker(gomock.NewController(t))
+	locker.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(false, wantErr)
+
+	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, IntegrityCfg: icfg, Locker: locker})
+
+	if _, err := svc.Scrub(context.Background(), 0, "", nil); !errors.Is(err, wantErr) {
+		t.Fatalf("Scrub error = %v, want %v", err, wantErr)
+	}
+}
+
+// TestScrub_RunsUnderTheLock asserts the pass happens inside the locked
+// section, so the lock actually covers the backend reads rather than being
+// taken and released around nothing.
+func TestScrub_RunsUnderTheLock(t *testing.T) {
+	t.Parallel()
+	var locked bool
+	scrubber := opstest.NewMockScrubberOps(gomock.NewController(t))
+	scrubber.EXPECT().Scrub(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(context.Context, int, string, progress.Observer) worker.WorkSummary {
+			if !locked {
+				t.Error("scrub ran outside the advisory lock")
+			}
+			return worker.WorkSummary{Attempted: 3}
+		})
+
+	icfg := opstest.NewMockIntegrityConfigLoader(gomock.NewController(t))
+	icfg.EXPECT().Load().
+		Return(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}).AnyTimes()
+
+	locker := opstest.NewMockAdvisoryLocker(gomock.NewController(t))
+	locker.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, _ int64, fn func(context.Context) error) (bool, error) {
+			locked = true
+			err := fn(ctx)
+			locked = false
+			return true, err
+		})
+
+	svc := NewIntegrity(IntegrityDeps{Scrubber: scrubber, IntegrityCfg: icfg, Locker: locker})
+
+	res, err := svc.Scrub(context.Background(), 0, "", nil)
+	if err != nil {
+		t.Fatalf("Scrub: %v", err)
+	}
+	if res.Checked != 3 {
+		t.Errorf("Checked = %d, want 3", res.Checked)
 	}
 }
 
@@ -766,7 +859,19 @@ func integrityOver(t *testing.T, scrubber ScrubberOps) *Integrity {
 	icfg := opstest.NewMockIntegrityConfigLoader(gomock.NewController(t))
 	icfg.EXPECT().Load().
 		Return(&config.IntegrityConfig{Enabled: true, ScrubberBatchSize: 50}).AnyTimes()
-	return NewIntegrity(IntegrityDeps{Scrubber: scrubber, IntegrityCfg: icfg})
+	return NewIntegrity(IntegrityDeps{Scrubber: scrubber, IntegrityCfg: icfg, Locker: grantingLocker(t)})
+}
+
+// grantingLocker is an advisory locker that always takes the lock and runs the
+// work, which is what every test that is not about lock contention wants.
+func grantingLocker(t *testing.T) *opstest.MockAdvisoryLocker {
+	t.Helper()
+	locker := opstest.NewMockAdvisoryLocker(gomock.NewController(t))
+	locker.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, _ int64, fn func(context.Context) error) (bool, error) {
+			return true, fn(ctx)
+		}).AnyTimes()
+	return locker
 }
 
 // TestVerifyKey_ReportsEveryCopy asserts a per-key verification answers with a

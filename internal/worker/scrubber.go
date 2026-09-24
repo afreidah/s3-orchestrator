@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
@@ -215,13 +216,17 @@ func (s *Scrubber) scrub(ctx context.Context, batchSize int, backend string, obs
 	affordable, declined := s.affordableBackends()
 	affordable = restrictToBackend(affordable, backend)
 
-	locs, err := s.store.GetLeastRecentlyScrubbedObjects(ctx, batchSize, affordable)
+	// One cutoff for both queries, so the deferred count and the batch describe
+	// the same population even if the cycle straddles a second boundary.
+	scrubbedBefore := s.scrubbedBefore()
+
+	locs, err := s.store.GetLeastRecentlyScrubbedObjects(ctx, batchSize, affordable, scrubbedBefore)
 	if err != nil {
 		s.log.ErrorContext(ctx, "failed to fetch objects", "error", err)
 		return WorkSummary{}
 	}
 
-	deferred := s.countDeferred(ctx, declined)
+	deferred := s.countDeferred(ctx, declined, scrubbedBefore)
 
 	// Published after the cycle so the gauges reflect the work just done.
 	// Deferred copies get their own gauge rather than being folded into the
@@ -253,6 +258,17 @@ func (s *Scrubber) scrub(ctx context.Context, batchSize int, backend string, obs
 	})
 	sum.Deferred = deferred
 	return sum
+}
+
+// scrubbedBefore returns the re-verification cutoff for this cycle. A missing
+// config falls back to the default floor rather than to no floor: an unset
+// value must not turn every pass into a full re-read of each backend.
+func (s *Scrubber) scrubbedBefore() time.Time {
+	icfg := s.Config()
+	if icfg == nil {
+		return time.Now().Add(-config.DefaultScrubberMinAge)
+	}
+	return icfg.ScrubbedBefore(time.Now())
 }
 
 // affordableBackends splits the fleet into the backends the scrubber can still
@@ -299,11 +315,11 @@ func restrictToBackend(affordable []string, backend string) []string {
 // countDeferred reports how many scrubbable copies sit on backends this cycle
 // declined to read. Counting the queue rather than the batch is the point: the
 // batch never contained them, so it cannot say how much was left undone.
-func (s *Scrubber) countDeferred(ctx context.Context, declined []string) int {
+func (s *Scrubber) countDeferred(ctx context.Context, declined []string, scrubbedBefore time.Time) int {
 	if len(declined) == 0 {
 		return 0
 	}
-	n, err := s.store.CountScrubCandidatesOnBackends(ctx, declined)
+	n, err := s.store.CountScrubCandidatesOnBackends(ctx, declined, scrubbedBefore)
 	if err != nil {
 		s.log.WarnContext(ctx, "failed to count deferred scrub candidates", "error", err)
 		return 0

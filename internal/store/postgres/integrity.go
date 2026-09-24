@@ -19,6 +19,8 @@ import (
 	"math"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	db "github.com/afreidah/s3-orchestrator/internal/store/postgres/sqlc"
 )
@@ -33,14 +35,15 @@ import (
 //
 // An empty backends slice selects nothing: the caller has established that no
 // backend can be read right now, and returning the whole queue would ignore it.
-func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string) ([]core.ObjectLocation, error) {
+func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string, scrubbedBefore time.Time) ([]core.ObjectLocation, error) {
 	if len(backends) == 0 {
 		return nil, nil
 	}
 	safeLimit := int32(max(1, min(limit, math.MaxInt32))) //nolint:gosec // clamped above
 	rows, err := s.queries.GetLeastRecentlyScrubbedObjects(ctx, db.GetLeastRecentlyScrubbedObjectsParams{
-		BackendNames: backends,
-		RowLimit:     safeLimit,
+		BackendNames:   backends,
+		ScrubbedBefore: pgtype.Timestamptz{Time: scrubbedBefore, Valid: true},
+		RowLimit:       safeLimit,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get least recently scrubbed objects: %w", err)
@@ -51,11 +54,14 @@ func (s *Store) GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, 
 // CountScrubCandidatesOnBackends reports how many scrubbable copies live on the
 // named backends. The scrubber uses it to say how much of the queue a cycle
 // declined to read, which the batch it did read cannot show.
-func (s *Store) CountScrubCandidatesOnBackends(ctx context.Context, backends []string) (int64, error) {
+func (s *Store) CountScrubCandidatesOnBackends(ctx context.Context, backends []string, scrubbedBefore time.Time) (int64, error) {
 	if len(backends) == 0 {
 		return 0, nil
 	}
-	n, err := s.queries.CountScrubCandidatesOnBackends(ctx, backends)
+	n, err := s.queries.CountScrubCandidatesOnBackends(ctx, db.CountScrubCandidatesOnBackendsParams{
+		BackendNames:   backends,
+		ScrubbedBefore: pgtype.Timestamptz{Time: scrubbedBefore, Valid: true},
+	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to count scrub candidates: %w", err)
 	}

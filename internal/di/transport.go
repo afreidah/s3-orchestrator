@@ -172,6 +172,7 @@ func ProvideOps(i do.Injector) (*ops.Services, error) {
 		OverRep:      overRep,
 		Rebalancer:   rebalancer,
 		Scrubber:     scrubber,
+		Locker:       stores,
 		Expiry:       expirer,
 		Provisioning: stores,
 		Registry:     NewRegistryPublisher(i),

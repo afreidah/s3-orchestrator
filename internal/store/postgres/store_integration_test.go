@@ -212,6 +212,12 @@ func TestStoreInt_GetObjectsWithoutHash(t *testing.T) {
 	}
 }
 
+// scrubAllCutoff is a re-verification floor far enough ahead that every row a
+// test wrote is due. Tests that exercise the floor itself pass their own.
+func scrubAllCutoff() time.Time {
+	return time.Now().Add(time.Hour)
+}
+
 // TestStoreInt_GetLeastRecentlyScrubbedObjects verifies the helper returns
 // hashed rows. The clamp on small/zero limits is exercised too.
 func TestStoreInt_GetLeastRecentlyScrubbedObjects(t *testing.T) {
@@ -226,11 +232,11 @@ func TestStoreInt_GetLeastRecentlyScrubbedObjects(t *testing.T) {
 		t.Fatalf("UpdateContentHash: %v", err)
 	}
 
-	if _, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100, []string{"backend-a"}); err != nil {
+	if _, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100, []string{"backend-a"}, scrubAllCutoff()); err != nil {
 		t.Fatalf("GetLeastRecentlyScrubbedObjects: %v", err)
 	}
 	// Zero/negative limits clamp to 1, exercising the safeLimit branch.
-	if _, err := s.GetLeastRecentlyScrubbedObjects(ctx, 0, []string{"backend-a"}); err != nil {
+	if _, err := s.GetLeastRecentlyScrubbedObjects(ctx, 0, []string{"backend-a"}, scrubAllCutoff()); err != nil {
 		t.Errorf("GetLeastRecentlyScrubbedObjects(0): %v", err)
 	}
 }
@@ -1188,12 +1194,12 @@ func TestStoreInt_ScrubQueue_FreshWritesDoNotJumpTheQueue(t *testing.T) {
 		t.Fatalf("backdating %s: %v", oldKey, err)
 	}
 
-	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100, []string{"backend-a"})
+	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100, []string{"backend-a"}, scrubAllCutoff())
 	if err != nil {
 		t.Fatalf("GetLeastRecentlyScrubbedObjects: %v", err)
 	}
 
-	var oldPos, freshPos = -1, -1
+var oldPos, freshPos = -1, -1
 	for i := range got {
 		switch got[i].ObjectKey {
 		case oldKey:
@@ -1279,7 +1285,7 @@ func TestStoreInt_ScrubQueue_BackendFilter(t *testing.T) {
 		}
 	}
 
-	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100, []string{"backend-a"})
+	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100, []string{"backend-a"}, scrubAllCutoff())
 	if err != nil {
 		t.Fatalf("GetLeastRecentlyScrubbedObjects: %v", err)
 	}
@@ -1290,7 +1296,7 @@ func TestStoreInt_ScrubQueue_BackendFilter(t *testing.T) {
 	}
 
 	// An empty affordable set selects nothing rather than everything.
-	none, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100, nil)
+	none, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100, nil, scrubAllCutoff())
 	if err != nil {
 		t.Fatalf("GetLeastRecentlyScrubbedObjects(nil): %v", err)
 	}
@@ -1298,15 +1304,54 @@ func TestStoreInt_ScrubQueue_BackendFilter(t *testing.T) {
 		t.Errorf("an empty backend list returned %d copies, want 0", len(none))
 	}
 
-	n, err := s.CountScrubCandidatesOnBackends(ctx, []string{"backend-b"})
+	n, err := s.CountScrubCandidatesOnBackends(ctx, []string{"backend-b"}, scrubAllCutoff())
 	if err != nil {
 		t.Fatalf("CountScrubCandidatesOnBackends: %v", err)
 	}
 	if n < 1 {
 		t.Errorf("count on the declined backend = %d, want at least the one copy written here", n)
 	}
-	if n, err := s.CountScrubCandidatesOnBackends(ctx, nil); err != nil || n != 0 {
+	if n, err := s.CountScrubCandidatesOnBackends(ctx, nil, scrubAllCutoff()); err != nil || n != 0 {
 		t.Errorf("empty backend list: count=%d err=%v, want 0/nil", n, err)
+	}
+}
+
+// TestStoreInt_ScrubFloorExcludesRecentlyVerified asserts the re-verification
+// floor keeps a freshly written copy out of both the batch and the deferred
+// count, and admits it once the cutoff moves past it. Without the floor a
+// backend holding fewer copies than the batch size is read in full on every
+// pass, so egress tracks the scrub interval rather than the staleness of the
+// data.
+func TestStoreInt_ScrubFloorExcludesRecentlyVerified(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "floor")
+
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 10}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+	if err := s.UpdateContentHash(ctx, key, "backend-a", "abc123"); err != nil {
+		t.Fatalf("UpdateContentHash: %v", err)
+	}
+
+	past := time.Now().Add(-time.Hour)
+	got, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100, []string{"backend-a"}, past)
+	if err != nil {
+		t.Fatalf("GetLeastRecentlyScrubbedObjects: %v", err)
+	}
+	for _, loc := range got {
+		if loc.ObjectKey == key {
+			t.Errorf("copy written moments ago was selected behind a past cutoff")
+		}
+	}
+
+	due, err := s.GetLeastRecentlyScrubbedObjects(ctx, 100, []string{"backend-a"}, scrubAllCutoff())
+	if err != nil {
+		t.Fatalf("GetLeastRecentlyScrubbedObjects(due): %v", err)
+	}
+	if !slices.ContainsFunc(due, func(loc core.ObjectLocation) bool { return loc.ObjectKey == key }) {
+		t.Errorf("copy was not selected once the cutoff moved past it")
 	}
 }
 

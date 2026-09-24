@@ -269,6 +269,7 @@ func TestCompression_ScrubberDetectsCorruptedCompressedCopy(t *testing.T) {
 			len(got), len(body))
 	}
 
+	backdateObjectLocations(t, h.db, key)
 	if sum := h.workers.Scrubber.Scrub(ctx, 100, "", nil); sum.Failed != 1 {
 		t.Errorf("scrub reported %d mismatches, want 1 (%+v)", sum.Failed, sum)
 	}

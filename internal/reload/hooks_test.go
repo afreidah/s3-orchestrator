@@ -663,6 +663,7 @@ func newUIDepsForReloadTest(t *testing.T) *ui.Deps {
 		Objects:      st.Objects,
 		Store:        mock,
 		EncStore:     mock,
+		Locker:       mock,
 		Runtime:      st.Runtime,
 		Usage:        st.Runtime.Usage(),
 		IntegrityCfg: st.IntegrityCfg,

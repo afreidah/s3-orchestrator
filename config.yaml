@@ -125,6 +125,7 @@ ui:
 #   verify_on_read: true             # Hash-check every GET response
 #   scrubber_interval: "6h"          # Background verification interval (0 = disabled)
 #   scrubber_batch_size: 100         # Objects per scrub cycle
+#   scrubber_min_age: "24h"          # Skip copies verified more recently than this
 
 # --- Object data cache ---
 cache:

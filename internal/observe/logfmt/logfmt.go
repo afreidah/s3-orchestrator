@@ -5,7 +5,7 @@
 //
 // Helper attribute constructors that pin every operational log line to the
 // project's logging glossary. The Err helper exists primarily to defeat a
-// JSON-handler footgun: passing a raw error value yields {} for any error
+// JSON-handler behaviour: passing a raw error value yields {} for any error
 // type whose underlying struct lacks JSON tags, which downstream JS log
 // viewers render as "[object Object]" and operators cannot grep. Using
 // err.Error() guarantees a printable string in every handler.

@@ -193,9 +193,12 @@ type PendingStore interface {
 // A copy the scrubber cannot afford to read must never occupy a batch slot, or
 // it is either stamped as examined without being read or left at the head of
 // the queue forever.
+//
+// scrubbedBefore is the re-verification floor, and both scrub queries take it
+// so the deferred count describes the same population the batch is drawn from.
 type IntegrityStore interface {
-	GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string) ([]ObjectLocation, error)
-	CountScrubCandidatesOnBackends(ctx context.Context, backends []string) (int64, error)
+	GetLeastRecentlyScrubbedObjects(ctx context.Context, limit int, backends []string, scrubbedBefore time.Time) ([]ObjectLocation, error)
+	CountScrubCandidatesOnBackends(ctx context.Context, backends []string, scrubbedBefore time.Time) (int64, error)
 	GetObjectsWithoutHash(ctx context.Context, limit, offset int, backend string) ([]ObjectLocation, error)
 	UpdateContentHash(ctx context.Context, key, backendName, hash string) error
 	MarkObjectScrubbed(ctx context.Context, key, backendName string) error

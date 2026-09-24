@@ -62,9 +62,15 @@ func newOpsForTest(t testing.TB, opts ...func(*proxytest.Stack, *proxytest.Worke
 	mock.EXPECT().GetActiveMultipartCounts(gomock.Any()).Return(map[string]int64{}, nil).AnyTimes()
 	mock.EXPECT().GetUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.UsageStat{}, nil).AnyTimes()
 	mock.EXPECT().GetPoolUsageForPeriod(gomock.Any(), gomock.Any()).Return(map[string]core.PoolUsage{}, nil).AnyTimes()
-	mock.EXPECT().GetLeastRecentlyScrubbedObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	mock.EXPECT().GetLeastRecentlyScrubbedObjects(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	mock.EXPECT().IntegrityCoverage(gomock.Any(), gomock.Any()).Return(core.CoverageStat{}, nil).AnyTimes()
 	mock.EXPECT().GetObjectsWithoutHash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	// An operator-triggered scrub runs under the advisory lock, so the dashboard
+	// only reaches the scrubber when the lock is granted.
+	mock.EXPECT().WithAdvisoryLock(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, _ int64, fn func(context.Context) error) (bool, error) {
+			return true, fn(ctx)
+		}).AnyTimes()
 	st := proxytest.New(t, mock, &proxytest.StackOptions{
 		Runtime: proxytest.NewRuntime(&proxytest.RuntimeOptions{
 			Backends:        map[string]backend.ObjectBackend{},
@@ -91,6 +97,7 @@ func testOps(st *proxytest.Stack, workers *proxytest.Workers, store storetest.Me
 		Store:        store,
 		EncStore:     store,
 		CompStore:    store,
+		Locker:       store,
 		Runtime:      st.Runtime,
 		Usage:        st.Runtime.Usage(),
 		IntegrityCfg: st.IntegrityCfg,
