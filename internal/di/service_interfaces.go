@@ -36,12 +36,14 @@ type nearLimitReporter interface {
 	NearLimit(threshold float64) bool
 }
 
-// quotaMetricsRefresher is the *infra.BackendRuntime pair the flush tick runs
-// after writing counters. The fleet gauges describe shared state and need one
-// instance to refresh them. The usage baselines are what each instance's limit
-// checks compare against, so every instance refreshes its own.
+// quotaMetricsRefresher is the *infra.BackendRuntime set the flush tick runs
+// after writing counters. The fleet snapshot describes shared state, so one
+// instance computes and publishes it and the others load it. The usage
+// baselines are what each instance's limit checks compare against, so every
+// instance refreshes its own.
 type quotaMetricsRefresher interface {
 	UpdateFleetMetrics(ctx context.Context) error
+	LoadFleetMetrics(ctx context.Context) error
 	RefreshUsageBaselines(ctx context.Context) error
 }
 

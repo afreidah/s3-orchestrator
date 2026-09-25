@@ -4,8 +4,9 @@
 // Author: Alex Freidah
 //
 // Owns Prometheus metric recording for manager operations and periodic gauge
-// refreshes from PostgreSQL. Reads quota stats, object counts, multipart counts,
-// and monthly usage from the store and updates the corresponding gauges.
+// refreshes from the metadata store. The monthly usage gauges and the usage
+// baselines limit checks compare against live here; the fleet-wide gauges and
+// the snapshot shared between instances live in fleet.go.
 // -------------------------------------------------------------------------------
 
 package metrics
@@ -17,7 +18,6 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/counter"
-	"github.com/afreidah/s3-orchestrator/internal/observe/event"
 	"github.com/afreidah/s3-orchestrator/internal/observe/logfmt"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -44,24 +44,14 @@ type Deps interface {
 	CountUnencryptedLocations(ctx context.Context) (int64, error)
 }
 
-// ReplicationSnapshot is the last-computed replication state, retained so a
-// cheap admin endpoint can serve it without a fresh ledger scan. Ready is false
-// until the first computation has run.
-type ReplicationSnapshot struct {
-	Factor          int
-	UnderReplicated int64
-	OverReplicated  int64
-	ComputedAt      time.Time
-	Ready           bool
-}
-
 // Collector records Prometheus metrics for manager-level operations and
 // periodically refreshes gauge values from the metadata store.
 type Collector struct {
 	store             Deps
 	usage             *counter.UsageTracker
 	backendNames      []string
-	replicationFactor func() int // returns 0 when replication is disabled
+	replicationFactor func() int  // returns 0 when replication is disabled
+	shared            SharedState // nil on a single instance
 	log               *slog.Logger
 
 	repMu   sync.RWMutex        // guards repSnap
@@ -69,12 +59,14 @@ type Collector struct {
 }
 
 // CollectorDeps groups the metrics collector's constructor parameters.
-// ReplicationFactor returns 0 when replication is disabled.
+// ReplicationFactor returns 0 when replication is disabled. Shared is where
+// the fleet snapshot is published and read, and is nil on a single instance.
 type CollectorDeps struct {
 	Store             Deps
 	Usage             *counter.UsageTracker
 	BackendNames      []string
 	ReplicationFactor func() int
+	Shared            SharedState
 }
 
 // New creates a Collector with references to the store and usage tracker
@@ -85,6 +77,7 @@ func New(deps CollectorDeps) *Collector {
 		usage:             deps.Usage,
 		backendNames:      deps.BackendNames,
 		replicationFactor: deps.ReplicationFactor,
+		shared:            deps.Shared,
 		log:               slog.Default().With(logfmt.Component("metrics_collector")),
 	}
 }
@@ -116,21 +109,22 @@ func (mc *Collector) UpdateQuotaMetrics(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	mc.updateFleetGauges(ctx, stats)
+	mc.refreshFleet(ctx, stats)
 	mc.updateUsageGauges(ctx, stats)
 	return nil
 }
 
-// UpdateFleetMetrics refreshes the gauges that describe the whole fleet:
-// quota bytes, object and multipart counts, replication state and plaintext
-// copies. Every instance reads the same values from the store, so with
-// several instances only one needs to run it.
+// UpdateFleetMetrics computes the fleet snapshot - quota bytes, object and
+// multipart counts, replication state and plaintext copies - applies it, and
+// publishes it for the other instances, which load it with LoadFleetMetrics.
+// Every instance would read the same values from the store, so with several
+// instances only one runs it.
 func (mc *Collector) UpdateFleetMetrics(ctx context.Context) error {
 	stats, err := mc.store.GetQuotaStats(ctx)
 	if err != nil {
 		return err
 	}
-	mc.updateFleetGauges(ctx, stats)
+	mc.refreshFleet(ctx, stats)
 	return nil
 }
 
@@ -145,102 +139,6 @@ func (mc *Collector) RefreshUsageBaselines(ctx context.Context) error {
 	}
 	mc.updateUsageGauges(ctx, stats)
 	return nil
-}
-
-// updateFleetGauges publishes every gauge derived from fleet-wide store state.
-func (mc *Collector) updateFleetGauges(ctx context.Context, stats map[string]core.QuotaStat) {
-	mc.updateQuotaGauges(ctx, stats)
-	mc.updateObjectCountGauges(ctx, stats)
-	mc.updateMultipartCountGauges(ctx, stats)
-	mc.updateReplicationPending(ctx)
-	mc.updatePlaintextCopies(ctx)
-}
-
-// updatePlaintextCopies publishes how many copies are still unencrypted.
-//
-// Refreshed here rather than from the dashboard so the figure keeps moving on a
-// deployment that scrapes Prometheus and never opens the web UI. Encryption
-// applies to new writes only, so without this nothing reports that a fleet
-// configured for encryption is still partly plaintext.
-func (mc *Collector) updatePlaintextCopies(ctx context.Context) {
-	count, err := mc.store.CountUnencryptedLocations(ctx)
-	if err != nil {
-		mc.log.WarnContext(ctx, "failed to count unencrypted copies", "error", err)
-		return
-	}
-	telemetry.EncryptionPlaintextCopies.Set(float64(count))
-}
-
-// updateQuotaGauges sets per-backend quota bytes gauges and emits a
-// capacity-warning event when utilization crosses 80%.
-func (mc *Collector) updateQuotaGauges(ctx context.Context, stats map[string]core.QuotaStat) {
-	for name, stat := range stats {
-		telemetry.QuotaBytesUsed.WithLabelValues(name).Set(float64(stat.BytesUsed))
-		telemetry.QuotaOrphanBytes.WithLabelValues(name).Set(float64(stat.OrphanBytes))
-		if stat.BytesLimit == 0 {
-			telemetry.QuotaBytesLimit.WithLabelValues(name).Set(0)
-			telemetry.QuotaBytesAvailable.WithLabelValues(name).Set(0)
-			continue
-		}
-		telemetry.QuotaBytesLimit.WithLabelValues(name).Set(float64(stat.BytesLimit))
-		available := stat.BytesLimit - stat.BytesUsed - stat.OrphanBytes
-		telemetry.QuotaBytesAvailable.WithLabelValues(name).Set(float64(available))
-		mc.maybeEmitCapacityWarning(ctx, name, &stat, available)
-	}
-}
-
-// maybeEmitCapacityWarning emits a slog warning and a capacity event when
-// the backend has crossed 80% utilization. Operators rely on this signal
-// to expand capacity before writes start failing with 507.
-func (mc *Collector) maybeEmitCapacityWarning(ctx context.Context, name string, stat *core.QuotaStat, available int64) {
-	utilization := float64(stat.BytesUsed+stat.OrphanBytes) / float64(stat.BytesLimit)
-	if utilization < 0.8 {
-		return
-	}
-	mc.log.WarnContext(ctx, "backend approaching capacity",
-		"backend", name,
-		"utilization_pct", int(utilization*100),
-		"bytes_available", available,
-		"bytes_limit", stat.BytesLimit)
-	event.Publish(event.BackendCapacityWarning, name, map[string]any{
-		"backend":         name,
-		"utilization_pct": int(utilization * 100),
-		"bytes_available": available,
-		"bytes_limit":     stat.BytesLimit,
-	})
-}
-
-// updateObjectCountGauges resets every known backend's object count to
-// zero before applying the live counts so a backend that just lost its
-// last object reports as zero rather than retaining the stale value.
-func (mc *Collector) updateObjectCountGauges(ctx context.Context, stats map[string]core.QuotaStat) {
-	objCounts, err := mc.store.GetObjectCounts(ctx)
-	if err != nil {
-		mc.log.ErrorContext(ctx, "failed to get object counts", "error", err)
-		return
-	}
-	for name := range stats {
-		telemetry.ObjectCount.WithLabelValues(name).Set(0)
-	}
-	for name, count := range objCounts {
-		telemetry.ObjectCount.WithLabelValues(name).Set(float64(count))
-	}
-}
-
-// updateMultipartCountGauges follows the same reset-then-set pattern as
-// updateObjectCountGauges for active multipart uploads.
-func (mc *Collector) updateMultipartCountGauges(ctx context.Context, stats map[string]core.QuotaStat) {
-	mpCounts, err := mc.store.GetActiveMultipartCounts(ctx)
-	if err != nil {
-		mc.log.ErrorContext(ctx, "failed to get multipart upload counts", "error", err)
-		return
-	}
-	for name := range stats {
-		telemetry.ActiveMultipartUploads.WithLabelValues(name).Set(0)
-	}
-	for name, count := range mpCounts {
-		telemetry.ActiveMultipartUploads.WithLabelValues(name).Set(float64(count))
-	}
 }
 
 // updateUsageGauges refreshes the monthly usage gauges and seeds the
@@ -290,59 +188,4 @@ func (mc *Collector) updatePoolGauges(pools map[string]core.PoolUsage) {
 			telemetry.UsagePoolLimit.WithLabelValues(name, pool.Name).Set(float64(pool.Limit))
 		}
 	}
-}
-
-// updateReplicationPending updates the under-replicated-objects gauge.
-// No-op when replication is disabled (factor <= 1) or when no factor
-// source has been wired (the closure is nil in test fixtures that build
-// metrics without a replication worker).
-func (mc *Collector) updateReplicationPending(ctx context.Context) {
-	if mc.replicationFactor == nil {
-		return
-	}
-	factor := mc.replicationFactor()
-	if factor <= 1 {
-		// Replication disabled: record a ready, zeroed snapshot so the admin
-		// endpoint reports "not replicating" rather than "not yet computed".
-		mc.setReplicationSnapshot(ReplicationSnapshot{Factor: factor, Ready: true, ComputedAt: time.Now()})
-		return
-	}
-
-	locations, err := mc.store.GetUnderReplicatedObjects(ctx, factor, 10000)
-	if err != nil {
-		mc.log.ErrorContext(ctx, "failed to get under-replicated objects", "error", err)
-		return
-	}
-	under := int64(len(core.GroupByKey(locations)))
-	telemetry.ReplicationPending.Set(float64(under))
-
-	over, err := mc.store.CountOverReplicatedObjects(ctx, factor)
-	if err != nil {
-		mc.log.ErrorContext(ctx, "failed to count over-replicated objects", "error", err)
-		return
-	}
-	telemetry.OverReplicationPending.Set(float64(over))
-
-	mc.setReplicationSnapshot(ReplicationSnapshot{
-		Factor:          factor,
-		UnderReplicated: under,
-		OverReplicated:  over,
-		ComputedAt:      time.Now(),
-		Ready:           true,
-	})
-}
-
-// setReplicationSnapshot stores the latest computed replication state.
-func (mc *Collector) setReplicationSnapshot(s ReplicationSnapshot) {
-	mc.repMu.Lock()
-	defer mc.repMu.Unlock()
-	mc.repSnap = s
-}
-
-// ReplicationSnapshot returns the last-computed replication state. Ready is
-// false until the first collector cycle has run.
-func (mc *Collector) ReplicationSnapshot() ReplicationSnapshot {
-	mc.repMu.RLock()
-	defer mc.repMu.RUnlock()
-	return mc.repSnap
 }
