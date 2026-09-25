@@ -85,10 +85,12 @@ jobs:
         with:
           args: -o CHANGELOG.md
 
+      # Authored as the maintainer and rebase-merged, which keeps the commit's
+      # own author. A squash merge would credit the app whose token opens the PR.
       - name: Open CHANGELOG PR
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "Alex Freidah"
+          git config user.email "alex.freidah@gmail.com"
           BRANCH="changelog/${GITHUB_REF_NAME}"
           git checkout -b "$BRANCH"
           git add CHANGELOG.md
@@ -100,6 +102,6 @@ jobs:
             --head "$BRANCH" \
             --title "docs: update CHANGELOG.md for ${GITHUB_REF_NAME}" \
             --body "Auto-generated changelog update from release ${GITHUB_REF_NAME}.")
-          gh pr merge "$PR_URL" --auto --squash
+          gh pr merge "$PR_URL" --auto --rebase
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
