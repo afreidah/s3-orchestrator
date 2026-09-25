@@ -10,6 +10,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -23,7 +24,9 @@ import (
 // fakeReplication is a replicationSnapshotter returning a canned snapshot.
 type fakeReplication struct{ snap metrics.ReplicationSnapshot }
 
-func (f fakeReplication) ReplicationSnapshot() metrics.ReplicationSnapshot { return f.snap }
+func (f fakeReplication) ReplicationSnapshot(context.Context) metrics.ReplicationSnapshot {
+	return f.snap
+}
 
 func TestHandleReplicationStatus_ReturnsSnapshot(t *testing.T) {
 	t.Parallel()

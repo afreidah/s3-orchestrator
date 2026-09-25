@@ -26,8 +26,8 @@ import (
 // TYPES
 // -------------------------------------------------------------------------
 
-// fakeReplicationDeps is a metrics.Deps returning canned replication data; the
-// non-replication methods are unused by updateReplicationPending.
+// fakeReplicationDeps is a metrics.Deps returning canned replication and
+// plaintext figures, and nothing for the other reads.
 type fakeReplicationDeps struct {
 	under     []core.ObjectLocation
 	over      int64
@@ -74,12 +74,14 @@ func TestCollector_ReplicationSnapshot(t *testing.T) {
 		log:               slog.Default(),
 	}
 
-	if mc.ReplicationSnapshot().Ready {
+	if mc.ReplicationSnapshot(context.Background()).Ready {
 		t.Error("snapshot should not be ready before the first compute")
 	}
 
-	mc.updateReplicationPending(context.Background())
-	snap := mc.ReplicationSnapshot()
+	if err := mc.UpdateFleetMetrics(context.Background()); err != nil {
+		t.Fatalf("UpdateFleetMetrics: %v", err)
+	}
+	snap := mc.ReplicationSnapshot(context.Background())
 	if !snap.Ready || snap.Factor != 2 || snap.UnderReplicated != 2 || snap.OverReplicated != 5 {
 		t.Errorf("snapshot = %+v", snap)
 	}
@@ -95,8 +97,10 @@ func TestCollector_ReplicationSnapshot_Disabled(t *testing.T) {
 		replicationFactor: func() int { return 1 }, // disabled
 		log:               slog.Default(),
 	}
-	mc.updateReplicationPending(context.Background())
-	snap := mc.ReplicationSnapshot()
+	if err := mc.UpdateFleetMetrics(context.Background()); err != nil {
+		t.Fatalf("UpdateFleetMetrics: %v", err)
+	}
+	snap := mc.ReplicationSnapshot(context.Background())
 	if !snap.Ready || snap.Factor != 1 || snap.UnderReplicated != 0 || snap.OverReplicated != 0 {
 		t.Errorf("disabled snapshot = %+v", snap)
 	}
@@ -108,7 +112,9 @@ func TestCollector_ReplicationSnapshot_Disabled(t *testing.T) {
 func TestCollector_PublishesPlaintextCopies(t *testing.T) {
 	mc := &Collector{store: fakeReplicationDeps{plaintext: 17}, log: slog.Default()}
 
-	mc.updatePlaintextCopies(context.Background())
+	if err := mc.UpdateFleetMetrics(context.Background()); err != nil {
+		t.Fatalf("UpdateFleetMetrics: %v", err)
+	}
 
 	if got := promtest.ToFloat64(telemetry.EncryptionPlaintextCopies); got != 17 {
 		t.Errorf("plaintext gauge = %v, want 17", got)
@@ -125,7 +131,9 @@ func TestCollector_PlaintextCountFailureLeavesGauge(t *testing.T) {
 		log:   slog.Default(),
 	}
 
-	mc.updatePlaintextCopies(context.Background())
+	if err := mc.UpdateFleetMetrics(context.Background()); err != nil {
+		t.Fatalf("UpdateFleetMetrics: %v", err)
+	}
 
 	if got := promtest.ToFloat64(telemetry.EncryptionPlaintextCopies); got != 9 {
 		t.Errorf("gauge = %v after a failed count, want the previous value 9", got)

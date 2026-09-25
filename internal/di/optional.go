@@ -20,7 +20,6 @@ import (
 	"github.com/samber/do/v2"
 
 	objcache "github.com/afreidah/s3-orchestrator/internal/cache"
-	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/encryption"
 )
 
@@ -93,17 +92,6 @@ func IsRegistered[T any](inj do.Injector) bool {
 // -------------------------------------------------------------------------
 // INTERNALS
 // -------------------------------------------------------------------------
-
-// resolveOptionalCounterBackend returns the configured Redis counter
-// backend, or nil when Redis is disabled / not registered. The runtime
-// builder treats nil as "use the local counter backend".
-func resolveOptionalCounterBackend(i do.Injector) counter.Backend {
-	rb, err := do.Invoke[*counter.RedisCounterBackend](i)
-	if err != nil {
-		return nil
-	}
-	return rb
-}
 
 // resolveOptionalCache returns the object data cache, or nil when
 // caching is disabled / not registered. The object manager treats nil as
