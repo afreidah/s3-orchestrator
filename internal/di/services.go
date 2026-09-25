@@ -43,7 +43,7 @@ const (
 )
 
 // -------------------------------------------------------------------------
-// USAGE FLUSH (unique: no advisory lock, adaptive interval)
+// USAGE FLUSH
 // -------------------------------------------------------------------------
 
 // usageFlushService periodically flushes in-memory usage counters to the
@@ -126,9 +126,12 @@ func (s *usageFlushService) adjustInterval(ctx context.Context, ticker *time.Tic
 	return target
 }
 
-// flushTick runs a single flush+metrics cycle. When Redis counters are
-// configured, wraps the flush in an advisory lock so only one instance
-// performs the destructive GETSET.
+// flushTick runs a single flush+metrics cycle. With Redis counters the usage
+// counters are shared, so only the instance holding the advisory lock performs
+// the destructive GETSET and refreshes the fleet gauges. Every instance then
+// reloads its own usage baselines, which is what its limit checks compare
+// against; an instance that skipped that on a lost lock would keep admitting
+// work against budget already spent.
 func (s *usageFlushService) flushTick(ctx context.Context) {
 	// Outside the advisory lock: the byte deltas are this instance's own, so
 	// every instance flushes its own set. Skipping them on a lost lock would
@@ -140,27 +143,33 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 	if s.flusher.RedisCounterConfigured() {
 		acquired, err := s.locker.WithAdvisoryLock(ctx, core.LockUsageFlush,
 			func(lockCtx context.Context) error {
-				s.doFlush(lockCtx)
+				s.flushSharedUsage(lockCtx)
 				return nil
 			})
 		if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
 			s.log.ErrorContext(ctx, "tick failed", "error", err)
 		}
 		if !acquired {
-			s.log.DebugContext(ctx, "tick skipped, another instance holds the lock")
+			s.log.DebugContext(ctx, "usage flush skipped, another instance holds the lock")
 		}
-		return
+	} else {
+		s.flushSharedUsage(ctx)
 	}
-	s.doFlush(ctx)
+
+	// After the flush, so the lock holder's baseline includes what it wrote.
+	if err := s.fleet.RefreshUsageBaselines(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
+		s.log.ErrorContext(ctx, "usage baseline refresh failed", "error", err)
+	}
 }
 
-// doFlush performs the actual flush and quota metric update.
-func (s *usageFlushService) doFlush(ctx context.Context) {
+// flushSharedUsage writes the usage counters to the store and republishes the
+// fleet gauges. With Redis counters it runs only under the advisory lock.
+func (s *usageFlushService) flushSharedUsage(ctx context.Context) {
 	if err := s.flusher.FlushUsage(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
 		s.log.ErrorContext(ctx, "counter flush failed", "error", err)
 	}
-	if err := s.fleet.UpdateQuotaMetrics(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-		s.log.ErrorContext(ctx, "quota metrics refresh failed", "error", err)
+	if err := s.fleet.UpdateFleetMetrics(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
+		s.log.ErrorContext(ctx, "fleet metrics refresh failed", "error", err)
 	}
 }
 

@@ -36,11 +36,13 @@ type nearLimitReporter interface {
 	NearLimit(threshold float64) bool
 }
 
-// quotaMetricsRefresher is the *infra.BackendRuntime call that republishes the
-// quota gauges after a flush, so the numbers operators watch move with the
-// ones just written.
+// quotaMetricsRefresher is the *infra.BackendRuntime pair the flush tick runs
+// after writing counters. The fleet gauges describe shared state and need one
+// instance to refresh them. The usage baselines are what each instance's limit
+// checks compare against, so every instance refreshes its own.
 type quotaMetricsRefresher interface {
-	UpdateQuotaMetrics(ctx context.Context) error
+	UpdateFleetMetrics(ctx context.Context) error
+	RefreshUsageBaselines(ctx context.Context) error
 }
 
 // lifecycleOps is the subset of *expiry.Manager that NewLifecycleService

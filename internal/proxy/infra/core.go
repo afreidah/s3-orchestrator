@@ -334,3 +334,13 @@ func (c *BackendRuntime) RecordOperation(operation, backend string, start time.T
 func (c *BackendRuntime) UpdateQuotaMetrics(ctx context.Context) error {
 	return c.metricsCollector.UpdateQuotaMetrics(ctx)
 }
+
+// UpdateFleetMetrics delegates to the metrics collector.
+func (c *BackendRuntime) UpdateFleetMetrics(ctx context.Context) error {
+	return c.metricsCollector.UpdateFleetMetrics(ctx)
+}
+
+// RefreshUsageBaselines delegates to the metrics collector.
+func (c *BackendRuntime) RefreshUsageBaselines(ctx context.Context) error {
+	return c.metricsCollector.RefreshUsageBaselines(ctx)
+}
