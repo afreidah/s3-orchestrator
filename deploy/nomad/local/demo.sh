@@ -58,21 +58,6 @@ healthy_allocations() {
         || echo 0
 }
 
-# reload_fleet sends SIGHUP to every running instance so each rebuilds its
-# credential registry from the store. Provisioning only republishes the registry
-# on the instance that served the call, so without this the perf identity
-# authenticates on one instance and gets 403 from the rest.
-reload_fleet() {
-    echo "Reloading every instance so it picks up the perf identity..."
-    local alloc
-    for alloc in $(nomad job allocs -json s3-orchestrator \
-        | jq -r '.[] | select(.ClientStatus == "running") | .ID'); do
-        nomad alloc signal -s SIGHUP "$alloc" >/dev/null 2>&1 \
-            || echo "Warning: could not signal allocation ${alloc:0:8}"
-    done
-    sleep 2
-}
-
 # print_platform_endpoints lists what only Nomad can report: the dev agent UI
 # and each instance's dynamic metrics port.
 print_platform_endpoints() {
@@ -156,7 +141,6 @@ done
 echo "Waiting for Traefik to route to the fleet..."
 if [[ "$HEALTHY" -ge "$INSTANCES" ]] && wait_for_health 30; then
     provision_perf_identity
-    reload_fleet
     create_grafana_correlation
     print_summary "Nomad" "./deploy/nomad/local/demo.sh"
     echo "  Nomad agent log: /tmp/nomad-demo.log"

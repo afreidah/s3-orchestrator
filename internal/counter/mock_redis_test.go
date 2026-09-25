@@ -173,6 +173,20 @@ func (mr *MockRedisClientMockRecorder) Pipeline() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Pipeline", reflect.TypeOf((*MockRedisClient)(nil).Pipeline))
 }
 
+// Publish mocks base method.
+func (m *MockRedisClient) Publish(ctx context.Context, channel string, message any) *redis.IntCmd {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Publish", ctx, channel, message)
+	ret0, _ := ret[0].(*redis.IntCmd)
+	return ret0
+}
+
+// Publish indicates an expected call of Publish.
+func (mr *MockRedisClientMockRecorder) Publish(ctx, channel, message any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Publish", reflect.TypeOf((*MockRedisClient)(nil).Publish), ctx, channel, message)
+}
+
 // Set mocks base method.
 func (m *MockRedisClient) Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd {
 	m.ctrl.T.Helper()
@@ -185,6 +199,25 @@ func (m *MockRedisClient) Set(ctx context.Context, key string, value any, expira
 func (mr *MockRedisClientMockRecorder) Set(ctx, key, value, expiration any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Set", reflect.TypeOf((*MockRedisClient)(nil).Set), ctx, key, value, expiration)
+}
+
+// Subscribe mocks base method.
+func (m *MockRedisClient) Subscribe(ctx context.Context, channels ...string) *redis.PubSub {
+	m.ctrl.T.Helper()
+	varargs := []any{ctx}
+	for _, a := range channels {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "Subscribe", varargs...)
+	ret0, _ := ret[0].(*redis.PubSub)
+	return ret0
+}
+
+// Subscribe indicates an expected call of Subscribe.
+func (mr *MockRedisClientMockRecorder) Subscribe(ctx any, channels ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{ctx}, channels...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Subscribe", reflect.TypeOf((*MockRedisClient)(nil).Subscribe), varargs...)
 }
 
 // TxPipeline mocks base method.

@@ -177,7 +177,33 @@ func TestLifecycleManager_ModeMatrix(t *testing.T) {
 		t.Run(string(tc.mode), func(t *testing.T) {
 			t.Parallel()
 			mgr := lifecycleManagerForMode(t, tc.mode)
-			assertModeRegistrations(t, tc.mode, mgr.Names(), tc.mustContain, tc.mustNotHave)
+			assertModeRegistrations(t, tc.mode, mgr.Names(), tc.mustContain, append(tc.mustNotHave, "provisioning-watch"))
+		})
+	}
+}
+
+// TestLifecycleManager_ProvisioningWatchWithRedis registers the provisioning
+// watcher in every mode once Redis is configured: API instances authenticate
+// against the provisioning view and workers read its declared buckets. The
+// Redis address refuses connections, which starts the backend in fallback
+// rather than failing the build.
+func TestLifecycleManager_ProvisioningWatchWithRedis(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []config.Mode{config.ModeAPI, config.ModeWorker, config.ModeAll} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			cfg := happyPathConfig(t.TempDir())
+			cfg.Redis = &config.RedisConfig{Address: "127.0.0.1:1"}
+			if err := cfg.SetDefaultsAndValidate(); err != nil {
+				t.Fatalf("config validation: %v", err)
+			}
+			inj := NewInjector(InjectorDeps{Config: cfg, Mode: mode, LogLevel: new(slog.LevelVar), LogBuffer: telemetry.NewLogBuffer()})
+			t.Cleanup(func() { _ = inj.Shutdown() })
+			mgr, err := do.Invoke[*lifecycle.Manager](inj)
+			if err != nil {
+				t.Fatalf("resolve LifecycleManager: %v", err)
+			}
+			assertModeRegistrations(t, mode, mgr.Names(), []string{"provisioning-watch"}, nil)
 		})
 	}
 }

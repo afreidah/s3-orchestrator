@@ -12,10 +12,13 @@
 package di
 
 import (
+	"context"
+
 	"github.com/samber/do/v2"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
+	"github.com/afreidah/s3-orchestrator/internal/counter"
 	"github.com/afreidah/s3-orchestrator/internal/debug"
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 	"github.com/afreidah/s3-orchestrator/internal/notify"
@@ -124,6 +127,17 @@ func ProvideLifecycleManager(i do.Injector) (*lifecycle.Manager, error) {
 	sm.Register("cb-watchdog", breaker.NewWatchdog(registry))
 	if fr, err := do.Invoke[*debug.FlightRecorderService](i); err == nil {
 		sm.Register("flight-recorder", fr)
+	}
+	// Every mode holds a provisioning view: API instances authenticate
+	// against it, workers read its declared buckets.
+	if cfg.Redis != nil {
+		channel, err := do.Invoke[*counter.RedisCounterBackend](i)
+		if err != nil {
+			return nil, err
+		}
+		sm.Register("provisioning-watch", newProvisioningWatcher(channel, func(ctx context.Context) error {
+			return applyProvisioning(ctx, i)
+		}))
 	}
 
 	if !mode.IsWorker() {

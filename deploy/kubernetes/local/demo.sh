@@ -34,22 +34,6 @@ helm() { command helm --kube-context "k3d-${CLUSTER_NAME}" "$@"; }
 
 cd "$REPO_ROOT"
 
-# reload_fleet sends SIGHUP to every orchestrator pod so each rebuilds its
-# credential registry from the store. Provisioning only republishes the registry
-# on the instance that served the call, so without this the perf identity
-# authenticates on one pod and gets 403 from the rest.
-reload_fleet() {
-    echo "Reloading every instance so it picks up the perf identity..."
-    local pod
-    for pod in $(kubectl -n "$NAMESPACE" get pods \
-        -l "app.kubernetes.io/name=s3-orchestrator" \
-        --field-selector=status.phase=Running -o name); do
-        kubectl -n "$NAMESPACE" exec "$pod" -- kill -HUP 1 >/dev/null 2>&1 \
-            || echo "Warning: could not signal ${pod#pod/}"
-    done
-    sleep 2
-}
-
 # print_platform_endpoints lists what only Kubernetes can report: the pods, and
 # how to reach one pod's metrics listener, which is not published on the host.
 print_platform_endpoints() {
@@ -131,7 +115,6 @@ kubectl -n "$NAMESPACE" rollout status "deployment/$RELEASE" --timeout=180s || R
 echo "Waiting for Traefik to route to the fleet..."
 if [[ "$ROLLED_OUT" == "true" ]] && wait_for_health 30; then
     provision_perf_identity
-    reload_fleet
     create_grafana_correlation
     print_summary "Kubernetes (k3d)" "./deploy/kubernetes/local/demo.sh"
 else

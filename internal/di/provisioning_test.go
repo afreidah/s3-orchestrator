@@ -13,6 +13,8 @@ package di
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/samber/do/v2"
@@ -22,6 +24,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/provisioning"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
@@ -136,7 +139,8 @@ func TestAssembleBucketRegistry_ReadFailurePropagates(t *testing.T) {
 
 // TestRegistryPublisher_SwapsTheRunningRegistry verifies a provisioning change
 // takes effect on the next request: the publisher reassembles from the store
-// and installs the result on the serving instance.
+// and installs both the credential registry and the bucket CORS rules on the
+// serving instance.
 func TestRegistryPublisher_SwapsTheRunningRegistry(t *testing.T) {
 	t.Parallel()
 
@@ -152,10 +156,16 @@ func TestRegistryPublisher_SwapsTheRunningRegistry(t *testing.T) {
 	inj := do.New()
 	do.ProvideValue[core.ProvisioningStore](inj, store)
 	do.ProvideValue(inj, provisioning.NewDeclared())
-	do.ProvideValue(inj, &config.Config{Buckets: []config.BucketConfig{{Name: "photos"}}})
+	do.ProvideNamedValue(inj, "mode", config.ModeAPI)
+	do.ProvideValue(inj, &config.Config{Buckets: []config.BucketConfig{{
+		Name: "photos",
+		CORS: []config.CORSRule{{AllowedOrigins: []string{"https://app.example.com"}, AllowedMethods: []string{"GET"}}},
+	}}})
 
 	srv := &s3api.Server{}
 	do.ProvideValue(inj, srv)
+	policy := cors.New(s3api.BucketFromPath, s3api.WriteS3Error)
+	do.ProvideValue(inj, policy)
 
 	before := srv.GetBucketAuth()
 	if err := NewRegistryPublisher(inj).Republish(context.Background()); err != nil {
@@ -164,6 +174,36 @@ func TestRegistryPublisher_SwapsTheRunningRegistry(t *testing.T) {
 	after := srv.GetBucketAuth()
 	if after == nil || after == before {
 		t.Fatal("the server is still serving the registry it had before")
+	}
+
+	preflight := httptest.NewRequestWithContext(context.Background(), http.MethodOptions, "/photos/key", http.NoBody)
+	preflight.Header.Set("Origin", "https://app.example.com")
+	preflight.Header.Set("Access-Control-Request-Method", "GET")
+	w := httptest.NewRecorder()
+	policy.Middleware(http.NotFoundHandler()).ServeHTTP(w, preflight)
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://app.example.com" {
+		t.Errorf("preflight Allow-Origin = %q after Republish; the bucket's CORS rules were not installed", got)
+	}
+}
+
+// TestRegistryPublisher_WorkerModeRefreshesDeclaredOnly rebuilds the declared
+// bucket set in a mode that serves no S3 API, without resolving a server or a
+// CORS policy that mode never builds.
+func TestRegistryPublisher_WorkerModeRefreshesDeclaredOnly(t *testing.T) {
+	t.Parallel()
+
+	inj := do.New()
+	do.ProvideValue[core.ProvisioningStore](inj, emptyProvisioningStore(t))
+	declared := provisioning.NewDeclared()
+	do.ProvideValue(inj, declared)
+	do.ProvideNamedValue(inj, "mode", config.ModeWorker)
+	do.ProvideValue(inj, &config.Config{Buckets: []config.BucketConfig{{Name: "photos"}}})
+
+	if err := NewRegistryPublisher(inj).Republish(context.Background()); err != nil {
+		t.Fatalf("Republish: %v", err)
+	}
+	if got := declared.Buckets(); len(got) != 1 || got[0].Name != "photos" {
+		t.Errorf("declared buckets = %+v, want photos", got)
 	}
 }
 
@@ -178,11 +218,24 @@ func TestRegistryPublisher_MissingDependencyFails(t *testing.T) {
 		setup func(do.Injector)
 	}{
 		{"no config", func(do.Injector) {}},
-		{"no server", func(i do.Injector) {
+		{"no mode", func(i do.Injector) {
 			do.ProvideValue(i, &config.Config{})
 		}},
 		{"no store", func(i do.Injector) {
 			do.ProvideValue(i, &config.Config{})
+			do.ProvideNamedValue(i, "mode", config.ModeAPI)
+		}},
+		{"no server", func(i do.Injector) {
+			do.ProvideValue(i, &config.Config{})
+			do.ProvideNamedValue(i, "mode", config.ModeAPI)
+			do.ProvideValue[core.ProvisioningStore](i, emptyProvisioningStore(t))
+			do.ProvideValue(i, provisioning.NewDeclared())
+		}},
+		{"no CORS policy", func(i do.Injector) {
+			do.ProvideValue(i, &config.Config{})
+			do.ProvideNamedValue(i, "mode", config.ModeAPI)
+			do.ProvideValue[core.ProvisioningStore](i, emptyProvisioningStore(t))
+			do.ProvideValue(i, provisioning.NewDeclared())
 			do.ProvideValue(i, &s3api.Server{})
 		}},
 	} {

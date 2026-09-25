@@ -66,6 +66,12 @@ func (m *memoryRedis) Set(_ context.Context, key string, value any, _ time.Durat
 	return redis.NewStatusResult("OK", nil)
 }
 
+func (m *memoryRedis) Publish(context.Context, string, any) *redis.IntCmd {
+	return redis.NewIntResult(0, nil)
+}
+
+func (m *memoryRedis) Subscribe(context.Context, ...string) *redis.PubSub { return nil }
+
 func (m *memoryRedis) IncrBy(context.Context, string, int64) *redis.IntCmd {
 	return redis.NewIntResult(0, nil)
 }
