@@ -1116,6 +1116,47 @@ func TestGetPoolUsageForPeriod_ScopedToPeriod(t *testing.T) {
 // MULTIPART UPLOADS
 // -------------------------------------------------------------------------
 
+// TestListParts_PagesAfterMarker returns parts above the marker in part-number
+// order, at most limit of them, whatever order they were recorded in.
+func TestListParts_PagesAfterMarker(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.CreateMultipartUpload(ctx, &core.CreateMultipartUploadParams{
+		UploadID: "upload-pages", ObjectKey: "bucket/big.bin", BackendName: "backend-a",
+	}); err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+	for _, n := range []int{5, 1, 3, 2, 4} {
+		if err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: "upload-pages", PartNumber: n, ETag: "e", SizeBytes: 1}); err != nil {
+			t.Fatalf("RecordPart(%d): %v", n, err)
+		}
+	}
+
+	for _, tc := range []struct {
+		after, limit int
+		want         []int
+	}{
+		{0, 2, []int{1, 2}},
+		{2, 2, []int{3, 4}},
+		{4, 2, []int{5}},
+		{5, 2, []int{}},
+	} {
+		parts, err := s.ListParts(ctx, "upload-pages", tc.after, tc.limit)
+		if err != nil {
+			t.Fatalf("ListParts(after %d): %v", tc.after, err)
+		}
+		got := make([]int, 0, len(parts))
+		for _, p := range parts {
+			got = append(got, p.PartNumber)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("ListParts(after %d, limit %d) = %v, want %v", tc.after, tc.limit, got, tc.want)
+		}
+	}
+}
+
 // TestMultipartUpload_Lifecycle verifies the full create/record-part/complete/delete lifecycle.
 func TestMultipartUpload_Lifecycle(t *testing.T) {
 	t.Parallel()

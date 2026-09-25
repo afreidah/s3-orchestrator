@@ -306,6 +306,65 @@ func (q *Queries) ListMultipartUploadsByPrefix(ctx context.Context, arg ListMult
 	return items, nil
 }
 
+const listParts = `-- name: ListParts :many
+SELECT part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
+FROM multipart_parts
+WHERE upload_id = $1
+  AND part_number > $2
+ORDER BY part_number
+LIMIT $3
+`
+
+type ListPartsParams struct {
+	UploadID  string
+	AfterPart int32
+	RowLimit  int32
+}
+
+type ListPartsRow struct {
+	PartNumber    int32
+	Etag          string
+	PlaintextEtag *string
+	SizeBytes     int64
+	Encrypted     bool
+	EncryptionKey []byte
+	KeyID         *string
+	PlaintextSize *int64
+	CreatedAt     pgtype.Timestamptz
+}
+
+// One page of an upload's parts: those numbered above after_part, in order.
+// Selects the same columns as GetParts so both map through one converter.
+func (q *Queries) ListParts(ctx context.Context, arg ListPartsParams) ([]ListPartsRow, error) {
+	rows, err := q.db.Query(ctx, listParts, arg.UploadID, arg.AfterPart, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPartsRow{}
+	for rows.Next() {
+		var i ListPartsRow
+		if err := rows.Scan(
+			&i.PartNumber,
+			&i.Etag,
+			&i.PlaintextEtag,
+			&i.SizeBytes,
+			&i.Encrypted,
+			&i.EncryptionKey,
+			&i.KeyID,
+			&i.PlaintextSize,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertPart = `-- name: UpsertPart :exec
 INSERT INTO multipart_parts (upload_id, part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())

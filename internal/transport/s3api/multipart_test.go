@@ -421,11 +421,13 @@ func TestListParts_Success(t *testing.T) {
 				ObjectKey:   "mybucket/testkey",
 				BackendName: "b1",
 			}, nil).AnyTimes()
-		m.EXPECT().GetParts(gomock.Any(), gomock.Any()).
+		// The default page asks for 1000 parts after part 0, plus one row to
+		// detect truncation.
+		m.EXPECT().ListParts(gomock.Any(), "upload-1", 0, 1001).
 			Return([]core.MultipartPart{
 				{PartNumber: 1, ETag: `"aaa"`, SizeBytes: 100, CreatedAt: now},
 				{PartNumber: 2, ETag: `"bbb"`, SizeBytes: 200, CreatedAt: now},
-			}, nil).AnyTimes()
+			}, nil)
 	})
 
 	resp := doReq(t, ts, http.MethodGet, ts.URL+"/mybucket/testkey?uploadId=upload-1", nil)
@@ -458,6 +460,10 @@ func TestListParts_Success(t *testing.T) {
 	if result.Parts[1].PartNumber != 2 || result.Parts[1].Size != 200 {
 		t.Errorf("Part[1] = %+v", result.Parts[1])
 	}
+	if result.MaxParts != 1000 || result.PartNumberMarker != 0 || result.NextPartNumberMarker != 2 || result.IsTruncated {
+		t.Errorf("paging = MaxParts %d, PartNumberMarker %d, NextPartNumberMarker %d, IsTruncated %v; want 1000, 0, 2, false",
+			result.MaxParts, result.PartNumberMarker, result.NextPartNumberMarker, result.IsTruncated)
+	}
 }
 
 // TestListParts_StoreError verifies the list parts store error contract.
@@ -471,7 +477,7 @@ func TestListParts_StoreError(t *testing.T) {
 				ObjectKey:   "mybucket/testkey",
 				BackendName: "b1",
 			}, nil).AnyTimes()
-		m.EXPECT().GetParts(gomock.Any(), gomock.Any()).
+		m.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(nil, &core.S3Error{
 				StatusCode: 500,
 				Code:       "InternalError",
@@ -498,7 +504,7 @@ func TestListParts_EmptyParts(t *testing.T) {
 				ObjectKey:   "mybucket/testkey",
 				BackendName: "b1",
 			}, nil).AnyTimes()
-		m.EXPECT().GetParts(gomock.Any(), gomock.Any()).
+		m.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(nil, nil).AnyTimes() // no parts
 	})
 
@@ -531,7 +537,7 @@ func TestListParts_EmitsIsTruncatedFalse(t *testing.T) {
 				ObjectKey:   "mybucket/testkey",
 				BackendName: "b1",
 			}, nil).AnyTimes()
-		m.EXPECT().GetParts(gomock.Any(), gomock.Any()).
+		m.EXPECT().ListParts(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(nil, nil).AnyTimes()
 	})
 

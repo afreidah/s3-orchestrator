@@ -72,6 +72,7 @@ func Permissive(m *MockMetadataStore) {
 	r.GetObjectsWithoutHash(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.GetOverReplicatedObjects(a, a, a).Return(nil, nil).AnyTimes()
 	r.GetParts(a, a).Return(nil, nil).AnyTimes()
+	r.ListParts(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.GetPendingCleanups(a, a).Return(nil, nil).AnyTimes()
 	r.GetPendingNotifications(a, a).Return(nil, nil).AnyTimes()
 	r.GetQuotaStats(a).Return(nil, nil).AnyTimes()

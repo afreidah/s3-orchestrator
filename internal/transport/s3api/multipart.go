@@ -16,6 +16,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,6 +26,10 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/multipart"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
+
+// listingPageLimit is the most parts or uploads one S3 listing response
+// returns, and the page size when the client names none.
+const listingPageLimit = 1000
 
 // -------------------------------------------------------------------------
 // XML TYPES
@@ -71,13 +76,16 @@ type copyPartResult struct {
 
 // listPartsResult is the XML response for ListParts.
 type listPartsResult struct {
-	XMLName     xml.Name   `xml:"ListPartsResult"`
-	Xmlns       string     `xml:"xmlns,attr"`
-	Bucket      string     `xml:"Bucket"`
-	Key         string     `xml:"Key"`
-	UploadId    string     `xml:"UploadId"`
-	IsTruncated bool       `xml:"IsTruncated"`
-	Parts       []partInfo `xml:"Part"`
+	XMLName              xml.Name   `xml:"ListPartsResult"`
+	Xmlns                string     `xml:"xmlns,attr"`
+	Bucket               string     `xml:"Bucket"`
+	Key                  string     `xml:"Key"`
+	UploadId             string     `xml:"UploadId"`
+	PartNumberMarker     int        `xml:"PartNumberMarker"`
+	NextPartNumberMarker int        `xml:"NextPartNumberMarker"`
+	MaxParts             int        `xml:"MaxParts"`
+	IsTruncated          bool       `xml:"IsTruncated"`
+	Parts                []partInfo `xml:"Part"`
 }
 
 // partInfo holds part metadata for the ListParts response.
@@ -423,7 +431,11 @@ type xmlUpload struct {
 func (s *Server) handleListMultipartUploads(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket string) (int, error) {
 	bucketPrefix := internalkey.Prefix(bucket)
 
-	maxUploads := parseQueryInt(r, "max-uploads", 1000, 1000)
+	maxUploads, err := parseListingCount(r, "max-uploads", listingPageLimit, listingPageLimit)
+	if err != nil {
+		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", err.Error())
+		return http.StatusBadRequest, err
+	}
 
 	// Fetch one extra to detect truncation
 	uploads, err := s.Multipart.ListMultipartUploads(ctx, bucketPrefix, maxUploads+1)
@@ -458,22 +470,40 @@ func (s *Server) handleListMultipartUploads(ctx context.Context, w http.Response
 	return http.StatusOK, nil
 }
 
-// handleListParts handles GET /{bucket}/{key}?uploadId=X
+// handleListParts handles GET /{bucket}/{key}?uploadId=X, returning one page
+// of parts: up to max-parts numbered above part-number-marker.
 // key is the user-facing key (for XML response), internalKey is the prefixed
-// key (unused here since GetParts uses uploadID, but accepted for consistency).
+// key (unused here since ListParts uses uploadID, but accepted for consistency).
+//
+// NextPartNumberMarker is the last part returned, or 0 when the page is empty,
+// and is reported whether or not the page is truncated, as S3 does.
 func (s *Server) handleListParts(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key, _ string) (int, error) {
 	uploadID := r.URL.Query().Get("uploadId")
 
-	parts, err := s.Multipart.GetParts(ctx, bucket, key, uploadID)
+	maxParts, err := parseListingCount(r, "max-parts", listingPageLimit, listingPageLimit)
+	if err != nil {
+		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", err.Error())
+		return http.StatusBadRequest, err
+	}
+	marker, err := parseListingCount(r, "part-number-marker", 0, math.MaxInt32)
+	if err != nil {
+		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", err.Error())
+		return http.StatusBadRequest, err
+	}
+
+	parts, truncated, err := s.Multipart.ListParts(ctx, bucket, key, uploadID, marker, maxParts)
 	if err != nil {
 		return writeStorageError(w, err, "Failed to list parts"), err
 	}
 
 	result := listPartsResult{
-		Xmlns:    s3XMLNS,
-		Bucket:   bucket,
-		Key:      key,
-		UploadId: uploadID,
+		Xmlns:            s3XMLNS,
+		Bucket:           bucket,
+		Key:              key,
+		UploadId:         uploadID,
+		PartNumberMarker: marker,
+		MaxParts:         maxParts,
+		IsTruncated:      truncated,
 	}
 
 	for i := range parts {
@@ -483,6 +513,9 @@ func (s *Server) handleListParts(ctx context.Context, w http.ResponseWriter, r *
 			Size:         parts[i].SizeBytes,
 			LastModified: parts[i].CreatedAt.UTC().Format(time.RFC3339),
 		})
+	}
+	if len(parts) > 0 {
+		result.NextPartNumberMarker = parts[len(parts)-1].PartNumber
 	}
 
 	if err := writeXML(w, http.StatusOK, result); err != nil {

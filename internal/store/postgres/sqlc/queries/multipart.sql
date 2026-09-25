@@ -32,6 +32,16 @@ FROM multipart_parts
 WHERE upload_id = $1
 ORDER BY part_number;
 
+-- name: ListParts :many
+-- One page of an upload's parts: those numbered above after_part, in order.
+-- Selects the same columns as GetParts so both map through one converter.
+SELECT part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
+FROM multipart_parts
+WHERE upload_id = @upload_id
+  AND part_number > @after_part
+ORDER BY part_number
+LIMIT @row_limit;
+
 -- name: DeleteMultipartUpload :exec
 DELETE FROM multipart_uploads
 WHERE upload_id = $1;

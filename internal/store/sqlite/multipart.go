@@ -142,27 +142,48 @@ func (s *Store) GetParts(ctx context.Context, uploadID string) ([]core.Multipart
 	if err != nil {
 		return nil, fmt.Errorf("failed to get parts: %w", err)
 	}
-	return collectRows(rows, "parts", func(rows *sql.Rows) (core.MultipartPart, error) {
-		var (
-			p         core.MultipartPart
-			ptETag    sql.NullString
-			keyID     sql.NullString
-			ptSize    sql.NullInt64
-			createdAt string
-		)
-		if err := rows.Scan(&p.PartNumber, &p.ETag, &ptETag, &p.SizeBytes, &p.Encrypted, &p.EncryptionKey, &keyID, &ptSize, &createdAt); err != nil {
-			return core.MultipartPart{}, fmt.Errorf("failed to scan part: %w", err)
-		}
-		p.PlaintextETag = nullStringValue(ptETag)
-		p.KeyID = nullStringValue(keyID)
-		p.PlaintextSize = nullInt64Value(ptSize)
-		created, err := parseTime(createdAt)
-		if err != nil {
-			return core.MultipartPart{}, fmt.Errorf("invalid part created_at timestamp %q: %w", createdAt, err)
-		}
-		p.CreatedAt = created
-		return p, nil
-	})
+	return collectRows(rows, "parts", scanPart)
+}
+
+// ListParts returns up to limit parts numbered above afterPart, ordered by
+// part number.
+func (s *Store) ListParts(ctx context.Context, uploadID string, afterPart, limit int) ([]core.MultipartPart, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT part_number, etag, plaintext_etag, size_bytes, encrypted, encryption_key, key_id, plaintext_size, created_at
+		 FROM multipart_parts
+		 WHERE upload_id = ? AND part_number > ?
+		 ORDER BY part_number
+		 LIMIT ?`,
+		uploadID, afterPart, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list parts: %w", err)
+	}
+	return collectRows(rows, "parts", scanPart)
+}
+
+// scanPart reads one multipart_parts row selected in the column order GetParts
+// and ListParts share.
+func scanPart(rows *sql.Rows) (core.MultipartPart, error) {
+	var (
+		p         core.MultipartPart
+		ptETag    sql.NullString
+		keyID     sql.NullString
+		ptSize    sql.NullInt64
+		createdAt string
+	)
+	if err := rows.Scan(&p.PartNumber, &p.ETag, &ptETag, &p.SizeBytes, &p.Encrypted, &p.EncryptionKey, &keyID, &ptSize, &createdAt); err != nil {
+		return core.MultipartPart{}, fmt.Errorf("failed to scan part: %w", err)
+	}
+	p.PlaintextETag = nullStringValue(ptETag)
+	p.KeyID = nullStringValue(keyID)
+	p.PlaintextSize = nullInt64Value(ptSize)
+	created, err := parseTime(createdAt)
+	if err != nil {
+		return core.MultipartPart{}, fmt.Errorf("invalid part created_at timestamp %q: %w", createdAt, err)
+	}
+	p.CreatedAt = created
+	return p, nil
 }
 
 // -------------------------------------------------------------------------

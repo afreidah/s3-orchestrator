@@ -215,6 +215,22 @@ func parseQueryInt(r *http.Request, param string, defaultVal, maxVal int) int {
 	return v
 }
 
+// parseListingCount reads a paging parameter the way S3 does: absent or empty
+// means defaultVal, a value above ceiling is capped to it, and anything that
+// is not an integer between 0 and 2147483647 is refused. The error is the
+// message an InvalidArgument response carries.
+func parseListingCount(r *http.Request, param string, defaultVal, ceiling int) (int, error) {
+	s := r.URL.Query().Get(param)
+	if s == "" {
+		return defaultVal, nil
+	}
+	v, err := strconv.ParseInt(s, 10, 32)
+	if err != nil || v < 0 {
+		return 0, fmt.Errorf("Argument %s must be an integer between 0 and 2147483647", param) //nolint:staticcheck // ST1005: S3's own message, capitalised as S3 returns it
+	}
+	return min(int(v), ceiling), nil
+}
+
 // Query keys an object request may carry. S3 selects the operation from the
 // query string, not just the method, so a key absent from this set names an
 // operation this server does not implement.
@@ -224,10 +240,12 @@ func parseQueryInt(r *http.Request, param string, defaultVal, maxVal int) int {
 // path, and AWS keeps adding them; enumerating what we understand means a
 // missed one is a rejected request instead of a destroyed object.
 var supportedObjectQueryKeys = map[string]bool{
-	"uploads":    true, // CreateMultipartUpload / ListMultipartUploads
-	"uploadId":   true, // per-upload multipart operations
-	"partNumber": true, // UploadPart
-	"tagging":    true, // Put/Get/DeleteObjectTagging
+	"uploads":            true, // CreateMultipartUpload / ListMultipartUploads
+	"uploadId":           true, // per-upload multipart operations
+	"partNumber":         true, // UploadPart
+	"max-parts":          true, // ListParts paging
+	"part-number-marker": true,
+	"tagging":            true, // Put/Get/DeleteObjectTagging
 
 	// x-id names the SDK operation that built the request (x-id=PutObject).
 	// Added by the AWS SDKs, carries no meaning for the server, and appears on

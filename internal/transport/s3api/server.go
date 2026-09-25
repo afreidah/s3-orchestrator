@@ -80,6 +80,7 @@ type MultipartOps interface {
 	AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error
 	ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]core.MultipartUpload, error)
 	GetParts(ctx context.Context, bucket, key, uploadID string) ([]core.MultipartPart, error)
+	ListParts(ctx context.Context, bucket, key, uploadID string, partNumberMarker, maxParts int) ([]core.MultipartPart, bool, error)
 	CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error)
 }
 
