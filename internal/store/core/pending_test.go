@@ -38,11 +38,11 @@ type promoteTxStub struct {
 	deleteErr   error
 	landingErr  error
 
-	ops          []string
-	inserted     []ObjectLocation
-	deleted      []string
-	cleared      [][]string
-	pathsCleared []string
+	ops        []string
+	inserted   []ObjectLocation
+	deleted    []string
+	cleared    [][]string
+	pathsAsked []string
 }
 
 func (s *promoteTxStub) AcquireKeyLock(context.Context, string) error {
@@ -80,11 +80,11 @@ func (s *promoteTxStub) ClearPendingForKey(_ context.Context, _ string, keep []s
 	return nil, nil
 }
 
-// ClearPendingOnBackend reports the intents the test seeded as still landing
-// at the path, recording which path was asked.
-func (s *promoteTxStub) ClearPendingOnBackend(_ context.Context, key, backend string) (int64, error) {
-	s.ops = append(s.ops, "clear_landing")
-	s.pathsCleared = append(s.pathsCleared, key+"/"+backend)
+// CountPendingOnBackend reports the intents the test seeded as still live for
+// the path, recording which path was asked.
+func (s *promoteTxStub) CountPendingOnBackend(_ context.Context, key, backend string) (int64, error) {
+	s.ops = append(s.ops, "count_live")
+	s.pathsAsked = append(s.pathsAsked, key+"/"+backend)
 	return s.landing, s.landingErr
 }
 
@@ -201,8 +201,9 @@ func TestPromotePending_CompanionDiscardedWhenNoCopy(t *testing.T) {
 // verifies the reaper's discard deletes nothing while another intent for the
 // same key and backend is live. That upload is landing at the same path, so a
 // delete sent now would take its bytes once they land and leave its row
-// describing nothing; the discard cancels that intent instead, and the path
-// is removed by that copy's own resolution once its upload has finished.
+// describing nothing. The other intent is left exactly as it was: it is the
+// promise that the path gets cleaned up if that upload never commits, and the
+// last intent to resolve for the path is the one that deletes it.
 func TestPromotePending_CompanionDiscardLeavesThePathToTheCopyStillLanding(t *testing.T) {
 	t.Parallel()
 	stub := &promoteTxStub{
@@ -218,13 +219,13 @@ func TestPromotePending_CompanionDiscardLeavesThePathToTheCopyStillLanding(t *te
 		t.Errorf("result = %v, want CompanionDiscarded", result)
 	}
 	if len(displaced) != 0 {
-		t.Errorf("displaced = %+v, want nothing while another copy is landing at the path", displaced)
+		t.Errorf("displaced = %+v, want nothing while another intent is live for the path", displaced)
 	}
-	if !slices.Equal(stub.pathsCleared, []string{"k/b2"}) {
-		t.Errorf("intents cancelled at %v, want the discarded copy's own path k/b2", stub.pathsCleared)
+	if !slices.Equal(stub.pathsAsked, []string{"k/b2"}) {
+		t.Errorf("asked about %v, want the discarded copy's own path k/b2", stub.pathsAsked)
 	}
 	if !slices.Equal(stub.deleted, []string{"i-1"}) {
-		t.Errorf("expected the intent cleared, got %v", stub.deleted)
+		t.Errorf("intents removed = %v, want only the resolved one; the other stays for its own resolution", stub.deleted)
 	}
 }
 
@@ -506,11 +507,11 @@ type companionTxStub struct {
 	pullErr    error
 	landingErr error
 
-	inserted     []ObjectLocation
-	deleted      []string
-	rowsPulled   []string
-	pathsCleared []string
-	stripes      []int64
+	inserted   []ObjectLocation
+	deleted    []string
+	rowsPulled []string
+	pathsAsked []string
+	stripes    []int64
 }
 
 func (s *companionTxStub) AcquireKeyLock(context.Context, string) error { return s.keyLockErr }
@@ -554,10 +555,10 @@ func (s *companionTxStub) AdjustQuotaStripe(_ context.Context, _ string, _ int16
 	return nil
 }
 
-// ClearPendingOnBackend reports the intents the test seeded as still landing
-// at the path, recording which path was asked.
-func (s *companionTxStub) ClearPendingOnBackend(_ context.Context, key, backend string) (int64, error) {
-	s.pathsCleared = append(s.pathsCleared, key+"/"+backend)
+// CountPendingOnBackend reports the intents the test seeded as still live for
+// the path, recording which path was asked.
+func (s *companionTxStub) CountPendingOnBackend(_ context.Context, key, backend string) (int64, error) {
+	s.pathsAsked = append(s.pathsAsked, key+"/"+backend)
 	return s.landing, s.landingErr
 }
 
@@ -649,8 +650,7 @@ func TestCommitCompanionCopy_DropsTheRowItCannotVouchFor(t *testing.T) {
 // discard deletes no bytes while another intent for the same key and backend
 // is live. That upload is landing at the same path, so a delete sent now would
 // take its bytes once they land and leave its row describing nothing. The
-// discard cancels that intent instead: the copy's own commit then finds it
-// gone and removes the path once every write to it has finished.
+// other intent is left as it is; the last resolution for the path deletes it.
 func TestCommitCompanionCopy_LeavesThePathToTheCopyStillLanding(t *testing.T) {
 	t.Parallel()
 	stub := &companionTxStub{landing: 1}
@@ -664,10 +664,13 @@ func TestCommitCompanionCopy_LeavesThePathToTheCopyStillLanding(t *testing.T) {
 		t.Errorf("result = %v, want untrusted", result)
 	}
 	if len(displaced) != 0 {
-		t.Errorf("displaced = %+v, want nothing while another copy is landing at the path", displaced)
+		t.Errorf("displaced = %+v, want nothing while another intent is live for the path", displaced)
 	}
-	if !slices.Equal(stub.pathsCleared, []string{"k/b2"}) {
-		t.Errorf("intents cancelled at %v, want the discarded copy's own path k/b2", stub.pathsCleared)
+	if !slices.Equal(stub.pathsAsked, []string{"k/b2"}) {
+		t.Errorf("asked about %v, want the discarded copy's own path k/b2", stub.pathsAsked)
+	}
+	if len(stub.deleted) != 0 {
+		t.Errorf("intents removed = %v, want none: the other intent is the path's promise of cleanup", stub.deleted)
 	}
 }
 
@@ -694,7 +697,7 @@ func TestCommitCompanionCopy_StillDropsTheRowWhileACopyIsLanding(t *testing.T) {
 		t.Errorf("delta for b2 = %d, want the row's 250 credited back", deltas["b2"])
 	}
 	if len(displaced) != 0 {
-		t.Errorf("displaced = %+v, want nothing while another copy is landing at the path", displaced)
+		t.Errorf("displaced = %+v, want nothing while another intent is live for the path", displaced)
 	}
 }
 

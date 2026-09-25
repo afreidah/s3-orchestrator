@@ -421,9 +421,9 @@ func TestRecordObjectAndClearPending_EmptyIntentBehavesLikeRecordObject(t *testi
 // delete arrives, which is the second copy once it lands, and the second
 // copy's commit then records a row for bytes that are gone.
 //
-// The discard leaves the path to the copy still landing on it instead: it
-// cancels that copy's intent, so the copy's own commit finds the intent gone
-// and removes the path once every write to it has finished.
+// The discard leaves the path to the copy still landing on it instead, and
+// leaves that copy's intent as it is: the copy commits normally on top, and
+// its intent stays the path's promise of cleanup should it never commit.
 func TestCommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -457,20 +457,80 @@ func TestCommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding(t *testin
 		t.Errorf("first copy's discard reported %+v for deletion while the second copy was still landing at that path", displaced)
 	}
 
+	if got := queryPendingCount(t, s); got != 1 {
+		t.Errorf("pending rows = %d, want the second copy's intent left in place", got)
+	}
+
 	result, displaced, _, err = s.CommitCompanionCopy(ctx, &second)
 	if err != nil {
 		t.Fatalf("CommitCompanionCopy second: %v", err)
 	}
-	if result != core.CompanionCopyUntrusted {
-		t.Errorf("second copy: result = %v, want Untrusted, since the first copy's discard left it the path", result)
+	if result != core.CompanionCopyCommitted {
+		t.Errorf("second copy: result = %v, want Committed: its intent was untouched and its bytes are the path's", result)
 	}
-	if len(displaced) != 1 || displaced[0].BackendName != "backend-b" {
-		t.Errorf("second copy's discard reported %+v, want backend-b's bytes now that nothing else is landing there", displaced)
+	if len(displaced) != 0 {
+		t.Errorf("second copy's commit reported %+v for deletion, want nothing", displaced)
 	}
-	if got := queryObjectLocationsOnBackend(t, s, "bucket/k", "backend-b"); got != 0 {
-		t.Errorf("object_locations rows on backend-b = %d, want none: a row there describes bytes the discard's delete removes", got)
+	if got := queryObjectLocationsOnBackend(t, s, "bucket/k", "backend-b"); got != 1 {
+		t.Errorf("object_locations rows on backend-b = %d, want the second copy's", got)
 	}
 	if got := queryPendingCount(t, s); got != 0 {
 		t.Errorf("pending rows = %d, want none once both copies have resolved", got)
+	}
+}
+
+// TestPromotePending_TwoAbandonedCompanions_TheLastToResolveDeletesThePath
+// verifies the reaper's side of the same rule. Two abandoned intents for one
+// key and backend: the first resolved leaves the path to the second, whose
+// intent is still there for exactly this purpose; the second, finding no
+// other intent, hands the bytes back for deletion. Nothing is left behind.
+func TestPromotePending_TwoAbandonedCompanions_TheLastToResolveDeletesThePath(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	first := core.PendingObject{IntentID: "i-first", ObjectKey: "bucket/k", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	second := core.PendingObject{IntentID: "i-second", ObjectKey: "bucket/k", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	for _, p := range []*core.PendingObject{&first, &second} {
+		if _, err := s.InsertPendingIfFits(ctx, p); err != nil {
+			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
+		}
+	}
+	// The write that placed them committed its first copy on backend-a and
+	// then died; both companions outlived it.
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: "bucket/k", Size: 100,
+		Copies:  []core.ObjectCopy{{Backend: "backend-a"}},
+		Placing: []core.ObjectCopy{{Backend: "backend-b", IntentID: "i-first"}, {Backend: "backend-b", IntentID: "i-second"}},
+	}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	result, displaced, _, err := s.PromotePending(ctx, &first)
+	if err != nil {
+		t.Fatalf("PromotePending first: %v", err)
+	}
+	if result != core.PendingPromoteCompanionDiscarded {
+		t.Fatalf("first: result = %v, want CompanionDiscarded", result)
+	}
+	if len(displaced) != 0 {
+		t.Errorf("first reported %+v for deletion while the second intent was still live", displaced)
+	}
+
+	result, displaced, _, err = s.PromotePending(ctx, &second)
+	if err != nil {
+		t.Fatalf("PromotePending second: %v", err)
+	}
+	if result != core.PendingPromoteCompanionDiscarded {
+		t.Fatalf("second: result = %v, want CompanionDiscarded", result)
+	}
+	if len(displaced) != 1 || displaced[0].BackendName != "backend-b" {
+		t.Errorf("second reported %+v, want backend-b's bytes now that no intent is left for the path", displaced)
+	}
+	if got := queryPendingCount(t, s); got != 0 {
+		t.Errorf("pending rows = %d, want none", got)
+	}
+	if got := queryObjectLocationsOnBackend(t, s, "bucket/k", "backend-b"); got != 0 {
+		t.Errorf("object_locations rows on backend-b = %d, want none: a companion is never promoted", got)
 	}
 }

@@ -309,11 +309,10 @@ func TestPgAdapter_DeletePending_RemovesRow(t *testing.T) {
 	})
 }
 
-// TestPgAdapter_ClearPendingOnBackend_RemovesOnlyThatPath verifies the
-// discard's primitive removes every intent for the key on the one backend,
-// counts them, and leaves the key's intents on other backends and other keys
-// alone.
-func TestPgAdapter_ClearPendingOnBackend_RemovesOnlyThatPath(t *testing.T) {
+// TestPgAdapter_CountPendingOnBackend_CountsOnlyThatPath verifies the
+// discard's primitive counts the key's intents on the one backend, not the
+// key's intents on other backends nor other keys, and touches nothing.
+func TestPgAdapter_CountPendingOnBackend_CountsOnlyThatPath(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key, other := uniqueKey(t, "k"), uniqueKey(t, "other")
@@ -330,24 +329,24 @@ func TestPgAdapter_ClearPendingOnBackend_RemovesOnlyThatPath(t *testing.T) {
 	}
 
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		n, err := a.ClearPendingOnBackend(ctx, key, "backend-b")
+		n, err := a.CountPendingOnBackend(ctx, key, "backend-b")
 		if err != nil {
-			t.Fatalf("ClearPendingOnBackend: %v", err)
+			t.Fatalf("CountPendingOnBackend: %v", err)
 		}
 		if n != 2 {
-			t.Errorf("cleared %d intents, want the 2 on backend-b", n)
+			t.Errorf("counted %d intents, want the 2 on backend-b", n)
 		}
-		for _, id := range []string{uniqueKey(t, "other-backend"), uniqueKey(t, "other-key")} {
+		for _, id := range []string{uniqueKey(t, "landing-1"), uniqueKey(t, "landing-2"), uniqueKey(t, "other-backend"), uniqueKey(t, "other-key")} {
 			if kept, err := a.ClaimPending(ctx, id); err != nil || !kept {
 				t.Errorf("intent %s: claimed=%v err=%v, want it left in place", id, kept, err)
 			}
 		}
-		n, err = a.ClearPendingOnBackend(ctx, key, "backend-b")
+		n, err = a.CountPendingOnBackend(ctx, key, "backend-c")
 		if err != nil {
-			t.Fatalf("ClearPendingOnBackend again: %v", err)
+			t.Fatalf("CountPendingOnBackend on an empty path: %v", err)
 		}
 		if n != 0 {
-			t.Errorf("cleared %d intents from an empty path, want 0", n)
+			t.Errorf("counted %d intents on an empty path, want 0", n)
 		}
 	})
 }

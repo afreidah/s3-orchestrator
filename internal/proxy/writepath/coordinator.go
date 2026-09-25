@@ -373,7 +373,7 @@ func (w *Coordinator) CommitCompanionCopy(ctx context.Context, p *core.PendingOb
 		telemetry.ReplicationWriteCopiesTotal.WithLabelValues(WriteCopyCommitted).Inc()
 		return true, nil
 	}
-	w.log.WarnContext(ctx, "a further copy finished after its intent was cleared (a newer write, or an earlier discard at its path); discarding it",
+	w.log.WarnContext(ctx, "a newer write took the key while a further copy was uploading; discarding it",
 		"key", p.ObjectKey, "backend", p.BackendName, "intent_id", p.IntentID)
 	w.core.Acct().APICall(s3op.PutObject, p.BackendName)
 	w.deleteDisplaced(ctx, p.ObjectKey, displaced)

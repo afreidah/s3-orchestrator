@@ -39,7 +39,7 @@ func (*noopTxAdapter) ClearPendingForKey(context.Context, string, []string) ([]S
 	return nil, nil
 }
 
-func (*noopTxAdapter) ClearPendingOnBackend(context.Context, string, string) (int64, error) {
+func (*noopTxAdapter) CountPendingOnBackend(context.Context, string, string) (int64, error) {
 	return 0, nil
 }
 

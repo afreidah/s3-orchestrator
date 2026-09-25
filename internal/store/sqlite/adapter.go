@@ -104,18 +104,15 @@ func (a *sqliteTxAdapter) ClearPendingForKey(ctx context.Context, objectKey stri
 	return cleared, nil
 }
 
-// ClearPendingOnBackend removes every intent for one key on one backend and
-// reports how many there were.
-func (a *sqliteTxAdapter) ClearPendingOnBackend(ctx context.Context, objectKey, backend string) (int64, error) {
-	res, err := a.tx.ExecContext(ctx,
-		`DELETE FROM pending_objects WHERE object_key = ? AND backend_name = ?`,
-		objectKey, backend)
-	if err != nil {
-		return 0, fmt.Errorf("clear pending intents on backend: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("count cleared pending intents: %w", err)
+// CountPendingOnBackend reports how many intents are live for one key on one
+// backend.
+func (a *sqliteTxAdapter) CountPendingOnBackend(ctx context.Context, objectKey, backend string) (int64, error) {
+	var n int64
+	if err := a.tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pending_objects WHERE object_key = ? AND backend_name = ?`,
+		objectKey, backend,
+	).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count pending intents on backend: %w", err)
 	}
 	return n, nil
 }

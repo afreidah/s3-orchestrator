@@ -115,13 +115,13 @@ func TestSqlite_ClearPendingForKey_NoIntents(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// ClearPendingOnBackend
+// CountPendingOnBackend
 // -------------------------------------------------------------------------
 
-// TestSqlite_ClearPendingOnBackend_RemovesOnlyThatPath verifies the discard's
-// primitive removes every intent for the key on the one backend, counts them,
-// and leaves the key's intents on other backends and other keys alone.
-func TestSqlite_ClearPendingOnBackend_RemovesOnlyThatPath(t *testing.T) {
+// TestSqlite_CountPendingOnBackend_CountsOnlyThatPath verifies the discard's
+// primitive counts the key's intents on the one backend, not the key's intents
+// on other backends nor other keys, and touches nothing.
+func TestSqlite_CountPendingOnBackend_CountsOnlyThatPath(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -132,25 +132,22 @@ func TestSqlite_ClearPendingOnBackend_RemovesOnlyThatPath(t *testing.T) {
 	seedPendingIntent(t, s, "other-key", "bucket/other", "backend-b", 40)
 
 	withAdapter(t, s, func(a *sqliteTxAdapter) {
-		n, err := a.ClearPendingOnBackend(ctx, "bucket/k", "backend-b")
+		n, err := a.CountPendingOnBackend(ctx, "bucket/k", "backend-b")
 		if err != nil {
-			t.Fatalf("ClearPendingOnBackend: %v", err)
+			t.Fatalf("CountPendingOnBackend: %v", err)
 		}
 		if n != 2 {
-			t.Errorf("cleared %d intents, want the 2 on backend-b", n)
+			t.Errorf("counted %d intents, want the 2 on backend-b", n)
 		}
-		if got := countPendingForKey(t, a, "bucket/k"); got != 1 {
-			t.Errorf("rows left for the key = %d, want 1 (the one on backend-a)", got)
+		if got := countPendingForKey(t, a, "bucket/k"); got != 3 {
+			t.Errorf("rows for the key = %d, want all 3 still there", got)
 		}
-		if got := countPendingForKey(t, a, "bucket/other"); got != 1 {
-			t.Errorf("rows left for the other key = %d, want 1", got)
-		}
-		n, err = a.ClearPendingOnBackend(ctx, "bucket/k", "backend-b")
+		n, err = a.CountPendingOnBackend(ctx, "bucket/k", "backend-c")
 		if err != nil {
-			t.Fatalf("ClearPendingOnBackend again: %v", err)
+			t.Fatalf("CountPendingOnBackend on an empty path: %v", err)
 		}
 		if n != 0 {
-			t.Errorf("cleared %d intents from an empty path, want 0", n)
+			t.Errorf("counted %d intents on an empty path, want 0", n)
 		}
 	})
 }

@@ -69,12 +69,12 @@ func (a *pgTxAdapter) ClearPendingForKey(ctx context.Context, objectKey string, 
 	return cleared, nil
 }
 
-// ClearPendingOnBackend removes every intent for one key on one backend and
-// reports how many there were.
-func (a *pgTxAdapter) ClearPendingOnBackend(ctx context.Context, objectKey, backend string) (int64, error) {
-	n, err := a.q.ClearPendingOnBackend(ctx, db.ClearPendingOnBackendParams{ObjectKey: objectKey, BackendName: backend})
+// CountPendingOnBackend reports how many intents are live for one key on one
+// backend.
+func (a *pgTxAdapter) CountPendingOnBackend(ctx context.Context, objectKey, backend string) (int64, error) {
+	n, err := a.q.CountPendingOnBackend(ctx, db.CountPendingOnBackendParams{ObjectKey: objectKey, BackendName: backend})
 	if err != nil {
-		return 0, fmt.Errorf("clear pending intents on backend: %w", err)
+		return 0, fmt.Errorf("count pending intents on backend: %w", err)
 	}
 	return n, nil
 }
