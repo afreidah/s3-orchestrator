@@ -115,6 +115,44 @@ func TestSqlite_ClearPendingForKey_NoIntents(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// CountPendingOnBackend
+// -------------------------------------------------------------------------
+
+// TestSqlite_CountPendingOnBackend_CountsOnlyThatPath verifies the discard's
+// primitive counts the key's intents on the one backend, not the key's intents
+// on other backends nor other keys, and touches nothing.
+func TestSqlite_CountPendingOnBackend_CountsOnlyThatPath(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	seedPendingIntent(t, s, "landing-1", "bucket/k", "backend-b", 10)
+	seedPendingIntent(t, s, "landing-2", "bucket/k", "backend-b", 20)
+	seedPendingIntent(t, s, "other-backend", "bucket/k", "backend-a", 30)
+	seedPendingIntent(t, s, "other-key", "bucket/other", "backend-b", 40)
+
+	withAdapter(t, s, func(a *sqliteTxAdapter) {
+		n, err := a.CountPendingOnBackend(ctx, "bucket/k", "backend-b")
+		if err != nil {
+			t.Fatalf("CountPendingOnBackend: %v", err)
+		}
+		if n != 2 {
+			t.Errorf("counted %d intents, want the 2 on backend-b", n)
+		}
+		if got := countPendingForKey(t, a, "bucket/k"); got != 3 {
+			t.Errorf("rows for the key = %d, want all 3 still there", got)
+		}
+		n, err = a.CountPendingOnBackend(ctx, "bucket/k", "backend-c")
+		if err != nil {
+			t.Fatalf("CountPendingOnBackend on an empty path: %v", err)
+		}
+		if n != 0 {
+			t.Errorf("counted %d intents on an empty path, want 0", n)
+		}
+	})
+}
+
+// -------------------------------------------------------------------------
 // AcquireKeyLock
 // -------------------------------------------------------------------------
 

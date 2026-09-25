@@ -73,6 +73,15 @@ WHERE object_key = @object_key
   AND intent_id <> ALL(@keep::text[])
 RETURNING intent_id, backend_name, size_bytes;
 
+-- name: CountPendingOnBackend :one
+-- How many intents are live for one key on one backend. A discard asks once
+-- its own intent is gone, so a count above zero means other uploads are still
+-- landing at the path it was about to delete, and the path is left to them.
+SELECT COUNT(*)::bigint
+FROM pending_objects
+WHERE object_key = @object_key
+  AND backend_name = @backend_name;
+
 -- name: DeletePendingObject :exec
 DELETE FROM pending_objects WHERE intent_id = $1;
 

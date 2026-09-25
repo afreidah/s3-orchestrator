@@ -242,6 +242,148 @@ func TestStoreInt_GetLeastRecentlyScrubbedObjects(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// COMPANION COPIES
+// -------------------------------------------------------------------------
+
+// TestStoreInt_CommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding
+// is the sequence behind #1527, against Postgres. Two writes to one key each
+// place a further copy on backend-b, and a slow backend-b answers them in
+// order: the first write's copy resolves before the second write's has landed.
+// The first is discarded, rightly, since the second write cleared its intent.
+// Deleting its bytes by key and backend at that moment removes whatever is at
+// that path when the delete arrives, which is the second copy once it lands,
+// and the second copy's commit then records a row for bytes that are gone.
+//
+// The discard leaves the path to the copy still landing on it instead, and
+// leaves that copy's intent as it is: the copy commits normally on top, and
+// its intent stays the path's promise of cleanup should it never commit.
+func TestStoreInt_CommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+
+	first := core.PendingObject{IntentID: uniqueKey(t, "first"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	second := core.PendingObject{IntentID: uniqueKey(t, "second"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	for _, p := range []*core.PendingObject{&first, &second} {
+		if _, err := s.InsertPendingIfFits(ctx, p); err != nil {
+			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
+		}
+		defer func(id string) { _ = s.DeletePending(ctx, id) }(p.IntentID)
+	}
+	// The second write commits the copy that answered its client, which clears
+	// the first write's intent and keeps its own still-running one.
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: key, Size: 100,
+		Copies:  []core.ObjectCopy{{Backend: "backend-a"}},
+		Placing: []core.ObjectCopy{{Backend: "backend-b", IntentID: second.IntentID}},
+	}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	result, displaced, _, err := s.CommitCompanionCopy(ctx, &first)
+	if err != nil {
+		t.Fatalf("CommitCompanionCopy first: %v", err)
+	}
+	if result != core.CompanionCopyUntrusted {
+		t.Fatalf("first copy: result = %v, want Untrusted", result)
+	}
+	if len(displaced) != 0 {
+		t.Errorf("first copy's discard reported %+v for deletion while the second copy was still landing at that path", displaced)
+	}
+
+	if got := pgCount(t, s, `SELECT COUNT(*) FROM pending_objects WHERE object_key = $1`, key); got != 1 {
+		t.Errorf("pending rows = %d, want the second copy's intent left in place", got)
+	}
+
+	result, displaced, _, err = s.CommitCompanionCopy(ctx, &second)
+	if err != nil {
+		t.Fatalf("CommitCompanionCopy second: %v", err)
+	}
+	if result != core.CompanionCopyCommitted {
+		t.Errorf("second copy: result = %v, want Committed: its intent was untouched and its bytes are the path's", result)
+	}
+	if len(displaced) != 0 {
+		t.Errorf("second copy's commit reported %+v for deletion, want nothing", displaced)
+	}
+	if got := pgCount(t, s, `SELECT COUNT(*) FROM object_locations WHERE object_key = $1 AND backend_name = 'backend-b'`, key); got != 1 {
+		t.Errorf("object_locations rows on backend-b = %d, want the second copy's", got)
+	}
+	if got := pgCount(t, s, `SELECT COUNT(*) FROM pending_objects WHERE object_key = $1`, key); got != 0 {
+		t.Errorf("pending rows = %d, want none once both copies have resolved", got)
+	}
+}
+
+// TestStoreInt_PromotePending_TwoAbandonedCompanions_TheLastToResolveDeletesThePath
+// verifies the reaper's side of the same rule against Postgres. Two abandoned
+// intents for one key and backend: the first resolved leaves the path to the
+// second, whose intent is still there for exactly this purpose; the second,
+// finding no other intent, hands the bytes back for deletion.
+func TestStoreInt_PromotePending_TwoAbandonedCompanions_TheLastToResolveDeletesThePath(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+
+	first := core.PendingObject{IntentID: uniqueKey(t, "first"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	second := core.PendingObject{IntentID: uniqueKey(t, "second"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	for _, p := range []*core.PendingObject{&first, &second} {
+		if _, err := s.InsertPendingIfFits(ctx, p); err != nil {
+			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
+		}
+		defer func(id string) { _ = s.DeletePending(ctx, id) }(p.IntentID)
+	}
+	// The write that placed them committed its first copy on backend-a and
+	// then died; both companions outlived it.
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: key, Size: 100,
+		Copies:  []core.ObjectCopy{{Backend: "backend-a"}},
+		Placing: []core.ObjectCopy{{Backend: "backend-b", IntentID: first.IntentID}, {Backend: "backend-b", IntentID: second.IntentID}},
+	}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	result, displaced, _, err := s.PromotePending(ctx, &first)
+	if err != nil {
+		t.Fatalf("PromotePending first: %v", err)
+	}
+	if result != core.PendingPromoteCompanionDiscarded {
+		t.Fatalf("first: result = %v, want CompanionDiscarded", result)
+	}
+	if len(displaced) != 0 {
+		t.Errorf("first reported %+v for deletion while the second intent was still live", displaced)
+	}
+
+	result, displaced, _, err = s.PromotePending(ctx, &second)
+	if err != nil {
+		t.Fatalf("PromotePending second: %v", err)
+	}
+	if result != core.PendingPromoteCompanionDiscarded {
+		t.Fatalf("second: result = %v, want CompanionDiscarded", result)
+	}
+	if len(displaced) != 1 || displaced[0].BackendName != "backend-b" {
+		t.Errorf("second reported %+v, want backend-b's bytes now that no intent is left for the path", displaced)
+	}
+	if got := pgCount(t, s, `SELECT COUNT(*) FROM pending_objects WHERE object_key = $1`, key); got != 0 {
+		t.Errorf("pending rows = %d, want none", got)
+	}
+	if got := pgCount(t, s, `SELECT COUNT(*) FROM object_locations WHERE object_key = $1 AND backend_name = 'backend-b'`, key); got != 0 {
+		t.Errorf("object_locations rows on backend-b = %d, want none: a companion is never promoted", got)
+	}
+}
+
+// pgCount runs a one-column count against the shared store, for the
+// assertions above that look at the tables directly.
+func pgCount(t *testing.T, s *Store, query string, args ...any) int {
+	t.Helper()
+	var n int
+	if err := s.pool.QueryRow(context.Background(), query, args...).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	return n
+}
+
+// -------------------------------------------------------------------------
 // NOTIFICATIONS OUTBOX
 // -------------------------------------------------------------------------
 

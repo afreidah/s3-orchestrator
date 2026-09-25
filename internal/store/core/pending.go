@@ -101,8 +101,9 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 // so rebuilding from that copy is cheaper than being wrong. The replication
 // worker sees the shortfall and fills it on its next pass.
 //
-// The one case that leaves the backend alone is a copy already recorded there,
-// because those bytes are that copy rather than the intent's.
+// Two cases leave the backend alone: a copy already recorded there, because
+// those bytes are that copy rather than the intent's, and another intent still
+// live for the path, which discardedCompanionBytes leaves the path to.
 func resolveCompanion(ctx context.Context, tx TxAdapter, p *PendingObject, existing []ExistingCopy) (promoteOutcome, error) {
 	if err := tx.DeletePending(ctx, p.IntentID); err != nil {
 		return promoteOutcome{}, fmt.Errorf("delete companion pending row: %w", err)
@@ -112,14 +113,39 @@ func resolveCompanion(ctx context.Context, tx TxAdapter, p *PendingObject, exist
 			return promoteOutcome{result: PendingPromoteCompanionKept}, nil
 		}
 	}
-	return promoteOutcome{
-		result: PendingPromoteCompanionDiscarded,
-		displaced: []DeletedCopy{{
-			BackendName: p.BackendName,
-			SizeBytes:   p.SizeBytes,
-			Reason:      CleanupReasonCompanionDiscarded,
-		}},
-	}, nil
+	displaced, err := discardedCompanionBytes(ctx, tx, p, p.SizeBytes, CleanupReasonCompanionDiscarded)
+	if err != nil {
+		return promoteOutcome{}, err
+	}
+	return promoteOutcome{result: PendingPromoteCompanionDiscarded, displaced: displaced}, nil
+}
+
+// discardedCompanionBytes names the bytes a discarded copy leaves on its
+// backend for the caller to remove, unless another intent for the same key
+// and backend is still live.
+//
+// A delete goes by key and backend, so it removes whatever is at the path when
+// it arrives. While another intent for that path is live, that is the other
+// upload's bytes once they land, and its commit would then record a row for a
+// copy that is gone. So the path is left to that intent, untouched. Every
+// resolution of a key runs under the key lock, so the intents for a path
+// resolve one at a time, and the last one to resolve finds no other and
+// deletes the path: if the other upload commits, the path holds its copy; if
+// it fails or its process dies, the intent is still there for the reaper,
+// which deletes the path the same way.
+//
+// The intent is not cancelled, because it is the only promise that the path
+// gets cleaned up when its upload does not commit. Deleting it would leave
+// the bytes with no row, no intent and no cleanup entry.
+func discardedCompanionBytes(ctx context.Context, tx TxAdapter, p *PendingObject, size int64, reason string) ([]DeletedCopy, error) {
+	live, err := tx.CountPendingOnBackend(ctx, p.ObjectKey, p.BackendName)
+	if err != nil {
+		return nil, fmt.Errorf("count intents live for the path: %w", err)
+	}
+	if live > 0 {
+		return nil, nil
+	}
+	return []DeletedCopy{{BackendName: p.BackendName, SizeBytes: size, Reason: reason}}, nil
 }
 
 // -------------------------------------------------------------------------
@@ -175,7 +201,8 @@ func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (com
 // claiming a copy on that backend describes the same path and is no safer, so
 // it goes too: replication rebuilds the copy from one the client was told
 // about, which costs a rebuild in the case where these bytes never landed on
-// top of anything.
+// top of anything. The bytes themselves are left to any other intent still
+// live for the path, for the reason discardedCompanionBytes gives.
 func discardUntrustedCopy(ctx context.Context, tx TxAdapter, p *PendingObject) (companionOutcome, error) {
 	orphaned := p.SizeBytes
 	deltas := QuotaDeltas{}
@@ -193,15 +220,11 @@ func discardUntrustedCopy(ctx context.Context, tx TxAdapter, p *PendingObject) (
 			return companionOutcome{}, err
 		}
 	}
-	return companionOutcome{
-		result: CompanionCopyUntrusted,
-		displaced: []DeletedCopy{{
-			BackendName: p.BackendName,
-			SizeBytes:   orphaned,
-			Reason:      CleanupReasonCompanionUntrusted,
-		}},
-		deltas: deltas,
-	}, nil
+	displaced, err := discardedCompanionBytes(ctx, tx, p, orphaned, CleanupReasonCompanionUntrusted)
+	if err != nil {
+		return companionOutcome{}, err
+	}
+	return companionOutcome{result: CompanionCopyUntrusted, displaced: displaced, deltas: deltas}, nil
 }
 
 // clearSupersededIntents removes every intent for the key and reports the ones
