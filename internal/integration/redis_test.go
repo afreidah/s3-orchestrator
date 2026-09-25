@@ -55,10 +55,7 @@ func newTestRedisBackend(t *testing.T, backends []string) (*counter.RedisCounter
 		OpenTimeout:      500 * time.Millisecond,
 	}
 
-	rb, err := counter.NewRedisCounterBackend(client, cfg, backends)
-	if err != nil {
-		t.Fatalf("NewRedisCounterBackend: %v", err)
-	}
+	rb := counter.NewRedisCounterBackend(client, cfg, backends)
 	t.Cleanup(func() { rb.Close() })
 
 	return rb, client
@@ -144,19 +141,13 @@ func TestRedis_SharedVisibility(t *testing.T) {
 		OpenTimeout:      500 * time.Millisecond,
 	}
 
-	rb1, err := counter.NewRedisCounterBackend(client, cfg, backends)
-	if err != nil {
-		t.Fatalf("rb1: %v", err)
-	}
+	rb1 := counter.NewRedisCounterBackend(client, cfg, backends)
 	defer rb1.Close()
 
 	// Second instance needs its own client to simulate a separate process,
 	// but shares the same prefix.
 	client2 := newRedisClient(t)
-	rb2, err := counter.NewRedisCounterBackend(client2, cfg, backends)
-	if err != nil {
-		t.Fatalf("rb2: %v", err)
-	}
+	rb2 := counter.NewRedisCounterBackend(client2, cfg, backends)
 	defer rb2.Close()
 
 	// Instance 1 writes

@@ -130,18 +130,91 @@ func TestNewRedisCounterBackend_HappyPath(t *testing.T) {
 		FailureThreshold: 3,
 		OpenTimeout:      time.Second,
 	}
-	r, err := NewRedisCounterBackend(mock, cfg, []string{"b1"})
-	if err != nil {
-		t.Fatalf("NewRedisCounterBackend: %v", err)
-	}
-	if r == nil {
-		t.Fatal("NewRedisCounterBackend returned nil")
-	}
+	r := NewRedisCounterBackend(mock, cfg, []string{"b1"})
 	if r.log == nil {
 		t.Fatal("log field left nil")
 	}
+	if r.inFallback() {
+		t.Error("backend started in fallback with Redis reachable")
+	}
 	if err := r.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
+	}
+}
+
+// TestNewRedisCounterBackend_UnreachableStartsInFallback pins the boot
+// behaviour: Redis down at startup is the same condition as Redis failing
+// while running, so the backend comes up on local counters rather than
+// failing the service or being left out of it.
+func TestNewRedisCounterBackend_UnreachableStartsInFallback(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mock := NewMockRedisClient(ctrl)
+	mock.EXPECT().Ping(gomock.Any()).Return(redis.NewStatusResult("", errors.New("connection refused"))).AnyTimes()
+	mock.EXPECT().Close().Return(nil)
+
+	cfg := &config.RedisConfig{
+		Address:          "127.0.0.1:6379",
+		KeyPrefix:        "test",
+		FailureThreshold: 3,
+		OpenTimeout:      time.Second,
+	}
+	r := NewRedisCounterBackend(mock, cfg, []string{"b1"})
+	defer func() { _ = r.Close() }()
+
+	if !r.inFallback() {
+		t.Fatal("backend not in fallback with Redis unreachable at startup")
+	}
+	r.Add("b1", FieldAPIRequests, 5)
+	if got := r.Load("b1", FieldAPIRequests); got != 5 {
+		t.Errorf("Load = %d from the local counters, want 5", got)
+	}
+	if _, err := r.GetShared(context.Background(), "x"); !errors.Is(err, ErrSharedStateUnavailable) {
+		t.Errorf("GetShared err = %v, want ErrSharedStateUnavailable", err)
+	}
+}
+
+// TestSharedState_PutAndGet covers the shared-state round trip, a missing
+// key reading as nil, and a Redis error surfacing to the caller.
+func TestSharedState_PutAndGet(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mock := NewMockRedisClient(ctrl)
+	newBackend := func() *RedisCounterBackend {
+		return &RedisCounterBackend{
+			client: mock,
+			prefix: "test",
+			local:  NewLocalCounterBackend([]string{"b1"}),
+			cb:     newTestCB(),
+		}
+	}
+	r := newBackend()
+	ctx := context.Background()
+
+	mock.EXPECT().Set(gomock.Any(), "test:shared:snap", []byte("v1"), time.Minute).
+		Return(redis.NewStatusResult("OK", nil))
+	if err := r.PutShared(ctx, "snap", []byte("v1"), time.Minute); err != nil {
+		t.Fatalf("PutShared: %v", err)
+	}
+
+	mock.EXPECT().Get(gomock.Any(), "test:shared:snap").Return(redis.NewStringResult("v1", nil))
+	if got, err := r.GetShared(ctx, "snap"); err != nil || string(got) != "v1" {
+		t.Errorf("GetShared = %q, %v; want v1", got, err)
+	}
+
+	mock.EXPECT().Get(gomock.Any(), "test:shared:missing").Return(redis.NewStringResult("", redis.Nil))
+	if got, err := r.GetShared(ctx, "missing"); err != nil || got != nil {
+		t.Errorf("GetShared(missing) = %q, %v; want nil, nil", got, err)
+	}
+
+	// A failure can trip the breaker, so each error case gets its own backend.
+	boom := errors.New("redis down")
+	mock.EXPECT().Get(gomock.Any(), "test:shared:snap").Return(redis.NewStringResult("", boom))
+	if _, err := newBackend().GetShared(ctx, "snap"); !errors.Is(err, boom) {
+		t.Errorf("GetShared err = %v, want %v", err, boom)
+	}
+	mock.EXPECT().Set(gomock.Any(), "test:shared:snap", []byte("v2"), time.Minute).
+		Return(redis.NewStatusResult("", boom))
+	if err := newBackend().PutShared(ctx, "snap", []byte("v2"), time.Minute); !errors.Is(err, boom) {
+		t.Errorf("PutShared err = %v, want %v", err, boom)
 	}
 }
 

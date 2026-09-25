@@ -234,10 +234,7 @@ func ProvideRedisCounterBackend(i do.Injector) (*counter.RedisCounterBackend, er
 		redisOpts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
 	redisClient := redis.NewClient(redisOpts)
-	rb, err := counter.NewRedisCounterBackend(redisClient, cfg.Redis, br.Order)
-	if err != nil {
-		return nil, err
-	}
+	rb := counter.NewRedisCounterBackend(redisClient, cfg.Redis, br.Order)
 	//nolint:sloglint // bootstrap log; no request/span ctx exists yet
 	slog.Info("Redis shared counters enabled",
 		logfmt.Component("di"),
@@ -393,9 +390,17 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 		backendNames = append(backendNames, name)
 	}
 
-	counters := resolveOptionalCounterBackend(i)
-	if counters == nil {
-		counters = counter.NewLocalCounterBackend(backendNames)
+	// With Redis configured, the usage counters and the fleet snapshot are
+	// shared through it, whatever state Redis is in: an unreachable Redis
+	// puts the backend in fallback, not out of the wiring.
+	var counters counter.Backend = counter.NewLocalCounterBackend(backendNames)
+	var shared metrics.SharedState
+	if cfg.Redis != nil {
+		rb, err := do.Invoke[*counter.RedisCounterBackend](i)
+		if err != nil {
+			return nil, err
+		}
+		counters, shared = rb, rb
 	}
 	usage := counter.NewUsageTracker(counters, br.UsageLimits)
 
@@ -419,6 +424,7 @@ func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 		Usage:             usage,
 		BackendNames:      backendNames,
 		ReplicationFactor: replicationFactorFromInjector(i),
+		Shared:            shared,
 	})
 	rt.SetMetricsCollector(collector)
 	// Register the collector so the admin handler can serve its replication

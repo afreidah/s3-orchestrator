@@ -94,6 +94,11 @@ func (r recordingFleet) UpdateFleetMetrics(_ context.Context) error {
 	return r.err
 }
 
+func (r recordingFleet) LoadFleetMetrics(_ context.Context) error {
+	*r.calls = append(*r.calls, "LoadFleetMetrics")
+	return r.err
+}
+
 func (r recordingFleet) RefreshUsageBaselines(_ context.Context) error {
 	*r.calls = append(*r.calls, "RefreshUsageBaselines")
 	return r.err
@@ -253,7 +258,8 @@ func TestServiceWorkClosures_RunOnceCovers(t *testing.T) {
 
 // TestUsageFlushService_FlushTick pins which steps a tick runs and in what
 // order. An instance that loses the lock must still refresh its usage
-// baselines, or its limit checks run against a stale baseline indefinitely.
+// baselines, or its limit checks run against a stale baseline indefinitely,
+// and must load the holder's fleet snapshot rather than serve its own.
 // Without Redis the losing locker proves no lock is taken, since the flush
 // would otherwise be skipped. Store errors are logged and never cut the tick
 // short.
@@ -269,7 +275,7 @@ func TestUsageFlushService_FlushTick(t *testing.T) {
 		err    error
 		want   []string
 	}{
-		{"redis lock lost", true, fakeLocker{}, nil, []string{"FlushQuota", "RefreshUsageBaselines"}},
+		{"redis lock lost", true, fakeLocker{}, nil, []string{"FlushQuota", "LoadFleetMetrics", "RefreshUsageBaselines"}},
 		{"redis lock won", true, acquiringLocker{}, nil, shared},
 		{"no redis takes no lock", false, fakeLocker{}, nil, shared},
 		{"errors do not stop the tick", true, acquiringLocker{}, storeErr, shared},

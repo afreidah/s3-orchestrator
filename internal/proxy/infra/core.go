@@ -340,6 +340,11 @@ func (c *BackendRuntime) UpdateFleetMetrics(ctx context.Context) error {
 	return c.metricsCollector.UpdateFleetMetrics(ctx)
 }
 
+// LoadFleetMetrics delegates to the metrics collector.
+func (c *BackendRuntime) LoadFleetMetrics(ctx context.Context) error {
+	return c.metricsCollector.LoadFleetMetrics(ctx)
+}
+
 // RefreshUsageBaselines delegates to the metrics collector.
 func (c *BackendRuntime) RefreshUsageBaselines(ctx context.Context) error {
 	return c.metricsCollector.RefreshUsageBaselines(ctx)

@@ -10,6 +10,10 @@
 //
 // Redis key schema: {prefix}:usage:{YYYY-MM}:{backend}:{field}
 // Keys receive a 35-day TTL so old months auto-expire without cleanup.
+//
+// Also carries shared state: a value one instance computes for the whole fleet
+// and the others read, under {prefix}:shared:{name}. It rides the same client
+// and circuit breaker, so a Redis outage is one condition, not two.
 // -------------------------------------------------------------------------------
 
 package counter
@@ -60,6 +64,7 @@ const pingTimeout = 5 * time.Second
 type RedisClient interface {
 	IncrBy(ctx context.Context, key string, value int64) *redis.IntCmd
 	Get(ctx context.Context, key string) *redis.StringCmd
+	Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd
 	GetSet(ctx context.Context, key string, value any) *redis.StringCmd
 	Del(ctx context.Context, keys ...string) *redis.IntCmd
 	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
@@ -106,17 +111,16 @@ func (r *RedisCounterBackend) logger() *slog.Logger {
 	return r.log
 }
 
-// NewRedisCounterBackend creates a shared counter backend backed by Redis.
-// Pings Redis on creation; returns an error if Redis is unreachable (a
-// configured dependency must be available at boot). Starts a background
-// health probe goroutine.
-func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backendNames []string) (*RedisCounterBackend, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
-	defer cancel()
-	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("redis ping failed: %w", err)
-	}
-
+// NewRedisCounterBackend creates a shared counter backend backed by Redis and
+// starts the background health probe.
+//
+// An unreachable Redis at boot is the same condition as Redis failing while
+// running: the backend starts in fallback on local counters, logs it at error
+// level, and the health probe moves it onto Redis once Redis answers. Refusing
+// to start would take the whole service down over a dependency it can run
+// without, and starting without the backend at all would leave the instance on
+// local counters with nothing to bring it back.
+func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backendNames []string) *RedisCounterBackend {
 	sentinel := errors.New("redis unavailable")
 	cb := breaker.NewCircuitBreaker(breaker.Config{
 		Name:      "redis",
@@ -138,14 +142,23 @@ func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backend
 		probeDone: make(chan struct{}),
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		r.setFallback(true)
+		r.logger().ErrorContext(ctx, "Redis unreachable at startup, running on local counters until it answers",
+			"address", cfg.Address,
+			logfmt.Err(err),
+		)
+	} else {
+		r.logger().InfoContext(ctx, "initialized",
+			"address", cfg.Address,
+			"prefix", cfg.KeyPrefix,
+		)
+	}
+
 	go r.healthProbe()
-
-	r.logger().InfoContext(context.Background(), "initialized",
-		"address", cfg.Address,
-		"prefix", cfg.KeyPrefix,
-	)
-
-	return r, nil
+	return r
 }
 
 // -------------------------------------------------------------------------
@@ -397,8 +410,10 @@ func (r *RedisCounterBackend) SwapPools(backend string) map[string]int64 {
 // -------------------------------------------------------------------------
 
 // healthProbe runs in a background goroutine, periodically PINGing Redis
-// when the circuit breaker is open. On recovery, it syncs local deltas
-// back to Redis and resumes normal operation.
+// while the backend is in fallback. On recovery, it syncs local deltas back
+// to Redis and resumes normal operation. It keys off the fallback flag rather
+// than the breaker, because a backend that could not reach Redis at startup
+// is in fallback without the breaker ever having opened.
 func (r *RedisCounterBackend) healthProbe() {
 	defer close(r.probeDone)
 	ticker := time.NewTicker(healthProbeInterval)
@@ -407,7 +422,7 @@ func (r *RedisCounterBackend) healthProbe() {
 	for {
 		select {
 		case <-ticker.C:
-			if r.cb.IsHealthy() {
+			if !r.inFallback() {
 				continue
 			}
 			r.tryRecover()
@@ -548,6 +563,11 @@ func (r *RedisCounterBackend) key(backend, field string) string {
 	return r.keyForPeriod(backend, field, CurrentPeriod())
 }
 
+// sharedKey returns the Redis key for a named piece of shared state.
+func (r *RedisCounterBackend) sharedKey(name string) string {
+	return fmt.Sprintf("%s:shared:%s", r.prefix, name)
+}
+
 // keyForPeriod returns the Redis key for a backend field in a specific period.
 func (r *RedisCounterBackend) keyForPeriod(backend, field, period string) string {
 	return fmt.Sprintf("%s:usage:%s:%s:%s", r.prefix, period, backend, field)
@@ -585,6 +605,55 @@ func cmdInt64(cmd *redis.StringCmd) int64 {
 // current period.
 func isAllNil(err error) bool {
 	return errors.Is(err, redis.Nil)
+}
+
+// -------------------------------------------------------------------------
+// SHARED STATE
+// -------------------------------------------------------------------------
+
+// ErrSharedStateUnavailable is returned while Redis is in fallback, when
+// there is nowhere shared to write to or read from.
+var ErrSharedStateUnavailable = errors.New("redis shared state unavailable")
+
+// PutShared stores value under name for every instance to read, expiring
+// after ttl.
+func (r *RedisCounterBackend) PutShared(ctx context.Context, name string, value []byte, ttl time.Duration) error {
+	if r.inFallback() {
+		return ErrSharedStateUnavailable
+	}
+	ctx, cancel := context.WithTimeout(ctx, opTimeout)
+	defer cancel()
+
+	if err := r.client.Set(ctx, r.sharedKey(name), value, ttl).Err(); err != nil {
+		telemetry.RedisOperationsTotal.WithLabelValues("set", "error").Inc()
+		r.recordFailure(err)
+		return err
+	}
+	telemetry.RedisOperationsTotal.WithLabelValues("set", "success").Inc()
+	r.notePostCheck("set", nil)
+	return nil
+}
+
+// GetShared returns the value stored under name, or nil when there is none.
+func (r *RedisCounterBackend) GetShared(ctx context.Context, name string) ([]byte, error) {
+	if r.inFallback() {
+		return nil, ErrSharedStateUnavailable
+	}
+	ctx, cancel := context.WithTimeout(ctx, opTimeout)
+	defer cancel()
+
+	val, err := r.client.Get(ctx, r.sharedKey(name)).Bytes()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		telemetry.RedisOperationsTotal.WithLabelValues("get", "error").Inc()
+		r.recordFailure(err)
+		return nil, err
+	}
+	telemetry.RedisOperationsTotal.WithLabelValues("get", "success").Inc()
+	r.notePostCheck("get", nil)
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	return val, nil
 }
 
 // -------------------------------------------------------------------------

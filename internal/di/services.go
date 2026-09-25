@@ -128,10 +128,11 @@ func (s *usageFlushService) adjustInterval(ctx context.Context, ticker *time.Tic
 
 // flushTick runs a single flush+metrics cycle. With Redis counters the usage
 // counters are shared, so only the instance holding the advisory lock performs
-// the destructive GETSET and refreshes the fleet gauges. Every instance then
-// reloads its own usage baselines, which is what its limit checks compare
-// against; an instance that skipped that on a lost lock would keep admitting
-// work against budget already spent.
+// the destructive GETSET and computes the fleet snapshot; the others load the
+// snapshot it published, so every instance serves the same fleet gauges and
+// replication status. Every instance then reloads its own usage baselines,
+// which is what its limit checks compare against; an instance that skipped
+// that on a lost lock would keep admitting work against budget already spent.
 func (s *usageFlushService) flushTick(ctx context.Context) {
 	// Outside the advisory lock: the byte deltas are this instance's own, so
 	// every instance flushes its own set. Skipping them on a lost lock would
@@ -151,6 +152,9 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 		}
 		if !acquired {
 			s.log.DebugContext(ctx, "usage flush skipped, another instance holds the lock")
+			if err := s.fleet.LoadFleetMetrics(ctx); err != nil {
+				s.log.WarnContext(ctx, "fleet snapshot load failed", "error", err)
+			}
 		}
 	} else {
 		s.flushSharedUsage(ctx)
@@ -162,8 +166,8 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 	}
 }
 
-// flushSharedUsage writes the usage counters to the store and republishes the
-// fleet gauges. With Redis counters it runs only under the advisory lock.
+// flushSharedUsage writes the usage counters to the store and computes the
+// fleet snapshot. With Redis counters it runs only under the advisory lock.
 func (s *usageFlushService) flushSharedUsage(ctx context.Context) {
 	if err := s.flusher.FlushUsage(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
 		s.log.ErrorContext(ctx, "counter flush failed", "error", err)

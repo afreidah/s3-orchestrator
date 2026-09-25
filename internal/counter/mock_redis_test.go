@@ -173,6 +173,20 @@ func (mr *MockRedisClientMockRecorder) Pipeline() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Pipeline", reflect.TypeOf((*MockRedisClient)(nil).Pipeline))
 }
 
+// Set mocks base method.
+func (m *MockRedisClient) Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Set", ctx, key, value, expiration)
+	ret0, _ := ret[0].(*redis.StatusCmd)
+	return ret0
+}
+
+// Set indicates an expected call of Set.
+func (mr *MockRedisClientMockRecorder) Set(ctx, key, value, expiration any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Set", reflect.TypeOf((*MockRedisClient)(nil).Set), ctx, key, value, expiration)
+}
+
 // TxPipeline mocks base method.
 func (m *MockRedisClient) TxPipeline() redis.Pipeliner {
 	m.ctrl.T.Helper()
