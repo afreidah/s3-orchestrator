@@ -51,7 +51,8 @@ func PromotePending(ctx context.Context, runner Runner, p *PendingObject) (Pendi
 //
 // Returns Untrusted when the intent is gone, meaning a newer write took the key
 // while the upload ran. The displaced copies then name what has to come off the
-// backend, which the caller deletes the same way it deletes any orphan.
+// backend, which the caller deletes the same way it deletes any orphan -- or
+// nothing, while another intent for the same key and backend is still live.
 func CommitCompanionCopy(ctx context.Context, runner Runner, p *PendingObject) (CompanionCommitResult, []DeletedCopy, QuotaDeltas, error) {
 	out, err := WithTxVal(ctx, runner, func(ctx context.Context, tx TxAdapter) (companionOutcome, error) {
 		return commitCompanionTx(ctx, tx, p)

@@ -64,10 +64,15 @@ type TxAdapter interface {
 // The deletion is unconditional even for a backend the caller is writing to:
 // leaving the row would let an upload that is still running commit a copy of
 // the object this write just replaced.
+//
+// CountPendingOnBackend reports how many intents are live for one key on one
+// backend. A discard asks once its own intent is gone, so a count above zero
+// means other uploads are still landing at the path it was about to delete.
 type PendingTxAdapter interface {
 	ClaimPending(ctx context.Context, intentID string) (claimed bool, err error)
 	DeletePending(ctx context.Context, intentID string) error
 	ClearPendingForKey(ctx context.Context, objectKey string, keep []string) ([]SupersededIntent, error)
+	CountPendingOnBackend(ctx context.Context, objectKey, backendName string) (int64, error)
 }
 
 // -------------------------------------------------------------------------

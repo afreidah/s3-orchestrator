@@ -69,6 +69,16 @@ func (a *pgTxAdapter) ClearPendingForKey(ctx context.Context, objectKey string, 
 	return cleared, nil
 }
 
+// CountPendingOnBackend reports how many intents are live for one key on one
+// backend.
+func (a *pgTxAdapter) CountPendingOnBackend(ctx context.Context, objectKey, backend string) (int64, error) {
+	n, err := a.q.CountPendingOnBackend(ctx, db.CountPendingOnBackendParams{ObjectKey: objectKey, BackendName: backend})
+	if err != nil {
+		return 0, fmt.Errorf("count pending intents on backend: %w", err)
+	}
+	return n, nil
+}
+
 // ClaimPending returns true if the pending row exists and was locked
 // FOR UPDATE; false if it has already been resolved.
 func (a *pgTxAdapter) ClaimPending(ctx context.Context, intentID string) (bool, error) {
