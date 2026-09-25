@@ -4,9 +4,13 @@
 # Author: Alex Freidah
 #
 # Simplified job for local testing against docker-compose backing services.
-# No Vault dependency -- config is rendered directly with hardcoded dev
-# credentials. The __HOST_IP__ placeholder is replaced by demo.sh with the
-# Docker bridge gateway so the container can reach host-network services.
+# No Vault dependency: demo.sh inlines the shared deploy/local/config.yaml with
+# hardcoded dev credentials in place of __CONFIG__, and replaces __INSTANCES__
+# with the instance count. The production example is
+# deploy/nomad/s3-orchestrator.nomad.hcl.
+#
+# Runs several instances sharing Postgres and Redis behind the Traefik job in
+# traefik.nomad.hcl, which is how a production fleet is deployed.
 # -------------------------------------------------------------------------------
 
 job "s3-orchestrator" {
@@ -14,19 +18,21 @@ job "s3-orchestrator" {
   type        = "service"
 
   group "s3-orchestrator" {
-    count = 1
+    count = __INSTANCES__
 
+    # Dynamic host ports, so every instance on the one dev agent gets its
+    # own. Clients reach the fleet through Traefik on :9000.
     network {
       port "http" {
-        static = 9000
+        to = 9000
       }
       # Dedicated metrics+pprof listener. Pprof endpoints are mounted
       # here, not on the S3 listener, so runtime internals stay off
       # the public port. In production this binds to an internal-only
-      # interface (the demo binds 0.0.0.0 so the docker-compose
-      # Prometheus container can reach it from its bridge network).
+      # interface (the demo binds 0.0.0.0 so Prometheus can reach each
+      # instance through its published port).
       port "metrics" {
-        static = 9001
+        to = 9001
       }
     }
 
@@ -34,8 +40,13 @@ job "s3-orchestrator" {
       name     = "s3-orchestrator"
       port     = "http"
       provider = "nomad"
+      tags = [
+        "traefik.enable=true",
+        "traefik.http.routers.s3-orchestrator.entrypoints=s3",
+        "traefik.http.routers.s3-orchestrator.rule=PathPrefix(`/`)",
+      ]
 
-      # Liveness — always 200, keeps the allocation alive during DB outages.
+      # Liveness - always 200, keeps the allocation alive during DB outages.
       check {
         type     = "http"
         path     = "/health"
@@ -43,7 +54,7 @@ job "s3-orchestrator" {
         timeout  = "3s"
       }
 
-      # Readiness — returns 503 until startup completes and during shutdown
+      # Readiness - returns 503 until startup completes and during shutdown
       # drain. Gates rolling deploys so traffic only routes to ready instances.
       check {
         type      = "http"
@@ -52,6 +63,14 @@ job "s3-orchestrator" {
         timeout   = "2s"
         on_update = "require_healthy"
       }
+    }
+
+    # Registered separately so Prometheus discovers every instance's metrics
+    # listener from the Nomad registry.
+    service {
+      name     = "s3-orchestrator-metrics"
+      port     = "metrics"
+      provider = "nomad"
     }
 
     task "s3-orchestrator" {
@@ -74,177 +93,19 @@ job "s3-orchestrator" {
         }
       }
 
+      # The same limits as the Kubernetes demo's pods, with the Go memory
+      # limit at 90% of the task's memory.
       env {
-        GOMEMLIMIT = "2048MiB"
-        GOMAXPROCS = "4"
+        GOMEMLIMIT = "920MiB"
+        GOMAXPROCS = "2"
       }
 
+      # The shared deploy/local/config.yaml, rendered by demo.sh and inlined
+      # in place of __CONFIG__.
       template {
         destination = "local/config.yaml"
         data        = <<-YAML
-          server:
-            listen_addr: "0.0.0.0:9000"
-            backend_timeout: "30s"
-            max_concurrent_reads: 1000
-            max_concurrent_writes: 1000
-            load_shed_threshold: 0.9
-            admission_wait: "100ms"
-
-          database:
-            driver: postgres
-            host: "__HOST_IP__"
-            port: 15432
-            database: "s3proxy_test"
-            user: "s3proxy"
-            password: "s3proxy"
-            ssl_mode: "disable"
-            max_conns: 200
-
-          buckets:
-            - name: "photos"
-              credentials:
-                - access_key_id: "photoskey"
-                  secret_access_key: "photossecret"
-
-          backends:
-            - name: "minio-1"
-              endpoint: "http://__HOST_IP__:19000"
-              region: "us-east-1"
-              bucket: "backend1"
-              access_key_id: "minioadmin"
-              secret_access_key: "minioadmin"
-              force_path_style: true
-              unsigned_payload: true
-              quota_bytes: 10737418240
-
-            - name: "minio-2"
-              endpoint: "http://__HOST_IP__:19002"
-              region: "us-east-1"
-              bucket: "backend2"
-              access_key_id: "minioadmin"
-              secret_access_key: "minioadmin"
-              force_path_style: true
-              unsigned_payload: true
-              quota_bytes: 10737418240
-
-            - name: "minio-3"
-              endpoint: "http://__HOST_IP__:19004"
-              region: "us-east-1"
-              bucket: "backend3"
-              access_key_id: "minioadmin"
-              secret_access_key: "minioadmin"
-              force_path_style: true
-              unsigned_payload: true
-              quota_bytes: 10737418240
-
-          routing_strategy: "spread"
-
-          replication:
-            factor: 2
-            worker_interval: "20s"
-            batch_size: 400
-
-          # Both copies are placed by the write itself, so the replicator is
-          # left with repair rather than the read-back that making the second
-          # copy would cost. The count defaults to replication.factor.
-          #
-          # max_in_flight caps the writes whose second copy is still uploading
-          # after the client was answered, and defaults to
-          # server.max_concurrent_writes. Set here well above the handful a
-          # keeping-up fleet carries, so tripping it means a backend has gone
-          # slow: watch s3o_detached_uploads_depth for that, and
-          # s3o_replication_write_fanout_skipped_total for the writes that
-          # then fell back to one copy. Drop it to single digits to watch the
-          # fallback fire on purpose.
-          write_path:
-            parallel_copies:
-              enabled: true
-              max_in_flight: 256
-
-          rebalance:
-            enabled: true
-            strategy: "spread"
-            interval: "6h"
-            batch_size: 300
-            threshold: 0.7
-            concurrency: 5
-
-          encryption:
-            enabled: true
-            master_key: "F2rpnHM7TmwJ4/DalNfk0cvCCPmHTfvB9LyhBLPoCVc="
-            chunk_size: 262144
-
-          compression:
-            enabled: true
-            level: "default"
-            chunk_size: 1048576
-            min_size: 4096
-            min_ratio: 0.95
-
-          integrity:
-            enabled: true
-            verify_on_read: true
-            scrubber_interval: "20m"
-            scrubber_batch_size: 200
-
-          # --- Object data cache (disabled by default) ---
-          # In-memory LRU cache for frequently read objects. Reduces backend
-          # API calls and egress by serving repeated reads from memory. Objects
-          # are cached after the first full GET and invalidated on write.
-          cache:
-            enabled: true
-            max_size: "300MB"               # total cache capacity (default: 256MB)
-            max_object_size: "20MB"      # skip caching objects larger than this (default: 10MB)
-            ttl: "5m"                     # cached entry lifetime (default: 5m)
-
-          circuit_breaker:
-            failure_threshold: 3
-            open_timeout: "15s"
-            cache_ttl: "60s"
-
-          backend_circuit_breaker:
-            enabled: true
-            failure_threshold: 3
-            open_timeout: "15s"
-
-          telemetry:
-            metrics:
-              enabled: true
-              # Dedicated listener for /metrics and (when pprof: true)
-              # /debug/pprof/*. Binding metrics to a separate listener
-              # keeps pprof off the public S3 port. 0.0.0.0 here lets
-              # the docker-compose Prometheus container scrape via the
-              # bridge gateway; in production this should be 127.0.0.1
-              # or an internal-only interface.
-              listen: "0.0.0.0:9001"
-              # Local demo opt-in so perf runs can capture profiles.
-              # Production should leave this off (default).
-              pprof: true
-            tracing:
-              enabled: true
-              endpoint: "__HOST_IP__:4317"
-              insecure: true
-
-          rate_limit:
-            enabled: true
-            requests_per_sec: 2500
-            burst: 4000
-
-          # The credential that administers this deployment. An ordinary
-          # identity holding every permission, which is what the admin API,
-          # the TUI and the dashboard all authenticate as. demo.sh mints the
-          # keypair per run and substitutes it here.
-          auth:
-            root:
-              access_key_id: "__ROOT_ACCESS_KEY__"
-              secret_access_key: "__ROOT_SECRET_KEY__"
-
-          # The dashboard logs in against the credential store, so the root
-          # keypair above is what reaches it. There is one thing to hold.
-          ui:
-            enabled: true
-            session_secret: "local-dev-session-key"
-            # force_secure_cookies: false        # Local dev - no TLS proxy
+          __CONFIG__
         YAML
       }
 

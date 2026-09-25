@@ -3,22 +3,27 @@
 #
 # Author: Alex Freidah
 #
-# Scrape config for the docker-compose / kubernetes local demo. Points at the
-# orchestrator's /metrics endpoint and at the container exporters surfaced by
-# the demo stack. Production deployments wire scrape via service discovery
-# instead of the static targets used here.
+# Scrape config for the local demos. The Nomad demo's instances are scraped
+# directly, found through Nomad's service registry. The Kubernetes demo's pods
+# are not reachable from the host, so Alloy scrapes them in the cluster and
+# remote-writes here. Either way every series carries job="s3-orchestrator".
 # -------------------------------------------------------------------------------
 
 global:
   scrape_interval: 10s
 
 scrape_configs:
-  - job_name: s3-orchestrator
+  # Every instance's dedicated metrics listener, from the Nomad registry. The
+  # job label is rewritten so dashboard queries on job="s3-orchestrator" see
+  # the whole fleet, one series per instance.
+  - job_name: s3-orchestrator-nomad
     metrics_path: /metrics
-    # Orchestrator exposes /metrics and /debug/pprof/* on a dedicated
-    # listener (telemetry.metrics.listen = "0.0.0.0:9001" in the demo
-    # job spec) so that pprof endpoints never share a port with the
-    # public S3 API. Production deployments should bind this listener
-    # to an internal-only interface.
-    static_configs:
-      - targets: ["localhost:9001"]
+    nomad_sd_configs:
+      - server: "http://127.0.0.1:4646"
+        refresh_interval: 10s
+    relabel_configs:
+      - source_labels: [__meta_nomad_service]
+        regex: s3-orchestrator-metrics
+        action: keep
+      - target_label: job
+        replacement: s3-orchestrator

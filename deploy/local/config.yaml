@@ -1,0 +1,169 @@
+# -------------------------------------------------------------------------------
+# S3 Orchestrator - Local Demo Configuration
+#
+# Author: Alex Freidah
+#
+# The one config both local demos run, so the Nomad and Kubernetes demos
+# differ only in the scheduler underneath. Points at docker-compose.test.yml
+# services on the host. The __HOST_IP__, __ROOT_ACCESS_KEY__ and
+# __ROOT_SECRET_KEY__ placeholders are substituted by render_config in
+# lib.sh. Not for production use.
+# -------------------------------------------------------------------------------
+
+server:
+  listen_addr: "0.0.0.0:9000"
+  backend_timeout: "30s"
+  max_concurrent_reads: 1000
+  max_concurrent_writes: 1000
+  load_shed_threshold: 0.9
+  admission_wait: "100ms"
+
+database:
+  driver: postgres
+  host: "__HOST_IP__"
+  port: 15432
+  database: "s3proxy_test"
+  user: "s3proxy"
+  password: "s3proxy"
+  ssl_mode: "disable"
+  # Per instance. The default three instances stay under the compose
+  # Postgres max_connections of 300.
+  max_conns: 90
+
+# Shared usage counters: every instance sees the fleet's spend, and one
+# instance at a time flushes them to Postgres.
+redis:
+  address: "__HOST_IP__:16379"
+
+buckets:
+  - name: "photos"
+    credentials:
+      - access_key_id: "photoskey"
+        secret_access_key: "photossecret"
+
+backends:
+  - name: "minio-1"
+    endpoint: "http://__HOST_IP__:19000"
+    region: "us-east-1"
+    bucket: "backend1"
+    access_key_id: "minioadmin"
+    secret_access_key: "minioadmin"
+    force_path_style: true
+    unsigned_payload: true
+    quota_bytes: 10737418240
+
+  - name: "minio-2"
+    endpoint: "http://__HOST_IP__:19002"
+    region: "us-east-1"
+    bucket: "backend2"
+    access_key_id: "minioadmin"
+    secret_access_key: "minioadmin"
+    force_path_style: true
+    unsigned_payload: true
+    quota_bytes: 10737418240
+
+  - name: "minio-3"
+    endpoint: "http://__HOST_IP__:19004"
+    region: "us-east-1"
+    bucket: "backend3"
+    access_key_id: "minioadmin"
+    secret_access_key: "minioadmin"
+    force_path_style: true
+    unsigned_payload: true
+    quota_bytes: 10737418240
+
+routing_strategy: "spread"
+
+replication:
+  factor: 2
+  worker_interval: "20s"
+  batch_size: 400
+
+# Both copies are placed by the write itself, so the replicator is left with
+# repair rather than the read-back that making the second copy would cost. The
+# count defaults to replication.factor.
+#
+# max_in_flight caps the writes whose second copy is still uploading after the
+# client was answered, and defaults to server.max_concurrent_writes. Set here
+# well above the handful a keeping-up fleet carries, so tripping it means a
+# backend has gone slow: watch s3o_detached_uploads_depth for that, and
+# s3o_replication_write_fanout_skipped_total for the writes that then fell back
+# to one copy. Drop it to single digits to watch the fallback fire on purpose.
+write_path:
+  parallel_copies:
+    enabled: true
+    max_in_flight: 256
+
+rebalance:
+  enabled: true
+  strategy: "spread"
+  interval: "6h"
+  batch_size: 300
+  threshold: 0.7
+  concurrency: 5
+
+encryption:
+  enabled: true
+  master_key: "F2rpnHM7TmwJ4/DalNfk0cvCCPmHTfvB9LyhBLPoCVc="
+  chunk_size: 262144
+
+compression:
+  enabled: true
+  level: "default"
+  chunk_size: 1048576
+  min_size: 4096
+  min_ratio: 0.95
+
+integrity:
+  enabled: true
+  verify_on_read: true
+  scrubber_interval: "20m"
+  scrubber_batch_size: 200
+
+# In-memory LRU cache for frequently read objects, one per instance. Objects
+# are cached after the first full GET and invalidated on write.
+cache:
+  enabled: true
+  max_size: "300MB"
+  max_object_size: "20MB"
+  ttl: "5m"
+
+circuit_breaker:
+  failure_threshold: 3
+  open_timeout: "15s"
+  cache_ttl: "60s"
+
+backend_circuit_breaker:
+  enabled: true
+  failure_threshold: 3
+  open_timeout: "15s"
+
+telemetry:
+  metrics:
+    enabled: true
+    # Dedicated listener for /metrics and /debug/pprof/*, kept off the public
+    # S3 port. 0.0.0.0 lets the scheduler publish it for scraping; production
+    # should bind an internal-only interface and leave pprof off.
+    listen: "0.0.0.0:9001"
+    pprof: true
+  tracing:
+    enabled: true
+    endpoint: "__HOST_IP__:4317"
+    insecure: true
+
+# Per instance, so the fleet admits the rate times the instance count.
+rate_limit:
+  enabled: true
+  requests_per_sec: 2500
+  burst: 4000
+
+# The credential that administers this deployment: the admin API, the TUI and
+# the dashboard all authenticate as it. Minted per run by lib.sh.
+auth:
+  root:
+    access_key_id: "__ROOT_ACCESS_KEY__"
+    secret_access_key: "__ROOT_SECRET_KEY__"
+
+ui:
+  enabled: true
+  session_secret: "local-dev-session-key"

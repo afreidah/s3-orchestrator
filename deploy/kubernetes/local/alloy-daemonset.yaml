@@ -1,13 +1,44 @@
 # -------------------------------------------------------------------------------
-# Alloy DaemonSet - Kubernetes Pod Log Collection
+# Alloy DaemonSet - Kubernetes Pod Logs and Metrics
 #
 # Author: Alex Freidah
 #
-# Runs Alloy on every node to scrape pod logs from /var/log/pods and ship
-# them to Loki. Positions are stored on a hostPath so Alloy survives restarts
-# without re-reading old logs.
+# Runs Alloy on every node to ship pod logs from /var/log/pods to Loki and
+# pod metrics to Prometheus. Positions are stored on a hostPath so Alloy
+# survives restarts without re-reading old logs. The Role lets it discover
+# the orchestrator pods it scrapes.
 # -------------------------------------------------------------------------------
 
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy
+  namespace: s3-orchestrator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: alloy
+  namespace: s3-orchestrator
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alloy
+  namespace: s3-orchestrator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: alloy
+subjects:
+  - kind: ServiceAccount
+    name: alloy
+    namespace: s3-orchestrator
+---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -24,11 +55,16 @@ spec:
       labels:
         app.kubernetes.io/name: alloy
     spec:
-      serviceAccountName: default
+      serviceAccountName: alloy
       containers:
         - name: alloy
           image: grafana/alloy:v1.8.2
           args: ["run", "--server.http.listen-addr=0.0.0.0:12345", "/etc/alloy/config.alloy"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
           ports:
             - name: http
               containerPort: 12345

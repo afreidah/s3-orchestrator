@@ -50,6 +50,7 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-body-size: "5g"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+  # Empty matches every host.
   host: s3.example.com
   tls:
     enabled: false
@@ -115,8 +116,15 @@ secrets:
 # S3 Orchestrator Configuration
 #
 # Rendered as config.yaml in the ConfigMap. This is the same config format
-# documented in the project README — no Helm-specific syntax required.
+# documented in the project README - no Helm-specific syntax required.
+#
+# To use a complete config file you already have instead, pass it whole:
+#   helm install ... --set-file configFile=config.yaml
+# It is mounted as-is and replaces the config map below entirely; nothing from
+# the defaults is merged into it.
 # -------------------------------------------------------------------------------
+configFile: ""
+
 config:
   server:
     listen_addr: "0.0.0.0:9000"

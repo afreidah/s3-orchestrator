@@ -1,12 +1,14 @@
 # -------------------------------------------------------------------------------
-# Alloy ConfigMap - Kubernetes Pod Log Collection
+# Alloy ConfigMap - Kubernetes Pod Logs and Metrics
 #
 # Author: Alex Freidah
 #
 # Scrapes s3-orchestrator pod logs from the node filesystem, parses JSON,
 # extracts trace_id as structured metadata for Grafana trace-to-log
-# correlation, and ships to Loki on the host. The __HOST_IP__ placeholder
-# is replaced by demo.sh at apply time.
+# correlation, and ships to Loki on the host. Also scrapes each pod's
+# dedicated metrics listener and remote-writes to the host Prometheus, which
+# cannot reach pod IPs itself. The __HOST_IP__ placeholder is replaced by
+# demo.sh at apply time.
 # -------------------------------------------------------------------------------
 
 apiVersion: v1
@@ -51,7 +53,7 @@ data:
         }
       }
 
-      // Attach trace_id as structured metadata for trace ↔ log linking.
+      // Attach trace_id as structured metadata for trace-to-log linking.
       stage.structured_metadata {
         values = {
           trace_id = "traceID",
@@ -64,5 +66,54 @@ data:
     loki.write "loki" {
       endpoint {
         url = "http://__HOST_IP__:3100/loki/api/v1/push"
+      }
+    }
+
+    // Orchestrator pods on this node, so each DaemonSet replica scrapes only
+    // its own node's pods.
+    discovery.kubernetes "pods" {
+      role = "pod"
+      namespaces {
+        names = ["s3-orchestrator"]
+      }
+      selectors {
+        role  = "pod"
+        field = "spec.nodeName=" + sys.env("NODE_NAME")
+      }
+    }
+
+    // Keep the metrics container port and label the series job="s3-orchestrator",
+    // the same job the Nomad demo's Prometheus scrape uses.
+    discovery.relabel "metrics" {
+      targets = discovery.kubernetes.pods.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+        regex         = "s3-orchestrator"
+        action        = "keep"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_port_name"]
+        regex         = "metrics"
+        action        = "keep"
+      }
+
+      rule {
+        target_label = "job"
+        replacement  = "s3-orchestrator"
+      }
+    }
+
+    prometheus.scrape "metrics" {
+      targets         = discovery.relabel.metrics.output
+      job_name        = "s3-orchestrator"
+      scrape_interval = "10s"
+      forward_to      = [prometheus.remote_write.host.receiver]
+    }
+
+    prometheus.remote_write "host" {
+      endpoint {
+        url = "http://__HOST_IP__:19090/api/v1/write"
       }
     }

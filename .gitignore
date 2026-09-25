@@ -24,7 +24,7 @@ provider-coverage.out
 *.tfstate.*
 
 # Keypair the local demo mints for the perf suite. Minted per run, never shared.
-deploy/nomad/local/.perf-credentials.env
+.perf-credentials.env
 *.db
 *.db-shm
 *.db-wal
