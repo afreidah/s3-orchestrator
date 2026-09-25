@@ -61,6 +61,19 @@ func queryObjectLocationsCount(t *testing.T, s *Store, key string) int {
 	return count
 }
 
+// queryObjectLocationsOnBackend returns the number of rows in object_locations
+// for a key on one backend, failing the test on a query error.
+func queryObjectLocationsOnBackend(t *testing.T, s *Store, key, backend string) int {
+	t.Helper()
+	var count int
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM object_locations WHERE object_key = ? AND backend_name = ?`, key, backend,
+	).Scan(&count); err != nil {
+		t.Fatalf("queryObjectLocationsOnBackend: %v", err)
+	}
+	return count
+}
+
 // -------------------------------------------------------------------------
 // InsertPending / DeletePending / PendingDepth
 // -------------------------------------------------------------------------
@@ -392,5 +405,72 @@ func TestRecordObjectAndClearPending_EmptyIntentBehavesLikeRecordObject(t *testi
 	}
 	if got := queryObjectLocationsCount(t, s, "bucket/k1"); got != 1 {
 		t.Errorf("object_locations row not created: %d", got)
+	}
+}
+
+// -------------------------------------------------------------------------
+// CommitCompanionCopy  -  two copies racing to one backend
+// -------------------------------------------------------------------------
+
+// TestCommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding is the
+// sequence behind #1527. Two writes to one key each place a further copy on
+// backend-b, and a slow backend-b answers them in order: the first write's
+// copy resolves before the second write's has landed. The first is discarded,
+// rightly, since the second write cleared its intent. Deleting its bytes by
+// key and backend at that moment removes whatever is at that path when the
+// delete arrives, which is the second copy once it lands, and the second
+// copy's commit then records a row for bytes that are gone.
+//
+// The discard leaves the path to the copy still landing on it instead: it
+// cancels that copy's intent, so the copy's own commit finds the intent gone
+// and removes the path once every write to it has finished.
+func TestCommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	first := core.PendingObject{IntentID: "i-first", ObjectKey: "bucket/k", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	second := core.PendingObject{IntentID: "i-second", ObjectKey: "bucket/k", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	for _, p := range []*core.PendingObject{&first, &second} {
+		if _, err := s.InsertPendingIfFits(ctx, p); err != nil {
+			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
+		}
+	}
+	// The second write commits the copy that answered its client, which clears
+	// the first write's intent and keeps its own still-running one.
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: "bucket/k", Size: 100,
+		Copies:  []core.ObjectCopy{{Backend: "backend-a"}},
+		Placing: []core.ObjectCopy{{Backend: "backend-b", IntentID: "i-second"}},
+	}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	result, displaced, _, err := s.CommitCompanionCopy(ctx, &first)
+	if err != nil {
+		t.Fatalf("CommitCompanionCopy first: %v", err)
+	}
+	if result != core.CompanionCopyUntrusted {
+		t.Fatalf("first copy: result = %v, want Untrusted", result)
+	}
+	if len(displaced) != 0 {
+		t.Errorf("first copy's discard reported %+v for deletion while the second copy was still landing at that path", displaced)
+	}
+
+	result, displaced, _, err = s.CommitCompanionCopy(ctx, &second)
+	if err != nil {
+		t.Fatalf("CommitCompanionCopy second: %v", err)
+	}
+	if result != core.CompanionCopyUntrusted {
+		t.Errorf("second copy: result = %v, want Untrusted, since the first copy's discard left it the path", result)
+	}
+	if len(displaced) != 1 || displaced[0].BackendName != "backend-b" {
+		t.Errorf("second copy's discard reported %+v, want backend-b's bytes now that nothing else is landing there", displaced)
+	}
+	if got := queryObjectLocationsOnBackend(t, s, "bucket/k", "backend-b"); got != 0 {
+		t.Errorf("object_locations rows on backend-b = %d, want none: a row there describes bytes the discard's delete removes", got)
+	}
+	if got := queryPendingCount(t, s); got != 0 {
+		t.Errorf("pending rows = %d, want none once both copies have resolved", got)
 	}
 }

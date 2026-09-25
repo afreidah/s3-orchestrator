@@ -242,6 +242,86 @@ func TestStoreInt_GetLeastRecentlyScrubbedObjects(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// COMPANION COPIES
+// -------------------------------------------------------------------------
+
+// TestStoreInt_CommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding
+// is the sequence behind #1527, against Postgres. Two writes to one key each
+// place a further copy on backend-b, and a slow backend-b answers them in
+// order: the first write's copy resolves before the second write's has landed.
+// The first is discarded, rightly, since the second write cleared its intent.
+// Deleting its bytes by key and backend at that moment removes whatever is at
+// that path when the delete arrives, which is the second copy once it lands,
+// and the second copy's commit then records a row for bytes that are gone.
+//
+// The discard leaves the path to the copy still landing on it instead: it
+// cancels that copy's intent, so the copy's own commit finds the intent gone
+// and removes the path once every write to it has finished.
+func TestStoreInt_CommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key := uniqueKey(t, "k")
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+
+	first := core.PendingObject{IntentID: uniqueKey(t, "first"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	second := core.PendingObject{IntentID: uniqueKey(t, "second"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	for _, p := range []*core.PendingObject{&first, &second} {
+		if _, err := s.InsertPendingIfFits(ctx, p); err != nil {
+			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
+		}
+		defer func(id string) { _ = s.DeletePending(ctx, id) }(p.IntentID)
+	}
+	// The second write commits the copy that answered its client, which clears
+	// the first write's intent and keeps its own still-running one.
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: key, Size: 100,
+		Copies:  []core.ObjectCopy{{Backend: "backend-a"}},
+		Placing: []core.ObjectCopy{{Backend: "backend-b", IntentID: second.IntentID}},
+	}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	result, displaced, _, err := s.CommitCompanionCopy(ctx, &first)
+	if err != nil {
+		t.Fatalf("CommitCompanionCopy first: %v", err)
+	}
+	if result != core.CompanionCopyUntrusted {
+		t.Fatalf("first copy: result = %v, want Untrusted", result)
+	}
+	if len(displaced) != 0 {
+		t.Errorf("first copy's discard reported %+v for deletion while the second copy was still landing at that path", displaced)
+	}
+
+	result, displaced, _, err = s.CommitCompanionCopy(ctx, &second)
+	if err != nil {
+		t.Fatalf("CommitCompanionCopy second: %v", err)
+	}
+	if result != core.CompanionCopyUntrusted {
+		t.Errorf("second copy: result = %v, want Untrusted, since the first copy's discard left it the path", result)
+	}
+	if len(displaced) != 1 || displaced[0].BackendName != "backend-b" {
+		t.Errorf("second copy's discard reported %+v, want backend-b's bytes now that nothing else is landing there", displaced)
+	}
+	var rows int
+	if err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM object_locations WHERE object_key = $1 AND backend_name = 'backend-b'`, key,
+	).Scan(&rows); err != nil {
+		t.Fatalf("count rows on backend-b: %v", err)
+	}
+	if rows != 0 {
+		t.Errorf("object_locations rows on backend-b = %d, want none: a row there describes bytes the discard's delete removes", rows)
+	}
+	if err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM pending_objects WHERE object_key = $1`, key,
+	).Scan(&rows); err != nil {
+		t.Fatalf("count pending rows: %v", err)
+	}
+	if rows != 0 {
+		t.Errorf("pending rows = %d, want none once both copies have resolved", rows)
+	}
+}
+
+// -------------------------------------------------------------------------
 // NOTIFICATIONS OUTBOX
 // -------------------------------------------------------------------------
 

@@ -57,6 +57,29 @@ func (q *Queries) ClearPendingForKey(ctx context.Context, arg ClearPendingForKey
 	return items, nil
 }
 
+const clearPendingOnBackend = `-- name: ClearPendingOnBackend :execrows
+DELETE FROM pending_objects
+WHERE object_key = $1
+  AND backend_name = $2
+`
+
+type ClearPendingOnBackendParams struct {
+	ObjectKey   string
+	BackendName string
+}
+
+// Removes every intent for one key on one backend. A discard runs this once
+// its own intent is gone, so the rows it removes are other uploads still
+// landing at the path the discard was about to delete, and the count tells the
+// caller to leave the path to them.
+func (q *Queries) ClearPendingOnBackend(ctx context.Context, arg ClearPendingOnBackendParams) (int64, error) {
+	result, err := q.db.Exec(ctx, clearPendingOnBackend, arg.ObjectKey, arg.BackendName)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countPendingObjects = `-- name: CountPendingObjects :one
 SELECT COUNT(*)::bigint FROM pending_objects
 `

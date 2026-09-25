@@ -246,16 +246,18 @@ const (
 // CompanionCommitResult describes how an upload that outlived its response
 // settled the copy it was placing.
 //
-// Untrusted is not a failure. It says a newer write took the key while this
-// upload was still running, so the bytes it just wrote cannot be told apart
-// from that write's own copy at the same path, and the safe reading is that
-// neither they nor any row claiming a copy there describes the current object.
+// Untrusted is not a failure. It says the intent was gone by the time the
+// upload finished: a newer write took the key while it ran, or an earlier copy
+// discarded at the same path left the path to it. Either way the bytes it just
+// wrote cannot be told apart from what else was written at that path, and the
+// safe reading is that neither they nor any row claiming a copy there
+// describes the current object.
 type CompanionCommitResult int
 
 // The outcomes of committing an extra copy after the client has been answered.
 const (
 	CompanionCopyCommitted CompanionCommitResult = iota // the intent was still there, so the copy is recorded
-	CompanionCopyUntrusted                              // a newer write cleared the intent; the copy is dropped and replication rebuilds it
+	CompanionCopyUntrusted                              // the intent was gone; the copy is dropped and replication rebuilds it
 )
 
 // -------------------------------------------------------------------------

@@ -69,6 +69,16 @@ func (a *pgTxAdapter) ClearPendingForKey(ctx context.Context, objectKey string, 
 	return cleared, nil
 }
 
+// ClearPendingOnBackend removes every intent for one key on one backend and
+// reports how many there were.
+func (a *pgTxAdapter) ClearPendingOnBackend(ctx context.Context, objectKey, backend string) (int64, error) {
+	n, err := a.q.ClearPendingOnBackend(ctx, db.ClearPendingOnBackendParams{ObjectKey: objectKey, BackendName: backend})
+	if err != nil {
+		return 0, fmt.Errorf("clear pending intents on backend: %w", err)
+	}
+	return n, nil
+}
+
 // ClaimPending returns true if the pending row exists and was locked
 // FOR UPDATE; false if it has already been resolved.
 func (a *pgTxAdapter) ClaimPending(ctx context.Context, intentID string) (bool, error) {

@@ -73,6 +73,15 @@ WHERE object_key = @object_key
   AND intent_id <> ALL(@keep::text[])
 RETURNING intent_id, backend_name, size_bytes;
 
+-- name: ClearPendingOnBackend :execrows
+-- Removes every intent for one key on one backend. A discard runs this once
+-- its own intent is gone, so the rows it removes are other uploads still
+-- landing at the path the discard was about to delete, and the count tells the
+-- caller to leave the path to them.
+DELETE FROM pending_objects
+WHERE object_key = @object_key
+  AND backend_name = @backend_name;
+
 -- name: DeletePendingObject :exec
 DELETE FROM pending_objects WHERE intent_id = $1;
 

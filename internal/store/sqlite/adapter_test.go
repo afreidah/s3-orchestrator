@@ -115,6 +115,47 @@ func TestSqlite_ClearPendingForKey_NoIntents(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// ClearPendingOnBackend
+// -------------------------------------------------------------------------
+
+// TestSqlite_ClearPendingOnBackend_RemovesOnlyThatPath verifies the discard's
+// primitive removes every intent for the key on the one backend, counts them,
+// and leaves the key's intents on other backends and other keys alone.
+func TestSqlite_ClearPendingOnBackend_RemovesOnlyThatPath(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	seedPendingIntent(t, s, "landing-1", "bucket/k", "backend-b", 10)
+	seedPendingIntent(t, s, "landing-2", "bucket/k", "backend-b", 20)
+	seedPendingIntent(t, s, "other-backend", "bucket/k", "backend-a", 30)
+	seedPendingIntent(t, s, "other-key", "bucket/other", "backend-b", 40)
+
+	withAdapter(t, s, func(a *sqliteTxAdapter) {
+		n, err := a.ClearPendingOnBackend(ctx, "bucket/k", "backend-b")
+		if err != nil {
+			t.Fatalf("ClearPendingOnBackend: %v", err)
+		}
+		if n != 2 {
+			t.Errorf("cleared %d intents, want the 2 on backend-b", n)
+		}
+		if got := countPendingForKey(t, a, "bucket/k"); got != 1 {
+			t.Errorf("rows left for the key = %d, want 1 (the one on backend-a)", got)
+		}
+		if got := countPendingForKey(t, a, "bucket/other"); got != 1 {
+			t.Errorf("rows left for the other key = %d, want 1", got)
+		}
+		n, err = a.ClearPendingOnBackend(ctx, "bucket/k", "backend-b")
+		if err != nil {
+			t.Fatalf("ClearPendingOnBackend again: %v", err)
+		}
+		if n != 0 {
+			t.Errorf("cleared %d intents from an empty path, want 0", n)
+		}
+	})
+}
+
+// -------------------------------------------------------------------------
 // AcquireKeyLock
 // -------------------------------------------------------------------------
 

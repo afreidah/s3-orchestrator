@@ -309,6 +309,49 @@ func TestPgAdapter_DeletePending_RemovesRow(t *testing.T) {
 	})
 }
 
+// TestPgAdapter_ClearPendingOnBackend_RemovesOnlyThatPath verifies the
+// discard's primitive removes every intent for the key on the one backend,
+// counts them, and leaves the key's intents on other backends and other keys
+// alone.
+func TestPgAdapter_ClearPendingOnBackend_RemovesOnlyThatPath(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	key, other := uniqueKey(t, "k"), uniqueKey(t, "other")
+	for _, p := range []core.PendingObject{
+		{IntentID: uniqueKey(t, "landing-1"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 1},
+		{IntentID: uniqueKey(t, "landing-2"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 1},
+		{IntentID: uniqueKey(t, "other-backend"), ObjectKey: key, BackendName: "backend-a", SizeBytes: 1},
+		{IntentID: uniqueKey(t, "other-key"), ObjectKey: other, BackendName: "backend-b", SizeBytes: 1},
+	} {
+		if _, err := s.InsertPendingIfFits(ctx, &p); err != nil {
+			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
+		}
+		defer func(id string) { _ = s.DeletePending(ctx, id) }(p.IntentID)
+	}
+
+	withPgAdapter(t, s, func(a *pgTxAdapter) {
+		n, err := a.ClearPendingOnBackend(ctx, key, "backend-b")
+		if err != nil {
+			t.Fatalf("ClearPendingOnBackend: %v", err)
+		}
+		if n != 2 {
+			t.Errorf("cleared %d intents, want the 2 on backend-b", n)
+		}
+		for _, id := range []string{uniqueKey(t, "other-backend"), uniqueKey(t, "other-key")} {
+			if kept, err := a.ClaimPending(ctx, id); err != nil || !kept {
+				t.Errorf("intent %s: claimed=%v err=%v, want it left in place", id, kept, err)
+			}
+		}
+		n, err = a.ClearPendingOnBackend(ctx, key, "backend-b")
+		if err != nil {
+			t.Fatalf("ClearPendingOnBackend again: %v", err)
+		}
+		if n != 0 {
+			t.Errorf("cleared %d intents from an empty path, want 0", n)
+		}
+	})
+}
+
 // -------------------------------------------------------------------------
 // OBJECTS TX
 // -------------------------------------------------------------------------
