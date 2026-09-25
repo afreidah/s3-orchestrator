@@ -3,7 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Two background services whose run-loop semantics live in DI because they
+// Background services whose run-loop semantics live in DI because they
 // read state from several collaborators at once, through the consumer
 // interfaces declared in service_interfaces.go:
 //
@@ -11,6 +11,8 @@
 //     observed load; does not fit the plain tickrunner.Service shape.
 //   - lifecycleService: a small tickrunner wrapper that needs the
 //     manager-side lifecycleOps surface to read rules and process them.
+//   - provisioningWatcher: rebuilds the provisioning view when another
+//     instance announces a change over Redis.
 //
 // All other background-service factories live next to their owning
 // worker (internal/worker, internal/proxy/multipart, internal/breaker)
@@ -225,4 +227,40 @@ func NewLifecycleService(manager lifecycleOps, locker tickrunner.AdvisoryLocker)
 			telemetry.LifecycleRunsTotal.WithLabelValues("error").Inc()
 		},
 	})
+}
+
+// -------------------------------------------------------------------------
+// PROVISIONING WATCH
+// -------------------------------------------------------------------------
+
+// provisioningWatcher rebuilds this instance's provisioning view when another
+// instance announces a change, and each time its subscription is established,
+// since it may have missed an announcement while it was not subscribed.
+type provisioningWatcher struct {
+	channel sharedChannelWatcher
+	apply   func(ctx context.Context) error
+	log     *slog.Logger
+}
+
+// newProvisioningWatcher constructs the provisioning watch service. apply
+// rebuilds this instance's view without announcing, so rebuilds do not echo
+// between instances.
+func newProvisioningWatcher(channel sharedChannelWatcher, apply func(ctx context.Context) error) lifecycle.Runner {
+	must.NotNil("channel", channel)
+	must.NotNil("apply", apply)
+	return &provisioningWatcher{
+		channel: channel,
+		apply:   apply,
+		log:     tickrunner.ComponentLogger("provisioning_watch"),
+	}
+}
+
+// Run watches the provisioning channel until ctx is done.
+func (w *provisioningWatcher) Run(ctx context.Context) error {
+	w.channel.WatchShared(ctx, provisioningChannel, func(ctx context.Context) {
+		if err := w.apply(ctx); err != nil {
+			w.log.ErrorContext(ctx, "provisioning rebuild failed", "error", err)
+		}
+	})
+	return nil
 }

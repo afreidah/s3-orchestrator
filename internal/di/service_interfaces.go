@@ -47,6 +47,12 @@ type quotaMetricsRefresher interface {
 	RefreshUsageBaselines(ctx context.Context) error
 }
 
+// sharedChannelWatcher is the *counter.RedisCounterBackend subscription the
+// provisioning watcher listens on.
+type sharedChannelWatcher interface {
+	WatchShared(ctx context.Context, channel string, onChange func(context.Context))
+}
+
 // lifecycleOps is the subset of *expiry.Manager that NewLifecycleService
 // needs to read the lifecycle config and process a tick.
 type lifecycleOps interface {

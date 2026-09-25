@@ -172,6 +172,10 @@ With Redis configured, all instances share the same usage counters via Redis `IN
 
 A circuit breaker monitors Redis health. If Redis becomes unavailable, the backend falls back to local in-memory counters automatically - same behavior as running without Redis. A background health probe PINGs Redis periodically and, on recovery, syncs local deltas back to Redis via an additive INCRBY pipeline before resuming shared operation. The entire local counter map is swapped atomically (single pointer swap) so no concurrent Add calls can lose deltas between the snapshot and the pipeline. Stale Redis keys from before the outage expire via TTL. Local counters are zeroed only after the pipeline commits, so a crash mid-recovery cannot lose deltas. The recovery is safe for concurrent execution by multiple instances since INCRBY is additive.
 
+### Provisioning Changes
+
+Users, credentials, grants and buckets created or changed through the admin API are stored in the database and applied on the instance that served the call. That instance then announces the change on a Redis pub/sub channel, and every other instance rebuilds its credential registry, bucket list and CORS rules from the database. Pub/sub keeps no messages for a subscriber that is disconnected, so an instance also rebuilds each time its subscription connects or reconnects. A change made while Redis is down reaches the other instances when they reconnect.
+
 ```yaml
 redis:
   address: "redis.example.com:6379"

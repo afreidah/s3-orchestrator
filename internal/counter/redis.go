@@ -12,8 +12,9 @@
 // Keys receive a 35-day TTL so old months auto-expire without cleanup.
 //
 // Also carries shared state: a value one instance computes for the whole fleet
-// and the others read, under {prefix}:shared:{name}. It rides the same client
-// and circuit breaker, so a Redis outage is one condition, not two.
+// and the others read, under {prefix}:shared:{name}, and change notifications
+// on pub/sub channels of the same name. It rides the same client and circuit
+// breaker, so a Redis outage is one condition, not two.
 // -------------------------------------------------------------------------------
 
 package counter
@@ -53,6 +54,10 @@ const opTimeout = 2 * time.Second
 // is open. Longer than opTimeout because these aren't on the request path.
 const pingTimeout = 5 * time.Second
 
+// watchRetryDelay is how long WatchShared waits before resubscribing after
+// the subscription connection fails.
+const watchRetryDelay = time.Second
+
 // -------------------------------------------------------------------------
 // REDIS CLIENT INTERFACE
 // -------------------------------------------------------------------------
@@ -65,6 +70,8 @@ type RedisClient interface {
 	IncrBy(ctx context.Context, key string, value int64) *redis.IntCmd
 	Get(ctx context.Context, key string) *redis.StringCmd
 	Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd
+	Publish(ctx context.Context, channel string, message any) *redis.IntCmd
+	Subscribe(ctx context.Context, channels ...string) *redis.PubSub
 	GetSet(ctx context.Context, key string, value any) *redis.StringCmd
 	Del(ctx context.Context, keys ...string) *redis.IntCmd
 	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
@@ -72,6 +79,15 @@ type RedisClient interface {
 	Ping(ctx context.Context) *redis.StatusCmd
 	Pipeline() redis.Pipeliner
 	TxPipeline() redis.Pipeliner
+	Close() error
+}
+
+// subscription is the receive side of a pub/sub subscription. *redis.PubSub
+// satisfies it: Receive returns a *redis.Subscription each time the channel is
+// subscribed, including after go-redis reconnects, and a *redis.Message for
+// each message published on it.
+type subscription interface {
+	Receive(ctx context.Context) (any, error)
 	Close() error
 }
 
@@ -86,12 +102,13 @@ type RedisClient interface {
 // Tests construct this type directly and may leave log nil, so every caller
 // routes through logger() rather than reading the field.
 type RedisCounterBackend struct {
-	client   RedisClient
-	prefix   string
-	local    *LocalCounterBackend
-	cb       *breaker.CircuitBreaker
-	backends []string
-	log      *slog.Logger
+	client    RedisClient
+	subscribe func(ctx context.Context, channel string) subscription
+	prefix    string
+	local     *LocalCounterBackend
+	cb        *breaker.CircuitBreaker
+	backends  []string
+	log       *slog.Logger
 
 	fallbackMu sync.RWMutex
 	fallback   bool // currently serving from the local counters
@@ -132,7 +149,10 @@ func NewRedisCounterBackend(client RedisClient, cfg *config.RedisConfig, backend
 	cb.SetOnStateChange(telemetry.NewCircuitBreakerHook("redis"))
 
 	r := &RedisCounterBackend{
-		client:    client,
+		client: client,
+		subscribe: func(ctx context.Context, channel string) subscription {
+			return client.Subscribe(ctx, channel)
+		},
 		prefix:    cfg.KeyPrefix,
 		local:     NewLocalCounterBackend(backendNames),
 		cb:        cb,
@@ -654,6 +674,91 @@ func (r *RedisCounterBackend) GetShared(ctx context.Context, name string) ([]byt
 		return nil, nil
 	}
 	return val, nil
+}
+
+// NotifyShared tells every instance watching channel that the state it
+// covers has changed. The message carries nothing; a watcher rereads the
+// state itself.
+func (r *RedisCounterBackend) NotifyShared(ctx context.Context, channel string) error {
+	if r.inFallback() {
+		return ErrSharedStateUnavailable
+	}
+	ctx, cancel := context.WithTimeout(ctx, opTimeout)
+	defer cancel()
+
+	if err := r.client.Publish(ctx, r.sharedKey(channel), "changed").Err(); err != nil {
+		telemetry.RedisOperationsTotal.WithLabelValues("publish", "error").Inc()
+		r.recordFailure(err)
+		return err
+	}
+	telemetry.RedisOperationsTotal.WithLabelValues("publish", "success").Inc()
+	r.notePostCheck("publish", nil)
+	return nil
+}
+
+// WatchShared calls onChange for every notification on channel, and once
+// each time the subscription is established: at start and after every
+// reconnect. Pub/sub keeps nothing for a subscriber that was away, so the
+// watcher assumes it missed a change whenever it (re)joins. Blocks until ctx
+// is done.
+func (r *RedisCounterBackend) WatchShared(ctx context.Context, channel string, onChange func(context.Context)) {
+	sub := r.subscribe(ctx, r.sharedKey(channel))
+	defer func() { _ = sub.Close() }()
+
+	interrupted := false
+	for {
+		msg, err := sub.Receive(ctx)
+		if err != nil {
+			if !r.awaitResubscribe(ctx, channel, err, !interrupted) {
+				return
+			}
+			interrupted = true
+			continue
+		}
+
+		change, subscribed := classifySharedMessage(msg)
+		if subscribed && interrupted {
+			r.logger().InfoContext(ctx, "shared state subscription restored", "channel", channel)
+			interrupted = false
+		}
+		if change {
+			onChange(ctx)
+		}
+	}
+}
+
+// awaitResubscribe waits out the retry delay after the subscription fails,
+// logging the first failure of an outage. Reports false when ctx ended and the
+// watcher should stop.
+func (r *RedisCounterBackend) awaitResubscribe(ctx context.Context, channel string, err error, first bool) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	if first {
+		r.logger().WarnContext(ctx, "shared state subscription lost, resubscribing",
+			"channel", channel, logfmt.Err(err))
+	}
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(watchRetryDelay):
+		return true
+	}
+}
+
+// classifySharedMessage reports whether a received pub/sub message means the
+// shared state may have changed, and whether it confirms a subscription. A
+// subscription counts as a change because anything published while the
+// subscriber was away is gone.
+func classifySharedMessage(msg any) (change, subscribed bool) {
+	switch m := msg.(type) {
+	case *redis.Subscription:
+		return m.Kind == "subscribe", m.Kind == "subscribe"
+	case *redis.Message:
+		return true, false
+	default:
+		return false, false
+	}
 }
 
 // -------------------------------------------------------------------------

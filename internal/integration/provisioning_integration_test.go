@@ -43,6 +43,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
+	"github.com/afreidah/s3-orchestrator/internal/transport/cors"
 	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
@@ -94,9 +95,11 @@ func setupProvEnv(t *testing.T) *provEnv {
 
 	inj := do.New()
 	do.ProvideValue(inj, cfg)
+	do.ProvideNamedValue(inj, "mode", config.ModeAPI)
 	do.ProvideValue[core.ProvisioningStore](inj, testStore)
 	do.ProvideValue(inj, declared)
 	do.ProvideValue(inj, srv)
+	do.ProvideValue(inj, cors.New(s3api.BucketFromPath, s3api.WriteS3Error))
 
 	publisher := di.NewRegistryPublisher(inj)
 	if err := publisher.Republish(context.Background()); err != nil {
