@@ -41,10 +41,10 @@ All vegeta targets accept these variables:
 ## Credentials
 
 `make perf` signs as a provisioned identity rather than the credential the
-config file declares. `make nomad-demo` creates a `perf` user, mints it a
-keypair, grants it `list-buckets,list,read,write,delete` on `photos`, and writes
-the keypair to `deploy/nomad/local/.perf-credentials.env`; `run-suite.sh` reads
-it from there and passes it to every scenario.
+config file declares. `make nomad-demo` and `make kubernetes-demo` both create a
+`perf` user, mint it a keypair, grant it `list-buckets,list,read,write,delete`
+on `photos`, and write the keypair to `deploy/local/.perf-credentials.env`;
+`run-suite.sh` reads it from there and passes it to every scenario.
 
 This is deliberate. A config-declared credential carries full access, because
 the config file has no syntax for narrowing it, so a suite run as one would

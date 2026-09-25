@@ -1,0 +1,120 @@
+# -------------------------------------------------------------------------------
+# Traefik - Local Dev Kubernetes Manifests
+#
+# Author: Alex Freidah
+#
+# Load balancer in front of the orchestrator pods, the same image and
+# entrypoint settings as the Nomad demo's Traefik job, with the Kubernetes
+# Ingress provider in place of the Nomad one. k3s's bundled Traefik is
+# disabled so both demos run this version. The LoadBalancer Service is
+# published on the host through k3d's load balancer.
+# -------------------------------------------------------------------------------
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: traefik
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traefik
+  namespace: traefik
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: traefik
+rules:
+  - apiGroups: [""]
+    resources: ["services", "secrets", "nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "ingressclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses/status"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: traefik
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: traefik
+subjects:
+  - kind: ServiceAccount
+    name: traefik
+    namespace: traefik
+---
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: traefik
+spec:
+  controller: traefik.io/ingress-controller
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  namespace: traefik
+  labels:
+    app.kubernetes.io/name: traefik
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: traefik
+    spec:
+      serviceAccountName: traefik
+      containers:
+        - name: traefik
+          image: traefik:v3.5
+          args:
+            - "--entrypoints.s3.address=:9000"
+            # Traefik cuts request bodies off after 60s by default, which
+            # would fail large uploads on a slow link.
+            - "--entrypoints.s3.transport.respondingTimeouts.readTimeout=0"
+            - "--entrypoints.traefik.address=:8081"
+            - "--api.dashboard=true"
+            - "--api.insecure=true"
+            - "--providers.kubernetesingress=true"
+          ports:
+            - name: s3
+              containerPort: 9000
+            - name: dashboard
+              containerPort: 8081
+          resources:
+            requests:
+              cpu: "1"
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik
+  namespace: traefik
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: traefik
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+    - name: dashboard
+      port: 8081
+      targetPort: dashboard

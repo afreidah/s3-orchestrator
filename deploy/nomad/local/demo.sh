@@ -5,20 +5,22 @@
 # Author: Alex Freidah
 #
 # Stands up a complete s3-orchestrator environment using Nomad in dev mode with
-# PostgreSQL and MinIO backends running via docker-compose on the host. Builds
-# the image from source and submits the job. Tears down cleanly with "down".
+# PostgreSQL, Redis and MinIO backends running via docker-compose on the host.
+# Builds the image from source and runs a fleet of instances behind Traefik,
+# the way production runs them. Everything but the scheduler is shared with the
+# Kubernetes demo through deploy/local. Tears down cleanly with "down".
 #
 # Usage:
-#   ./demo.sh        # stand up the full environment
-#   ./demo.sh down   # tear everything down
+#   ./demo.sh                # stand up the full environment
+#   INSTANCES=1 ./demo.sh    # a single instance, still behind Traefik
+#   ./demo.sh down           # tear everything down
 # -------------------------------------------------------------------------------
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-IMAGE="s3-orchestrator:local"
-PORT=9000
+# shellcheck source=SCRIPTDIR/../../local/lib.sh
+source "$SCRIPT_DIR/../../local/lib.sh"
 
 # Pin every Nomad AND Consul endpoint/credential to the local dev agent so a
 # sourced prod profile (e.g. munchbox-env.sh) can never redirect us at a real
@@ -34,127 +36,66 @@ nomad() { NOMAD_ADDR="http://127.0.0.1:4646" command nomad "$@"; }
 
 cd "$REPO_ROOT"
 
-BUCKET="photos"
-PERF_USER="perf"
-PERF_GRANTS="list-buckets,list,read,write,delete"
-CREDENTIALS_FILE="$SCRIPT_DIR/.perf-credentials.env"
-
-# rand_chars draws n characters from the given set.
-#
-# The random source is a fixed-size read rather than a stream, because a reader
-# that stops early leaves the filter writing into a closed pipe: under
-# "set -o pipefail" that SIGPIPE fails the whole script, which is a confusing
-# way for a demo to die before it prints anything.
-rand_chars() {
-    local set="$1" n="$2"
-    head -c 1024 /dev/urandom | LC_ALL=C tr -dc "$set" | cut -c1-"$n"
+# render_job prints the orchestrator job with the rendered config inlined at
+# the __CONFIG__ line, indented to match it, and the instance count filled in.
+render_job() {
+    local config="$1"
+    awk -v cfg="$config" -v n="$INSTANCES" '
+        /^[ \t]*__CONFIG__[ \t]*$/ {
+            indent = substr($0, 1, index($0, "__CONFIG__") - 1)
+            while ((getline line < cfg) > 0) print (line == "" ? "" : indent line)
+            next
+        }
+        { gsub(/__INSTANCES__/, n); print }
+    ' "$SCRIPT_DIR/s3-orchestrator.nomad.hcl"
 }
 
-# The root keypair, minted per run and substituted into the job's config. This
-# is the credential the demo administers itself with: the admin API, the TUI and
-# the dashboard all take it, so there is one thing to hold rather than a token
-# for one surface and a password for another.
-ROOT_ACCESS_KEY="AKIA$(rand_chars 'A-Z0-9' 16)"
-ROOT_SECRET_KEY="$(rand_chars 'A-Za-z0-9' 40)"
-
-# s3o runs the admin CLI out of the image the demo just built, so the demo needs
-# no host-installed binary beyond docker. It signs, rather than presenting a
-# token, which is the path an operator should be on.
-s3o() {
-    docker run --rm --network host "$IMAGE" \
-        admin -addr "http://127.0.0.1:$PORT" \
-        -access-key "$ROOT_ACCESS_KEY" -secret-key "$ROOT_SECRET_KEY" "$@"
+# healthy_allocations counts the orchestrator allocations that are running and
+# have passed their checks.
+healthy_allocations() {
+    curl -s "$NOMAD_ADDR/v1/job/s3-orchestrator/allocations" 2>/dev/null \
+        | jq '[.[] | select(.ClientStatus == "running" and .DeploymentStatus.Healthy == true)] | length' 2>/dev/null \
+        || echo 0
 }
 
-# provision_perf_identity creates the user, mints its keypair and grants it the
-# bucket, writing the keypair where the perf suite reads it.
-#
-# Idempotent, because the demo can be re-run against a database that survived
-# the last one: the user and the grant are reused where they already exist. A
-# fresh keypair is minted every run regardless - a minted secret is returned
-# once and never read back, so a previous run's is unrecoverable, and issuing a
-# second keypair for one user is exactly what the model is for.
-provision_perf_identity() {
-    echo "Provisioning the '$PERF_USER' identity..."
-    local listing user_id has_grant minted access_key secret
+# reload_fleet sends SIGHUP to every running instance so each rebuilds its
+# credential registry from the store. Provisioning only republishes the registry
+# on the instance that served the call, so without this the perf identity
+# authenticates on one instance and gets 403 from the rest.
+reload_fleet() {
+    echo "Reloading every instance so it picks up the perf identity..."
+    local alloc
+    for alloc in $(nomad job allocs -json s3-orchestrator \
+        | jq -r '.[] | select(.ClientStatus == "running") | .ID'); do
+        nomad alloc signal -s SIGHUP "$alloc" >/dev/null 2>&1 \
+            || echo "Warning: could not signal allocation ${alloc:0:8}"
+    done
+    sleep 2
+}
 
-    # Every call is tolerated rather than fatal: the environment is already up by
-    # this point, and losing the whole demo over a provisioning hiccup would be a
-    # worse outcome than falling back to the config credential.
-    listing=$(s3o -json user list 2>/dev/null || echo '{}')
-    user_id=$(jq -r --arg n "$PERF_USER" \
-        'first(.users[]? | select(.name == $n) | .id) // ""' <<<"$listing" 2>/dev/null || echo "")
-    has_grant=$(jq -r --arg n "$PERF_USER" --arg b "$BUCKET" \
-        'any(.users[]? | select(.name == $n) | .grants[]?;
-             .kind == "bucket" and .name == $b)' <<<"$listing" 2>/dev/null || echo false)
-
-    if [[ -z "$user_id" ]]; then
-        user_id=$(s3o -json user create -name "$PERF_USER" 2>/dev/null \
-            | jq -r '.user_id // ""' 2>/dev/null || echo "")
-    fi
-    if [[ -z "$user_id" ]]; then
-        echo "Warning: could not provision '$PERF_USER'; the perf suite will fall"
-        echo "         back to the config credential and its full access."
-        return 0
-    fi
-
-    if [[ "$has_grant" != "true" ]]; then
-        s3o grant add -user "$user_id" -name "$BUCKET" -permissions "$PERF_GRANTS" >/dev/null 2>&1 || true
-    fi
-
-    minted=$(s3o -json credential issue -user "$user_id" -label "perf suite" 2>/dev/null || echo '{}')
-    access_key=$(jq -r '.access_key_id // ""' <<<"$minted" 2>/dev/null || echo "")
-    secret=$(jq -r '.secret_access_key // ""' <<<"$minted" 2>/dev/null || echo "")
-    if [[ -z "$access_key" || -z "$secret" ]]; then
-        echo "Warning: could not mint a keypair for '$PERF_USER'; the perf suite"
-        echo "         will fall back to the config credential."
-        return 0
-    fi
-
-    # The secret reaches a file the caller owns and nothing else. Written in a
-    # subshell so the tightened umask does not outlive this function.
-    (
-        umask 077
-        cat > "$CREDENTIALS_FILE" <<EOF
-# Written by demo.sh. The perf suite signs as the perf identity, so a run goes
-# through a stored grant rather than the config credential's full access. The
-# root keypair is here too, for reaching the admin API by hand.
-PERF_ACCESS_KEY="$access_key"
-PERF_SECRET_KEY="$secret"
-PERF_USER_ID="$user_id"
-S3O_ACCESS_KEY_ID="$ROOT_ACCESS_KEY"
-S3O_SECRET_ACCESS_KEY="$ROOT_SECRET_KEY"
-EOF
-    )
-    echo "  user $user_id, key $access_key, granted $PERF_GRANTS on $BUCKET"
+# print_platform_endpoints lists what only Nomad can report: the dev agent UI
+# and each instance's dynamic metrics port.
+print_platform_endpoints() {
+    echo "  Nomad UI:   http://localhost:4646"
+    echo "  Metrics and pprof, one listener per instance:"
+    nomad service info -json s3-orchestrator-metrics 2>/dev/null \
+        | jq -r '.[] | "    http://\(.Address):\(.Port)/metrics  (alloc \(.AllocID[0:8]))"' 2>/dev/null || true
 }
 
 # --- Teardown ---
 if [[ "${1:-}" == "down" ]]; then
     echo "Tearing down demo environment..."
     nomad job stop -purge s3-orchestrator 2>/dev/null || true
+    nomad job stop -purge traefik 2>/dev/null || true
     pkill -f '[n]omad agent -dev' 2>/dev/null || true
     rm -f /tmp/nomad-demo.pid "$CREDENTIALS_FILE"
-    docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
+    stop_backing_services
     echo "Done."
     exit 0
 fi
 
-# --- Preflight checks ---
-for cmd in docker nomad jq; do
-    if ! command -v "$cmd" &>/dev/null; then
-        echo "Error: $cmd is required but not installed."
-        exit 1
-    fi
-done
-
-# --- Start backing services ---
-echo "Starting PostgreSQL and MinIO via docker-compose..."
-docker compose -f docker-compose.test.yml up -d --wait postgres minio-1 minio-2 minio-3
-docker compose -f docker-compose.test.yml up -d minio-setup
-
-# --- Start monitoring ---
-echo "Starting Prometheus and Grafana..."
+require_commands docker nomad jq
+start_backing_services
 
 # --- Start Nomad dev agent ---
 if nomad status &>/dev/null; then
@@ -164,7 +105,7 @@ else
     nomad agent -dev -log-level=WARN &>/tmp/nomad-demo.log &
     echo $! > /tmp/nomad-demo.pid
     echo "Waiting for Nomad to be ready..."
-    for i in $(seq 1 30); do
+    for _ in $(seq 1 30); do
         if nomad status &>/dev/null; then
             break
         fi
@@ -176,95 +117,52 @@ else
     fi
 fi
 
-# --- Build image ---
-echo "Building container image..."
-docker build -t "$IMAGE" .
+build_image
 
 # --- Discover host IP ---
-# In dev mode, Nomad runs Docker tasks on the host network. The Docker bridge
-# gateway lets containers reach host-bound ports (docker-compose services).
+# In dev mode, Nomad runs Docker tasks on the default bridge. Its gateway lets
+# containers reach host-bound ports (docker-compose services).
 HOST_IP=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
 echo "Host gateway IP: $HOST_IP"
 
-docker compose -f docker-compose.test.yml up -d tempo loki alloy prometheus grafana
+# Alloy runs in compose here, tailing container logs through the docker socket.
+docker compose -f "$COMPOSE_FILE" up -d tempo loki alloy prometheus grafana
 
-# --- Submit job ---
-echo "Submitting Nomad job..."
-sed -e "s/__HOST_IP__/$HOST_IP/g" \
-    -e "s|__ROOT_ACCESS_KEY__|$ROOT_ACCESS_KEY|g" \
-    -e "s|__ROOT_SECRET_KEY__|$ROOT_SECRET_KEY|g" \
-    "$SCRIPT_DIR/s3-orchestrator.nomad.hcl" | nomad job run -detach -
+# --- Submit jobs ---
+echo "Submitting Traefik job..."
+nomad job run -detach "$SCRIPT_DIR/traefik.nomad.hcl"
 
-# --- Wait for healthy allocation ---
-echo "Waiting for allocation to become healthy..."
-for i in $(seq 1 60); do
-    HEALTH=$(curl -s "http://localhost:$PORT/health" 2>/dev/null || true)
-    if echo "$HEALTH" | grep -q '"status":"ok"'; then
+echo "Submitting s3-orchestrator job ($INSTANCES instances)..."
+RENDERED_CONFIG="$(mktemp)"
+trap 'rm -f "$RENDERED_CONFIG"' EXIT
+render_config "$HOST_IP" "$RENDERED_CONFIG"
+render_job "$RENDERED_CONFIG" | nomad job run -detach -
+
+# --- Wait for a healthy fleet ---
+# Every instance must pass its checks before traffic starts: the perf suite
+# measures the whole fleet, and a run that began against one instance while
+# the others were still booting would measure something else.
+echo "Waiting for $INSTANCES healthy allocations..."
+HEALTHY=0
+for _ in $(seq 1 120); do
+    HEALTHY=$(healthy_allocations)
+    if [[ "$HEALTHY" -ge "$INSTANCES" ]]; then
         break
     fi
     sleep 1
 done
 
-HEALTH=$(curl -s "http://localhost:$PORT/health" 2>/dev/null || true)
-if echo "$HEALTH" | grep -q '"status":"ok"'; then
-    # --- Provision the perf identity ---
-    #
-    # The config file declares one credential on "photos", and a config
-    # credential carries full access because the file has no syntax for
-    # narrowing it. Running the perf suite as that credential would measure the
-    # request path with the permission check trivially satisfied, so the demo
-    # provisions a stored user instead and grants it exactly what the suite
-    # does: list, read, write, delete. Tagging is deliberately absent - the
-    # suite runs no tagging scenario, and a grant that carried it would not be
-    # proving anything.
+# Traefik picks up new registrations on its next refresh.
+echo "Waiting for Traefik to route to the fleet..."
+if [[ "$HEALTHY" -ge "$INSTANCES" ]] && wait_for_health 30; then
     provision_perf_identity
-
-    # --- Create Grafana trace→log correlation ---
-    curl -s -X POST http://localhost:13000/api/datasources/uid/tempo/correlations \
-        -H "Content-Type: application/json" \
-        -d @deploy/monitoring/grafana/correlation.json >/dev/null 2>&1 || true
-
-    echo ""
-    echo "========================================"
-    echo "  S3 Orchestrator is running in Nomad"
-    echo "========================================"
-    echo ""
-    echo "  S3 API:     http://localhost:$PORT"
-    echo "  Dashboard:  http://localhost:$PORT/ui/"
-    echo "  Metrics:    http://localhost:9001/metrics  (dedicated listener)"
-    echo "  pprof:      http://localhost:9001/debug/pprof/"
-    echo "  Health:     http://localhost:$PORT/health"
-    echo "  Grafana:    http://localhost:13000"
-    echo "  Tempo:      http://localhost:3200"
-    echo "  Nomad UI:   http://localhost:4646"
-    echo ""
-    echo "  Root keypair - the only credential, for the dashboard login, the"
-    echo "  TUI, and the admin API:"
-    echo "    access key: $ROOT_ACCESS_KEY"
-    echo "    secret key: $ROOT_SECRET_KEY"
-    echo ""
-    echo "    export S3O_ADMIN_ADDR=http://localhost:$PORT"
-    echo "    export S3O_ACCESS_KEY_ID=$ROOT_ACCESS_KEY"
-    echo "    export S3O_SECRET_ACCESS_KEY=$ROOT_SECRET_KEY"
-    echo "    s3-orchestrator admin status"
-    echo "    s3-orchestrator tui"
-    echo ""
-    echo "  Test upload:"
-    echo "    aws --endpoint-url http://localhost:$PORT s3 cp /etc/hostname s3://$BUCKET/test.txt"
-    echo ""
-    echo "  The '$PERF_USER' identity holds $PERF_GRANTS on $BUCKET."
-    echo "  Its keypair is in $CREDENTIALS_FILE, and 'make perf' signs as it."
-    echo ""
-    echo "  See what it reaches:"
-    echo "    s3-orchestrator admin user list"
-    echo ""
+    reload_fleet
+    create_grafana_correlation
+    print_summary "Nomad" "./deploy/nomad/local/demo.sh"
     echo "  Nomad agent log: /tmp/nomad-demo.log"
     echo ""
-    echo "  Tear down:"
-    echo "    ./deploy/nomad/local/demo.sh down"
-    echo ""
 else
-    echo "Error: health check returned '$HEALTH' (expected 'ok')"
+    echo "Error: $HEALTHY of $INSTANCES allocations healthy, or Traefik is not routing to them"
     nomad job status s3-orchestrator
     ALLOC_ID=$(nomad job status s3-orchestrator | grep -oP '[a-f0-9]{8}' | head -1)
     if [[ -n "$ALLOC_ID" ]]; then

@@ -67,7 +67,7 @@ esac
 # cache-flush call with. Whatever the caller states in the environment wins over
 # what was found lying around, so the overrides are captured before the file is
 # sourced and put back after.
-PERF_CREDENTIALS="${PERF_CREDENTIALS:-deploy/nomad/local/.perf-credentials.env}"
+PERF_CREDENTIALS="${PERF_CREDENTIALS:-deploy/local/.perf-credentials.env}"
 override_access="${PERF_ACCESS_KEY:-}"
 override_secret="${PERF_SECRET_KEY:-}"
 override_admin_key="${S3O_ACCESS_KEY_ID:-}"
@@ -81,8 +81,25 @@ SECRET_KEY="${override_secret:-${PERF_SECRET_KEY:-photossecret}}"
 ADMIN_ACCESS_KEY="${override_admin_key:-${S3O_ACCESS_KEY_ID:-}}"
 ADMIN_SECRET_KEY="${override_admin_secret:-${S3O_SECRET_ACCESS_KEY:-}}"
 
+# Say where the admin keypair came from. A shell that exports S3O_* for another
+# deployment silently overrides the demo's file, and the only symptom is a 401
+# on the cold-read scenario's cache flush.
+if [[ -n "$override_admin_key" ]]; then
+  ADMIN_SOURCE="environment"
+elif [[ -n "$ADMIN_ACCESS_KEY" ]]; then
+  ADMIN_SOURCE="$PERF_CREDENTIALS"
+else
+  ADMIN_SOURCE="none"
+fi
+
 mkdir -p "$RESULTS_DIR"
 echo "profile=$PROFILE results=$RESULTS_DIR endpoint=$ENDPOINT bucket=$BUCKET access_key=$ACCESS_KEY"
+echo "admin_key=${ADMIN_ACCESS_KEY:-none} (from $ADMIN_SOURCE)"
+if [[ -n "$override_admin_key" && -n "${S3O_ACCESS_KEY_ID:-}" && "$override_admin_key" != "$S3O_ACCESS_KEY_ID" ]]; then
+  echo "warning: S3O_ACCESS_KEY_ID in the environment overrides the admin keypair in"
+  echo "         $PERF_CREDENTIALS; unset S3O_ACCESS_KEY_ID and S3O_SECRET_ACCESS_KEY"
+  echo "         to sign as the demo's root keypair"
+fi
 echo
 
 # Run each scenario, recording PASS/FAIL by exit code. A non-zero exit

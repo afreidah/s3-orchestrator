@@ -13,8 +13,24 @@
 # source of truth at the chart level instead of duplicating port numbers
 # between the k8s plumbing (Service/Deployment/NetworkPolicy) and the runtime
 # config.
+#
+# When .Values.configFile is set, it is mounted verbatim instead: a complete
+# config.yaml the operator already has, not merged with the chart's defaults.
+# The listener override does not reach it, so its telemetry.metrics.listen
+# must match metrics.dedicatedListener.port.
 # -------------------------------------------------------------------------------
 
+{{- if .Values.configFile }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "s3-orchestrator.fullname" . }}
+  labels:
+    {{- include "s3-orchestrator.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    {{- .Values.configFile | nindent 4 }}
+{{- else }}
 {{- $config := deepCopy .Values.config -}}
 {{- if .Values.metrics.dedicatedListener.enabled -}}
   {{- $_ := set $config "telemetry" (default (dict) $config.telemetry) -}}
@@ -34,3 +50,4 @@ metadata:
 data:
   config.yaml: |
     {{- toYaml $config | nindent 4 }}
+{{- end }}

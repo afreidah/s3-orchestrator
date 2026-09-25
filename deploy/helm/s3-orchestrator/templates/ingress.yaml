@@ -5,8 +5,8 @@
 #
 # Optional Ingress fronting the Service. Gated by .Values.ingress.enabled so
 # operators using a different LB (cloud LB, ServiceMesh gateway) can leave
-# this off. Annotations and TLS hosts come from .Values; the rules are
-# generated from .Values.ingress.hosts.
+# this off. Annotations and TLS hosts come from .Values; the rule matches
+# .Values.ingress.host, or every host when it is empty.
 # -------------------------------------------------------------------------------
 
 {{- if .Values.ingress.enabled }}
@@ -29,8 +29,7 @@ spec:
       secretName: {{ .Values.ingress.tls.secretName }}
   {{- end }}
   rules:
-    - host: {{ .Values.ingress.host }}
-      http:
+    - http:
         paths:
           - path: /
             pathType: Prefix
@@ -39,4 +38,7 @@ spec:
                 name: {{ include "s3-orchestrator.fullname" . }}
                 port:
                   name: http
+      {{- with .Values.ingress.host }}
+      host: {{ . }}
+      {{- end }}
 {{- end }}
