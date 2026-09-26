@@ -56,7 +56,7 @@ func (p *usagePolicy) WithinLimits(name string, ops []s3op.Operation, egress, in
 	if !p.usage.WithinLimits(name, ops, egress, ingress) {
 		return false
 	}
-	if max := p.maxObjectSizes[name]; max > 0 && ingress > max {
+	if maxSize := p.maxObjectSizes[name]; maxSize > 0 && ingress > maxSize {
 		return false
 	}
 	return true

@@ -33,7 +33,7 @@ import (
 // All S3 operations are guarded: when the circuit is open, calls immediately
 // return ErrBackendUnavailable without touching the real backend.
 type CircuitBreakerBackend struct {
-	real CheckedBackend
+	inner CheckedBackend
 	*breaker.CircuitBreaker
 }
 
@@ -52,7 +52,7 @@ type CircuitBreakerConfig struct {
 // on the standard CircuitBreaker* metrics and the BackendCircuit*
 // notification events. It recovers only through Recover, which a
 // RecoveryProber calls once CheckHealth passes.
-func NewCircuitBreakerBackend(real CheckedBackend, cfg CircuitBreakerConfig) *CircuitBreakerBackend {
+func NewCircuitBreakerBackend(inner CheckedBackend, cfg CircuitBreakerConfig) *CircuitBreakerBackend {
 	cb := breaker.NewCircuitBreaker(breaker.Config{
 		Name:             cfg.Name,
 		Threshold:        cfg.Threshold,
@@ -63,7 +63,7 @@ func NewCircuitBreakerBackend(real CheckedBackend, cfg CircuitBreakerConfig) *Ci
 	})
 	cb.SetOnStateChange(telemetry.NewCircuitBreakerHook(cfg.Name))
 	return &CircuitBreakerBackend{
-		real:           real,
+		inner:          inner,
 		CircuitBreaker: cb,
 	}
 }
@@ -72,13 +72,13 @@ func NewCircuitBreakerBackend(real CheckedBackend, cfg CircuitBreakerConfig) *Ci
 // type-asserts to a concrete type or to a narrow interface (e.g. the
 // reconciler's objectLister, which extends ObjectBackend with ListObjects).
 func (cb *CircuitBreakerBackend) Unwrap() ObjectBackend {
-	return cb.real
+	return cb.inner
 }
 
 // CheckHealth runs the wrapped backend's bucket health check directly,
 // bypassing the breaker, so it can run while the circuit is open.
 func (cb *CircuitBreakerBackend) CheckHealth(ctx context.Context) error {
-	return cb.real.HeadBucket(ctx)
+	return cb.inner.HeadBucket(ctx)
 }
 
 // isBackendError returns true for errors that indicate backend health issues:
@@ -117,28 +117,28 @@ func isBackendError(err error) bool {
 // PutObject uploads an object to the backend with circuit breaker protection.
 func (cb *CircuitBreakerBackend) PutObject(ctx context.Context, key string, body io.Reader, size int64, contentType string, metadata map[string]string) (string, error) {
 	return cb.Call(func() (string, error) {
-		return cb.real.PutObject(ctx, key, body, size, contentType, metadata)
+		return cb.inner.PutObject(ctx, key, body, size, contentType, metadata)
 	})
 }
 
 // GetObject retrieves an object from the backend with circuit breaker protection.
 func (cb *CircuitBreakerBackend) GetObject(ctx context.Context, key string, rangeHeader string) (*GetObjectResult, error) {
 	return cb.Call(func() (*GetObjectResult, error) {
-		return cb.real.GetObject(ctx, key, rangeHeader)
+		return cb.inner.GetObject(ctx, key, rangeHeader)
 	})
 }
 
 // HeadObject retrieves object metadata with circuit breaker protection.
 func (cb *CircuitBreakerBackend) HeadObject(ctx context.Context, key string) (*HeadObjectResult, error) {
 	return cb.Call(func() (*HeadObjectResult, error) {
-		return cb.real.HeadObject(ctx, key)
+		return cb.inner.HeadObject(ctx, key)
 	})
 }
 
 // DeleteObject removes an object from the backend with circuit breaker protection.
 func (cb *CircuitBreakerBackend) DeleteObject(ctx context.Context, key string) error {
 	return cb.CallNoResult(func() error {
-		return cb.real.DeleteObject(ctx, key)
+		return cb.inner.DeleteObject(ctx, key)
 	})
 }
 
@@ -149,7 +149,7 @@ func (cb *CircuitBreakerBackend) DeleteObject(ctx context.Context, key string) e
 // operations so a misbehaving backend's native copy path trips the
 // breaker just like its PutObject/GetObject path.
 func (cb *CircuitBreakerBackend) CopyObject(ctx context.Context, srcKey, dstKey, contentType string, metadata map[string]string) (string, error) {
-	copier, ok := cb.real.(Copier)
+	copier, ok := cb.inner.(Copier)
 	if !ok {
 		return "", ErrCopyNotSupported
 	}

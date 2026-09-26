@@ -276,53 +276,53 @@ func (c *Config) validateQuotaReplicationCombo() []error {
 // NonReloadableFieldsChanged compares two configs and returns a list of
 // non-reloadable field descriptions that differ. Used by the SIGHUP handler
 // to warn about changes that require a restart.
-func NonReloadableFieldsChanged(old, new *Config) []string {
+func NonReloadableFieldsChanged(old, next *Config) []string {
 	var changed []string
-	changed = append(changed, serverFieldsChanged(&old.Server, &new.Server)...)
-	changed = append(changed, topLevelFieldsChanged(old, new)...)
-	changed = append(changed, redisFieldsChanged(old.Redis, new.Redis)...)
-	changed = append(changed, backendStructuralChanges(old.Backends, new.Backends)...)
+	changed = append(changed, serverFieldsChanged(&old.Server, &next.Server)...)
+	changed = append(changed, topLevelFieldsChanged(old, next)...)
+	changed = append(changed, redisFieldsChanged(old.Redis, next.Redis)...)
+	changed = append(changed, backendStructuralChanges(old.Backends, next.Backends)...)
 	return changed
 }
 
 // serverFieldsChanged enumerates non-reloadable server-config fields that
 // differ between two snapshots.
-func serverFieldsChanged(old, new *ServerConfig) []string {
+func serverFieldsChanged(old, next *ServerConfig) []string {
 	var changed []string
-	if old.ListenAddr != new.ListenAddr {
+	if old.ListenAddr != next.ListenAddr {
 		changed = append(changed, "server.listen_addr")
 	}
-	if old.MaxConcurrentRequests != new.MaxConcurrentRequests {
+	if old.MaxConcurrentRequests != next.MaxConcurrentRequests {
 		changed = append(changed, "server.max_concurrent_requests")
 	}
-	if old.MaxConcurrentReads != new.MaxConcurrentReads {
+	if old.MaxConcurrentReads != next.MaxConcurrentReads {
 		changed = append(changed, "server.max_concurrent_reads")
 	}
-	if old.MaxConcurrentWrites != new.MaxConcurrentWrites {
+	if old.MaxConcurrentWrites != next.MaxConcurrentWrites {
 		changed = append(changed, "server.max_concurrent_writes")
 	}
-	if old.MaxHeaderBytes != new.MaxHeaderBytes {
+	if old.MaxHeaderBytes != next.MaxHeaderBytes {
 		changed = append(changed, "server.max_header_bytes")
 	}
-	if old.MaxHeaderValueCount != new.MaxHeaderValueCount {
+	if old.MaxHeaderValueCount != next.MaxHeaderValueCount {
 		changed = append(changed, "server.max_header_value_count")
 	}
-	if old.LoadShedThreshold != new.LoadShedThreshold {
+	if old.LoadShedThreshold != next.LoadShedThreshold {
 		changed = append(changed, "server.load_shed_threshold")
 	}
-	if old.AdmissionWait != new.AdmissionWait {
+	if old.AdmissionWait != next.AdmissionWait {
 		changed = append(changed, "server.admission_wait")
 	}
-	if old.ReadHeaderTimeout != new.ReadHeaderTimeout ||
-		old.ReadTimeout != new.ReadTimeout ||
-		old.WriteTimeout != new.WriteTimeout ||
-		old.IdleTimeout != new.IdleTimeout {
+	if old.ReadHeaderTimeout != next.ReadHeaderTimeout ||
+		old.ReadTimeout != next.ReadTimeout ||
+		old.WriteTimeout != next.WriteTimeout ||
+		old.IdleTimeout != next.IdleTimeout {
 		changed = append(changed, "server timeouts (read_header_timeout, read_timeout, write_timeout, idle_timeout)")
 	}
-	if old.ShutdownDelay != new.ShutdownDelay {
+	if old.ShutdownDelay != next.ShutdownDelay {
 		changed = append(changed, "server.shutdown_delay")
 	}
-	if old.TLS != new.TLS {
+	if old.TLS != next.TLS {
 		changed = append(changed, "server.tls")
 	}
 	return changed
@@ -331,36 +331,36 @@ func serverFieldsChanged(old, new *ServerConfig) []string {
 // topLevelFieldsChanged enumerates non-reloadable top-level sub-configs
 // that differ (database, telemetry, UI, circuit breakers, encryption,
 // routing strategy).
-func topLevelFieldsChanged(old, new *Config) []string {
+func topLevelFieldsChanged(old, next *Config) []string {
 	var changed []string
-	if old.Database != new.Database {
+	if old.Database != next.Database {
 		changed = append(changed, "database")
 	}
-	if old.Telemetry != new.Telemetry {
+	if old.Telemetry != next.Telemetry {
 		changed = append(changed, "telemetry")
 	}
-	if old.UI != new.UI {
+	if old.UI != next.UI {
 		changed = append(changed, "ui")
 	}
-	if circuitBreakerChanged(old.CircuitBreaker, new.CircuitBreaker) {
+	if circuitBreakerChanged(old.CircuitBreaker, next.CircuitBreaker) {
 		changed = append(changed, "circuit_breaker")
 	}
-	if old.BackendCircuitBreaker != new.BackendCircuitBreaker {
+	if old.BackendCircuitBreaker != next.BackendCircuitBreaker {
 		changed = append(changed, "backend_circuit_breaker")
 	}
-	if old.Encryption.Enabled != new.Encryption.Enabled ||
-		old.Encryption.MasterKey != new.Encryption.MasterKey ||
-		old.Encryption.MasterKeyFile != new.Encryption.MasterKeyFile ||
-		old.Encryption.ChunkSize != new.Encryption.ChunkSize {
+	if old.Encryption.Enabled != next.Encryption.Enabled ||
+		old.Encryption.MasterKey != next.Encryption.MasterKey ||
+		old.Encryption.MasterKeyFile != next.Encryption.MasterKeyFile ||
+		old.Encryption.ChunkSize != next.Encryption.ChunkSize {
 		changed = append(changed, "encryption")
 	}
 	// The codec is built once at startup from level and chunk_size, and
 	// enabling compression mid-flight would leave the write path without one,
 	// so the whole block follows encryption in requiring a restart.
-	if old.Compression != new.Compression {
+	if old.Compression != next.Compression {
 		changed = append(changed, "compression")
 	}
-	if old.RoutingStrategy != new.RoutingStrategy {
+	if old.RoutingStrategy != next.RoutingStrategy {
 		changed = append(changed, "routing_strategy")
 	}
 	return changed
@@ -387,13 +387,13 @@ func derefBoolDefault(p *bool, def bool) bool {
 
 // redisFieldsChanged handles the *RedisConfig pointer-nullable case  -
 // either presence change or struct inequality counts as a diff.
-func redisFieldsChanged(old, new *RedisConfig) []string {
+func redisFieldsChanged(old, next *RedisConfig) []string {
 	oldHas := old != nil
-	newHas := new != nil
-	if oldHas != newHas {
+	nextHas := next != nil
+	if oldHas != nextHas {
 		return []string{"redis"}
 	}
-	if oldHas && newHas && *old != *new {
+	if oldHas && nextHas && *old != *next {
 		return []string{"redis"}
 	}
 	return nil
@@ -403,13 +403,13 @@ func redisFieldsChanged(old, new *RedisConfig) []string {
 // reloaded. Quota and usage limits are explicitly reloadable and handled
 // by a separate code path; only endpoint/credential/routing-shape fields
 // are checked here.
-func backendStructuralChanges(old, new []BackendConfig) []string {
-	if len(old) != len(new) {
+func backendStructuralChanges(old, next []BackendConfig) []string {
+	if len(old) != len(next) {
 		return []string{"backends (count changed)"}
 	}
 	var changed []string
 	for i := range old {
-		o, n := old[i], new[i]
+		o, n := old[i], next[i]
 		if o.Name != n.Name || o.Endpoint != n.Endpoint || o.Region != n.Region ||
 			o.Bucket != n.Bucket || o.AccessKeyID != n.AccessKeyID ||
 			o.SecretAccessKey != n.SecretAccessKey || o.ForcePathStyle != n.ForcePathStyle ||
