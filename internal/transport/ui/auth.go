@@ -4,10 +4,13 @@
 // Author: Alex Freidah
 //
 // HMAC-signed session cookies, double-submit CSRF tokens, and the login/logout
-// HTTP handlers. A login is a credential the registry resolves to a user, and
-// the session carries that user. requireAuth is the middleware every
-// authenticated UI route is wrapped in; HTML requests get redirected to the
-// login page on auth failure, JSON requests get a 401.
+// HTTP handlers. A login is a credential the registry resolves to a user holding
+// admin-read, and the session carries that user and the access key it proved.
+// requireAuth is the middleware every authenticated UI route is wrapped in: it
+// re-resolves the access key on every request, so a revoked key ends the
+// session, and authorizes the route against the user's current grants. HTML
+// requests get redirected to the login page on auth failure, JSON requests get
+// a 401.
 // -------------------------------------------------------------------------------
 
 package ui
@@ -26,6 +29,7 @@ import (
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -33,12 +37,18 @@ import (
 // SESSION AUTH
 // -------------------------------------------------------------------------
 
-// requireAuth wraps a handler and enforces session authentication.
-// HTML requests are redirected to the login page; API requests get 401.
-// State-changing API requests (POST) also require a valid CSRF token.
-func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+// requireAuth wraps a handler and enforces session authentication and the
+// route's authorization. HTML requests are redirected to the login page; API
+// requests get 401. State-changing API requests (POST) also require a valid
+// CSRF token.
+//
+// The session is re-resolved against the live registry on every request, so a
+// user who loses admin-read is signed out here the same as one whose key was
+// revoked: the dashboard itself is what that grant covers.
+func (h *Handler) requireAuth(rt *uiAPIRoute, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !h.validSession(r) {
+		user, ok := h.sessionUser(r)
+		if !ok || !canUseDashboard(user) {
 			if strings.HasPrefix(r.URL.Path, h.prefix+"/api/") {
 				h.log.WarnContext(r.Context(), "unauthorized API request", "path", r.URL.Path, "client_addr", r.RemoteAddr)
 				httputil.WriteJSONError(w, http.StatusUnauthorized, "unauthorized")
@@ -57,6 +67,10 @@ func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			}
 		}
 
+		r = r.WithContext(withUser(r.Context(), user))
+		if !h.authorizeRoute(w, r, rt) {
+			return
+		}
 		next(w, r)
 	}
 }
@@ -75,9 +89,11 @@ func (h *Handler) validCSRFToken(r *http.Request) bool {
 }
 
 // createSession sets an HMAC-signed session cookie and a CSRF token cookie.
-func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, accessKey string) {
+// The session names the user and the access key that proved it, so each later
+// request can check the key still belongs to that user.
+func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, userID, accessKey string) {
 	expiry := time.Now().Add(sessionTTL).Unix()
-	payload := fmt.Sprintf("%s|%d", accessKey, expiry)
+	payload := fmt.Sprintf("%s|%s|%d", userID, accessKey, expiry)
 
 	mac := hmac.New(sha256.New, h.sessionKey)
 	mac.Write([]byte(payload))
@@ -128,45 +144,69 @@ func generateCSRFToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// validSession checks whether the request carries a valid, non-expired session cookie.
-func (h *Handler) validSession(r *http.Request) bool {
+// sessionUser resolves the request's session cookie to the user it signed in
+// as. It reports false for a missing, forged or expired cookie, and for one
+// whose access key no longer belongs to that user - deleted, or reissued to
+// someone else - so revoking a key ends every session it opened.
+func (h *Handler) sessionUser(r *http.Request) (*auth.User, bool) {
+	userID, accessKey, ok := h.sessionClaims(r)
+	if !ok || h.registry == nil {
+		return nil, false
+	}
+	registry := h.registry()
+	if registry == nil {
+		return nil, false
+	}
+	user, ok := registry.UserByAccessKey(accessKey)
+	if !ok || user.ID != userID {
+		return nil, false
+	}
+	return user, true
+}
+
+// sessionClaims verifies the session cookie's signature and expiry and returns
+// the user and access key it names.
+func (h *Handler) sessionClaims(r *http.Request) (userID, accessKey string, ok bool) {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil {
-		return false
+		return "", "", false
 	}
 
 	parts := strings.SplitN(cookie.Value, ".", 2)
 	if len(parts) != 2 {
-		return false
+		return "", "", false
 	}
 
 	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return false
+		return "", "", false
 	}
 	payload := string(payloadBytes)
 
 	sig, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return false
+		return "", "", false
 	}
 
 	mac := hmac.New(sha256.New, h.sessionKey)
 	mac.Write([]byte(payload))
 	if !hmac.Equal(mac.Sum(nil), sig) {
-		return false
+		return "", "", false
 	}
 
-	_, rawExpiry, ok := strings.CutLast(payload, "|")
-	if !ok {
-		return false
+	rest, rawExpiry, found := strings.CutLast(payload, "|")
+	if !found {
+		return "", "", false
 	}
 	expiry, err := strconv.ParseInt(rawExpiry, 10, 64)
-	if err != nil {
-		return false
+	if err != nil || time.Now().Unix() >= expiry {
+		return "", "", false
 	}
-
-	return time.Now().Unix() < expiry
+	userID, accessKey, found = strings.CutLast(rest, "|")
+	if !found || userID == "" || accessKey == "" {
+		return "", "", false
+	}
+	return userID, accessKey, true
 }
 
 // -------------------------------------------------------------------------
@@ -196,7 +236,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 // serveLoginPage renders the GET /login page; redirects to the dashboard
 // when the request already carries a valid session.
 func (h *Handler) serveLoginPage(w http.ResponseWriter, r *http.Request) {
-	if h.validSession(r) {
+	if user, ok := h.sessionUser(r); ok && canUseDashboard(user) {
 		http.Redirect(w, r, h.prefix+"/", http.StatusSeeOther)
 		return
 	}
@@ -219,7 +259,7 @@ func (h *Handler) processLoginAttempt(w http.ResponseWriter, r *http.Request) {
 
 	key := r.FormValue("access_key")
 	secret := r.FormValue("secret_key")
-	userID, ok := h.resolveLogin(key, secret)
+	user, ok := h.resolveLogin(key, secret)
 	if !ok {
 		if h.loginThrottle != nil {
 			h.loginThrottle.RecordFailure(clientIP)
@@ -232,8 +272,18 @@ func (h *Handler) processLoginAttempt(w http.ResponseWriter, r *http.Request) {
 	if h.loginThrottle != nil {
 		h.loginThrottle.RecordSuccess(clientIP)
 	}
-	h.log.InfoContext(r.Context(), "admin login", "client_addr", clientIP, "user", userID)
-	h.createSession(w, r, userID)
+
+	// A valid credential without admin-read reaches the data through the S3
+	// API; the dashboard is an operator console showing the whole fleet.
+	if !canUseDashboard(user) {
+		h.log.WarnContext(r.Context(), "login refused: credential lacks dashboard access",
+			"client_addr", clientIP, "user", user.ID)
+		h.renderLoginError(w, r, http.StatusForbidden, "This credential cannot use the dashboard.")
+		return
+	}
+
+	h.log.InfoContext(r.Context(), "admin login", "client_addr", clientIP, "user", user.ID)
+	h.createSession(w, r, user.ID, key)
 	http.Redirect(w, r, h.prefix+"/", http.StatusSeeOther)
 }
 
@@ -245,19 +295,19 @@ func (h *Handler) processLoginAttempt(w http.ResponseWriter, r *http.Request) {
 //
 // Both halves are always compared, so a wrong access key takes the same work as
 // a wrong secret and the response cannot be used to learn which was which.
-func (h *Handler) resolveLogin(key, secret string) (string, bool) {
+func (h *Handler) resolveLogin(key, secret string) (*auth.User, bool) {
 	if h.registry == nil {
-		return "", false
+		return nil, false
 	}
 	registry := h.registry()
 	if registry == nil {
-		return "", false
+		return nil, false
 	}
 	user, err := registry.AuthenticateSecret(key, secret)
 	if err != nil {
-		return "", false
+		return nil, false
 	}
-	return user.ID, true
+	return user, true
 }
 
 // renderLoginError writes the login form with status and an inline error

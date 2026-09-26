@@ -17,6 +17,8 @@ package ui
 import (
 	"bytes"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -126,6 +128,11 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+	// The tree shows only the buckets this user may list, the same filter the
+	// tree API applies when the browser expands the root.
+	data.TopLevelEntries.Entries = slices.DeleteFunc(data.TopLevelEntries.Entries, func(e core.DirEntry) bool {
+		return !canList(r.Context(), strings.TrimSuffix(e.Name, "/"))
+	})
 
 	var totalUsed, totalLimit, totalOrphan int64
 	unlimited := false

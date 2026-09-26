@@ -54,7 +54,11 @@ func TestResolveLogin(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, ok := h.resolveLogin(tc.key, tc.secret)
+			user, ok := h.resolveLogin(tc.key, tc.secret)
+			var got string
+			if user != nil {
+				got = user.ID
+			}
 			if ok != tc.ok || got != tc.want {
 				t.Errorf("resolveLogin(%q) = %q,%v; want %q,%v", tc.key, got, ok, tc.want, tc.ok)
 			}

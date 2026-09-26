@@ -19,11 +19,14 @@ import (
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/ops"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 	"github.com/afreidah/s3-orchestrator/internal/util/bufpool"
 )
@@ -33,13 +36,17 @@ import (
 // -------------------------------------------------------------------------
 
 // handleTreeAPI returns children of a directory prefix as JSON for the
-// lazy-loaded file browser.
+// lazy-loaded file browser. The root lists only the buckets the user may list;
+// below it, the prefix's bucket must grant list.
 func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
 	prefix := r.URL.Query().Get("prefix")
 	if prefix != "" && !h.validBucketPrefix(prefix) {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "prefix must start with a configured bucket name")
+		return
+	}
+	if prefix != "" && !h.authorizeKey(w, r, prefix, core.PermList) {
 		return
 	}
 	startAfter := r.URL.Query().Get("startAfter")
@@ -55,6 +62,11 @@ func (h *Handler) handleTreeAPI(w http.ResponseWriter, r *http.Request) {
 		h.log.ErrorContext(r.Context(), "failed to list directory children", "prefix", prefix, "error", err)
 		httputil.WriteJSONError(w, http.StatusInternalServerError, "failed to list children")
 		return
+	}
+	if prefix == "" {
+		result.Entries = slices.DeleteFunc(result.Entries, func(e core.DirEntry) bool {
+			return !canList(r.Context(), strings.TrimSuffix(e.Name, "/"))
+		})
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, result)
@@ -76,6 +88,9 @@ func (h *Handler) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 		Key string `json:"key"`
 	}
 	if !httputil.DecodeJSONBody(w, r, &req, 1<<20) {
+		return
+	}
+	if !h.authorizeKey(w, r, req.Key, core.PermDelete) {
 		return
 	}
 
@@ -104,6 +119,9 @@ func (h *Handler) handleAPIDeletePrefix(w http.ResponseWriter, r *http.Request) 
 		Prefix string `json:"prefix"`
 	}
 	if !httputil.DecodeJSONBody(w, r, &req, 1<<20) {
+		return
+	}
+	if !h.authorizeKey(w, r, req.Prefix, core.PermDelete) {
 		return
 	}
 
@@ -149,6 +167,9 @@ func (h *Handler) handleAPIUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := r.FormValue("key")
+	if !h.authorizeKey(w, r, key, core.PermWrite) {
+		return
+	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "file is required")
@@ -191,6 +212,9 @@ func (h *Handler) handleAPIDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := r.URL.Query().Get("key")
+	if !h.authorizeKey(w, r, key, core.PermRead) {
+		return
+	}
 
 	result, err := h.objects.Get(r.Context(), key)
 	if err != nil {

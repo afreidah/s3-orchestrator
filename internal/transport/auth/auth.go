@@ -171,14 +171,28 @@ func (br *BucketRegistry) addKeypair(c *provisioning.Credential, u *User) error 
 }
 
 // UserByID returns the identity with the given id, for a caller that proved
-// itself by something other than a credential this registry holds - the shared
-// admin token, or a dashboard session naming the user it logged in as.
+// itself by something other than a credential this registry holds.
 //
 // It authenticates nothing on its own. Whatever proved the caller has already
 // done so; this only resolves the name to the grants behind it.
 func (br *BucketRegistry) UserByID(id string) (*User, bool) {
 	u, ok := br.byUserID[id]
 	return u, ok
+}
+
+// UserByAccessKey returns the identity an access key currently belongs to, for
+// a caller that proved the key earlier and holds a signed record of it - a
+// dashboard session. The secret is not checked; the session's signature already
+// stands for the login that did.
+//
+// Asking on every request is what makes revocation immediate: a key deleted or
+// moved to another user no longer resolves to the one the session names.
+func (br *BucketRegistry) UserByAccessKey(accessKey string) (*User, bool) {
+	e, ok := br.byAccessKey[accessKey]
+	if !ok {
+		return nil, false
+	}
+	return e.user, true
 }
 
 // AuthenticateSecret verifies a keypair presented whole rather than used to

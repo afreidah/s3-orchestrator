@@ -35,6 +35,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/store/storetest"
+	"github.com/afreidah/s3-orchestrator/internal/transport/auth"
 	"github.com/afreidah/s3-orchestrator/internal/worker"
 )
 
@@ -193,8 +194,9 @@ func TestHandleAPIDownload_StreamsObject(t *testing.T) {
 		}),
 	}
 
+	reader := auth.NewUser("reader", "reader", map[string]core.PermissionSet{"test-bucket": core.PermRead})
 	w := httptest.NewRecorder()
-	h.handleAPIDownload(w, httptest.NewRequestWithContext(context.Background(),
+	h.handleAPIDownload(w, httptest.NewRequestWithContext(withUser(context.Background(), reader),
 		http.MethodGet, "/api/download?key=test-bucket/dir/file.txt", nil))
 
 	if w.Code != http.StatusOK {

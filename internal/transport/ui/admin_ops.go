@@ -19,6 +19,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/httputil"
 )
 
@@ -110,7 +111,9 @@ func (h *Handler) handleAPICleanExcessStatus(w http.ResponseWriter, _ *http.Requ
 	h.writeAdminActionStatus(w, h.cleanExcessOp())
 }
 
-// handleAPISync triggers a backend sync to import pre-existing objects.
+// handleAPISync triggers a backend sync to import pre-existing objects. It
+// records objects into one bucket from one backend's listing, so it needs write
+// on the bucket and admin-maintain on that backend.
 func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
@@ -137,6 +140,15 @@ func (h *Handler) handleAPISync(w http.ResponseWriter, r *http.Request) {
 
 	if !h.validBucketPrefix(req.Bucket + "/") {
 		httputil.WriteJSONError(w, http.StatusBadRequest, "invalid backend or bucket")
+		return
+	}
+
+	if !h.authorizeKey(w, r, req.Bucket+"/", core.PermWrite) {
+		return
+	}
+	backend := core.Resource{Kind: core.ResourceBackend, Name: req.Backend}
+	if !userFrom(r.Context()).CanAdmin(backend, core.PermAdminMaintain) {
+		h.refuse(w, r, "/api/sync", "grant does not carry the permission", backend.String())
 		return
 	}
 

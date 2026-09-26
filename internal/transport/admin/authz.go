@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
-	"strings"
 
 	"github.com/afreidah/s3-orchestrator/internal/observe/audit"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
@@ -68,12 +67,7 @@ func (p principal) id() string {
 // proved an identity at all.
 //
 // A SigV4-signed request is verified the way the S3 API verifies one, against
-// the same registry, so one keypair reaches both surfaces. This is the path an
-// operator should be on.
-//
-// The shared admin token is still accepted and resolves onto the root user
-// rather than onto a privileged flag, which is what lets the authorization path
-// stay single. A token minted through the provisioning API is looked up last.
+// the same registry, so one keypair reaches both surfaces.
 func (h *Handler) authenticate(r *http.Request) (principal, bool) {
 	// Without a registry nothing can be resolved to an identity, so nothing is
 	// authenticated. The credential model is the only way in now, which means a
@@ -134,24 +128,9 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, rt *route, w
 		return h.authorizeAdmin(w, r, rt, who)
 	}
 
-	bucket, ok := bucketFromKey(h.resourceValue(r, rt))
+	bucket, reason, ok := auth.AuthorizeKey(who.User, h.resourceValue(r, rt), rt.Perm)
 	if !ok {
-		// The value names no single bucket: the empty prefix is the whole
-		// namespace and a partial name spans every bucket it prefixes. Only a
-		// caller holding the bucket wildcard can be authorized for that, since
-		// no per-bucket grant answers for buckets it does not name.
-		if who.User.AllBuckets().Has(rt.Perm) {
-			return true
-		}
-		h.refuse(r, w, rt, who, "", "resource names no bucket")
-		return false
-	}
-	if !who.User.CanReach(bucket) {
-		h.refuse(r, w, rt, who, bucket, "no grant on the bucket")
-		return false
-	}
-	if !who.User.Can(bucket, rt.Perm) {
-		h.refuse(r, w, rt, who, bucket, "grant does not carry the permission")
+		h.refuse(r, w, rt, who, bucket, reason)
 		return false
 	}
 	return true
@@ -203,21 +182,6 @@ func (h *Handler) backendParam(w http.ResponseWriter, r *http.Request) (string, 
 		return "", false
 	}
 	return name, true
-}
-
-// bucketFromKey reads the bucket an admin object key names. The admin API
-// carries bucket and key as one string and a bucket name holds no slash, so the
-// first segment is the bucket.
-//
-// A value with no slash names no single bucket: the empty prefix is the whole
-// namespace, and a partial name spans every bucket it prefixes. Neither can be
-// authorized against one grant, so both report false and are refused.
-func bucketFromKey(key string) (string, bool) {
-	bucket, _, found := strings.Cut(key, "/")
-	if !found || bucket == "" {
-		return "", false
-	}
-	return bucket, true
 }
 
 // refuse writes the 403 and records what was asked for against what was held,

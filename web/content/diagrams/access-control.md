@@ -84,7 +84,7 @@ An access key the registry does not hold still computes a full HMAC, against a f
     '    VERIFY -->|yes| WHO[Authenticated user<br>and the grants it holds]:::process',
     '',
     '    WHO --> SURFACE{Which surface?}:::decision',
-    '    SURFACE -->|dashboard| SESSION[Session cookie<br>carries the user id]:::success',
+    '    SURFACE -->|dashboard| SESSION[Session cookie<br>carries the user and key]:::success',
     '    SURFACE -->|"S3 API, admin objects"| BUCKET[Bucket from the<br>URL path]:::process',
     '    SURFACE -->|admin control plane| RES[Resource the route declares<br>orchestrator, backend:name, backend:*]:::process',
     '',
@@ -203,12 +203,12 @@ An access key the registry does not hold still computes a full HMAC, against a f
     SURFACE: {
       title: 'Which surface',
       badge: 'decision', badgeText: 'dispatch',
-      body: '<p>Three surfaces, one grant model. The S3 API and the admin API\'s object routes authorize against bucket grants; the rest of the admin API authorizes against backend and orchestrator grants; the dashboard turns the proved identity into a session.</p><p>The split is in what a route declares it needs, not in how the caller was authenticated. Nothing about the surface changes who the caller is.</p>'
+      body: '<p>Three surfaces, one grant model. The S3 API and the object routes of the admin API and the dashboard authorize against bucket grants; the rest of the admin API and the dashboard authorize against backend and orchestrator grants, each route requiring what the admin API requires for the same operation. Signing in to the dashboard requires <code>admin-read</code> on the orchestrator.</p><p>The split is in what a route declares it needs, not in how the caller was authenticated. Nothing about the surface changes who the caller is.</p>'
     },
     SESSION: {
       title: 'Session cookie',
       badge: 'success', badgeText: 'dashboard',
-      body: '<p>An HMAC-signed cookie carrying the user the credential proved, with a 24-hour TTL. Keys are derived deterministically from <code>ui.session_secret</code>, so sessions survive restarts and instances sharing that value accept each other\'s.</p><p>State-changing dashboard calls also carry a double-submit CSRF token. The <code>Secure</code> flag follows TLS detection or <code>force_secure_cookies</code>, because forcing it unconditionally would make browsers silently drop the cookie on a plain-HTTP hop.</p><p><a href="../../docs/configuration/#ui">Dashboard configuration &rarr;</a></p>'
+      body: '<p>An HMAC-signed cookie carrying the user and the access key that proved it, with a 24-hour TTL. Every request re-resolves the key against the current registry, so revoking the key, reissuing it to someone else, or removing the user\'s <code>admin-read</code> ends the session on its next request. Keys are derived deterministically from <code>ui.session_secret</code>, so sessions survive restarts and instances sharing that value accept each other\'s.</p><p>State-changing dashboard calls also carry a double-submit CSRF token. The <code>Secure</code> flag follows TLS detection or <code>force_secure_cookies</code>, because forcing it unconditionally would make browsers silently drop the cookie on a plain-HTTP hop.</p><p><a href="../../docs/configuration/#ui">Dashboard configuration &rarr;</a></p>'
     },
     BUCKET: {
       title: 'Bucket from the path',

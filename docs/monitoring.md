@@ -57,7 +57,7 @@ Response:
 
 The background reconciler (`reconcile.enabled: true`) runs the same logic on a timer. The admin endpoint is for immediate use after incidents.
 
-The dashboard requires authentication. Users log in at `{path}/login` with a credential the deployment holds - the `auth.root` keypair, or any credential the store has issued. Sessions last 24 hours.
+The dashboard requires authentication. Users log in at `{path}/login` with a credential the deployment holds - the `auth.root` keypair, or any credential the store has issued - whose user holds `admin-read` on the orchestrator; a bucket-only credential is refused. Each action requires the grant the admin API requires for the same operation, and object actions require the matching permission on the object's bucket. Sessions last 24 hours, and end on the next request once their access key is revoked or the user loses `admin-read`.
 
 The dashboard is server-rendered HTML. The object tree uses JavaScript for lazy-loaded directory expansion - directories fetch their children on click via the `/ui/api/tree` endpoint.
 
