@@ -3,32 +3,35 @@
 //
 // Author: Alex Freidah
 //
-// Holds the set of circuit breakers the watchdog should sweep on each tick.
+// Holds the set of circuit breakers the watchdog probes on each tick.
 // Populated at DI construction time so the watchdog never has to type-assert
 // or reach into the backend manager to discover breakers.
 // -------------------------------------------------------------------------------
 
 package breaker
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
-// StaleProbeResetter is implemented by anything whose half-open probe can
-// time out and need a manual reset. Both *CircuitBreaker and
-// backend.CircuitBreakerBackend (which embeds *CircuitBreaker) satisfy it.
-// ResetStaleProbe reports true when a probe was actually reset.
-type StaleProbeResetter interface {
-	ResetStaleProbe() bool
+// Prober is implemented by anything the watchdog drives toward recovery on
+// each tick. *CircuitBreaker resets a stale half-open probe;
+// backend.CircuitBreakerBackend health-checks its backend while open and
+// recovers it once the check passes.
+type Prober interface {
+	Probe(ctx context.Context)
 }
 
-// Registry is a thread-safe collection of breakers swept by the watchdog.
+// Registry is a thread-safe collection of breakers probed by the watchdog.
 type Registry struct {
 	mu       sync.RWMutex
-	breakers []StaleProbeResetter
+	breakers []Prober
 }
 
 // NewRegistry constructs a Registry preloaded with the given breakers.
 // Nil entries are silently dropped.
-func NewRegistry(initial ...StaleProbeResetter) *Registry {
+func NewRegistry(initial ...Prober) *Registry {
 	r := &Registry{}
 	for _, b := range initial {
 		if b != nil {
@@ -39,7 +42,7 @@ func NewRegistry(initial ...StaleProbeResetter) *Registry {
 }
 
 // Register appends a breaker to the registry. Nil is a no-op.
-func (r *Registry) Register(b StaleProbeResetter) {
+func (r *Registry) Register(b Prober) {
 	if b == nil {
 		return
 	}
@@ -48,14 +51,17 @@ func (r *Registry) Register(b StaleProbeResetter) {
 	r.mu.Unlock()
 }
 
-// ResetStaleProbes invokes ResetStaleProbe on every registered breaker.
+// ProbeAll invokes Probe on every registered breaker concurrently, so one slow
+// health check cannot delay the others, and returns when all have finished.
 // Safe for concurrent use.
-func (r *Registry) ResetStaleProbes() {
+func (r *Registry) ProbeAll(ctx context.Context) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	var wg sync.WaitGroup
 	for _, b := range r.breakers {
-		b.ResetStaleProbe()
+		wg.Go(func() { b.Probe(ctx) })
 	}
+	wg.Wait()
 }
 
 // Len returns the number of registered breakers.

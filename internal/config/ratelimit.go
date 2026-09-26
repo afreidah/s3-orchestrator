@@ -54,7 +54,7 @@ type CircuitBreakerConfig struct {
 // BackendCircuitBreakerConfig holds settings for per-backend circuit breakers.
 // When a backend is unreachable or returns errors (e.g. expired credentials),
 // the circuit opens and the backend is excluded from request routing until
-// recovery is detected via a probe request.
+// a HeadBucket health check passes.
 type BackendCircuitBreakerConfig struct {
 	Enabled          bool          `yaml:"enabled"`           // Enable per-backend circuit breakers (default: false)
 	FailureThreshold int           `yaml:"failure_threshold"` // Consecutive failures before opening (default: 5)

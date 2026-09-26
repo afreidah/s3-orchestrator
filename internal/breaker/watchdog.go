@@ -3,12 +3,11 @@
 //
 // Author: Alex Freidah
 //
-// Periodically resets stale half-open probes on every breaker
-// registered in the breaker.Registry, preventing circuits from getting
-// stuck half-open indefinitely when no new requests arrive.
-// Membership in the registry is decided once at DI construction time,
-// so the watchdog itself contains no type-assertion or
-// backend-discovery logic. Lives in the breaker package.
+// Probes every breaker registered in the breaker.Registry on a short tick.
+// Each breaker decides what a probe means for it: resetting a stale half-open
+// probe, or health-checking its dependency while open. Membership in the
+// registry is decided once at DI construction time, so the watchdog itself
+// contains no type-assertion or backend-discovery logic.
 // -------------------------------------------------------------------------------
 
 package breaker
@@ -20,29 +19,29 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/lifecycle"
 )
 
-// DefaultWatchdogInterval is the cadence at which the watchdog
-// inspects every registered breaker. Picked as half the breaker probe
-// timeout so a stuck half-open state is detected within one full probe
-// window.
-const DefaultWatchdogInterval = 1 * time.Minute
+// DefaultWatchdogInterval is the cadence at which the watchdog probes every
+// registered breaker. It bounds how late a due health check can run, so it
+// stays well below the shortest sensible open timeout.
+const DefaultWatchdogInterval = 5 * time.Second
 
-// watchdog is the lifecycle.Runner that scans every registered
-// breaker on a tick.
+// watchdog is the lifecycle.Runner that probes every registered breaker on a
+// tick.
 type watchdog struct {
 	registry *Registry
+	interval time.Duration
 }
 
 // NewWatchdog constructs the watchdog background service. The registry
-// holds every breaker that should be inspected on a tick - membership
-// is decided once at DI construction time.
+// holds every breaker that should be probed on a tick - membership is
+// decided once at DI construction time.
 func NewWatchdog(registry *Registry) lifecycle.Runner {
-	return &watchdog{registry: registry}
+	return &watchdog{registry: registry, interval: DefaultWatchdogInterval}
 }
 
-// Run implements lifecycle.Runner. Checks every DefaultWatchdogInterval
-// (1 minute) - half the breaker probe timeout.
+// Run implements lifecycle.Runner. Probes every breaker each interval until
+// ctx is cancelled.
 func (w *watchdog) Run(ctx context.Context) error {
-	ticker := time.NewTicker(DefaultWatchdogInterval)
+	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 
 	for {
@@ -50,12 +49,7 @@ func (w *watchdog) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			w.checkAll()
+			w.registry.ProbeAll(ctx)
 		}
 	}
-}
-
-// checkAll resets stale probes on every registered breaker.
-func (w *watchdog) checkAll() {
-	w.registry.ResetStaleProbes()
 }

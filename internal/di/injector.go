@@ -96,6 +96,7 @@ func registerInfrastructure(inj do.Injector) {
 // collaborator that routes, replicates or drains across them.
 func registerBackendStack(inj do.Injector) {
 	do.Provide(inj, ProvideBackends)
+	do.Provide(inj, ProvideUsageTracker)
 	do.Provide(inj, ProvideBreakerRegistry)
 	do.Provide(inj, ProvideBackendRuntime)
 	do.Provide(inj, ProvideIntegrityConfig)

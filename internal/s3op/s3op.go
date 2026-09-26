@@ -35,6 +35,7 @@ const (
 	CompleteMultipartUpload Operation = "CompleteMultipartUpload"
 	AbortMultipartUpload    Operation = "AbortMultipartUpload"
 	GetParts                Operation = "GetParts"
+	HeadBucket              Operation = "HeadBucket"
 )
 
 // Wildcard matches every operation not listed as unmetered. Written in a
@@ -57,6 +58,7 @@ var all = []Operation{
 	CompleteMultipartUpload,
 	AbortMultipartUpload,
 	GetParts,
+	HeadBucket,
 }
 
 // All returns every known operation. The caller receives a copy, so a

@@ -295,7 +295,7 @@ func TestCopyToReplica_Success(t *testing.T) {
 // CopyToReplica excludes dead sources from selection.
 func newOpenBreakerBackend(t *testing.T, ctrl *gomock.Controller, name string) *backend.CircuitBreakerBackend {
 	t.Helper()
-	inner := backendtest.NewMockObjectBackend(ctrl)
+	inner := backendtest.NewMockCheckedBackend(ctrl)
 	inner.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("billing account closed")).AnyTimes()
 	cb := backend.NewCircuitBreakerBackend(inner, backend.CircuitBreakerConfig{Name: name, Threshold: 1, Timeout: time.Hour})

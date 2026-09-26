@@ -60,7 +60,7 @@ type BackendsResult struct {
 	Order          []string
 	UsageLimits    map[string]core.UsageLimits
 	MaxObjectSizes map[string]int64
-	Breakers       []breaker.StaleProbeResetter // empty when per-backend breakers are disabled
+	Breakers       []*backend.CircuitBreakerBackend // empty when per-backend breakers are disabled
 }
 
 // UsageLimitsFor compiles one backend's configured budgets into the form
@@ -97,7 +97,7 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 	order := make([]string, 0, len(cfg.Backends))
 	limits := make(map[string]core.UsageLimits, len(cfg.Backends))
 	maxSizes := make(map[string]int64, len(cfg.Backends))
-	breakers := make([]breaker.StaleProbeResetter, 0, len(cfg.Backends))
+	breakers := make([]*backend.CircuitBreakerBackend, 0, len(cfg.Backends))
 
 	for idx := range cfg.Backends {
 		bcfg := &cfg.Backends[idx]
@@ -144,19 +144,22 @@ func ProvideBackends(i do.Injector) (*BackendsResult, error) {
 }
 
 // ProvideBreakerRegistry assembles the watchdog's breaker registry from the
-// database circuit breaker and the per-backend breakers produced during
-// backend initialization. Centralizing membership here keeps the watchdog
-// itself free of type-assertions and keeps DI as the single wiring point.
+// database circuit breaker and a recovery prober for each per-backend breaker
+// produced during backend initialization. The probers charge their health
+// checks through the usage tracker. Centralizing membership here keeps the
+// watchdog itself free of type-assertions and keeps DI as the single wiring
+// point.
 func ProvideBreakerRegistry(i do.Injector) (*breaker.Registry, error) {
 	r := newResolver(i)
 	dbCB := r.Resolve[*breaker.CircuitBreaker]()
 	br := r.Resolve[*BackendsResult]()
+	usage := r.Resolve[*counter.UsageTracker]()
 	if r.err != nil {
 		return nil, r.err
 	}
 	reg := breaker.NewRegistry(dbCB)
 	for _, b := range br.Breakers {
-		reg.Register(b)
+		reg.Register(backend.NewRecoveryProber(b, usage))
 	}
 	return reg, nil
 }
@@ -372,37 +375,62 @@ func ProvideMultipartManager(i do.Injector) (*multipart.Manager, error) {
 // MANAGER PROVIDER
 // -------------------------------------------------------------------------
 
+// ProvideUsageTracker builds the per-backend usage tracker that admits and
+// charges every backend call. With Redis configured, the counters are shared
+// through it, whatever state Redis is in: an unreachable Redis puts the
+// counter backend in fallback, not out of the wiring.
+func ProvideUsageTracker(i do.Injector) (*counter.UsageTracker, error) {
+	r := newResolver(i)
+	cfg := r.Resolve[*config.Config]()
+	br := r.Resolve[*BackendsResult]()
+	if r.err != nil {
+		return nil, r.err
+	}
+	if cfg.Redis != nil {
+		rb, err := do.Invoke[*counter.RedisCounterBackend](i)
+		if err != nil {
+			return nil, err
+		}
+		return counter.NewUsageTracker(rb, br.UsageLimits), nil
+	}
+	return counter.NewUsageTracker(counter.NewLocalCounterBackend(backendNamesOf(br)), br.UsageLimits), nil
+}
+
+// backendNamesOf lists the configured backend names.
+func backendNamesOf(br *BackendsResult) []string {
+	names := make([]string, 0, len(br.Backends))
+	for name := range br.Backends {
+		names = append(names, name)
+	}
+	return names
+}
+
 // ProvideBackendRuntime builds the backend runtime: the fleet registry,
-// usage tracker, admission semaphore, timeout policy, error classification,
-// and metrics collector. A first-class, independently-resolvable dependency
-// that workers, drain and every proxy collaborator share.
+// admission semaphore, timeout policy, error classification, and metrics
+// collector, over the shared usage tracker. A first-class,
+// independently-resolvable dependency that workers, drain and every proxy
+// collaborator share.
 func ProvideBackendRuntime(i do.Injector) (*infra.BackendRuntime, error) {
 	r := newResolver(i)
 	cfg := r.Resolve[*config.Config]()
 	br := r.Resolve[*BackendsResult]()
 	metricsDeps := r.Resolve[metrics.Deps]()
+	usage := r.Resolve[*counter.UsageTracker]()
 	if r.err != nil {
 		return nil, r.err
 	}
+	backendNames := backendNamesOf(br)
 
-	backendNames := make([]string, 0, len(br.Backends))
-	for name := range br.Backends {
-		backendNames = append(backendNames, name)
-	}
-
-	// With Redis configured, the usage counters and the fleet snapshot are
-	// shared through it, whatever state Redis is in: an unreachable Redis
-	// puts the backend in fallback, not out of the wiring.
-	var counters counter.Backend = counter.NewLocalCounterBackend(backendNames)
+	// With Redis configured, the fleet snapshot is shared through it, the
+	// same way the usage counters are.
 	var shared metrics.SharedState
 	if cfg.Redis != nil {
 		rb, err := do.Invoke[*counter.RedisCounterBackend](i)
 		if err != nil {
 			return nil, err
 		}
-		counters, shared = rb, rb
+		shared = rb
 	}
-	usage := counter.NewUsageTracker(counters, br.UsageLimits)
 
 	// Baselines are empty until the quota flush service primes them from
 	// backend_quotas, which it does before the listener accepts a request.

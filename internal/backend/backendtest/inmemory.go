@@ -17,7 +17,7 @@
 
 package backendtest
 
-//go:generate mockgen -destination=mock_backend.go -package=backendtest github.com/afreidah/s3-orchestrator/internal/backend ObjectBackend
+//go:generate mockgen -destination=mock_backend.go -package=backendtest github.com/afreidah/s3-orchestrator/internal/backend ObjectBackend,CheckedBackend
 
 import (
 	"bytes"
@@ -71,13 +71,14 @@ type InMemory struct {
 
 	Objects map[string]Object
 
-	PutErr      error
-	GetErr      error
-	HeadErr     error
-	DeleteErr   error
-	GetReadErr  error // surfaces from the body reader, not from GetObject itself
-	GetPanic    bool  // GetObject panics instead of returning
-	DeleteDelay time.Duration
+	PutErr        error
+	GetErr        error
+	HeadErr       error
+	DeleteErr     error
+	HeadBucketErr error
+	GetReadErr    error // surfaces from the body reader, not from GetObject itself
+	GetPanic      bool  // GetObject panics instead of returning
+	DeleteDelay   time.Duration
 
 	LastPutBodySeekable   bool
 	LastDeleteHadDeadline bool
@@ -93,7 +94,7 @@ func NewInMemory() *InMemory {
 	return &InMemory{Objects: make(map[string]Object)}
 }
 
-var _ backend.ObjectBackend = (*InMemory)(nil)
+var _ backend.CheckedBackend = (*InMemory)(nil)
 
 // notFoundError is a status-code-bearing error, so backend.IsNotFound
 // classifies an absent key the same way it classifies a real 404.
@@ -278,6 +279,13 @@ func (m *InMemory) DeleteObject(ctx context.Context, key string) error {
 	return nil
 }
 
+// HeadBucket satisfies backend.HealthChecker, returning the injected failure.
+func (m *InMemory) HeadBucket(context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.HeadBucketErr
+}
+
 // CopyObject satisfies backend.Copier. Reports ErrCopyNotSupported
 // until CopyEnabled is set, so callers stay on the materialized-copy path
 // unless a test opts into the native one.
@@ -321,6 +329,9 @@ func (m *InMemory) SetHeadErr(err error) { m.set(func() { m.HeadErr = err }) }
 
 // SetDeleteErr swaps the injected DeleteObject failure under the lock.
 func (m *InMemory) SetDeleteErr(err error) { m.set(func() { m.DeleteErr = err }) }
+
+// SetHeadBucketErr swaps the injected HeadBucket failure under the lock.
+func (m *InMemory) SetHeadBucketErr(err error) { m.set(func() { m.HeadBucketErr = err }) }
 
 // set runs fn holding the lock.
 func (m *InMemory) set(fn func()) {

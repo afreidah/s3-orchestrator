@@ -127,6 +127,7 @@ func newRedisInstance(t *testing.T, shared *memoryRedis) *infra.BackendRuntime {
 	do.ProvideValue(inj, &BackendsResult{Backends: map[string]backend.ObjectBackend{}, Order: names})
 	do.ProvideValue[metrics.Deps](inj, store)
 	do.ProvideValue(inj, rb)
+	do.Provide(inj, ProvideUsageTracker)
 
 	rt, err := ProvideBackendRuntime(inj)
 	if err != nil {

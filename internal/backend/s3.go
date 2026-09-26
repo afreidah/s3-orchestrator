@@ -10,7 +10,7 @@
 
 package backend
 
-//go:generate mockgen -destination=mock_generated_test.go -package=backend github.com/afreidah/s3-orchestrator/internal/backend ObjectBackend
+//go:generate mockgen -destination=mock_generated_test.go -package=backend github.com/afreidah/s3-orchestrator/internal/backend ObjectBackend,CheckedBackend
 
 import (
 	"context"
@@ -72,6 +72,20 @@ type ObjectBackend interface {
 	GetObject(ctx context.Context, key string, rangeHeader string) (*GetObjectResult, error)
 	HeadObject(ctx context.Context, key string) (*HeadObjectResult, error)
 	DeleteObject(ctx context.Context, key string) error
+}
+
+// HealthChecker confirms a backend is reachable and authorized without
+// touching any object.
+type HealthChecker interface {
+	HeadBucket(ctx context.Context) error
+}
+
+// CheckedBackend is an ObjectBackend that can also be health-checked. The
+// circuit breaker wrapper requires it so an open breaker can test recovery
+// without spending a client request.
+type CheckedBackend interface {
+	ObjectBackend
+	HealthChecker
 }
 
 // -------------------------------------------------------------------------
@@ -369,6 +383,23 @@ func (b *S3Backend) HeadObject(ctx context.Context, key string) (*HeadObjectResu
 				LastModified: a.LastModified,
 				Metadata:     a.Metadata,
 			}, nil
+		})
+}
+
+// HeadBucket checks that the bucket exists and the credentials can reach it.
+func (b *S3Backend) HeadBucket(ctx context.Context) error {
+	const operation = "HeadBucket"
+	return observe.RunErr(ctx,
+		observe.Client(spanPrefix+operation,
+			telemetry.BackendAttributes(operation, b.name, b.endpoint, b.bucket, ""),
+			b.recordOperation),
+		func(ctx context.Context) error {
+			if _, err := b.client.HeadBucket(ctx, &s3.HeadBucketInput{
+				Bucket: aws.String(b.bucket),
+			}); err != nil {
+				return fmt.Errorf("head bucket failed: %w", err)
+			}
+			return nil
 		})
 }
 

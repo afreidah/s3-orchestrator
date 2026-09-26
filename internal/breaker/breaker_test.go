@@ -360,35 +360,45 @@ func TestCB_OnlyOneProbeAllowed(t *testing.T) {
 	})
 }
 
-// TestCB_ProbeEligible verifies the cb probe eligible path by exercising cb.ProbeEligible, cb.PostCheck, time.Sleep.
-func TestCB_ProbeEligible(t *testing.T) {
+// TestCB_ExternalRecoveryNeverHalfOpens verifies a breaker configured for
+// external recovery refuses calls past the open timeout, never goes
+// half-open, and closes only through Recover.
+func TestCB_ExternalRecoveryNeverHalfOpens(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		cb := newTestBreaker(1, 5*time.Millisecond)
-
-		// Closed  -  not probe-eligible
-		if cb.ProbeEligible() {
-			t.Error("closed circuit should not be probe-eligible")
-		}
-
-		// Trip it open
+		cb := NewCircuitBreaker(Config{
+			Name: "ext", Threshold: 1, Timeout: 5 * time.Millisecond,
+			IsError: func(err error) bool { return err != nil }, Sentinel: errSentinel,
+			ExternalRecovery: true,
+		})
 		_ = cb.PostCheck(errTest)
-		if cb.ProbeEligible() {
-			t.Error("freshly opened circuit should not be probe-eligible (timeout not elapsed)")
-		}
+		time.Sleep(time.Second)
 
-		// Wait for timeout
-		time.Sleep(10 * time.Millisecond)
-		if !cb.ProbeEligible() {
-			t.Error("open circuit with elapsed timeout should be probe-eligible")
+		if err := cb.PreCheck(); !errors.Is(err, errSentinel) {
+			t.Fatalf("PreCheck past the open timeout = %v, want the sentinel", err)
 		}
-
-		// Transition to half-open via PreCheck  -  no longer probe-eligible
-		_ = cb.PreCheck()
-		if cb.ProbeEligible() {
-			t.Error("half-open circuit should not be probe-eligible")
+		if cb.State() != StateOpen {
+			t.Fatalf("state = %v, want open", cb.State())
+		}
+		cb.Recover()
+		if err := cb.PreCheck(); err != nil {
+			t.Fatalf("PreCheck after Recover = %v, want nil", err)
+		}
+		if cb.RecoveryDelay() != 5*time.Millisecond {
+			t.Errorf("RecoveryDelay = %v, want the open timeout", cb.RecoveryDelay())
 		}
 	})
+}
+
+// TestCB_OpeningErrorWrapsCause verifies the error returned when a failure
+// opens the circuit matches the sentinel and still wraps the failure.
+func TestCB_OpeningErrorWrapsCause(t *testing.T) {
+	t.Parallel()
+	cb := newTestBreaker(1, time.Minute)
+	err := cb.PostCheck(errTest)
+	if !errors.Is(err, errSentinel) || !errors.Is(err, errTest) {
+		t.Errorf("PostCheck = %v, want it to match both the sentinel and the cause", err)
+	}
 }
 
 // -------------------------------------------------------------------------

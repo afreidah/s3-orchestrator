@@ -78,9 +78,8 @@ func (r *backendRegistry) ExcludeDraining(eligible []string) []string {
 	return slices.DeleteFunc(slices.Clone(eligible), r.IsDraining)
 }
 
-// ExcludeUnhealthy filters out backends whose circuit breaker is open
-// and not probe-eligible. Backends that are not breaker-wrapped pass
-// through unconditionally.
+// ExcludeUnhealthy filters out backends whose circuit breaker is open.
+// Backends that are not breaker-wrapped pass through unconditionally.
 func (r *backendRegistry) ExcludeUnhealthy(eligible []string) []string {
 	return slices.DeleteFunc(slices.Clone(eligible), func(name string) bool {
 		b, ok := r.backends[name]
@@ -88,6 +87,6 @@ func (r *backendRegistry) ExcludeUnhealthy(eligible []string) []string {
 			return true
 		}
 		cb, ok := b.(*backend.CircuitBreakerBackend)
-		return ok && cb.State() == breaker.StateOpen && !cb.ProbeEligible()
+		return ok && cb.State() == breaker.StateOpen
 	})
 }

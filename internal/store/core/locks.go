@@ -32,4 +32,5 @@ const (
 	LockReconcile        int64 = 1009 // backend-vs-database consistency check
 	LockScrubber         int64 = 1010 // background integrity verification
 	LockPendingReaper    int64 = 1011 // abandoned PUT-intent resolution
+	LockMigrations       int64 = 1012 // schema migrations at startup
 )

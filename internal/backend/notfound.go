@@ -12,7 +12,10 @@
 
 package backend
 
-import "errors"
+import (
+	"errors"
+	"net/http"
+)
 
 // httpStatusError is the shape every backend SDK's response error shares:
 // an error that also reports the HTTP status it was built from. Named so
@@ -33,4 +36,11 @@ func IsNotFound(err error) bool {
 	}
 	respErr, ok := errors.AsType[httpStatusError](err)
 	return ok && respErr.HTTPStatusCode() == 404
+}
+
+// isRangeNotSatisfiable returns true if the error chain carries a 416: the
+// object exists but is too short for the requested range.
+func isRangeNotSatisfiable(err error) bool {
+	respErr, ok := errors.AsType[httpStatusError](err)
+	return ok && respErr.HTTPStatusCode() == http.StatusRequestedRangeNotSatisfiable
 }
