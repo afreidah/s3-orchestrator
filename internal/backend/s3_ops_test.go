@@ -3,7 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Exercises GetObject, HeadObject, DeleteObject, ListObjects, and CopyObject
+// Exercises GetObject, HeadObject, DeleteObject, HeadBucket, ListObjects, and CopyObject
 // against an httptest fake-S3 endpoint so the SDK request/response mapping
 // (attribute unwrapping, list-page conversion, copy-result ETag) is covered
 // without a live provider.
@@ -13,10 +13,12 @@ package backend
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -136,6 +138,32 @@ func TestDeleteObject(t *testing.T) {
 	}
 	if gotPath != "/test-bucket/dir/obj" {
 		t.Errorf("path = %q, want /test-bucket/dir/obj", gotPath)
+	}
+}
+
+// TestHeadBucket covers the bucket health check: a HEAD on the bucket path,
+// with a non-2xx answer surfacing its status for classification.
+func TestHeadBucket(t *testing.T) {
+	t.Parallel()
+	var gotMethod, gotPath string
+	var status atomic.Int32
+	status.Store(http.StatusOK)
+	be := newTestBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.WriteHeader(int(status.Load()))
+	})
+
+	if err := be.HeadBucket(t.Context()); err != nil {
+		t.Fatalf("HeadBucket: %v", err)
+	}
+	if gotMethod != http.MethodHead || gotPath != "/test-bucket/" {
+		t.Errorf("request = %s %s, want HEAD /test-bucket/", gotMethod, gotPath)
+	}
+
+	status.Store(http.StatusForbidden)
+	err := be.HeadBucket(t.Context())
+	if respErr, ok := errors.AsType[httpStatusError](err); !ok || respErr.HTTPStatusCode() != http.StatusForbidden {
+		t.Errorf("HeadBucket on a 403 = %v, want an error carrying status 403", err)
 	}
 }
 

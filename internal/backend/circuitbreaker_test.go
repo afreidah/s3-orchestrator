@@ -4,7 +4,8 @@
 // Author: Alex Freidah
 //
 // Tests for the per-backend circuit breaker wrapper: all 4 backend.ObjectBackend methods
-// forward correctly when closed, return breaker.ErrBackendUnavailable when open, and
+// forward correctly when closed, return breaker.ErrBackendUnavailable when open, only
+// backend-health failures open the circuit, client requests never probe it, and
 // Unwrap() returns the inner backend for type assertions.
 // -------------------------------------------------------------------------------
 
@@ -181,34 +182,77 @@ func TestCBBackend_DeleteObject_CircuitOpen(t *testing.T) {
 // Recovery
 // -------------------------------------------------------------------------
 
-// TestCBBackend_RecoveryAfterTimeout verifies the cbbackend recovery after timeout contract.
-// Asserts that probe should succeed:.
-func TestCBBackend_RecoveryAfterTimeout(t *testing.T) {
+// TestCBBackend_ClientRequestsNeverProbe verifies that once open, the breaker
+// refuses every client request even after the open timeout, and closes only
+// through Recover.
+func TestCBBackend_ClientRequestsNeverProbe(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		mock := newMockBackend()
 		mock.putErr = errors.New("connection refused")
 		cb := newTestCBBackend(mock, 1, 10*time.Millisecond)
 
-		// Trip the circuit
 		_, _ = cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil)
+		time.Sleep(time.Second)
 
-		time.Sleep(15 * time.Millisecond)
-
-		// Fix the mock
 		mock.mu.Lock()
 		mock.putErr = nil
 		mock.mu.Unlock()
 
-		// Probe should succeed, circuit closes
 		_, err := cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil)
-		if err != nil {
-			t.Fatalf("probe should succeed: %v", err)
+		if !errors.Is(err, breaker.ErrBackendUnavailable) {
+			t.Fatalf("PutObject after the open timeout = %v, want ErrBackendUnavailable", err)
 		}
-		if !cb.IsHealthy() {
-			t.Fatal("circuit should be closed after successful probe")
+		if cb.State() != breaker.StateOpen {
+			t.Errorf("state = %v, want open: client requests are never probes", cb.State())
+		}
+
+		cb.Recover()
+		if _, err := cb.PutObject(context.Background(), "key", strings.NewReader("data"), 4, "text/plain", nil); err != nil {
+			t.Fatalf("PutObject after Recover: %v", err)
 		}
 	})
+}
+
+// TestCBBackend_OpeningErrorKeepsCause verifies the error that opens the
+// circuit still matches ErrBackendUnavailable and carries the backend's own
+// error, so logs show what failed.
+func TestCBBackend_OpeningErrorKeepsCause(t *testing.T) {
+	t.Parallel()
+	cause := &httpError{code: 503, msg: "SlowDown"}
+	mock := newMockBackend()
+	mock.getErr = cause
+	cb := newTestCBBackend(mock, 1, time.Minute)
+
+	_, err := cb.GetObject(context.Background(), "key", "")
+	if !errors.Is(err, breaker.ErrBackendUnavailable) {
+		t.Errorf("err = %v, want it to match ErrBackendUnavailable", err)
+	}
+	if !errors.Is(err, cause) {
+		t.Errorf("err = %v, want it to wrap the backend error", err)
+	}
+}
+
+// TestCBBackend_RequestErrorsDoNotOpen verifies that a healthy backend
+// answering request-specific 4xx errors - a range past the end of a zero-byte
+// object, a failed precondition - stays closed however many arrive.
+func TestCBBackend_RequestErrorsDoNotOpen(t *testing.T) {
+	t.Parallel()
+	for _, code := range []int{400, 409, 412, 416} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			t.Parallel()
+			mock := newMockBackend()
+			mock.getErr = &httpError{code: code, msg: "request error"}
+			cb := newTestCBBackend(mock, 3, time.Minute)
+
+			for range 10 {
+				_, _ = cb.GetObject(context.Background(), "key", "bytes=0-31")
+			}
+			if cb.State() != breaker.StateClosed {
+				t.Errorf("state after ten %d responses = %v, want closed", code, cb.State())
+			}
+		})
+	}
 }
 
 // -------------------------------------------------------------------------
@@ -227,30 +271,23 @@ func TestCBBackend_Unwrap(t *testing.T) {
 	}
 }
 
-// TestCBBackend_NestedUnwrap verifies the cbbackend nested unwrap path by exercising cb2.Unwrap, u.Unwrap.
-func TestCBBackend_NestedUnwrap(t *testing.T) {
+// TestCBBackend_CheckHealthBypassesOpenCircuit verifies the health check
+// reaches the backend while the circuit is open.
+func TestCBBackend_CheckHealthBypassesOpenCircuit(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
-	cb1 := newTestCBBackend(mock, 3, time.Minute)
-	cb2 := NewCircuitBreakerBackend(cb1, CircuitBreakerConfig{Name: "outer", Threshold: 3, Timeout: time.Minute})
+	mock.getErr = errors.New("connection refused")
+	cb := newTestCBBackend(mock, 1, time.Minute)
+	_, _ = cb.GetObject(context.Background(), "key", "")
 
-	// Unwrap one layer
-	inner := cb2.Unwrap()
-	if inner != cb1 {
-		t.Fatal("first Unwrap should return cb1")
+	if err := cb.CheckHealth(context.Background()); err != nil {
+		t.Errorf("CheckHealth on an open circuit = %v, want the backend's nil", err)
 	}
-
-	// Unwrap fully (like SyncBackend does)
-	var be ObjectBackend = cb2
-	for {
-		if u, ok := be.(interface{ Unwrap() ObjectBackend }); ok {
-			be = u.Unwrap()
-		} else {
-			break
-		}
-	}
-	if be != mock {
-		t.Fatal("full unwrap should return the mock backend")
+	mock.mu.Lock()
+	mock.bucketErr = errors.New("still down")
+	mock.mu.Unlock()
+	if err := cb.CheckHealth(context.Background()); err == nil {
+		t.Error("CheckHealth = nil, want the backend's failure")
 	}
 }
 
@@ -319,35 +356,36 @@ func TestCBBackend_500DoesTripsBreaker(t *testing.T) {
 	}
 }
 
-// TestIsBackendError_404 verifies the is backend error 404 behaviour described by the test name.
-func TestIsBackendError_404(t *testing.T) {
+// TestIsBackendError_Classification verifies which failures count against a
+// backend: no status, 5xx, 429, and credential rejections do; any other
+// status is a request-specific answer from a working backend and does not.
+func TestIsBackendError_Classification(t *testing.T) {
 	t.Parallel()
-	if isBackendError(&httpError{code: 404, msg: "NoSuchKey"}) {
-		t.Error("404 should not be a backend error")
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"no status", errors.New("connection refused"), true},
+		{"500", &httpError{code: 500}, true},
+		{"503 wrapped", fmt.Errorf("get object failed: %w", &httpError{code: 503}), true},
+		{"429", &httpError{code: 429}, true},
+		{"401", &httpError{code: 401}, true},
+		{"403", &httpError{code: 403}, true},
+		{"400", &httpError{code: 400}, false},
+		{"404", &httpError{code: 404}, false},
+		{"409", &httpError{code: 409}, false},
+		{"412", &httpError{code: 412}, false},
+		{"416 wrapped", fmt.Errorf("get object failed: %w", &httpError{code: 416}), false},
 	}
-}
-
-// TestIsBackendError_500 verifies the is backend error 500 behaviour described by the test name.
-func TestIsBackendError_500(t *testing.T) {
-	t.Parallel()
-	if !isBackendError(&httpError{code: 500, msg: "InternalServerError"}) {
-		t.Error("500 should be a backend error")
-	}
-}
-
-// TestIsBackendError_Nil verifies the is backend error nil behaviour described by the test name.
-func TestIsBackendError_Nil(t *testing.T) {
-	t.Parallel()
-	if isBackendError(nil) {
-		t.Error("nil should not be a backend error")
-	}
-}
-
-// TestIsBackendError_PlainError verifies the is backend error plain error path by exercising errors.New.
-func TestIsBackendError_PlainError(t *testing.T) {
-	t.Parallel()
-	if !isBackendError(errors.New("connection refused")) {
-		t.Error("plain error should be a backend error")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isBackendError(tc.err); got != tc.want {
+				t.Errorf("isBackendError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 

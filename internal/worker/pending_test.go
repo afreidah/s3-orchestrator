@@ -386,11 +386,10 @@ func TestProcessPendingQueue_SkipsBackendWithOpenBreaker(t *testing.T) {
 	r, ops, _, _, ms := setupReaper(t)
 
 	ctrl := gomock.NewController(t)
-	rawBE := backendtest.NewMockObjectBackend(ctrl)
+	rawBE := backendtest.NewMockCheckedBackend(ctrl)
 	cb := backend.NewCircuitBreakerBackend(rawBE, backend.CircuitBreakerConfig{Name: "broken", Threshold: 1, Timeout: time.Hour})
 
-	// Trip the breaker: one HEAD failure with threshold=1 opens it. With a
-	// 1h openTimeout no time has elapsed, so ProbeEligible is false.
+	// Trip the breaker: one HEAD failure with threshold=1 opens it.
 	rawBE.EXPECT().HeadObject(gomock.Any(), gomock.Any()).Return(nil, errors.New("backend down"))
 	if _, err := cb.HeadObject(context.Background(), "trip"); err == nil {
 		t.Fatal("expected HeadObject to fail and trip the breaker")

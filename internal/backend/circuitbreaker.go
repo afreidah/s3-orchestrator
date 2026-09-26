@@ -5,8 +5,11 @@
 //
 // Wraps an ObjectBackend with a circuit breaker so that a backend with expired
 // credentials or a down provider is automatically excluded from request routing
-// after consecutive failures. When the open timeout elapses, a single probe
-// request tests recovery.
+// after consecutive failures. Only failures that say something about the
+// backend count: a network error, a 5xx, a 429, or a credential rejection
+// (401/403). While open, every call is
+// refused; recovery is tested out of band with a bucket health check (see
+// RecoveryProber), never with a client request.
 // -------------------------------------------------------------------------------
 
 package backend
@@ -15,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
@@ -29,7 +33,7 @@ import (
 // All S3 operations are guarded: when the circuit is open, calls immediately
 // return ErrBackendUnavailable without touching the real backend.
 type CircuitBreakerBackend struct {
-	real ObjectBackend
+	real CheckedBackend
 	*breaker.CircuitBreaker
 }
 
@@ -46,14 +50,16 @@ type CircuitBreakerConfig struct {
 // NewCircuitBreakerBackend wraps a backend with per-backend circuit breaker
 // logic. The breaker is wired to the telemetry hook so transitions surface
 // on the standard CircuitBreaker* metrics and the BackendCircuit*
-// notification events.
-func NewCircuitBreakerBackend(real ObjectBackend, cfg CircuitBreakerConfig) *CircuitBreakerBackend {
+// notification events. It recovers only through Recover, which a
+// RecoveryProber calls once CheckHealth passes.
+func NewCircuitBreakerBackend(real CheckedBackend, cfg CircuitBreakerConfig) *CircuitBreakerBackend {
 	cb := breaker.NewCircuitBreaker(breaker.Config{
-		Name:      cfg.Name,
-		Threshold: cfg.Threshold,
-		Timeout:   cfg.Timeout,
-		IsError:   isBackendError,
-		Sentinel:  breaker.ErrBackendUnavailable,
+		Name:             cfg.Name,
+		Threshold:        cfg.Threshold,
+		Timeout:          cfg.Timeout,
+		IsError:          isBackendError,
+		Sentinel:         breaker.ErrBackendUnavailable,
+		ExternalRecovery: true,
 	})
 	cb.SetOnStateChange(telemetry.NewCircuitBreakerHook(cfg.Name))
 	return &CircuitBreakerBackend{
@@ -69,12 +75,20 @@ func (cb *CircuitBreakerBackend) Unwrap() ObjectBackend {
 	return cb.real
 }
 
-// isBackendError returns true for errors that indicate backend health issues.
-// 404/NoSuchKey errors are excluded because they indicate a healthy backend
-// with a missing object, not a backend failure. Context cancellation and
+// CheckHealth runs the wrapped backend's bucket health check directly,
+// bypassing the breaker, so it can run while the circuit is open.
+func (cb *CircuitBreakerBackend) CheckHealth(ctx context.Context) error {
+	return cb.real.HeadBucket(ctx)
+}
+
+// isBackendError returns true for errors that indicate backend health issues:
+// a failure with no HTTP status (connection refused, DNS, TLS, reset), a 5xx,
+// a 429, or a 401/403 (expired or revoked credentials fail every request).
+// Any other status is an answer from a working backend about one request - a
+// missing key, a bad range, a failed precondition - and counting it would let
+// a single bad object trip a healthy backend. Context cancellation and
 // deadline are excluded too: they signal a caller-side timeout or shutdown,
-// not the wrapped backend's health, and counting them lets a slow source or
-// caller cancellation falsely trip an otherwise healthy backend's breaker.
+// not the wrapped backend's health.
 func isBackendError(err error) bool {
 	if err == nil {
 		return false
@@ -82,7 +96,18 @@ func isBackendError(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	return !IsNotFound(err)
+	respErr, ok := errors.AsType[httpStatusError](err)
+	if !ok {
+		return true
+	}
+	switch status := respErr.HTTPStatusCode(); {
+	case status >= http.StatusInternalServerError:
+		return true
+	case status == http.StatusTooManyRequests, status == http.StatusUnauthorized, status == http.StatusForbidden:
+		return true
+	default:
+		return false
+	}
 }
 
 // -------------------------------------------------------------------------

@@ -130,8 +130,8 @@ func (r *PendingReaper) processPendingQueue(ctx context.Context) WorkSummary {
 // pending row: admission gating, backend lookup, HEAD probe, and
 // promotion or drop depending on what the backend and store report.
 //
-// When the destination backend's circuit breaker is open and not yet
-// probe-eligible the intent is short-circuited: it is counted as failed
+// When the destination backend's circuit breaker is open the intent is
+// short-circuited: it is counted as failed
 // (so it stays queued for the next tick) and tallied in skipped so the
 // caller can emit one INFO log per backend instead of a probe-failed WARN
 // per intent.
@@ -144,8 +144,7 @@ func (r *PendingReaper) resolveOneIntent(ctx context.Context, p *core.PendingObj
 			return
 		}
 
-		if cb, ok := be.(*backend.CircuitBreakerBackend); ok &&
-			cb.State() == breaker.StateOpen && !cb.ProbeEligible() {
+		if cb, ok := be.(*backend.CircuitBreakerBackend); ok && cb.State() == breaker.StateOpen {
 			cnt, _ := skipped.LoadOrStore(p.BackendName, &atomic.Int32{})
 			cnt.(*atomic.Int32).Add(1)
 			res = ItemResult{Outcome: ItemFailed}

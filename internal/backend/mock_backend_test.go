@@ -27,6 +27,7 @@ type mockBackend struct {
 	getReadErr error // injected into the Body reader so reads fail mid-stream
 	headErr    error
 	delErr     error
+	bucketErr  error
 	delDelay   time.Duration
 }
 
@@ -41,7 +42,14 @@ func newMockBackend() *mockBackend {
 	return &mockBackend{objects: make(map[string]mockObject)}
 }
 
-var _ ObjectBackend = (*mockBackend)(nil)
+var _ CheckedBackend = (*mockBackend)(nil)
+
+// HeadBucket returns the injected bucket health-check failure.
+func (m *mockBackend) HeadBucket(context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.bucketErr
+}
 
 func (m *mockBackend) PutObject(_ context.Context, key string, body io.Reader, _ int64, contentType string, metadata map[string]string) (string, error) {
 	m.mu.Lock()

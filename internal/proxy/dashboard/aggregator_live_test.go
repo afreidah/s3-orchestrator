@@ -69,7 +69,7 @@ func stubUsage(ctrl *gomock.Controller) *MockUsageReader {
 // open, which is how the aggregator recognises an unhealthy backend.
 func trippedBackend(t *testing.T, ctrl *gomock.Controller) backend.ObjectBackend {
 	t.Helper()
-	inner := backendtest.NewMockObjectBackend(ctrl)
+	inner := backendtest.NewMockCheckedBackend(ctrl)
 	inner.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return("", errors.New("down")).AnyTimes()
 	cb := backend.NewCircuitBreakerBackend(inner, backend.CircuitBreakerConfig{
@@ -114,7 +114,7 @@ func TestDecorateLiveState_HealthyBackendAbsent(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 
-	healthy := backend.NewCircuitBreakerBackend(backendtest.NewMockObjectBackend(ctrl), backend.CircuitBreakerConfig{
+	healthy := backend.NewCircuitBreakerBackend(backendtest.NewMockCheckedBackend(ctrl), backend.CircuitBreakerConfig{
 		Name: "b1", Threshold: 5, Timeout: time.Minute,
 	})
 	fleet := NewMockFleetView(ctrl)

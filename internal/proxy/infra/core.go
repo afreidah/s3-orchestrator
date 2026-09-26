@@ -185,8 +185,7 @@ func (c *BackendRuntime) ExcludeDraining(eligible []string) []string {
 	return c.registry.ExcludeDraining(eligible)
 }
 
-// ExcludeUnhealthy filters out backends whose circuit breaker is open
-// and not probe-eligible.
+// ExcludeUnhealthy filters out backends whose circuit breaker is open.
 func (c *BackendRuntime) ExcludeUnhealthy(eligible []string) []string {
 	return c.registry.ExcludeUnhealthy(eligible)
 }

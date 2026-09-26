@@ -26,9 +26,13 @@ import (
 //
 // The request is ranged, but a backend that ignores Range simply streams the
 // object and only the prefix is read before the body is closed, so the result
-// is correct either way.
+// is correct either way. A zero-byte object cannot satisfy any range, so the
+// backend answers 416; that is read as an empty header.
 func FetchEnvelopeHeader(ctx context.Context, be ObjectBackend, key string) ([]byte, error) {
 	r, err := be.GetObject(ctx, key, fmt.Sprintf("bytes=0-%d", encryption.HeaderSize-1))
+	if isRangeNotSatisfiable(err) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read object header: %w", err)
 	}

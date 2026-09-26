@@ -9,6 +9,9 @@
 // breaker.
 //
 // States: closed (healthy) -> open (down) -> half-open (probing) -> closed.
+// A breaker configured for external recovery skips half-open: it refuses every
+// call while open and closes only when its owner, having checked the dependency
+// itself, calls Recover.
 // -------------------------------------------------------------------------------
 
 package breaker
@@ -16,6 +19,7 @@ package breaker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"sync"
@@ -96,17 +100,24 @@ type CircuitBreaker struct {
 	log           *slog.Logger     // scoped to logfmt.Component("circuit_breaker") with breaker_name attr
 	isError       func(error) bool // returns true if the error should trip the breaker
 	sentinel      error            // error returned when circuit is open
+	external      bool             // recovery comes only from Recover; no call is let through as a probe
+	lastErr       error            // the failure that last counted against the breaker, for its logs
 	onStateChange func(StateChangeInfo)
 }
 
 // Config configures a CircuitBreaker. Use SetOnStateChange after
 // construction to install metric / event hooks.
+//
+// ExternalRecovery makes the owner responsible for recovery: while open, every
+// call is refused, and only Recover closes the circuit. Owners that can check
+// the dependency directly use it, so no ordinary call is ever spent as a probe.
 type Config struct {
-	Name      string           // identifier for logging and labels (e.g. "database", "oci-backend")
-	Threshold int              // consecutive failures before opening
-	Timeout   time.Duration    // delay before probing recovery
-	IsError   func(error) bool // returns true for errors that should count as failures
-	Sentinel  error            // error returned when the circuit is open (e.g. ErrDBUnavailable)
+	Name             string           // identifier for logging and labels (e.g. "database", "oci-backend")
+	Threshold        int              // consecutive failures before opening
+	Timeout          time.Duration    // delay before probing recovery
+	IsError          func(error) bool // returns true for errors that should count as failures
+	Sentinel         error            // error returned when the circuit is open (e.g. ErrDBUnavailable)
+	ExternalRecovery bool             // closed only by Recover; see the type comment
 }
 
 // NewCircuitBreaker creates a new circuit breaker from cfg.
@@ -122,6 +133,7 @@ func NewCircuitBreaker(cfg Config) *CircuitBreaker {
 		),
 		isError:  cfg.IsError,
 		sentinel: cfg.Sentinel,
+		external: cfg.ExternalRecovery,
 	}
 }
 
@@ -181,14 +193,10 @@ func (cb *CircuitBreaker) OpenDuration() time.Duration {
 	return time.Since(cb.openedAt)
 }
 
-// ProbeEligible returns true when the circuit is open and the open timeout
-// has elapsed, meaning the next request should be allowed through as a probe.
-// This is a read-only check with no side effects  -  the actual state transition
-// happens in PreCheck when the request is dispatched.
-func (cb *CircuitBreaker) ProbeEligible() bool {
-	cb.mu.RLock()
-	defer cb.mu.RUnlock()
-	return cb.state == StateOpen && time.Since(cb.lastFailure) >= cb.openTimeout+cb.probeJitter
+// RecoveryDelay returns the open timeout: how long an open circuit waits
+// before recovery is first attempted.
+func (cb *CircuitBreaker) RecoveryDelay() time.Duration {
+	return cb.openTimeout
 }
 
 // -------------------------------------------------------------------------
@@ -213,6 +221,9 @@ func (cb *CircuitBreaker) PreCheck() error {
 	case StateClosed:
 		return nil
 	case StateOpen:
+		if cb.external {
+			return cb.sentinel
+		}
 		if time.Since(cb.lastFailure) >= cb.openTimeout+cb.probeJitter {
 			if !cb.probeInFlight.CompareAndSwap(false, true) {
 				return cb.sentinel // another probe already in flight
@@ -241,16 +252,17 @@ func (cb *CircuitBreaker) PreCheck() error {
 }
 
 // PostCheck records the result of a real call and transitions state.
-// When an error causes the circuit to open (or reopen), the original error
-// is replaced with the sentinel so callers always see the canonical error.
+// While the circuit is not closed after a failure, the error returned wraps
+// the sentinel around the original, so callers match the canonical error with
+// errors.Is and logs still show what actually failed.
 func (cb *CircuitBreaker) PostCheck(err error) error {
 	if !cb.isError(err) {
 		cb.onSuccess()
 		return err
 	}
-	cb.onFailure()
+	cb.onFailure(err)
 	if !cb.IsHealthy() {
-		return cb.sentinel
+		return fmt.Errorf("%w: %w", cb.sentinel, err)
 	}
 	return err
 }
@@ -290,12 +302,13 @@ func (cb *CircuitBreaker) onSuccess() {
 
 // onFailure increments the failure counter and transitions to open if the
 // threshold is reached.
-func (cb *CircuitBreaker) onFailure() {
+func (cb *CircuitBreaker) onFailure(err error) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
 	cb.failures++
 	cb.lastFailure = time.Now()
+	cb.lastErr = err
 
 	switch cb.state {
 	case StateHalfOpen:
@@ -337,6 +350,12 @@ func (cb *CircuitBreaker) ResetStaleProbe() bool {
 	return true
 }
 
+// Probe implements Prober by resetting a stale half-open probe, so the next
+// request can attempt recovery again.
+func (cb *CircuitBreaker) Probe(context.Context) {
+	cb.ResetStaleProbe()
+}
+
 // transition changes the circuit state, emits structured logs, and notifies
 // the OnStateChange callback. Caller must hold cb.mu.
 func (cb *CircuitBreaker) transition(to State) {
@@ -357,7 +376,8 @@ func (cb *CircuitBreaker) transition(to State) {
 			"from", from.String(),
 			"to", to.String(),
 			"failures", cb.failures,
-			"threshold", cb.failThreshold)
+			"threshold", cb.failThreshold,
+			logfmt.Err(cb.lastErr))
 
 	case to == StateOpen && from == StateHalfOpen:
 		cb.probeJitter = rand.N(cb.openTimeout / 4) //nolint:gosec // G404: jitter does not require crypto-strength randomness
@@ -365,7 +385,8 @@ func (cb *CircuitBreaker) transition(to State) {
 			"name", cb.name,
 			"from", from.String(),
 			"to", to.String(),
-			"failures", cb.failures)
+			"failures", cb.failures,
+			logfmt.Err(cb.lastErr))
 
 	case to == StateHalfOpen:
 		cb.log.InfoContext(context.Background(), "half-open: probing",

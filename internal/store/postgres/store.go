@@ -29,6 +29,7 @@ import (
 	// Registers the pgx database/sql driver used by goose migrations below.
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
 
 	"github.com/afreidah/s3-orchestrator/internal/breaker"
 	"github.com/afreidah/s3-orchestrator/internal/config"
@@ -117,6 +118,9 @@ func (s *Store) Close() {
 // RunMigrations applies versioned database migrations using goose. Migrations
 // are embedded in the binary and applied in order. Already-applied migrations
 // are skipped automatically via the goose_db_version tracking table.
+//
+// Instances starting together take turns under an advisory lock: the first
+// applies the migrations, and the rest wait, then find nothing left to apply.
 func (s *Store) RunMigrations(ctx context.Context) error {
 	stdDB, err := sql.Open("pgx", s.connStr)
 	if err != nil {
@@ -129,7 +133,12 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 		return fmt.Errorf("migration filesystem: %w", err)
 	}
 
-	provider, err := goose.NewProvider(goose.DialectPostgres, stdDB, migrations)
+	locker, err := lock.NewPostgresSessionLocker(lock.WithLockID(core.LockMigrations))
+	if err != nil {
+		return fmt.Errorf("create migration lock: %w", err)
+	}
+
+	provider, err := goose.NewProvider(goose.DialectPostgres, stdDB, migrations, goose.WithSessionLocker(locker))
 	if err != nil {
 		return fmt.Errorf("create migration provider: %w", err)
 	}
