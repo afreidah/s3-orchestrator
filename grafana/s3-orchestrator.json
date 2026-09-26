@@ -13,6 +13,52 @@
     "from": "now-1h",
     "to": "now"
   },
+  "templating": {
+    "list": [
+      {
+        "type": "query",
+        "name": "job",
+        "label": "Job",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(s3o_build_info, job)",
+          "refId": "job"
+        },
+        "definition": "label_values(s3o_build_info, job)",
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "sort": 1
+      },
+      {
+        "type": "query",
+        "name": "instance",
+        "label": "Instance",
+        "description": "Filters the per-instance panels. Fleet-wide panels read shared state every instance reports alike, so they ignore it.",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(s3o_build_info{job=\"$job\"}, instance)",
+          "refId": "instance"
+        },
+        "definition": "label_values(s3o_build_info{job=\"$job\"}, instance)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
   "panels": [
     {
       "type": "row",
@@ -42,7 +88,7 @@
       },
       "targets": [
         {
-          "expr": "s3o_build_info",
+          "expr": "count by (version) (s3o_build_info{job=\"$job\", instance=~\"$instance\"})",
           "legendFormat": "{{version}}",
           "instant": true
         }
@@ -50,7 +96,7 @@
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "textMode": "name",
+        "textMode": "value_and_name",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -1110,6 +1156,7 @@
       "type": "table",
       "id": 24,
       "title": "Circuit Breaker State",
+      "description": "Each breaker's worst state across the fleet. Every instance keeps its own breakers, so one instance can be open while the others are closed; the Fleet row has the per-instance table.",
       "gridPos": {
         "x": 0,
         "y": 62,
@@ -1122,7 +1169,7 @@
       },
       "targets": [
         {
-          "expr": "s3o_circuit_breaker_state",
+          "expr": "max by (name) (s3o_circuit_breaker_state)",
           "format": "table",
           "instant": true
         }
@@ -1254,16 +1301,16 @@
       },
       "targets": [
         {
-          "expr": "sum by (op) (increase(s3o_degraded_reads_total[5m]))",
-          "legendFormat": "reads {{op}}"
+          "expr": "sum by (operation) (increase(s3o_degraded_reads_total[5m]))",
+          "legendFormat": "reads {{operation}}"
         },
         {
-          "expr": "increase(s3o_degraded_cache_hits_total[5m])",
+          "expr": "sum(increase(s3o_degraded_cache_hits_total[5m]))",
           "legendFormat": "cache hits"
         },
         {
-          "expr": "sum by (op) (increase(s3o_degraded_write_rejections_total[5m]))",
-          "legendFormat": "write rejections {{op}}"
+          "expr": "sum by (operation) (increase(s3o_degraded_write_rejections_total[5m]))",
+          "legendFormat": "write rejections {{operation}}"
         }
       ],
       "options": {
@@ -1366,8 +1413,8 @@
       },
       "targets": [
         {
-          "expr": "increase(s3o_replication_copies_created_total[5m])",
-          "legendFormat": "copies/s"
+          "expr": "sum(increase(s3o_replication_copies_created_total[5m]))",
+          "legendFormat": "copies per 5m"
         }
       ],
       "options": {
@@ -1406,8 +1453,8 @@
       },
       "targets": [
         {
-          "expr": "increase(s3o_replication_errors_total[5m])",
-          "legendFormat": "errors/s"
+          "expr": "sum(increase(s3o_replication_errors_total[5m]))",
+          "legendFormat": "errors per 5m"
         }
       ],
       "options": {
@@ -1524,8 +1571,8 @@
       },
       "targets": [
         {
-          "expr": "increase(s3o_replication_health_copies_total[5m])",
-          "legendFormat": "health copies/s"
+          "expr": "sum(increase(s3o_replication_health_copies_total[5m]))",
+          "legendFormat": "health copies per 5m"
         }
       ],
       "options": {
@@ -1606,7 +1653,7 @@
       },
       "targets": [
         {
-          "expr": "rate(s3o_replication_write_copies_committed_sum[5m]) / rate(s3o_replication_write_copies_committed_count[5m])",
+          "expr": "sum(rate(s3o_replication_write_copies_committed_sum[5m])) / sum(rate(s3o_replication_write_copies_committed_count[5m]))",
           "legendFormat": "copies per write"
         }
       ],
@@ -1646,8 +1693,8 @@
       },
       "targets": [
         {
-          "expr": "s3o_detached_uploads_depth",
-          "legendFormat": "in flight"
+          "expr": "s3o_detached_uploads_depth{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}"
         }
       ],
       "fieldConfig": {
@@ -1686,7 +1733,7 @@
       },
       "targets": [
         {
-          "expr": "rate(s3o_replication_write_fanout_skipped_total[5m])",
+          "expr": "sum(rate(s3o_replication_write_fanout_skipped_total[5m]))",
           "legendFormat": "skipped/s"
         }
       ],
@@ -1991,7 +2038,7 @@
       },
       "targets": [
         {
-          "expr": "100 * (s3o_usage_pool_requests / (s3o_usage_pool_limit > 0))",
+          "expr": "100 * max by (backend, pool) (s3o_usage_pool_requests) / (max by (backend, pool) (s3o_usage_pool_limit) > 0)",
           "format": "table",
           "instant": true
         }
@@ -2142,8 +2189,8 @@
       },
       "targets": [
         {
-          "expr": "increase(s3o_rate_limit_rejections_total[5m])",
-          "legendFormat": "rejections/s"
+          "expr": "sum(increase(s3o_rate_limit_rejections_total[5m]))",
+          "legendFormat": "rejections per 5m"
         }
       ],
       "options": {
@@ -2181,8 +2228,8 @@
       },
       "targets": [
         {
-          "expr": "increase(s3o_admission_rejections_total[5m])",
-          "legendFormat": "rejections/s"
+          "expr": "sum(increase(s3o_admission_rejections_total[5m]))",
+          "legendFormat": "rejections per 5m"
         }
       ],
       "options": {
@@ -2220,7 +2267,7 @@
       },
       "targets": [
         {
-          "expr": "increase(s3o_load_shed_total[5m])",
+          "expr": "sum(increase(s3o_load_shed_total[5m]))",
           "legendFormat": "shed"
         }
       ],
@@ -2259,7 +2306,7 @@
       },
       "targets": [
         {
-          "expr": "increase(s3o_early_rejections_total[5m])",
+          "expr": "sum(increase(s3o_early_rejections_total[5m]))",
           "legendFormat": "rejected"
         }
       ],
@@ -2298,7 +2345,7 @@
       },
       "targets": [
         {
-          "expr": "increase(s3o_write_failover_total[5m])",
+          "expr": "sum(increase(s3o_write_failover_total[5m]))",
           "legendFormat": "failovers"
         }
       ],
@@ -2338,7 +2385,7 @@
       },
       "targets": [
         {
-          "expr": "increase(s3o_cors_preflight_total[5m])",
+          "expr": "sum by (result) (increase(s3o_cors_preflight_total[5m]))",
           "legendFormat": "{{result}}"
         }
       ],
@@ -2485,12 +2532,12 @@
       },
       "targets": [
         {
-          "expr": "increase(s3o_rebalance_objects_moved_total[5m])",
+          "expr": "sum(increase(s3o_rebalance_objects_moved_total[5m]))",
           "legendFormat": "objects"
         },
         {
-          "expr": "increase(s3o_rebalance_bytes_moved_total[5m])",
-          "legendFormat": "bytes/s"
+          "expr": "sum(increase(s3o_rebalance_bytes_moved_total[5m]))",
+          "legendFormat": "bytes per 5m"
         }
       ],
       "options": {
@@ -2638,7 +2685,7 @@
       },
       "targets": [
         {
-          "expr": "s3o_drain_active",
+          "expr": "max(s3o_drain_active)",
           "legendFormat": "drain",
           "instant": true
         }
@@ -2708,11 +2755,11 @@
       },
       "targets": [
         {
-          "expr": "rate(s3o_drain_objects_moved_total[5m])",
+          "expr": "sum(rate(s3o_drain_objects_moved_total[5m]))",
           "legendFormat": "objects/s"
         },
         {
-          "expr": "rate(s3o_drain_bytes_moved_total[5m])",
+          "expr": "sum(rate(s3o_drain_bytes_moved_total[5m]))",
           "legendFormat": "bytes/s"
         }
       ],
@@ -2752,11 +2799,11 @@
       },
       "targets": [
         {
-          "expr": "rate(s3o_lifecycle_deleted_total[5m])",
+          "expr": "sum(rate(s3o_lifecycle_deleted_total[5m]))",
           "legendFormat": "deleted/s"
         },
         {
-          "expr": "rate(s3o_lifecycle_failed_total[5m])",
+          "expr": "sum(rate(s3o_lifecycle_failed_total[5m]))",
           "legendFormat": "failed/s"
         }
       ],
@@ -3199,7 +3246,7 @@
       },
       "targets": [
         {
-          "expr": "max(s3o_encryption_unknown_key_id_total)",
+          "expr": "sum(s3o_encryption_unknown_key_id_total)",
           "legendFormat": "unknown keyID"
         }
       ],
@@ -3317,11 +3364,11 @@
       },
       "targets": [
         {
-          "expr": "rate(s3o_cache_hits_total[5m])",
+          "expr": "sum(rate(s3o_cache_hits_total[5m]))",
           "legendFormat": "hits"
         },
         {
-          "expr": "rate(s3o_cache_misses_total[5m])",
+          "expr": "sum(rate(s3o_cache_misses_total[5m]))",
           "legendFormat": "misses"
         }
       ],
@@ -3408,12 +3455,12 @@
       },
       "targets": [
         {
-          "expr": "s3o_cache_size_bytes",
-          "legendFormat": "bytes used"
+          "expr": "s3o_cache_size_bytes{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} bytes used"
         },
         {
-          "expr": "s3o_cache_entries",
-          "legendFormat": "entries"
+          "expr": "s3o_cache_entries{job=\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} entries"
         }
       ],
       "options": {
@@ -3441,8 +3488,8 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "entries"
+              "id": "byRegexp",
+              "options": ".* entries$"
             },
             "properties": [
               {
@@ -3474,7 +3521,7 @@
       },
       "targets": [
         {
-          "expr": "rate(s3o_cache_evictions_total[5m])",
+          "expr": "sum(rate(s3o_cache_evictions_total[5m]))",
           "legendFormat": "evictions/s"
         }
       ],
@@ -3628,7 +3675,7 @@
       },
       "targets": [
         {
-          "expr": "s3o_integrity_oldest_unverified_seconds",
+          "expr": "max(s3o_integrity_oldest_unverified_seconds)",
           "legendFormat": "oldest unverified"
         }
       ],
@@ -3686,11 +3733,11 @@
       },
       "targets": [
         {
-          "expr": "s3o_integrity_never_verified_copies",
+          "expr": "max(s3o_integrity_never_verified_copies)",
           "legendFormat": "never verified"
         },
         {
-          "expr": "s3o_integrity_deferred_copies",
+          "expr": "max(s3o_integrity_deferred_copies)",
           "legendFormat": "unreachable (backend over limit)"
         }
       ],
@@ -3812,7 +3859,7 @@
       },
       "targets": [
         {
-          "expr": "s3o_redis_fallback_active",
+          "expr": "max(s3o_redis_fallback_active)",
           "legendFormat": "fallback",
           "instant": true
         }
@@ -4016,7 +4063,7 @@
       },
       "targets": [
         {
-          "expr": "rate(s3o_over_replication_removed_total[$__rate_interval])",
+          "expr": "sum(rate(s3o_over_replication_removed_total[$__rate_interval]))",
           "legendFormat": "removed/s",
           "refId": "A"
         }
@@ -4064,7 +4111,7 @@
       },
       "targets": [
         {
-          "expr": "rate(s3o_over_replication_errors_total[$__rate_interval])",
+          "expr": "sum(rate(s3o_over_replication_errors_total[$__rate_interval]))",
           "legendFormat": "errors/s",
           "refId": "A"
         }
@@ -4112,7 +4159,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, rate(s3o_over_replication_duration_seconds_bucket[$__rate_interval]))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(s3o_over_replication_duration_seconds_bucket[$__rate_interval])))",
           "legendFormat": "p95",
           "refId": "A"
         }
@@ -4205,7 +4252,7 @@
       },
       "targets": [
         {
-          "expr": "rate(s3o_pending_intents_enqueued_total[5m])",
+          "expr": "sum(rate(s3o_pending_intents_enqueued_total[5m]))",
           "legendFormat": "enqueued"
         },
         {
@@ -4253,7 +4300,7 @@
       },
       "targets": [
         {
-          "expr": "sum(s3o_pending_intents_resolved_total{status=\"ambiguous\"})",
+          "expr": "sum(increase(s3o_pending_intents_resolved_total{status=\"ambiguous\"}[$__range]))",
           "legendFormat": "ambiguous"
         }
       ],
@@ -4435,7 +4482,7 @@
       },
       "targets": [
         {
-          "expr": "s3o_worker_consecutive_failures",
+          "expr": "max by (service) (s3o_worker_consecutive_failures)",
           "legendFormat": "{{service}}"
         }
       ]
@@ -4444,6 +4491,7 @@
       "type": "timeseries",
       "id": 89,
       "title": "Seconds since last successful tick",
+      "description": "Age of the most recent successful tick anywhere in the fleet. Lock-gated workers tick on whichever instance holds the lock, so a per-instance age grows on every instance that is not holding it.",
       "gridPos": {
         "x": 0,
         "y": 236,
@@ -4456,7 +4504,7 @@
       },
       "targets": [
         {
-          "expr": "time() - s3o_worker_last_success_timestamp_seconds",
+          "expr": "time() - max by (service) (s3o_worker_last_success_timestamp_seconds)",
           "legendFormat": "{{service}}"
         }
       ]
@@ -4510,7 +4558,7 @@
       },
       "targets": [
         {
-          "expr": "s3o_notification_queue_depth"
+          "expr": "max(s3o_notification_queue_depth)"
         }
       ]
     },
@@ -4613,7 +4661,7 @@
       },
       "targets": [
         {
-          "expr": "s3o_cleanup_dlq_depth"
+          "expr": "max(s3o_cleanup_dlq_depth)"
         }
       ]
     },
@@ -4817,7 +4865,7 @@
       "type": "stat",
       "id": 110,
       "title": "Degraded mode active",
-      "description": "1 when the DB circuit breaker is open or half-open; reads broadcast across backends.",
+      "description": "1 when any instance's DB circuit breaker is open or half-open; that instance broadcasts reads across backends.",
       "gridPos": {
         "x": 0,
         "y": 304,
@@ -4830,7 +4878,7 @@
       },
       "targets": [
         {
-          "expr": "s3o_degraded_mode_active",
+          "expr": "max(s3o_degraded_mode_active)",
           "legendFormat": "active"
         }
       ],
@@ -5376,7 +5424,7 @@
       },
       "targets": [
         {
-          "expr": "count(up{job=\"s3-orchestrator\"} == 1)",
+          "expr": "count(up{job=\"$job\"} == 1)",
           "legendFormat": "instances"
         }
       ],
@@ -5430,7 +5478,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (instance) (rate(s3o_manager_requests_total[5m]))",
+          "expr": "sum by (instance) (rate(s3o_manager_requests_total{job=\"$job\", instance=~\"$instance\"}[5m]))",
           "legendFormat": "{{instance}}"
         }
       ],
@@ -5472,7 +5520,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (service) (rate(s3o_worker_ticks_total{result=\"skipped\"}[15m]))",
+          "expr": "sum by (service) (rate(s3o_worker_ticks_total{job=\"$job\", instance=~\"$instance\", result=\"skipped\"}[15m]))",
           "legendFormat": "{{service}}"
         }
       ],
@@ -5489,6 +5537,366 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "table",
+      "id": 145,
+      "title": "Circuit Breaker State by Instance",
+      "description": "Every instance keeps its own breakers. A backend open on one instance and closed on the others points at that instance's path to the backend, not the backend.",
+      "gridPos": {
+        "x": 0,
+        "y": 364,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "s3o_circuit_breaker_state{job=\"$job\", instance=~\"$instance\"}",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true
+            },
+            "renameByName": {
+              "instance": "Instance",
+              "name": "Name",
+              "Value": "State"
+            },
+            "indexByName": {
+              "instance": 0,
+              "name": 1,
+              "Value": 2
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "State"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "Closed",
+                        "color": "green"
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "text": "Open",
+                        "color": "red"
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "2": {
+                        "text": "Half-Open",
+                        "color": "yellow"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 146,
+      "title": "Inflight requests by instance",
+      "description": "Requests each instance is holding right now. One instance well above the others while request rates match is an instance whose backend or database calls are slower.",
+      "gridPos": {
+        "x": 12,
+        "y": 364,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (instance) (s3o_inflight_requests{job=\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 147,
+      "title": "Successful worker ticks by instance",
+      "description": "Which instance ran each lock-gated worker. The lock moves between instances from tick to tick; a worker that only ever succeeds on one instance is fine, one that succeeds nowhere is stuck.",
+      "gridPos": {
+        "x": 0,
+        "y": 372,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (instance, service) (rate(s3o_worker_ticks_total{job=\"$job\", instance=~\"$instance\", result=\"success\"}[15m]))",
+          "legendFormat": "{{instance}} {{service}}"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 148,
+      "title": "Data Path Details",
+      "gridPos": {
+        "x": 0,
+        "y": 380,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "id": 149,
+      "title": "Plaintext Copies",
+      "description": "Object copies still stored unencrypted. Nonzero after encryption is turned on means the encrypt-existing pass has not reached them yet.",
+      "gridPos": {
+        "x": 0,
+        "y": 381,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max(s3o_encryption_plaintext_copies)",
+          "legendFormat": "plaintext copies"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 150,
+      "title": "HEAD Served from Metadata",
+      "description": "HEAD responses answered from stored metadata without a backend request.",
+      "gridPos": {
+        "x": 6,
+        "y": 381,
+        "w": 9,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(s3o_head_served_from_metadata_total[5m]))",
+          "legendFormat": "served from metadata"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 151,
+      "title": "Work Declined for Usage Headroom",
+      "description": "Copies skipped because the backend had no usage headroom left. A skipped scrub is not stamped, so the copy stays first in line for the next sweep; a replica left unverified or an object a bulk rewrite skipped is only revisited when that pass runs again.",
+      "gridPos": {
+        "x": 15,
+        "y": 381,
+        "w": 9,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(s3o_integrity_usage_declined_total[5m]))",
+          "legendFormat": "integrity verification"
+        },
+        {
+          "expr": "sum by (operation) (rate(s3o_bulk_rewrite_usage_declined_total[5m]))",
+          "legendFormat": "bulk rewrite {{operation}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 152,
+      "title": "Bulk Rewrite Copies Changed Underneath",
+      "description": "Copies a bulk rewrite pass converted while a client wrote the same key. The pass's bytes reached the backend before its commit was refused, so the stored copy is the pass's output over the newer write. Each one is audited as storage.ConversionRaced; any nonzero value is worth checking.",
+      "gridPos": {
+        "x": 0,
+        "y": 389,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (operation) (rate(s3o_bulk_rewrite_copy_changed_total[5m]))",
+          "legendFormat": "{{operation}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 153,
+      "title": "Excess Copies Kept for Their Key",
+      "description": "Over-replicated copies the cleaner kept because they held the only usable encryption key for the object.",
+      "gridPos": {
+        "x": 12,
+        "y": 389,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(s3o_over_replication_key_preserved_total[5m]))",
+          "legendFormat": "kept"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
           "custom": {
             "lineWidth": 2,
             "fillOpacity": 10,

@@ -15,7 +15,8 @@ global:
 scrape_configs:
   # Every instance's dedicated metrics listener, from the Nomad registry. The
   # job label is rewritten so dashboard queries on job="s3-orchestrator" see
-  # the whole fleet, one series per instance.
+  # the whole fleet, one series per instance, and the instance label is the
+  # short allocation ID so dashboard legends match `nomad job allocs`.
   - job_name: s3-orchestrator-nomad
     metrics_path: /metrics
     nomad_sd_configs:
@@ -27,3 +28,6 @@ scrape_configs:
         action: keep
       - target_label: job
         replacement: s3-orchestrator
+      - source_labels: [__meta_nomad_service_id]
+        regex: "_nomad-task-([0-9a-f]{8}).*"
+        target_label: instance

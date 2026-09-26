@@ -83,7 +83,8 @@ data:
     }
 
     // Keep the metrics container port and label the series job="s3-orchestrator",
-    // the same job the Nomad demo's Prometheus scrape uses.
+    // the same job the Nomad demo's Prometheus scrape uses. The instance label
+    // is the pod name, so dashboard legends match `kubectl get pods`.
     discovery.relabel "metrics" {
       targets = discovery.kubernetes.pods.targets
 
@@ -102,6 +103,11 @@ data:
       rule {
         target_label = "job"
         replacement  = "s3-orchestrator"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "instance"
       }
     }
 

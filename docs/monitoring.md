@@ -130,8 +130,16 @@ manager operations, circuit breaker & degraded mode, replication, usage
 tracking, rate limiting & rejections, rebalancer, drain & lifecycle,
 cleanup queue & audit, encryption, object data cache, integrity
 verification, Redis, over-replication cleanup, pending PUT intents,
-and authentication (streaming SigV4). Rows for less frequently inspected
-domains are collapsed by default.
+authentication (streaming SigV4), worker health, event notifications,
+cleanup DLQ & enqueue failures, edge cases & admin ops, degraded-mode
+hardening, compression, fleet, and data path details.
+
+With more than one instance, panels show the fleet: request and worker
+counters are summed across instances, and state every instance reports
+alike (quota, usage, backlog depths) is shown once. The Fleet row and a
+few per-instance panels (cache size, detached uploads) keep one series
+per instance, labelled with the Prometheus `instance` label. The `Job`
+and `Instance` variables at the top narrow those per-instance panels.
 
 ### Key Prometheus metrics
 
