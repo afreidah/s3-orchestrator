@@ -101,6 +101,7 @@ type MultipartStore interface {
 	GetMultipartUpload(ctx context.Context, uploadID string) (*MultipartUpload, error)
 	RecordPart(ctx context.Context, p *RecordPartParams) error
 	GetParts(ctx context.Context, uploadID string) ([]MultipartPart, error)
+	ListParts(ctx context.Context, uploadID string, afterPart, limit int) ([]MultipartPart, error)
 	DeleteMultipartUpload(ctx context.Context, uploadID string) error
 	ListMultipartUploads(ctx context.Context, prefix string, maxUploads int) ([]MultipartUpload, error)
 	CountActiveMultipartUploads(ctx context.Context, bucketPrefix string) (int64, error)

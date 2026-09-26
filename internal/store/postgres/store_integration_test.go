@@ -584,6 +584,43 @@ func TestStoreInt_RecordPartAndGetParts(t *testing.T) {
 	}
 }
 
+// TestStoreInt_ListPartsPagesAfterMarker returns parts above the marker in
+// part-number order, at most limit of them, whatever order they were recorded
+// in.
+func TestStoreInt_ListPartsPagesAfterMarker(t *testing.T) {
+	s := adapterPgStore(t)
+	uploadID, _ := seedMultipartUpload(t, s, "", nil)
+	ctx := context.Background()
+
+	for _, n := range []int{5, 1, 3, 2, 4} {
+		if err := s.RecordPart(ctx, &core.RecordPartParams{UploadID: uploadID, PartNumber: n, ETag: "e", SizeBytes: 1}); err != nil {
+			t.Fatalf("RecordPart(%d): %v", n, err)
+		}
+	}
+
+	for _, tc := range []struct {
+		after, limit int
+		want         []int
+	}{
+		{0, 2, []int{1, 2}},
+		{2, 2, []int{3, 4}},
+		{4, 2, []int{5}},
+		{5, 2, []int{}},
+	} {
+		parts, err := s.ListParts(ctx, uploadID, tc.after, tc.limit)
+		if err != nil {
+			t.Fatalf("ListParts(after %d): %v", tc.after, err)
+		}
+		got := make([]int, 0, len(parts))
+		for _, p := range parts {
+			got = append(got, p.PartNumber)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("ListParts(after %d, limit %d) = %v, want %v", tc.after, tc.limit, got, tc.want)
+		}
+	}
+}
+
 // TestStoreInt_CountActiveMultipartUploads verifies the helper
 // counts in-progress uploads under a prefix.
 func TestStoreInt_CountActiveMultipartUploads(t *testing.T) {

@@ -347,6 +347,22 @@ func (mr *MockMultipartOpsMockRecorder) ListMultipartUploads(ctx, prefix, maxUpl
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListMultipartUploads", reflect.TypeOf((*MockMultipartOps)(nil).ListMultipartUploads), ctx, prefix, maxUploads)
 }
 
+// ListParts mocks base method.
+func (m *MockMultipartOps) ListParts(ctx context.Context, bucket, key, uploadID string, partNumberMarker, maxParts int) ([]core.MultipartPart, bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListParts", ctx, bucket, key, uploadID, partNumberMarker, maxParts)
+	ret0, _ := ret[0].([]core.MultipartPart)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// ListParts indicates an expected call of ListParts.
+func (mr *MockMultipartOpsMockRecorder) ListParts(ctx, bucket, key, uploadID, partNumberMarker, maxParts any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListParts", reflect.TypeOf((*MockMultipartOps)(nil).ListParts), ctx, bucket, key, uploadID, partNumberMarker, maxParts)
+}
+
 // UploadPart mocks base method.
 func (m *MockMultipartOps) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, body io.Reader, size int64) (string, error) {
 	m.ctrl.T.Helper()

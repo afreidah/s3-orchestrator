@@ -362,6 +362,41 @@ func (mp *Manager) GetParts(ctx context.Context, bucket, key, uploadID string) (
 	return parts, nil
 }
 
+// ListParts returns one page of an upload's parts: up to maxParts numbered
+// above partNumberMarker, and whether more follow. ETags are the ones UploadPart
+// handed the client, for the reason GetParts gives.
+func (mp *Manager) ListParts(ctx context.Context, bucket, key, uploadID string, partNumberMarker, maxParts int) ([]core.MultipartPart, bool, error) {
+	const operation = s3op.GetParts
+	ctx, span := telemetry.StartSpan(ctx, spanPrefix+operation.String(),
+		telemetry.AttrUploadID.String(uploadID),
+	)
+	defer span.End()
+	if _, err := mp.fetchScopedUpload(ctx, span, bucket, key, uploadID, operation); err != nil {
+		return nil, false, err
+	}
+	if maxParts == 0 {
+		// A zero-size page still reports whether any parts lie past the marker.
+		rest, err := mp.stores.ListParts(ctx, uploadID, partNumberMarker, 1)
+		if err != nil {
+			return nil, false, err
+		}
+		return nil, len(rest) > 0, nil
+	}
+	// One extra row says whether the page is the last without a count query.
+	parts, err := mp.stores.ListParts(ctx, uploadID, partNumberMarker, maxParts+1)
+	if err != nil {
+		return nil, false, err
+	}
+	truncated := len(parts) > maxParts
+	if truncated {
+		parts = parts[:maxParts]
+	}
+	for i := range parts {
+		parts[i].ETag = clientPartETag(&parts[i])
+	}
+	return parts, truncated, nil
+}
+
 // uploadIDLockNamespace is OR'd into every multipart-upload advisory
 // lock ID so per-uploadID locks live above 2^62 and cannot collide
 // with the small reserved service lock IDs in core/locks.go.

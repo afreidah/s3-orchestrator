@@ -182,6 +182,22 @@ func (s *Store) GetParts(ctx context.Context, uploadID string) ([]core.Multipart
 	return mapSlice(rows, multipartPartFromRow), nil
 }
 
+// ListParts returns up to limit parts numbered above afterPart, ordered by
+// part number.
+func (s *Store) ListParts(ctx context.Context, uploadID string, afterPart, limit int) ([]core.MultipartPart, error) {
+	rows, err := s.queries.ListParts(ctx, db.ListPartsParams{
+		UploadID:  uploadID,
+		AfterPart: int32(afterPart), //nolint:gosec // G115: the S3 handler parses the marker as a 32-bit integer
+		RowLimit:  int32(limit),     //nolint:gosec // G115: limit is a small caller-controlled page size
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list parts: %w", err)
+	}
+	return mapSlice(rows, func(r *db.ListPartsRow) core.MultipartPart {
+		return multipartPartFromRow((*db.GetPartsRow)(r))
+	}), nil
+}
+
 // multipartPartFromRow converts a sqlc GetParts row into the canonical
 // core.MultipartPart shape, safely dereferencing nullable KeyID and
 // PlaintextSize.

@@ -1177,6 +1177,21 @@ func (mr *MockMetadataStoreMockRecorder) ListObjectsDelimited(ctx, prefix, delim
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjectsDelimited", reflect.TypeOf((*MockMetadataStore)(nil).ListObjectsDelimited), ctx, prefix, delimiter, startAfter, maxKeys)
 }
 
+// ListParts mocks base method.
+func (m *MockMetadataStore) ListParts(ctx context.Context, uploadID string, afterPart, limit int) ([]core.MultipartPart, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListParts", ctx, uploadID, afterPart, limit)
+	ret0, _ := ret[0].([]core.MultipartPart)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListParts indicates an expected call of ListParts.
+func (mr *MockMetadataStoreMockRecorder) ListParts(ctx, uploadID, afterPart, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListParts", reflect.TypeOf((*MockMetadataStore)(nil).ListParts), ctx, uploadID, afterPart, limit)
+}
+
 // ListUncompressedLocations mocks base method.
 func (m *MockMetadataStore) ListUncompressedLocations(ctx context.Context, limit int, after core.Cursor, t core.CompressionThresholds, backend string) ([]core.RewritableLocation, error) {
 	m.ctrl.T.Helper()
