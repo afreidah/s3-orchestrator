@@ -15,6 +15,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/observe/event"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/syncutil"
 )
@@ -344,6 +346,14 @@ type mockOutboxStore struct {
 	pending      []core.NotificationRow
 	completedIDs []int64
 	retriedIDs   []int64
+	depth        int64
+}
+
+// NotificationQueueDepth returns the configured outbox backlog.
+func (m *mockOutboxStore) NotificationQueueDepth(_ context.Context) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.depth, nil
 }
 
 // InsertNotification inserts notification.
@@ -536,6 +546,54 @@ func TestDrainOnce_DeliversAndCompletes(t *testing.T) {
 	}
 }
 
+// recordingGauges captures what the notifier publishes.
+type recordingGauges struct {
+	mu     sync.Mutex
+	source string
+	g      telemetry.WorkerGauges
+}
+
+// PublishWorkerGauges records the published gauges.
+func (r *recordingGauges) PublishWorkerGauges(_ context.Context, source string, g telemetry.WorkerGauges) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.source, r.g = source, g
+}
+
+// TestDrainOnce_PublishesOutboxBacklog verifies the queue depth is the whole
+// outbox backlog the store counts, not the size of the batch just drained.
+func TestDrainOnce_PublishesOutboxBacklog(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	ms := &mockOutboxStore{
+		pending: []core.NotificationRow{{ID: 1, EventType: "test", Payload: []byte(`{}`), EndpointURL: srv.URL}},
+		depth:   42,
+	}
+	pub := &recordingGauges{}
+	n := &Notifier{
+		log:       slog.Default(),
+		endpoints: []config.NotificationEndpoint{{URL: srv.URL, Events: []string{"*"}, Timeout: 5 * time.Second, MaxRetries: 3}},
+		store:     ms,
+		client:    &http.Client{Timeout: 5 * time.Second},
+	}
+	n.SetGaugePublisher(pub)
+
+	n.drainOnce(context.Background())
+
+	pub.mu.Lock()
+	defer pub.mu.Unlock()
+	if pub.source != telemetry.GaugeSourceNotifier {
+		t.Errorf("published under %q, want %q", pub.source, telemetry.GaugeSourceNotifier)
+	}
+	if pub.g.NotificationQueueDepth == nil || *pub.g.NotificationQueueDepth != 42 {
+		t.Errorf("published depth %v, want 42", pub.g.NotificationQueueDepth)
+	}
+}
+
 // TestDrainOnce_RetriesOnFailure verifies the drain once retries on failure contract.
 // Asserts that expected ID 1 retried, got.
 func TestDrainOnce_RetriesOnFailure(t *testing.T) {
@@ -658,6 +716,12 @@ type failingOutboxStore struct {
 	pending     []core.NotificationRow
 	completeErr error
 	retryErr    error
+}
+
+// NotificationQueueDepth fails, so the drain's depth publish takes its
+// error path.
+func (m *failingOutboxStore) NotificationQueueDepth(_ context.Context) (int64, error) {
+	return 0, errors.New("count failed")
 }
 
 // InsertNotification inserts notification.

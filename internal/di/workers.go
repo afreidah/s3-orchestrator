@@ -93,7 +93,9 @@ func ProvideRebalancer(i do.Injector) (*worker.Rebalancer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewRebalancer(c.Runtime, c.Coord, c.Stores), nil
+	rb := worker.NewRebalancer(c.Runtime, c.Coord, c.Stores)
+	rb.SetGaugePublisher(c.Runtime)
+	return rb, nil
 }
 
 // ProvideReplicator constructs the replication worker. It takes the encryptor
@@ -163,13 +165,15 @@ func ProvideCleanupWorker(i do.Injector) (*worker.CleanupWorker, error) {
 	if concurrency <= 0 {
 		concurrency = 10
 	}
-	return worker.NewCleanupWorker(worker.CleanupWorkerDeps{
+	w := worker.NewCleanupWorker(worker.CleanupWorkerDeps{
 		Ops:              rt,
 		Store:            stores,
 		Concurrency:      concurrency,
 		InstanceID:       id.String(),
 		ClaimGracePeriod: cfg.CleanupQueue.ClaimGracePeriod,
-	}), nil
+	})
+	w.SetGaugePublisher(rt)
+	return w, nil
 }
 
 // ProvidePendingReaper constructs the pending-reaper worker. The
@@ -186,13 +190,15 @@ func ProvidePendingReaper(i do.Injector) (*worker.PendingReaper, error) {
 	if c.Stores == nil {
 		return nil, fmt.Errorf("pending pattern enabled but MetadataStore resolved to nil")
 	}
-	return worker.NewPendingReaper(worker.PendingReaperDeps{
+	r := worker.NewPendingReaper(worker.PendingReaperDeps{
 		Ops:       c.Runtime,
 		Placement: c.Coord,
 		Store:     c.Stores,
 		MinAge:    c.Cfg.WritePath.PendingPattern.MinAge,
 		BatchSize: c.Cfg.WritePath.PendingPattern.BatchSize,
-	}), nil
+	})
+	r.SetGaugePublisher(c.Runtime)
+	return r, nil
 }
 
 // ProvideScrubber constructs the integrity-verification worker.
@@ -205,13 +211,15 @@ func ProvideScrubber(i do.Injector) (*worker.Scrubber, error) {
 	if err != nil {
 		return nil, err
 	}
-	return worker.NewScrubber(worker.ScrubberDeps{
+	s := worker.NewScrubber(worker.ScrubberDeps{
 		Ops:       c.Runtime,
 		Placement: c.Coord,
 		Store:     c.Stores,
 		Encryptor: enc,
 		Codec:     codec,
-	}), nil
+	})
+	s.SetGaugePublisher(c.Runtime)
+	return s, nil
 }
 
 // ProvideReconciler constructs the bucket reconciler worker. Registered

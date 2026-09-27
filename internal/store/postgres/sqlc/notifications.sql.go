@@ -89,6 +89,17 @@ func (q *Queries) InsertNotification(ctx context.Context, arg InsertNotification
 	return err
 }
 
+const notificationQueueDepth = `-- name: NotificationQueueDepth :one
+SELECT COUNT(*)::bigint FROM notification_outbox WHERE attempts < 10
+`
+
+func (q *Queries) NotificationQueueDepth(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, notificationQueueDepth)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const retryNotification = `-- name: RetryNotification :exec
 UPDATE notification_outbox
 SET attempts = attempts + 1,

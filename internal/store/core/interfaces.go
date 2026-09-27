@@ -350,6 +350,7 @@ type ProvisioningStore interface {
 type NotificationOutbox interface {
 	InsertNotification(ctx context.Context, eventType, payload, endpointURL string) error
 	GetPendingNotifications(ctx context.Context, limit int) ([]NotificationRow, error)
+	NotificationQueueDepth(ctx context.Context) (int64, error)
 	CompleteNotification(ctx context.Context, id int64) error
 	RetryNotification(ctx context.Context, id int64, backoff time.Duration, lastError string) error
 }

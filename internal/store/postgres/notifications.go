@@ -55,6 +55,13 @@ func notificationFromRow(r *db.GetPendingNotificationsRow) core.NotificationRow 
 	}
 }
 
+// NotificationQueueDepth counts the notifications still to be delivered,
+// including those waiting out a retry backoff. Rows past the attempt limit are
+// never sent again and are not counted.
+func (s *Store) NotificationQueueDepth(ctx context.Context) (int64, error) {
+	return s.queries.NotificationQueueDepth(ctx)
+}
+
 // CompleteNotification removes a delivered notification from the outbox.
 // Satisfies the notify.OutboxStore interface.
 func (s *Store) CompleteNotification(ctx context.Context, id int64) error {

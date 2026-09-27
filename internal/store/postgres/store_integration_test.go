@@ -431,6 +431,47 @@ func TestStoreInt_NotificationsOutbox(t *testing.T) {
 	}
 }
 
+// TestStoreInt_NotificationQueueDepth verifies the depth counts a
+// notification still to be delivered and stops counting it once it is past
+// the attempt limit. The store is shared across tests, so it asserts deltas.
+func TestStoreInt_NotificationQueueDepth(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	before, err := s.NotificationQueueDepth(ctx)
+	if err != nil {
+		t.Fatalf("NotificationQueueDepth: %v", err)
+	}
+
+	if err := s.InsertNotification(ctx, "depth.event", `{}`, "https://example.invalid/depth"); err != nil {
+		t.Fatalf("InsertNotification: %v", err)
+	}
+	if got, _ := s.NotificationQueueDepth(ctx); got != before+1 {
+		t.Fatalf("depth after insert = %d, want %d", got, before+1)
+	}
+
+	pending, err := s.GetPendingNotifications(ctx, 1000)
+	if err != nil {
+		t.Fatalf("GetPendingNotifications: %v", err)
+	}
+	var id int64
+	for _, p := range pending {
+		if p.EventType == "depth.event" {
+			id = p.ID
+		}
+	}
+	if id == 0 {
+		t.Fatal("depth.event notification not found")
+	}
+	for range 10 {
+		if err := s.RetryNotification(ctx, id, time.Second, "exhaust"); err != nil {
+			t.Fatalf("RetryNotification: %v", err)
+		}
+	}
+	if got, _ := s.NotificationQueueDepth(ctx); got != before {
+		t.Errorf("depth after exhausting attempts = %d, want %d", got, before)
+	}
+}
+
 // -------------------------------------------------------------------------
 // USAGE FLUSH
 // -------------------------------------------------------------------------

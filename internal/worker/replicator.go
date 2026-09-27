@@ -156,7 +156,6 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 	}
 
 	if len(locations) == 0 {
-		telemetry.ReplicationPending.Set(0)
 		telemetry.ReplicationRunsTotal.WithLabelValues(WorkSummary{}.Outcome()).Inc()
 		telemetry.ReplicationDuration.Observe(time.Since(start).Seconds())
 		return ReplicationSummary{}, nil
@@ -169,7 +168,10 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 	// store for least-utilized / first-with-space backend per call. Over-
 	// quota races are caught by the backend layer (RecordReplica returns an
 	// error) so the worst case is a wasted copy that gets cleaned up.
-	telemetry.ReplicationPending.Set(float64(len(tasks)))
+	//
+	// The pending gauge is the fleet snapshot's ledger count, not this
+	// batch: a pass sees at most one batch, and every instance serves the
+	// snapshot's figure.
 	var created atomic.Int64
 	runner := BatchRunner[replicaTask]{
 		Name:        "replication",
@@ -179,7 +181,6 @@ func (r *Replicator) replicate(ctx context.Context, cfg config.ReplicationConfig
 		Key:         func(t replicaTask) string { return t.key },
 	}
 	sum := runner.Run(ctx, tasks, func(ctx context.Context, task replicaTask) ItemResult {
-		defer telemetry.ReplicationPending.Dec()
 		var res ItemResult // zero value (ItemSkipped) when admission blocks the work
 		WithAdmission(ctx, r.ops, WorkerNameReplicator, func() {
 			outcome := r.ReplicateObject(ctx, task.key, task.copies, task.needed)

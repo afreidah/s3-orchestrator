@@ -99,6 +99,11 @@ func (r recordingFleet) LoadFleetMetrics(_ context.Context) error {
 	return r.err
 }
 
+func (r recordingFleet) LoadWorkerGauges(_ context.Context) error {
+	*r.calls = append(*r.calls, "LoadWorkerGauges")
+	return r.err
+}
+
 func (r recordingFleet) RefreshUsageBaselines(_ context.Context) error {
 	*r.calls = append(*r.calls, "RefreshUsageBaselines")
 	return r.err
@@ -266,7 +271,8 @@ func TestServiceWorkClosures_RunOnceCovers(t *testing.T) {
 func TestUsageFlushService_FlushTick(t *testing.T) {
 	t.Parallel()
 	storeErr := errors.New("store down")
-	shared := []string{"FlushQuota", "FlushUsage", "UpdateFleetMetrics", "RefreshUsageBaselines"}
+	single := []string{"FlushQuota", "FlushUsage", "UpdateFleetMetrics", "RefreshUsageBaselines"}
+	won := []string{"FlushQuota", "FlushUsage", "UpdateFleetMetrics", "LoadWorkerGauges", "RefreshUsageBaselines"}
 
 	tests := []struct {
 		name   string
@@ -275,10 +281,10 @@ func TestUsageFlushService_FlushTick(t *testing.T) {
 		err    error
 		want   []string
 	}{
-		{"redis lock lost", true, fakeLocker{}, nil, []string{"FlushQuota", "LoadFleetMetrics", "RefreshUsageBaselines"}},
-		{"redis lock won", true, acquiringLocker{}, nil, shared},
-		{"no redis takes no lock", false, fakeLocker{}, nil, shared},
-		{"errors do not stop the tick", true, acquiringLocker{}, storeErr, shared},
+		{"redis lock lost", true, fakeLocker{}, nil, []string{"FlushQuota", "LoadFleetMetrics", "LoadWorkerGauges", "RefreshUsageBaselines"}},
+		{"redis lock won", true, acquiringLocker{}, nil, won},
+		{"no redis takes no lock", false, fakeLocker{}, nil, single},
+		{"errors do not stop the tick", true, acquiringLocker{}, storeErr, won},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -53,7 +53,7 @@ notifications:
 
 | Metric | Meaning |
 |---|---|
-| `s3o_notification_queue_depth` | Current queued rows |
+| `s3o_notification_queue_depth` | Notifications still to be delivered, including those waiting out a retry backoff |
 | `s3o_notification_sent_total` | Successful POSTs by endpoint and event type |
 | `s3o_notification_failed_total` | POST failures (counted before retry) |
 | `s3o_notification_dropped_total` | Rows that exceeded `max_retries` and were dropped |

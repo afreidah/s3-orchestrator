@@ -75,6 +75,7 @@ func Permissive(m *MockMetadataStore) {
 	r.ListParts(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.GetPendingCleanups(a, a).Return(nil, nil).AnyTimes()
 	r.GetPendingNotifications(a, a).Return(nil, nil).AnyTimes()
+	r.NotificationQueueDepth(a).Return(int64(0), nil).AnyTimes()
 	r.GetQuotaStats(a).Return(nil, nil).AnyTimes()
 	r.GetLeastRecentlyScrubbedObjects(a, a, a, a).Return(nil, nil).AnyTimes()
 	r.CountScrubCandidatesOnBackends(a, a, a).Return(int64(0), nil).AnyTimes()

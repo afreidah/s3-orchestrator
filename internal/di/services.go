@@ -144,20 +144,7 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 	}
 
 	if s.flusher.RedisCounterConfigured() {
-		acquired, err := s.locker.WithAdvisoryLock(ctx, core.LockUsageFlush,
-			func(lockCtx context.Context) error {
-				s.flushSharedUsage(lockCtx)
-				return nil
-			})
-		if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
-			s.log.ErrorContext(ctx, "tick failed", "error", err)
-		}
-		if !acquired {
-			s.log.DebugContext(ctx, "usage flush skipped, another instance holds the lock")
-			if err := s.fleet.LoadFleetMetrics(ctx); err != nil {
-				s.log.WarnContext(ctx, "fleet snapshot load failed", "error", err)
-			}
-		}
+		s.flushFleetTick(ctx)
 	} else {
 		s.flushSharedUsage(ctx)
 	}
@@ -165,6 +152,30 @@ func (s *usageFlushService) flushTick(ctx context.Context) {
 	// After the flush, so the lock holder's baseline includes what it wrote.
 	if err := s.fleet.RefreshUsageBaselines(ctx); err != nil && !errors.Is(err, core.ErrDBUnavailable) {
 		s.log.ErrorContext(ctx, "usage baseline refresh failed", "error", err)
+	}
+}
+
+// flushFleetTick is the shared-counter half of a tick: the lock holder flushes
+// and publishes the fleet snapshot, the others load it, and every instance
+// loads the worker gauges, which each worker's own lock holder published and
+// which need not be this instance or the flush lock's holder.
+func (s *usageFlushService) flushFleetTick(ctx context.Context) {
+	acquired, err := s.locker.WithAdvisoryLock(ctx, core.LockUsageFlush,
+		func(lockCtx context.Context) error {
+			s.flushSharedUsage(lockCtx)
+			return nil
+		})
+	if err != nil && !errors.Is(err, core.ErrDBUnavailable) {
+		s.log.ErrorContext(ctx, "tick failed", "error", err)
+	}
+	if !acquired {
+		s.log.DebugContext(ctx, "usage flush skipped, another instance holds the lock")
+		if err := s.fleet.LoadFleetMetrics(ctx); err != nil {
+			s.log.WarnContext(ctx, "fleet snapshot load failed", "error", err)
+		}
+	}
+	if err := s.fleet.LoadWorkerGauges(ctx); err != nil {
+		s.log.WarnContext(ctx, "worker gauges load failed", "error", err)
 	}
 }
 

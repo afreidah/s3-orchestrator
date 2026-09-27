@@ -20,6 +20,9 @@ WHERE next_retry <= NOW() AND attempts < 10
 ORDER BY created_at ASC
 LIMIT $1;
 
+-- name: NotificationQueueDepth :one
+SELECT COUNT(*)::bigint FROM notification_outbox WHERE attempts < 10;
+
 -- name: CompleteNotification :exec
 DELETE FROM notification_outbox WHERE id = $1;
 

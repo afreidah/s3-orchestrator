@@ -368,8 +368,11 @@ func ProvideNotifier(i do.Injector) (*notify.Notifier, error) {
 	r := newResolver(i)
 	cfg := r.Resolve[*config.Config]()
 	stores := r.Resolve[metadataStore]()
+	rt := r.Resolve[*infra.BackendRuntime]()
 	if r.err != nil {
 		return nil, r.err
 	}
-	return notify.NewNotifier(&cfg.Notifications, stores), nil
+	n := notify.NewNotifier(&cfg.Notifications, stores)
+	n.SetGaugePublisher(rt)
+	return n, nil
 }

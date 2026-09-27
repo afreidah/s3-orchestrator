@@ -2083,6 +2083,38 @@ func TestNotificationOutbox_Retry(t *testing.T) {
 	}
 }
 
+// TestNotificationQueueDepth verifies the depth counts every notification still
+// to be delivered, including one waiting out a backoff, and not one past the
+// attempt limit.
+func TestNotificationQueueDepth(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mustInsertNotification(t, s, "test", `{}`, "https://hook.example.com")
+	mustInsertNotification(t, s, "test", `{}`, "https://hook.example.com")
+	pending, _ := s.GetPendingNotifications(ctx, 10)
+	if len(pending) != 2 {
+		t.Fatalf("pending = %d, want 2", len(pending))
+	}
+
+	if err := s.RetryNotification(ctx, pending[0].ID, time.Hour, "timeout"); err != nil {
+		t.Fatalf("RetryNotification: %v", err)
+	}
+	if n, err := s.NotificationQueueDepth(ctx); err != nil || n != 2 {
+		t.Errorf("depth with one backing off = %d, %v; want 2", n, err)
+	}
+
+	for range 10 {
+		if err := s.RetryNotification(ctx, pending[1].ID, time.Hour, "timeout"); err != nil {
+			t.Fatalf("RetryNotification: %v", err)
+		}
+	}
+	if n, err := s.NotificationQueueDepth(ctx); err != nil || n != 1 {
+		t.Errorf("depth with one exhausted = %d, %v; want 1", n, err)
+	}
+}
+
 // -------------------------------------------------------------------------
 // ADVISORY LOCK
 // -------------------------------------------------------------------------

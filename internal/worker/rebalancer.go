@@ -50,6 +50,7 @@ type Rebalancer struct {
 	ops       Ops
 	placement Placement
 	store     RebalancerStore
+	gauges    GaugePublisher
 	cfg       syncutil.AtomicConfig[config.RebalanceConfig]
 }
 
@@ -60,6 +61,12 @@ func NewRebalancer(ops Ops, placement Placement, store RebalancerStore) *Rebalan
 	must.NotNil("placement", placement)
 	must.NotNil("store", store)
 	return &Rebalancer{ops: ops, placement: placement, store: store, log: slog.Default().With(logfmt.Component("rebalancer"))}
+}
+
+// SetGaugePublisher shares the pending-move gauge with every instance. Called
+// once at wiring, before the first pass; without it the gauge is set locally.
+func (r *Rebalancer) SetGaugePublisher(p GaugePublisher) {
+	r.gauges = p
 }
 
 // SetConfig atomically stores the rebalance configuration.
@@ -143,7 +150,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 			return RebalanceSummary{}, fmt.Errorf("failed to plan rebalance: %w", err)
 		}
 
-		telemetry.RebalancePending.Set(float64(len(plan)))
+		r.publishPending(ctx, int64(len(plan)))
 
 		if len(plan) == 0 {
 			r.log.InfoContext(ctx, "rebalance skipping, empty plan", "strategy", cfg.Strategy)
@@ -152,6 +159,7 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 		}
 
 		sum := r.ExecuteMoves(ctx, plan, cfg.Strategy, cfg.Concurrency, observer)
+		r.publishPending(ctx, 0)
 
 		telemetry.RebalanceRunsTotal.WithLabelValues(cfg.Strategy, sum.Outcome()).Inc()
 		telemetry.RebalanceDuration.WithLabelValues(cfg.Strategy).Observe(time.Since(start).Seconds())
@@ -164,6 +172,12 @@ func (r *Rebalancer) Rebalance(ctx context.Context, cfg config.RebalanceConfig, 
 		)
 		return RebalanceSummary{WorkSummary: sum}, nil
 	})
+}
+
+// publishPending shares how many moves the current pass has planned: the plan
+// size when it starts, zero when it ends.
+func (r *Rebalancer) publishPending(ctx context.Context, n int64) {
+	publishGauges(ctx, r.gauges, telemetry.GaugeSourceRebalancer, telemetry.WorkerGauges{RebalancePending: &n})
 }
 
 // -------------------------------------------------------------------------
@@ -539,7 +553,6 @@ func (r *Rebalancer) ExecuteMoves(ctx context.Context, plan []RebalanceMove, str
 		Key:         RebalanceMove.progressLabel,
 	}
 	return runner.Run(ctx, plan, func(ctx context.Context, mv RebalanceMove) ItemResult {
-		defer telemetry.RebalancePending.Dec()
 		var res ItemResult // zero value (ItemSkipped) when admission blocks the move
 		WithAdmission(ctx, r.ops, WorkerNameRebalancer, func() {
 			if r.ExecuteOneMove(ctx, mv, strategy) {

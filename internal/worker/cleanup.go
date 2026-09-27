@@ -36,6 +36,7 @@ type CleanupWorker struct {
 	concurrency      int
 	instanceID       string
 	claimGracePeriod time.Duration
+	gauges           GaugePublisher
 }
 
 // CleanupWorkerDeps groups the cleanup worker's constructor parameters.
@@ -62,6 +63,12 @@ func NewCleanupWorker(deps CleanupWorkerDeps) *CleanupWorker {
 		claimGracePeriod: deps.ClaimGracePeriod,
 		log:              slog.Default().With(logfmt.Component("cleanup_worker")),
 	}
+}
+
+// SetGaugePublisher shares the queue depths with every instance. Called once
+// at wiring, before the first tick; without it the gauges are set locally.
+func (w *CleanupWorker) SetGaugePublisher(p GaugePublisher) {
+	w.gauges = p
 }
 
 // -------------------------------------------------------------------------
@@ -289,14 +296,16 @@ func (w *CleanupWorker) scheduleCleanupRetry(ctx context.Context, item *core.Cle
 	}
 }
 
-// recordCleanupDepths refreshes the cleanup-queue and DLQ depth gauges
-// at the end of a tick. Errors are tolerated because depth reads are
-// purely informational.
+// recordCleanupDepths publishes the cleanup-queue and DLQ depths at the end
+// of a tick. A failed read leaves that gauge as it was, because depth reads
+// are purely informational.
 func (w *CleanupWorker) recordCleanupDepths(ctx context.Context) {
+	var g telemetry.WorkerGauges
 	if depth, err := w.store.CleanupQueueDepth(ctx); err == nil {
-		telemetry.CleanupQueueDepth.Set(float64(depth))
+		g.CleanupQueueDepth = &depth
 	}
 	if dlqDepth, err := w.store.CleanupDLQDepth(ctx); err == nil {
-		telemetry.CleanupDLQDepth.Set(float64(dlqDepth))
+		g.CleanupDLQDepth = &dlqDepth
 	}
+	publishGauges(ctx, w.gauges, telemetry.GaugeSourceCleanup, g)
 }

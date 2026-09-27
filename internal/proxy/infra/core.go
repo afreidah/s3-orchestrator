@@ -37,6 +37,7 @@ import (
 	"github.com/afreidah/s3-orchestrator/internal/backend"
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/counter"
+	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/accounting"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/s3op"
@@ -342,6 +343,21 @@ func (c *BackendRuntime) UpdateFleetMetrics(ctx context.Context) error {
 // LoadFleetMetrics delegates to the metrics collector.
 func (c *BackendRuntime) LoadFleetMetrics(ctx context.Context) error {
 	return c.metricsCollector.LoadFleetMetrics(ctx)
+}
+
+// LoadWorkerGauges delegates to the metrics collector.
+func (c *BackendRuntime) LoadWorkerGauges(ctx context.Context) error {
+	return c.metricsCollector.LoadWorkerGauges(ctx)
+}
+
+// PublishWorkerGauges delegates to the metrics collector, or applies the
+// gauges locally when none is installed.
+func (c *BackendRuntime) PublishWorkerGauges(ctx context.Context, source string, g telemetry.WorkerGauges) {
+	if c.metricsCollector == nil {
+		g.Apply()
+		return
+	}
+	c.metricsCollector.PublishWorkerGauges(ctx, source, g)
 }
 
 // RefreshUsageBaselines delegates to the metrics collector.

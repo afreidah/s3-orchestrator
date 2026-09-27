@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/progress"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/metrics"
 	"github.com/afreidah/s3-orchestrator/internal/transport/admin/adminapi"
@@ -95,7 +94,6 @@ func (h *Handler) handleOverReplicationStatus(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	telemetry.OverReplicationPending.Set(float64(res.Pending))
 	httputil.WriteJSON(w, http.StatusOK, adminapi.OverReplicationStatusResponse{
 		Status:  statusOK,
 		Factor:  res.Factor,

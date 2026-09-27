@@ -98,6 +98,19 @@ type Notifier struct {
 	store     OutboxStore
 	client    *http.Client
 	dampener  *syncutil.TTLCache[string, struct{}]
+	gauges    GaugePublisher
+}
+
+// GaugePublisher shares the outbox depth with every instance.
+// *metrics.Collector satisfies it.
+type GaugePublisher interface {
+	PublishWorkerGauges(ctx context.Context, source string, g telemetry.WorkerGauges)
+}
+
+// SetGaugePublisher shares the outbox depth with every instance. Called once at
+// wiring, before the first drain; without it the gauge is set locally.
+func (n *Notifier) SetGaugePublisher(p GaugePublisher) {
+	n.gauges = p
 }
 
 // NewNotifier creates a notifier backed by the given outbox store. Registers
@@ -230,6 +243,23 @@ func (n *Notifier) Close() {
 	}
 }
 
+// publishDepth shares how many notifications are still to be delivered once
+// the batch is done: the whole outbox backlog, not the batch just processed. A
+// failed count leaves the gauge as it was.
+func (n *Notifier) publishDepth(ctx context.Context) {
+	depth, err := n.store.NotificationQueueDepth(ctx)
+	if err != nil {
+		n.log.WarnContext(ctx, "failed to count pending notifications", "error", err)
+		return
+	}
+	g := telemetry.WorkerGauges{NotificationQueueDepth: &depth}
+	if n.gauges == nil {
+		g.Apply()
+		return
+	}
+	n.gauges.PublishWorkerGauges(ctx, telemetry.GaugeSourceNotifier, g)
+}
+
 // drainOnce processes one batch of pending notifications under an advisory lock.
 func (n *Notifier) drainOnce(ctx context.Context) {
 	acquired, err := n.store.WithAdvisoryLock(ctx, advisoryLockKey, func(lockCtx context.Context) error {
@@ -237,10 +267,10 @@ func (n *Notifier) drainOnce(ctx context.Context) {
 		if err != nil {
 			return err
 		}
-		telemetry.NotificationQueueDepth.Set(float64(len(rows)))
 		for _, row := range rows {
 			n.processPendingRow(lockCtx, row)
 		}
+		n.publishDepth(lockCtx)
 		return nil
 	})
 	if err != nil {

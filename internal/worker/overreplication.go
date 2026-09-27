@@ -155,7 +155,8 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 		}
 	}
 
-	telemetry.OverReplicationPending.Set(float64(len(tasks)))
+	// The pending gauge is the fleet snapshot's ledger count, which every
+	// instance serves; this pass's task list is one batch of it.
 	var removed atomic.Int64
 	runner := BatchRunner[cleanupTask]{
 		Name:        "over_replication",
@@ -165,7 +166,6 @@ func (c *OverReplicationCleaner) clean(ctx context.Context, cfg config.Replicati
 		Key:         func(t cleanupTask) string { return t.key },
 	}
 	sum := runner.Run(ctx, tasks, func(ctx context.Context, task cleanupTask) ItemResult {
-		defer telemetry.OverReplicationPending.Dec()
 		var res ItemResult // zero value (ItemSkipped) when admission blocks the work
 		WithAdmission(ctx, c.ops, WorkerNameOverReplication, func() {
 			n, failures := c.cleanObject(ctx, task.key, task.copies, task.excess, cfg.Factor, quotaStats)
@@ -207,7 +207,6 @@ func (c *OverReplicationCleaner) reportCleanCycle(ctx context.Context, start tim
 	telemetry.OverReplicationRunsTotal.WithLabelValues(out.summary.Outcome()).Inc()
 	telemetry.OverReplicationDuration.Observe(duration.Seconds())
 	if out.objectsChecked == 0 {
-		telemetry.OverReplicationPending.Set(0)
 		return
 	}
 	telemetry.OverReplicationRemovedTotal.Add(float64(out.summary.CopiesRemoved))

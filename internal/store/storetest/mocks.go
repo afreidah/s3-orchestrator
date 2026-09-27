@@ -1323,6 +1323,21 @@ func (mr *MockMetadataStoreMockRecorder) MoveObjectLocation(ctx, key, fromBacken
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveObjectLocation", reflect.TypeOf((*MockMetadataStore)(nil).MoveObjectLocation), ctx, key, fromBackend, toBackend)
 }
 
+// NotificationQueueDepth mocks base method.
+func (m *MockMetadataStore) NotificationQueueDepth(ctx context.Context) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "NotificationQueueDepth", ctx)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// NotificationQueueDepth indicates an expected call of NotificationQueueDepth.
+func (mr *MockMetadataStoreMockRecorder) NotificationQueueDepth(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NotificationQueueDepth", reflect.TypeOf((*MockMetadataStore)(nil).NotificationQueueDepth), ctx)
+}
+
 // PendingDepth mocks base method.
 func (m *MockMetadataStore) PendingDepth(ctx context.Context) (int64, error) {
 	m.ctrl.T.Helper()

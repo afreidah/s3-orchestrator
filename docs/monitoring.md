@@ -363,7 +363,7 @@ All metrics are prefixed with `s3o_`. Exposed at `/metrics` when `telemetry.metr
 | `s3o_integrity_usage_declined_total` | Counter | - | Copies the scrubber skipped because the backend holding them was at its usage limit. A sustained rate means coverage is bounded by egress budget, not by scrubber throughput |
 | `s3o_auth_streaming_requests_total` | Counter | variant | Streaming-payload SigV4 PUTs by variant |
 | `s3o_auth_streaming_rejections_total` | Counter | reason | Chunk-validation failures (tampered body, signature mismatch, etc.) |
-| `s3o_notification_queue_depth` | Gauge | - | Pending webhook events queued for delivery |
+| `s3o_notification_queue_depth` | Gauge | - | Webhook events still to be delivered, including those waiting out a retry backoff |
 | `s3o_notification_sent_total` | Counter | endpoint, event_type | Successfully POSTed webhook events |
 | `s3o_notification_failed_total` | Counter | endpoint, event_type | Webhook POST failures (before retry) |
 | `s3o_notification_dropped_total` | Counter | endpoint, event_type | Webhook events dropped (dampened, or the outbox enqueue failed) |
