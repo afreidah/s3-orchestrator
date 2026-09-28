@@ -27,12 +27,22 @@ import (
 // replication factor. Returns all rows for those objects so callers know which
 // backends already have copies.
 //
-// A key's copies are the rows it holds plus the companion intents still
-// uploading one, because a write that places its own copies commits them a
-// moment apart and the intent is the statement that the copy is on its way.
-// Counting only the rows makes every such write look under-replicated for that
-// moment, and a scan landing inside it reads the object back to make a copy the
-// write is already placing.
+// A key's copies are the rows it holds plus the intents still uploading one,
+// because a write that places its own copies commits them a moment apart and
+// the intent is the statement that the copy is on its way. Counting only the
+// rows makes every such write look under-replicated for that moment, and a
+// scan landing inside it reads the object back to make a copy the write is
+// already placing.
+//
+// Every live intent counts, whatever its role. The role tells the reaper what
+// to do with an abandoned intent; it does not say which copy records the
+// object. That is the first to land, and when it is a companion the write's
+// primary intent is the one still in flight: a count of companions alone read
+// such a key as one copy short, and the worker copied it to the very backend
+// the primary was landing on. An intent a later write to the same key adds
+// counts too, harmlessly, since that write replaces the object; one left by a
+// write that never finished holds replication off only until the reaper
+// clears it.
 func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT ol.object_key, ol.backend_name, ol.size_bytes, ol.encrypted,
@@ -46,7 +56,6 @@ func (s *Store) GetUnderReplicatedObjects(ctx context.Context, factor, limit int
 		     LEFT JOIN (
 		         SELECT object_key, COUNT(*) AS copies
 		         FROM pending_objects
-		         WHERE role = 'companion'
 		         GROUP BY object_key
 		     ) i ON i.object_key = ol2.object_key
 		     WHERE ol2.managed
@@ -98,7 +107,6 @@ func (s *Store) GetUnderReplicatedObjectsExcluding(ctx context.Context, factor, 
 		    LEFT JOIN (
 		        SELECT object_key, COUNT(*) AS copies
 		        FROM pending_objects
-		        WHERE role = 'companion'
 		        GROUP BY object_key
 		    ) i ON i.object_key = ol2.object_key
 		    WHERE ol2.backend_name NOT IN (SELECT value FROM json_each(?)) AND ol2.managed

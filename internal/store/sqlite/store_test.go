@@ -1323,6 +1323,56 @@ func TestReplication_UnderAndOver(t *testing.T) {
 	}
 }
 
+// TestReplication_ALiveIntentCountsWhateverItsRole verifies a key whose write
+// is still placing copies is not under-replicated whichever of its intents is
+// the one still uploading. The first copy to land records the object, and when
+// that is a companion the write's primary intent is the one in flight; a count
+// of companion intents alone read such a key as one copy short.
+func TestReplication_ALiveIntentCountsWhateverItsRole(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.SyncQuotaLimits(ctx, []config.BackendConfig{
+		{Name: "backend-a", QuotaBytes: 1 << 30},
+		{Name: "backend-b", QuotaBytes: 1 << 30},
+		{Name: "backend-c", QuotaBytes: 1 << 30},
+	}); err != nil {
+		t.Fatalf("SyncQuotaLimits: %v", err)
+	}
+
+	primary := core.PendingObject{IntentID: "i-primary", ObjectKey: "bucket/k", BackendName: "backend-b", SizeBytes: 1024}
+	companion := core.PendingObject{IntentID: "i-companion", ObjectKey: "bucket/k", BackendName: "backend-c", SizeBytes: 1024, Role: core.PendingRoleCompanion}
+	for _, p := range []*core.PendingObject{&primary, &companion} {
+		if fits, err := s.InsertPendingIfFits(ctx, p); err != nil || !fits {
+			t.Fatalf("InsertPendingIfFits %s: fits=%v err=%v", p.IntentID, fits, err)
+		}
+	}
+	// A companion on backend-a landed first and recorded the object; the
+	// primary and the other companion are still uploading.
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: "bucket/k", Size: 1024,
+		Copies:  []core.ObjectCopy{{Backend: "backend-a"}},
+		Placing: []core.ObjectCopy{{Backend: "backend-b", IntentID: "i-primary"}, {Backend: "backend-c", IntentID: "i-companion"}},
+	}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	under, err := s.GetUnderReplicatedObjects(ctx, 3, 10)
+	if err != nil {
+		t.Fatalf("GetUnderReplicatedObjects: %v", err)
+	}
+	if len(under) != 0 {
+		t.Errorf("under-replicated rows = %d, want 0: one copy recorded and two intents live meet factor 3", len(under))
+	}
+	under, err = s.GetUnderReplicatedObjectsExcluding(ctx, 3, 10, []string{"backend-d"})
+	if err != nil {
+		t.Fatalf("GetUnderReplicatedObjectsExcluding: %v", err)
+	}
+	if len(under) != 0 {
+		t.Errorf("under-replicated rows (excluding) = %d, want 0", len(under))
+	}
+}
+
 // TestRecordReplica_Duplicate verifies the record replica duplicate contract.
 // Asserts that RecordReplica duplicate:.
 func TestRecordReplica_Duplicate(t *testing.T) {

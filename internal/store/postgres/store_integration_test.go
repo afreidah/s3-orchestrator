@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 )
 
@@ -851,6 +852,65 @@ func TestStoreInt_ReplicationQueries(t *testing.T) {
 	}
 	if _, err := s.CountOverReplicatedObjects(ctx, 1); err != nil {
 		t.Errorf("CountOverReplicatedObjects: %v", err)
+	}
+}
+
+// TestStoreInt_Replication_ALiveIntentCountsWhateverItsRole verifies, against
+// Postgres, that a key whose write is still placing copies is not
+// under-replicated whichever of its intents is the one still uploading: with
+// one copy recorded and a primary and a companion intent live, factor 3 is met.
+func TestStoreInt_Replication_ALiveIntentCountsWhateverItsRole(t *testing.T) {
+	s := adapterPgStore(t)
+	ctx := context.Background()
+	if err := s.SyncQuotaLimits(ctx, []config.BackendConfig{
+		{Name: "backend-a", QuotaBytes: 1 << 30},
+		{Name: "backend-b", QuotaBytes: 1 << 30},
+		{Name: "backend-c", QuotaBytes: 1 << 30},
+	}); err != nil {
+		t.Fatalf("SyncQuotaLimits: %v", err)
+	}
+	key := uniqueKey(t, "k")
+	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
+
+	primary := core.PendingObject{IntentID: uniqueKey(t, "primary"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 1024}
+	companion := core.PendingObject{IntentID: uniqueKey(t, "companion"), ObjectKey: key, BackendName: "backend-c", SizeBytes: 1024, Role: core.PendingRoleCompanion}
+	for _, p := range []*core.PendingObject{&primary, &companion} {
+		if fits, err := s.InsertPendingIfFits(ctx, p); err != nil || !fits {
+			t.Fatalf("InsertPendingIfFits %s: fits=%v err=%v", p.IntentID, fits, err)
+		}
+		defer func(id string) { _ = s.DeletePending(ctx, id) }(p.IntentID)
+	}
+	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{
+		Key: key, Size: 1024,
+		Copies:  []core.ObjectCopy{{Backend: "backend-a"}},
+		Placing: []core.ObjectCopy{{Backend: "backend-b", IntentID: primary.IntentID}, {Backend: "backend-c", IntentID: companion.IntentID}},
+	}); err != nil {
+		t.Fatalf("RecordObject: %v", err)
+	}
+
+	// The fixture is shared, so other tests' keys may be under-replicated;
+	// the assertion is about this key alone.
+	for _, tc := range []struct {
+		name  string
+		query func() ([]core.ObjectLocation, error)
+	}{
+		{"GetUnderReplicatedObjects", func() ([]core.ObjectLocation, error) {
+			return s.GetUnderReplicatedObjects(ctx, 3, 1000)
+		}},
+		{"GetUnderReplicatedObjectsExcluding", func() ([]core.ObjectLocation, error) {
+			return s.GetUnderReplicatedObjectsExcluding(ctx, 3, 1000, []string{"backend-d"})
+		}},
+	} {
+		under, err := tc.query()
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		for _, loc := range under {
+			if loc.ObjectKey == key {
+				t.Errorf("%s: key reported under-replicated at factor 3 with one copy recorded and two intents live", tc.name)
+				break
+			}
+		}
 	}
 }
 

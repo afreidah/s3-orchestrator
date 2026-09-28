@@ -11,16 +11,25 @@
 -- -----------------------------------------------------------------------------
 
 -- name: GetUnderReplicatedObjects :many
--- A key's copies are the rows it holds plus the companion intents still
--- uploading one, because a write that places its own copies commits them a
--- moment apart and the intent is the statement that the copy is on its way.
--- Counting only the rows makes every such write look under-replicated for that
--- moment, and a scan landing inside it reads the object back to make a copy the
--- write is already placing.
+-- A key's copies are the rows it holds plus the intents still uploading one,
+-- because a write that places its own copies commits them a moment apart and
+-- the intent is the statement that the copy is on its way. Counting only the
+-- rows makes every such write look under-replicated for that moment, and a
+-- scan landing inside it reads the object back to make a copy the write is
+-- already placing.
+--
+-- Every live intent counts, whatever its role. The role tells the reaper what
+-- to do with an abandoned intent; it does not say which copy records the
+-- object. That is the first to land, and when it is a companion the write's
+-- primary intent is the one still in flight: a count of companions alone read
+-- such a key as one copy short, and the worker copied it to the very backend
+-- the primary was landing on. An intent a later write to the same key adds
+-- counts too, harmlessly, since that write replaces the object; one left by a
+-- write that never finished holds replication off only until the reaper
+-- clears it.
 WITH inflight AS (
     SELECT object_key, COUNT(*) AS copies
     FROM pending_objects
-    WHERE role = 'companion'
     GROUP BY object_key
 ),
 under_replicated AS (
@@ -45,7 +54,6 @@ ORDER BY ol.object_key ASC, ol.created_at ASC;
 WITH inflight AS (
     SELECT object_key, COUNT(*) AS copies
     FROM pending_objects
-    WHERE role = 'companion'
     GROUP BY object_key
 ),
 under_replicated AS (
