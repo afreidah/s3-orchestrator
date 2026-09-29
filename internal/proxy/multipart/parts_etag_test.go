@@ -96,7 +96,10 @@ func TestGetParts_ReportsTheETagTheClientWasGiven(t *testing.T) {
 		AnyTimes()
 	store.EXPECT().GetParts(gomock.Any(), "upload-1").
 		Return([]core.MultipartPart{
-			{PartNumber: 1, ETag: `"stored-envelope-etag"`, PlaintextETag: "abc123", SizeBytes: 9},
+			{
+				PartNumber: 1, ETag: `"stored-envelope-etag"`, PlaintextETag: "abc123",
+				SizeBytes: 69, Encrypted: true, PlaintextSize: 9,
+			},
 			{PartNumber: 2, ETag: `"legacy-part-etag"`, SizeBytes: 9},
 		}, nil).AnyTimes()
 	storetest.Permissive(store)
@@ -113,10 +116,51 @@ func TestGetParts_ReportsTheETagTheClientWasGiven(t *testing.T) {
 	if parts[0].ETag != `"abc123"` {
 		t.Errorf("part 1 etag = %q, want the client's digest", parts[0].ETag)
 	}
+	if parts[0].SizeBytes != 9 {
+		t.Errorf("part 1 size = %d, want the client-visible plaintext size 9", parts[0].SizeBytes)
+	}
 	// A part uploaded before per-part digests has none to report, so it keeps
 	// the backend value - which is what that client was given at upload.
 	if parts[1].ETag != `"legacy-part-etag"` {
 		t.Errorf("part 2 etag = %q, want the stored value kept for a pre-digest part", parts[1].ETag)
+	}
+}
+
+// TestListParts_ReportsTheSizeTheClientUploaded verifies that the paged listing
+// reports an encrypted part at the size the client sent, not its envelope size.
+func TestListParts_ReportsTheSizeTheClientUploaded(t *testing.T) {
+	t.Parallel()
+	be := backendtest.NewInMemory()
+
+	ctrl := gomock.NewController(t)
+	store := storetest.NewMockMetadataStore(ctrl)
+	store.EXPECT().GetMultipartUpload(gomock.Any(), gomock.Any()).
+		Return(&core.MultipartUpload{UploadID: "upload-1", ObjectKey: "multi/key", BackendName: "b1"}, nil).
+		AnyTimes()
+	store.EXPECT().ListParts(gomock.Any(), "upload-1", 0, 1001).
+		Return([]core.MultipartPart{
+			{
+				PartNumber: 1, ETag: `"stored-envelope-etag"`, PlaintextETag: "abc123",
+				SizeBytes: 69, Encrypted: true, PlaintextSize: 9,
+			},
+			{PartNumber: 2, ETag: `"plain-part-etag"`, SizeBytes: 9},
+		}, nil)
+	storetest.Permissive(store)
+
+	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": be}, nil)
+
+	parts, truncated, err := mgr.ListParts(context.Background(), "multi", "key", "upload-1", 0, 1000)
+	if err != nil {
+		t.Fatalf("ListParts: %v", err)
+	}
+	if truncated || len(parts) != 2 {
+		t.Fatalf("parts = %d truncated = %v, want 2 and false", len(parts), truncated)
+	}
+	if parts[0].SizeBytes != 9 || parts[0].ETag != `"abc123"` {
+		t.Errorf("part 1 = size %d etag %q, want the client's 9 bytes and digest", parts[0].SizeBytes, parts[0].ETag)
+	}
+	if parts[1].SizeBytes != 9 {
+		t.Errorf("part 2 size = %d, want the stored size kept for an unencrypted part", parts[1].SizeBytes)
 	}
 }
 

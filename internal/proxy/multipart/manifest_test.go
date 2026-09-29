@@ -167,6 +167,15 @@ func TestValidateManifestAgainstStored(t *testing.T) {
 			enforceMinSize: true, wantCode: "EntityTooSmall",
 		},
 		{
+			name:     "encrypted part undersized before its envelope",
+			manifest: []core.CompletePart{{PartNumber: 1}, {PartNumber: 2}},
+			stored: []core.MultipartPart{
+				{PartNumber: 1, ETag: "a", SizeBytes: MinPartSizeBytes + 60, Encrypted: true, PlaintextSize: MinPartSizeBytes - 1},
+				{PartNumber: 2, ETag: "b", SizeBytes: 10},
+			},
+			enforceMinSize: true, wantCode: "EntityTooSmall",
+		},
+		{
 			name:     "undersized final part is allowed",
 			manifest: []core.CompletePart{{PartNumber: 1}, {PartNumber: 2}},
 			stored:   storedParts(), enforceMinSize: true,

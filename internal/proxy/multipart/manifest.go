@@ -119,6 +119,24 @@ func clientPartETag(p *core.MultipartPart) string {
 	return p.ETag
 }
 
+// clientPartSize returns the size of the bytes the client uploaded for this
+// part. An encrypted part is stored as a larger envelope, and a client resuming
+// an upload sums the listed sizes to find its offset, so the envelope size
+// would send it past the end of what it has written.
+func clientPartSize(p *core.MultipartPart) int64 {
+	if p.Encrypted {
+		return p.PlaintextSize
+	}
+	return p.SizeBytes
+}
+
+// presentToClient rewrites a stored part into what UploadPart told the client:
+// the digest of the bytes it sent and their size.
+func presentToClient(p *core.MultipartPart) {
+	p.ETag = clientPartETag(p)
+	p.SizeBytes = clientPartSize(p)
+}
+
 // validateManifestAgainstStored compares the manifest to the parts actually
 // held for the upload: every requested part must exist, its ETag must match,
 // and every part but the last must meet the minimum size. stored must be
@@ -157,12 +175,12 @@ func validateManifestAgainstStored(manifest []core.CompletePart, stored []core.M
 		// The final part carries whatever remains, so only the parts before
 		// it have to meet the floor.
 		isFinal := i == len(manifest)-1
-		if enforceMinSize && !isFinal && got.SizeBytes < MinPartSizeBytes {
+		if size := clientPartSize(got); enforceMinSize && !isFinal && size < MinPartSizeBytes {
 			return &core.S3Error{
 				StatusCode: http.StatusBadRequest,
 				Code:       "EntityTooSmall",
 				Message: fmt.Sprintf("Part number %d is %d bytes, below the %d byte minimum for a non-final part",
-					want.PartNumber, got.SizeBytes, MinPartSizeBytes),
+					want.PartNumber, size, MinPartSizeBytes),
 			}
 		}
 	}

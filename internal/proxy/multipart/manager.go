@@ -357,7 +357,7 @@ func (mp *Manager) GetParts(ctx context.Context, bucket, key, uploadID string) (
 		return nil, err
 	}
 	for i := range parts {
-		parts[i].ETag = clientPartETag(&parts[i])
+		presentToClient(&parts[i])
 	}
 	return parts, nil
 }
@@ -392,7 +392,7 @@ func (mp *Manager) ListParts(ctx context.Context, bucket, key, uploadID string, 
 		parts = parts[:maxParts]
 	}
 	for i := range parts {
-		parts[i].ETag = clientPartETag(&parts[i])
+		presentToClient(&parts[i])
 	}
 	return parts, truncated, nil
 }
