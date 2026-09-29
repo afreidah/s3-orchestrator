@@ -358,6 +358,13 @@ func (mp *Manager) GetParts(ctx context.Context, bucket, key, uploadID string) (
 	}
 	for i := range parts {
 		parts[i].ETag = clientPartETag(&parts[i])
+		// Multipart parts can be stored as encrypted envelopes. S3 clients
+		// resume an upload by summing the sizes returned by ListParts, so the
+		// wire-facing size must describe the bytes the client uploaded rather
+		// than the larger encrypted representation held by the backend.
+		if parts[i].Encrypted {
+			parts[i].SizeBytes = parts[i].PlaintextSize
+		}
 	}
 	return parts, nil
 }

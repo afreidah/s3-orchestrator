@@ -96,7 +96,10 @@ func TestGetParts_ReportsTheETagTheClientWasGiven(t *testing.T) {
 		AnyTimes()
 	store.EXPECT().GetParts(gomock.Any(), "upload-1").
 		Return([]core.MultipartPart{
-			{PartNumber: 1, ETag: `"stored-envelope-etag"`, PlaintextETag: "abc123", SizeBytes: 9},
+			{
+				PartNumber: 1, ETag: `"stored-envelope-etag"`, PlaintextETag: "abc123",
+				SizeBytes: 69, Encrypted: true, PlaintextSize: 9,
+			},
 			{PartNumber: 2, ETag: `"legacy-part-etag"`, SizeBytes: 9},
 		}, nil).AnyTimes()
 	storetest.Permissive(store)
@@ -112,6 +115,9 @@ func TestGetParts_ReportsTheETagTheClientWasGiven(t *testing.T) {
 	}
 	if parts[0].ETag != `"abc123"` {
 		t.Errorf("part 1 etag = %q, want the client's digest", parts[0].ETag)
+	}
+	if parts[0].SizeBytes != 9 {
+		t.Errorf("part 1 size = %d, want the client-visible plaintext size 9", parts[0].SizeBytes)
 	}
 	// A part uploaded before per-part digests has none to report, so it keeps
 	// the backend value - which is what that client was given at upload.
