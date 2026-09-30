@@ -85,7 +85,15 @@ For HTTPS endpoints, unsigned payload is enabled by default. For plain HTTP endp
     unsigned_payload: true   # stream uploads without buffering (auto-enabled for HTTPS)
 ```
 
-Set `unsigned_payload: false` to force payload hashing. This buffers the entire object in memory before uploading - only use this if you have a specific compliance requirement for end-to-end payload integrity independent of TLS.
+Set `unsigned_payload: false` to force payload hashing and make incoming streams
+replayable for SDK retries. Bodies up to 32 MiB are materialized in memory;
+larger bodies use a self-unlinking temporary file. Configure `server.spill_dir`
+on suitable protected storage, or set `TMPDIR` for the service, and allow capacity
+for concurrent uploads. This mode also helps backends that temporarily return
+`503 SlowDown`: unsigned streaming can fail with "request stream is not
+seekable" when the SDK tries to retry a one-shot body. The tradeoff is buffering
+the incoming body before the backend upload starts. Already-seekable bodies
+are passed through without that extra copy.
 
 Streaming never means an unknown length: every upload declares its size up front, so `Content-Length` is always sent and `Transfer-Encoding: chunked` is never used. That matters because SigV4 signs `content-length`, so a request that streams without it cannot validate - backends that require the header answer `411`, and backends that merely check the signature answer `403 SignatureDoesNotMatch`.
 

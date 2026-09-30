@@ -10,9 +10,11 @@ package backend
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -27,6 +29,58 @@ import (
 // nonSeekableReader wraps a reader so it cannot be type-asserted to
 // io.ReadSeeker, forcing PutObject's signed-payload materialization path.
 type nonSeekableReader struct{ r io.Reader }
+
+// A backend can ask for a retry after receiving an upload body. Signed mode
+// must materialize the incoming stream so retrying sends every byte again,
+// without rereading upstream hash/encryption streams.
+func TestPutObject_SignedStreamRetriesSlowDownWithoutLosingBytes(t *testing.T) {
+	t.Parallel()
+	payload := bytes.Repeat([]byte("harbor-layer-"), 4096)
+	var attempts atomic.Int32
+	bodies := make(chan []byte, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read backend body: %v", err)
+		}
+		bodies <- body
+		if attempts.Add(1) == 1 {
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, "<Error><Code>SlowDown</Code><Message>retry later</Message></Error>")
+			return
+		}
+		w.Header().Set("ETag", `"retry-ok"`)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	unsigned := false
+	be, err := NewS3Backend(t.Context(), &config.BackendConfig{
+		Name: "retry-test", Endpoint: srv.URL, Region: "us-east-1",
+		Bucket: "test-bucket", AccessKeyID: "AKID", SecretAccessKey: "test-secret",
+		ForcePathStyle: true, UnsignedPayload: &unsigned, DisableChecksum: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.New()
+	body := io.TeeReader(nonSeekableReader{r: bytes.NewReader(payload)}, hash)
+	if _, err := be.PutObject(t.Context(), "test-layer", body, int64(len(payload)), "application/octet-stream", nil); err != nil {
+		t.Fatalf("PutObject should recover from SlowDown: %v", err)
+	}
+	if attempts.Load() != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts.Load())
+	}
+	for range 2 {
+		if got := <-bodies; !bytes.Equal(got, payload) {
+			t.Fatalf("retry sent %d bytes, want complete %d-byte payload", len(got), len(payload))
+		}
+	}
+	wantHash := sha256.Sum256(payload)
+	if !bytes.Equal(hash.Sum(nil), wantHash[:]) {
+		t.Fatal("retry reread the original hash stream")
+	}
+}
 
 // -------------------------------------------------------------------------
 // PUBLIC API
