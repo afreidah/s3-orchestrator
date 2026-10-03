@@ -62,7 +62,23 @@ To roll back: restore the database backup and deploy the previous binary version
 
 ## Version History
 
-### v0.149.x (current)
+### v0.150.x (current)
+
+**Each write stores its bytes under a path of its own ([#1554](https://github.com/afreidah/s3-orchestrator/issues/1554), v0.150.0)**
+
+Every write of a key stored its bytes at the key, so two writes to one key on one backend shared a path. Cleaning up one write's copy could delete the bytes of another write that had just committed, leaving a row that described nothing until the scrubber reached it.
+
+A write now stores its bytes at `<object key>!<id>`, and the row records that path in `storage_key`. This covers PUTs, parallel copies, replicas, rebalance and drain moves, multipart completions, and CopyObject. A cleanup deletes exactly the path its row names, so no write can remove another write's bytes.
+
+**Operator action items before and after upgrade:**
+
+- **Multi-instance deployments must stop every instance before starting the new version.** An older instance cannot insert rows once the new schema is applied, and it reads and deletes objects at their keys rather than their paths. Do not run old and new versions side by side. A single instance upgrades normally.
+- **Two migrations apply automatically on Postgres** (`00032` and `00033`) and one on SQLite (`0020`). They add `storage_key` to `object_locations`, `pending_objects`, `cleanup_queue` and `cleanup_dlq`, and fill it with each row's object key, which is where existing bytes already are. Nothing on any backend moves. The fill rewrites every row of those tables, so the first start takes longer on a large database.
+- **Rollback is not supported once the new version has written objects.** The down migration refuses to run while any row is stored under a per-write path, because dropping the column would lose those paths. Restoring a pre-upgrade database backup loses every object written since the upgrade, and leaves their bytes on the backends as orphans for reconcile.
+- **An overwrite on a backend that already holds the object costs one extra DELETE**, because the new copy no longer replaces the old one in place. The old copy is removed right after the commit, or queued in `cleanup_queue` if that delete fails.
+- **Raw backend listings show keys with a `!` suffix.** Objects written before the upgrade stay at their keys until they are overwritten. Reconcile and sync compare by path, so they do not import these as new objects.
+
+### v0.149.x
 
 **A drain is a record in the database ([#1571](https://github.com/afreidah/s3-orchestrator/issues/1571), v0.149.14)**
 

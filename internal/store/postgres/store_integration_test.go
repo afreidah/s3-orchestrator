@@ -246,26 +246,20 @@ func TestStoreInt_GetLeastRecentlyScrubbedObjects(t *testing.T) {
 // COMPANION COPIES
 // -------------------------------------------------------------------------
 
-// TestStoreInt_CommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding
-// is the sequence behind #1527, against Postgres. Two writes to one key each
-// place a further copy on backend-b, and a slow backend-b answers them in
-// order: the first write's copy resolves before the second write's has landed.
-// The first is discarded, rightly, since the second write cleared its intent.
-// Deleting its bytes by key and backend at that moment removes whatever is at
-// that path when the delete arrives, which is the second copy once it lands,
-// and the second copy's commit then records a row for bytes that are gone.
-//
-// The discard leaves the path to the copy still landing on it instead, and
-// leaves that copy's intent as it is: the copy commits normally on top, and
-// its intent stays the path's promise of cleanup should it never commit.
-func TestStoreInt_CommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding(t *testing.T) {
+// TestStoreInt_CommitCompanionCopy_DiscardDeletesOnlyItsOwnPath runs two
+// writes to one key that each place a further copy on backend-b, with the
+// first write's copy resolving after the second write has committed. The
+// first is discarded, since the second write cleared its intent, and its
+// cleanup names only its own path. The second copy then commits at its own
+// path, untouched.
+func TestStoreInt_CommitCompanionCopy_DiscardDeletesOnlyItsOwnPath(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
-	first := core.PendingObject{IntentID: uniqueKey(t, "first"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
-	second := core.PendingObject{IntentID: uniqueKey(t, "second"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	first := core.PendingObject{IntentID: uniqueKey(t, "first"), ObjectKey: key, StorageKey: key + "!first", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	second := core.PendingObject{IntentID: uniqueKey(t, "second"), ObjectKey: key, StorageKey: key + "!second", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
 	for _, p := range []*core.PendingObject{&first, &second} {
 		if _, err := s.InsertPendingIfFits(ctx, p); err != nil {
 			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
@@ -289,8 +283,8 @@ func TestStoreInt_CommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding(
 	if result != core.CompanionCopyUntrusted {
 		t.Fatalf("first copy: result = %v, want Untrusted", result)
 	}
-	if len(displaced) != 0 {
-		t.Errorf("first copy's discard reported %+v for deletion while the second copy was still landing at that path", displaced)
+	if len(displaced) != 1 || displaced[0].StorageKey != first.StorageKey {
+		t.Errorf("first copy's discard reported %+v, want only its own path %s", displaced, first.StorageKey)
 	}
 
 	if got := pgCount(t, s, `SELECT COUNT(*) FROM pending_objects WHERE object_key = $1`, key); got != 1 {
@@ -302,7 +296,7 @@ func TestStoreInt_CommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding(
 		t.Fatalf("CommitCompanionCopy second: %v", err)
 	}
 	if result != core.CompanionCopyCommitted {
-		t.Errorf("second copy: result = %v, want Committed: its intent was untouched and its bytes are the path's", result)
+		t.Errorf("second copy: result = %v, want Committed: its intent was untouched", result)
 	}
 	if len(displaced) != 0 {
 		t.Errorf("second copy's commit reported %+v for deletion, want nothing", displaced)
@@ -315,19 +309,17 @@ func TestStoreInt_CommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding(
 	}
 }
 
-// TestStoreInt_PromotePending_TwoAbandonedCompanions_TheLastToResolveDeletesThePath
-// verifies the reaper's side of the same rule against Postgres. Two abandoned
-// intents for one key and backend: the first resolved leaves the path to the
-// second, whose intent is still there for exactly this purpose; the second,
-// finding no other intent, hands the bytes back for deletion.
-func TestStoreInt_PromotePending_TwoAbandonedCompanions_TheLastToResolveDeletesThePath(t *testing.T) {
+// TestStoreInt_PromotePending_TwoAbandonedCompanions_EachDeletesItsOwnPath
+// verifies the reaper's side against Postgres: two abandoned intents for one
+// key and backend each hand back their own path for deletion.
+func TestStoreInt_PromotePending_TwoAbandonedCompanions_EachDeletesItsOwnPath(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
-	first := core.PendingObject{IntentID: uniqueKey(t, "first"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
-	second := core.PendingObject{IntentID: uniqueKey(t, "second"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	first := core.PendingObject{IntentID: uniqueKey(t, "first"), ObjectKey: key, StorageKey: key + "!first", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	second := core.PendingObject{IntentID: uniqueKey(t, "second"), ObjectKey: key, StorageKey: key + "!second", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
 	for _, p := range []*core.PendingObject{&first, &second} {
 		if _, err := s.InsertPendingIfFits(ctx, p); err != nil {
 			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
@@ -351,8 +343,8 @@ func TestStoreInt_PromotePending_TwoAbandonedCompanions_TheLastToResolveDeletesT
 	if result != core.PendingPromoteCompanionDiscarded {
 		t.Fatalf("first: result = %v, want CompanionDiscarded", result)
 	}
-	if len(displaced) != 0 {
-		t.Errorf("first reported %+v for deletion while the second intent was still live", displaced)
+	if len(displaced) != 1 || displaced[0].StorageKey != first.StorageKey {
+		t.Errorf("first reported %+v, want only its own path %s", displaced, first.StorageKey)
 	}
 
 	result, displaced, _, err = s.PromotePending(ctx, &second)
@@ -362,8 +354,8 @@ func TestStoreInt_PromotePending_TwoAbandonedCompanions_TheLastToResolveDeletesT
 	if result != core.PendingPromoteCompanionDiscarded {
 		t.Fatalf("second: result = %v, want CompanionDiscarded", result)
 	}
-	if len(displaced) != 1 || displaced[0].BackendName != "backend-b" {
-		t.Errorf("second reported %+v, want backend-b's bytes now that no intent is left for the path", displaced)
+	if len(displaced) != 1 || displaced[0].StorageKey != second.StorageKey {
+		t.Errorf("second reported %+v, want only its own path %s", displaced, second.StorageKey)
 	}
 	if got := pgCount(t, s, `SELECT COUNT(*) FROM pending_objects WHERE object_key = $1`, key); got != 0 {
 		t.Errorf("pending rows = %d, want none", got)
@@ -998,7 +990,7 @@ func TestStoreInt_CleanupQueueLifecycle(t *testing.T) {
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if err := s.EnqueueCleanup(ctx, "backend-a", key, "test", 256); err != nil {
+	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "test", 256)); err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 
@@ -1074,7 +1066,7 @@ func TestStoreInt_ImportSuppressedByPendingCleanup(t *testing.T) {
 	ctx := context.Background()
 	key := t.Name() + "/deleted"
 
-	if err := s.EnqueueCleanup(ctx, "backend-a", key, "delete_failed", 500); err != nil {
+	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "delete_failed", 500)); err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 
@@ -1147,7 +1139,7 @@ func TestStoreInt_ListExpiredObjectsTagFilter(t *testing.T) {
 
 	// A second copy of one key, so a tag-filtered query has to dedup replicas
 	// rather than trivially returning one row per object.
-	if _, _, err := s.RecordReplica(ctx, prefix+"both", "backend-b", "backend-a"); err != nil {
+	if _, _, err := s.RecordReplica(ctx, replicaOf(prefix+"both", "backend-b", "backend-a")); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 
@@ -1253,7 +1245,7 @@ func TestStoreInt_GetObjectBackendsForKeys_GroupsByKey(t *testing.T) {
 		t.Fatalf("RecordObject(k1): %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, k1) }()
-	if _, _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a"); err != nil {
+	if _, _, err := s.RecordReplica(ctx, replicaOf(k1, "backend-b", "backend-a")); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 50}); err != nil {
@@ -1306,7 +1298,7 @@ func TestStoreInt_DeleteObjectsBatch_RemovesRowsAndDecrementsQuotas(t *testing.T
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k1, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject(k1): %v", err)
 	}
-	if _, _, err := s.RecordReplica(ctx, k1, "backend-b", "backend-a"); err != nil {
+	if _, _, err := s.RecordReplica(ctx, replicaOf(k1, "backend-b", "backend-a")); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: k2, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 50}); err != nil {
@@ -1708,7 +1700,7 @@ func TestStoreInt_GetAllObjectLocations_ReportsVerifiedTimestamp(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
-	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
+	if _, _, err := s.RecordReplica(ctx, replicaOf(key, "backend-b", "backend-a")); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 

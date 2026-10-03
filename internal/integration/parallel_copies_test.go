@@ -56,7 +56,7 @@ func assertEveryCopyReadable(t *testing.T, h *harness, key string, want []byte) 
 		if !ok {
 			t.Fatalf("ledger names backend %q, which is not in the fleet", name)
 		}
-		res, err := be.GetObject(context.Background(), internalKey(key), "")
+		res, err := be.GetObject(context.Background(), h.storagePath(name, key), "")
 		if err != nil {
 			t.Errorf("copy on %s is recorded but unreadable: %v", name, err)
 			continue

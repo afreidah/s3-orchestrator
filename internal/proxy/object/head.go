@@ -46,6 +46,10 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 			if !o.core.Usage().WithinLimits(beName, headObjectOp, 0, 0) {
 				return fail, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 			}
+			loc, err := o.readLocation(ctx, backend, beName, key, loc)
+			if err != nil {
+				return fail, err
+			}
 			// HEAD has no body to inspect, so a contradictory row is the only
 			// divergence it can see - but it is the one that matters here,
 			// since the size reported below is read straight off that row.
@@ -55,7 +59,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 				return fail, fmt.Errorf("backend %s: %w", beName, err)
 			}
 
-			r, err := o.core.HeadWithTimeout(ctx, backend, storagePath(key, loc))
+			r, err := o.core.HeadWithTimeout(ctx, backend, core.StoragePath(key, loc.StorageKey))
 			if err != nil {
 				o.core.Acct().APICall(s3op.HeadObject, beName) // API call was made even on failure
 				return fail, err
@@ -65,7 +69,7 @@ func (o *Manager) HeadObject(ctx context.Context, key string) (*HeadResult, erro
 			// Those differ once the bytes were encrypted, compressed, or both,
 			// and a HEAD that reports the stored size sends clients ranging
 			// against coordinates the object does not have.
-			if loc != nil && (loc.Encrypted || isCompressed(loc)) {
+			if loc.Encrypted || isCompressed(loc) {
 				r.Size = logicalSize(loc)
 			}
 

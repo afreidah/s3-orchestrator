@@ -16,11 +16,15 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	s3be "github.com/afreidah/s3-orchestrator/internal/backend"
+	"github.com/afreidah/s3-orchestrator/internal/internalkey"
 	"github.com/afreidah/s3-orchestrator/internal/observe/telemetry"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/readpath"
+	"github.com/afreidah/s3-orchestrator/internal/proxy/reconcile"
+	"github.com/afreidah/s3-orchestrator/internal/s3op"
 	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/util/ioutilx"
 )
@@ -36,23 +40,87 @@ func isCompressed(loc *core.ObjectLocation) bool {
 	return loc != nil && loc.CompressionAlgorithm != ""
 }
 
-// storagePath names the bytes a copy holds on its backend: the path its row
-// records, or the object's key when there is no row to read one from.
+// readLocation returns the row a GET or HEAD reads with: the database row when
+// there is one, or, during a database outage, a row built from the newest copy
+// on the backend and what that copy's bytes say about how they are stored.
 //
-// A read addresses the path, never the key. A write stores its bytes under the
-// key plus its own intent id, so an overwrite in progress and the object it is
-// replacing occupy different paths and a reader sees one or the other whole.
-//
-// The fallback is for the degraded broadcast, which runs with the database
-// unreachable and so has no row at all. It is the only answer available there,
-// and it is the right one for every object written before per-write storage
-// keys, whose bytes are at the key. An object written since is not readable in
-// that mode - a read that fails rather than one that returns other bytes.
-func storagePath(key string, loc *core.ObjectLocation) string {
-	if loc == nil {
-		return key
+// It reads that copy's head and tail the same way import does for an object it
+// finds on a backend. A compressed copy reads through the normal compressed
+// path and serves the client's bytes. An encrypted copy returns 503, because
+// decrypting it needs the key only the database holds.
+func (o *Manager) readLocation(ctx context.Context, be s3be.ObjectBackend, beName, key string, loc *core.ObjectLocation) (*core.ObjectLocation, error) {
+	if loc != nil {
+		return loc, nil
 	}
-	return core.StoragePath(key, loc.StorageKey)
+	newest, size, err := o.newestCopy(ctx, be, beName, key)
+	if err != nil {
+		return nil, err
+	}
+	discovered, err := reconcile.DiscoverBytes(ctx, be, o.codec, newest, size)
+	if err != nil {
+		return nil, err
+	}
+	_, form := core.ClassifyImport(discovered, nil)
+	if form != nil && form.Encrypted {
+		return nil, core.ErrServiceUnavailable
+	}
+	return core.ObjectFromStoredForm(key, beName, newest, size, form, nil), nil
+}
+
+// newestCopy returns the path and size of the object's newest copy on one
+// backend.
+//
+// It lists the backend starting at the object key. S3 lists in byte order and
+// "!" sorts before letters, digits and ".", so the bare key "bucket/photo.jpg"
+// and its copies "bucket/photo.jpg!3f9a0c..." come first, and the listing stops
+// at the first key past them. The newest match wins. With no match it returns
+// the bare key, so the read that follows 404s as it would anyway.
+func (o *Manager) newestCopy(ctx context.Context, be s3be.ObjectBackend, beName, key string) (string, int64, error) {
+	copies := key + internalkey.WriteSeparator
+	newest, size, newestAt, found := key, int64(0), time.Time{}, false
+	err := be.ListObjects(ctx, key, func(page []s3be.ListedObject) error {
+		for i := range page {
+			listed := page[i].Key
+			if listed > copies && !strings.HasPrefix(listed, copies) {
+				return s3be.ErrStopListing
+			}
+			if listed != key && !isPerWritePath(key, listed) {
+				continue
+			}
+			if !found || page[i].LastModified.After(newestAt) {
+				newest, size, newestAt, found = listed, page[i].SizeBytes, page[i].LastModified, true
+			}
+		}
+		return nil
+	})
+	o.core.Acct().APICall(s3op.ListObjectsV2, beName)
+	return newest, size, err
+}
+
+// writeIDLength is the number of characters after the "!" in a copy's path:
+// a random 16-byte id written as 32 lowercase hex characters.
+const writeIDLength = 32
+
+// isPerWritePath reports whether a key the listing returned is a stored copy
+// of the object, rather than a different object that happens to start with
+// the same characters.
+//
+// To find the copies of "photo.jpg", the listing asks the backend for every
+// key that starts with "photo.jpg!". That returns the object's copies, such as
+// "photo.jpg!3f9a0c...", but it would also return a separate object that a
+// client named "photo.jpg!backup". A copy always ends in exactly 32 hex
+// characters after the "!", so any key that doesn't is skipped.
+func isPerWritePath(key, listed string) bool {
+	id, ok := strings.CutPrefix(listed, key+internalkey.WriteSeparator)
+	if !ok || len(id) != writeIDLength {
+		return false
+	}
+	for _, c := range id {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // resolveLastModified reports the Last-Modified a read should answer with,
@@ -123,7 +191,7 @@ func (o *Manager) compressedGetAttempt(ctx context.Context, key, rangeHeader, be
 		return fail, fmt.Errorf("backend %s: %w", beName, err)
 	}
 
-	fetcher := newStoredRangeFetcher(o.core, backend, o.encryptor, loc, storagePath(key, loc), beName)
+	fetcher := newStoredRangeFetcher(o.core, backend, o.encryptor, loc, core.StoragePath(key, loc.StorageKey), beName)
 	reader, err := o.codec.DecompressRanged(ctx, fetcher, fetcher.compressedSize())
 	if err != nil {
 		telemetry.CompressionErrorsTotal.WithLabelValues(telemetry.CompressionOpDecode).Inc()

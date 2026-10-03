@@ -331,11 +331,9 @@ type InsertReplicaConditionalParams struct {
 // this SELECT list, where a bare parameter takes no type from the INSERT
 // target, and in the predicates below.
 //
-// storage_key is the caller's, not the source row's: the replica is a new set
-// of bytes at a path of its own, so it is named after the write that placed it
-// the same way a PUT's copy is. Carrying the source's path would put two rows
-// on two backends at one name again, and a cleanup for either would then have
-// to guess which bytes it meant.
+// storage_key comes from the caller, not the source row: the replica is a new
+// set of bytes at a path of its own, named after the write that placed it the
+// same way a PUT's copy is, so a cleanup of either copy names its own bytes.
 func (q *Queries) InsertReplicaConditional(ctx context.Context, arg InsertReplicaConditionalParams) (int64, error) {
 	row := q.db.QueryRow(ctx, insertReplicaConditional,
 		arg.ObjectKey,

@@ -84,18 +84,14 @@ func (b backendRange) FetchRange(ctx context.Context, start, end int64) ([]byte,
 //
 // A nil return means the bytes are stored verbatim.
 func ClassifyImport(ctx context.Context, deps ClassifyDeps, backendName, key string, size int64) (*core.StoredForm, error) {
-	header, err := backend.FetchEnvelopeHeader(ctx, deps.Backend, key)
+	discovered, err := DiscoverBytes(ctx, deps.Backend, deps.Codec, key, size)
 	if err != nil {
-		return nil, fmt.Errorf("failed to inspect %s: %w", key, err)
+		return nil, err
 	}
-	discovered := core.DiscoveredBytes{Header: header}
 
 	// Only an envelope needs a key to go with it, so only then is the
-	// per-key ledger lookup worth paying for. Bytes that are not an envelope
-	// get the cheaper question asked of them instead: are they an encoding
-	// this orchestrator wrote?
-	if !encryption.HasEnvelopeMagic(header) {
-		discovered.LogicalSize, discovered.Compressed = deps.inspectStored(ctx, header, key, size)
+	// per-key ledger lookup worth paying for.
+	if !encryption.HasEnvelopeMagic(discovered.Header) {
 		decision, form := core.ClassifyImport(discovered, nil)
 		deps.record(ctx, decision, backendName, key)
 		return form, nil
@@ -115,19 +111,31 @@ func ClassifyImport(ctx context.Context, deps ClassifyDeps, backendName, key str
 // INTERNALS
 // -------------------------------------------------------------------------
 
-// inspectStored asks the codec whether these bytes are one of its own. A failure
-// to read the tail is not an error: it means the object is not recognised, and
-// it is then imported as the verbatim bytes it appears to be.
+// DiscoverBytes reads what an object's stored bytes say about themselves, for
+// a caller that has no database row describing them: import, which found the
+// object on a backend, and a read while the database is down.
 //
-// The frame magic is checked first, off the head already in hand, so the tail
-// fetch is only spent on objects that could plausibly be an encoding. Without
-// that filter every plaintext object on a backend would cost a second ranged
-// GET during the walk.
-func (d ClassifyDeps) inspectStored(ctx context.Context, header []byte, key string, size int64) (int64, bool) {
-	if d.Codec == nil || size <= 0 || !compression.HasFrameMagic(header) {
-		return 0, false
+// It reads the head of the object at path, where an encryption envelope
+// announces itself. When the head is not an envelope but starts like a zstd
+// frame, it also reads the tail to check for this codec's seek table, which
+// marks the bytes as compressed and gives their logical size. A plain .zst
+// file a client uploaded has no seek table, so it is reported as uncompressed.
+//
+// The frame magic is checked first, so only objects that could be compressed
+// cost the second ranged read. A tail that cannot be read is not an error: the
+// bytes are then reported as stored verbatim. codec may be nil, in which case
+// nothing is reported as compressed.
+func DiscoverBytes(ctx context.Context, be backend.ObjectBackend, codec StoredInspector, path string, size int64) (core.DiscoveredBytes, error) {
+	header, err := backend.FetchEnvelopeHeader(ctx, be, path)
+	if err != nil {
+		return core.DiscoveredBytes{}, fmt.Errorf("failed to inspect %s: %w", path, err)
 	}
-	return d.Codec.InspectStored(ctx, backendRange{be: d.Backend, key: key}, size)
+	found := core.DiscoveredBytes{Header: header}
+	if codec == nil || size <= 0 || encryption.HasEnvelopeMagic(header) || !compression.HasFrameMagic(header) {
+		return found, nil
+	}
+	found.LogicalSize, found.Compressed = codec.InspectStored(ctx, backendRange{be: be, key: path}, size)
+	return found, nil
 }
 
 // record emits the metric and audit trail for one decision, and warns on the

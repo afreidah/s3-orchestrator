@@ -258,8 +258,8 @@ func (c *BackendRuntime) WithTimeout(ctx context.Context) (context.Context, cont
 }
 
 // DeleteWithTimeout deletes the object at storageKey on a backend using the
-// configured backend timeout. The path, not the object's key: those stopped
-// being the same string when writes started storing their bytes per write.
+// configured backend timeout. storageKey is the path the bytes occupy, which
+// for a per-write copy is not the object's key.
 func (c *BackendRuntime) DeleteWithTimeout(ctx context.Context, be backend.ObjectBackend, storageKey string) error {
 	return c.timeouts.DeleteWithTimeout(ctx, be, storageKey)
 }
@@ -281,10 +281,9 @@ func (c *BackendRuntime) DeleteWithTimeout(ctx context.Context, be backend.Objec
 // the two disagree only when an overwrite lands mid-copy, which each of them
 // reports in its own terms. sizeEstimate is what admission is judged on.
 //
-// srcKey and dstKey are the paths on each side. They differ: the copy is a new
-// write on the destination, so it is stored under a path naming itself, and a
-// cleanup that follows it deletes those bytes rather than whatever else the
-// object has on that backend.
+// srcKey and dstKey are the paths on each side, and they differ. The copy is a
+// new write on the destination with a path of its own, so a cleanup after it
+// deletes only those bytes and nothing else the object has on that backend.
 func (c *BackendRuntime) StreamCopy(ctx context.Context, src, dst backend.CopyEndpoint, srcKey, dstKey string, sizeEstimate int64) (int64, error) {
 	// Refusals are tagged with the leg that had no headroom, so callers get
 	// the same structural retry answer they already act on for I/O failures:

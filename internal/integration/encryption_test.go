@@ -661,7 +661,7 @@ func TestDecryptExisting_DownloadFails(t *testing.T) {
 	// Delete the object directly from the backend (bypassing the orchestrator)
 	backendName := queryObjectBackend(t, key)
 	backend := allBackends[backendName]
-	if err := backend.DeleteObject(ctx, internalKey(key)); err != nil {
+	if err := backend.DeleteObject(ctx, storagePath(t, backendName, key)); err != nil {
 		t.Fatalf("direct DeleteObject: %v", err)
 	}
 
@@ -693,7 +693,7 @@ func TestEncryptExisting_DownloadFails(t *testing.T) {
 	// Delete the object directly from the backend
 	backendName := queryObjectBackend(t, key)
 	backend := allBackends[backendName]
-	if err := backend.DeleteObject(ctx, internalKey(key)); err != nil {
+	if err := backend.DeleteObject(ctx, storagePath(t, backendName, key)); err != nil {
 		t.Fatalf("direct DeleteObject: %v", err)
 	}
 
@@ -764,7 +764,7 @@ func TestEncryptDecryptExisting_DirectBackendVerification(t *testing.T) {
 	backend := allBackends[backendName]
 
 	// Read raw bytes from backend  -  should be plaintext
-	rawResult, err := backend.GetObject(ctx, internalKey(key), "")
+	rawResult, err := backend.GetObject(ctx, storagePath(t, backendName, key), "")
 	if err != nil {
 		t.Fatalf("direct GetObject (pre-encrypt): %v", err)
 	}
@@ -778,7 +778,7 @@ func TestEncryptDecryptExisting_DirectBackendVerification(t *testing.T) {
 	env.callAdmin(t, "/admin/api/encrypt-existing")
 
 	// Read raw bytes from backend  -  should be ciphertext (different from plaintext)
-	encResult, err := backend.GetObject(ctx, internalKey(key), "")
+	encResult, err := backend.GetObject(ctx, storagePath(t, backendName, key), "")
 	if err != nil {
 		t.Fatalf("direct GetObject (post-encrypt): %v", err)
 	}
@@ -795,7 +795,7 @@ func TestEncryptDecryptExisting_DirectBackendVerification(t *testing.T) {
 	env.callAdmin(t, "/admin/api/decrypt-existing")
 
 	// Read raw bytes from backend  -  should be plaintext again
-	decResult, err := backend.GetObject(ctx, internalKey(key), "")
+	decResult, err := backend.GetObject(ctx, storagePath(t, backendName, key), "")
 	if err != nil {
 		t.Fatalf("direct GetObject (post-decrypt): %v", err)
 	}
@@ -903,7 +903,7 @@ func assertStoredAsEnvelope(t *testing.T, ctx context.Context, key string, plain
 		t.Fatalf("ledger names backend %q, which is not configured", backendName)
 	}
 
-	result, err := be.GetObject(ctx, internalKey(key), "")
+	result, err := be.GetObject(ctx, storagePath(t, backendName, key), "")
 	if err != nil {
 		t.Fatalf("direct backend read: %v", err)
 	}

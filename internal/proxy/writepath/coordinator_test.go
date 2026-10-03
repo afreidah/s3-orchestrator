@@ -106,10 +106,9 @@ func expectStreamCopyOK(src, dest *backendtest.MockObjectBackend) {
 		Return("etag", nil)
 }
 
-// The two paths one move addresses: where the source copy sits, and where this
-// move wrote its own. They are different strings on purpose - a move is a write
-// and names its destination after itself, which is what lets each of the three
-// cleanup paths below delete exactly the bytes it is responsible for.
+// The two paths one move addresses: where the source copy sits, and where the
+// move writes its own. They differ because a move is a write with its own
+// path, so each of the three cleanup paths deletes exactly its own bytes.
 const (
 	srcPath  = "k!src-copy"
 	destPath = "k!this-move"

@@ -68,18 +68,6 @@ func (f *pagedLister) ListObjects(ctx context.Context, prefix string, fn func([]
 	return nil
 }
 
-// decoratedBackend mimics a decorator (circuit breaker, metrics) around a
-// backend, so resolveLister has something to unwrap.
-type decoratedBackend struct {
-	backend.ObjectBackend
-	inner backend.ObjectBackend
-}
-
-func (w *decoratedBackend) Unwrap() backend.ObjectBackend { return w.inner }
-
-// listlessBackend is a backend that cannot list, for the unsupported-backend path.
-type listlessBackend struct{ backend.ObjectBackend }
-
 // newTestManager wires a Manager over the generated mocks.
 func newTestManager(t *testing.T, ctrl *gomock.Controller) (*Manager, *MockStores, *MockBackendResolver, *MockUsageRecorder) {
 	t.Helper()
@@ -110,16 +98,16 @@ func importOf(key, backendName string, size int64, unmanaged bool) gomock.Matche
 // ledgerRows returns a ListObjectsByBackendKeyAsc stub yielding one page then
 // exhaustion, which is how the DB cursor signals the end of the walk.
 //
-// A row left without a storage key takes its object key, which is what every
-// row written before per-write storage keys holds and what an imported object
-// gets. The cursor walks storage keys, so the field cannot be left empty.
+// A row left without a storage key takes its object key, the value a row
+// stored at its key holds and the value an imported object gets. The cursor
+// walks storage keys, so the field cannot be left empty.
 func ledgerRows(rows ...core.ObjectLocation) func(context.Context, string, string, int) ([]core.ObjectLocation, error) {
 	page := make([]core.ObjectLocation, len(rows))
-	for i, r := range rows {
-		if r.StorageKey == "" {
-			r.StorageKey = r.ObjectKey
+	for i := range rows {
+		page[i] = rows[i]
+		if page[i].StorageKey == "" {
+			page[i].StorageKey = page[i].ObjectKey
 		}
-		page[i] = r
 	}
 	return func(_ context.Context, _, afterStorageKey string, _ int) ([]core.ObjectLocation, error) {
 		if afterStorageKey == "" {
@@ -135,9 +123,9 @@ func ledgerRows(rows ...core.ObjectLocation) func(context.Context, string, strin
 
 // TestDeleter_SweepsCleanupQueue asserts a stale-row delete is followed by the
 // cleanup-queue sweep for the copy's path. Without the sweep, queue rows for
-// bytes the backend no longer holds keep retrying a delete that 404s until
-// they exhaust their attempts. The row is addressed by the object's key and
-// the sweep by the path, which are no longer the same string.
+// bytes the backend does not hold keep retrying a delete that 404s until they
+// exhaust their attempts. The row is addressed by the object's key and the
+// sweep by the path, which are different strings.
 func TestDeleter_SweepsCleanupQueue(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
@@ -187,27 +175,8 @@ func TestDeleter_DeleteFailurePropagates(t *testing.T) {
 // BACKEND RESOLUTION
 // -------------------------------------------------------------------------
 
-// TestResolveLister_UnwrapsDecorators asserts the resolver digs past wrapping
-// backends to reach the client that can actually list.
-func TestResolveLister_UnwrapsDecorators(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	m, _, backends, _ := newTestManager(t, ctrl)
-
-	inner := &pagedLister{InMemory: backendtest.NewInMemory()}
-	backends.EXPECT().GetBackend("b1").Return(&decoratedBackend{ObjectBackend: inner, inner: inner}, nil).AnyTimes()
-
-	got, err := m.resolveLister("b1")
-	if err != nil {
-		t.Fatalf("resolveLister: %v", err)
-	}
-	if got != ObjectLister(inner) {
-		t.Error("resolveLister did not unwrap to the listing-capable backend")
-	}
-}
-
-// TestResolveLister_UnknownBackend surfaces the lookup error unchanged.
-func TestResolveLister_UnknownBackend(t *testing.T) {
+// TestReconcileBackend_UnknownBackend surfaces the lookup error unchanged.
+func TestReconcileBackend_UnknownBackend(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)
 	m, _, backends, _ := newTestManager(t, ctrl)
@@ -215,23 +184,8 @@ func TestResolveLister_UnknownBackend(t *testing.T) {
 	want := errors.New("no such backend")
 	backends.EXPECT().GetBackend(gomock.Any()).Return(nil, want).AnyTimes()
 
-	if _, err := m.resolveLister("nope"); !errors.Is(err, want) {
+	if _, err := m.ReconcileBackend(context.Background(), "nope", nil); !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
-	}
-}
-
-// TestResolveLister_NotAListerFails asserts a backend that cannot list is a
-// clear error rather than a nil-interface panic later in the merge.
-func TestResolveLister_NotAListerFails(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	m, _, backends, _ := newTestManager(t, ctrl)
-
-	backends.EXPECT().GetBackend(gomock.Any()).Return(&listlessBackend{}, nil).AnyTimes()
-
-	_, err := m.resolveLister("b1")
-	if err == nil {
-		t.Fatal("expected an error for a backend that cannot list")
 	}
 }
 

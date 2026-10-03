@@ -31,9 +31,9 @@ import (
 // be made by any other path.
 //
 // The path is per copy rather than per request. A write placing several copies
-// at once holds an intent per copy, and each copy's bytes go down under that
-// intent's id - so a copy that is later discarded, displaced or rebuilt is
-// addressable on its own.
+// holds an intent per copy and stores each copy's bytes under that intent's
+// id, so a copy that is later discarded, displaced or rebuilt can be addressed
+// on its own.
 type ObjectCopy struct {
 	Backend    string
 	IntentID   string
@@ -57,10 +57,9 @@ type ObjectCopy struct {
 // key describes an object this write has replaced, and leaving a stranger's
 // would let it commit a copy of what was just replaced.
 //
-// They are held back from clearing only. Their bytes are not: a copy this write
-// is still uploading goes down at its own intent's path, so a prior copy on
-// that same backend is at a different path and deleting it cannot touch what
-// this write is placing.
+// Only their intents are held back. A copy this write is still uploading goes
+// to its own intent's path, so deleting a prior copy on the same backend
+// cannot touch what this write is placing.
 type RecordObjectRequest struct {
 	Key      string
 	Size     int64
@@ -165,7 +164,7 @@ func recordObjectTx(ctx context.Context, tx TxAdapter, req *RecordObjectRequest)
 		return mutationResult{}, err
 	}
 	for _, c := range req.Copies {
-		if err := tx.InsertObjectLocation(ctx, objectFromStoredForm(req.Key, c.Backend, c.StorageKey, req.Size, req.Form, req.Identity)); err != nil {
+		if err := tx.InsertObjectLocation(ctx, ObjectFromStoredForm(req.Key, c.Backend, c.StorageKey, req.Size, req.Form, req.Identity)); err != nil {
 			return mutationResult{}, fmt.Errorf("insert object location on %s: %w", c.Backend, err)
 		}
 		deltas.Add(c.Backend, req.Size)
@@ -382,10 +381,10 @@ func DeleteObjectLocation(ctx context.Context, runner Runner, key, backendName s
 // MoveLocation is one src -> dest repointing of a copy: which object, the two
 // backends, and the path the bytes were written to on the destination.
 //
-// StorageKey is the caller's because the caller is what wrote those bytes. A
-// move is a write like any other - it puts a new object on a backend - so it
-// names its own path rather than reusing the source's, and the orphan cleanup
-// on a move that loses its race then deletes exactly what that move uploaded.
+// StorageKey comes from the caller, which wrote those bytes. A move is a write
+// like any other, so it uses its own path rather than the source's, and the
+// orphan cleanup for a move that loses its race deletes exactly what that move
+// uploaded.
 type MoveLocation struct {
 	ObjectKey   string
 	FromBackend string
@@ -423,7 +422,7 @@ func MoveObjectLocation(ctx context.Context, runner Runner, m *MoveLocation) (in
 		// hand-listed subset of the source row's fields. A field omitted here is
 		// a column describing bytes the moved copy then contradicts, which is
 		// how this path came to drop the compression columns.
-		dest := objectFromStoredForm(key, toBackend, m.StorageKey, src.SizeBytes, StoredFormFromLocation(src), src.Identity)
+		dest := ObjectFromStoredForm(key, toBackend, m.StorageKey, src.SizeBytes, StoredFormFromLocation(src), src.Identity)
 		if err := tx.InsertObjectLocation(ctx, dest); err != nil {
 			return 0, err
 		}
@@ -526,16 +525,10 @@ func ImportObject(ctx context.Context, runner Runner, req *ImportObjectRequest) 
 			return ImportSkippedPendingCleanup, nil
 		}
 
-		// No identity: an imported object's ETag is whatever the backend
-		// reports, which is not known here and is not the same answer on every
-		// copy. The first read that has to ask the backend records what it got
-		// for every copy, so the value settles on first use instead of being
-		// guessed at import.
 		// Bytes already recorded at this path belong to a copy the ledger knows
-		// about, and the row naming them is filed under the real object's key -
-		// which a path the orchestrator wrote is not. Without this, a bulk sync
+		// about, under the real object's key. Without this check, a bulk sync
 		// would adopt every per-write path on the backend a second time, as an
-		// object whose name is the path.
+		// object named after its path.
 		recorded, err := tx.CopyExistsAtPath(ctx, req.Backend, req.Key)
 		if err != nil {
 			return ImportSkippedExisting, err
@@ -544,11 +537,17 @@ func ImportObject(ctx context.Context, runner Runner, req *ImportObjectRequest) 
 			return ImportSkippedExisting, nil
 		}
 
-		// The storage key is the key: a discovered object is at the path the
-		// listing found it at, and that path is what the row has to address it
-		// by. An object the orchestrator wrote and lost the row for comes back
-		// under its own per-write path, which is exactly where its bytes are.
-		loc := objectFromStoredForm(req.Key, req.Backend, req.Key, req.Size, req.Form, nil)
+		// The storage key is the key: a discovered object sits at the path the
+		// listing found it at, so that is the path the row addresses. An object
+		// the orchestrator wrote and lost the row for comes back under its own
+		// per-write path, which is where its bytes are.
+		//
+		// No identity: an imported object's ETag is whatever the backend
+		// reports, which is not known here and is not the same answer on every
+		// copy. The first read that has to ask the backend records what it got
+		// for every copy, so the value settles on first use instead of being
+		// guessed at import.
+		loc := ObjectFromStoredForm(req.Key, req.Backend, req.Key, req.Size, req.Form, nil)
 		loc.Unmanaged = req.Unmanaged
 		loc.CreatedAt = cmp.Or(req.WrittenAt, time.Now())
 		inserted, err := tx.InsertObjectLocationIfNotExists(ctx, loc)

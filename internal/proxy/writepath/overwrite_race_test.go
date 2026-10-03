@@ -1,19 +1,17 @@
 // -------------------------------------------------------------------------------
-// Overwrite Race - Issue #1527
+// Overwrite Race - Two Writes Racing to One Backend
 //
 // Author: Alex Freidah
 //
-// The one test that runs the reported failure end to end: two overwrites of one
-// key racing towards one backend, the loser's companion resolving after the
-// winner's has committed. It is driven against a real store and a real backend
-// rather than mocks, because the bug lived in the seam between them - the
-// ledger said one thing and the bytes said another, and only a test that holds
-// both can see that.
+// Runs two overwrites of one key racing towards one backend end to end, with
+// the losing write's companion resolving after the winner's has committed. It
+// uses a real store and a real backend rather than mocks, because the failure
+// it guards against is a disagreement between the ledger and the bytes, and
+// only a test that holds both can see it.
 //
-// The race is modelled in program order rather than with goroutines. The
-// interleaving that reproduces it is a specific one (the loser resolves last),
-// so scheduling it deliberately is what makes the test say the same thing on
-// every run.
+// The race is scheduled in program order rather than with goroutines. Only one
+// interleaving matters (the loser resolves last), so running it deliberately
+// makes the test give the same answer on every run.
 // -------------------------------------------------------------------------------
 
 package writepath
@@ -40,9 +38,8 @@ import (
 // FIXTURE
 // -------------------------------------------------------------------------
 
-// raceKey is the one key both writes contend for. Namespaced like any object
-// the orchestrator stores, so the storage keys the writes mint look like the
-// ones a deployment produces.
+// raceKey is the key both writes contend for, namespaced like any stored
+// object so the minted storage keys look like real ones.
 const raceKey = "bucket/repro/contended"
 
 // The two backends the write places on: the one that answers the client, and
@@ -54,9 +51,8 @@ const (
 )
 
 // raceFleet builds a coordinator over a real SQLite store and real in-memory
-// backends. Nothing here is stubbed: the discard path under test is a store
-// transaction, and a fake store would be a restatement of the code it is meant
-// to be checking.
+// backends. Nothing is stubbed, because the discard under test is a store
+// transaction and a fake store would only restate the code being checked.
 func raceFleet(t *testing.T) (*Coordinator, *sqlite.Store, *backendtest.InMemory) {
 	t.Helper()
 	ctx := context.Background()
@@ -96,8 +92,8 @@ type write struct {
 }
 
 // startWrite claims both intents without uploading anything. The companion's
-// bytes land when the test says so, because when they land relative to the
-// other write is the whole subject.
+// bytes land when the test calls landCompanion, because their timing relative
+// to the other write is what the tests are about.
 func startWrite(t *testing.T, coord *Coordinator, body string) *write {
 	t.Helper()
 	ctx := context.Background()
@@ -116,9 +112,8 @@ func startWrite(t *testing.T, coord *Coordinator, body string) *write {
 	return w
 }
 
-// landCompanion is the upload the client never waits for, finally arriving. It
-// lands at the companion intent's own path, which is what every later cleanup
-// addresses it by.
+// landCompanion completes the companion upload the client never waits for, at
+// the companion intent's own path.
 func landCompanion(t *testing.T, slow *backendtest.InMemory, w *write) {
 	t.Helper()
 	if _, err := slow.PutObject(context.Background(), w.companion.StorageKey,
@@ -149,33 +144,27 @@ func commitPrimary(t *testing.T, coord *Coordinator, w *write) {
 // PUBLIC API
 // -------------------------------------------------------------------------
 
-// TestOverwriteRace_LoserDiscardLeavesTheWinnerIntact is issue #1527.
+// TestOverwriteRace_LoserDiscardLeavesTheWinnerIntact runs two overwrites of
+// one key that each leave a companion uploading to the slow backend. The
+// second write commits, its companion commits, and only then does the first
+// write's companion resolve and discard itself.
 //
-// Two overwrites of one key each leave a companion uploading to the slow
-// backend. The second write commits, its companion commits, and only then does
-// the first write's companion resolve and discard itself. That last step used
-// to delete "the object at the key" on that backend, which by then was the
-// winner's copy, under a row that had just committed - the ledger then named a
-// copy that did not exist and nothing short of a scrub cycle noticed.
-//
-// The assertions are the two halves that used to disagree: the row and the
-// bytes it describes.
+// The discard must remove only the loser's bytes. The test checks that the
+// winner's row and the bytes it describes both survive and still agree.
 func TestOverwriteRace_LoserDiscardLeavesTheWinnerIntact(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	coord, store, slow := raceFleet(t)
 
 	// Both writes are answered on the fast backend while their companions are
-	// still going up to the slow one, which is what the 2 s of netem delay
-	// produces on the real fleet.
+	// still uploading to the slow one.
 	loser := startWrite(t, coord, "v2-the-overtaken-write")
 	commitPrimary(t, coord, loser)
 
 	winner := startWrite(t, coord, "v3-the-write-that-took-the-key")
 	// This commit clears the loser's companion intent and hands its bytes to
-	// cleanup - which finds nothing, because that upload has not landed yet.
-	// The scheduling matters: it is what leaves the discard below as the only
-	// thing that can remove them.
+	// cleanup, which finds nothing because that upload has not landed yet. That
+	// leaves the discard below as the only thing that can remove them.
 	commitPrimary(t, coord, winner)
 
 	// The winner's companion lands and commits. From here the ledger names a
@@ -189,8 +178,8 @@ func TestOverwriteRace_LoserDiscardLeavesTheWinnerIntact(t *testing.T) {
 		t.Fatal("the winning companion was not recorded, so the race under test never happened")
 	}
 
-	// And only now does the overtaken upload finish and resolve. Its intent is
-	// gone - the winner's commit cleared it - so it discards itself.
+	// Only now does the overtaken upload finish and resolve. The winner's
+	// commit cleared its intent, so it discards itself.
 	landCompanion(t, slow, loser)
 	if recorded, err = coord.CommitCompanionCopy(ctx, loser.companion); err != nil {
 		t.Fatalf("resolve the overtaken companion: %v", err)
@@ -215,13 +204,13 @@ func TestOverwriteRace_LoserDiscardLeavesTheWinnerIntact(t *testing.T) {
 	// The bytes: still there, and still the winner's.
 	stored, ok := slow.Get(winner.companion.StorageKey)
 	if !ok {
-		t.Fatal("the ledger names a copy on the slow backend that does not exist - issue #1527")
+		t.Fatal("the ledger names a copy on the slow backend that does not exist")
 	}
 	if !bytes.Equal(stored.Data, winner.body) {
 		t.Errorf("the surviving bytes are %q, want the winner's %q", stored.Data, winner.body)
 	}
 
-	// And the loser's own bytes are the ones that went.
+	// The loser's own bytes are the ones removed.
 	if slow.Has(loser.companion.StorageKey) {
 		t.Error("the overtaken companion's bytes were left on the backend")
 	}
@@ -233,10 +222,10 @@ func TestOverwriteRace_LoserDiscardLeavesTheWinnerIntact(t *testing.T) {
 	}
 }
 
-// TestOverwriteRace_OverwriteDoesNotMutateInPlace is the property the fix rests
-// on, stated on its own: two writes of one key never share a path on a backend.
-// Every cleanup in the system is a delete of one of those paths, so a shared one
-// is the only way a cleanup can reach another write's bytes.
+// TestOverwriteRace_OverwriteDoesNotMutateInPlace verifies two writes of one
+// key never share a path on a backend. Every cleanup deletes one of those
+// paths, so a shared path is the only way a cleanup could reach another
+// write's bytes.
 func TestOverwriteRace_OverwriteDoesNotMutateInPlace(t *testing.T) {
 	t.Parallel()
 	coord, _, slow := raceFleet(t)
@@ -277,9 +266,9 @@ func noopSpan() trace.Span {
 
 // copyOn finds the copy recorded on one backend.
 func copyOn(locs []core.ObjectLocation, backendName string) (core.ObjectLocation, bool) {
-	for _, loc := range locs {
-		if loc.BackendName == backendName {
-			return loc, true
+	for i := range locs {
+		if locs[i].BackendName == backendName {
+			return locs[i], true
 		}
 	}
 	return core.ObjectLocation{}, false

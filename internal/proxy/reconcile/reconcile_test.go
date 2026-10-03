@@ -317,9 +317,9 @@ type fakeLister struct {
 
 // ListObjectsByBackendKeyAsc lists objects by backend storage key asc.
 //
-// A page row left without a storage key takes its object key, which is what a
-// row written before per-write storage keys holds and what an imported object
-// gets. The cursor is a storage key, so the comparison is against that column.
+// A page row left without a storage key takes its object key, the value a row
+// stored at its key holds and the value an imported object gets. The cursor is
+// a storage key, so the comparison is against that column.
 func (f *fakeLister) ListObjectsByBackendKeyAsc(_ context.Context, _, afterStorageKey string, limit int) ([]core.ObjectLocation, error) {
 	if f.err != nil && f.calls == f.errAt {
 		f.calls++

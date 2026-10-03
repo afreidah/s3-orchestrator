@@ -868,11 +868,10 @@ func (mp *Manager) completeMultipartUploadLocked(
 	// request) still wins.
 	wctx, wcancel := mp.core.WithTimeout(ctx)
 	defer wcancel()
-	// Assembled under the intent's own storage key, like any other write: the
-	// completion of an upload is a write of the object, so a client that
-	// completes twice, or completes while another write takes the key, leaves
-	// two distinct objects on the backend rather than two writers racing at one
-	// path.
+	// Assembled under the intent's own storage key, like any other write. A
+	// client that completes twice, or completes while another write takes the
+	// key, leaves two distinct objects on the backend instead of two writers
+	// racing at one path.
 	//
 	// The backend's ETag for the assembled object describes the bytes as
 	// stored and is discarded; the client is given the composite built above.

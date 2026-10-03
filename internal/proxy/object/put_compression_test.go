@@ -99,11 +99,9 @@ type putResult struct {
 	form   *core.StoredForm
 }
 
-// putThroughFleet runs one PUT against a single in-memory backend and returns
-// the stored bytes with the row that describes them.
 // copyData returns the bytes a backend holds for an object, wherever the write
-// stored them. A write names its path after itself, so a test cannot index the
-// backend by the client's key any more.
+// stored them. A write's path carries its own id, so a test cannot index the
+// backend by the client's key.
 func copyData(t *testing.T, be *backendtest.InMemory, objectKey string) []byte {
 	t.Helper()
 	obj, ok := be.CopyOf(objectKey)
@@ -113,6 +111,8 @@ func copyData(t *testing.T, be *backendtest.InMemory, objectKey string) []byte {
 	return obj.Data
 }
 
+// putThroughFleet runs one PUT against a single in-memory backend and returns
+// the stored bytes with the row that describes them.
 func putThroughFleet(t *testing.T, opts *fleetOpts, key string, body []byte) putResult {
 	t.Helper()
 	be := backendtest.NewInMemory()
@@ -373,6 +373,11 @@ type noDecode struct{}
 // DecompressRanged implements Codec.
 func (noDecode) DecompressRanged(context.Context, compression.RangeFetcher, int64) (compression.RangedReader, error) {
 	return nil, errors.New("decode is not reached on the write path")
+}
+
+// InspectStored implements Codec; the write path never inspects stored bytes.
+func (noDecode) InspectStored(context.Context, compression.RangeFetcher, int64) (int64, bool) {
+	return 0, false
 }
 
 // failingCodec fails every encode. It is why Codec is an interface: the

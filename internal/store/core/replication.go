@@ -29,10 +29,9 @@ type recordReplicaResult struct {
 // Zero bytes and Removed=false are different from zero bytes and Removed=true,
 // which is why the flag is carried rather than inferred from the size.
 //
-// StorageKey comes from the locked re-read rather than the caller's scan, for
-// the same reason SizeBytes does and then some: it is what the caller deletes
-// off the backend, and a path from a stale scan can name bytes a newer write
-// has already replaced.
+// StorageKey comes from the locked re-read rather than the caller's scan, like
+// SizeBytes. The caller deletes that path from the backend, and a path from a
+// stale scan can name bytes a newer write has already replaced.
 type RemovedCopy struct {
 	StorageKey string
 	SizeBytes  int64
@@ -43,11 +42,9 @@ type RemovedCopy struct {
 // backend it read from, the backend it wrote to, and the path it wrote to
 // there.
 //
-// The path is the caller's because the caller is what performed the upload. A
-// replica is a fresh set of bytes on a new backend, so it is named after the
-// copy that placed it rather than inheriting the source's name - which would
-// put two copies of one object at one path again and leave a cleanup for either
-// of them guessing.
+// The path comes from the caller, which performed the upload. A replica is a
+// fresh set of bytes on a new backend, so it gets its own path rather than the
+// source's, and a cleanup of either copy can only reach that copy's bytes.
 type ReplicaInsert struct {
 	ObjectKey     string
 	TargetBackend string

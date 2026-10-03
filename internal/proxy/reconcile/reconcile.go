@@ -4,12 +4,11 @@
 // Author: Alex Freidah
 //
 // Diffs the live key set on a backend against the metadata store using a
-// streaming sorted-merge. Both sides compare paths on the backend rather than
-// object keys, which after per-write storage keys are different strings. Both
-// inputs are walked in byte (C-collation) order (S3 ListObjectsV2 is
-// spec-mandated UTF-8 byte ordered; the DB cursor uses ORDER BY storage_key
-// COLLATE "C" ASC to match) so the merge runs in
-// O(page_size) memory regardless of backend object count. The byte-order match
+// streaming sorted-merge. Both sides compare backend paths rather than object
+// keys, since a per-write copy's path is not its key. Both inputs are walked in
+// byte (C-collation) order (S3 ListObjectsV2 is spec-mandated UTF-8 byte
+// ordered; the DB cursor uses ORDER BY storage_key COLLATE "C" ASC to match) so
+// the merge runs in O(page_size) memory regardless of backend object count. The byte-order match
 // is load-bearing: a locale-collated cursor mis-orders against the byte-order
 // merge comparison and reconcile oscillates. Replaces the previous "materialise
 // every key into a map" implementation that OOM'd at scale.
@@ -38,13 +37,12 @@ import (
 //
 // key is what both sides agree on: the path the bytes occupy. On the backend
 // side that is what the listing returned; on the ledger side it is the row's
-// storage_key, which is no longer the object's key now that each write stores
-// its bytes under a path of its own.
+// storage_key.
 //
-// objectKey is set on ledger entries only, and is what the row is addressed by
-// when the merge decides to delete it. A backend entry has none: the import it
-// drives records the discovered path as the object's key too, because a stray
-// object is only nameable by where it was found.
+// objectKey is set on ledger entries only, and addresses the row when the
+// merge deletes it. A backend entry has none: its import records the
+// discovered path as the object's key too, because a stray object can only be
+// named by where it was found.
 type Entry struct {
 	key          string
 	objectKey    string

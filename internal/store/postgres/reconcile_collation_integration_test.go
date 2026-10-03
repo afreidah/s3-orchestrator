@@ -174,7 +174,7 @@ func runReconcile(t *testing.T, s *Store, backendName string, keys []string) rec
 	importer := func(_ context.Context, _ *core.ImportObjectRequest) (core.ImportOutcome, error) {
 		return core.ImportInserted, nil
 	}
-	deleter := func(_ context.Context, _, _ string) error { return nil }
+	deleter := func(_ context.Context, _, _, _ string) error { return nil }
 	onImp := reconcile.ImportHandler(slog.Default(), backendName, importer, &res)
 	onDel := reconcile.DeleteHandler(slog.Default(), backendName, deleter, &res)
 

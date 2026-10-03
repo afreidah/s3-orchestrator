@@ -179,7 +179,7 @@ func (m *Manager) logger() *slog.Logger {
 // unmanaged, so it counts toward the backend's quota without any worker acting
 // on it. Returns counts of imported vs skipped objects.
 func (m *Manager) SyncBackend(ctx context.Context, backendName, bucket string, knownBuckets []string) (imported, skipped int, err error) {
-	s3b, err := m.resolveLister(backendName)
+	s3b, err := m.backends.GetBackend(backendName)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -300,7 +300,7 @@ func (m *Manager) importDiscovered(ctx context.Context, req *core.ImportObjectRe
 // ledger rows whose keys are no longer on the backend. A key outside every
 // configured bucket prefix is imported as unmanaged.
 func (m *Manager) ReconcileBackend(ctx context.Context, backendName string, knownBuckets []string) (*Result, error) {
-	s3b, err := m.resolveLister(backendName)
+	s3b, err := m.backends.GetBackend(backendName)
 	if err != nil {
 		return nil, err
 	}
@@ -356,26 +356,4 @@ func (m *Manager) deleter() DeleterFn {
 		}
 		return nil
 	}
-}
-
-// resolveLister unwraps a backend down to the concrete client that can list,
-// past any decorators (circuit breaker, metrics) wrapping it.
-func (m *Manager) resolveLister(name string) (ObjectLister, error) {
-	be, err := m.backends.GetBackend(name)
-	if err != nil {
-		return nil, err
-	}
-	inner := be
-	for {
-		u, ok := inner.(interface{ Unwrap() backend.ObjectBackend })
-		if !ok {
-			break
-		}
-		inner = u.Unwrap()
-	}
-	lister, ok := inner.(ObjectLister)
-	if !ok {
-		return nil, fmt.Errorf("backend %s does not support listing", name)
-	}
-	return lister, nil
 }

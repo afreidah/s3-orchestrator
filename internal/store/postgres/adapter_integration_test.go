@@ -145,6 +145,17 @@ func uniqueKey(t *testing.T, suffix string) string {
 	return t.Name() + "/" + suffix
 }
 
+// replicaOf describes a replica of key copied from source to target, stored
+// at a path of its own the way the replicator stores one.
+func replicaOf(key, target, source string) *core.ReplicaInsert {
+	return &core.ReplicaInsert{ObjectKey: key, TargetBackend: target, SourceBackend: source, StorageKey: key + "!r"}
+}
+
+// cleanupOf describes a cleanup row for bytes stored at the object's key.
+func cleanupOf(backend, key, reason string, size int64) *core.CleanupRequest {
+	return &core.CleanupRequest{BackendName: backend, ObjectKey: key, StorageKey: key, Reason: reason, SizeBytes: size}
+}
+
 // -------------------------------------------------------------------------
 // AcquireKeyLock
 // -------------------------------------------------------------------------
@@ -309,48 +320,6 @@ func TestPgAdapter_DeletePending_RemovesRow(t *testing.T) {
 	})
 }
 
-// TestPgAdapter_CountPendingOnBackend_CountsOnlyThatPath verifies the
-// discard's primitive counts the key's intents on the one backend, not the
-// key's intents on other backends nor other keys, and touches nothing.
-func TestPgAdapter_CountPendingOnBackend_CountsOnlyThatPath(t *testing.T) {
-	s := adapterPgStore(t)
-	ctx := context.Background()
-	key, other := uniqueKey(t, "k"), uniqueKey(t, "other")
-	for _, p := range []core.PendingObject{
-		{IntentID: uniqueKey(t, "landing-1"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 1},
-		{IntentID: uniqueKey(t, "landing-2"), ObjectKey: key, BackendName: "backend-b", SizeBytes: 1},
-		{IntentID: uniqueKey(t, "other-backend"), ObjectKey: key, BackendName: "backend-a", SizeBytes: 1},
-		{IntentID: uniqueKey(t, "other-key"), ObjectKey: other, BackendName: "backend-b", SizeBytes: 1},
-	} {
-		if _, err := s.InsertPendingIfFits(ctx, &p); err != nil {
-			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
-		}
-		defer func(id string) { _ = s.DeletePending(ctx, id) }(p.IntentID)
-	}
-
-	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		n, err := a.CountPendingOnBackend(ctx, key, "backend-b")
-		if err != nil {
-			t.Fatalf("CountPendingOnBackend: %v", err)
-		}
-		if n != 2 {
-			t.Errorf("counted %d intents, want the 2 on backend-b", n)
-		}
-		for _, id := range []string{uniqueKey(t, "landing-1"), uniqueKey(t, "landing-2"), uniqueKey(t, "other-backend"), uniqueKey(t, "other-key")} {
-			if kept, err := a.ClaimPending(ctx, id); err != nil || !kept {
-				t.Errorf("intent %s: claimed=%v err=%v, want it left in place", id, kept, err)
-			}
-		}
-		n, err = a.CountPendingOnBackend(ctx, key, "backend-c")
-		if err != nil {
-			t.Fatalf("CountPendingOnBackend on an empty path: %v", err)
-		}
-		if n != 0 {
-			t.Errorf("counted %d intents on an empty path, want 0", n)
-		}
-	})
-}
-
 // -------------------------------------------------------------------------
 // OBJECTS TX
 // -------------------------------------------------------------------------
@@ -366,7 +335,7 @@ func TestPgAdapter_GetExistingCopiesForUpdate_ReturnsAllCopies(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
-	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
+	if _, _, err := s.RecordReplica(ctx, replicaOf(key, "backend-b", "backend-a")); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 
@@ -573,7 +542,7 @@ func TestPgAdapter_DeleteObjectFromBackend_RemovesOneRow(t *testing.T) {
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 100}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
+	if _, _, err := s.RecordReplica(ctx, replicaOf(key, "backend-b", "backend-a")); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
@@ -621,7 +590,7 @@ func TestPgAdapter_InsertReplicaConditional_InsertsWhenSourceExists(t *testing.T
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
 
-	if _, ok, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil || !ok {
+	if _, ok, err := s.RecordReplica(ctx, replicaOf(key, "backend-b", "backend-a")); err != nil || !ok {
 		t.Fatalf("RecordReplica(insert): got ok=%v err=%v, want (true, nil)", ok, err)
 	}
 
@@ -641,7 +610,7 @@ func TestPgAdapter_InsertReplicaConditional_SkipsWhenSourceMissing(t *testing.T)
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	withPgAdapter(t, s, func(a *pgTxAdapter) {
-		_, got, err := a.InsertReplicaConditional(ctx, uniqueKey(t, "missing"), "backend-b", "backend-a")
+		_, got, err := a.InsertReplicaConditional(ctx, replicaOf(uniqueKey(t, "missing"), "backend-b", "backend-a"))
 		if err != nil {
 			t.Fatalf("InsertReplicaConditional: %v", err)
 		}
@@ -662,10 +631,11 @@ func TestPgAdapter_SumAndDeleteCleanupQueueRows_DeletesAndReturnsTotals(t *testi
 	s := adapterPgStore(t)
 	ctx := context.Background()
 	key := uniqueKey(t, "k")
-	if err := s.EnqueueCleanup(ctx, "backend-a", key, "test", 256); err != nil {
+	req := cleanupOf("backend-a", key, "test", 256)
+	if err := s.EnqueueCleanup(ctx, req); err != nil {
 		t.Fatalf("EnqueueCleanup(1): %v", err)
 	}
-	if err := s.EnqueueCleanup(ctx, "backend-a", key, "test", 256); err != nil {
+	if err := s.EnqueueCleanup(ctx, req); err != nil {
 		t.Fatalf("EnqueueCleanup(2): %v", err)
 	}
 
@@ -784,7 +754,7 @@ func TestPgAdapter_GetExistingCopiesForUpdate_CarriesEncryptionState(t *testing.
 		t.Fatalf("RecordObject encrypted: %v", err)
 	}
 	defer func() { _, _, _ = s.DeleteObject(ctx, key) }()
-	if _, _, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil {
+	if _, _, err := s.RecordReplica(ctx, replicaOf(key, "backend-b", "backend-a")); err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
 

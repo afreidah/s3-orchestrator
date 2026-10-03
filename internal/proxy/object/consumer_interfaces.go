@@ -50,6 +50,7 @@ type WriteRuntime interface {
 type Codec interface {
 	Compress(dst io.Writer, src io.Reader) (int64, error)
 	DecompressRanged(ctx context.Context, f compression.RangeFetcher, compressedSize int64) (compression.RangedReader, error)
+	InspectStored(ctx context.Context, f compression.RangeFetcher, storedSize int64) (int64, bool)
 }
 
 // -------------------------------------------------------------------------

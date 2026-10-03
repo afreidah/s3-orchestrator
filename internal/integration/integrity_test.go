@@ -124,7 +124,7 @@ func assertAllCopiesIntact(t *testing.T, ctx context.Context, key string, want [
 		if !ok {
 			t.Fatalf("%s: ledger names backend %q, which is not configured", stage, name)
 		}
-		result, err := be.GetObject(ctx, internalKey(key), "")
+		result, err := be.GetObject(ctx, storagePath(t, name, key), "")
 		if err != nil {
 			t.Fatalf("%s: copy on %s is unreadable: %v", stage, name, err)
 		}
@@ -265,7 +265,7 @@ func corruptBackendCopy(t *testing.T, ctx context.Context, backendName, key stri
 	if !ok {
 		t.Fatalf("backend %q is not configured", backendName)
 	}
-	if _, err := be.PutObject(ctx, internalKey(key), bytes.NewReader(corrupt),
+	if _, err := be.PutObject(ctx, storagePath(t, backendName, key), bytes.NewReader(corrupt),
 		int64(len(corrupt)), "application/octet-stream", nil); err != nil {
 		t.Fatalf("corrupting copy on %s: %v", backendName, err)
 	}
@@ -321,6 +321,7 @@ func TestIntegrity_ScrubberDetectsCorruptedCopy(t *testing.T) {
 	}
 
 	victim := backends[1]
+	victimPath := storagePath(t, victim, key)
 	corruptBackendCopy(t, ctx, victim, key, bytes.Repeat([]byte("X"), 512))
 
 	// The client still gets the right bytes: read failover picks the healthy
@@ -336,7 +337,7 @@ func TestIntegrity_ScrubberDetectsCorruptedCopy(t *testing.T) {
 	// A detected mismatch removes the bad bytes: DeleteOrEnqueue deletes
 	// directly and only falls back to the queue when the backend refuses.
 	be := allBackends[victim]
-	if _, err := be.GetObject(ctx, internalKey(key), ""); err == nil {
+	if _, err := be.GetObject(ctx, victimPath, ""); err == nil {
 		t.Errorf("corrupted copy still present on %s after scrub", victim)
 	}
 
@@ -436,6 +437,7 @@ func TestIntegrity_VerifyOnReadDiscardsCorruptedCopy(t *testing.T) {
 		t.Fatalf("expected a single copy so the read cannot fail over, got %v", backends)
 	}
 	victim := backends[0]
+	victimPath := storagePath(t, victim, key)
 	corruptBackendCopy(t, ctx, victim, key, bytes.Repeat([]byte("X"), 400))
 
 	// Read the object to completion and close it, which is what drives
@@ -452,7 +454,7 @@ func TestIntegrity_VerifyOnReadDiscardsCorruptedCopy(t *testing.T) {
 
 	waitFor(t, 10*time.Second, "corrupted copy discarded", func() bool {
 		be := allBackends[victim]
-		_, getErr := be.GetObject(ctx, internalKey(key), "")
+		_, getErr := be.GetObject(ctx, victimPath, "")
 		return getErr != nil
 	})
 
@@ -540,6 +542,7 @@ func TestIntegrity_RangedReadKeepsHealthyCopy(t *testing.T) {
 	if len(before) != 1 {
 		t.Fatalf("expected a single copy so a read cannot fail over, got %v", before)
 	}
+	victimPath := storagePath(t, before[0], key)
 
 	// Read a slice and close it, which is what drives verification.
 	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
@@ -565,7 +568,7 @@ func TestIntegrity_RangedReadKeepsHealthyCopy(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	victim := before[0]
-	if _, err := allBackends[victim].GetObject(ctx, internalKey(key), ""); err != nil {
+	if _, err := allBackends[victim].GetObject(ctx, victimPath, ""); err != nil {
 		t.Errorf("a healthy ranged read destroyed the bytes on %s: %v", victim, err)
 	}
 	if after := queryObjectBackends(t, key); len(after) != 1 {

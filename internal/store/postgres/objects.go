@@ -47,9 +47,8 @@ func (s *Store) ListObjectsByBackend(ctx context.Context, backendName string, li
 // bounded-memory sorted-merge join against an S3 ListObjects walk; both
 // sides are in lex order so the merge is O(n) memory bounded by limit.
 //
-// By storage_key because that is what the backend listing on the other side of
-// the merge returns - the path the bytes occupy, which is no longer the
-// object's key.
+// It orders by storage_key because the backend listing on the other side of
+// the merge returns paths, and a per-write copy's path is not its object key.
 func (s *Store) ListObjectsByBackendKeyAsc(ctx context.Context, backendName, afterStorageKey string, limit int) ([]core.ObjectLocation, error) {
 	rows, err := s.queries.ListObjectsByBackendKeyAsc(ctx, db.ListObjectsByBackendKeyAscParams{
 		BackendName: backendName,

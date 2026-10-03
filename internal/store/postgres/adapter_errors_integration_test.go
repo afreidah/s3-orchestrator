@@ -149,7 +149,9 @@ func TestPgAdapterErr_InsertObjectLocationIfNotExists(t *testing.T) {
 // is wrapped.
 func TestPgAdapterErr_InsertReplicaConditional(t *testing.T) {
 	a := closedPgAdapter(t, adapterPgStore(t))
-	if _, _, err := a.InsertReplicaConditional(context.Background(), "k", "backend-b", "backend-a"); err == nil {
+	if _, _, err := a.InsertReplicaConditional(context.Background(), &core.ReplicaInsert{
+		ObjectKey: "k", TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: "k!r",
+	}); err == nil {
 		t.Error("expected error from closed tx")
 	}
 }

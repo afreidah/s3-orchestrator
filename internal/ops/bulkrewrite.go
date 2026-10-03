@@ -277,10 +277,10 @@ func bulkRewritePageSize(maxRewrites, rewritten int) int {
 // as it goes: a run that fits when it starts can stop fitting halfway through.
 func (op bulkRewriteOp[L]) processLocation(ctx context.Context, env bulkRewriteEnv, loc L) rewriteOutcome {
 	key, backendName, sizeBytes := loc.rewriteKey(), loc.rewriteBackend(), loc.rewriteSize()
-	// Read and written at the copy's own path, which is also why the rewrite is
-	// safe in place: the path names this copy, so a client overwriting the key
-	// while the pass runs writes somewhere else entirely and the etag CAS below
-	// is what stops this pass describing bytes that are no longer the object's.
+	// Read and written at the copy's own path, so rewriting in place is safe: a
+	// client overwriting the key during the pass writes to a different path, and
+	// the etag CAS below stops the pass recording bytes that are not the
+	// current object.
 	storageKey := core.StoragePath(key, loc.rewriteStorageKey())
 
 	if op.declines != nil && op.declines(loc) {

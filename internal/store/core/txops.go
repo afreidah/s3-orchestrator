@@ -77,8 +77,8 @@ func (o TxOps) MoveObjectLocation(ctx context.Context, m *MoveLocation) (int64, 
 	return MoveObjectLocation(ctx, o.runner, m)
 }
 
-// SweepStaleCleanupQueueRows drops queued cleanups for bytes reconcile has
-// established are no longer on the backend.
+// SweepStaleCleanupQueueRows drops queued cleanups for bytes reconcile found
+// missing from the backend.
 func (o TxOps) SweepStaleCleanupQueueRows(ctx context.Context, storageKey, backend string) (int64, error) {
 	return SweepStaleCleanupQueueRows(ctx, o.runner, storageKey, backend)
 }

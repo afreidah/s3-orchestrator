@@ -527,6 +527,33 @@ func queryLogicalSize(t *testing.T, key string) int64 {
 	return size.Int64
 }
 
+// storagePathIn returns the path a copy of storedKey occupies on backendName,
+// read from the object_locations row in db. Each write stores its bytes under a
+// path of its own, so a test that reaches a backend directly has to ask the
+// ledger where the copy is. A key with no row on that backend, such as a
+// multipart part object, is returned unchanged.
+func storagePathIn(t *testing.T, db *sql.DB, backendName, storedKey string) string {
+	t.Helper()
+	var storageKey string
+	err := db.QueryRow(
+		"SELECT storage_key FROM object_locations WHERE object_key = $1 AND backend_name = $2",
+		storedKey, backendName).Scan(&storageKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return storedKey
+	}
+	if err != nil {
+		t.Fatalf("storagePathIn(%s, %s): %v", backendName, storedKey, err)
+	}
+	return core.StoragePath(storedKey, storageKey)
+}
+
+// storagePath is storagePathIn against the shared test database, for an object
+// key inside the virtual bucket.
+func storagePath(t *testing.T, backendName, key string) string {
+	t.Helper()
+	return storagePathIn(t, testDB, backendName, internalKey(key))
+}
+
 // backendObjectSize reports how many bytes a backend physically holds for an
 // object key. Every other size in the system - the ledger's size_bytes, the
 // quota, the usage counters - is a derived number that can drift from this one,
@@ -544,7 +571,7 @@ func backendRawObjectSize(t *testing.T, backendName, storedKey string) int64 {
 	if !ok {
 		t.Fatalf("backendRawObjectSize: backend %q is not configured", backendName)
 	}
-	head, err := be.HeadObject(context.Background(), storedKey)
+	head, err := be.HeadObject(context.Background(), storagePathIn(t, testDB, backendName, storedKey))
 	if err != nil {
 		t.Fatalf("backendRawObjectSize(%s, %s): %v", backendName, storedKey, err)
 	}
@@ -1144,11 +1171,11 @@ func (f *FailableStore) ListObjectsByBackend(ctx context.Context, backendName st
 
 // MoveObjectLocation is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) MoveObjectLocation(ctx context.Context, key, fromBackend, toBackend string) (int64, error) {
+func (f *FailableStore) MoveObjectLocation(ctx context.Context, m *core.MoveLocation) (int64, error) {
 	if f.isFailing() {
 		return 0, errSimulatedDBOutage
 	}
-	return f.inner.MoveObjectLocation(ctx, key, fromBackend, toBackend)
+	return f.inner.MoveObjectLocation(ctx, m)
 }
 
 // GetUnderReplicatedObjects is an integration-test fixture helper; see file header for
@@ -1162,11 +1189,11 @@ func (f *FailableStore) GetUnderReplicatedObjects(ctx context.Context, factor, l
 
 // RecordReplica is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) RecordReplica(ctx context.Context, key, targetBackend, sourceBackend string) (int64, bool, error) {
+func (f *FailableStore) RecordReplica(ctx context.Context, r *core.ReplicaInsert) (int64, bool, error) {
 	if f.isFailing() {
 		return 0, false, errSimulatedDBOutage
 	}
-	return f.inner.RecordReplica(ctx, key, targetBackend, sourceBackend)
+	return f.inner.RecordReplica(ctx, r)
 }
 
 // GetOverReplicatedObjects is an integration-test fixture helper; see file header for
@@ -1189,9 +1216,9 @@ func (f *FailableStore) CountOverReplicatedObjects(ctx context.Context, factor i
 
 // RemoveExcessCopy is an integration-test fixture helper; see file header for
 // the surrounding lifecycle the helpers participate in.
-func (f *FailableStore) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (int64, bool, error) {
+func (f *FailableStore) RemoveExcessCopy(ctx context.Context, key, backendName string, factor int) (core.RemovedCopy, error) {
 	if f.isFailing() {
-		return 0, false, errSimulatedDBOutage
+		return core.RemovedCopy{}, errSimulatedDBOutage
 	}
 	return f.inner.RemoveExcessCopy(ctx, key, backendName, factor)
 }

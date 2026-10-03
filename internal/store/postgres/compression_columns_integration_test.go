@@ -229,7 +229,7 @@ func TestPgRecordReplica_PreservesRepresentation(t *testing.T) {
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1024, Form: form}); err != nil {
 		t.Fatalf("RecordObject: %v", err)
 	}
-	if _, inserted, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil || !inserted {
+	if _, inserted, err := s.RecordReplica(ctx, replicaOf(key, "backend-b", "backend-a")); err != nil || !inserted {
 		t.Fatalf("RecordReplica: inserted=%v err=%v", inserted, err)
 	}
 

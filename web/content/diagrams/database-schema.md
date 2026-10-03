@@ -66,6 +66,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     '    object_locations {',
     '        TEXT object_key PK',
     '        TEXT backend_name "PK, FK"',
+    '        TEXT storage_key',
     '        BIGINT size_bytes',
     '        BOOLEAN encrypted',
     '        BYTEA encryption_key',
@@ -138,6 +139,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     '        BIGSERIAL id PK',
     '        TEXT backend_name FK',
     '        TEXT object_key',
+    '        TEXT storage_key',
     '        TEXT reason',
     '        BIGINT size_bytes',
     '        TIMESTAMPTZ created_at',
@@ -153,6 +155,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     '        BIGINT original_id',
     '        TEXT backend_name FK',
     '        TEXT object_key',
+    '        TEXT storage_key',
     '        TEXT reason',
     '        BIGINT size_bytes',
     '        INT attempts',
@@ -164,6 +167,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     '    pending_objects {',
     '        TEXT intent_id PK',
     '        TEXT object_key',
+    '        TEXT storage_key',
     '        TEXT backend_name FK',
     '        BIGINT size_bytes',
     '        BOOLEAN encrypted',
@@ -305,9 +309,11 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
       title: 'object_locations',
       badge: 'core', badgeText: 'core table',
       body: '<p>Maps every stored object to its backend(s). Composite primary key <code>(object_key, backend_name)</code> supports replication &mdash; one object can exist on multiple backends. Added encryption columns track envelope-encrypted objects.</p>' +
+        '<p>Each copy records the path its bytes occupy on its backend in <code>storage_key</code>. A write stores its bytes at <code>&lt;object key&gt;!&lt;id&gt;</code>, an id of its own, so two writes of one key never share a path and a cleanup deletes only the bytes its own write uploaded. A row whose bytes sit at the object key carries <code>storage_key = object_key</code>.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">object_key</td><td>TEXT</td><td>PK (composite)</td></tr>' +
         '<tr><td class="fk">backend_name</td><td>TEXT</td><td>PK + FK &rarr; backend_quotas</td></tr>' +
+        '<tr><td>storage_key</td><td>TEXT</td><td>Path of this copy\'s bytes on its backend. NOT NULL; unique per backend</td></tr>' +
         '<tr><td>size_bytes</td><td>BIGINT</td><td>Ciphertext size if encrypted</td></tr>' +
         '<tr><td>encrypted</td><td>BOOLEAN</td><td>Envelope encryption flag</td></tr>' +
         '<tr><td>encryption_key</td><td>BYTEA</td><td>Packed nonce + wrapped DEK</td></tr>' +
@@ -326,7 +332,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<tr><td>content_type</td><td>TEXT</td><td>Content type the write carried, served from the row rather than from whichever backend replies (nullable)</td></tr>' +
         '<tr><td>user_metadata</td><td>JSONB</td><td>The x-amz-meta-* set. An empty object means the object has none; NULL means nobody has looked yet, which is what a row predating identity capture holds (nullable)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>The object\'s write time, not the copy\'s: every copy of a key carries the same value and a replica inherits it, so an unmodified object reports one Last-Modified whichever copy serves it. Unsuitable as a per-copy age, which last_scrubbed_at tracks instead</td></tr></table>' +
-        '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_backend (backend_name) &bull; idx_object_locations_key_pattern (object_key text_pattern_ops) &bull; idx_object_locations_created (created_at) &bull; idx_object_locations_key_created (object_key, created_at) &bull; idx_object_locations_backend_key_collate_c (backend_name, object_key COLLATE "C") &bull; idx_object_locations_key_collate_c_covering (object_key COLLATE "C", created_at) INCLUDE (backend_name, size_bytes, etag) &bull; idx_object_locations_managed (backend_name) WHERE managed &bull; idx_object_locations_scrub_queue (COALESCE(last_scrubbed_at, created_at), object_key) WHERE content_hash IS NOT NULL AND managed</p>' +
+        '<p class="ac-idx"><b>Indexes:</b> PK (object_key, backend_name) &bull; idx_object_locations_backend (backend_name) &bull; idx_object_locations_key_pattern (object_key text_pattern_ops) &bull; idx_object_locations_created (created_at) &bull; idx_object_locations_key_created (object_key, created_at) &bull; idx_object_locations_backend_storage_key_collate_c (backend_name, storage_key COLLATE "C") for the reconcile walk &bull; idx_object_locations_backend_storage_key_unique UNIQUE (backend_name, storage_key) &bull; idx_object_locations_key_collate_c_covering (object_key COLLATE "C", created_at) INCLUDE (backend_name, size_bytes, etag) &bull; idx_object_locations_managed (backend_name) WHERE managed &bull; idx_object_locations_scrub_queue (COALESCE(last_scrubbed_at, created_at), object_key) WHERE content_hash IS NOT NULL AND managed</p>' +
         '<p>Used by: <a href="../write-path/">write path</a> (RecordObject), <a href="../read-path/">read path</a> (GetAllObjectLocations), <a href="../background-services/">replicator</a> (GetUnderReplicatedObjects), directory tree listing, <a href="../encryption/">key rotation</a>, <a href="../compression/">compression</a> (stored-form columns).</p>' +
         '<p class="ac-metric">Key queries: InsertObjectLocation, ListObjectsByPrefix, GetDirectoryStats, GetUnderReplicatedObjects, BackendObjectStats</p>'
     },
@@ -403,7 +409,8 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">id</td><td>BIGSERIAL</td><td>PRIMARY KEY (auto-increment)</td></tr>' +
         '<tr><td class="fk">backend_name</td><td>TEXT</td><td>FK &rarr; backend_quotas</td></tr>' +
-        '<tr><td>object_key</td><td>TEXT</td><td>S3 key to delete</td></tr>' +
+        '<tr><td>object_key</td><td>TEXT</td><td>Object the orphan belonged to, kept so an operator can tell which object it was</td></tr>' +
+        '<tr><td>storage_key</td><td>TEXT</td><td>Path on the backend the worker deletes</td></tr>' +
         '<tr><td>reason</td><td>TEXT</td><td>Why cleanup is needed</td></tr>' +
         '<tr><td>size_bytes</td><td>BIGINT</td><td>Object size (for orphan_bytes tracking)</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Enqueue time</td></tr>' +
@@ -420,13 +427,14 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
     cleanup_dlq: {
       title: 'cleanup_dlq',
       badge: 'cleanup', badgeText: 'dead-letter queue',
-      body: '<p>Dead-letter table for cleanup_queue rows that exhausted their retry budget without ever succeeding at the physical backend delete. The row contents are preserved verbatim (key, backend, size, last_error) and the original_id correlates back to the queue row that was moved. Operators inspect this table to find unrecoverable orphans and retry them manually or write each entry off deliberately.</p>' +
+      body: '<p>Dead-letter table for cleanup_queue rows that exhausted their retry budget without ever succeeding at the physical backend delete. The row contents are preserved verbatim (key, path, backend, size, last_error) and the original_id correlates back to the queue row that was moved. Operators inspect this table to find unrecoverable orphans and retry them manually or write each entry off deliberately.</p>' +
         '<p><b>Important:</b> moving a row here does NOT decrement <code>orphan_bytes</code>. The backend object is still on disk; reclaim happens only when an operator confirms it is gone (e.g. via the reconciler) and runs a manual cleanup.</p>' +
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">id</td><td>BIGSERIAL</td><td>PRIMARY KEY (auto-increment)</td></tr>' +
         '<tr><td>original_id</td><td>BIGINT</td><td>cleanup_queue.id at the time of the move</td></tr>' +
         '<tr><td class="fk">backend_name</td><td>TEXT</td><td>FK &rarr; backend_quotas</td></tr>' +
-        '<tr><td>object_key</td><td>TEXT</td><td>S3 key still on the backend</td></tr>' +
+        '<tr><td>object_key</td><td>TEXT</td><td>Object the orphan belonged to</td></tr>' +
+        '<tr><td>storage_key</td><td>TEXT</td><td>Path on the backend still holding the bytes</td></tr>' +
         '<tr><td>reason</td><td>TEXT</td><td>Original enqueue reason</td></tr>' +
         '<tr><td>size_bytes</td><td>BIGINT</td><td>Bytes still occupying backend quota</td></tr>' +
         '<tr><td>attempts</td><td>INT</td><td>Final attempt count (>= 10)</td></tr>' +
@@ -448,6 +456,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<table class="ac-cols"><tr><th>Column</th><th>Type</th><th>Notes</th></tr>' +
         '<tr><td class="pk">intent_id</td><td>TEXT</td><td>PRIMARY KEY (UUID v4 minted by the coordinator)</td></tr>' +
         '<tr><td>object_key</td><td>TEXT</td><td>S3 key the PUT targets</td></tr>' +
+        '<tr><td>storage_key</td><td>TEXT</td><td>Path the upload writes on the backend: the object key, <code>!</code>, and this intent\'s id. The reaper HEADs and deletes at this path</td></tr>' +
         '<tr><td class="fk">backend_name</td><td>TEXT</td><td>FK &rarr; backend_quotas; target of the in-flight PUT</td></tr>' +
         '<tr><td>size_bytes</td><td>BIGINT</td><td>Ciphertext size (or plaintext if encryption disabled)</td></tr>' +
         '<tr><td>encrypted</td><td>BOOLEAN</td><td>true when an EncryptionMeta is captured below</td></tr>' +
@@ -462,7 +471,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
         '<tr><td>etag</td><td>TEXT</td><td>MD5 of the bytes the client sent, so a reaper-promoted object answers a HEAD without asking a backend (nullable)</td></tr>' +
         '<tr><td>content_type</td><td>TEXT</td><td>Content type the write carried, promoted with the object (nullable)</td></tr>' +
         '<tr><td>user_metadata</td><td>JSONB</td><td>x-amz-meta-* the write carried. An empty object means the write had none; NULL means the intent predates identity capture (nullable)</td></tr>' +
-        '<tr><td>role</td><td>TEXT</td><td>What promoting this intent means: <code>primary</code> replaces whatever the key held, <code>companion</code> adds a copy alongside its siblings. CHECK-constrained to the two, defaulting to primary, which is what every intent written before write fan-out meant. A companion is never promoted - the reaper cannot tell its bytes from an older object at the same path, so it drops the row and removes them, and replication rebuilds the copy from one the client was told about</td></tr>' +
+        '<tr><td>role</td><td>TEXT</td><td>What promoting this intent means: <code>primary</code> replaces whatever the key held, <code>companion</code> adds a copy alongside its siblings. CHECK-constrained to the two, defaulting to primary, which is what every intent written before write fan-out meant. A companion is never promoted - the reaper cannot tell whether its upload finished, so it drops the row and removes the bytes at its path, and replication rebuilds the copy from one the client was told about</td></tr>' +
         '<tr><td>created_at</td><td>TIMESTAMPTZ</td><td>Intent creation time; reaper only considers rows older than <code>write_path.pending_pattern.min_age</code> (default 5m)</td></tr></table>' +
         '<p class="ac-idx"><b>Indexes:</b> PK on intent_id &bull; idx_pending_objects_created (created_at) for the reaper\'s age-cursored scan &bull; idx_pending_objects_backend (backend_name) &bull; idx_pending_objects_key (object_key) for the by-key clear every commit runs</p>' +
         '<p>Used by: <code>writepath.Coordinator.ClaimWriteTarget</code> and <code>ClaimWriteCopies</code> (insert through <code>InsertPendingIfFits</code> on PUT entry) &bull; <code>RecordObjectAndPromoteIntent</code> (delete on successful commit) &bull; <code>RecoverFromRecordFailure</code> (delete on drain race / commit failure) &bull; <a href="../background-services/">PendingReaper</a> (HEAD-probes the backend and promotes / drops stale intents). The reaper runs under advisory lock 1011 (<code>LockPendingReaper</code>), which the notification drainer currently shares. Its stale scan is a plain SELECT; promotion re-reads the row with a plain <code>FOR UPDATE</code> through <code>LockPendingForUpdate</code>, so a row already resolved elsewhere is a no-op.</p>' +
@@ -654,7 +663,7 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
 | **backend_quotas** | Backend registry with storage quota tracking | `backend_name` |
 | **backend_quota_stripes** | A backend's stored byte total, split across rows so concurrent writes take different row locks | `(backend_name, stripe_id)` |
 | **backend_request_usage** | Monthly call counts per named request budget, which is what admission charges against | `(backend_name, period, pool)` |
-| **object_locations** | Maps objects to backends (supports replication) | `(object_key, backend_name)` |
+| **object_locations** | Maps objects to backends (supports replication) and records the path each copy occupies | `(object_key, backend_name)` |
 | **object_tags** | Key/value labels on an object, shared by every replica | `(object_key, tag_key)` |
 | **multipart_uploads** | In-progress multipart upload state | `upload_id` |
 | **multipart_parts** | Individual parts within a multipart upload | `(upload_id, part_number)` |
@@ -704,3 +713,5 @@ Entity-relationship diagram of the PostgreSQL metadata store. The SQLite store (
 | `00029_grant_resource` | Rename `grants.bucket_name` to `resource_name` and add `resource_kind` (bucket, backend, or a deployment-wide control-plane kind that `00030` renames to `orchestrator`), moving the primary key to `(user_id, resource_kind, resource_name)`. Control-plane actions such as draining a backend are not operations on a bucket, so a grant has to be able to name something else. Every existing row is a bucket grant; the down path discards the rest |
 | `00030_grant_orchestrator_kind` | Rename the resource kind `instance` to `orchestrator`, since the grant covers every process of a deployment rather than one. The reader accepts both spellings, so a deployment that has not run this still authorizes its existing grants |
 | `00031_backend_drains` | Add `backend_drains`, the durable record of each backend's drain, and the `backend_capacity` view every admission test reads. A drain was held in the memory of the process that started it, so a restart forgot it and other instances never saw it. With the record in the database, admission refuses a drained backend on every instance, and the drain worker resumes a drain after a restart |
+| `00032_object_storage_key` | Add `storage_key` to `object_locations`, `pending_objects`, `cleanup_queue` and `cleanup_dlq`, backfilled to `object_key`, which is where every existing copy's bytes are. Each write stores its bytes at a path of its own, so two writes of one key never share a path and a delete removes only what its own write uploaded. The down migration refuses while any row is stored anywhere other than its object key |
+| `00033_storage_key_indexes` | Add `idx_object_locations_backend_storage_key_collate_c (backend_name, storage_key COLLATE "C")` for the reconcile walk, which compares the ledger with a backend listing by path, and the unique `idx_object_locations_backend_storage_key_unique (backend_name, storage_key)`. Drop `idx_object_locations_backend_key_collate_c`. Built `CONCURRENTLY` outside a transaction |

@@ -89,9 +89,9 @@ func (r *Replicator) verifyReplica(ctx context.Context, target, targetStorageKey
 
 	// StreamCopy moves the stored bytes verbatim, so the source row describes
 	// the new copy exactly once the backend name and the path are swapped. The
-	// path has to be swapped: the copy was written under a name of its own on
-	// the target, and reading back the source's would either 404 or - worse, on
-	// a backend that happens to hold the key - hash a different object.
+	// copy was written under its own path on the target; reading back the
+	// source's path would 404, or hash a different object on a backend that
+	// happens to hold the key.
 	replica := *source
 	replica.BackendName = target
 	replica.StorageKey = targetStorageKey

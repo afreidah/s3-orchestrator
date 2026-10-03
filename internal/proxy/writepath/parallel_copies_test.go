@@ -220,14 +220,10 @@ func TestCommitCompanionCopy_RecordsTheCopy(t *testing.T) {
 }
 
 // TestCommitCompanionCopy_DiscardsAnUntrustedCopy asserts a copy the store
-// could not vouch for has its own bytes removed from the backend - and only
-// those. A newer write took the key while this upload ran, so this upload's
-// bytes describe an object that is no longer the object; the copy that write
-// committed sits at a different path and must survive untouched.
-//
-// This is issue #1527 at the coordinator: the discard used to delete "the
-// object at the key", which on a backend the winner had also landed on was the
-// winner's bytes, under a row that had just committed.
+// could not vouch for has its own bytes removed from the backend, and only
+// those. A newer write took the key while this upload ran, so these bytes are
+// stale. The copy the newer write committed sits at a different path on the
+// same backend and must survive untouched.
 func TestCommitCompanionCopy_DiscardsAnUntrustedCopy(t *testing.T) {
 	t.Parallel()
 	ctrl := gomock.NewController(t)

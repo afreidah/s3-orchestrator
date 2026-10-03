@@ -42,10 +42,9 @@ CREATE TABLE IF NOT EXISTS object_locations (
     object_key     TEXT NOT NULL,
     backend_name   TEXT NOT NULL REFERENCES backend_quotas(backend_name),
     -- The path this copy's bytes occupy on the backend. A write stores them
-    -- under object_key || '!' || intent_id, so two overwrites racing towards
-    -- one backend never share a path and the cleanup that follows either of
-    -- them deletes its own bytes. Rows written before this existed hold
-    -- storage_key = object_key, which is where their bytes are.
+    -- under object_key || '!' || intent_id, so two writes to one backend never
+    -- share a path and a cleanup deletes only its own write's bytes. A row
+    -- whose bytes are at the object key holds storage_key = object_key.
     storage_key    TEXT NOT NULL,
     size_bytes     INTEGER NOT NULL,
     encrypted      INTEGER NOT NULL DEFAULT 0,
@@ -100,8 +99,8 @@ CREATE INDEX IF NOT EXISTS idx_object_locations_managed
     ON object_locations(backend_name) WHERE managed;
 
 -- Backs reconcile's sorted-merge join, which walks the ledger in the byte order
--- a backend listing returns, and states the invariant per-write storage keys
--- exist to create: one backend holds one object at one path.
+-- a backend listing returns. Being unique, it also enforces one object per path
+-- per backend.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_object_locations_backend_storage_key
     ON object_locations(backend_name, storage_key);
 

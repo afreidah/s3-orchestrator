@@ -26,6 +26,7 @@ import (
 
 	"github.com/afreidah/s3-orchestrator/internal/config"
 	"github.com/afreidah/s3-orchestrator/internal/proxy/proxytest"
+	"github.com/afreidah/s3-orchestrator/internal/store/core"
 	"github.com/afreidah/s3-orchestrator/internal/transport/s3api"
 )
 
@@ -132,7 +133,10 @@ func TestOrphanBytes_EnqueueIncrementsOrphanBytes(t *testing.T) {
 
 	resetState(t)
 
-	err := testStore.EnqueueCleanup(ctx, "minio-1", "test-bucket/orphan-test-key", "test_reason", 512)
+	err := testStore.EnqueueCleanup(ctx, &core.CleanupRequest{
+		BackendName: "minio-1", ObjectKey: "test-bucket/orphan-test-key", StorageKey: "test-bucket/orphan-test-key",
+		Reason: "test_reason", SizeBytes: 512,
+	})
 	if err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
@@ -184,7 +188,9 @@ func TestOrphanBytes_CleanupSuccessDecrementsOrphanBytes(t *testing.T) {
 	backend := queryObjectBackend(t, key)
 
 	internalK := internalKey(key)
-	err = testStore.EnqueueCleanup(ctx, backend, internalK, "test_reason", 100)
+	err = testStore.EnqueueCleanup(ctx, &core.CleanupRequest{
+		BackendName: backend, ObjectKey: internalK, StorageKey: internalK, Reason: "test_reason", SizeBytes: 100,
+	})
 	if err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
@@ -228,7 +234,10 @@ func TestOrphanBytes_MoveCleanupToDLQ_GraduatesQueueRow(t *testing.T) {
 
 	resetState(t)
 
-	err := testStore.EnqueueCleanup(ctx, "minio-1", "test-bucket/dlq-graduate", "delete_failed", 4096)
+	err := testStore.EnqueueCleanup(ctx, &core.CleanupRequest{
+		BackendName: "minio-1", ObjectKey: "test-bucket/dlq-graduate", StorageKey: "test-bucket/dlq-graduate",
+		Reason: "delete_failed", SizeBytes: 4096,
+	})
 	if err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
@@ -342,7 +351,9 @@ func TestOrphanBytes_CleanupZeroSizeSkipsOrphanDecrement(t *testing.T) {
 	backend := queryObjectBackend(t, key)
 	internalK := internalKey(key)
 
-	err = testStore.EnqueueCleanup(ctx, backend, internalK, "test_zero", 0)
+	err = testStore.EnqueueCleanup(ctx, &core.CleanupRequest{
+		BackendName: backend, ObjectKey: internalK, StorageKey: internalK, Reason: "test_zero",
+	})
 	if err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}

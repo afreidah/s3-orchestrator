@@ -174,7 +174,9 @@ func TestDrainRecord_RefusesReplicaTarget(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 	mustStartDrain(t, s, "backend-b")
-	if _, inserted, err := s.RecordReplica(ctx, key, "backend-b", "backend-a"); err != nil || inserted {
+	if _, inserted, err := s.RecordReplica(ctx, &core.ReplicaInsert{
+		ObjectKey: key, TargetBackend: "backend-b", SourceBackend: "backend-a", StorageKey: key + "!r",
+	}); err != nil || inserted {
 		t.Errorf("RecordReplica onto a draining backend = %v, %v; want refused", inserted, err)
 	}
 }

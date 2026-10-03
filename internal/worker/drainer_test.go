@@ -49,11 +49,11 @@ func captureEnqueue(store *storetest.MockMetadataStore) *[]string {
 		mu      sync.Mutex
 		reasons []string
 	)
-	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _, _, reason string, _ int64) error {
+	store.EXPECT().EnqueueCleanup(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, c *core.CleanupRequest) error {
 			mu.Lock()
 			defer mu.Unlock()
-			reasons = append(reasons, reason)
+			reasons = append(reasons, c.Reason)
 			return nil
 		}).AnyTimes()
 	return &reasons
@@ -140,7 +140,8 @@ func TestDrainOne_ReplicaElsewhere_DropsTheDrainedCopy(t *testing.T) {
 }
 
 // TestDrainOne_OnlyCopy_MovesTheObject verifies an object only the draining
-// backend holds is streamed to another backend.
+// backend holds is streamed to a path of its own on another backend, and that
+// the row is moved to that path.
 func TestDrainOne_OnlyCopy_MovesTheObject(t *testing.T) {
 	t.Parallel()
 	src := backendtest.NewInMemory()
@@ -149,16 +150,20 @@ func TestDrainOne_OnlyCopy_MovesTheObject(t *testing.T) {
 
 	store := storetest.NewMockMetadataStore(gomock.NewController(t))
 	onlyOnB1(store)
-	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(int64(4), nil).AnyTimes()
+	var moved core.MoveLocation
+	store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, m *core.MoveLocation) (int64, error) {
+			moved = *m
+			return 4, nil
+		}).AnyTimes()
 	storetest.Permissive(store)
 
 	d := newDrainerFor(t, store, map[string]backend.ObjectBackend{"b1": src, "b2": dst}, &fleetOpts{Order: []string{"b1", "b2"}})
 	if !d.drainOne(context.Background(), src, "b1", drainedObject()) {
 		t.Fatal("drainOne failed to move the only copy")
 	}
-	if !dst.Has("key1") {
-		t.Error("the destination does not hold the object")
+	if moved.StorageKey == "" || moved.StorageKey == "key1" || !dst.Has(moved.StorageKey) {
+		t.Errorf("row moved to path %q; the destination must hold the bytes at a fresh path", moved.StorageKey)
 	}
 }
 
@@ -185,7 +190,7 @@ func TestDrainOne_MoveFailures_EnqueueTheCopyTheyLeft(t *testing.T) {
 
 			store := storetest.NewMockMetadataStore(gomock.NewController(t))
 			onlyOnB1(store)
-			store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			store.EXPECT().MoveObjectLocation(gomock.Any(), gomock.Any()).
 				Return(tc.moved, tc.err).AnyTimes()
 			reasons := captureEnqueue(store)
 			storetest.Permissive(store)
@@ -311,8 +316,8 @@ func TestDrain_MovesEverythingOffAndCompletes(t *testing.T) {
 		t.Errorf("summary = %+v, want 3 moved and 1 drain completed", sum)
 	}
 	for _, key := range []string{"bkt/a", "bkt/b", "bkt/c"} {
-		if b1.Has(key) || !b2.Has(key) {
-			t.Errorf("%s: on b1 = %v, on b2 = %v; want moved to b2", key, b1.Has(key), b2.Has(key))
+		if b1.HasCopyOf(key) || !b2.HasCopyOf(key) {
+			t.Errorf("%s: on b1 = %v, on b2 = %v; want moved to b2", key, b1.HasCopyOf(key), b2.HasCopyOf(key))
 		}
 	}
 	if rec := drainRecord(t, store, "b1"); rec.State != core.DrainStateDrained || rec.ObjectsMoved != 3 {

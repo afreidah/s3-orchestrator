@@ -3,19 +3,13 @@
 --
 -- Author: Alex Freidah
 --
--- Reconcile's sorted-merge join now walks the ledger by storage_key, because
--- that is what a backend listing returns: the path the bytes occupy, which is
--- no longer the object's key. The cursor predicate and the ORDER BY carry
--- COLLATE "C" for the same reason 00012 added it for object_key - S3
--- ListObjectsV2 is UTF-8 byte ordered and the merge compares Go strings, so a
--- locale-collated walk mis-pairs keys and the pass oscillates.
+-- Reconcile walks the ledger by storage_key, since a backend listing returns
+-- paths rather than object keys. The walk sorts with COLLATE "C" because S3
+-- lists keys in byte order; a locale-collated walk would mis-pair keys.
 --
--- The unique index states the invariant the whole change exists to create: one
--- backend holds one object at one path. It is satisfiable on an existing
--- deployment by construction - every backfilled row has storage_key =
--- object_key and (object_key, backend_name) is already the primary key - and
--- from here on a new path carries a fresh intent id, so a violation would mean
--- two writes minted the same 128-bit id.
+-- The unique index enforces one object per path per backend. Existing rows
+-- satisfy it already: each was backfilled with its object key, and
+-- (object_key, backend_name) is the primary key.
 -- -------------------------------------------------------------------------------
 
 -- +goose Up

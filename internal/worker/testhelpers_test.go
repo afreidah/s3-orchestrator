@@ -28,18 +28,17 @@ import (
 // FIXTURE NORMALISATION
 // -------------------------------------------------------------------------
 
-// A fixture that names no storage key describes the legacy form: bytes at the
-// object's own key, which is what the migration backfilled onto every row
-// written before per-write paths and what an imported object carries. Filling
-// it in on the way out of the stub is what keeps each test's fixture about its
-// own subject instead of restating the path three times.
+// A fixture that names no storage key describes bytes at the object's own key,
+// as a backfilled or imported row has them. Filling the path in on the way out
+// of the stub keeps each fixture about its own subject instead of restating the
+// path.
 
 // withPaths fills in the storage key of every row that left it unset.
 func withPaths(rows []core.ObjectLocation) []core.ObjectLocation {
 	out := make([]core.ObjectLocation, len(rows))
-	for i, r := range rows {
-		r.StorageKey = core.StoragePath(r.ObjectKey, r.StorageKey)
-		out[i] = r
+	for i := range rows {
+		out[i] = rows[i]
+		out[i].StorageKey = core.StoragePath(rows[i].ObjectKey, rows[i].StorageKey)
 	}
 	return out
 }
@@ -47,9 +46,9 @@ func withPaths(rows []core.ObjectLocation) []core.ObjectLocation {
 // withIntentPaths does the same for pending intents.
 func withIntentPaths(rows []core.PendingObject) []core.PendingObject {
 	out := make([]core.PendingObject, len(rows))
-	for i, r := range rows {
-		r.StorageKey = core.StoragePath(r.ObjectKey, r.StorageKey)
-		out[i] = r
+	for i := range rows {
+		out[i] = rows[i]
+		out[i].StorageKey = core.StoragePath(rows[i].ObjectKey, rows[i].StorageKey)
 	}
 	return out
 }
@@ -72,10 +71,8 @@ func withCleanupPaths(rows []core.CleanupItem) []core.CleanupItem {
 // which backend holds the bytes, which object they belonged to, why they are
 // going and how many of them there are.
 //
-// The path is not among them because most of these workers mint it - a replica
-// or a move names its destination after itself - so a test that pinned it would
-// be pinning a random id. cleanupAt is for the cases where the path is the
-// point.
+// The path is not among them because most of these workers mint it for a
+// replica or a move, so pinning it would pin a random id.
 func cleanupOf(backendName, objectKey, reason string, size int64) gomock.Matcher {
 	return gomock.Cond(func(c *core.CleanupRequest) bool {
 		return c.BackendName == backendName && c.ObjectKey == objectKey &&
@@ -88,14 +85,6 @@ func cleanupOf(backendName, objectKey, reason string, size int64) gomock.Matcher
 func cleanupOn(backendName, objectKey string) gomock.Matcher {
 	return gomock.Cond(func(c *core.CleanupRequest) bool {
 		return c.BackendName == backendName && c.ObjectKey == objectKey
-	})
-}
-
-// cleanupAt matches an enqueued cleanup by the path it deletes, which is what a
-// test about deleting the right bytes is asserting.
-func cleanupAt(backendName, storageKey string) gomock.Matcher {
-	return gomock.Cond(func(c *core.CleanupRequest) bool {
-		return c.BackendName == backendName && c.StorageKey == storageKey
 	})
 }
 

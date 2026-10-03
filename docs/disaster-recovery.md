@@ -20,7 +20,7 @@ The orchestrator binary itself is stateless. Any instance with access to the dat
 
 When PostgreSQL becomes unreachable, the circuit breaker activates automatically:
 
-- **Reads** enter degraded mode: the orchestrator broadcasts GET requests to all backends (or uses a short-lived cache of recent key-to-backend mappings if `circuit_breaker.cache_ttl` is configured). Unencrypted objects found on any backend are returned normally. **Encrypted objects return `503 Service Unavailable`** because decryption requires encryption metadata (wrapped DEK, key ID) stored in the database.
+- **Reads** enter degraded mode: the orchestrator broadcasts GET requests to all backends (or uses a short-lived cache of recent key-to-backend mappings if `circuit_breaker.cache_ttl` is configured). Each backend is listed to find the object's newest copy, since only the database records which `<key>!<id>` path a write used. Unencrypted objects found on any backend are returned normally, and compressed ones are decoded first. A deleted object whose backend delete failed and is waiting for retry can be served in that window. **Encrypted objects return `503 Service Unavailable`** because decryption requires encryption metadata (wrapped DEK, key ID) stored in the database.
 - **Writes** return `503 Service Unavailable` because the orchestrator cannot record the object's location without the database.
 - **Background workers** (rebalancer, replicator, usage flush, cleanup queue) pause until the database recovers.
 

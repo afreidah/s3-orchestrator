@@ -118,11 +118,9 @@ INSERT INTO object_locations (object_key, backend_name, storage_key, size_bytes,
 -- this SELECT list, where a bare parameter takes no type from the INSERT
 -- target, and in the predicates below.
 --
--- storage_key is the caller's, not the source row's: the replica is a new set
--- of bytes at a path of its own, so it is named after the write that placed it
--- the same way a PUT's copy is. Carrying the source's path would put two rows
--- on two backends at one name again, and a cleanup for either would then have
--- to guess which bytes it meant.
+-- storage_key comes from the caller, not the source row: the replica is a new
+-- set of bytes at a path of its own, named after the write that placed it the
+-- same way a PUT's copy is, so a cleanup of either copy names its own bytes.
 SELECT @object_key::text, @target_backend::text, @storage_key::text, ol.size_bytes, ol.encrypted, ol.encryption_key, ol.key_id, ol.plaintext_size, ol.content_hash, ol.compression_algorithm, ol.compression_level, ol.compression_format_version, ol.logical_size, ol.etag, ol.content_type, ol.user_metadata, ol.created_at
 FROM object_locations ol
 JOIN backend_capacity c ON c.backend_name = @target_backend::text

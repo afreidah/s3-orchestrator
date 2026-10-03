@@ -340,10 +340,10 @@ func (r *Replicator) ReplicateObject(ctx context.Context, key string, existingCo
 		// what occupies the target, and it is only written if the target still
 		// has room at that moment. An attempt that leaves no row behind
 		// therefore has nothing to give back.
-		// The path the copy is written to on the target, minted before the
-		// transfer so the verify read, the record and every cleanup below all
-		// address the same bytes. A replica is a write like any other and gets
-		// a name no other write shares.
+		//
+		// The target path is minted before the transfer so the verify read, the
+		// record and every cleanup below address the same bytes. A replica is a
+		// write like any other and gets a path no other write shares.
 		targetStorageKey := writepath.NewStorageKey(key)
 		sourceLoc, err := r.CopyToReplica(ctx, key, targetStorageKey, existingCopies, target)
 		if err != nil {
@@ -473,9 +473,8 @@ func (r *Replicator) FindReplicaTarget(ctx context.Context, key string, size int
 
 // CopyToReplica reads the object from an existing copy and writes it to the
 // target backend at targetStorageKey, a path minted for this copy so the
-// bytes it places are addressable on their own. Tries each existing copy in
-// order for failover. Returns the
-// source row it read from: its BackendName is the source that answered, its
+// bytes it places can be addressed on their own. Tries each existing copy in
+// order for failover. Returns the source row it read from: its BackendName is the source that answered, its
 // SizeBytes the bytes actually transferred, and its stored-form columns
 // describe the target too, because StreamCopy moves the bytes verbatim. The
 // input slice is cloned before sorting so callers retain their original
@@ -558,9 +557,9 @@ func (r *Replicator) tryCopyFrom(ctx context.Context, key, targetStorageKey, tar
 	// refusal with the leg that had no headroom, so a source out of egress
 	// falls through to the next candidate and a full destination is terminal,
 	// exactly as an I/O failure on either leg would be.
+	//
 	// Read at the source copy's own path and write at the one minted for this
-	// replica: the object's key names neither of them. A source row carrying no
-	// path of its own predates them, and its bytes are at the key.
+	// replica. A source row carrying no path keeps its bytes at the key.
 	_, err := r.ops.StreamCopy(ctx, src, dst,
 		core.StoragePath(key, loc.StorageKey), targetStorageKey, loc.SizeBytes)
 	if err == nil {
@@ -595,9 +594,9 @@ func (r *Replicator) pruneStaleSource(ctx context.Context, key, backendName stri
 // CleanupOrphan deletes the bytes this replication attempt wrote when the DB
 // record was not created (e.g. source was deleted during replication). It
 // deletes them at the path the attempt wrote them to, so a target that already
-// held a copy of the key keeps it. Looks up the
-// backend by name and dispatches to DeleteOrEnqueue, which handles its
-// own API accounting and orphan-byte tracking.
+// held a copy of the key keeps it. Looks up the backend by name and dispatches
+// to DeleteOrEnqueue, which handles its own API accounting and orphan-byte
+// tracking.
 func (r *Replicator) CleanupOrphan(ctx context.Context, backendName, key, storageKey string, sizeBytes int64) {
 	be, ok := r.ops.Backends()[backendName]
 	if !ok {

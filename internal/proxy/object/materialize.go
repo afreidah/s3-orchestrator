@@ -74,7 +74,7 @@ func (o *Manager) materializeCopySource(
 ) (*materializedSource, error) {
 	var lastErr error
 	for i := range locations {
-		ms, err := o.tryMaterializeFromLocation(ctx, storagePath(sourceKey, &locations[i]), size, locations[i].BackendName)
+		ms, err := o.tryMaterializeFromLocation(ctx, core.StoragePath(sourceKey, locations[i].StorageKey), size, locations[i].BackendName)
 		if err != nil {
 			lastErr = err
 			continue
@@ -90,8 +90,8 @@ func (o *Manager) materializeCopySource(
 }
 
 // tryMaterializeFromLocation attempts to download one copy, at the path that
-// copy occupies on its backend, into a fresh seekable buffer. (ms, nil) on success. (nil, nil) means the
-// replica was skipped without a hard error (usage limits hit, backend not
+// copy occupies on its backend, into a fresh seekable buffer. (ms, nil) on
+// success. (nil, nil) means the replica was skipped without a hard error (usage limits hit, backend not
 // registered) — caller moves on. (nil, err) is a real failure (backend GET
 // errored or materialization failed). Errors are aggregated by the caller so
 // the last underlying failure surfaces when no replica succeeds.

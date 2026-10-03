@@ -810,7 +810,9 @@ func TestReconcile_StaleRowSweepsCleanupQueue(t *testing.T) {
 	if _, _, err := testStore.RecordObject(ctx, &core.RecordObjectRequest{Key: staleKey, Size: sizeBytes, Copies: []core.ObjectCopy{{Backend: backend}}}); err != nil {
 		t.Fatalf("seed RecordObject: %v", err)
 	}
-	if err := testStore.EnqueueCleanup(ctx, backend, staleKey, "test-seed", sizeBytes); err != nil {
+	if err := testStore.EnqueueCleanup(ctx, &core.CleanupRequest{
+		BackendName: backend, ObjectKey: staleKey, StorageKey: staleKey, Reason: "test-seed", SizeBytes: sizeBytes,
+	}); err != nil {
 		t.Fatalf("seed EnqueueCleanup: %v", err)
 	}
 	if err := testStore.IncrementOrphanBytes(ctx, backend, sizeBytes); err != nil {
@@ -933,7 +935,9 @@ func TestSweepStaleCleanupQueueRows_PostgresDirect_OnlyThisBackend(t *testing.T)
 // short and readable.
 func mustEnqueueWithSize(t *testing.T, ctx context.Context, backend, key, reason string, size int64) {
 	t.Helper()
-	if err := testStore.EnqueueCleanup(ctx, backend, key, reason, size); err != nil {
+	if err := testStore.EnqueueCleanup(ctx, &core.CleanupRequest{
+		BackendName: backend, ObjectKey: key, StorageKey: key, Reason: reason, SizeBytes: size,
+	}); err != nil {
 		t.Fatalf("EnqueueCleanup(%s, %s, size=%d): %v", backend, key, size, err)
 	}
 }
@@ -2958,7 +2962,8 @@ func TestStore_MoveObjectLocation_RaceSafe(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	size, err := testStore.MoveObjectLocation(ctx, key, "minio-1", "minio-2")
+	move := &core.MoveLocation{ObjectKey: key, FromBackend: "minio-1", ToBackend: "minio-2", StorageKey: key}
+	size, err := testStore.MoveObjectLocation(ctx, move)
 	if err != nil {
 		t.Fatalf("MoveObjectLocation: %v", err)
 	}
@@ -2973,7 +2978,7 @@ func TestStore_MoveObjectLocation_RaceSafe(t *testing.T) {
 		t.Errorf("minio-2 after move = %d, want 100", used)
 	}
 
-	size, err = testStore.MoveObjectLocation(ctx, key, "minio-1", "minio-2")
+	size, err = testStore.MoveObjectLocation(ctx, move)
 	if err != nil {
 		t.Fatalf("second MoveObjectLocation: %v", err)
 	}
@@ -3135,7 +3140,9 @@ func TestStore_RecordReplica_StaleSourceSkipped(t *testing.T) {
 		t.Fatalf("RecordObject: %v", err)
 	}
 
-	_, ok, err := testStore.RecordReplica(ctx, key, "minio-2", "minio-1")
+	_, ok, err := testStore.RecordReplica(ctx, &core.ReplicaInsert{
+		ObjectKey: key, TargetBackend: "minio-2", SourceBackend: "minio-1", StorageKey: key + "!r",
+	})
 	if err != nil {
 		t.Fatalf("RecordReplica: %v", err)
 	}
@@ -3154,7 +3161,9 @@ func TestStore_RecordReplica_StaleSourceSkipped(t *testing.T) {
 		t.Fatalf("RecordObject fresh: %v", err)
 	}
 
-	_, ok, err = testStore.RecordReplica(ctx, key, "minio-1", "minio-1")
+	_, ok, err = testStore.RecordReplica(ctx, &core.ReplicaInsert{
+		ObjectKey: key, TargetBackend: "minio-1", SourceBackend: "minio-1", StorageKey: key + "!r",
+	})
 	if err != nil {
 		t.Fatalf("RecordReplica stale: %v", err)
 	}

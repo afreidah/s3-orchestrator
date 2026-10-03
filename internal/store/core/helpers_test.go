@@ -3,7 +3,7 @@
 //
 // Author: Alex Freidah
 //
-// Pure-function coverage for objectFromStoredForm and displacedFromExisting.
+// Pure-function coverage for ObjectFromStoredForm and displacedFromExisting.
 // Engine adapters lean on these helpers when translating between the
 // canonical core domain types and the engine-specific row shapes; the
 // behaviors must hold for every code path independently of the engine.
@@ -20,7 +20,7 @@ import (
 )
 
 // -------------------------------------------------------------------------
-// objectFromStoredForm
+// ObjectFromStoredForm
 // -------------------------------------------------------------------------
 
 // TestObjectFromStoredForm_NilForm verifies a nil StoredForm yields an
@@ -28,7 +28,7 @@ import (
 // field.
 func TestObjectFromStoredForm_NilForm(t *testing.T) {
 	t.Parallel()
-	loc := objectFromStoredForm("k", "b1", "k!w1", 100, nil, nil)
+	loc := ObjectFromStoredForm("k", "b1", "k!w1", 100, nil, nil)
 	if loc == nil {
 		t.Fatal("expected non-nil ObjectLocation")
 	}
@@ -51,7 +51,7 @@ func TestObjectFromStoredForm_EncryptedFields(t *testing.T) {
 		PlaintextSize: 90,
 		ContentHash:   "abc",
 	}
-	loc := objectFromStoredForm("k", "b1", "k!w1", 100, form, nil)
+	loc := ObjectFromStoredForm("k", "b1", "k!w1", 100, form, nil)
 	if !loc.Encrypted || loc.KeyID != "kid-1" || loc.PlaintextSize != 90 || loc.ContentHash != "abc" {
 		t.Errorf("encryption fields not preserved: %+v", loc)
 	}
@@ -65,7 +65,7 @@ func TestObjectFromStoredForm_EncryptedFields(t *testing.T) {
 func TestObjectFromStoredForm_HashOnly(t *testing.T) {
 	t.Parallel()
 	form := &StoredForm{ContentHash: "abc123"}
-	loc := objectFromStoredForm("k", "b1", "k!w1", 100, form, nil)
+	loc := ObjectFromStoredForm("k", "b1", "k!w1", 100, form, nil)
 	if loc.Encrypted {
 		t.Error("Encrypted = true, want false")
 	}
@@ -79,7 +79,7 @@ func TestObjectFromStoredForm_HashOnly(t *testing.T) {
 // produces the same shape as a nil StoredForm.
 func TestObjectFromStoredForm_PlaintextFormWithoutEncryption(t *testing.T) {
 	t.Parallel()
-	loc := objectFromStoredForm("k", "b1", "k!w1", 100, &StoredForm{}, nil)
+	loc := ObjectFromStoredForm("k", "b1", "k!w1", 100, &StoredForm{}, nil)
 	if loc.Encrypted || loc.EncryptionKey != nil || loc.ContentHash != "" {
 		t.Errorf("plaintext form did not yield zero encryption fields: %+v", loc)
 	}
@@ -104,10 +104,9 @@ func TestDisplacedFromExisting_EmptyInput(t *testing.T) {
 }
 
 // TestDisplacedFromExisting_SameBackendStillDisplaced verifies that a copy on a
-// backend the new write also lands on is displaced. It used to be excluded,
-// because a PUT overwrote it in place; a write now stores its bytes at a path
-// of its own, so the old copy is still sitting at the old path and leaving it
-// would leak the bytes.
+// backend the new write also lands on is displaced. The new write stores its
+// bytes at a path of its own, so the old copy stays at its old path and leaving
+// it would leak the bytes.
 func TestDisplacedFromExisting_SameBackendStillDisplaced(t *testing.T) {
 	t.Parallel()
 	existing := []ExistingCopy{

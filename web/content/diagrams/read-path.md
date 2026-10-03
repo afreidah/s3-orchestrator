@@ -56,10 +56,12 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     '    DBLOOKUP -->|DB unavailable| CACHE{Location<br>Cache?}:::decision',
     '    DBLOOKUP -->|ok| COPIES[Iterate Copies<br>with Failover]:::process',
     '',
-    '    CACHE -->|hit + success| METRICS',
+    '    CACHE -->|hit: cached backend| DLOC[Find Newest Copy,<br>Check Stored Form]:::process',
     '    CACHE -->|miss or fail| FANOUT[Broadcast to<br>All Backends]:::process',
-    '    FANOUT -->|first success| METRICS',
+    '    FANOUT -->|each backend tried| DLOC',
     '    FANOUT -->|all fail| BFAIL[Return Last<br>Error]:::reject',
+    '    DLOC -->|encrypted| R503[503 Service<br>Unavailable]:::reject',
+    '    DLOC -->|plain or compressed| ULIMIT',
     '',
     '    COPIES --> ULIMIT{Usage Limit<br>Check}:::filter',
     '    ULIMIT -->|over limit, more copies| COPIES',
@@ -175,12 +177,22 @@ Detailed flow of a GetObject request through location lookup, failover, broadcas
     CACHE: {
       title: 'Location Cache Lookup',
       badge: 'decision', badgeText: 'degraded mode',
-      body: '<p>When the DB is unavailable and <code>circuit_breaker.degraded_reads_enabled</code> is on, the system enters degraded mode and checks the in-memory location cache first. With the setting off, the request fails with 503 instead.</p><p>Degraded reads only serve unencrypted objects. With an encryptor configured, every degraded GET attempt fails with <code>ErrServiceUnavailable</code> because there is no row to unwrap the DEK from, so the client gets 503.</p><p>The cache maps object keys to backend names with a TTL (+/-20% random jitter to prevent expiry storms). Populated by previous successful broadcast reads.</p><p>On <b>cache hit</b>: tries the cached backend directly. If that succeeds, the read completes without broadcasting. If the cached backend fails, falls through to broadcast.</p><p>On <b>cache miss</b>: proceeds directly to broadcast.</p><p class="ac-metric">Metrics: s3o_degraded_reads_total, s3o_degraded_cache_hits_total</p>'
+      body: '<p>When the DB is unavailable and <code>circuit_breaker.degraded_reads_enabled</code> is on, the system enters degraded mode and checks the in-memory location cache first. With the setting off, the request fails with 503 instead.</p><p>The cache maps object keys to backend names with a TTL (+/-20% random jitter to prevent expiry storms). Populated by previous successful broadcast reads.</p><p>On <b>cache hit</b>: tries the cached backend directly. If that succeeds, the read completes without broadcasting. If the cached backend fails, falls through to broadcast.</p><p>On <b>cache miss</b>: proceeds directly to broadcast.</p><p class="ac-metric">Metrics: s3o_degraded_reads_total, s3o_degraded_cache_hits_total</p>'
     },
     FANOUT: {
       title: 'Broadcast to All Backends',
       badge: 'process', badgeText: 'broadcast',
-      body: '<p>Tries every configured backend to find the object without DB guidance. Two strategies (configured via <code>parallel_broadcast</code>):</p><p><b>Sequential</b>: iterates backends in order, stops at first success. Lower resource usage but higher latency.</p><p><b>Parallel</b>: launches a bounded window of goroutines (capped by <code>degraded_broadcast_parallelism</code>), returns the first success via a buffered channel, then cancels the losing probes\' contexts so their in-flight work stops promptly. Lower latency but more API calls.</p><p>After a winner is declared a background goroutine drains and cleans up the remaining probe results. The drain is bounded by <code>backend_timeout</code> so a hung backend that never returns after cancellation cannot strand it.</p><p>On success, caches the backend mapping (<code>cache.Set(key, name)</code>) so future degraded reads skip the broadcast.</p><p class="ac-metric">Span attribute: s3o.parallel_broadcast=true | Metric: s3o_degraded_broadcast_drain_timeout_total</p>'
+      body: '<p>Tries every configured backend to find the object without DB guidance. Two strategies (configured via <code>parallel_broadcast</code>):</p><p><b>Sequential</b>: iterates backends in order, stops at first success. Lower resource usage but higher latency.</p><p><b>Parallel</b>: launches a bounded window of goroutines (capped by <code>degraded_broadcast_parallelism</code>), returns the first success via a buffered channel, then cancels the losing probes\' contexts so their in-flight work stops promptly. Lower latency but more API calls.</p><p>After a winner is declared a background goroutine drains and cleans up the remaining probe results. The drain is bounded by <code>backend_timeout</code> so a hung backend that never returns after cancellation cannot strand it.</p><p>Each backend tried first finds the object\'s newest copy and checks how it is stored, then reads it through the normal path.</p><p>On success, caches the backend mapping (<code>cache.Set(key, name)</code>) so future degraded reads skip the broadcast.</p><p class="ac-metric">Span attribute: s3o.parallel_broadcast=true | Metric: s3o_degraded_broadcast_drain_timeout_total</p>'
+    },
+    DLOC: {
+      title: 'Find Newest Copy, Check Stored Form',
+      badge: 'process', badgeText: 'degraded mode',
+      body: '<p>With the database down there is no row to say which <code>&lt;key&gt;!&lt;id&gt;</code> path holds the object\'s bytes, or whether they are compressed or encrypted. This step works both out from the backend (<code>readLocation</code>).</p><p><b>Newest copy</b>: lists the backend starting at the object key. The bare key and its <code>!&lt;id&gt;</code> copies sort first, and the newest by modification time is read. The listing is one extra API call.</p><p><b>Stored form</b>: reads the copy\'s first bytes, and for a zstd frame also its tail, the same way import checks an object it finds on a backend. A seek table marks the copy as compressed, so it is decoded and served at its logical size. An encryption envelope returns 503. Anything else is served as stored.</p><p>The newest copy is not always the committed one: an upload whose commit failed, or a deleted object whose backend delete failed and is waiting for retry, can be served until the reaper or cleanup worker resolves it.</p>'
+    },
+    R503: {
+      title: '503 Service Unavailable',
+      badge: 'reject', badgeText: 'encrypted copy',
+      body: '<p>The newest copy is encrypted. Decrypting it needs the wrapped data key and key ID, which only the database holds, so the read is refused rather than serving ciphertext.</p>'
     },
     BFAIL: {
       title: 'Return Last Error (Broadcast)',

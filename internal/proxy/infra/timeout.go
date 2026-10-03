@@ -107,10 +107,9 @@ func (p *timeoutPolicy) HeadWithTimeout(ctx context.Context, be backend.ObjectBa
 // rather than the caller's estimate, since an overwrite can land between the
 // two.
 //
-// The two keys are the paths the bytes occupy on each backend, and they are not
-// the same string: the copy is a new write on the destination and gets a path
-// of its own there, which is what lets its orphan cleanup name exactly what it
-// uploaded.
+// srcKey and dstKey are the paths on each backend, and they differ. The copy
+// is a new write on the destination with a path of its own, so its orphan
+// cleanup deletes exactly what it uploaded.
 func (p *timeoutPolicy) StreamCopy(ctx context.Context, src, dst backend.ObjectBackend, srcKey, dstKey string) (int64, error) {
 	rctx, rcancel := p.WithTimeout(ctx)
 	defer rcancel()

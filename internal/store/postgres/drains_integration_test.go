@@ -209,7 +209,7 @@ func TestPgDrainRecord_RefusesReplicaTarget(t *testing.T) {
 	target := drainBackend(t, s)
 	key := pgRecordOn(t, s, "backend-a", "k")
 	pgStartDrain(t, s, target)
-	if _, inserted, err := s.RecordReplica(context.Background(), key, target, "backend-a"); err != nil || inserted {
+	if _, inserted, err := s.RecordReplica(context.Background(), replicaOf(key, target, "backend-a")); err != nil || inserted {
 		t.Errorf("RecordReplica onto a draining backend = %v, %v; want refused", inserted, err)
 	}
 }

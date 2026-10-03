@@ -409,6 +409,13 @@ func (h *harness) quotaUsed(backendName string) int64 {
 	return used
 }
 
+// storagePath returns the path key's copy occupies on backendName, read from
+// this harness's ledger.
+func (h *harness) storagePath(backendName, key string) string {
+	h.t.Helper()
+	return storagePathIn(h.t, h.db, backendName, internalKey(key))
+}
+
 // backendSize reports how many bytes a backend physically holds for key, read
 // off the backend rather than out of the ledger.
 func (h *harness) backendSize(backendName, key string) int64 {
@@ -417,7 +424,7 @@ func (h *harness) backendSize(backendName, key string) int64 {
 	if !ok {
 		h.t.Fatalf("backendSize: %q is not in this harness fleet", backendName)
 	}
-	head, err := be.HeadObject(context.Background(), internalKey(key))
+	head, err := be.HeadObject(context.Background(), h.storagePath(backendName, key))
 	if err != nil {
 		h.t.Fatalf("backendSize(%s, %s): %v", backendName, key, err)
 	}
@@ -528,7 +535,7 @@ func (h *harness) corrupt(backendName, key string, replacement []byte) {
 	if !ok {
 		h.t.Fatalf("corrupt: %q is not in this harness fleet", backendName)
 	}
-	if _, err := be.PutObject(context.Background(), internalKey(key),
+	if _, err := be.PutObject(context.Background(), h.storagePath(backendName, key),
 		bytes.NewReader(replacement), int64(len(replacement)), "application/octet-stream", nil); err != nil {
 		h.t.Fatalf("corrupting copy on %s: %v", backendName, err)
 	}
@@ -555,7 +562,7 @@ func (h *harness) storedBytes(backendName, key string) []byte {
 	if !ok {
 		h.t.Fatalf("storedBytes: %q is not in this harness fleet", backendName)
 	}
-	result, err := be.GetObject(context.Background(), internalKey(key), "")
+	result, err := be.GetObject(context.Background(), h.storagePath(backendName, key), "")
 	if err != nil {
 		h.t.Fatalf("direct read of %s from %s: %v", key, backendName, err)
 	}

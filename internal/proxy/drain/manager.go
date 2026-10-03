@@ -285,7 +285,7 @@ func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBack
 		dbDeleted := 0
 		for i := range objects {
 			progress.Track(observer, objects[i].ObjectKey, func() string {
-				return d.purgeOneObject(ctx, be, name, objects[i].ObjectKey, &dbDeleted)
+				return d.purgeOneObject(ctx, be, name, &objects[i], &dbDeleted)
 			})
 		}
 
@@ -301,8 +301,9 @@ func (d *Manager) PurgeBackendObjects(ctx context.Context, be backend.ObjectBack
 // metadata row, incrementing dbDeleted on a successful DB removal. Returns the
 // progress status: failed when the DB record could not be dropped (the signal
 // the page made no progress), ok otherwise.
-func (d *Manager) purgeOneObject(ctx context.Context, be backend.ObjectBackend, name, key string, dbDeleted *int) string {
-	if err := d.infra.DeleteWithTimeout(ctx, be, key); err != nil {
+func (d *Manager) purgeOneObject(ctx context.Context, be backend.ObjectBackend, name string, obj *core.ObjectLocation, dbDeleted *int) string {
+	key := obj.ObjectKey
+	if err := d.infra.DeleteWithTimeout(ctx, be, core.StoragePath(key, obj.StorageKey)); err != nil {
 		d.log.WarnContext(ctx, "failed to delete object from backend during purge",
 			slog.String("backend", name), slog.String("key", key), "error", err)
 	}

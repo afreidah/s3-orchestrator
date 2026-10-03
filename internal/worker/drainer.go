@@ -305,7 +305,13 @@ func (d *Drainer) dropDrainedCopy(ctx context.Context, src backend.ObjectBackend
 			"key", obj.ObjectKey, "backend", srcName, logfmt.Err(err))
 		return false
 	}
-	d.placement.DeleteOrEnqueue(ctx, src, srcName, obj.ObjectKey, "drain_source_delete", obj.SizeBytes)
+	d.placement.DeleteOrEnqueue(ctx, src, &core.CleanupRequest{
+		BackendName: srcName,
+		ObjectKey:   obj.ObjectKey,
+		StorageKey:  core.StoragePath(obj.ObjectKey, obj.StorageKey),
+		Reason:      "drain_source_delete",
+		SizeBytes:   obj.SizeBytes,
+	})
 	audit.Log(ctx, "storage.DrainRemoveReplica",
 		slog.String("key", obj.ObjectKey),
 		slog.String("removed_from", srcName),
@@ -323,13 +329,15 @@ func (d *Drainer) moveOff(ctx context.Context, src backend.ObjectBackend, srcNam
 		return false
 	}
 	movedSize, err := d.placement.MoveObject(ctx, &writepath.MoveRequest{
-		Key:         obj.ObjectKey,
-		SizeBytes:   obj.SizeBytes,
-		SrcBackend:  src,
-		SrcName:     srcName,
-		DestBackend: dest,
-		DestName:    destName,
-		Reasons:     writepath.DrainMoveReasons,
+		Key:            obj.ObjectKey,
+		SizeBytes:      obj.SizeBytes,
+		SrcBackend:     src,
+		SrcName:        srcName,
+		DestBackend:    dest,
+		DestName:       destName,
+		SrcStorageKey:  core.StoragePath(obj.ObjectKey, obj.StorageKey),
+		DestStorageKey: writepath.NewStorageKey(obj.ObjectKey),
+		Reasons:        writepath.DrainMoveReasons,
 	})
 	if err != nil {
 		if !errors.Is(err, writepath.ErrMoveStale) {

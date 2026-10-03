@@ -14,6 +14,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -72,7 +73,13 @@ type ObjectBackend interface {
 	GetObject(ctx context.Context, key string, rangeHeader string) (*GetObjectResult, error)
 	HeadObject(ctx context.Context, key string) (*HeadObjectResult, error)
 	DeleteObject(ctx context.Context, key string) error
+	ListObjects(ctx context.Context, prefix string, fn func([]ListedObject) error) error
 }
+
+// ErrStopListing is returned by a ListObjects callback to end the listing once
+// it has what it needs. ListObjects then returns nil, so stopping early is not
+// reported as a failure.
+var ErrStopListing = errors.New("stop listing")
 
 // HealthChecker confirms a backend is reachable and authorized without
 // touching any object.
@@ -501,6 +508,9 @@ func (b *S3Backend) ListObjects(ctx context.Context, prefix string, fn func([]Li
 					continue
 				}
 				if err := fn(objects); err != nil {
+					if errors.Is(err, ErrStopListing) {
+						return nil
+					}
 					return err
 				}
 			}

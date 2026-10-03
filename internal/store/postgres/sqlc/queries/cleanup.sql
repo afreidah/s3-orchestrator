@@ -12,9 +12,8 @@
 
 -- name: EnqueueCleanup :exec
 -- storage_key is what the worker deletes; object_key rides along so an operator
--- reading the queue still sees which object the orphan belongs to. They differ
--- for every row written since per-write storage keys, and a row queued before
--- them holds the same value in both.
+-- reading the queue still sees which object the orphan belongs to. The two hold
+-- the same value when the bytes were stored at the object's key.
 INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes)
 VALUES ($1, $2, $3, $4, $5);
 
@@ -109,10 +108,10 @@ DELETE FROM cleanup_queue WHERE backend_name = $1;
 -- given (storage_key, backend_name) pair. Used by the reconciler-driven
 -- sweep so orphan_bytes can be decremented in step with the row delete.
 --
--- Matched on the path rather than the object, because the row being swept is a
--- queued deletion of particular bytes and the reconcile that triggers it has
--- established that those bytes are gone. Sweeping by object would also drop the
--- queued deletions of the key's other writes, whose bytes are still there.
+-- Rows are matched on the path rather than the object, because reconcile only
+-- established that the bytes at that path are gone. Sweeping by object would
+-- also drop queued deletions for the key's other writes, whose bytes are still
+-- on the backend.
 SELECT COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes,
        COUNT(*)::bigint AS row_count
 FROM cleanup_queue

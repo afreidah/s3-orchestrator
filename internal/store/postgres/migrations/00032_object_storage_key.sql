@@ -3,35 +3,16 @@
 --
 -- Author: Alex Freidah
 --
--- The path a copy's bytes occupy on its backend, recorded next to the copy
--- instead of being assumed to equal the object's key.
+-- Records the path each copy's bytes occupy on its backend. A write stores its
+-- bytes under object_key || '!' || an id of its own, so two writes to one key
+-- never share a path and deleting one write's bytes cannot remove another's.
 --
--- Every write of a key used to land at the key itself. That is what issue #1527
--- is: two overwrites racing towards one slow backend wrote the same path, and
--- the cleanup that followed the companion upload which lost the race deleted
--- "the object at that key" - which by then was the winner's. The ledger kept a
--- row naming a copy whose bytes were gone, the replication factor was silently
--- one short, and nothing but the scrubber could notice.
+-- pending_objects carries the column because the intent is the only record of
+-- where an upload's bytes went if its commit never happens. cleanup_queue and
+-- cleanup_dlq carry it because a queued delete outlives the row it came from.
 --
--- A write now stores its bytes under object_key || '!' || intent_id, and the
--- row points at that path. A discard deletes the object it wrote and no other;
--- an overwrite never writes in place, so a read during one sees the old object
--- or the new one rather than a path being mutated underneath it; and every
--- queued deletion says which bytes it is for.
---
--- pending_objects carries the column for the same reason it carries the stored
--- form: the intent is written before the upload, so it is the only record of
--- where the bytes went if the commit never happens. The reaper and the
--- companion-discard path both delete at what it says.
---
--- cleanup_queue and cleanup_dlq carry it because a queued deletion outlives
--- everything that knew the path: the row it came from is already gone by the
--- time the worker runs. object_key stays alongside it so an operator reading
--- the queue still sees which object the orphan belongs to.
---
--- The backfill is storage_key = object_key, which is where a row written before
--- this migration actually has its bytes. Nothing downstream has to recognise
--- those rows as special - they are read through the same column as every other.
+-- Existing rows are backfilled with their object key, which is where their
+-- bytes already are, so nothing on any backend moves.
 -- -------------------------------------------------------------------------------
 
 -- +goose Up
@@ -53,6 +34,23 @@ UPDATE cleanup_dlq SET storage_key = object_key WHERE storage_key IS NULL;
 ALTER TABLE cleanup_dlq ALTER COLUMN storage_key SET NOT NULL;
 
 -- +goose Down
+
+-- Dropping the column loses the path of every copy written since the upgrade:
+-- its row would point at the object key, where there are no bytes. The
+-- rollback refuses while any row is stored anywhere other than its object key.
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM object_locations WHERE storage_key <> object_key)
+       OR EXISTS (SELECT 1 FROM pending_objects WHERE storage_key <> object_key)
+       OR EXISTS (SELECT 1 FROM cleanup_queue WHERE storage_key <> object_key)
+       OR EXISTS (SELECT 1 FROM cleanup_dlq WHERE storage_key <> object_key)
+    THEN
+        RAISE EXCEPTION 'rows are stored under per-write storage keys; rolling back would lose their paths';
+    END IF;
+END
+$$;
+-- +goose StatementEnd
 
 ALTER TABLE cleanup_dlq DROP COLUMN IF EXISTS storage_key;
 ALTER TABLE cleanup_queue DROP COLUMN IF EXISTS storage_key;

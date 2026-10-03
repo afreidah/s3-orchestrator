@@ -21,15 +21,17 @@ cleanup_queue:
 
 When any backend object deletion fails during normal operations (PutObject orphan cleanup, DeleteObject, overwrite displaced copies, multipart part cleanup, rebalancer, replicator), the failed deletion is automatically enqueued for retry.
 
+Each enqueued item names the path to delete in `storage_key`, the path of the one write's bytes it is for, so a retry can never reach another write's copy of the same key. `object_key` rides along so an operator can tell which object an orphan belonged to.
+
 Each enqueued item tracks the object's `size_bytes`. On enqueue, the backend's `orphan_bytes` counter is incremented so that write routing and replication target selection account for the physically unreleased space. On successful cleanup the row is removed and `orphan_bytes` is decremented in a single atomic CTE; a worker crash between the two operations cannot leave the counter inconsistent.
 
 **Per-row claim pattern.** Every row carries `claimed_at` and `claimed_by` columns. When a worker tick fetches a batch it stamps each row with the current instance's identifier and timestamp, gated by `FOR UPDATE SKIP LOCKED` (Postgres) or SQLite's intrinsic single-writer serialisation. Two instances ticking concurrently always see disjoint row sets, so a connection death or rolling-deploy overlap that would otherwise let two workers process the same row is now structurally impossible. A claim older than `claim_grace_period` (default 5m) is reclaimable so a worker that died mid-process does not leave the row stuck; reclaims emit `s3o_cleanup_queue_stale_claims_recovered_total` and a `cleanup_queue.claim_recovered` audit event.
 
-The background worker runs every minute and retries with exponential backoff (1 minute to 24 hours). Scheduling a retry clears the row's claim so it is immediately re-eligible for the next tick. After 10 failed attempts, the row is graduated to the `cleanup_dlq` table via `core.MoveCleanupToDLQ` (single transaction: read the row, insert it into `cleanup_dlq`, delete it from `cleanup_queue`). `orphan_bytes` is intentionally NOT decremented during the move because the backend object is still on disk. The DLQ entry retains the full row payload (key, backend, size, reason, last_error) plus an `original_id` correlation column so an operator can find the original queue entry.
+The background worker runs every minute and retries with exponential backoff (1 minute to 24 hours). Scheduling a retry clears the row's claim so it is immediately re-eligible for the next tick. After 10 failed attempts, the row is graduated to the `cleanup_dlq` table via `core.MoveCleanupToDLQ` (single transaction: read the row, insert it into `cleanup_dlq`, delete it from `cleanup_queue`). `orphan_bytes` is intentionally NOT decremented during the move because the backend object is still on disk. The DLQ entry retains the full row payload (key, storage key, backend, size, reason, last_error) plus an `original_id` correlation column so an operator can find the original queue entry.
 
 **Reconcile does not undo a pending delete.** A key with a row in `cleanup_queue` or `cleanup_dlq` is still on the backend only because the delete could not reach it. Reconcile therefore skips importing such a key rather than adopting it, checked inside the import transaction so a cleanup finishing concurrently cannot slip between the check and the insert. Adopting it would resurrect the object: it would come back live, the replicator would spread it to reach the replication factor, and its `created_at` would restart so any lifecycle rule that had expired it would wait another full window.
 
-The suppression is scoped to the `(key, backend)` pair, so a copy that was removed cleanly on another backend is still importable. Suppressed keys are logged and reported as `suppressed_pending_cleanup` in the reconcile result - a run showing many of them is pointing at a cleanup queue that is not draining, not at a reconcile problem.
+The suppression is scoped to the `(storage_key, backend)` pair, so a copy that was removed cleanly on another backend is still importable. Suppressed keys are logged and reported as `suppressed_pending_cleanup` in the reconcile result - a run showing many of them is pointing at a cleanup queue that is not draining, not at a reconcile problem.
 
 **Monitoring:**
 
@@ -54,7 +56,7 @@ The suppression is scoped to the `(key, backend)` pair, so a copy that was remov
 
 ```sql
 -- View unrecoverable orphans needing manual intervention
-SELECT id, original_id, backend_name, object_key, reason, attempts,
+SELECT id, original_id, backend_name, object_key, storage_key, reason, attempts,
        size_bytes, first_enqueued_at, moved_at, last_error
 FROM cleanup_dlq
 ORDER BY moved_at;
@@ -68,8 +70,8 @@ DELETE FROM cleanup_dlq WHERE id = 42;
 COMMIT;
 
 -- Or, to push a DLQ entry back through automatic retry (e.g. after fixing the backend):
-INSERT INTO cleanup_queue (backend_name, object_key, reason, size_bytes, next_retry, attempts, last_error)
-SELECT backend_name, object_key, reason, size_bytes, NOW(), 0, last_error
+INSERT INTO cleanup_queue (backend_name, object_key, storage_key, reason, size_bytes, next_retry, attempts, last_error)
+SELECT backend_name, object_key, storage_key, reason, size_bytes, NOW(), 0, last_error
   FROM cleanup_dlq WHERE id = 42;
 DELETE FROM cleanup_dlq WHERE id = 42;
 ```
@@ -88,7 +90,7 @@ write_path:
     batch_size: 50       # rows claimed per tick (default: 50)
 ```
 
-**How recovery works.** On every tick the `PendingReaper` worker (`internal/worker/pending.go`) claims a batch of `pending_objects` rows older than `min_age`, HEADs the backend at the recorded key, and resolves each one:
+**How recovery works.** On every tick the `PendingReaper` worker (`internal/worker/pending.go`) claims a batch of `pending_objects` rows older than `min_age`, HEADs the backend at the intent's recorded `storage_key`, and resolves each one:
 
 - **HEAD 200** -> the backend received the bytes. Promote the intent to a committed `object_locations` row (`pending_reaper.promoted` audit event).
 - **HEAD 404** -> the backend never received the bytes. Drop the intent (`pending_reaper.dropped` audit event). No orphan exists.

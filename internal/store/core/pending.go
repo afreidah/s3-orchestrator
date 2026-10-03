@@ -78,7 +78,7 @@ func commitPromotion(ctx context.Context, tx TxAdapter, p *PendingObject, existi
 	if err != nil {
 		return promoteOutcome{}, err
 	}
-	loc := objectFromStoredForm(p.ObjectKey, p.BackendName, p.StorageKey, p.SizeBytes, pendingStoredForm(p), p.Identity)
+	loc := ObjectFromStoredForm(p.ObjectKey, p.BackendName, p.StorageKey, p.SizeBytes, pendingStoredForm(p), p.Identity)
 	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
 		return promoteOutcome{}, fmt.Errorf("insert promoted location: %w", err)
 	}
@@ -157,7 +157,7 @@ func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (com
 	if !claimed {
 		return discardUntrustedCopy(p), nil
 	}
-	loc := objectFromStoredForm(p.ObjectKey, p.BackendName, p.StorageKey, p.SizeBytes, pendingStoredForm(p), p.Identity)
+	loc := ObjectFromStoredForm(p.ObjectKey, p.BackendName, p.StorageKey, p.SizeBytes, pendingStoredForm(p), p.Identity)
 	if err := tx.InsertObjectLocation(ctx, loc); err != nil {
 		return companionOutcome{}, fmt.Errorf("insert companion location: %w", err)
 	}
@@ -173,7 +173,7 @@ func commitCompanionTx(ctx context.Context, tx TxAdapter, p *PendingObject) (com
 
 // discardUntrustedCopy resolves an upload whose write has been overtaken: the
 // intent is gone, so a newer write took the key while these bytes were still
-// going up, and they describe an object that is no longer the object.
+// uploading, and they describe a stale version of the object.
 //
 // It removes those bytes and nothing else. They sit at this write's own path,
 // which no other write shares, so whatever the key holds on this backend now
@@ -207,13 +207,11 @@ func discardUntrustedCopy(p *PendingObject) companionOutcome {
 // served their purpose - but their bytes are the object and must not be reported
 // as stale.
 //
-// Every other cleared intent's bytes are stale, whichever backend they are on.
-// An intent naming a backend this write also landed on used to be dropped
-// without touching it, on the grounds that the object at that path was this
-// write's own copy; each write now has a path of its own, so that intent's bytes
-// are somewhere else entirely and leaving them leaks on exactly the backend the
-// object is most likely to be on. The upload may still be running, in which case
-// the deletion finds nothing and the copy's own commit discards it again.
+// Every other cleared intent's bytes are stale, whichever backend they are on,
+// including a backend this write also landed on: that intent's bytes sit at a
+// different path from this write's copy, and leaving them would leak them. The
+// upload may still be running, in which case the deletion finds nothing and
+// the copy's own commit discards it again.
 //
 // keep names the intents of this same write still uploading. They are the one
 // kind a commit leaves behind, because the write they belong to is the write

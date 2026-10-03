@@ -54,7 +54,7 @@ type claimResult struct {
 func enqueueN(t *testing.T, s *Store, n int, suffix string) {
 	t.Helper()
 	for range n {
-		if err := s.EnqueueCleanup(context.Background(), "backend-a", uniqueKey(t, suffix), "test", 256); err != nil {
+		if err := s.EnqueueCleanup(context.Background(), cleanupOf("backend-a", uniqueKey(t, suffix), "test", 256)); err != nil {
 			t.Fatalf("EnqueueCleanup: %v", err)
 		}
 	}
@@ -122,7 +122,7 @@ func TestStoreInt_ClaimPendingCleanups_ReclaimAfterGrace(t *testing.T) {
 	ctx := context.Background()
 
 	key := uniqueKey(t, "reclaim")
-	if err := s.EnqueueCleanup(ctx, "backend-a", key, "test", 256); err != nil {
+	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "test", 256)); err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 
@@ -216,7 +216,7 @@ func TestStoreInt_CompleteCleanupItem_AtomicDecrement(t *testing.T) {
 	before := readOrphanBytes(t, s, "backend-a")
 
 	key := uniqueKey(t, "atomic-complete")
-	if err := s.EnqueueCleanup(ctx, "backend-a", key, "test", size); err != nil {
+	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "test", size)); err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 
@@ -267,7 +267,7 @@ func TestStoreInt_CompleteCleanupItem_ClampsAtZero(t *testing.T) {
 	}
 
 	key := uniqueKey(t, "clamp-zero")
-	if err := s.EnqueueCleanup(ctx, "backend-a", key, "test", 10_000); err != nil {
+	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "test", 10_000)); err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 
@@ -302,7 +302,7 @@ func TestStoreInt_RetryCleanupItem_ClearsClaim(t *testing.T) {
 	ctx := context.Background()
 
 	key := uniqueKey(t, "retry-clears")
-	if err := s.EnqueueCleanup(ctx, "backend-a", key, "test", 256); err != nil {
+	if err := s.EnqueueCleanup(ctx, cleanupOf("backend-a", key, "test", 256)); err != nil {
 		t.Fatalf("EnqueueCleanup: %v", err)
 	}
 

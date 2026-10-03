@@ -80,17 +80,17 @@ func (r *Rebalancer) Config() *config.RebalanceConfig {
 }
 
 // RebalanceMove describes a single object move from one backend to another.
+//
+// SrcStorageKey is where the copy being moved sits on FromBackend, taken from
+// the row the planner selected. The destination's path is minted when the move
+// runs rather than when it is planned, because other writes can take the key
+// while a plan waits, and a path chosen earlier could name bytes the move never
+// wrote.
 type RebalanceMove struct {
-	ObjectKey   string
-	FromBackend string
-	ToBackend   string
-	SizeBytes   int64
-
-	// SrcStorageKey is where the copy being moved sits on FromBackend, taken
-	// from the row the planner selected. The destination's path is minted at
-	// execution time rather than planned, because a plan can sit in a queue
-	// while other writes take the key and a path decided then would name bytes
-	// the move never wrote.
+	ObjectKey     string
+	FromBackend   string
+	ToBackend     string
+	SizeBytes     int64
 	SrcStorageKey string
 }
 

@@ -134,6 +134,11 @@ func (m *mockBackend) DeleteObject(_ context.Context, key string) error {
 	return nil
 }
 
+// ListObjects returns nothing; no test in this package lists through it.
+func (m *mockBackend) ListObjects(context.Context, string, func([]ListedObject) error) error {
+	return nil
+}
+
 // hasObject returns true if the key exists in the mock backend's store.
 
 type errReader struct{ err error }

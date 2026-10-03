@@ -114,17 +114,21 @@ func seedListingRows(ctx context.Context, t *testing.T, s *Store, keys, copies i
 	}
 	if _, err := s.pool.Exec(ctx, `
 		INSERT INTO object_locations
-		    (object_key, backend_name, size_bytes, etag, content_type, managed, created_at)
+		    (object_key, storage_key, backend_name, size_bytes, etag, content_type, managed, created_at)
 		SELECT
-		    format('%s%s/IMG_%s.jpg', $3::text, to_char(DATE '2024-01-01' + (k % 900), 'YYYY/MM'),
-		           lpad(k::text, 8, '0')),
+		    key, key,
 		    $4::text || c,
 		    (k % 5000000)::bigint,
 		    md5(k::text),
 		    'image/jpeg',
 		    true,
 		    NOW() - (k || ' seconds')::interval
-		FROM generate_series(1, $1) k CROSS JOIN generate_series(1, $2) c`,
+		FROM generate_series(1, $1) k
+		CROSS JOIN generate_series(1, $2) c
+		CROSS JOIN LATERAL (
+		    SELECT format('%s%s/IMG_%s.jpg', $3::text, to_char(DATE '2024-01-01' + (k % 900), 'YYYY/MM'),
+		                  lpad(k::text, 8, '0')) AS key
+		) named`,
 		keys, copies, listPlanPrefix, listPlanBackend); err != nil {
 		t.Fatalf("seed rows: %v", err)
 	}

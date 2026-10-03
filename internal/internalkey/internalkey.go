@@ -38,34 +38,24 @@ func Split(internalKey string) (bucket, userKey string) {
 // WriteSeparator divides an object's internal key from the id of the write that
 // produced the bytes stored under it. See StorageKey.
 //
-// '!' is in S3's own "safe characters" set, so it survives a key in a request
-// path with no percent-encoding and needs no XML escaping in a listing - it has
-// to, because a storage key is what the orchestrator hands a backend as its
-// object key. It also sorts below every alphanumeric, which puts a key's
-// per-write objects immediately after it in a raw bucket listing rather than
-// scattered through the namespace, and that is what an operator reading a
-// provider's console needs to see.
+// A storage key is what the orchestrator hands a backend as its object key, so
+// the separator has to survive a request path and a listing unescaped. '!' is
+// in S3's "safe characters" set, and it sorts below every alphanumeric, which
+// keeps a key's per-write objects together in a raw bucket listing.
 const WriteSeparator = "!"
 
 // StorageKey returns the path on a backend that one write of objectKey stores
 // its bytes at: the object's own key, the separator, and the id of the pending
 // intent that write holds for this copy.
 //
-// Every write of a key used to land at the key itself, which is the whole of
-// issue #1527: two overwrites racing towards one backend wrote the same path,
-// so the cleanup that followed the loser could not tell its own bytes from the
-// winner's and deleted whichever was there. A path that names the write makes
-// every deletion unambiguous - a discard removes what it wrote and nothing else
-// - and an overwrite stops being an in-place mutation, so a read during one
-// sees either the old object or the new one rather than a half-written path.
+// Because each write has its own path, a cleanup deletes exactly the bytes its
+// write uploaded and never another write's, and an overwrite never modifies a
+// path a reader may be reading.
 //
-// The intent id is 16 random bytes in hex and a storage key ends with one, so
-// the last separator splits a storage key back into its parts even when the
-// client's own key contains a '!'. Two writes therefore collide only by
-// colliding on that id.
-//
-// Rows written before storage keys existed hold storage_key = object_key, which
-// is exactly where their bytes are; nothing built here has to recognise them.
+// The intent id is 16 random bytes in hex, so the last separator splits a
+// storage key back into its parts even when the client's key contains a '!'.
+// A row whose storage key equals its object key keeps its bytes at the key;
+// nothing here has to treat it specially.
 func StorageKey(objectKey, intentID string) string {
 	return objectKey + WriteSeparator + intentID
 }

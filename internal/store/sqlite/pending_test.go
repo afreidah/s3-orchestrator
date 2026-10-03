@@ -412,25 +412,18 @@ func TestRecordObjectAndClearPending_EmptyIntentBehavesLikeRecordObject(t *testi
 // CommitCompanionCopy  -  two copies racing to one backend
 // -------------------------------------------------------------------------
 
-// TestCommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding is the
-// sequence behind #1527. Two writes to one key each place a further copy on
-// backend-b, and a slow backend-b answers them in order: the first write's
-// copy resolves before the second write's has landed. The first is discarded,
-// rightly, since the second write cleared its intent. Deleting its bytes by
-// key and backend at that moment removes whatever is at that path when the
-// delete arrives, which is the second copy once it lands, and the second
-// copy's commit then records a row for bytes that are gone.
-//
-// The discard leaves the path to the copy still landing on it instead, and
-// leaves that copy's intent as it is: the copy commits normally on top, and
-// its intent stays the path's promise of cleanup should it never commit.
-func TestCommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding(t *testing.T) {
+// TestCommitCompanionCopy_DiscardDeletesOnlyItsOwnPath runs two writes to one
+// key that each place a further copy on backend-b, with the first write's copy
+// resolving after the second write has committed. The first is discarded,
+// since the second write cleared its intent, and its cleanup names only its
+// own path. The second copy then commits at its own path, untouched.
+func TestCommitCompanionCopy_DiscardDeletesOnlyItsOwnPath(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	first := core.PendingObject{IntentID: "i-first", ObjectKey: "bucket/k", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
-	second := core.PendingObject{IntentID: "i-second", ObjectKey: "bucket/k", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	first := core.PendingObject{IntentID: "i-first", ObjectKey: "bucket/k", StorageKey: "bucket/k!first", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	second := core.PendingObject{IntentID: "i-second", ObjectKey: "bucket/k", StorageKey: "bucket/k!second", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
 	for _, p := range []*core.PendingObject{&first, &second} {
 		if _, err := s.InsertPendingIfFits(ctx, p); err != nil {
 			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
@@ -453,8 +446,8 @@ func TestCommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding(t *testin
 	if result != core.CompanionCopyUntrusted {
 		t.Fatalf("first copy: result = %v, want Untrusted", result)
 	}
-	if len(displaced) != 0 {
-		t.Errorf("first copy's discard reported %+v for deletion while the second copy was still landing at that path", displaced)
+	if len(displaced) != 1 || displaced[0].StorageKey != first.StorageKey {
+		t.Errorf("first copy's discard reported %+v, want only its own path %s", displaced, first.StorageKey)
 	}
 
 	if got := queryPendingCount(t, s); got != 1 {
@@ -466,7 +459,7 @@ func TestCommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding(t *testin
 		t.Fatalf("CommitCompanionCopy second: %v", err)
 	}
 	if result != core.CompanionCopyCommitted {
-		t.Errorf("second copy: result = %v, want Committed: its intent was untouched and its bytes are the path's", result)
+		t.Errorf("second copy: result = %v, want Committed: its intent was untouched", result)
 	}
 	if len(displaced) != 0 {
 		t.Errorf("second copy's commit reported %+v for deletion, want nothing", displaced)
@@ -479,18 +472,16 @@ func TestCommitCompanionCopy_DiscardLeavesThePathToTheCopyStillLanding(t *testin
 	}
 }
 
-// TestPromotePending_TwoAbandonedCompanions_TheLastToResolveDeletesThePath
-// verifies the reaper's side of the same rule. Two abandoned intents for one
-// key and backend: the first resolved leaves the path to the second, whose
-// intent is still there for exactly this purpose; the second, finding no
-// other intent, hands the bytes back for deletion. Nothing is left behind.
-func TestPromotePending_TwoAbandonedCompanions_TheLastToResolveDeletesThePath(t *testing.T) {
+// TestPromotePending_TwoAbandonedCompanions_EachDeletesItsOwnPath verifies the
+// reaper's side: two abandoned intents for one key and backend each hand back
+// their own path for deletion, and nothing is left behind.
+func TestPromotePending_TwoAbandonedCompanions_EachDeletesItsOwnPath(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	first := core.PendingObject{IntentID: "i-first", ObjectKey: "bucket/k", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
-	second := core.PendingObject{IntentID: "i-second", ObjectKey: "bucket/k", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	first := core.PendingObject{IntentID: "i-first", ObjectKey: "bucket/k", StorageKey: "bucket/k!first", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
+	second := core.PendingObject{IntentID: "i-second", ObjectKey: "bucket/k", StorageKey: "bucket/k!second", BackendName: "backend-b", SizeBytes: 100, Role: core.PendingRoleCompanion}
 	for _, p := range []*core.PendingObject{&first, &second} {
 		if _, err := s.InsertPendingIfFits(ctx, p); err != nil {
 			t.Fatalf("InsertPending %s: %v", p.IntentID, err)
@@ -513,8 +504,8 @@ func TestPromotePending_TwoAbandonedCompanions_TheLastToResolveDeletesThePath(t 
 	if result != core.PendingPromoteCompanionDiscarded {
 		t.Fatalf("first: result = %v, want CompanionDiscarded", result)
 	}
-	if len(displaced) != 0 {
-		t.Errorf("first reported %+v for deletion while the second intent was still live", displaced)
+	if len(displaced) != 1 || displaced[0].StorageKey != first.StorageKey {
+		t.Errorf("first reported %+v, want only its own path %s", displaced, first.StorageKey)
 	}
 
 	result, displaced, _, err = s.PromotePending(ctx, &second)
@@ -524,8 +515,8 @@ func TestPromotePending_TwoAbandonedCompanions_TheLastToResolveDeletesThePath(t 
 	if result != core.PendingPromoteCompanionDiscarded {
 		t.Fatalf("second: result = %v, want CompanionDiscarded", result)
 	}
-	if len(displaced) != 1 || displaced[0].BackendName != "backend-b" {
-		t.Errorf("second reported %+v, want backend-b's bytes now that no intent is left for the path", displaced)
+	if len(displaced) != 1 || displaced[0].StorageKey != second.StorageKey {
+		t.Errorf("second reported %+v, want only its own path %s", displaced, second.StorageKey)
 	}
 	if got := queryPendingCount(t, s); got != 0 {
 		t.Errorf("pending rows = %d, want none", got)

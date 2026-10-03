@@ -735,10 +735,9 @@ func TestMoveObjectLocation_SourceGone(t *testing.T) {
 }
 
 // TestRecordObject_Overwrite_SameBackend covers an overwrite landing on the
-// backend that already holds the object. The prior copy is displaced, at its
-// own path: a write no longer replaces anything in place, so those bytes are
-// still sitting where the last write put them and only an explicit cleanup
-// reclaims them.
+// backend that already holds the object. The prior copy is displaced at its
+// own path: the new write stores its bytes elsewhere, so the old bytes stay
+// where the last write put them until an explicit cleanup reclaims them.
 func TestRecordObject_Overwrite_SameBackend(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

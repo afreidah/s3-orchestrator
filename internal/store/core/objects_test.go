@@ -72,11 +72,9 @@ func TestDeleteObject_IntentClearFailureAborts(t *testing.T) {
 // path, so they are cleaned off their backends instead of waiting for the
 // reaper.
 //
-// Including the intent on a backend this write also landed on. That one used to
-// be skipped, on the grounds that the object at the shared path was this
-// write's own copy; each write now has a path of its own, so those bytes are
-// somewhere else and skipping them leaks on the backend the object is most
-// likely to be on.
+// That includes an intent on a backend this write also landed on: its bytes
+// sit at a different path from this write's copy, and skipping them would leak
+// them.
 func TestRecordObject_ClearsSupersededIntents(t *testing.T) {
 	t.Parallel()
 	stub := &intentClearingTxStub{

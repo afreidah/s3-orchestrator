@@ -62,6 +62,10 @@ func (o *Manager) GetObject(ctx context.Context, key string, rangeHeader string)
 	var wireBytes atomic.Int64
 	result, backendName, err := o.failover.Read(ctx, "GetObject", key,
 		func(ctx context.Context, beName string, loc *core.ObjectLocation, backend s3be.ObjectBackend) (readpath.ProbeResult[*s3be.GetObjectResult], error) {
+			loc, err := o.readLocation(ctx, backend, beName, key, loc)
+			if err != nil {
+				return readpath.ProbeResult[*s3be.GetObjectResult]{}, err
+			}
 			if isCompressed(loc) {
 				selfMetered.Store(true)
 			}
@@ -134,12 +138,6 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 	if !o.core.Usage().WithinLimits(beName, getObjectOp, 0, 0) {
 		return fail, 0, fmt.Errorf("backend %s: %w", beName, readpath.ErrUsageLimitSkip)
 	}
-	// Encrypted reads need the location row to unwrap the DEK; without it
-	// (degraded broadcast with the DB unreachable) we cannot decrypt.
-	if o.encryptor != nil && loc == nil {
-		return fail, 0, core.ErrServiceUnavailable
-	}
-
 	// A compressed copy is read by decoding it, which is driven by the codec
 	// rather than by a GET of the whole object.
 	if isCompressed(loc) {
@@ -164,7 +162,7 @@ func (o *Manager) getObjectAttempt(ctx context.Context, key, rangeHeader, beName
 	}
 	actualRange := br.header
 
-	r, cancel, err := o.core.GetWithTimeout(ctx, backend, storagePath(key, loc), actualRange)
+	r, cancel, err := o.core.GetWithTimeout(ctx, backend, core.StoragePath(key, loc.StorageKey), actualRange)
 	if err != nil {
 		o.core.Acct().APICall(s3op.GetObject, beName)
 		return fail, 0, err
@@ -301,7 +299,7 @@ func (o *Manager) maybeWrapIntegrityReader(
 		o.coord.DeleteOrEnqueue(ctx, backend, &core.CleanupRequest{
 			BackendName: beName,
 			ObjectKey:   key,
-			StorageKey:  storagePath(key, loc),
+			StorageKey:  core.StoragePath(key, loc.StorageKey),
 			Reason:      "integrity_failed",
 			SizeBytes:   r.Size,
 		})

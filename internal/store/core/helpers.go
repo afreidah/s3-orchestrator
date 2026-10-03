@@ -97,17 +97,16 @@ func StoredFormFromLocation(loc *ObjectLocation) *StoredForm {
 	}
 }
 
-// objectFromStoredForm builds an ObjectLocation suitable for
+// ObjectFromStoredForm builds an ObjectLocation suitable for
 // InsertObjectLocation from a key/backend/storage-key/size tuple plus the
 // optional description of how the bytes are stored and the optional
 // client-facing identity. A nil identity leaves the row's columns NULL, which
 // is what a write that never learned the object's ETag records.
 //
-// storageKey is where the bytes this row describes actually are. It is a
-// parameter rather than something derived from key because it is the one field
-// no caller can reconstruct: it names the write that placed the bytes, and the
-// row is the only place that record survives.
-func objectFromStoredForm(key, backend, storageKey string, size int64, form *StoredForm, id *ObjectIdentity) *ObjectLocation {
+// storageKey is where the bytes this row describes are. It is a parameter
+// rather than derived from key because it names the write that placed the
+// bytes, and the row is the only lasting record of it.
+func ObjectFromStoredForm(key, backend, storageKey string, size int64, form *StoredForm, id *ObjectIdentity) *ObjectLocation {
 	loc := &ObjectLocation{
 		ObjectKey:   key,
 		BackendName: backend,
@@ -139,12 +138,10 @@ func objectFromStoredForm(key, backend, storageKey string, size int64, form *Sto
 // StoragePath resolves the path a copy occupies on its backend: the one it was
 // given, or the object's key when it was given none.
 //
-// A caller with no path of its own is describing bytes that are at the key, and
-// that is not a special case: the migration backfilled exactly that for every
-// row written before per-write paths existed, and an import adopts bytes at the
-// key it records them under. Resolving it in one place is also what keeps an
-// empty string out of the column, which the (backend_name, storage_key) unique
-// index would reject on the second such copy.
+// A caller with no path is describing bytes at the object's key, which is
+// where a backfilled row and an imported object keep them. Resolving it here
+// also keeps an empty string out of the column, which the (backend_name,
+// storage_key) unique index would reject on the second such copy.
 func StoragePath(objectKey, storageKey string) string {
 	if storageKey == "" {
 		return objectKey
@@ -160,12 +157,8 @@ func StoragePath(objectKey, storageKey string) string {
 // their removal owes.
 //
 // Every copy is displaced, including the ones on backends the new write lands
-// on. That used to be the exception: a PUT wrote at the object's key, so a
-// backend it landed on had its old copy replaced in place and deleting it would
-// have deleted the new one. A write now stores its bytes under a path of its
-// own, so the old copy is still sitting at the old path - untouched, unreachable
-// and paid for - and skipping it leaks the bytes on exactly the backend the
-// object is most likely to live on.
+// on. The new write stores its bytes at a path of its own, so the old copy
+// stays at its old path on that backend, and skipping it would leak the bytes.
 func displacedFromExisting(existing []ExistingCopy) []DeletedCopy {
 	if len(existing) == 0 {
 		return nil
@@ -187,9 +180,8 @@ func displacedFromExisting(existing []ExistingCopy) []DeletedCopy {
 // Reading the size from the locked set rather than the caller's stale value
 // keeps object_locations.size_bytes and backend_quotas.bytes_used in
 // agreement across a concurrent overwrite. The storage key comes from the same
-// read for the stronger version of that reason: the caller's copy of it may
-// name bytes a newer write has already replaced, and deleting those is the
-// failure this whole mechanism exists to prevent.
+// read because the caller's copy of it may name bytes a newer write has
+// already replaced, and deleting those would remove the wrong object.
 func copyOnBackend(existing []ExistingCopy, backendName string) (ExistingCopy, bool) {
 	for _, ec := range existing {
 		if ec.BackendName == backendName {

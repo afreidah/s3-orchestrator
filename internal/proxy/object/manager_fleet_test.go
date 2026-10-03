@@ -1139,13 +1139,12 @@ func TestGetObject_DBUnavailable_AllFail(t *testing.T) {
 	}
 }
 
-// TestGetObject_DBUnavailable_EncryptedRejects503 pins the
-// encryption-aware DB-down rejection.
+// TestGetObject_DBUnavailable_EncryptedRejects503 verifies a degraded read of
+// an encrypted copy returns 503, since decrypting needs the key the database
+// holds, while a plaintext copy on the same deployment is still served.
 func TestGetObject_DBUnavailable_EncryptedRejects503(t *testing.T) {
 	t.Parallel()
-	b1 := backendtest.NewInMemory()
-	_, _ = b1.PutObject(context.Background(), "enc-key", bytes.NewReader([]byte("ciphertext")), 10, "text/plain", nil)
-
+	ctx := context.Background()
 	provider, err := encryption.NewConfigKeyProvider("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "test-0")
 	if err != nil {
 		t.Fatalf("NewConfigKeyProvider: %v", err)
@@ -1154,17 +1153,32 @@ func TestGetObject_DBUnavailable_EncryptedRejects503(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sealed, err := enc.Encrypt(ctx, bytes.NewReader([]byte("secret")), 6)
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	ciphertext, err := io.ReadAll(sealed.Body)
+	if err != nil {
+		t.Fatalf("read ciphertext: %v", err)
+	}
 
+	b1 := backendtest.NewInMemory()
+	b1.Objects["enc-key"] = backendtest.Object{Data: ciphertext}
+	b1.Objects["plain-key"] = backendtest.Object{Data: []byte("plain")}
 	store := locationsStore(t, nil, core.ErrDBUnavailable)
 	mgr := newFleet(t, store, map[string]backend.ObjectBackend{"b1": b1}, &fleetOpts{Order: []string{"b1"}, BackendTimeout: 30 * time.Second, Encryptor: enc})
 
-	_, err = mgr.GetObject(context.Background(), "enc-key", "")
-	if err == nil {
-		t.Fatal("expected error for encrypted read with DB unavailable")
+	_, err = mgr.GetObject(ctx, "enc-key", "")
+	if s3err, ok := errors.AsType[*core.S3Error](err); !ok || s3err.StatusCode != 503 {
+		t.Errorf("encrypted copy: expected 503 S3Error, got: %v", err)
 	}
-	s3err, ok := errors.AsType[*core.S3Error](err)
-	if !ok || s3err.StatusCode != 503 {
-		t.Errorf("expected 503 S3Error, got: %v", err)
+	result, err := mgr.GetObject(ctx, "plain-key", "")
+	if err != nil {
+		t.Fatalf("plaintext copy: %v", err)
+	}
+	defer func() { _ = result.Body.Close() }()
+	if got, _ := io.ReadAll(result.Body); string(got) != "plain" {
+		t.Errorf("plaintext copy body = %q, want %q", got, "plain")
 	}
 }
 

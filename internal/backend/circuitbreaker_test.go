@@ -256,18 +256,24 @@ func TestCBBackend_RequestErrorsDoNotOpen(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
-// Unwrap
+// ListObjects
 // -------------------------------------------------------------------------
 
-// TestCBBackend_Unwrap verifies the cbbackend unwrap path by exercising cb.Unwrap.
-func TestCBBackend_Unwrap(t *testing.T) {
+// TestCBBackend_ListObjectsRespectsTheCircuit verifies a listing reaches the
+// backend while the circuit is closed and is refused once it opens.
+func TestCBBackend_ListObjectsRespectsTheCircuit(t *testing.T) {
 	t.Parallel()
 	mock := newMockBackend()
-	cb := newTestCBBackend(mock, 3, time.Minute)
+	mock.getErr = errors.New("connection refused")
+	cb := newTestCBBackend(mock, 1, time.Minute)
+	noop := func([]ListedObject) error { return nil }
 
-	inner := cb.Unwrap()
-	if inner != mock {
-		t.Fatal("Unwrap should return the inner backend")
+	if err := cb.ListObjects(context.Background(), "", noop); err != nil {
+		t.Fatalf("ListObjects on a closed circuit = %v, want nil", err)
+	}
+	_, _ = cb.GetObject(context.Background(), "key", "")
+	if err := cb.ListObjects(context.Background(), "", noop); !errors.Is(err, breaker.ErrBackendUnavailable) {
+		t.Errorf("ListObjects on an open circuit = %v, want ErrBackendUnavailable", err)
 	}
 }
 

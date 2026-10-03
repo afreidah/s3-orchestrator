@@ -328,7 +328,7 @@ func TestStoreInt_ObjectTags_ReplicaRemovalKeepsTags(t *testing.T) {
 	key := uniqueKey(t, "tags-replicated")
 
 	seedTaggedObject(t, s, key, "backend-a", nil)
-	if _, err := s.MoveObjectLocation(ctx, key, "backend-a", "backend-b"); err != nil {
+	if _, err := s.MoveObjectLocation(ctx, &core.MoveLocation{ObjectKey: key, FromBackend: "backend-a", ToBackend: "backend-b", StorageKey: key + "!m"}); err != nil {
 		t.Fatalf("MoveObjectLocation: %v", err)
 	}
 	if _, _, err := s.RecordObject(ctx, &core.RecordObjectRequest{Key: key, Copies: []core.ObjectCopy{{Backend: "backend-a"}}, Size: 1024}); err != nil {

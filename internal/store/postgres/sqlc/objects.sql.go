@@ -107,10 +107,9 @@ type CopyExistsAtPathParams struct {
 }
 
 // Whether the backend already has a copy recorded at this path, whatever
-// object it belongs to. Import asks before adopting bytes it found, because
-// the object key it would record them under is the path itself, which says
-// nothing about the row an orchestrator-written path already has under the
-// real object's key.
+// object it belongs to. Import asks before adopting bytes it found: it would
+// record them under the path as the object key, so it cannot otherwise see that
+// a path the orchestrator wrote already has a row under the real object's key.
 func (q *Queries) CopyExistsAtPath(ctx context.Context, arg CopyExistsAtPathParams) (bool, error) {
 	row := q.db.QueryRow(ctx, copyExistsAtPath, arg.BackendName, arg.StorageKey)
 	var exists bool
@@ -414,9 +413,9 @@ type GetExistingCopiesForUpdateRow struct {
 	HasDek      *bool
 }
 
-// storage_key comes along because the caller that deletes these rows is also
-// the caller that deletes their bytes, and after per-write storage keys the
-// path is no longer derivable from the object key.
+// storage_key comes along because the caller that deletes these rows also
+// deletes their bytes, and a per-write path cannot be derived from the object
+// key.
 func (q *Queries) GetExistingCopiesForUpdate(ctx context.Context, objectKey string) ([]GetExistingCopiesForUpdateRow, error) {
 	rows, err := q.db.Query(ctx, getExistingCopiesForUpdate, objectKey)
 	if err != nil {
@@ -1181,11 +1180,10 @@ type ListObjectsByBackendKeyAscRow struct {
 // ReconcileBackend to drive a bounded-memory sorted-merge join against an S3
 // ListObjects walk. Pass ” as the cursor on the first call.
 //
-// storage_key rather than object_key because that is what the other side of the
-// merge returns: a backend lists the paths it holds, and after per-write
-// storage keys a path is no longer the object's key. Walking by object_key
-// would pair every row against the wrong listing entry, which the merge reports
-// as one import and one delete per object, forever.
+// It walks storage_key rather than object_key because a backend lists the paths
+// it holds, and a per-write copy's path is not its object key. Walking by
+// object_key would pair rows against the wrong listing entries, and the merge
+// would report one import and one delete per object on every pass.
 //
 // COLLATE "C" is required: the merge join compares keys in byte order (Go string
 // comparison) against S3 ListObjectsV2, which is UTF-8 byte ordered. Without it,

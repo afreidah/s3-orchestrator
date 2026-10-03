@@ -45,9 +45,8 @@ func setupReaper(t *testing.T) (*PendingReaper, *MockCleanupOps, *MockPlacement,
 }
 
 // pendingFixture returns a PendingObject for the reaper test rows. Its storage
-// key is the object's own, the legacy form every intent written before
-// per-write paths carries, so the probe and the cleanup address the same string
-// the fixtures' backends are seeded at.
+// key is the object's own key, so the probe and the cleanup address the same
+// string the fixtures' backends are seeded at.
 func pendingFixture(intentID, key, backendName string) core.PendingObject {
 	return core.PendingObject{
 		IntentID:    intentID,

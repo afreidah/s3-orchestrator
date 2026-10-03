@@ -47,6 +47,9 @@ func (fakeBackend) HeadObject(context.Context, string) (*backend.HeadObjectResul
 }
 func (fakeBackend) DeleteObject(context.Context, string) error { return nil }
 func (fakeBackend) HeadBucket(context.Context) error           { return nil }
+func (fakeBackend) ListObjects(context.Context, string, func([]backend.ListedObject) error) error {
+	return nil
+}
 
 // newTestCore constructs a *BackendRuntime with sensible defaults so the
 // forwarder tests focus on behavior, not wiring boilerplate.

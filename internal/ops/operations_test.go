@@ -90,6 +90,10 @@ func (f *fakeBackend) HeadObject(_ context.Context, _ string) (*s3be.HeadObjectR
 // DeleteObject is a no-op.
 func (f *fakeBackend) DeleteObject(_ context.Context, _ string) error { return nil }
 
+func (f *fakeBackend) ListObjects(context.Context, string, func([]s3be.ListedObject) error) error {
+	return nil
+}
+
 // emptyEncAdmin is a minimal EncryptionAdmin stub: every listing is empty and
 // every mutator is a no-op, so a pass runs to completion with nothing to do.
 type emptyEncAdmin struct{}

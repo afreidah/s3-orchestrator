@@ -424,10 +424,10 @@ func (o *Manager) attemptPutOnBackend(ctx context.Context, span trace.Span, oper
 	}
 
 	bctx, bcancel := o.core.WithTimeout(ctx)
-	// Written at the intent's own path, never at the object's key. That is what
-	// makes an overwrite an addition rather than an in-place mutation: a reader
-	// mid-write still sees the whole previous object, and the cleanup that
-	// follows either write can only reach its own bytes.
+	// Written at the intent's own path, never at the object's key, so an
+	// overwrite never modifies bytes in place. A reader mid-write still sees the
+	// whole previous object, and the cleanup after either write can only reach
+	// its own bytes.
 	//
 	// The backend's ETag is discarded: it describes the bytes as stored, which
 	// are ciphertext or compressed frames whenever either feature is on.

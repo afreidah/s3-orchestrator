@@ -104,19 +104,6 @@ func (a *sqliteTxAdapter) ClearPendingForKey(ctx context.Context, objectKey stri
 	return cleared, nil
 }
 
-// CountPendingOnBackend reports how many intents are live for one key on one
-// backend.
-func (a *sqliteTxAdapter) CountPendingOnBackend(ctx context.Context, objectKey, backend string) (int64, error) {
-	var n int64
-	if err := a.tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pending_objects WHERE object_key = ? AND backend_name = ?`,
-		objectKey, backend,
-	).Scan(&n); err != nil {
-		return 0, fmt.Errorf("count pending intents on backend: %w", err)
-	}
-	return n, nil
-}
-
 // DeletePending removes a pending intent.
 func (a *sqliteTxAdapter) DeletePending(ctx context.Context, intentID string) error {
 	if _, err := a.tx.ExecContext(ctx,
@@ -471,9 +458,9 @@ func (a *sqliteTxAdapter) InsertReplicaConditional(ctx context.Context, r *core.
 	// here is a column describing bytes that the copy then contradicts. That is
 	// how the conditional insert came to drop every encryption field.
 	//
-	// The storage key is the exception, and has to be: it is where the bytes
-	// are, not what they are. The caller uploaded them to a path of its own on
-	// the target, so the row names that path rather than the source's.
+	// The storage key is the exception, because it says where the bytes are,
+	// not what they are. The caller uploaded them to a path of its own on the
+	// target, so the row names that path rather than the source's.
 	dest := *srcLoc
 	dest.ObjectKey = r.ObjectKey
 	dest.BackendName = r.TargetBackend

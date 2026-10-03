@@ -68,13 +68,6 @@ func NewCircuitBreakerBackend(inner CheckedBackend, cfg CircuitBreakerConfig) *C
 	}
 }
 
-// Unwrap returns the underlying ObjectBackend. This is needed for code that
-// type-asserts to a concrete type or to a narrow interface (e.g. the
-// reconciler's objectLister, which extends ObjectBackend with ListObjects).
-func (cb *CircuitBreakerBackend) Unwrap() ObjectBackend {
-	return cb.inner
-}
-
 // CheckHealth runs the wrapped backend's bucket health check directly,
 // bypassing the breaker, so it can run while the circuit is open.
 func (cb *CircuitBreakerBackend) CheckHealth(ctx context.Context) error {
@@ -155,5 +148,12 @@ func (cb *CircuitBreakerBackend) CopyObject(ctx context.Context, srcKey, dstKey,
 	}
 	return cb.Call(func() (string, error) {
 		return copier.CopyObject(ctx, srcKey, dstKey, contentType, metadata)
+	})
+}
+
+// ListObjects lists objects by prefix with circuit breaker protection.
+func (cb *CircuitBreakerBackend) ListObjects(ctx context.Context, prefix string, fn func([]ListedObject) error) error {
+	return cb.CallNoResult(func() error {
+		return cb.inner.ListObjects(ctx, prefix, fn)
 	})
 }

@@ -22,8 +22,10 @@ package backendtest
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -66,14 +68,14 @@ type Object struct {
 //
 // CopyObject always exists, so InMemory satisfies backend.Copier, but it
 // reports ErrCopyNotSupported until a test sets CopyEnabled - which leaves
-// callers on the materialized-copy path by default.
+// callers on the materialized-copy path by default. CopyLandsBeforeErr makes a
+// failing CopyObject write the destination anyway, modelling a server-side copy
+// whose response was lost.
 type InMemory struct {
 	mu sync.Mutex
 
 	Objects map[string]Object
 
-	// CopyLandsBeforeErr makes a failing CopyObject write the destination
-	// anyway, modelling a server-side copy whose response was lost.
 	CopyLandsBeforeErr bool
 
 	PutErr        error
@@ -81,6 +83,7 @@ type InMemory struct {
 	HeadErr       error
 	DeleteErr     error
 	HeadBucketErr error
+	ListErr       error
 	GetReadErr    error // surfaces from the body reader, not from GetObject itself
 	GetPanic      bool  // GetObject panics instead of returning
 	DeleteDelay   time.Duration
@@ -284,6 +287,40 @@ func (m *InMemory) DeleteObject(ctx context.Context, key string) error {
 	return nil
 }
 
+// listPageSize is how many keys one ListObjects page holds, matching the S3
+// default so tests that page see the same page boundaries as a real backend.
+const listPageSize = 1000
+
+// ListObjects calls fn with the keys that start with prefix, in byte order,
+// one page at a time. Returns ListErr when set, and stops without error when
+// fn returns backend.ErrStopListing.
+func (m *InMemory) ListObjects(_ context.Context, prefix string, fn func([]backend.ListedObject) error) error {
+	m.mu.Lock()
+	if m.ListErr != nil {
+		err := m.ListErr
+		m.mu.Unlock()
+		return err
+	}
+	listed := make([]backend.ListedObject, 0, len(m.Objects))
+	for key, obj := range m.Objects {
+		if strings.HasPrefix(key, prefix) {
+			listed = append(listed, backend.ListedObject{Key: key, SizeBytes: int64(len(obj.Data)), LastModified: obj.LastModified})
+		}
+	}
+	m.mu.Unlock()
+
+	slices.SortFunc(listed, func(a, b backend.ListedObject) int { return strings.Compare(a.Key, b.Key) })
+	for start := 0; start < len(listed); start += listPageSize {
+		if err := fn(listed[start:min(start+listPageSize, len(listed))]); err != nil {
+			if errors.Is(err, backend.ErrStopListing) {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
+}
+
 // HeadBucket satisfies backend.HealthChecker, returning the injected failure.
 func (m *InMemory) HeadBucket(context.Context) error {
 	m.mu.Lock()
@@ -307,9 +344,9 @@ func (m *InMemory) CopyObject(_ context.Context, srcKey, dstKey, _ string, _ map
 	}
 	if m.CopyErr != nil {
 		// The ambiguous failure the HEAD probe exists for: the backend
-		// completed the copy and then lost the response. Performing it before
-		// reporting the error is what makes that case reachable now that the
-		// destination path is minted inside the copy and no test can seed it.
+		// completed the copy and then lost the response. The destination path
+		// is minted inside the copy, so a test cannot seed it and the copy has
+		// to land here instead.
 		if m.CopyLandsBeforeErr {
 			m.Objects[dstKey] = src
 		}
@@ -332,10 +369,8 @@ func (m *InMemory) Has(key string) bool {
 // wherever they are: at the key itself, or under one of the per-write paths a
 // write stores its bytes at.
 //
-// Tests need this because a write no longer stores at the object's key and the
-// path it does use names the write - a fresh id no caller can predict. Asking
-// whether the object arrived is a different question from asking for its exact
-// path, and this is the first one.
+// A write's path carries a fresh id that no test can predict, so a test that
+// only cares whether the object arrived asks this instead of naming the path.
 func (m *InMemory) HasCopyOf(objectKey string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -349,13 +384,12 @@ func (m *InMemory) HasCopyOf(objectKey string) bool {
 }
 
 // CopyOf returns the object the backend holds for objectKey, wherever it is:
-// at the key itself, or under the per-write path a write stored it at. The
-// companion to HasCopyOf, for the assertions that are about the bytes rather
-// than about the object's presence.
+// at the key itself, or under the per-write path a write stored it at. It is
+// for assertions about the bytes rather than about the object's presence.
 //
-// A key with more than one copy on the backend - an overwrite whose predecessor
-// has not been cleaned up yet - returns an arbitrary one, so a test that cares
-// which should assert on the path it expects instead.
+// When the backend holds more than one copy of the key, such as an overwrite
+// whose predecessor is not cleaned up yet, it returns an arbitrary one. A test
+// that cares which copy should assert on the path it expects instead.
 func (m *InMemory) CopyOf(objectKey string) (Object, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -6,6 +6,7 @@
 //	mockgen -destination=mock_backend.go -package=backendtest github.com/afreidah/s3-orchestrator/internal/backend ObjectBackend,CheckedBackend
 //
 
+// Package backendtest is a generated GoMock package.
 package backendtest
 
 import (
@@ -83,6 +84,20 @@ func (m *MockObjectBackend) HeadObject(ctx context.Context, key string) (*backen
 func (mr *MockObjectBackendMockRecorder) HeadObject(ctx, key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeadObject", reflect.TypeOf((*MockObjectBackend)(nil).HeadObject), ctx, key)
+}
+
+// ListObjects mocks base method.
+func (m *MockObjectBackend) ListObjects(ctx context.Context, prefix string, fn func([]backend.ListedObject) error) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListObjects", ctx, prefix, fn)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ListObjects indicates an expected call of ListObjects.
+func (mr *MockObjectBackendMockRecorder) ListObjects(ctx, prefix, fn any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjects", reflect.TypeOf((*MockObjectBackend)(nil).ListObjects), ctx, prefix, fn)
 }
 
 // PutObject mocks base method.
@@ -180,6 +195,20 @@ func (m *MockCheckedBackend) HeadObject(ctx context.Context, key string) (*backe
 func (mr *MockCheckedBackendMockRecorder) HeadObject(ctx, key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeadObject", reflect.TypeOf((*MockCheckedBackend)(nil).HeadObject), ctx, key)
+}
+
+// ListObjects mocks base method.
+func (m *MockCheckedBackend) ListObjects(ctx context.Context, prefix string, fn func([]backend.ListedObject) error) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListObjects", ctx, prefix, fn)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ListObjects indicates an expected call of ListObjects.
+func (mr *MockCheckedBackendMockRecorder) ListObjects(ctx, prefix, fn any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjects", reflect.TypeOf((*MockCheckedBackend)(nil).ListObjects), ctx, prefix, fn)
 }
 
 // PutObject mocks base method.

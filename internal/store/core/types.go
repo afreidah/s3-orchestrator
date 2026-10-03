@@ -88,12 +88,11 @@ type StoredForm struct {
 // zero value means managed and a construction site that omits it cannot
 // accidentally produce a row the workers ignore.
 //
-// StorageKey is the path this copy occupies on its backend, and it is what
-// every path that reads, writes or deletes the bytes addresses them by. It is
-// not the object's key: a write stores its bytes under the key plus its own
-// intent id (see internalkey.StorageKey), so two writes of one key never share
-// a path and a cleanup can only ever delete what it wrote. A row written before
-// storage keys existed holds the object key, which is where its bytes are.
+// StorageKey is the path this copy occupies on its backend, and everything that
+// reads, writes or deletes the bytes uses it. A write stores its bytes under
+// the object key plus its own intent id (see internalkey.StorageKey), so two
+// writes of one key never share a path and a cleanup only deletes what its
+// write stored. A row whose bytes are at the object key holds that key here.
 //
 // The compression columns follow StoredForm: an empty algorithm means the
 // bytes are stored verbatim, and they are zero on rows from queries that do
@@ -146,10 +145,9 @@ type ExistingCopy struct {
 // delete, or the target of an intent that write superseded.
 //
 // StorageKey is the path to delete, carried here rather than derived from the
-// object key by the caller. It is the whole of the fix for issue #1527: the
-// bytes a cleanup removes are the ones the row or intent it came from named,
-// so a cleanup that runs after a newer write has committed its own copy cannot
-// take that copy's bytes with it.
+// object key by the caller. A cleanup removes exactly the bytes its row or
+// intent named, so a cleanup that runs after a newer write has committed its
+// own copy cannot take that copy's bytes with it.
 //
 // Reason is the cleanup-queue label the removal is recorded under if it has to
 // be retried, so an operator reading the queue can tell the two apart. An empty
@@ -443,10 +441,9 @@ type CompletePart struct {
 // are going and how many of them there are.
 //
 // StorageKey and ObjectKey are both carried because they answer different
-// questions and are no longer the same string. The worker deletes the first;
-// the second is what an operator reading the queue or the DLQ needs in order to
-// know what the orphan was. SizeBytes is what orphan_bytes is credited by when
-// the delete finally lands.
+// questions. The worker deletes the first; the second tells an operator
+// reading the queue or the DLQ what the orphan was. SizeBytes is what
+// orphan_bytes is credited by when the delete finally lands.
 type CleanupRequest struct {
 	BackendName string
 	ObjectKey   string
@@ -458,9 +455,8 @@ type CleanupRequest struct {
 // CleanupItem represents a pending cleanup operation in the retry queue.
 //
 // StorageKey is the path the worker deletes. ObjectKey is beside it so the
-// admin listing still says which object the orphan belongs to; the two differ
-// for every row queued since per-write storage keys, and a row queued before
-// them holds the same value in both.
+// admin listing still says which object the orphan belongs to. The two hold
+// the same value when the bytes were stored at the object's key.
 //
 // ClaimedAt and ClaimedBy are populated by ClaimPendingCleanups (the worker
 // path) and surfaced through GetPendingCleanups (the admin display path);

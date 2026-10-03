@@ -56,7 +56,7 @@ func (o *Manager) headSourceForCopy(
 		if !ok {
 			continue
 		}
-		headResult, err := o.core.HeadWithTimeout(ctx, be, storagePath(sourceKey, &locations[i]))
+		headResult, err := o.core.HeadWithTimeout(ctx, be, core.StoragePath(sourceKey, locations[i].StorageKey))
 		if err != nil {
 			continue
 		}
@@ -234,7 +234,7 @@ func copyIdentity(locations []core.ObjectLocation, contentType string, metadata 
 func sameBackendStoragePath(locations []core.ObjectLocation, destBackendName, sourceKey string) string {
 	for i := range locations {
 		if locations[i].BackendName == destBackendName {
-			return storagePath(sourceKey, &locations[i])
+			return core.StoragePath(sourceKey, locations[i].StorageKey)
 		}
 	}
 	return sourceKey
